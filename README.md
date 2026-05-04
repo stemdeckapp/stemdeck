@@ -1,5 +1,7 @@
 # StemDeck
 
+[![status-badge](https://ci.popchores.app/api/badges/2/status.svg?events=push%2Crelease%2Cpull_request_metadata%2Cpull_request_closed%2Cpull_request)](https://ci.popchores.app/repos/2)
+
 If you like StemDeck and find it useful, consider [buying me a coffee ☕](https://buymeacoffee.com/tha.les).
 
 ![StemDeck](stemdeck.png)
