@@ -39,12 +39,15 @@ def _run_ffmpeg(job: Job, cmd: list[str]) -> bool:
             tail = (stderr or b"").decode(errors="replace").splitlines()[-3:]
             logger.warning(
                 "ffmpeg exit %s for job %s: %s",
-                proc.returncode, job.id, " | ".join(tail) or "(no stderr)",
+                proc.returncode,
+                job.id,
+                " | ".join(tail) or "(no stderr)",
             )
             return False
         return True
     finally:
         set_proc(job.id, None)
+
 
 _TERMINAL = frozenset(("done", "error", "cancelled"))
 
@@ -77,9 +80,7 @@ def cleanup_source(job_dir: Path) -> None:
         f.unlink(missing_ok=True)
 
 
-def make_original_track(
-    job: Job, job_dir: Path, stems_dir: Path
-) -> Path | None:
+def make_original_track(job: Job, job_dir: Path, stems_dir: Path) -> Path | None:
     """Build the "Original" backing track at stems/original.wav as the
     sum of the stems the user did NOT select. This way the studio can
     play (original + each selected stem) and reconstruct the full song
@@ -121,9 +122,7 @@ def make_original_track(
     return out if _run_ffmpeg(job, cmd) else None
 
 
-def make_selected_mix(
-    job: Job, stems_dir: Path, found: list[str]
-) -> Path | None:
+def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | None:
     """If the user picked a strict subset of stems at submit time,
     sum those stems with ffmpeg amix into mix.wav. Returns the output
     path on success, or None when there's nothing to mix.

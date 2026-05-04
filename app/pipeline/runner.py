@@ -42,10 +42,7 @@ def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     # from the demucs-emitted stems. Reclaim disk before the ffmpeg
     # amix steps in case they need scratch space.
     cleanup_source(job_dir)
-    job.stems = [
-        {"name": name, "url": f"/api/jobs/{job.id}/stems/{name}.wav"}
-        for name in found
-    ]
+    job.stems = [{"name": name, "url": f"/api/jobs/{job.id}/stems/{name}.wav"} for name in found]
     # Subset post-processing. When the user kept all 6 stems, both of
     # these are skipped -- the original is the sum of the stems and a
     # mix would equal the original. When a strict subset was chosen:
@@ -59,10 +56,13 @@ def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _set(job, stage="Mixing tracks...")
     original_path = make_original_track(job, job_dir, stems_dir)
     if original_path is not None:
-        job.stems.insert(0, {
-            "name": "original",
-            "url": f"/api/jobs/{job.id}/stems/original.wav",
-        })
+        job.stems.insert(
+            0,
+            {
+                "name": "original",
+                "url": f"/api/jobs/{job.id}/stems/original.wav",
+            },
+        )
     _check_cancel(job)
     mix_path = make_selected_mix(job, stems_dir, found)
     if mix_path is not None:

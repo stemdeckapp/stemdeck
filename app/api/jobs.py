@@ -35,11 +35,7 @@ async def create_job(payload: JobRequest) -> dict[str, str]:
         url = validate_youtube_url(payload.url)
     except InvalidYouTubeURL as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    selected = (
-        [s for s in payload.stems if s in STEM_NAMES]
-        if payload.stems
-        else list(STEM_NAMES)
-    )
+    selected = [s for s in payload.stems if s in STEM_NAMES] if payload.stems else list(STEM_NAMES)
     if not selected:  # everything was unknown -- treat as full set
         selected = list(STEM_NAMES)
     job = registry_register(Job(id=uuid.uuid4().hex[:12], selected_stems=selected))
