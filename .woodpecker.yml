@@ -55,7 +55,10 @@ steps:
 
   trivy-fs:
     # Scans the source tree for: known CVEs in deps, leaked secrets,
-    # and Dockerfile / compose misconfigurations.
+    # and Dockerfile / compose misconfigurations. Skips .venv (it can
+    # be left over from earlier steps in the shared workspace; trivy
+    # would scan its bundled extractor files and flag false-positive
+    # secrets that ship inside third-party packages like yt-dlp).
     image: aquasec/trivy:latest
     commands:
       - trivy fs
@@ -63,6 +66,8 @@ steps:
           --severity HIGH,CRITICAL
           --exit-code 1
           --ignore-unfixed
+          --skip-dirs .venv
+          --skip-dirs jobs
           .
 
   trivy-config:

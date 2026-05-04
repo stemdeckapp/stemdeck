@@ -90,5 +90,14 @@ WORKDIR /app
 COPY app/ ./app/
 COPY static/ ./static/
 
+# Run as a non-root user. /app is owned by app so the process can
+# write nothing surprising; /cache is writable for torch/demucs model
+# downloads and /jobs is the standard mount point for job artifacts.
+RUN groupadd --system --gid 1001 app \
+    && useradd --system --uid 1001 --gid app --home /app --no-create-home app \
+    && mkdir -p /cache /jobs \
+    && chown -R app:app /app /cache /jobs
+USER app
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
