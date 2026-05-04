@@ -4,7 +4,10 @@
 # misconfig) so CI does not need a docker-in-docker setup.
 
 when:
-  - event: [push, pull_request]
+  - event: pull_request
+  - event: push
+    branch: main
+  - event: release
 
 steps:
   lint:
