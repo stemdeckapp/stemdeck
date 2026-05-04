@@ -13,7 +13,7 @@ steps:
   lint:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     commands:
-      - uv sync --frozen
+      - uv sync --frozen --all-extras
       - uv run ruff check app/ tests/
       - uv run ruff format --check app/ tests/
       - bash -n run.sh
@@ -22,7 +22,7 @@ steps:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     commands:
       - apt-get update && apt-get install -y --no-install-recommends ffmpeg
-      - uv sync --frozen
+      - uv sync --frozen --all-extras
       - uv run pytest tests/ -q
 
   js-syntax:
