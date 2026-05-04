@@ -1,5 +1,7 @@
 # StemDeck
 
+If you like StemDeck and find it useful, consider [buying me a coffee ☕](https://buymeacoffee.com/tha.les).
+
 ![StemDeck](stemdeck.png)
 
 Paste a YouTube URL, get the audio split into stems (vocals / drums / bass / guitar / piano / other) and play them back in a DAW-style multitrack mixer. Mute, solo, mix, zoom the waveform, loop a region, and download individual stems or a custom mix.
