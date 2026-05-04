@@ -41,7 +41,17 @@ steps:
     commands:
       - uv tool install pip-audit
       - uv pip compile pyproject.toml -o /tmp/requirements.txt
+      # Ignored CVEs (review periodically):
+      #   CVE-2025-2953  torch.mkldnn_max_pool2d local-DoS, fixed in 2.7.1
+      #   CVE-2025-3730  torch.nn.functional.ctc_loss local-DoS, fixed in 2.8
+      # We are pinned to torch <2.7 because torchaudio 2.7+ requires torchcodec,
+      # which has ABI issues that break demucs's torchaudio.save() path. Both
+      # CVEs are in ops StemDeck does not invoke; risk on a local-only single-
+      # user app is negligible. Drop these ignores once the torchaudio /
+      # torchcodec story stabilizes upstream.
       - uv tool run pip-audit -r /tmp/requirements.txt --strict
+          --ignore-vuln CVE-2025-2953
+          --ignore-vuln CVE-2025-3730
 
   trivy-fs:
     # Scans the source tree for: known CVEs in deps, leaked secrets,
