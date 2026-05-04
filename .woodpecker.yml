@@ -1,0 +1,59 @@
+# Woodpecker CI: lint + unit tests + security scans.
+# Does not build or publish artifacts. Image scanning is done via
+# `trivy fs` on the project tree (covers deps, secrets, and Dockerfile
+# misconfig) so CI does not need a docker-in-docker setup.
+
+when:
+  - event: [push, pull_request]
+
+steps:
+  lint:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    commands:
+      - uv sync --frozen
+      - uv run ruff check app/ tests/
+      - uv run ruff format --check app/ tests/
+      - bash -n run.sh
+
+  test:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends ffmpeg
+      - uv sync --frozen
+      - uv run pytest tests/ -q
+
+  js-syntax:
+    image: node:20-alpine
+    commands:
+      - for f in static/js/*.js; do node --check "$f"; done
+
+  sast-bandit:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    commands:
+      - uv tool install bandit
+      - uv tool run bandit -r app/ -ll  # fail on medium+ severity
+
+  deps-audit:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    commands:
+      - uv tool install pip-audit
+      - uv pip compile pyproject.toml -o /tmp/requirements.txt
+      - uv tool run pip-audit -r /tmp/requirements.txt --strict
+
+  trivy-fs:
+    # Scans the source tree for: known CVEs in deps, leaked secrets,
+    # and Dockerfile / compose misconfigurations.
+    image: aquasec/trivy:latest
+    commands:
+      - trivy fs
+          --scanners vuln,secret,misconfig
+          --severity HIGH,CRITICAL
+          --exit-code 1
+          --ignore-unfixed
+          .
+
+  trivy-config:
+    # Dedicated Dockerfile + compose static analysis (Trivy's IaC linter).
+    image: aquasec/trivy:latest
+    commands:
+      - trivy config --severity HIGH,CRITICAL --exit-code 1 build/
