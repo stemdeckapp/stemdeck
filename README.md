@@ -205,4 +205,12 @@ You, the user running this software, are solely responsible for how you use it, 
 The author(s) of StemDeck provide this code "as is", without warranty of any kind, and accept no responsibility or liability for how it is used. If you're unsure whether a particular use is allowed in your jurisdiction, consult a lawyer before proceeding.
 
 
-[![Star History Chart](https://api.star-history.com/svg?repos=thcp/stemdeck&type=Date&theme=modern)](https://star-history.com/#thcp/stemdeck&Date)
+## Star History
+
+<a href="https://www.star-history.com/?type=date&repos=thcp%2Fstemdeck">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=thcp/stemdeck&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=thcp/stemdeck&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=thcp/stemdeck&type=date&legend=top-left" />
+ </picture>
+</a>
