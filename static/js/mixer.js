@@ -53,7 +53,16 @@ export function applyMix() {
     if (s.muted) effective = 0;
     else if (anySolo && !s.soloed) effective = 0;
     const idx = trackIndex[name];
-    if (idx !== undefined) multitrack.setTrackVolume(idx, effective * masterVolume);
+    if (idx === undefined) continue;
+    // The bundled multitrack player uses HTMLAudioElement.volume on most
+    // browsers, which throws when set outside 0..1. One over-hot fader must
+    // not abort the whole mixer pass and leave later channels stale.
+    const volume = Math.max(0, Math.min(1, effective * masterVolume));
+    try {
+      multitrack.setTrackVolume(idx, volume);
+    } catch (err) {
+      console.warn(`[mixer] failed to set ${name} volume`, err);
+    }
   }
 }
 

@@ -625,7 +625,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
     buildPresenceRuler(totalDuration);
     updateFooterTimes(0);
     updatePresencePlayhead(0);
-    setMasterVolume(masterFader ? parseFloat(masterFader.value) : 1);
+    setMasterVolume(masterFader ? parseFloat(masterFader.value) : masterVolume);
     applyMix();
     setLoopStart(totalDuration * LOOP_DEFAULT_START_FRAC);
     setLoopEnd(totalDuration * LOOP_DEFAULT_END_FRAC);
