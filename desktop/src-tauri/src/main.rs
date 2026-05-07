@@ -68,6 +68,7 @@ fn main() {
             ensure_external_assets,
             ensure_torch_device,
             start_backend,
+            open_url,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
@@ -198,6 +199,20 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
 #[tauri::command]
 fn ensure_torch_device() -> Result<GpuSetup, String> {
     let root = app_root()?;
+    let data_dir = root.join("data");
+
+    // CPU-only portable build: skip GPU detection and pip entirely.
+    if data_dir.join("cpu-only").exists() {
+        persist_torch_device(&data_dir, "cpu");
+        return Ok(GpuSetup {
+            gpu_detected: false,
+            gpu_name: None,
+            cuda_version: None,
+            torch_device: "cpu".to_string(),
+            cuda_verified: false,
+        });
+    }
+
     let python = python_path(&root)
         .filter(|p| p.is_file())
         .ok_or_else(|| "Python not found".to_string())?;
@@ -224,7 +239,6 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
         },
     };
     // Persist so subsequent launches skip this step entirely.
-    let data_dir = app_root()?.join("data");
     persist_torch_device(&data_dir, &setup.torch_device);
     Ok(setup)
 }
@@ -370,6 +384,25 @@ fn verify_cuda_torch(python: &Path) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/c", "start", "", &url]);
+        hide_console_window(&mut cmd);
+        cmd.spawn().map_err(|e| format!("failed to open URL: {e}"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("failed to open URL: {e}"))?;
+    }
+    Ok(())
 }
 
 fn stop_backend(state: &BackendState) {

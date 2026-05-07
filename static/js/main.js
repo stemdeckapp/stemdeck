@@ -101,6 +101,16 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ─── External links ───
+
+document.addEventListener("click", (e) => {
+  const anchor = e.target.closest('a[target="_blank"]');
+  if (anchor?.href) {
+    e.preventDefault();
+    window.__TAURI__.core.invoke("open_url", { url: anchor.href });
+  }
+});
+
 // ─── Bootstrap ───
 
 renderEmptyShell();

@@ -1,22 +1,51 @@
 when:
   - event: release
+  - event: manual
+    branch: windows*
 
 depends_on:
   - ci
 
-labels:
-  hostname: windows
-  platform: windows/amd64
-  backend: local
-
 steps:
-  build-windows-portable:
-    image: powershell
+  build-windows-nvidia:
+    labels:
+      platform: windows/amd64
+      backend: local
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1
+          -PackageName StemDeck-Windows-x64.NVIDIA
+          -StripVenv
 
-  upload-windows-zip:
-    image: powershell
+  build-windows-cpu:
+    labels:
+      platform: windows/amd64
+      backend: local
+    depends_on:
+      - build-windows-nvidia
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1
+          -PackageName StemDeck-Windows-x64
+          -CpuOnly
+          -StripVenv
+          -SkipTauriBuild
+
+  scan-windows-artifacts:
+    labels:
+      platform: windows/amd64
+      backend: local
+    depends_on:
+      - build-windows-cpu
+    commands:
+      - docker run --rm -v "${PWD}/dist:/scan" clamav/clamav:latest clamscan --no-summary --infected /scan
+
+  upload-windows-artifacts:
+    when:
+      - event: release
+    labels:
+      platform: windows/amd64
+      backend: local
+    depends_on:
+      - scan-windows-artifacts
     environment:
       GH_TOKEN:
         from_secret: github_token
@@ -29,4 +58,10 @@ steps:
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
           throw "GitHub CLI is required on the Windows agent to upload release assets."
         }
-      - gh release upload "$env:CI_COMMIT_TAG" "dist/StemDeck-Windows-x64.zip" "dist/StemDeck-Windows-x64.zip.sha256" --repo "thcp/stemdeck" --clobber
+      - gh release upload "$env:CI_COMMIT_TAG"
+          "dist/StemDeck-Windows-x64.NVIDIA.zip"
+          "dist/StemDeck-Windows-x64.NVIDIA.zip.sha256"
+          "dist/StemDeck-Windows-x64.zip"
+          "dist/StemDeck-Windows-x64.zip.sha256"
+          --repo "thcp/stemdeck"
+          --clobber

@@ -606,8 +606,18 @@
 .btn-transport.playing svg:not(.pause-icon) {
   display: none;
 }
-.btn-transport.playing,
-.btn-transport.stopped,
+.btn-transport.playing {
+  background: linear-gradient(180deg, #4ade80, #16a34a);
+  color: white;
+  border-color: #15803d;
+  box-shadow: 0 16px 34px rgba(34, 197, 94, 0.22);
+}
+.btn-transport.stopped {
+  background: linear-gradient(180deg, #f87171, #dc2626);
+  color: white;
+  border-color: #b91c1c;
+  box-shadow: 0 16px 34px rgba(239, 68, 68, 0.22);
+}
 .btn-transport.loop.active {
   background: linear-gradient(180deg, var(--gold-bright), var(--gold));
   color: white;

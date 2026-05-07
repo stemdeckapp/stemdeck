@@ -37,7 +37,29 @@ If you need the polish, the mobile app, or the extra musician-facing tooling, th
 - **Song analysis.** BPM (librosa beat tracker on percussive HPSS), key + scale + confidence (Albrecht-Shanahan profile with root-prominence weighting), integrated LUFS (BS.1770 via pyloudnorm), sample peak in dBFS. All surfaced in the now-playing card.
 - **Cancellable jobs.** Click cancel mid-pipeline (download, Demucs, ffmpeg amix) and the runner terminates the active subprocess immediately, deletes the partial job dir, and returns the API to ready.
 
+## Windows desktop app
+
+Pre-built portable zips are attached to each [GitHub release](https://github.com/thcp/stemdeck/releases). Two variants are available:
+
+| Zip | GPU | Approx. size |
+| --- | --- | --- |
+| `StemDeck-Windows-x64.zip` | CPU only | ~700 MB |
+| `StemDeck-Windows-x64.NVIDIA.zip` | NVIDIA CUDA | ~1.6 GB |
+
+Pick the CPU variant if you don't have an NVIDIA GPU, or just want a smaller download — separation still works, it's just slower. Pick the NVIDIA variant if you have a CUDA-capable GPU and want faster separation.
+
+**Running it:**
+1. Extract the zip anywhere (no installer needed).
+2. Run `StemDeck.exe`.
+3. On first launch the app runs a short setup: checks the bundled Python runtime, creates the workspace, verifies FFmpeg and the Demucs model (downloaded on first run, ~170 MB). Subsequent launches skip most of this and start in seconds.
+
+Everything is self-contained — no Python, no uv, no system dependencies required.
+
+---
+
 ## Requirements
+
+*(for running from source on macOS / Linux)*
 
 - Python 3.10+
 - `ffmpeg` on `PATH` (install instructions per-platform below)
@@ -50,7 +72,7 @@ If you need the polish, the mobile app, or the extra musician-facing tooling, th
 ### macOS / Linux (one-shot)
 
 ```sh
-git clone <repo-url> stemdeck && cd stemdeck
+git clone https://github.com/thcp/stemdeck stemdeck && cd stemdeck
 ./run.sh setup     # detects OS, installs ffmpeg + uv, runs `uv sync`
 ./run.sh start
 ```

@@ -4,7 +4,7 @@
   "version": "0.1.0-alpha.0",
   "identifier": "app.stemdeck.desktop",
   "build": {
-    "frontendDist": "../",
+    "frontendDist": "../ui",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },

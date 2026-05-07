@@ -1,8 +1,10 @@
 param(
   [string]$Configuration = "release",
-  [string]$OutputRoot = "dist",
-  [string]$PackageName = "StemDeck-Windows-x64",
-  [switch]$SkipTauriBuild
+  [string]$OutputRoot    = "dist",
+  [string]$PackageName   = "StemDeck-Windows-x64",
+  [switch]$SkipTauriBuild,
+  [switch]$CpuOnly,
+  [switch]$StripVenv
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +62,9 @@ New-Item -ItemType Directory -Force (Join-Path $Stage "data") | Out-Null
 foreach ($Dir in @("cache", "downloads", "ffmpeg", "jobs", "logs", "models")) {
   New-Item -ItemType Directory -Force (Join-Path $Stage "data\$Dir") | Out-Null
 }
+if ($CpuOnly) {
+  New-Item -ItemType File -Force (Join-Path $Stage "data\cpu-only") | Out-Null
+}
 
 Copy-Tree (Join-Path $Root "app") (Join-Path $BackendDir "app")
 Copy-Tree (Join-Path $Root "static") (Join-Path $BackendDir "static")
@@ -75,8 +80,34 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) {
 }
 
 & $PythonExe -m pip install --upgrade pip
+
 & $PythonExe -m pip install "$Root"
+
+if ($CpuOnly) {
+  # pip strips local version identifiers when resolving requirements, so it installs
+  # the CUDA wheel from PyPI even when we pre-install the CPU wheel. Force-reinstall
+  # after the fact: uninstalls CUDA torch and replaces it with the CPU-only variant.
+  & $PythonExe -m pip install torch==2.6.0+cpu torchaudio==2.6.0+cpu `
+      --index-url https://download.pytorch.org/whl/cpu `
+      --force-reinstall --no-deps
+}
+
 & $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile"
+
+if ($StripVenv) {
+  Write-Host "Stripping venv of build-time artifacts..."
+  Get-ChildItem -Path $PythonDir -Filter "__pycache__" -Recurse -Directory -Force |
+    Remove-Item -Recurse -Force
+  foreach ($rel in @("torch\include", "torch\share\cmake", "torch\test")) {
+    $p = Join-Path $PythonDir "Lib\site-packages\$rel"
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+  }
+  # Remove C++ static link libraries from torch — needed only for building C++ extensions,
+  # never for running Python. dnnl.lib alone is ~623 MB.
+  Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages\torch") `
+      -Filter "*.lib" -Recurse -File -Force |
+    Remove-Item -Force
+}
 
 Push-Location $DesktopDir
 try {
@@ -103,6 +134,8 @@ Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $ZipPath -Force
 $Hash = Get-FileHash -Algorithm SHA256 $ZipPath
 Set-Content -Path $ChecksumPath -Value "$($Hash.Hash)  $PackageName.zip"
 
-Write-Host "Portable folder staged at: $Stage"
-Write-Host "Portable zip created at: $ZipPath"
-Write-Host "Checksum created at: $ChecksumPath"
+$Variant = if ($CpuOnly) { "CPU-only" } else { "CUDA/GPU (NVIDIA)" }
+Write-Host "Variant     : $Variant"
+Write-Host "Staged at   : $Stage"
+Write-Host "Zip created : $ZipPath"
+Write-Host "Checksum    : $ChecksumPath"
