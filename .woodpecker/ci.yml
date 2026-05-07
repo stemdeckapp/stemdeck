@@ -12,6 +12,8 @@ when:
 steps:
   lint:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    labels:
+      platform: linux/amd64
     environment:
       UV_LINK_MODE: copy
     commands:
@@ -22,6 +24,8 @@ steps:
 
   test:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    labels:
+      platform: linux/amd64
     environment:
       UV_LINK_MODE: copy
     commands:
@@ -31,11 +35,15 @@ steps:
 
   js-syntax:
     image: node:20-alpine
+    labels:
+      platform: linux/amd64
     commands:
       - for f in static/js/*.js; do node --check "$f"; done
 
   sast-bandit:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    labels:
+      platform: linux/amd64
     environment:
       UV_LINK_MODE: copy
     commands:
@@ -44,6 +52,8 @@ steps:
 
   deps-audit:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    labels:
+      platform: linux/amd64
     environment:
       UV_LINK_MODE: copy
     commands:
@@ -68,6 +78,8 @@ steps:
     # would scan its bundled extractor files and flag false-positive
     # secrets that ship inside third-party packages like yt-dlp).
     image: aquasec/trivy:latest
+    labels:
+      platform: linux/amd64
     commands:
       - trivy fs
           --scanners vuln,secret,misconfig
@@ -81,5 +93,7 @@ steps:
   trivy-config:
     # Dedicated Dockerfile + compose static analysis (Trivy's IaC linter).
     image: aquasec/trivy:latest
+    labels:
+      platform: linux/amd64
     commands:
       - trivy config --severity HIGH,CRITICAL --exit-code 1 build/

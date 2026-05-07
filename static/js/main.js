@@ -104,6 +104,12 @@ document.addEventListener("keydown", (e) => {
 // ─── External links ───
 
 document.addEventListener("click", (e) => {
+  const dl = e.target.closest("a.lane-dl");
+  if (dl?.href) {
+    e.preventDefault();
+    window.__TAURI__.core.invoke("open_url", { url: dl.href });
+    return;
+  }
   const anchor = e.target.closest('a[target="_blank"]');
   if (anchor?.href) {
     e.preventDefault();

@@ -54,14 +54,39 @@ export function applyMix() {
     else if (anySolo && !s.soloed) effective = 0;
     const idx = trackIndex[name];
     if (idx === undefined) continue;
-    // The bundled multitrack player uses HTMLAudioElement.volume on most
-    // browsers, which throws when set outside 0..1. One over-hot fader must
-    // not abort the whole mixer pass and leave later channels stale.
-    const volume = Math.max(0, Math.min(1, effective * masterVolume));
-    try {
-      multitrack.setTrackVolume(idx, volume);
-    } catch (err) {
-      console.warn(`[mixer] failed to set ${name} volume`, err);
+
+    const targetGain = effective * masterVolume;
+
+    // HTMLAudioElement.volume is capped at [0,1] by the browser spec.
+    // Values > 1 throw in Firefox/Safari (breaking the whole loop) and
+    // are silently clamped in Chrome (boost never audible). Route each
+    // HTMLAudioElement through a Web Audio GainNode instead — gain.value
+    // accepts any positive number, enabling real boost and reliable mute.
+    const audioEl = multitrack.audios?.[idx];
+    if (audioEl instanceof HTMLMediaElement) {
+      if (!audioEl._stGainNode) {
+        const ctx = multitrack.audioContext;
+        if (ctx) {
+          try {
+            if (!audioEl._stMediaSource) {
+              audioEl._stMediaSource = ctx.createMediaElementSource(audioEl);
+            }
+            audioEl._stGainNode = ctx.createGain();
+            audioEl._stMediaSource.connect(audioEl._stGainNode);
+            audioEl._stGainNode.connect(ctx.destination);
+            audioEl.volume = 1;
+          } catch (err) {
+            console.warn(`[mixer] GainNode setup failed for "${name}":`, err);
+          }
+        }
+      }
+      if (audioEl._stGainNode) {
+        audioEl._stGainNode.gain.value = targetGain;
+      } else {
+        multitrack.setTrackVolume(idx, Math.min(1, targetGain));
+      }
+    } else {
+      multitrack.setTrackVolume(idx, targetGain);
     }
   }
 }

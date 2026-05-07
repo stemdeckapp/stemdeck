@@ -38,18 +38,23 @@ export function attachAnalysers() {
         // analyser taps the post-gain signal.
         audioEl.getGainNode().connect(analyser);
       } else {
-        // Bare HTMLAudioElement (Safari path -- captureStream isn't
-        // supported on <audio>, so we route the element through Web
-        // Audio via createMediaElementSource. Once converted, the
-        // element's output flows through the AudioContext: we send it
-        // to ctx.destination so the user still hears it, and tap a
-        // branch into the analyser. createMediaElementSource may only
-        // be called once per element, so we cache the source on it.
+        // Bare HTMLAudioElement: route through Web Audio so we can tap
+        // the post-gain signal. applyMix() may have already created the
+        // MediaElementSource + GainNode chain; re-use it if so (the spec
+        // only allows createMediaElementSource once per element).
         if (!audioEl._stMediaSource) {
           audioEl._stMediaSource = ctx.createMediaElementSource(audioEl);
-          audioEl._stMediaSource.connect(ctx.destination);
+          audioEl._stGainNode = ctx.createGain();
+          audioEl._stMediaSource.connect(audioEl._stGainNode);
+          audioEl._stGainNode.connect(ctx.destination);
+          audioEl.volume = 1;
+        } else if (!audioEl._stGainNode) {
+          audioEl._stGainNode = ctx.createGain();
+          audioEl._stMediaSource.connect(audioEl._stGainNode);
+          audioEl._stGainNode.connect(ctx.destination);
+          audioEl.volume = 1;
         }
-        audioEl._stMediaSource.connect(analyser);
+        audioEl._stGainNode.connect(analyser);
       }
     } catch (err) {
       console.warn("VU analyser hookup failed for stem", stemName, err);
