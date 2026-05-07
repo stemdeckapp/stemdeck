@@ -1,7 +1,5 @@
 when:
   - event: release
-  - event: manual
-    branch: windows*
 
 depends_on:
   - ci
