@@ -1,5 +1,6 @@
 when:
   - event: release
+  - event: manual
 
 depends_on:
   - ci
