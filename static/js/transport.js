@@ -366,6 +366,16 @@ function wireZoomButtons() {
       zoomToLevelAtClientX(centerX, Number(zoomTrack.value) || 1);
     });
   }
+  // Recalculate zoom + playhead height whenever the wave container is resized
+  // (window resize, sidebar open/close, etc.). Without this, --wave-playhead-h
+  // stays at the initial pixel height and multitrack's pxPerSec is stale.
+  if (waveScroll) {
+    const ro = new ResizeObserver(() => {
+      if (multitrack && totalDuration > 0) applyWaveZoom();
+    });
+    ro.observe(waveScroll);
+  }
+
   // Cmd/Ctrl + wheel = zoom around cursor; plain vertical wheel pans horizontally
   // once the waveform is zoomed wider than the viewport.
   if (waveScroll) {

@@ -843,12 +843,12 @@
 .app:not(.is-import) .stems-panel {
   grid-column: 2;
   grid-row: 1;
-  align-self: start;
+  align-self: stretch;
   width: 48px;
-  /* 6px panel padding + 32px toolbar + 34px ruler = 72px */
-  margin: 72px 0 0 12px;
-  /* exactly as tall as the visible lane stack */
-  height: calc(var(--visible-track-count, 6) * 48px);
+  /* 6px panel padding + 32px toolbar + 34px ruler = 72px top;
+     6px matches wave-editor bottom padding so height == waves-column height */
+  margin: 72px 0 6px 12px;
+  height: auto;
   overflow: hidden;
   padding: 0;
   border: 0;
@@ -940,14 +940,16 @@
 .app:not(.is-import) .stem-waveform-layer {
   left: 48px;
   right: 0;
+  /* waves-column already starts below the ruler, no offset needed */
   top: 0;
   bottom: 0;
+  height: auto;
 }
 
 .app:not(.is-import) .stem-waveform-row {
   flex: 1 1 0;
-  min-height: 0;
   height: auto;
+  min-height: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.11);
 }
 
