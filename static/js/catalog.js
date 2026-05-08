@@ -9,6 +9,8 @@ const STORAGE_VERSION = 2; // bump to wipe stale seeded data
 let folders = [];
 let tracks = {};
 let _currentTrackId = null;
+let catalogView = "library";
+let catalogSearchQuery = "";
 
 // ─── Persistence ───
 
@@ -45,6 +47,21 @@ function removeTrackFromFolders(trackId) {
 
 function normalizeSource(value) {
   return String(value || "").trim();
+}
+
+function normalizeSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function trackMatchesSearch(track) {
+  const q = normalizeSearch(catalogSearchQuery);
+  if (!q) return true;
+  return [
+    track?.title,
+    track?.channel,
+    track?.sourceUrl,
+    ...(track?.stems || []),
+  ].some((value) => String(value || "").toLowerCase().includes(q));
 }
 
 function findTrackBySource(sourceUrl, exceptId) {
@@ -154,6 +171,16 @@ function moveTrackToTrash(trackId) {
   if (trash && !trash.items.includes(trackId)) trash.items.unshift(trackId);
   if (_currentTrackId === trackId) _currentTrackId = null;
   saveState();
+  render();
+}
+
+function setCatalogView(view) {
+  catalogView = view === "trash" ? "trash" : "library";
+  const app = document.querySelector(".app");
+  if (catalogView === "trash") {
+    app?.classList.remove("cat-collapsed");
+    localStorage.setItem("stemdeck.catalog.collapsed", "0");
+  }
   render();
 }
 
@@ -354,6 +381,7 @@ function endDrag(itemEl) {
   dragId = null;
   itemEl.classList.remove("dragging");
   for (const el of document.querySelectorAll(".folder.drop-target")) el.classList.remove("drop-target");
+  document.querySelector(".rail-trash")?.classList.remove("drop-target");
   document.getElementById("lanes")?.classList.remove("library-drop-target");
 }
 
@@ -377,6 +405,10 @@ function wireTrackDragAndLoad(el, trackId) {
     startDrag(trackId, el, e);
   });
   el.addEventListener("dragend", () => endDrag(el));
+  el.addEventListener("click", (e) => {
+    if (e.target.closest(".cat-del")) return;
+    setCurrentTrack(trackId);
+  });
   el.addEventListener("dblclick", (e) => {
     if (e.target.closest(".cat-del")) return;
     loadTrackIntoStudio(trackId);
@@ -407,6 +439,47 @@ function wireMainPanelDrop() {
   });
 }
 
+function wireRailTrashDrop() {
+  const trash = document.querySelector(".rail-trash");
+  if (!trash || trash.dataset.dropReady === "1") return;
+  trash.dataset.dropReady = "1";
+
+  trash.addEventListener("dragover", (e) => {
+    const trackId = getDraggedTrackId(e);
+    if (!trackId || !tracks[trackId]) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    trash.classList.add("drop-target");
+  });
+  trash.addEventListener("dragleave", (e) => {
+    if (!trash.contains(e.relatedTarget)) trash.classList.remove("drop-target");
+  });
+  trash.addEventListener("drop", (e) => {
+    const trackId = getDraggedTrackId(e);
+    if (!trackId || !tracks[trackId]) return;
+    e.preventDefault();
+    trash.classList.remove("drop-target");
+    moveTrackToTrash(trackId);
+  });
+}
+
+function isTextEditingTarget(target) {
+  return Boolean(target?.closest?.("input, textarea, select, [contenteditable='true'], .folder-editor"));
+}
+
+function wireLibraryDeleteKeys() {
+  if (document.body.dataset.libraryDeleteReady === "1") return;
+  document.body.dataset.libraryDeleteReady = "1";
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    if (isTextEditingTarget(e.target)) return;
+    if (!_currentTrackId || !tracks[_currentTrackId]) return;
+    e.preventDefault();
+    moveTrackToTrash(_currentTrackId);
+  });
+}
+
 // ─── Rendering ───
 
 function thumbHtml(track) {
@@ -432,7 +505,7 @@ function makeStripItem({ className = "", id, title, html, color, trackId }) {
   return item;
 }
 
-function renderTrackItem(trackId) {
+function renderTrackItem(trackId, { inTrash = false } = {}) {
   const track = tracks[trackId];
   if (!track) return null;
 
@@ -448,16 +521,16 @@ function renderTrackItem(trackId) {
       <div class="cat-sub">
         <span>${track.channel}</span>
         <span class="dot">·</span>
-        <span>${stemCount} stem${stemCount !== 1 ? "s" : ""}</span>
+        <span>${inTrash ? "Removed" : `${stemCount} stem${stemCount !== 1 ? "s" : ""}`}</span>
       </div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : ""}"></div>
-    <button class="cat-del" type="button" aria-label="Move ${track.title} to Trash" title="Move to Trash">
+    ${inTrash ? "" : `<button class="cat-del" type="button" aria-label="Move ${track.title} to Trash" title="Move to Trash">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="3 6 5 6 21 6"></polyline>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
       </svg>
-    </button>
+    </button>`}
   `;
 
   el.querySelector(".cat-del")?.addEventListener("click", (e) => {
@@ -497,10 +570,16 @@ function renderFolder(folder) {
   const body = document.createElement("div");
   body.className = "folder-body";
 
-  if (folder.items.length === 0) {
+  const visibleItems = folder.items.filter((id) => trackMatchesSearch(tracks[id]));
+
+  if (catalogSearchQuery && visibleItems.length === 0) {
+    return null;
+  }
+
+  if (visibleItems.length === 0) {
     body.innerHTML = '<span class="folder-empty">Empty folder</span>';
   } else {
-    for (const id of folder.items) {
+    for (const id of visibleItems) {
       const item = renderTrackItem(id);
       if (item) body.appendChild(item);
     }
@@ -561,22 +640,64 @@ function render() {
   const list = document.getElementById("catalogList");
   const strip = document.getElementById("catalogStrip");
   const count = document.getElementById("catCount");
+  const catalog = document.getElementById("catalogPanel");
+  const searchInput = document.getElementById("catalogSearch");
   if (!list) return;
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
 
-  const trashIds = new Set(folders.find((f) => f.id === TRASH_ID)?.items || []);
+  const trash = getTrashFolder();
+  const trashIds = new Set(trash?.items || []);
   const totalTracks = Object.keys(tracks).filter((id) => !trashIds.has(id)).length;
-  if (count) count.textContent = `${totalTracks} track${totalTracks !== 1 ? "s" : ""}`;
+  const isTrashView = catalogView === "trash";
+
+  catalog?.classList.toggle("trash-view", isTrashView);
+  document.querySelector(".rail-library")?.classList.toggle("active", !isTrashView);
+  document.querySelector(".rail-library")?.setAttribute("aria-pressed", String(!isTrashView));
+  document.querySelector(".rail-trash")?.classList.toggle("active", isTrashView);
+  document.querySelector(".rail-trash")?.setAttribute("aria-pressed", String(isTrashView));
+  if (count) {
+    const n = isTrashView ? trashIds.size : totalTracks;
+    count.textContent = isTrashView
+      ? `${n} deleted`
+      : `${n} track${n !== 1 ? "s" : ""}`;
+  }
+  if (searchInput) {
+    searchInput.placeholder = isTrashView
+      ? "Search trash…"
+      : "Search library…";
+  }
 
   const nonTrash = folders.filter((f) => f.id !== TRASH_ID);
-  const trash = folders.find((f) => f.id === TRASH_ID);
-  for (const folder of nonTrash) list.appendChild(renderFolder(folder));
-  if (trash) list.appendChild(renderFolder(trash));
+  if (isTrashView) {
+    const visibleTrashItems = (trash?.items || []).filter((id) => trackMatchesSearch(tracks[id]));
+    if (!trash?.items.length) {
+      list.innerHTML = '<span class="folder-empty trash-empty">Trash is empty</span>';
+    } else if (visibleTrashItems.length === 0) {
+      list.innerHTML = '<span class="folder-empty trash-empty">No deleted tracks match your search</span>';
+    } else {
+      for (const id of visibleTrashItems) {
+        const item = renderTrackItem(id, { inTrash: true });
+        if (item) list.appendChild(item);
+      }
+    }
+    return;
+  }
+
+  let renderedFolders = 0;
+  for (const folder of nonTrash) {
+    const el = renderFolder(folder);
+    if (!el) continue;
+    list.appendChild(el);
+    renderedFolders += 1;
+  }
+  if (catalogSearchQuery && renderedFolders === 0) {
+    list.innerHTML = '<span class="folder-empty trash-empty">No tracks match your search</span>';
+  }
 
   // Collapsed strip: top-level structure only. Show unfiled songs,
-  // folders, and the Trash bin itself -- never the files inside Trash.
+  // folders only. Trash lives in the side rail.
   if (strip) {
     const folderTrackIds = new Set(folders.flatMap((folder) => folder.items));
     for (const [trackId, track] of Object.entries(tracks)) {
@@ -599,14 +720,6 @@ function render() {
         color: folderColor,
       }));
     }
-    if (trash) {
-      strip.appendChild(makeStripItem({
-        className: "trash-thumb",
-        id: TRASH_ID,
-        title: `Trash (${trash.items.length})`,
-        html: folderThumbHtml(true),
-      }));
-    }
   }
 }
 
@@ -627,6 +740,21 @@ function wireCatalogToggle() {
   });
   toggle.addEventListener("keydown", (e) => {
     if (e.code === "Enter" || e.code === "Space") { e.preventDefault(); toggle.click(); }
+  });
+}
+
+function wireCatalogRailViews() {
+  document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
+  document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
+}
+
+function wireCatalogSearch() {
+  const input = document.getElementById("catalogSearch");
+  if (!input || input.dataset.searchReady === "1") return;
+  input.dataset.searchReady = "1";
+  input.addEventListener("input", () => {
+    catalogSearchQuery = normalizeSearch(input.value);
+    render();
   });
 }
 
@@ -674,8 +802,12 @@ async function checkForUpdate() {
 export function initCatalog() {
   loadState();
   wireCatalogToggle();
+  wireCatalogRailViews();
+  wireCatalogSearch();
   wireWidgets();
   wireMainPanelDrop();
+  wireRailTrashDrop();
+  wireLibraryDeleteKeys();
   render();
 
   document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);

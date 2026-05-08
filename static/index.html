@@ -29,11 +29,6 @@
       <header class="topbar appbar">
           <div class="appbar-body">
           <div class="appbar-body-inner">
-          <button class="app-menu-btn" id="appMenuBtn" type="button" aria-label="Menu">
-            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M4 7h16M4 12h16M4 17h16"></path>
-            </svg>
-          </button>
           <div class="brand-group">
             <div class="brand-row">
               <h1 class="brand">StemDeck</h1>
@@ -121,7 +116,7 @@
                 <span>Piano</span>
               </button>
               <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
-                <span>More</span>
+                <span>Others</span>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
@@ -155,13 +150,18 @@
       <!-- ─ Left: Catalog sidebar ─ -->
       <aside class="catalog" id="catalogPanel">
         <nav class="catalog-rail" aria-label="Library navigation">
-          <button class="rail-btn active" type="button" aria-label="Library">
+          <button class="rail-menu-btn" id="appMenuBtn" type="button" aria-label="Toggle library panel">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16"></path>
+            </svg>
+          </button>
+          <button class="rail-btn rail-library active" type="button" aria-label="Library" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
             </svg>
             <span>Library</span>
           </button>
-          <button class="rail-btn rail-trash" type="button" aria-label="Trash">
+          <button class="rail-btn rail-trash" type="button" aria-label="Trash" aria-pressed="false">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M3 6h18"></path>
               <path d="M8 6V4h8v2"></path>
@@ -200,7 +200,7 @@
               <circle cx="11" cy="11" r="7"></circle>
               <path d="m21 21-4.3-4.3"></path>
             </svg>
-            <span>Search library…</span>
+            <input id="catalogSearch" type="search" placeholder="Search library…" autocomplete="off" spellcheck="false" />
           </div>
 
           <button class="new-folder-btn" id="newFolderBtn" type="button">

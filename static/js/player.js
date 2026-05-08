@@ -602,8 +602,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
-  app?.classList.add("appbar-collapsed");
-  buildStripStems();
   stopVuLoop();
   stopStemVuLoop();
   if (multitrack) {

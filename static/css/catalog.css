@@ -79,6 +79,20 @@
   flex-shrink: 0;
 }
 .catalog-search svg { flex-shrink: 0; }
+.catalog-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  padding: 0;
+}
+.catalog-search input::placeholder {
+  color: var(--ink-faint);
+}
 
 /* ─── New folder button ─── */
 .new-folder-btn {
@@ -477,4 +491,3 @@
   height: 22px;
   margin: 8px auto;
 }
-

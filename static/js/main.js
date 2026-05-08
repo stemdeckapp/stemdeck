@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
 import { STEM_NAMES } from "./constants.js";
-import { renderEmptyShell, buildStripStems } from "./player.js";
+import { renderEmptyShell } from "./player.js";
 import { wireJobForm } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -73,7 +73,7 @@ wireMixerToolbar();
 wireStemChoiceButtons();
 initCatalog();
 wireFileDrop();
-wireAppbarCollapse();
+wireAppShellControls();
 
 // ─── File drop on URL input ───
 
@@ -140,42 +140,12 @@ function wireFileDrop() {
   });
 }
 
-// ─── Appbar collapse (double-click to toggle icon strip) ───
+// ─── App shell controls ───
 
-function wireAppbarCollapse() {
-  const appbar = document.querySelector(".appbar");
-  const app = document.querySelector(".app");
-  if (!appbar || !app) return;
-
+function wireAppShellControls() {
   document.getElementById("appMenuBtn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     document.getElementById("catalogToggle")?.click();
-  });
-
-  appbar.addEventListener("dblclick", () => {
-    const collapsed = app.classList.toggle("appbar-collapsed");
-    if (collapsed) buildStripStems();
-  });
-
-  document.getElementById("appbarStrip")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const sq = e.target.closest("[data-stem]");
-    if (sq?.dataset.stem) {
-      document.querySelector(`.stem-choice[data-stem="${sq.dataset.stem}"]`)?.click();
-      buildStripStems();
-      return;
-    }
-    if (e.target.closest(".strip-sq-process")) {
-      const urlInput = document.getElementById("url");
-      const fileInput = document.getElementById("fileInput");
-      if (urlInput?.value.trim() || fileInput?.files?.length > 0) {
-        document.getElementById("job-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      } else {
-        app.classList.remove("appbar-collapsed");
-      }
-      return;
-    }
-    app.classList.remove("appbar-collapsed");
   });
 }
 

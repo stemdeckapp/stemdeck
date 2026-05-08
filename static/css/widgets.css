@@ -77,10 +77,10 @@
 
 /* ─── 3. Topbar: 2-col (brand + form) ─── */
 .topbar.appbar {
-  min-height: 74px !important;
-  height: 74px !important;
+  min-height: 70px !important;
+  height: 70px !important;
   gap: 0 !important;
-  padding: 12px 22px !important;
+  padding: 10px 22px !important;
   flex-shrink: 0;
   align-items: center !important;
   border-radius: 12px !important;
@@ -88,9 +88,9 @@
 }
 
 .app.appbar-collapsed .topbar.appbar {
-  min-height: 74px !important;
-  height: 74px !important;
-  padding: 12px 22px !important;
+  min-height: 70px !important;
+  height: 70px !important;
+  padding: 10px 22px !important;
   align-items: center !important;
   justify-content: center !important;
 }
@@ -104,7 +104,7 @@
 
 .topbar .appbar-body-inner {
   display: grid !important;
-  grid-template-columns: 68px 232px minmax(420px, 1fr);
+  grid-template-columns: 210px minmax(0, 1fr);
   align-items: center;
   gap: 18px;
   width: 100%;
@@ -179,9 +179,9 @@
 
 .topbar .appbar-import-panel {
   display: grid;
-  grid-template-columns: minmax(330px, 1fr) auto auto;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, auto) auto;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -190,55 +190,117 @@
 }
 
 .topbar .appbar-import-panel .url-wrap {
-  min-height: 50px !important;
-  height: 50px !important;
-  padding: 0 16px !important;
-  border-radius: 10px !important;
+  min-height: 44px !important;
+  height: 44px !important;
+  padding: 0 14px !important;
+  border-radius: 9px !important;
 }
 
 .topbar .appbar-import-panel input[type="url"] {
-  font-size: 15px !important;
+  font-size: 14px !important;
 }
 
 .topbar .appbar-import-panel .btn-primary {
-  height: 50px !important;
-  min-width: 178px !important;
-  border-radius: 10px !important;
-  font-size: 15px !important;
-  padding: 0 24px !important;
+  height: 44px !important;
+  min-width: 132px !important;
+  border-radius: 9px !important;
+  font-size: 14px !important;
+  padding: 0 16px !important;
   order: 3;
 }
 
 .topbar .stem-choice-row {
   display: grid;
-  grid-template-columns: repeat(6, minmax(96px, auto));
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(74px, 1fr));
+  gap: 6px;
   padding: 0;
   order: 2;
+  min-width: 0;
 }
 
 .topbar .stem-choice-row > span { display: none; }
 
 .topbar .stem-choice {
-  min-height: 50px;
-  height: 50px;
-  padding: 0 16px;
+  min-height: 44px;
+  height: 44px;
+  min-width: 0;
+  padding: 0 10px;
   border-radius: 9px;
-  font-size: 13px;
-  gap: 8px;
+  font-size: 11.5px;
+  gap: 6px;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.025), transparent),
     rgba(8, 15, 22, 0.38);
 }
 
 .topbar .stem-choice svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .topbar .stem-choice.other {
   color: #c492ff;
-  min-width: 126px;
+  min-width: 0;
+}
+
+@media (max-width: 1250px) {
+  .topbar .appbar-body-inner {
+    grid-template-columns: 178px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .topbar .brand {
+    font-size: 20px;
+  }
+
+  .topbar .beta-badge {
+    height: 18px;
+    padding: 0 5px;
+    font-size: 9px;
+  }
+
+  .topbar .appbar-import-panel {
+    grid-template-columns: minmax(210px, 1fr) minmax(0, auto) auto;
+    gap: 8px;
+  }
+
+  .topbar .appbar-import-panel .url-wrap {
+    min-height: 40px !important;
+    height: 40px !important;
+    padding: 0 12px !important;
+  }
+
+  .topbar .appbar-import-panel input[type="url"] {
+    font-size: 13px !important;
+  }
+
+  .topbar .stem-choice-row {
+    grid-template-columns: repeat(6, 42px);
+    gap: 5px;
+  }
+
+  .topbar .stem-choice {
+    width: 42px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .topbar .stem-choice span {
+    display: none;
+  }
+
+  .topbar .stem-choice svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .topbar .appbar-import-panel .btn-primary {
+    height: 40px !important;
+    min-width: 118px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+  }
 }
 
 /* ─── Reference-style library sidebar with icon rail ─── */
@@ -255,12 +317,33 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 10px;
   padding: 18px 8px 16px;
   border-right: 1px solid rgba(157,170,182,0.12);
   background:
     radial-gradient(circle at 100% 0%, rgba(216,168,74,0.08), transparent 16rem),
     rgba(8, 17, 24, 0.42);
+}
+
+.rail-menu-btn {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--glass-line);
+  border-radius: 11px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.035), transparent),
+    rgba(17, 27, 36, 0.78);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  flex: 0 0 auto;
+}
+
+.rail-menu-btn:hover {
+  background-color: rgba(31,43,52,0.78);
 }
 
 .rail-btn {
@@ -285,6 +368,12 @@
 .rail-btn:hover {
   color: var(--ink);
   background: rgba(255,255,255,0.035);
+}
+
+.rail-btn.drop-target {
+  color: var(--danger);
+  background: rgba(232, 95, 111, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(232, 95, 111, 0.36);
 }
 
 .rail-btn.active {
@@ -324,6 +413,23 @@
   min-height: 40px;
   padding: 0 12px !important;
   border-radius: 9px !important;
+}
+
+.catalog.trash-view .catalog-search {
+  color: var(--ink-faint);
+  border-style: dashed;
+}
+
+.catalog.trash-view .new-folder-btn {
+  display: none !important;
+}
+
+.catalog.trash-view .cat-item {
+  opacity: 0.82;
+}
+
+.trash-empty {
+  padding: 10px 12px !important;
 }
 
 .new-folder-btn {
