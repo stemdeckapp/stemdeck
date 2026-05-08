@@ -155,6 +155,35 @@
   display: none !important;
 }
 
+.topbar .brand-version.has-update {
+  display: block !important;
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.15;
+  font-weight: 600;
+}
+
+.topbar .brand-version.has-update a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #78dc84;
+  text-decoration: none;
+}
+
+.topbar .brand-version.has-update a::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 10px rgba(120, 220, 132, 0.55);
+}
+
+.topbar .brand-version.has-update a:hover {
+  color: #9af0a4;
+}
+
 .app.appbar-collapsed .appbar-body {
   display: block !important;
   height: auto !important;
@@ -430,6 +459,76 @@
 
 .trash-empty {
   padding: 10px 12px !important;
+}
+
+.about-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 8, 13, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.about-backdrop.hidden {
+  display: none !important;
+}
+
+.about-card {
+  width: min(400px, calc(100vw - 32px));
+  position: relative;
+  padding: 24px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(28,39,48,0.98), rgba(13,21,29,0.98));
+  box-shadow: var(--shadow-panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+.about-card h2 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.about-version {
+  margin: 8px 0 18px;
+  color: var(--gold);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.about-link {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.4;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.about-link:hover {
+  color: var(--gold);
+}
+
+.about-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font: inherit;
+}
+
+.about-close:hover {
+  background: rgba(21,31,39,0.8);
+  color: var(--ink);
 }
 
 .new-folder-btn {
@@ -710,7 +809,149 @@
 }
 
 .widget .wave-editor {
+  position: relative;
   border-radius: 0;
+}
+
+.wave-loading-overlay {
+  position: absolute;
+  inset: var(--wave-widget-ruler-h, 35px) 0 0 0;
+  z-index: 9;
+  overflow: hidden;
+  border-top: 1px solid rgba(148, 163, 184, 0.10);
+  background:
+    linear-gradient(90deg, rgba(7, 13, 19, 0.42), rgba(14, 25, 34, 0.50), rgba(7, 13, 19, 0.42));
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 180ms ease;
+}
+
+.wave-loading-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.wave-loading-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 32%, rgba(255, 64, 72, 0.10), transparent 18rem),
+    radial-gradient(circle at 52% 54%, rgba(216, 168, 74, 0.09), transparent 22rem),
+    radial-gradient(circle at 84% 42%, rgba(80, 160, 255, 0.08), transparent 18rem);
+  filter: blur(16px);
+  opacity: 0.72;
+  animation: waveLoadGlow 4.2s ease-in-out infinite alternate;
+}
+
+.wave-loading-lines {
+  position: absolute;
+  inset: 10px 14px 14px 14px;
+  display: grid;
+  grid-template-rows: repeat(6, 1fr);
+  gap: 1px;
+  opacity: 0.54;
+}
+
+.wave-loading-lines i {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 2px;
+  opacity: 0.70;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, currentColor 28%, transparent), transparent),
+    linear-gradient(0deg, transparent calc(50% - 1px), currentColor 50%, transparent calc(50% + 1px));
+  animation: waveLoadLane 2.7s ease-in-out infinite;
+}
+
+.wave-loading-lines i::before {
+  content: "";
+  position: absolute;
+  inset: 9% 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      currentColor 0 3px,
+      transparent 3px 9px
+    );
+  opacity: 0.82;
+  filter: blur(0.45px);
+  transform-origin: center;
+  mask-image:
+    radial-gradient(ellipse 11% 48% at 12% 50%, #000 0 44%, transparent 70%),
+    radial-gradient(ellipse 18% 70% at 32% 50%, #000 0 48%, transparent 74%),
+    radial-gradient(ellipse 15% 54% at 55% 50%, #000 0 45%, transparent 72%),
+    radial-gradient(ellipse 21% 78% at 78% 50%, #000 0 50%, transparent 76%),
+    radial-gradient(ellipse 10% 42% at 94% 50%, #000 0 42%, transparent 70%);
+  animation: waveLoadBars 1.95s ease-in-out infinite;
+}
+
+.wave-loading-lines i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-55%);
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, currentColor 10%, transparent) 38%,
+      rgba(255, 255, 255, 0.34) 50%,
+      color-mix(in srgb, currentColor 14%, transparent) 62%,
+      transparent 100%
+    );
+  filter: blur(9px);
+  animation: waveLoadTravel 1.85s cubic-bezier(0.42, 0, 0.2, 1) infinite;
+}
+
+.wave-loading-lines i:nth-child(1) { color: #a9b5c6; animation-delay: -0.05s; }
+.wave-loading-lines i:nth-child(2) { color: #ff4f62; animation-delay: -0.18s; }
+.wave-loading-lines i:nth-child(3) { color: #ff8b2d; animation-delay: -0.31s; }
+.wave-loading-lines i:nth-child(4) { color: #ffd04d; animation-delay: -0.44s; }
+.wave-loading-lines i:nth-child(5) { color: #4fd06a; animation-delay: -0.57s; }
+.wave-loading-lines i:nth-child(6) { color: #9a6dff; animation-delay: -0.70s; }
+
+.wave-loading-lines i:nth-child(1)::before { animation-delay: -0.05s; }
+.wave-loading-lines i:nth-child(2)::before { animation-delay: -0.18s; }
+.wave-loading-lines i:nth-child(3)::before { animation-delay: -0.31s; }
+.wave-loading-lines i:nth-child(4)::before { animation-delay: -0.44s; }
+.wave-loading-lines i:nth-child(5)::before { animation-delay: -0.57s; }
+.wave-loading-lines i:nth-child(6)::before { animation-delay: -0.70s; }
+
+.wave-loading-lines i:nth-child(1)::after { animation-delay: -0.05s; }
+.wave-loading-lines i:nth-child(2)::after { animation-delay: -0.18s; }
+.wave-loading-lines i:nth-child(3)::after { animation-delay: -0.31s; }
+.wave-loading-lines i:nth-child(4)::after { animation-delay: -0.44s; }
+.wave-loading-lines i:nth-child(5)::after { animation-delay: -0.57s; }
+.wave-loading-lines i:nth-child(6)::after { animation-delay: -0.70s; }
+
+@keyframes waveLoadLane {
+  0%, 100% { opacity: 0.44; }
+  50% { opacity: 0.70; }
+}
+
+@keyframes waveLoadBars {
+  0%, 100% {
+    transform: translateX(-1.2%) scaleY(0.56);
+    opacity: 0.54;
+  }
+  45% {
+    transform: translateX(1.2%) scaleY(0.95);
+    opacity: 0.86;
+  }
+}
+
+@keyframes waveLoadTravel {
+  from { transform: translateX(-58%); opacity: 0; }
+  18% { opacity: 0.78; }
+  72% { opacity: 0.78; }
+  to { transform: translateX(112%); opacity: 0; }
+}
+
+@keyframes waveLoadGlow {
+  from { transform: translateX(-2%) scale(1); opacity: 0.74; }
+  to { transform: translateX(2%) scale(1.04); opacity: 1; }
 }
 
 /* ─── 8b. Waveform widget: height + override waves.css .app:not(.is-import) rules ─── */

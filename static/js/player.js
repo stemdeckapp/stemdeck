@@ -581,6 +581,10 @@ function renderAllMiniWaves(mt, stems) {
   });
 }
 
+function setWaveformLoading(loading) {
+  document.getElementById("waveLoadingOverlay")?.classList.toggle("hidden", !loading);
+}
+
 export function buildStripStems() {
   const container = document.getElementById("appbarStripStems");
   if (!container) return;
@@ -602,6 +606,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
+  setWaveformLoading(true);
   stopVuLoop();
   stopStemVuLoop();
   if (multitrack) {
@@ -612,6 +617,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   stopBtn.classList.remove("stopped");
   visualRenderToken += 1;
   const token = visualRenderToken;
+  window.setTimeout(() => {
+    if (token === visualRenderToken) setWaveformLoading(false);
+  }, 20000);
   setCurrentJobId(jobId);
   setTotalDuration(duration || 0);
   loadMixIntoState(jobId);
@@ -706,6 +714,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   };
 
   mt.once("canplay", () => {
+    setWaveformLoading(false);
     const ctx = mt.audioContext;
     console.debug(
       `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,

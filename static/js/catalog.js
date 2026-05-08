@@ -1,7 +1,7 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio } from "./player.js";
-import { saveSelectedStems, selectedStems } from "./state.js";
+import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
@@ -164,6 +164,88 @@ export function updateTrackStatus(trackId, status) {
   }
 }
 
+function hasTrackAnalysis(track) {
+  return Boolean(
+    track?.bpm
+    || track?.key
+    || track?.scale
+    || track?.keyConfidence != null
+    || track?.lufs != null
+    || track?.peakDb != null,
+  );
+}
+
+function stateMetadataToTrack(state, fallbackTrack) {
+  return {
+    ...fallbackTrack,
+    title: state.title || fallbackTrack.title,
+    thumb: state.thumbnail || fallbackTrack.thumb,
+    stems: state.selected_stems || fallbackTrack.stems,
+    selectedStems: state.selected_stems || fallbackTrack.selectedStems,
+    audioStems: state.stems || fallbackTrack.audioStems || [],
+    duration: state.duration || fallbackTrack.duration,
+    status: state.status || fallbackTrack.status,
+    bpm: state.bpm ?? fallbackTrack.bpm,
+    key: state.key ?? fallbackTrack.key,
+    scale: state.scale ?? fallbackTrack.scale,
+    keyConfidence: state.key_confidence ?? fallbackTrack.keyConfidence,
+    lufs: state.lufs ?? fallbackTrack.lufs,
+    peakDb: state.peak_db ?? fallbackTrack.peakDb,
+  };
+}
+
+function applyTrackInfoToPanel(track) {
+  titleEl.textContent = track.title || "Untitled track";
+  bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
+  keyChip.textContent = track.key || "— —";
+
+  const summaryKey = document.getElementById("summary-key");
+  const summaryBpm = document.getElementById("summary-bpm");
+  const summaryScale = document.getElementById("summary-scale");
+  const summaryConfidence = document.getElementById("summary-confidence");
+  const summaryConfidenceLabel = document.getElementById("summary-confidence-label");
+  const loudnessCard = document.getElementById("loudness-card");
+  const summaryLufs = document.getElementById("summary-lufs");
+  const summaryPeak = document.getElementById("summary-peak");
+
+  if (summaryKey) summaryKey.textContent = track.key || "—";
+  if (summaryBpm) {
+    summaryBpm.textContent = "";
+    if (track.bpm) {
+      const bpmNum = document.createTextNode(`${track.bpm} `);
+      const bpmUnit = document.createElement("small");
+      bpmUnit.textContent = "BPM";
+      summaryBpm.append(bpmNum, bpmUnit);
+    } else {
+      summaryBpm.innerHTML = "— <small>BPM</small>";
+    }
+  }
+  if (summaryScale) summaryScale.textContent = track.scale || "";
+  if (summaryConfidence) {
+    summaryConfidence.textContent = "";
+    summaryConfidence.style.removeProperty("--confidence-pct");
+    summaryConfidence.classList.add("hidden");
+    summaryConfidenceLabel?.classList.add("hidden");
+    if (track.keyConfidence != null) {
+      const confidence = Math.max(0, Math.min(100, Number(track.keyConfidence)));
+      const confSpan = document.createElement("span");
+      confSpan.textContent = `${confidence}%`;
+      summaryConfidence.appendChild(confSpan);
+      summaryConfidence.style.setProperty("--confidence-pct", confidence);
+      summaryConfidence.classList.remove("hidden");
+      summaryConfidenceLabel?.classList.remove("hidden");
+    }
+  }
+  if (loudnessCard) {
+    const hasLoudness = track.lufs != null && track.peakDb != null;
+    loudnessCard.classList.toggle("hidden", !hasLoudness);
+    if (hasLoudness) {
+      if (summaryLufs) summaryLufs.textContent = Number(track.lufs).toFixed(1);
+      if (summaryPeak) summaryPeak.textContent = Number(track.peakDb).toFixed(1);
+    }
+  }
+}
+
 function moveTrackToTrash(trackId) {
   if (!tracks[trackId]) return;
   removeTrackFromFolders(trackId);
@@ -199,35 +281,29 @@ function applyStoredStemSelection(track) {
 async function loadTrackIntoStudio(trackId) {
   let track = tracks[trackId];
   if (!track) return;
+  const hadStoredAudio = Boolean(track.audioStems?.length);
 
-  if (!track.audioStems?.length) {
+  if (!track.audioStems?.length || !hasTrackAnalysis(track)) {
     try {
       const res = await fetch(`/api/jobs/${trackId}`);
       if (res.ok) {
         const state = await res.json();
-        track = {
-          ...track,
-          title: state.title || track.title,
-          thumb: state.thumbnail || track.thumb,
-          stems: state.selected_stems || track.stems,
-          selectedStems: state.selected_stems || track.selectedStems,
-          audioStems: state.stems || track.audioStems || [],
-          duration: state.duration || track.duration,
-          status: state.status || track.status,
-        };
+        track = stateMetadataToTrack(state, track);
         tracks[trackId] = track;
         saveState();
       }
     } catch { /* ignore; the stored track may be from a previous server run */ }
   }
 
-  if (!track.audioStems?.length || track.status !== "done") return;
+  if (!track.audioStems?.length) return;
+  if (track.status !== "done" && !hadStoredAudio) return;
   applyStoredStemSelection(track);
   setCurrentTrack(trackId);
 
   const urlInput = document.getElementById("url");
   if (urlInput && track.sourceUrl) urlInput.value = track.sourceUrl;
 
+  applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb);
 }
 
@@ -783,20 +859,48 @@ function wireWidgets() {
 // ─── Init ───
 
 const CURRENT_VERSION = "0.1.0";
+const REPO_URL = "https://github.com/thcp/stemdeck";
 const RELEASES_URL = "https://github.com/thcp/stemdeck/releases";
 const RELEASES_API = "https://api.github.com/repos/thcp/stemdeck/releases/latest";
 
 async function checkForUpdate() {
   const el = document.getElementById("brandVersion");
   if (!el) return;
+  el.textContent = "";
+  el.classList.remove("has-update");
   try {
     const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
     if (!res.ok) return;
     const data = await res.json();
     const latest = (data.tag_name || "").replace(/^v/, "");
     if (!latest || latest === CURRENT_VERSION) return;
-    el.innerHTML = `v${CURRENT_VERSION} <a class="brand-update-chip" href="${RELEASES_URL}/tag/${data.tag_name}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="18 15 12 9 6 15"></polyline></svg> New release available</a>`;
+    el.classList.add("has-update");
+    el.innerHTML = `<a href="${RELEASES_URL}/tag/${data.tag_name}" target="_blank" rel="noopener noreferrer">new release available</a>`;
   } catch { /* network unavailable — silently skip */ }
+}
+
+function wireAboutDialog() {
+  const btn = document.getElementById("aboutBtn");
+  const dialog = document.getElementById("aboutDialog");
+  const close = document.getElementById("aboutClose");
+  const version = document.getElementById("aboutVersion");
+  const link = dialog?.querySelector(".about-link");
+  if (!btn || !dialog) return;
+
+  if (version) version.textContent = `v${CURRENT_VERSION}`;
+  if (link) link.setAttribute("href", REPO_URL);
+
+  const open = () => dialog.classList.remove("hidden");
+  const hide = () => dialog.classList.add("hidden");
+
+  btn.addEventListener("click", open);
+  close?.addEventListener("click", hide);
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target === dialog) hide();
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.code === "Escape") hide();
+  });
 }
 
 export function initCatalog() {
@@ -808,6 +912,7 @@ export function initCatalog() {
   wireMainPanelDrop();
   wireRailTrashDrop();
   wireLibraryDeleteKeys();
+  wireAboutDialog();
   render();
 
   document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);

@@ -108,6 +108,12 @@ function applyState(state) {
       audioStems: state.stems || [],
       status: state.status,
       duration: state.duration,
+      bpm: state.bpm,
+      key: state.key,
+      scale: state.scale,
+      keyConfidence: state.key_confidence,
+      lufs: state.lufs,
+      peakDb: state.peak_db,
       sourceUrl: jobSources.get(state.job_id) || urlInput.value,
     });
     setCurrentTrack(state.job_id);
@@ -341,6 +347,12 @@ export function wireJobForm() {
       selectedStems: [...selectedStems],
       audioStems: [],
       status: "processing",
+      bpm: null,
+      key: null,
+      scale: null,
+      keyConfidence: null,
+      lufs: null,
+      peakDb: null,
       sourceUrl: urlInput.value,
     });
     setCurrentTrack(jobId);

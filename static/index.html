@@ -116,10 +116,10 @@
                 <span>Piano</span>
               </button>
               <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
-                <span>Others</span>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <polyline points="6 9 12 15 18 9"></polyline>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
                 </svg>
+                <span>Others</span>
               </button>
             </div>
           </form>
@@ -178,7 +178,7 @@
             </svg>
             <span>Help</span>
           </a>
-          <button class="rail-btn" type="button" aria-label="About">
+          <button class="rail-btn" id="aboutBtn" type="button" aria-label="About">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <circle cx="12" cy="12" r="10"></circle>
               <path d="M12 8v4M12 16h.01"></path>
@@ -400,6 +400,12 @@
                         <div id="multitrack-container"></div>
                         <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
                       </div>
+                      <div class="wave-loading-overlay hidden" id="waveLoadingOverlay" aria-label="Loading waveform" aria-live="polite">
+                        <div class="wave-loading-glow" aria-hidden="true"></div>
+                        <div class="wave-loading-lines" aria-hidden="true">
+                          <i></i><i></i><i></i><i></i><i></i><i></i>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -474,6 +480,17 @@
       </div><!-- /#lanes -->
 
     </div><!-- /.app -->
+
+    <div class="about-backdrop hidden" id="aboutDialog" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <div class="about-card">
+        <button class="about-close" id="aboutClose" type="button" aria-label="Close about dialog">×</button>
+        <h2 id="aboutTitle">StemDeck</h2>
+        <p class="about-version" id="aboutVersion">v0.1.0</p>
+        <a class="about-link" href="https://github.com/thcp/stemdeck" target="_blank" rel="noopener noreferrer">
+          github.com/thcp/stemdeck
+        </a>
+      </div>
+    </div>
 
     <script type="module" src="/js/main.js"></script>
   </body>
