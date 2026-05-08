@@ -6,8 +6,8 @@
 /* ─── 1. App shell: 2-column grid (catalog + main) ─── */
 .app {
   display: grid !important;
-  grid-template-columns: var(--cat-w, 280px) 1fr !important;
-  grid-template-rows: minmax(0, 1fr) !important;
+  grid-template-columns: var(--cat-w, 370px) 1fr !important;
+  grid-template-rows: 74px minmax(0, 1fr) !important;
   max-width: none !important;
   width: 100% !important;
   height: 100vh !important;
@@ -17,7 +17,22 @@
   overflow: hidden !important;
   margin: 0 !important;
 }
-.app.cat-collapsed { --cat-w: 64px; }
+.app.cat-collapsed { --cat-w: 78px; }
+
+.app > .topbar.appbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.app > .catalog {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.app > #lanes {
+  grid-column: 2;
+  grid-row: 2;
+}
 
 /* ─── 2. Main area (#lanes) ─── */
 #lanes {
@@ -62,55 +77,271 @@
 
 /* ─── 3. Topbar: 2-col (brand + form) ─── */
 .topbar.appbar {
-  grid-template-columns: 220px 1fr !important;
-  gap: 14px !important;
-  padding: 12px 16px !important;
+  min-height: 74px !important;
+  height: 74px !important;
+  gap: 0 !important;
+  padding: 12px 22px !important;
   flex-shrink: 0;
   align-items: center !important;
   border-radius: 12px !important;
+  overflow: visible !important;
+}
+
+.app.appbar-collapsed .topbar.appbar {
+  min-height: 74px !important;
+  height: 74px !important;
+  padding: 12px 22px !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.topbar .appbar-body {
+  display: block !important;
+  width: 100%;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.topbar .appbar-body-inner {
+  display: grid !important;
+  grid-template-columns: 68px 232px minmax(420px, 1fr);
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+}
+
+.app-menu-btn {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.035), transparent),
+    rgba(17, 27, 36, 0.78);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.app-menu-btn:hover {
+  background-color: rgba(31,43,52,0.78);
+}
+
+.topbar .brand-group {
+  padding: 0 !important;
+  gap: 0;
+}
+
+.topbar .brand-row {
+  gap: 9px;
+}
+
+.topbar .brand {
+  font-size: 23px;
+  letter-spacing: 0;
+}
+
+.topbar .beta-badge {
+  height: 20px;
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.topbar .brand-sub,
+.topbar .brand-version {
+  display: none !important;
+}
+
+.app.appbar-collapsed .appbar-body {
+  display: block !important;
+  height: auto !important;
+}
+
+.app.appbar-collapsed .appbar-icon-strip {
+  display: none !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  overflow: visible !important;
+}
+
+.app.appbar-collapsed .appbar-strip-inner {
+  height: 40px !important;
+  min-height: 40px !important;
+  align-items: center !important;
+  overflow: visible !important;
 }
 
 .topbar .appbar-import-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(330px, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
   min-width: 0;
 }
 
 .topbar .import-input-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--glass-line);
+  display: contents;
 }
 
 .topbar .appbar-import-panel .url-wrap {
-  min-height: 40px !important;
+  min-height: 50px !important;
+  height: 50px !important;
+  padding: 0 16px !important;
+  border-radius: 10px !important;
 }
+
+.topbar .appbar-import-panel input[type="url"] {
+  font-size: 15px !important;
+}
+
 .topbar .appbar-import-panel .btn-primary {
-  height: 40px !important;
-  font-size: 13px !important;
-  padding: 0 18px !important;
+  height: 50px !important;
+  min-width: 178px !important;
+  border-radius: 10px !important;
+  font-size: 15px !important;
+  padding: 0 24px !important;
+  order: 3;
 }
 
 .topbar .stem-choice-row {
-  grid-template-columns: auto repeat(6, 1fr);
+  display: grid;
+  grid-template-columns: repeat(6, minmax(96px, auto));
   gap: 8px;
-  padding-top: 10px;
+  padding: 0;
+  order: 2;
 }
 
+.topbar .stem-choice-row > span { display: none; }
+
 .topbar .stem-choice {
-  min-height: 40px;
-  padding: 0 10px;
-  font-size: 12px;
-  gap: 6px;
+  min-height: 50px;
+  height: 50px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  gap: 8px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025), transparent),
+    rgba(8, 15, 22, 0.38);
 }
 
 .topbar .stem-choice svg {
   width: 16px;
   height: 16px;
+}
+
+.topbar .stem-choice.other {
+  color: #c492ff;
+  min-width: 126px;
+}
+
+/* ─── Reference-style library sidebar with icon rail ─── */
+.catalog {
+  display: grid !important;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 0 !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+
+.catalog-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 18px 8px 16px;
+  border-right: 1px solid rgba(157,170,182,0.12);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(216,168,74,0.08), transparent 16rem),
+    rgba(8, 17, 24, 0.42);
+}
+
+.rail-btn {
+  min-height: 58px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-faint);
+  display: grid;
+  grid-template-rows: 24px auto;
+  place-items: center;
+  gap: 4px;
+  padding: 7px 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.rail-btn:hover {
+  color: var(--ink);
+  background: rgba(255,255,255,0.035);
+}
+
+.rail-btn.active {
+  color: var(--gold);
+  background: rgba(216,168,74,0.08);
+}
+
+.rail-btn.active::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--gold);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.catalog-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px 14px;
+}
+
+.catalog-head {
+  display: none !important;
+}
+
+.catalog-search {
+  min-height: 40px;
+  padding: 0 12px !important;
+  border-radius: 9px !important;
+}
+
+.new-folder-btn {
+  min-height: 40px;
+  padding: 0 12px !important;
+  border-radius: 9px !important;
+}
+
+.catalog-list {
+  padding-right: 0 !important;
+}
+
+.app.cat-collapsed .catalog {
+  grid-template-columns: 72px !important;
+}
+
+.app.cat-collapsed .catalog-main {
+  display: none !important;
 }
 
 /* ─── 4. File drop pill ─── */

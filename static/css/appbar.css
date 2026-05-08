@@ -5,47 +5,171 @@
   padding-bottom: 14px;
 }
 
-/* Collapse import panel when a track is loaded; .appbar-expanded overrides */
-.app:not(.no-track):not(.appbar-expanded) .appbar-import-panel {
-  display: none;
-}
-.app:not(.no-track):not(.appbar-expanded) .appbar {
-  grid-template-columns: 1fr;
-}
+/* ─── Collapsed icon strip (double-click to toggle) ─── */
 
-/* Toggle button — only visible when a track is loaded */
-.appbar-toggle {
-  display: none;
+/* Expandable body wrapper — same grid-row trick as .widget-body */
+.appbar-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  opacity: 1;
+  width: 100%;
+  min-height: 0;
+  transition: grid-template-rows 220ms ease, opacity 180ms ease;
 }
-.app:not(.no-track) .appbar-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 4px 10px;
-  border: 1px solid var(--glass-line);
-  border-radius: 6px;
-  background: rgba(255,255,255,0.04);
-  color: rgba(216,222,230,0.7);
-  font-size: 12px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  width: fit-content;
-}
-.app:not(.no-track) .appbar-toggle:hover {
-  background: rgba(255,255,255,0.08);
-  color: #d8dde6;
-}
-.app:not(.no-track).appbar-expanded .appbar-toggle svg {
-  transform: rotate(180deg);
-}
-
-.appbar {
+.appbar-body-inner {
+  min-height: 0;
+  width: 100%;
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   align-items: stretch;
   gap: 22px;
+}
+
+/* Strip wrapper — collapsed by default */
+.appbar-icon-strip {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  min-height: 0; /* prevent flex parent from reserving space when row is 0fr */
+  transition: grid-template-rows 220ms ease, opacity 200ms ease 20ms;
+}
+.appbar-strip-inner {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 auto;
+}
+
+/* Collapsed state */
+.app.appbar-collapsed .appbar-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  height: 0; /* force flex child to zero — grid-template-rows alone isn't enough in a flex container */
+}
+.app.appbar-collapsed .appbar-icon-strip {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+}
+.app.appbar-collapsed .appbar {
+  min-height: 52px;
+  height: 52px;
+  padding: 6px 14px;
+  justify-content: center;
+  align-items: center;
+}
+.app.appbar-collapsed .appbar-strip-inner {
+  height: 40px;
+  align-items: center;
+}
+
+.strip-sq {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, opacity 120ms;
+}
+.strip-sq:hover { background: rgba(255,255,255,0.08) !important; }
+.strip-sq-process:hover { filter: brightness(1.1); }
+.strip-sq-brand {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--ink);
+  background: rgba(255,255,255,0.05);
+  letter-spacing: -0.03em;
+}
+.strip-sq-url {
+  background: rgba(255,255,255,0.03);
+  color: var(--ink-faint);
+  margin-right: 3px;
+}
+.strip-sq-stems {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.strip-sq-stem {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: opacity 120ms, background 120ms;
+}
+.strip-sq-stem:hover { opacity: 0.85 !important; }
+.strip-sq-stem.inactive { opacity: 0.2; }
+.strip-sq-process {
+  background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold) 100%);
+  color: #17130c;
+  border-color: transparent;
+  margin-left: 4px;
+}
+.strip-sq-process.loading {
+  cursor: progress;
+  filter: saturate(0.92);
+}
+.strip-sq-process.loading svg {
+  display: none;
+}
+.strip-sq-process.loading::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border-radius: 50%;
+  background: conic-gradient(currentColor 0deg 270deg, transparent 270deg 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 0);
+  animation: spin 0.85s linear infinite;
+}
+
+.brand-version {
+  font-size: 11px;
+  color: rgba(216,222,230,0.35);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.brand-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(100, 200, 120, 0.10);
+  border: 1px solid rgba(100, 200, 120, 0.22);
+  color: #6dcc82;
+  font-size: 9px;
+  text-decoration: none;
+}
+.brand-update-chip:hover {
+  background: rgba(100, 200, 120, 0.2);
+  color: #88dfa0;
+}
+
+.appbar {
+  display: flex;
+  flex-direction: column;
   padding: 20px 24px 22px;
   border: 1px solid var(--glass-line);
   border-radius: 16px;
@@ -55,6 +179,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.045),
     var(--shadow-panel);
+  transition: padding 220ms ease;
 }
 
 .brand-group {

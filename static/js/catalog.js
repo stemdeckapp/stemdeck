@@ -654,6 +654,23 @@ function wireWidgets() {
 
 // ─── Init ───
 
+const CURRENT_VERSION = "0.1.0";
+const RELEASES_URL = "https://github.com/thcp/stemdeck/releases";
+const RELEASES_API = "https://api.github.com/repos/thcp/stemdeck/releases/latest";
+
+async function checkForUpdate() {
+  const el = document.getElementById("brandVersion");
+  if (!el) return;
+  try {
+    const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const latest = (data.tag_name || "").replace(/^v/, "");
+    if (!latest || latest === CURRENT_VERSION) return;
+    el.innerHTML = `v${CURRENT_VERSION} <a class="brand-update-chip" href="${RELEASES_URL}/tag/${data.tag_name}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="18 15 12 9 6 15"></polyline></svg> New release available</a>`;
+  } catch { /* network unavailable — silently skip */ }
+}
+
 export function initCatalog() {
   loadState();
   wireCatalogToggle();
@@ -662,4 +679,5 @@ export function initCatalog() {
   render();
 
   document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);
+  checkForUpdate();
 }

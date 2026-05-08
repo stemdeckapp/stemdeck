@@ -25,53 +25,22 @@
   <body>
     <div class="app">
 
-      <!-- ─ Left: Catalog sidebar ─ -->
-      <aside class="catalog" id="catalogPanel">
-        <div class="catalog-head" id="catalogToggle" role="button" tabindex="0" aria-label="Toggle catalog">
-          <h3>Library</h3>
-          <span class="cat-count" id="catCount">0 tracks</span>
-          <svg class="cat-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </div>
-
-        <div class="catalog-search">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="11" cy="11" r="7"></circle>
-            <path d="m21 21-4.3-4.3"></path>
-          </svg>
-          <span>Search library…</span>
-        </div>
-
-        <button class="new-folder-btn" id="newFolderBtn" type="button">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M12 5v14M5 12h14"></path>
-          </svg>
-          New folder
-        </button>
-
-        <div class="catalog-list" id="catalogList"></div>
-
-        <!-- Collapsed strip (just thumbs) -->
-        <div class="cat-collapsed-strip" id="catalogStrip"></div>
-
-      </aside>
-
-      <!-- ─ Right: Main area ─ -->
-      <div id="lanes">
-
-        <!-- ─ Topbar ─ -->
-        <header class="topbar appbar">
+      <!-- ─ Topbar ─ -->
+      <header class="topbar appbar">
+          <div class="appbar-body">
+          <div class="appbar-body-inner">
+          <button class="app-menu-btn" id="appMenuBtn" type="button" aria-label="Menu">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16"></path>
+            </svg>
+          </button>
           <div class="brand-group">
             <div class="brand-row">
               <h1 class="brand">StemDeck</h1>
               <span class="beta-badge">ALPHA</span>
             </div>
-            <span class="brand-sub">AI stem separation for YouTube</span>
-            <button type="button" id="appbarToggle" class="appbar-toggle" aria-label="Toggle import panel" aria-expanded="false">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              New track
-            </button>
+            <span class="brand-sub">AI stem separation</span>
+            <div class="brand-version" id="brandVersion">v0.1.0</div>
           </div>
 
           <form id="job-form" class="appbar-import-panel">
@@ -152,14 +121,104 @@
                 <span>Piano</span>
               </button>
               <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
+                <span>More</span>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
-                <span>Others</span>
               </button>
             </div>
           </form>
-        </header>
+          </div><!-- /.appbar-body-inner -->
+          </div><!-- /.appbar-body -->
+
+          <!-- Collapsed icon strip (shown on double-click) -->
+          <div class="appbar-icon-strip" id="appbarStrip">
+          <div class="appbar-strip-inner">
+            <div class="strip-sq strip-sq-brand">SD</div>
+            <div class="strip-sq strip-sq-url">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"></path>
+                <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"></path>
+              </svg>
+            </div>
+            <div class="strip-sq-stems" id="appbarStripStems"></div>
+            <div class="strip-sq strip-sq-process">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"></path>
+                <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path>
+              </svg>
+            </div>
+          </div><!-- /.appbar-strip-inner -->
+          </div><!-- /.appbar-icon-strip -->
+      </header>
+
+      <!-- ─ Left: Catalog sidebar ─ -->
+      <aside class="catalog" id="catalogPanel">
+        <nav class="catalog-rail" aria-label="Library navigation">
+          <button class="rail-btn active" type="button" aria-label="Library">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+            </svg>
+            <span>Library</span>
+          </button>
+          <button class="rail-btn rail-trash" type="button" aria-label="Trash">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M3 6h18"></path>
+              <path d="M8 6V4h8v2"></path>
+              <path d="M19 6l-1 14H6L5 6"></path>
+            </svg>
+            <span>Trash</span>
+          </button>
+          <div class="rail-spacer"></div>
+          <a class="rail-btn" href="https://github.com/thcp/stemdeck/issues" target="_blank" rel="noopener noreferrer" aria-label="Help">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.2-2.2 1.4-2.7 2.8"></path>
+              <path d="M12 17h.01"></path>
+            </svg>
+            <span>Help</span>
+          </a>
+          <button class="rail-btn" type="button" aria-label="About">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M12 8v4M12 16h.01"></path>
+            </svg>
+            <span>About</span>
+          </button>
+        </nav>
+        <div class="catalog-main">
+          <div class="catalog-head" id="catalogToggle" role="button" tabindex="0" aria-label="Toggle catalog">
+            <h3>Library</h3>
+            <span class="cat-count" id="catCount">0 tracks</span>
+            <svg class="cat-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </div>
+
+          <div class="catalog-search">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m21 21-4.3-4.3"></path>
+            </svg>
+            <span>Search library…</span>
+          </div>
+
+          <button class="new-folder-btn" id="newFolderBtn" type="button">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            New folder
+          </button>
+
+          <div class="catalog-list" id="catalogList"></div>
+
+          <!-- Collapsed strip (just thumbs) -->
+          <div class="cat-collapsed-strip" id="catalogStrip"></div>
+        </div>
+      </aside>
+
+      <!-- ─ Right: Main area ─ -->
+      <div id="lanes">
 
         <!-- ─ Job progress ─ -->
         <div id="job" class="job hidden" role="status" aria-live="polite">
@@ -409,26 +468,6 @@
               </button>
             </div>
             <span id="footer-time-total">00:00</span>
-          </div>
-          <div class="footer-actions">
-            <a class="footer-btn" href="https://github.com/thcp/stemdeck/issues" target="_blank" rel="noopener noreferrer">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.2-2.2 1.4-2.7 2.8"></path>
-                <path d="M12 17h.01"></path>
-              </svg>
-              <span>Help</span>
-            </a>
-            <a class="footer-btn" href="https://buymeacoffee.com/tha.les" target="_blank" rel="noopener noreferrer">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M17 8h1a4 4 0 0 1 0 8h-1"></path>
-                <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"></path>
-                <line x1="6" y1="2" x2="6" y2="4"></line>
-                <line x1="10" y1="2" x2="10" y2="4"></line>
-                <line x1="14" y1="2" x2="14" y2="4"></line>
-              </svg>
-              <span>Tip the maker</span>
-            </a>
           </div>
         </footer>
 

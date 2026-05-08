@@ -581,12 +581,29 @@ function renderAllMiniWaves(mt, stems) {
   });
 }
 
+export function buildStripStems() {
+  const container = document.getElementById("appbarStripStems");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const name of STEM_NAMES) {
+    const color = STEM_COLORS[name];
+    const active = selectedStems.has(name);
+    const sq = document.createElement("div");
+    sq.className = "strip-sq strip-sq-stem" + (active ? "" : " inactive");
+    sq.dataset.stem = name;
+    if (active) sq.style.cssText = `background:${color}1a;border-color:${color}44;color:${color}`;
+    const srcSvg = document.querySelector(`.stem-choice[data-stem="${name}"] svg`);
+    if (srcSvg) sq.appendChild(srcSvg.cloneNode(true));
+    container.appendChild(sq);
+  }
+}
+
 export function wireUpAudio(jobId, stems, duration, thumbnail) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
-  app?.classList.remove("appbar-expanded");
-  document.getElementById("appbarToggle")?.setAttribute("aria-expanded", "false");
+  app?.classList.add("appbar-collapsed");
+  buildStripStems();
   stopVuLoop();
   stopStemVuLoop();
   if (multitrack) {

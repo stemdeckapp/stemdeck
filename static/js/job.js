@@ -24,6 +24,7 @@ const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
 function setSubmitProcessing(processing) {
   submitBtn.disabled = processing;
   submitBtn.classList.toggle("loading", processing);
+  document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
   if (label) label.textContent = processing ? "Processing" : "Process";
 }
