@@ -245,6 +245,14 @@
   background: rgba(255, 255, 255, 0.04);
   color: #d8dde3;
   font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.footer-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #fff;
 }
 
 .preview-head button {
@@ -791,12 +799,12 @@
 }
 
 .footer-btn {
-  min-height: 66px;
-  font-size: 20px;
+  min-height: 36px;
+  font-size: 13px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 8px;
 }
 
 /* ─── Screenshot-aligned DAW layout ─── */
@@ -981,10 +989,11 @@
 }
 
 .app:not(.is-import) .footer-btn {
-  min-width: 138px;
-  min-height: 54px;
-  padding: 0 20px;
-  font-size: 14px;
+  min-width: 100px;
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  gap: 7px;
 }
 
 .app:not(.is-import) .transport-footer .np-transport {

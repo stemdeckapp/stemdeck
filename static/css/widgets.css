@@ -1,0 +1,998 @@
+/* ──────────────────────────────────────────────
+   widgets.css  —  New layout + collapsible widgets + horizontal mixer
+   Loaded last; overrides base.css / appbar.css / mixer.css where needed.
+   ────────────────────────────────────────────── */
+
+/* ─── 1. App shell: 2-column grid (catalog + main) ─── */
+.app {
+  display: grid !important;
+  grid-template-columns: var(--cat-w, 280px) 1fr !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  max-width: none !important;
+  width: 100% !important;
+  height: 100vh !important;
+  min-height: 0 !important;
+  padding: 12px !important;
+  gap: 12px !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+}
+.app.cat-collapsed { --cat-w: 64px; }
+
+/* ─── 2. Main area (#lanes) ─── */
+#lanes {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  padding-bottom: 0;
+  height: 100%;
+  min-height: 0;
+  /* Remove the studio-dashboard layout */
+}
+
+#lanes.library-drop-target {
+  outline: 1px solid rgba(216, 168, 74, 0.54);
+  outline-offset: -4px;
+}
+
+#lanes.library-drop-target::after {
+  content: "Drop to load track";
+  position: fixed;
+  right: 28px;
+  top: 28px;
+  z-index: 30;
+  padding: 8px 12px;
+  border: 1px solid rgba(216, 168, 74, 0.44);
+  border-radius: 8px;
+  background: rgba(15, 23, 31, 0.92);
+  color: var(--gold);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: var(--shadow-panel);
+}
+
+/* Suppress the old studio-dashboard nested flex that conflicts */
+#lanes > .studio-dashboard {
+  display: contents;
+}
+
+/* ─── 3. Topbar: 2-col (brand + form) ─── */
+.topbar.appbar {
+  grid-template-columns: 220px 1fr !important;
+  gap: 14px !important;
+  padding: 12px 16px !important;
+  flex-shrink: 0;
+  align-items: center !important;
+  border-radius: 12px !important;
+}
+
+.topbar .appbar-import-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar .import-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.topbar .appbar-import-panel .url-wrap {
+  min-height: 40px !important;
+}
+.topbar .appbar-import-panel .btn-primary {
+  height: 40px !important;
+  font-size: 13px !important;
+  padding: 0 18px !important;
+}
+
+.topbar .stem-choice-row {
+  grid-template-columns: auto repeat(6, 1fr);
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.topbar .stem-choice {
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.topbar .stem-choice svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ─── 4. File drop pill ─── */
+.url-wrap { position: relative; }
+
+.file-pill {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid rgba(95, 188, 86, 0.45);
+  background: rgba(95, 188, 86, 0.08);
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: #5fbc56;
+  max-width: 100%;
+}
+.file-pill:not(.hidden) { display: inline-flex; }
+.file-pill .file-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.file-pill .file-size { color: var(--ink-faint); font-size: 10.5px; }
+.file-pill .file-clear {
+  background: transparent;
+  border: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  font-size: 14px;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.file-pill .file-clear:hover { background: var(--panel-2, rgba(21,31,39,0.82)); color: var(--ink); }
+
+/* When a file is loaded, hide the text input and icon */
+.url-wrap.has-file .url-prefix,
+.url-wrap.has-file input[type="url"],
+.url-wrap.has-file input[type="text"] { display: none; }
+
+.url-wrap.drag-over {
+  border-color: rgba(216, 168, 74, 0.56) !important;
+  background-color: rgba(216, 168, 74, 0.04) !important;
+}
+
+/* ─── 5. Job progress: fix always-hidden CSS bug ─── */
+.job:not(.hidden) {
+  display: block !important;
+}
+
+/* ─── 6. Grafana-style collapsible widget ─── */
+.widget {
+  flex-shrink: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+  background: linear-gradient(180deg, rgba(28,39,48,0.82), rgba(15,23,31,0.86));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.045), var(--shadow-panel);
+}
+
+.widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--glass-line);
+  transition: background var(--t-fast, 120ms) ease;
+}
+.widget-head:hover { background: rgba(31,43,52,0.55); }
+
+.widget-head .title-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.widget-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.widget-head .chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-faint);
+  transition: transform 180ms ease;
+  flex-shrink: 0;
+}
+.widget-head .widget-hint {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.widget-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  overflow: hidden;
+  transition: grid-template-rows 220ms ease, opacity 180ms ease;
+}
+.widget-body > .body-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.widget.collapsed .widget-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.widget.collapsed .widget-head {
+  border-bottom-color: transparent;
+}
+.widget.collapsed .widget-head .chevron {
+  transform: rotate(-90deg);
+}
+/* Collapsed widgets must not hold onto flex-grow or min-height */
+.widget.collapsed {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+}
+
+/* ─── 7. Information widget: override now-playing layout ─── */
+.widget .now-playing {
+  display: grid !important;
+  grid-template-columns: 82px minmax(150px, 1.15fr) minmax(145px, 1fr) repeat(3, minmax(58px, 0.55fr)) !important;
+  gap: 12px 16px !important;
+  min-height: 0 !important;
+  padding: 9px 16px 10px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  align-items: start !important;
+}
+
+/* Override transport.css responsive rules that break widget layout */
+@media (max-width: 1100px) {
+  .widget .now-playing {
+    grid-template-columns: 72px minmax(120px, 1fr) minmax(120px, 1fr) repeat(3, minmax(50px, 0.5fr)) !important;
+    grid-template-areas: none !important;
+    gap: 9px 10px !important;
+  }
+  .widget .now-playing .key-card {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+  .widget .now-playing .loudness-card,
+  .widget .now-playing .beat-card {
+    grid-column: auto !important;
+  }
+}
+
+@media (max-width: 800px) {
+  .widget .now-playing {
+    grid-template-columns: 72px 1fr 1fr !important;
+  }
+}
+
+/* np-art stays as-is inside widget */
+.widget .np-art {
+  grid-area: unset !important;
+  width: 82px !important;
+  height: 82px !important;
+  align-self: center !important;
+}
+
+@media (max-width: 1100px) {
+  .widget .np-art {
+    width: 72px !important;
+    height: 72px !important;
+  }
+}
+
+/* np-info → track info column */
+.widget .np-info {
+  grid-area: unset !important;
+  gap: 8px !important;
+  padding: 0 14px 0 12px !important;
+}
+
+.widget .np-title {
+  font-size: 16px !important;
+  line-height: 1.15 !important;
+  -webkit-line-clamp: 1 !important;
+}
+
+.widget .chip {
+  min-height: 26px !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+}
+
+.widget .np-play-row {
+  gap: 10px !important;
+  margin-top: 0 !important;
+  font-size: 11px !important;
+}
+
+.widget .stem-energy,
+.widget .analysis-card {
+  min-height: 82px !important;
+  padding: 0 10px !important;
+}
+
+.widget .stem-energy h3,
+.widget .analysis-card h3 {
+  margin-bottom: 7px !important;
+  font-size: 11px !important;
+}
+
+.widget .energy-row {
+  grid-template-columns: 62px 1fr 32px !important;
+  gap: 7px !important;
+  margin: 2px 0 !important;
+  font-size: 10.5px !important;
+}
+.widget .energy-row[data-stem="original"] { display: none !important; }
+
+.widget .energy-row b {
+  height: 8px !important;
+}
+
+.widget .analysis-card {
+  gap: 5px !important;
+}
+
+.widget .analysis-card strong {
+  font-size: 17px !important;
+}
+
+.widget .analysis-card small {
+  font-size: 10px !important;
+}
+
+.widget .confidence-ring {
+  width: 46px !important;
+  height: 46px !important;
+  font-size: 11px !important;
+}
+
+.widget[data-widget="mixer"] {
+}
+
+/* ─── 8. Waveform widget: give wave-editor flex space ─── */
+.widget .studio-wave-grid {
+  display: grid !important;
+  grid-template-columns: var(--header-w, 320px) 1fr !important;
+  gap: 0 !important;
+  min-height: 0 !important;
+}
+
+.widget .stems-panel {
+  border-radius: 0;
+}
+
+.widget .wave-editor {
+  border-radius: 0;
+}
+
+/* ─── 8b. Waveform widget: height + override waves.css .app:not(.is-import) rules ─── */
+
+/* Waveform widget: natural height from WaveSurfer content.
+   CSS vars used by stem-list alignment rules below:
+     lane-h  = WaveSurfer height(100px) + trackBorderColor(1px)
+     margin  = wave-editor padding-top(6) + toolbar(30) + toolbar-margin-bottom(2)
+               + wave-scroll border-top(1) + ruler(34) = 73px              */
+.widget[data-widget="waveform"] {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
+  --wave-widget-lane-h: 101px;
+  --wave-widget-separator-h: 0px;
+  --wave-widget-editor-top-offset: 6px;
+  --wave-widget-toolbar-h: 32px;
+  --wave-widget-ruler-h: 35px;
+}
+
+.widget[data-widget="waveform"] .widget-body,
+.widget[data-widget="waveform"] .widget-body > .body-inner {
+  min-height: 0;
+  overflow: visible;
+}
+
+/* stems-panel in old layout was a 48px overlay (grid-column:2 = same cell as wave-editor,
+   width:48px, pointer-events:none, margin-top:72px). Reset all of that. */
+.widget .stems-panel {
+  grid-column: unset !important;
+  grid-row: unset !important;
+  width: unset !important;
+  min-height: 326px !important;
+  pointer-events: auto !important;
+  margin: 0 !important;
+  z-index: auto !important;
+  overflow: auto !important;
+  padding: 16px 18px !important;
+  border: 1px solid var(--glass-line) !important;
+  background: rgba(21,31,39,0.6) !important;
+  align-self: stretch !important;
+  height: auto !important;
+}
+.widget .stems-panel .panel-title { display: block !important; }
+
+.widget .stem-list {
+  height: auto !important;
+  margin-top: 46px;
+  gap: 1px !important;
+}
+
+/* ─── Waveform: slim icon-only column (matches design's 32px icon | waveform layout) ─── */
+
+/* Override the 2-col wave grid to use a slim 36px icon column */
+.widget[data-widget="waveform"] .studio-wave-grid {
+  grid-template-columns: 36px 1fr !important;
+  min-height: var(--wave-widget-content-h) !important;
+}
+
+/* Slim the stems-panel to an icon-only strip.
+   padding-top mirrors original waves.css offset:
+   wave-editor padding(6) + toolbar(30+2) + ruler(34) = 72px */
+.widget[data-widget="waveform"] .stems-panel {
+  width: 36px !important;
+  min-width: 36px !important;
+  min-height: 0 !important;
+  padding: 72px 0 0 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  align-self: stretch !important;
+  height: 100% !important;
+}
+
+/* Hide panel title and interactive controls — M/S/monitor are in the mixer */
+.widget[data-widget="waveform"] .panel-title,
+.widget[data-widget="waveform"] .drag-handle,
+.widget[data-widget="waveform"] .stem-mute,
+.widget[data-widget="waveform"] .stem-solo,
+.widget[data-widget="waveform"] .stem-monitor,
+.widget[data-widget="waveform"] .mini-meter { display: none !important; }
+
+/* stem-list fills the stems-panel content area (below the 72px offset).
+   flex: 1 1 0 on spans auto-distributes height — same as original non-import layout. */
+.widget[data-widget="waveform"] .stem-list {
+  margin-top: 0 !important;
+  gap: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+}
+.widget[data-widget="waveform"] .stem-list span {
+  flex: 1 1 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+.widget[data-widget="waveform"] .stem-list span.hidden {
+  display: none !important;
+}
+
+/* em contains both the SVG icon and the text label — zero font-size hides the text */
+.widget[data-widget="waveform"] .stem-list em {
+  font-size: 0 !important;
+  line-height: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.widget[data-widget="waveform"] .stem-list .stem-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* ─── Waveform widget: expose WaveSurfer bar canvases ─── */
+
+/* non-import mode hides multitrack canvases (opacity:0) and uses SVG overlays.
+   In the widget we want the real WaveSurfer bar rendering, so undo that. */
+.widget[data-widget="waveform"] #multitrack-container {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  position: static !important;
+  inset: unset !important;
+  min-height: 0 !important;
+}
+
+/* Allow each track div to show its WaveSurfer trackBackground color */
+.widget[data-widget="waveform"] #multitrack-container > div {
+  background: transparent !important;
+  overflow: visible !important;
+}
+
+/* Remove the 48px left gutter (stems-panel is in its own column, not overlapping) */
+.widget[data-widget="waveform"] .waves-column {
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  padding-left: 0 !important;
+  --wave-gutter: 0px !important;
+}
+.widget[data-widget="waveform"] .waves-grid {
+  left: 0 !important;
+}
+.widget[data-widget="waveform"] .lanes-ruler {
+  margin-left: 0 !important;
+}
+
+/* Let wave-scroll grow vertically with its content */
+.widget[data-widget="waveform"] .wave-scroll {
+  height: calc(var(--wave-widget-ruler-h) + var(--wave-widget-track-stack-h, 394px)) !important;
+  overflow-y: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+.widget[data-widget="waveform"] .wave-canvas {
+  height: 100% !important;
+}
+
+.widget[data-widget="waveform"] .wave-toolbar {
+  min-height: 46px !important;
+  height: 46px !important;
+  margin: 0 !important;
+  padding: 12px 24px 8px 0 !important;
+  align-items: center !important;
+}
+
+.widget[data-widget="waveform"] .zoom-tools {
+  gap: 8px !important;
+  font-size: 16px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-tools > svg {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-slider {
+  width: 104px !important;
+  height: 16px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-slider::-webkit-slider-thumb {
+  width: 12px !important;
+  height: 12px !important;
+  margin-top: -4px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-slider::-moz-range-thumb {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-tools button {
+  min-width: 28px !important;
+  min-height: 28px !important;
+  padding: 0 10px !important;
+}
+
+.widget[data-widget="waveform"] .zoom-tools #zoom-out,
+.widget[data-widget="waveform"] .zoom-tools #zoom-in {
+  width: 28px !important;
+  font-size: 19px !important;
+}
+
+.widget[data-widget="waveform"] .lanes-ruler {
+  height: var(--wave-widget-ruler-h) !important;
+  display: block !important;
+}
+
+.widget[data-widget="waveform"] .lanes-ruler-time {
+  height: 100% !important;
+}
+
+.widget[data-widget="waveform"] .tick {
+  align-items: center !important;
+  border-left-color: transparent !important;
+  padding-left: 0 !important;
+}
+
+.widget[data-widget="waveform"] .tick-label {
+  color: rgba(156, 163, 178, 0.68) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+
+.widget[data-widget="waveform"] .waves-grid .grid-line {
+  display: none !important;
+}
+
+.widget[data-widget="waveform"] .waves-column [style*="height: 2px"] {
+  background-color: rgba(148, 163, 184, 0.08) !important;
+}
+
+/* Hide SVG overlay — WaveSurfer canvas is the visual source in widget mode */
+.widget[data-widget="waveform"] .stem-waveform-layer {
+  display: none !important;
+}
+
+/* ─── 9. Horizontal mixer ─── */
+
+/* Hide waveform + mixer widgets when no track is loaded */
+.app.no-track .widget[data-widget="waveform"],
+.app.no-track .widget[data-widget="mixer"] { display: none !important; }
+
+/* preview-mixer-body: old layout had 2-col grid (mixer | 94px master fader).
+   Flatten to single block so the mixer-column fills the full width. */
+.widget .preview-mixer-body {
+  display: block !important;
+  height: auto !important;
+  overflow: visible !important;
+  padding-top: 0 !important;
+}
+
+/* Mixer column: 2-up grid of rows — matches design's .mixer-grid */
+.widget .mixer-column {
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr) !important;
+  column-gap: 22px !important;
+  row-gap: 10px !important;
+  padding: 14px 18px 16px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 1100px) {
+  .widget .mixer-column { grid-template-columns: 1fr !important; }
+}
+
+/* Horizontal mixer row — exact design column widths:
+   icon(24) | name(60) | fader(1fr) | VU(90) | val(50) | M(28) | S(28) | dl(28) */
+.widget .lane-header.mx-row {
+  display: grid !important;
+  grid-template-columns: 24px 60px 1fr 90px 50px 28px 28px 28px !important;
+  grid-template-rows: auto !important;
+  gap: 10px !important;
+  align-items: center !important;
+  justify-items: stretch !important;
+  padding: 7px 4px !important;
+  border: none !important;
+  border-bottom: 1px solid transparent !important;
+  background: transparent !important;
+  flex-direction: unset !important;
+  min-height: unset !important;
+  height: auto !important;
+  width: 100% !important;
+  overflow: visible !important;
+}
+/* all borders transparent — row-gap provides the spacing */
+
+/* Remove the old stripe */
+.widget .lane-header.mx-row .lane-stripe { display: none !important; }
+
+/* Explicitly show the download link — mixer.css sets display:none and
+   .app:not(.is-import) .lane-dl uses display:grid with absolute positioning.
+   Both must be defeated. */
+.widget .lane-header.mx-row .lane-dl {
+  display: flex !important;
+  position: static !important;
+  left: unset !important;
+  right: unset !important;
+  bottom: unset !important;
+  top: unset !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 6px !important;
+}
+
+/* Icon — 16px to match design */
+.mx-icon { display: flex; align-items: center; justify-content: center; }
+.mx-icon svg { width: 16px; height: 16px; }
+
+/* Name — 12.5px matching design */
+.mx-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Horizontal fader */
+.lane-knob.mx-fader {
+  position: relative !important;
+  height: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  cursor: ew-resize !important;
+  width: 100% !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  justify-self: stretch !important;
+  min-height: 0 !important;
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+.lane-knob.mx-fader::before { display: none !important; }
+.lane-knob.mx-fader .lane-knob-indicator { display: none !important; }
+
+/* Fader track: 4px height, matching design */
+.mx-fader-track {
+  width: 100%;
+  height: 4px;
+  background: var(--line, rgba(35,42,55,1));
+  border-radius: 2px;
+  position: relative;
+}
+.mx-fader-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: calc(var(--lane-pos, 0.5) * 100%);
+  border-radius: 2px;
+  opacity: 1;
+  pointer-events: none;
+}
+/* Fader knob: 14px, stem-colored, translate(-50%,-50%) centers it on the fill end */
+.mx-fader-knob {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--lane-pos, 0.5) * 100%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(0,0,0,0.4);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: left 80ms ease;
+}
+.lane-knob.mx-fader.dragging .mx-fader-knob { transition: none; }
+.lane-knob.mx-fader.dragging { cursor: ew-resize !important; }
+.lane-knob.mx-fader.disabled { opacity: 0.4; pointer-events: none; }
+
+/* VU meter: 8px tall, design gradient (#4a8c44 → #b8a83b 65% → #d65a4a 100%) */
+.lane-vu.mx-meter {
+  display: block !important;
+  height: 8px !important;
+  width: 100% !important;
+  border-radius: 2px !important;
+  background: var(--line-soft, #1a2030) !important;
+  overflow: hidden !important;
+  position: relative !important;
+  top: unset !important;
+  right: unset !important;
+  left: unset !important;
+  bottom: unset !important;
+  transform: none !important;
+  flex-direction: unset !important;
+  gap: unset !important;
+  padding: 0 !important;
+}
+.mx-meter .lane-vu-bar.mx-meter-fill {
+  position: absolute !important;
+  left: 0 !important; top: 0 !important;
+  height: 100% !important;
+  width: var(--vu-level, 0%) !important;
+  background: linear-gradient(90deg, #4a8c44 0%, #b8a83b 65%, #d65a4a 100%) !important;
+  border-radius: 2px !important;
+  transition: width 60ms linear !important;
+}
+.mx-meter .lane-vu-bar:not(.mx-meter-fill) { display: none !important; }
+.lane-vu.mx-meter::before,
+.lane-vu.mx-meter::after { content: none !important; }
+
+/* Value */
+.mx-val {
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* M / S / download buttons — 26px matching design */
+.mx-btn {
+  width: 26px !important;
+  height: 26px !important;
+  border: 1px solid var(--line, #232a37) !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--ink-dim) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: background 120ms, border-color 120ms, color 120ms !important;
+  padding: 0 !important;
+  text-decoration: none !important;
+}
+.mx-btn:hover { background: rgba(31,43,52,0.88) !important; border-color: rgba(157,170,182,0.38) !important; }
+
+/* Muted: M turns red */
+.lane-header.muted .lane-icon-toggle.mx-btn {
+  color: #e85d4f !important;
+  border-color: rgba(232,93,79,0.5) !important;
+  opacity: 1 !important;
+}
+.lane-icon-toggle.mx-btn.active { color: var(--ink-dim) !important; }
+
+/* Solo active: gold */
+.mx-btn.solo.active {
+  color: var(--gold, #d8a84a) !important;
+  border-color: rgba(216,168,74,0.5) !important;
+  background: rgba(216,168,74,0.12) !important;
+}
+
+/* Download: stem-colored — matches STEM_COLORS in constants.js */
+.lane-header[data-stem="vocals"] .lane-dl.mx-btn { color: #e85f6f !important; border-color: rgba(232,95,111,0.45) !important; }
+.lane-header[data-stem="drums"]  .lane-dl.mx-btn { color: #e89048 !important; border-color: rgba(232,144,72,0.45) !important; }
+.lane-header[data-stem="bass"]   .lane-dl.mx-btn { color: #e8b848 !important; border-color: rgba(232,184,72,0.45) !important; }
+.lane-header[data-stem="guitar"] .lane-dl.mx-btn { color: #88d878 !important; border-color: rgba(136,216,120,0.45) !important; }
+.lane-header[data-stem="piano"]  .lane-dl.mx-btn { color: #b88fe8 !important; border-color: rgba(184,143,232,0.45) !important; }
+.lane-header[data-stem="other"]  .lane-dl.mx-btn { color: #88a8c8 !important; border-color: rgba(136,168,200,0.45) !important; }
+.lane-header[data-stem="original"] .lane-dl.mx-btn { color: #a8b0bd !important; border-color: rgba(168,176,189,0.45) !important; }
+
+.lane-dl.mx-btn svg { width: 13px !important; height: 13px !important; }
+.lane-dl.mx-btn.disabled { opacity: 0.3 !important; pointer-events: none !important; }
+
+/* Unavailable rows are stems not produced for this extraction. Keep them
+   visible for orientation, but remove interaction and live meter emphasis. */
+.widget .lane-header.unavailable {
+  opacity: 0.34;
+  filter: grayscale(0.85);
+}
+
+.widget .lane-header.unavailable .mx-name,
+.widget .lane-header.unavailable .mx-val {
+  color: var(--ink-faint) !important;
+}
+
+.widget .lane-header.unavailable .mx-fader-fill,
+.widget .lane-header.unavailable .mx-fader-knob,
+.widget .lane-header.unavailable .mx-meter .mx-meter-fill {
+  background: rgba(148, 163, 184, 0.36) !important;
+}
+
+.widget .lane-header.unavailable .mx-btn,
+.widget .lane-header.unavailable .lane-knob {
+  pointer-events: none !important;
+}
+
+.widget .energy-row.unavailable {
+  opacity: 0.32;
+  filter: grayscale(0.85);
+}
+
+.widget .energy-row.unavailable b {
+  background: rgba(148, 163, 184, 0.14) !important;
+}
+
+.widget .energy-row.unavailable em {
+  color: var(--ink-faint);
+}
+
+/* Muted row */
+.widget .lane-header.muted { opacity: 0.55; }
+.widget .lane-header.muted .mx-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* ─── 10. Transport footer stays at bottom ─── */
+.app:not(.is-import) .transport-footer,
+.transport-footer {
+  flex: 0 0 96px;
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  height: 96px;
+  min-height: 96px;
+  padding: 16px 18px !important;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background:
+    radial-gradient(circle at 58% 0%, rgba(216, 168, 74, 0.055), transparent 24rem),
+    linear-gradient(180deg, rgba(28, 39, 48, 0.82), rgba(15, 23, 31, 0.86));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.045), var(--shadow-panel);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  gap: 18px;
+  overflow: hidden;
+}
+
+.app:not(.is-import) .transport-footer .np-transport,
+.transport-footer .np-transport {
+  grid-column: 2;
+  justify-self: center;
+  flex: 0 0 auto;
+  margin-left: 0;
+  margin-right: 0;
+  align-items: center;
+  line-height: 1;
+  min-width: max-content;
+}
+
+.app:not(.is-import) .transport-footer .np-transport > span,
+.transport-footer .np-transport > span {
+  display: inline-flex;
+  align-items: center;
+  height: 58px;
+}
+
+.app:not(.is-import) .transport-footer .np-transport-row,
+.transport-footer .np-transport-row {
+  align-items: center;
+  height: 58px;
+}
+
+.app:not(.is-import) .transport-footer .btn-transport,
+.transport-footer .btn-transport {
+  flex: 0 0 58px;
+  width: 58px;
+  height: 58px;
+  min-width: 58px;
+  min-height: 58px;
+  align-self: center;
+}
+
+.app:not(.is-import) .transport-footer .footer-actions,
+.transport-footer .footer-actions {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .app:not(.is-import) .transport-footer,
+  .transport-footer {
+    flex-basis: 88px;
+    height: 88px;
+    min-height: 88px;
+    padding: 14px 18px !important;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .app:not(.is-import) .transport-footer .footer-actions,
+  .transport-footer .footer-actions {
+    display: none;
+  }
+
+  .app:not(.is-import) .transport-footer .np-transport,
+  .transport-footer .np-transport {
+    margin-left: 0;
+  }
+}
+
+/* ─── 11. Responsive: compact layout below 960px ─── */
+@media (max-width: 960px) {
+  .app {
+    grid-template-columns: var(--cat-w, 240px) 1fr !important;
+  }
+  .topbar .stem-choice span { display: none; }
+  .widget .lane-header.mx-row {
+    /* drop val col at narrow width: icon(24) name(55) fader(1fr) VU(70) M S dl */
+    grid-template-columns: 24px 55px 1fr 70px 26px 26px 26px !important;
+  }
+  .mx-val { display: none; }
+}
+
+@media (max-width: 720px) {
+  .app {
+    grid-template-columns: 52px 1fr !important;
+    --cat-w: 52px;
+  }
+}

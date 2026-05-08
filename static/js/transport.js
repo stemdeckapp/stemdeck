@@ -26,8 +26,7 @@ function rulerRect() {
 }
 
 function loopOverlayParent() {
-  return document.querySelector(".stem-waveform-layer")
-    || document.querySelector(".waves-column")
+  return document.querySelector(".waves-column")
     || rulerTime;
 }
 
@@ -180,17 +179,15 @@ export function togglePlayPause() {
     multitrack.pause();
     return;
   }
-  // Browsers suspend the AudioContext until a user gesture explicitly
-  // resumes it. Multitrack's context can also drift back into "suspended"
-  // after an idle period, in which case .play() silently no-ops -- the
-  // audio elements try to start, immediately stall on the suspended
-  // graph, and emit no error. Resume defensively on every play click.
   const ctx = multitrack.audioContext;
+  // Safari requires play() to be called synchronously within the user-gesture
+  // handler. Calling it in a resume().then() callback breaks that guarantee on
+  // Safari's AudioBufferSourceNode path, causing silence or stuttering.
+  // Resume fire-and-forget so the context becomes live, then play() immediately.
   if (ctx && ctx.state === "suspended") {
-    ctx.resume().catch(() => { /* ignore -- play() will still try */ });
+    ctx.resume().catch(() => {});
   }
-  // Starting playback. With loop on, snap the playhead to loopStart so
-  // play always begins at the head of the looped region (DAW convention).
+  // Snap playhead to loopStart on play (DAW convention).
   if (loopEnabled && totalDuration > 0) {
     multitrack.setTime(loopStart);
   }

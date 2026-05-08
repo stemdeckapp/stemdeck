@@ -105,6 +105,12 @@ export let masterVolume = 0.5; // mirrored from masterFader.value
 export const trackAnalysers = []; // index → { analyser, data, vuEl }
 export let vuRafId = null;
 
+// Master bus nodes — created once in audio.js, shared across mixer.js.
+// masterBusGain is driven by the master fader; masterLimiter is a
+// transparent brickwall limiter that prevents inter-stem summing clipping.
+export let masterBusGain = null;
+export let masterLimiter = null;
+
 // ─── Setter helpers for mutable state (so other modules can update) ───
 
 export function setEventSource(v) { eventSource = v; }
@@ -119,3 +125,5 @@ export function setWaveZoom(v) { waveZoom = v; }
 export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
 export function setVuRafId(v) { vuRafId = v; }
+export function setMasterBusGain(v) { masterBusGain = v; }
+export function setMasterLimiter(v) { masterLimiter = v; }

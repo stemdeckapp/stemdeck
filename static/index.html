@@ -19,334 +19,368 @@
     <link rel="stylesheet" href="/css/waves.css" />
     <link rel="stylesheet" href="/css/job.css" />
     <link rel="stylesheet" href="/css/responsive.css" />
+    <link rel="stylesheet" href="/css/catalog.css" />
+    <link rel="stylesheet" href="/css/widgets.css" />
   </head>
   <body>
     <div class="app">
-      <!-- ─ Top bar ─ -->
-      <header class="appbar">
-        <div class="brand-group">
-          <div class="brand-row">
-            <h1 class="brand">StemDeck</h1>
-            <span class="beta-badge">ALPHA</span>
-          </div>
-          <span class="brand-sub">AI stem separation for YouTube</span>
-        </div>
 
-        <form id="job-form" class="appbar-import-panel">
-          <div class="import-input-row">
-            <label class="url-wrap">
-              <svg class="url-prefix" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"></path>
-                <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"></path>
-              </svg>
-              <input
-                id="url"
-                type="url"
-                placeholder="Paste a YouTube link here..."
-                required
-                autocomplete="off"
-                spellcheck="false"
-              />
-            </label>
-            <button id="submit" class="btn-primary" type="submit">
-              <svg class="icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"></path>
-                <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path>
-              </svg>
-              <span>Process</span>
-            </button>
-          </div>
-          <div class="stem-choice-row">
-            <span>Stems to extract</span>
-            <button class="stem-choice vocals" type="button" data-stem="vocals" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                <path d="M12 19v3"></path>
-              </svg>
-              <span>Vocals</span>
-            </button>
-            <button class="stem-choice drums" type="button" data-stem="drums" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path>
-                <circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle>
-                <path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path>
-                <path d="M4 18l16-8"></path>
-              </svg>
-              <span>Drums</span>
-            </button>
-            <button class="stem-choice bass" type="button" data-stem="bass" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path>
-                <path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path>
-                <path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path>
-              </svg>
-              <span>Bass</span>
-            </button>
-            <button class="stem-choice guitar" type="button" data-stem="guitar" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path>
-                <path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path>
-                <path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path>
-              </svg>
-              <span>Guitar</span>
-            </button>
-            <button class="stem-choice piano" type="button" data-stem="piano" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <rect x="3" y="5" width="18" height="14" rx="2"></rect>
-                <path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path>
-                <path d="M9.5 5v7"></path><path d="M14.5 5v7"></path>
-              </svg>
-              <span>Piano</span>
-            </button>
-            <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
-              </svg>
-              <span>Others</span>
-            </button>
-          </div>
-        </form>
-      </header>
-
-      <section class="import-page" aria-label="Import YouTube song">
-        <div class="wave-lines wave-left" aria-hidden="true"></div>
-        <div class="wave-lines wave-right" aria-hidden="true"></div>
-
-        <div class="import-copy">
-          <h2>Extract any song <span>from YouTube</span></h2>
-          <p>Separate into stems using advanced AI technology</p>
-        </div>
-
-        <div class="privacy-note">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="10" rx="2"></rect>
-            <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
+      <!-- ─ Left: Catalog sidebar ─ -->
+      <aside class="catalog" id="catalogPanel">
+        <div class="catalog-head" id="catalogToggle" role="button" tabindex="0" aria-label="Toggle catalog">
+          <h3>Library</h3>
+          <span class="cat-count" id="catCount">0 tracks</span>
+          <svg class="cat-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
-          <span>Your data is encrypted and never stored</span>
         </div>
 
-        <div class="feature-strip surface-panel">
-          <div class="feature-item">
-            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
-            </svg>
-            <div><strong>High quality</strong><span>Powered by advanced<br />AI separation</span></div>
-          </div>
-          <div class="feature-item">
-            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-              <path d="m13 2-9 13h7l-1 7 10-14h-7l1-6Z"></path>
-            </svg>
-            <div><strong>Fast processing</strong><span>Get your stems in just<br />a few minutes</span></div>
-          </div>
-          <div class="feature-item">
-            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path>
-              <path d="M12 8v4"></path>
-              <path d="M12 16h.01"></path>
-            </svg>
-            <div><strong>Secure &amp; private</strong><span>Your data is encrypted<br />and never shared</span></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ─ Now-playing card ─ -->
-      <div id="transport" class="now-playing surface-panel">
-        <div class="np-art" id="np-art">
-          <div class="np-art-placeholder" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
-            </svg>
-          </div>
-          <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+        <div class="catalog-search">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m21 21-4.3-4.3"></path>
+          </svg>
+          <span>Search library…</span>
         </div>
 
-        <div class="np-info">
-          <div class="np-title" id="title"></div>
-          <div class="np-chips">
-            <span class="chip" id="t-bpm">— BPM</span>
-            <span class="chip" id="t-key">— —</span>
-            <span class="chip" id="t-stems-chip">— Stems</span>
-          </div>
-          <div class="np-play-row">
-            <span>00:00</span>
-            <div class="np-scrub" aria-hidden="true"><span></span></div>
-            <span id="t-time">00:00 / 00:00</span>
-          </div>
-        </div>
+        <button class="new-folder-btn" id="newFolderBtn" type="button">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"></path>
+          </svg>
+          New folder
+        </button>
 
-        <div class="stem-energy">
-          <h3>Stem Energy <span>i</span></h3>
-          <div class="energy-row original" data-stem="original"><span>Original</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row vocals" data-stem="vocals"><span>Vocals</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row drums" data-stem="drums"><span>Drums</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row bass" data-stem="bass"><span>Bass</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row guitar" data-stem="guitar"><span>Guitar</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row piano" data-stem="piano"><span>Piano</span><b style="--v:0%"></b><em>0%</em></div>
-          <div class="energy-row other" data-stem="other"><span>Others</span><b style="--v:0%"></b><em>0%</em></div>
-        </div>
+        <div class="catalog-list" id="catalogList"></div>
 
-        <div class="analysis-card key-card">
-          <h3>Key &amp; Scale</h3>
-          <strong id="summary-key">—</strong>
-          <small id="summary-scale"></small>
-          <div class="confidence-ring hidden" id="summary-confidence"></div>
-          <small id="summary-confidence-label" class="hidden">Confidence</small>
-        </div>
+        <!-- Collapsed strip (just thumbs) -->
+        <div class="cat-collapsed-strip" id="catalogStrip"></div>
 
-        <div class="analysis-card loudness-card hidden" id="loudness-card">
-          <h3>Loudness</h3>
-          <strong><span id="summary-lufs">—</span> <small>LUFS<br />Integrated</small></strong>
-          <strong><span id="summary-peak">—</span> <small>dBFS<br />Peak</small></strong>
-        </div>
+      </aside>
 
-        <div class="analysis-card beat-card">
-          <h3>Beat Overview</h3>
-          <div class="beat-values">
-            <strong id="summary-bpm">— <small>BPM</small></strong>
-            <strong>4/4 <small>Time Sig.</small></strong>
-          </div>
-        </div>
-      </div>
+      <!-- ─ Right: Main area ─ -->
+      <div id="lanes">
 
-      <!-- ─ Job progress ─ -->
-      <div id="job" class="job hidden" role="status" aria-live="polite">
-        <div class="job-header">
-          <div id="job-title" class="title"></div>
-          <div id="job-stage" class="stage"></div>
-          <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
-        </div>
-        <progress id="progress" max="100" value="0"></progress>
-        <div id="job-detail" class="job-detail" aria-live="polite"></div>
-      </div>
-
-      <div id="error" class="error hidden"></div>
-
-      <!-- ─ Lanes panel ─ -->
-      <div id="lanes" class="studio-dashboard">
-        <div class="studio-top-grid">
-          <section class="presence-panel surface-panel" aria-hidden="true">
-            <div class="panel-title">Stem Presence Timeline <span>i</span></div>
-            <div class="presence-ruler" id="presence-ruler">
-              <span></span><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b>
+        <!-- ─ Topbar ─ -->
+        <header class="topbar appbar">
+          <div class="brand-group">
+            <div class="brand-row">
+              <h1 class="brand">StemDeck</h1>
+              <span class="beta-badge">ALPHA</span>
             </div>
-            <div class="presence-grid">
-              <div class="presence-labels">
-                <span class="vocals">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                    <path d="M12 19v3"></path>
-                  </svg>
-                  Vocals
-                </span>
-                <span class="drums">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path>
-                    <circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle>
-                    <path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path>
-                    <path d="M10 18l-2 3"></path><path d="M14 18l2 3"></path><path d="M4 18l16-8"></path>
-                  </svg>
-                  Drums
-                </span>
-                <span class="bass">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path>
-                    <path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path>
-                    <path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path><path d="M20.5 3v4"></path>
-                  </svg>
-                  Bass
-                </span>
-                <span class="guitar">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path>
-                    <path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path>
-                    <path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path>
-                  </svg>
-                  Guitar
-                </span>
-                <span class="piano">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <rect x="3" y="5" width="18" height="14" rx="2"></rect>
-                    <path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path>
-                    <path d="M9.5 5v7"></path><path d="M14.5 5v7"></path>
-                  </svg>
-                  Piano
-                </span>
-                <span class="other">
-                  <svg class="presence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
-                  </svg>
-                  Others
-                </span>
-              </div>
-              <div class="presence-bars">
-                <i class="vocals" data-stem="vocals"></i><i class="drums" data-stem="drums"></i><i class="bass" data-stem="bass"></i><i class="guitar" data-stem="guitar"></i><i class="piano" data-stem="piano"></i><i class="other" data-stem="other"></i>
-                <div class="presence-playhead hidden" id="presence-playhead" aria-hidden="true"></div>
-              </div>
-            </div>
-          </section>
+            <span class="brand-sub">AI stem separation for YouTube</span>
+            <button type="button" id="appbarToggle" class="appbar-toggle" aria-label="Toggle import panel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              New track
+            </button>
+          </div>
 
-          <section class="preview-panel surface-panel">
-            <div class="preview-mixer-body">
-              <div id="mixer" class="mixer-column"></div>
-            </div>
-          </section>
-        </div>
-
-        <div class="studio-wave-grid">
-          <aside class="stems-panel" aria-label="Waveform lane icons">
-            <div class="panel-title">Stems</div>
-            <div class="stem-list">
-              <span class="original" data-stem="original"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>Original</em><b class="stem-mute" data-stem="original" role="button" tabindex="0" aria-label="Mute Original" aria-pressed="false">M</b><b class="stem-solo" data-stem="original" role="button" tabindex="0" aria-label="Solo Original" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="original" aria-label="Solo only Original"></button><i class="mini-meter"></i></span>
-              <span class="vocals" data-stem="vocals"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path></svg>Vocals</em><b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals" aria-pressed="false">M</b><b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="vocals" aria-label="Solo only Vocals"></button><i class="mini-meter"></i></span>
-              <span class="drums" data-stem="drums"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path><circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle><path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path><path d="M10 18l-2 3"></path><path d="M14 18l2 3"></path><path d="M4 18l16-8"></path></svg>Drums</em><b class="stem-mute" data-stem="drums" role="button" tabindex="0" aria-label="Mute Drums" aria-pressed="false">M</b><b class="stem-solo" data-stem="drums" role="button" tabindex="0" aria-label="Solo Drums" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="drums" aria-label="Solo only Drums"></button><i class="mini-meter"></i></span>
-              <span class="bass" data-stem="bass"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path><path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path><path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path><path d="M20.5 3v4"></path></svg>Bass</em><b class="stem-mute" data-stem="bass" role="button" tabindex="0" aria-label="Mute Bass" aria-pressed="false">M</b><b class="stem-solo" data-stem="bass" role="button" tabindex="0" aria-label="Solo Bass" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="bass" aria-label="Solo only Bass"></button><i class="mini-meter"></i></span>
-              <span class="guitar" data-stem="guitar"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path><path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path><path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path></svg>Guitar</em><b class="stem-mute" data-stem="guitar" role="button" tabindex="0" aria-label="Mute Guitar" aria-pressed="false">M</b><b class="stem-solo" data-stem="guitar" role="button" tabindex="0" aria-label="Solo Guitar" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="guitar" aria-label="Solo only Guitar"></button><i class="mini-meter"></i></span>
-              <span class="piano" data-stem="piano"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path><path d="M9.5 5v7"></path><path d="M14.5 5v7"></path></svg>Piano</em><b class="stem-mute" data-stem="piano" role="button" tabindex="0" aria-label="Mute Piano" aria-pressed="false">M</b><b class="stem-solo" data-stem="piano" role="button" tabindex="0" aria-label="Solo Piano" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="piano" aria-label="Solo only Piano"></button><i class="mini-meter"></i></span>
-              <span class="other" data-stem="other"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path></svg>Others</em><b class="stem-mute" data-stem="other" role="button" tabindex="0" aria-label="Mute Other" aria-pressed="false">M</b><b class="stem-solo" data-stem="other" role="button" tabindex="0" aria-label="Solo Other" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="other" aria-label="Solo only Other"></button><i class="mini-meter"></i></span>
-            </div>
-          </aside>
-
-          <section class="wave-editor surface-panel">
-            <div class="wave-toolbar">
-              <div class="zoom-tools">
-                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <circle cx="11" cy="11" r="7"></circle>
-                  <path d="m21 21-4.3-4.3"></path>
+          <form id="job-form" class="appbar-import-panel">
+            <div class="import-input-row">
+              <label class="url-wrap">
+                <svg class="url-prefix" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"></path>
+                  <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"></path>
                 </svg>
-                <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-                <input id="zoom-track" class="zoom-slider" type="range" min="1" max="32" step="0.01" value="1" aria-label="Waveform zoom" />
-                <button id="zoom-in" type="button" aria-label="Zoom in">＋</button>
-                <button id="zoom-fit" type="button">Fit</button>
-                <button class="kebab hidden" type="button" aria-label="More options">⋮</button>
-              </div>
+                <input
+                  id="url"
+                  type="url"
+                  placeholder="Paste a YouTube link — or drop an MP3/WAV here…"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <input id="fileInput" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" style="display:none" aria-hidden="true" />
+                <div class="file-pill hidden" id="filePill">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
+                  </svg>
+                  <span class="file-name" id="fileName"></span>
+                  <span class="file-size" id="fileSize"></span>
+                  <button class="file-clear" id="fileClear" type="button" aria-label="Remove file">×</button>
+                </div>
+              </label>
+              <button id="submit" class="btn-primary" type="submit">
+                <svg class="icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"></path>
+                  <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path>
+                </svg>
+                <span>Process</span>
+              </button>
             </div>
-            <div class="wave-scroll" id="wave-scroll">
-              <div class="wave-canvas" id="wave-canvas">
-                <div class="lanes-ruler" data-position="top">
-                  <div class="lanes-ruler-time" id="ruler-time">
-                    <div class="playhead-marker" aria-hidden="true">
-                      <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-                        <polygon points="0,0 10,0 5,8" fill="#d8a84a"></polygon>
-                      </svg>
-                    </div>
+            <div class="stem-choice-row">
+              <span>Stems to extract</span>
+              <button class="stem-choice vocals" type="button" data-stem="vocals" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                  <path d="M12 19v3"></path>
+                </svg>
+                <span>Vocals</span>
+              </button>
+              <button class="stem-choice drums" type="button" data-stem="drums" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path>
+                  <circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle>
+                  <path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path>
+                  <path d="M4 18l16-8"></path>
+                </svg>
+                <span>Drums</span>
+              </button>
+              <button class="stem-choice bass" type="button" data-stem="bass" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path>
+                  <path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path>
+                  <path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path>
+                </svg>
+                <span>Bass</span>
+              </button>
+              <button class="stem-choice guitar" type="button" data-stem="guitar" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path>
+                  <path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path>
+                  <path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path>
+                </svg>
+                <span>Guitar</span>
+              </button>
+              <button class="stem-choice piano" type="button" data-stem="piano" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                  <path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path>
+                  <path d="M9.5 5v7"></path><path d="M14.5 5v7"></path>
+                </svg>
+                <span>Piano</span>
+              </button>
+              <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
+                </svg>
+                <span>Others</span>
+              </button>
+            </div>
+          </form>
+        </header>
+
+        <!-- ─ Job progress ─ -->
+        <div id="job" class="job hidden" role="status" aria-live="polite">
+          <div class="job-header">
+            <div id="job-title" class="title"></div>
+            <div id="job-stage" class="stage"></div>
+            <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
+          </div>
+          <progress id="progress" max="100" value="0"></progress>
+          <div id="job-detail" class="job-detail" aria-live="polite"></div>
+        </div>
+
+        <div id="error" class="error hidden"></div>
+
+        <!-- ─ Widget: Information ─ -->
+        <section class="widget surface-panel" data-widget="info">
+          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
+            <div class="title-block">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 8v4M12 16h.01"></path>
+              </svg>
+              <h3>Information</h3>
+            </div>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </div>
+          <div class="widget-body">
+            <div class="body-inner">
+              <div id="transport" class="now-playing">
+                <div class="np-art" id="np-art">
+                  <div class="np-art-placeholder" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M9 18V5l12-2v13"></path>
+                      <circle cx="6" cy="18" r="3"></circle>
+                      <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                  </div>
+                  <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+                </div>
+
+                <div class="np-info">
+                  <div class="np-title" id="title"></div>
+                  <div class="np-chips">
+                    <span class="chip" id="t-bpm">— BPM</span>
+                    <span class="chip" id="t-key">— —</span>
+                    <span class="chip" id="t-stems-chip">— Stems</span>
+                  </div>
+                  <div class="np-play-row">
+                    <span>00:00</span>
+                    <div class="np-scrub" aria-hidden="true"><span></span></div>
+                    <span id="t-time">00:00 / 00:00</span>
                   </div>
                 </div>
-                <div class="waves-column">
-                  <div id="waves-grid" class="waves-grid" aria-hidden="true"></div>
-                  <div id="multitrack-container"></div>
-                  <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
+
+                <div class="stem-energy">
+                  <h3>Stem Energy <span>i</span></h3>
+                  <div class="energy-row original" data-stem="original"><span>Original</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row vocals" data-stem="vocals"><span>Vocals</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row drums" data-stem="drums"><span>Drums</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row bass" data-stem="bass"><span>Bass</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row guitar" data-stem="guitar"><span>Guitar</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row piano" data-stem="piano"><span>Piano</span><b style="--v:0%"></b><em>0%</em></div>
+                  <div class="energy-row other" data-stem="other"><span>Others</span><b style="--v:0%"></b><em>0%</em></div>
+                </div>
+
+                <div class="analysis-card key-card">
+                  <h3>Key &amp; Scale</h3>
+                  <strong id="summary-key">—</strong>
+                  <small id="summary-scale"></small>
+                  <div class="confidence-ring hidden" id="summary-confidence"></div>
+                  <small id="summary-confidence-label" class="hidden">Confidence</small>
+                </div>
+
+                <div class="analysis-card loudness-card hidden" id="loudness-card">
+                  <h3>Loudness</h3>
+                  <strong><span id="summary-lufs">—</span> <small>LUFS<br />Integrated</small></strong>
+                  <strong><span id="summary-peak">—</span> <small>dBFS<br />Peak</small></strong>
+                </div>
+
+                <div class="analysis-card beat-card">
+                  <h3>Beat Overview</h3>
+                  <div class="beat-values">
+                    <strong id="summary-bpm">— <small>BPM</small></strong>
+                    <strong>4/4 <small>Time Sig.</small></strong>
+                  </div>
                 </div>
               </div>
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
 
+        <!-- ─ Widget: Waveform ─ -->
+        <section class="widget surface-panel" data-widget="waveform">
+          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
+            <div class="title-block">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
+              </svg>
+              <h3>Waveform</h3>
+            </div>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </div>
+          <div class="widget-body">
+            <div class="body-inner">
+              <!-- Presence panel hidden but in DOM for JS -->
+              <div style="display:none" aria-hidden="true">
+                <section class="presence-panel surface-panel">
+                  <div class="panel-title">Stem Presence Timeline <span>i</span></div>
+                  <div class="presence-ruler" id="presence-ruler">
+                    <span></span><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b>
+                  </div>
+                  <div class="presence-grid">
+                    <div class="presence-labels">
+                      <span class="vocals">Vocals</span>
+                      <span class="drums">Drums</span>
+                      <span class="bass">Bass</span>
+                      <span class="guitar">Guitar</span>
+                      <span class="piano">Piano</span>
+                      <span class="other">Others</span>
+                    </div>
+                    <div class="presence-bars">
+                      <i class="vocals" data-stem="vocals"></i>
+                      <i class="drums" data-stem="drums"></i>
+                      <i class="bass" data-stem="bass"></i>
+                      <i class="guitar" data-stem="guitar"></i>
+                      <i class="piano" data-stem="piano"></i>
+                      <i class="other" data-stem="other"></i>
+                      <div class="presence-playhead hidden" id="presence-playhead" aria-hidden="true"></div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="studio-wave-grid">
+                <aside class="stems-panel" aria-label="Waveform lane icons">
+                  <div class="panel-title">Stems</div>
+                  <div class="stem-list">
+                    <span class="original" data-stem="original"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>Original</em><b class="stem-mute" data-stem="original" role="button" tabindex="0" aria-label="Mute Original" aria-pressed="false">M</b><b class="stem-solo" data-stem="original" role="button" tabindex="0" aria-label="Solo Original" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="original" aria-label="Solo only Original"></button><i class="mini-meter"></i></span>
+                    <span class="vocals" data-stem="vocals"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path></svg>Vocals</em><b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals" aria-pressed="false">M</b><b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="vocals" aria-label="Solo only Vocals"></button><i class="mini-meter"></i></span>
+                    <span class="drums" data-stem="drums"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path><circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle><path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path><path d="M10 18l-2 3"></path><path d="M14 18l2 3"></path><path d="M4 18l16-8"></path></svg>Drums</em><b class="stem-mute" data-stem="drums" role="button" tabindex="0" aria-label="Mute Drums" aria-pressed="false">M</b><b class="stem-solo" data-stem="drums" role="button" tabindex="0" aria-label="Solo Drums" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="drums" aria-label="Solo only Drums"></button><i class="mini-meter"></i></span>
+                    <span class="bass" data-stem="bass"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path><path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path><path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path><path d="M20.5 3v4"></path></svg>Bass</em><b class="stem-mute" data-stem="bass" role="button" tabindex="0" aria-label="Mute Bass" aria-pressed="false">M</b><b class="stem-solo" data-stem="bass" role="button" tabindex="0" aria-label="Solo Bass" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="bass" aria-label="Solo only Bass"></button><i class="mini-meter"></i></span>
+                    <span class="guitar" data-stem="guitar"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path><path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path><path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path></svg>Guitar</em><b class="stem-mute" data-stem="guitar" role="button" tabindex="0" aria-label="Mute Guitar" aria-pressed="false">M</b><b class="stem-solo" data-stem="guitar" role="button" tabindex="0" aria-label="Solo Guitar" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="guitar" aria-label="Solo only Guitar"></button><i class="mini-meter"></i></span>
+                    <span class="piano" data-stem="piano"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path><path d="M9.5 5v7"></path><path d="M14.5 5v7"></path></svg>Piano</em><b class="stem-mute" data-stem="piano" role="button" tabindex="0" aria-label="Mute Piano" aria-pressed="false">M</b><b class="stem-solo" data-stem="piano" role="button" tabindex="0" aria-label="Solo Piano" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="piano" aria-label="Solo only Piano"></button><i class="mini-meter"></i></span>
+                    <span class="other" data-stem="other"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path></svg>Others</em><b class="stem-mute" data-stem="other" role="button" tabindex="0" aria-label="Mute Other" aria-pressed="false">M</b><b class="stem-solo" data-stem="other" role="button" tabindex="0" aria-label="Solo Other" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="other" aria-label="Solo only Other"></button><i class="mini-meter"></i></span>
+                  </div>
+                </aside>
+
+                <section class="wave-editor surface-panel">
+                  <div class="wave-toolbar">
+                    <div class="zoom-tools">
+                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7"></circle>
+                        <path d="m21 21-4.3-4.3"></path>
+                      </svg>
+                      <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+                      <input id="zoom-track" class="zoom-slider" type="range" min="1" max="32" step="0.01" value="1" aria-label="Waveform zoom" />
+                      <button id="zoom-in" type="button" aria-label="Zoom in">＋</button>
+                      <button id="zoom-fit" type="button">Fit</button>
+                      <button class="kebab hidden" type="button" aria-label="More options">⋮</button>
+                    </div>
+                  </div>
+                  <div class="wave-scroll" id="wave-scroll">
+                    <div class="wave-canvas" id="wave-canvas">
+                      <div class="lanes-ruler" data-position="top">
+                        <div class="lanes-ruler-time" id="ruler-time">
+                          <div class="playhead-marker" aria-hidden="true">
+                            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                              <polygon points="0,0 10,0 5,8" fill="#d8a84a"></polygon>
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="waves-column">
+                        <div id="waves-grid" class="waves-grid" aria-hidden="true"></div>
+                        <div id="multitrack-container"></div>
+                        <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─ Widget: Mixer ─ -->
+        <section class="widget surface-panel" data-widget="mixer">
+          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
+            <div class="title-block">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="4" y1="21" x2="4" y2="14"></line>
+                <line x1="4" y1="10" x2="4" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12" y2="3"></line>
+                <line x1="20" y1="21" x2="20" y2="16"></line>
+                <line x1="20" y1="12" x2="20" y2="3"></line>
+                <line x1="1" y1="14" x2="7" y2="14"></line>
+                <line x1="9" y1="8" x2="15" y2="8"></line>
+                <line x1="17" y1="16" x2="23" y2="16"></line>
+              </svg>
+              <h3>Mixer</h3>
+            </div>
+            <span class="widget-hint">drag knobs to set gain · M = mute · S = solo</span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </div>
+          <div class="widget-body">
+            <div class="body-inner">
+              <div class="preview-mixer-body">
+                <div id="mixer" class="mixer-column"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─ Transport footer ─ -->
         <footer class="transport-footer">
           <div class="np-transport">
             <span id="footer-time-elapsed">00:00</span>
@@ -378,7 +412,7 @@
           </div>
           <div class="footer-actions">
             <a class="footer-btn" href="https://github.com/thcp/stemdeck/issues" target="_blank" rel="noopener noreferrer">
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"></circle>
                 <path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.2-2.2 1.4-2.7 2.8"></path>
                 <path d="M12 17h.01"></path>
@@ -386,7 +420,7 @@
               <span>Help</span>
             </a>
             <a class="footer-btn" href="https://buymeacoffee.com/tha.les" target="_blank" rel="noopener noreferrer">
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M17 8h1a4 4 0 0 1 0 8h-1"></path>
                 <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"></path>
                 <line x1="6" y1="2" x2="6" y2="4"></line>
@@ -397,18 +431,10 @@
             </a>
           </div>
         </footer>
-      </div>
 
-      <footer class="site-footer">
-        <span>© 2024 StemDeck. All rights reserved.</span>
-        <nav aria-label="Footer">
-          <a href="#">Terms of Service</a>
-          <span>•</span>
-          <a href="#">Privacy Policy</a>
-          <a class="help-btn" href="https://github.com/thcp/stemdeck/issues" target="_blank" rel="noopener noreferrer">Help</a>
-        </nav>
-      </footer>
-    </div>
+      </div><!-- /#lanes -->
+
+    </div><!-- /.app -->
 
     <script type="module" src="/js/main.js"></script>
   </body>

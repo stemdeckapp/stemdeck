@@ -8,6 +8,7 @@ import { wireJobForm } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
+import { initCatalog } from "./catalog.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -70,6 +71,86 @@ wireTransportButtons();
 wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
+initCatalog();
+wireFileDrop();
+wireAppbarToggle();
+
+// ─── File drop on URL input ───
+
+function wireFileDrop() {
+  const urlWrap = document.querySelector(".url-wrap");
+  const urlInput = document.getElementById("url");
+  const fileInput = document.getElementById("fileInput");
+  const filePill = document.getElementById("filePill");
+  const fileName = document.getElementById("fileName");
+  const fileSize = document.getElementById("fileSize");
+  const fileClear = document.getElementById("fileClear");
+  if (!urlWrap || !urlInput || !fileInput || !filePill) return;
+
+  function formatBytes(n) {
+    return n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function applyFile(file) {
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) {
+      alert("Only MP3 and WAV files are supported.");
+      return;
+    }
+    if (fileName) fileName.textContent = file.name;
+    if (fileSize) fileSize.textContent = formatBytes(file.size);
+    filePill.classList.remove("hidden");
+    urlWrap.classList.add("has-file");
+    // Store file on the hidden input for job.js to pick up
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    urlInput.value = "";
+    urlInput.removeAttribute("required");
+  }
+
+  function clearFile() {
+    filePill.classList.add("hidden");
+    urlWrap.classList.remove("has-file");
+    fileInput.value = "";
+    urlInput.setAttribute("required", "");
+  }
+
+  fileClear?.addEventListener("click", clearFile);
+
+  urlWrap.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    urlWrap.classList.add("drag-over");
+  });
+  urlWrap.addEventListener("dragleave", (e) => {
+    if (!urlWrap.contains(e.relatedTarget)) urlWrap.classList.remove("drag-over");
+  });
+  urlWrap.addEventListener("drop", (e) => {
+    e.preventDefault();
+    urlWrap.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) applyFile(file);
+  });
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) applyFile(fileInput.files[0]);
+  });
+}
+
+// ─── Appbar toggle (collapse import form when track is loaded) ───
+
+function wireAppbarToggle() {
+  const btn = document.getElementById("appbarToggle");
+  const app = document.querySelector(".app");
+  if (!btn || !app) return;
+  btn.addEventListener("click", () => {
+    const expanded = app.classList.toggle("appbar-expanded");
+    btn.setAttribute("aria-expanded", String(expanded));
+  });
+}
 
 // ─── Keyboard shortcuts ───
 
@@ -106,15 +187,30 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("click", (e) => {
   const dl = e.target.closest("a.lane-dl");
   if (dl?.href) {
-    e.preventDefault();
-    window.__TAURI__.core.invoke("open_url", { url: dl.href });
+    const openUrl = window.__TAURI__?.core?.invoke;
+    if (openUrl) {
+      e.preventDefault();
+      openUrl("open_url", { url: dl.href });
+    }
     return;
   }
   const anchor = e.target.closest('a[target="_blank"]');
   if (anchor?.href) {
-    e.preventDefault();
-    window.__TAURI__.core.invoke("open_url", { url: anchor.href });
+    const openUrl = window.__TAURI__?.core?.invoke;
+    if (openUrl) {
+      e.preventDefault();
+      openUrl("open_url", { url: anchor.href });
+    }
   }
+});
+
+// ─── Global error logging ───
+
+window.addEventListener("error", (e) => {
+  console.error("[app:error]", e.message, "\n", e.filename, ":", e.lineno, "\n", e.error?.stack ?? "");
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[app:unhandledrejection]", e.reason?.message ?? e.reason, "\n", e.reason?.stack ?? "");
 });
 
 // ─── Bootstrap ───

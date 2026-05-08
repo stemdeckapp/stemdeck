@@ -7,6 +7,7 @@ import {
 import { destroyPlayer } from "./player.js";
 import { wireUpAudio } from "./player.js";
 import { stagePhrases } from "./phrases.js";
+import { addTrackToLibrary, setCurrentTrack, updateTrackStatus } from "./catalog.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -16,6 +17,7 @@ let phraseTimerId = null;
 let lastStatus = null;
 let jobPollTimerId = null;
 const renderedJobs = new Set();
+const jobSources = new Map();
 
 const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
 
@@ -94,6 +96,21 @@ export function reset() {
 }
 
 function applyState(state) {
+  if (state.job_id) {
+    addTrackToLibrary({
+      id: state.job_id,
+      title: state.title || urlInput.value || "Processing track",
+      channel: state.status === "done" ? "Extracted" : "Processing",
+      thumb: state.thumbnail,
+      stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
+      selectedStems: state.selected_stems || [...selectedStems],
+      audioStems: state.stems || [],
+      status: state.status,
+      duration: state.duration,
+      sourceUrl: jobSources.get(state.job_id) || urlInput.value,
+    });
+    setCurrentTrack(state.job_id);
+  }
   if (state.title) {
     jobTitleEl.textContent = state.title;
     titleEl.textContent = state.title;
@@ -153,14 +170,17 @@ function applyState(state) {
 
   if (state.status === "error") {
     stopJobPolling();
+    updateTrackStatus(state.job_id, "error");
     showError(state.error || "Unknown error");
     setSubmitProcessing(false);
   } else if (state.status === "cancelled") {
     stopJobPolling();
+    updateTrackStatus(state.job_id, "cancelled");
     jobBox.classList.add("hidden");
     setSubmitProcessing(false);
   } else if (state.status === "done") {
     stopJobPolling();
+    updateTrackStatus(state.job_id, "done");
     jobBox.classList.add("hidden");
     if (!renderedJobs.has(state.job_id)) {
       renderedJobs.add(state.job_id);
@@ -310,6 +330,19 @@ export function wireJobForm() {
       return;
     }
     setCurrentJobId(jobId);
+    jobSources.set(jobId, urlInput.value);
+    addTrackToLibrary({
+      id: jobId,
+      title: urlInput.value || "Processing track",
+      channel: "Processing",
+      thumb: "",
+      stems: [...selectedStems],
+      selectedStems: [...selectedStems],
+      audioStems: [],
+      status: "processing",
+      sourceUrl: urlInput.value,
+    });
+    setCurrentTrack(jobId);
 
     jobBox.classList.add("hidden");
     jobCancelBtn.classList.add("hidden");

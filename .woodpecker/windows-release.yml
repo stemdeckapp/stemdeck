@@ -1,9 +1,5 @@
 when:
   - event: release
-  - event: manual
-
-depends_on:
-  - ci
 
 steps:
   build-windows-nvidia:

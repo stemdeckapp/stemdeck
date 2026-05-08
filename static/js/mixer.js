@@ -92,12 +92,11 @@ export function applyMix() {
 }
 
 export function updateLaneKnobVisual(knobEl, v) {
-  // CSS pseudo-element ::before reads --lane-pos to position the thumb
-  // along the track. 0 = bottom (silent), 1 = top (max). The indicator
-  // <div> is legacy from the previous rotary look and stays display:none.
   const frac = Math.max(0, Math.min(1, v / LANE_VOLUME_MAX));
   knobEl.style.setProperty("--lane-pos", frac.toFixed(3));
   knobEl.setAttribute("aria-valuenow", v.toFixed(2));
+  const val = knobEl.closest(".lane-header")?.querySelector(".mx-val");
+  if (val) val.textContent = String(Math.round(frac * 100));
 }
 
 export function setLaneVolume(name, v) {
@@ -262,7 +261,7 @@ function downloadIcon() {
 
 function makeVolumeKnob(stemName, color) {
   const wrap = document.createElement("div");
-  wrap.className = "lane-knob";
+  wrap.className = "lane-knob mx-fader";
   wrap.dataset.stem = stemName;
   wrap.tabIndex = 0;
   wrap.setAttribute("role", "slider");
@@ -270,25 +269,33 @@ function makeVolumeKnob(stemName, color) {
   wrap.setAttribute("aria-valuemin", "0");
   wrap.setAttribute("aria-valuemax", String(LANE_VOLUME_MAX));
   wrap.setAttribute("aria-valuenow", "1");
-  wrap.title = "Drag to adjust \u00b7 double-click to reset to 0 dB \u00b7 scroll to nudge";
+  wrap.title = "Drag to adjust \u00b7 double-click to reset to 0\u00a0dB \u00b7 scroll to nudge";
 
+  const track = document.createElement("div");
+  track.className = "mx-fader-track";
+  const fill = document.createElement("div");
+  fill.className = "mx-fader-fill";
+  fill.style.background = color;
+  const knob = document.createElement("div");
+  knob.className = "mx-fader-knob";
+  knob.style.background = color;
+  track.append(fill, knob);
+  wrap.appendChild(track);
+
+  // Legacy indicator kept for CSS compat (display:none via widgets.css)
   const indicator = document.createElement("div");
   indicator.className = "lane-knob-indicator";
-  indicator.style.background = color;
   wrap.appendChild(indicator);
 
   let dragging = false;
-  let startY = 0;
+  let startX = 0;
   let startVolume = 1;
-  let dragTravelPx = 86;
+
   const onMove = (e) => {
     if (!dragging) return;
-    const dy = startY - e.clientY;
-    // Map pointer travel to the actual rendered fader travel. The
-    // studio layout is responsive, so a hardcoded pixel constant makes
-    // the thumb move too fast on tall faders and too slowly on short
-    // ones.
-    setLaneVolume(stemName, startVolume + dy * (LANE_VOLUME_MAX / dragTravelPx));
+    const dx = e.clientX - startX;
+    const travelPx = Math.max(1, wrap.getBoundingClientRect().width);
+    setLaneVolume(stemName, startVolume + dx * (LANE_VOLUME_MAX / travelPx));
   };
   const onUp = () => {
     dragging = false;
@@ -299,11 +306,8 @@ function makeVolumeKnob(stemName, color) {
   wrap.addEventListener("pointerdown", (e) => {
     dragging = true;
     wrap.classList.add("dragging");
-    startY = e.clientY;
+    startX = e.clientX;
     startVolume = mixerState[stemName]?.volume ?? 1;
-    const trackHeight = wrap.getBoundingClientRect().height;
-    const thumbHeight = parseFloat(getComputedStyle(wrap, "::before").height) || 14;
-    dragTravelPx = Math.max(1, trackHeight - thumbHeight);
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
     e.preventDefault();
@@ -312,8 +316,6 @@ function makeVolumeKnob(stemName, color) {
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const cur = mixerState[stemName]?.volume ?? 1;
-    // Smaller step (0.04 / ~2% of full travel) so the wheel feels
-    // precise rather than coarse. Hold Shift for a 5x boost.
     const step = e.shiftKey ? 0.2 : 0.04;
     setLaneVolume(stemName, cur - Math.sign(e.deltaY) * step);
   }, { passive: false });
@@ -351,52 +353,75 @@ export function renderMixerRow(stem) {
   const display = STEM_DISPLAY[stem.name] || stem.name;
 
   const row = document.createElement("div");
-  row.className = "lane-header";
+  row.className = "lane-header mx-row";
   row.dataset.stem = stem.name;
 
+  // Col 1: stem icon
+  const iconCell = document.createElement("div");
+  iconCell.className = "mx-icon";
+  iconCell.style.color = color;
+  iconCell.innerHTML = stemIconMarkup(stem.name);
+
+  // Hidden lane-stripe kept for CSS compat
   const stripe = document.createElement("div");
   stripe.className = "lane-stripe";
   stripe.style.background = color;
+  row.appendChild(stripe);
 
-  const content = document.createElement("div");
-  content.className = "lane-content";
-  content.innerHTML = `
-    <div class="lane-name-row">
-      <button type="button" class="lane-icon-toggle active mute" aria-label="Toggle ${display}" aria-pressed="true">
-        ${stemIconMarkup(stem.name)}
-      </button>
-      <span class="lane-name" style="color:${color}">${display}</span>
-    </div>
-    <div class="lane-controls"></div>
-  `;
-  const controls = content.querySelector(".lane-controls");
-  controls.appendChild(makeVolumeKnob(stem.name, color));
-  controls.appendChild(makeMiniWaveSvg(stem.name, color));
+  // Col 2: name
+  const nameEl = document.createElement("span");
+  nameEl.className = "mx-name";
+  nameEl.style.color = color;
+  nameEl.textContent = display;
 
+  // Col 3: horizontal fader
+  const fader = makeVolumeKnob(stem.name, color);
+
+  // Col 4: VU meter
+  const vu = document.createElement("div");
+  vu.className = "lane-vu mx-meter";
+  vu.dataset.stem = stem.name;
+  vu.innerHTML = '<div class="lane-vu-bar mx-meter-fill"></div><div class="lane-vu-bar"></div>';
+
+  // Col 5: value label
+  const val = document.createElement("span");
+  val.className = "mx-val";
+  const initFrac = Math.max(0, Math.min(1, (state?.volume ?? 1) / LANE_VOLUME_MAX));
+  val.textContent = String(Math.round(initFrac * 100));
+
+  // Col 6: M button
+  const muteBtn = document.createElement("button");
+  muteBtn.type = "button";
+  muteBtn.className = "lane-icon-toggle mx-btn mute";
+  muteBtn.textContent = "M";
+  muteBtn.setAttribute("aria-label", `Mute ${display}`);
+  muteBtn.setAttribute("aria-pressed", String(state?.muted ?? false));
+  if (!state?.muted) muteBtn.classList.add("active");
+
+  // Col 7: S button
+  const soloBtn = document.createElement("button");
+  soloBtn.type = "button";
+  soloBtn.className = "solo ms-btn mx-btn";
+  soloBtn.textContent = "S";
+  soloBtn.setAttribute("aria-label", `Solo ${display}`);
+  soloBtn.setAttribute("aria-pressed", String(state?.soloed ?? false));
+  if (state?.soloed) soloBtn.classList.add("active");
+
+  // Col 8: download
   const dl = document.createElement("a");
-  dl.className = "lane-dl";
+  dl.className = "lane-dl mx-btn";
   dl.href = stem.url;
   dl.download = `${stem.name}.wav`;
   dl.title = `Download ${display}`;
   dl.appendChild(downloadIcon());
 
-  const vu = document.createElement("div");
-  vu.className = "lane-vu";
-  vu.dataset.stem = stem.name;
-  vu.innerHTML = '<div class="lane-vu-bar"></div><div class="lane-vu-bar"></div>';
-
-  row.append(stripe, content, vu, dl);
-
-  const muteBtn = row.querySelector(".lane-icon-toggle");
-
-  const refresh = () => {
-    muteBtn.classList.toggle("active", !state.muted);
-    muteBtn.setAttribute("aria-pressed", String(!state.muted));
-    row.classList.toggle("muted", state.muted);
-  };
-  refresh();
+  row.append(iconCell, nameEl, fader, vu, val, muteBtn, soloBtn, dl);
 
   muteBtn.addEventListener("click", () => toggleStemMute(stem.name));
+  soloBtn.addEventListener("click", () => toggleStemSolo(stem.name));
+
+  row.classList.toggle("muted", state?.muted ?? false);
+  if (state) updateLaneKnobVisual(fader, state.volume);
 
   return { row, vuEl: vu };
 }

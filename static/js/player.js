@@ -33,9 +33,7 @@ import { stopVuLoop } from "./audio.js";
 // hide the rows for unselected stems in the studio dashboard so the
 // user "only sees what they selected to extract".
 const _STEM_ROW_SELECTORS = [
-  ".mixer-column .lane-header[data-stem]",
   ".stem-list span[data-stem]",
-  ".energy-row[data-stem]",
   ".presence-bars i[data-stem]",
   ".presence-labels span",
   ".stem-waveform-row[data-stem]",
@@ -43,7 +41,12 @@ const _STEM_ROW_SELECTORS = [
 
 function applyStemSelectionFilter(presentNames) {
   const visibleTrackCount = Math.max(1, presentNames.size || TRACK_NAMES.length);
-  document.querySelector(".app")?.style.setProperty("--visible-track-count", String(visibleTrackCount));
+  const app = document.querySelector(".app");
+  app?.style.setProperty("--visible-track-count", String(visibleTrackCount));
+  app?.style.setProperty(
+    "--wave-widget-track-stack-h",
+    `${(visibleTrackCount * WAVEFORM_LANE_HEIGHT) + ((visibleTrackCount - 1) * WAVEFORM_SEPARATOR_HEIGHT)}px`,
+  );
   for (const sel of _STEM_ROW_SELECTORS) {
     for (const el of document.querySelectorAll(sel)) {
       const stem = el.dataset.stem
@@ -51,14 +54,59 @@ function applyStemSelectionFilter(presentNames) {
       el.classList.toggle("hidden", !presentNames.has(stem));
     }
   }
+  const visibleMixerNames = [];
+  if (presentNames.has("original")) visibleMixerNames.push("original");
+  for (const name of STEM_NAMES) {
+    if (presentNames.has(name)) visibleMixerNames.push(name);
+  }
+  for (const name of STEM_NAMES) {
+    if (visibleMixerNames.length >= STEM_NAMES.length) break;
+    if (!visibleMixerNames.includes(name)) visibleMixerNames.push(name);
+  }
+  const visibleMixerSet = new Set(visibleMixerNames);
+
+  for (const row of document.querySelectorAll(".mixer-column .lane-header[data-stem]")) {
+    const stem = row.dataset.stem;
+    const available = presentNames.has(stem);
+    row.classList.toggle("hidden", !visibleMixerSet.has(stem));
+    row.classList.toggle("unavailable", !available);
+    row.setAttribute("aria-disabled", String(!available));
+    for (const el of row.querySelectorAll("button, .lane-knob, .lane-dl")) {
+      el.classList.toggle("disabled", !available);
+      if (available) {
+        el.removeAttribute("aria-disabled");
+        if (el.matches(".lane-knob")) el.setAttribute("tabindex", "0");
+        else el.removeAttribute("tabindex");
+      } else {
+        el.setAttribute("aria-disabled", "true");
+        el.setAttribute("tabindex", "-1");
+      }
+      if ("disabled" in el) el.disabled = !available;
+    }
+  }
+  for (const row of document.querySelectorAll(".energy-row[data-stem]")) {
+    const available = presentNames.has(row.dataset.stem);
+    row.classList.toggle("unavailable", !available);
+    row.classList.remove("hidden");
+  }
 }
 
 function clearStemSelectionFilter() {
-  document.querySelector(".app")?.style.setProperty("--visible-track-count", String(TRACK_NAMES.length));
+  const app = document.querySelector(".app");
+  app?.style.setProperty("--visible-track-count", String(TRACK_NAMES.length));
+  app?.style.setProperty(
+    "--wave-widget-track-stack-h",
+    `${(TRACK_NAMES.length * WAVEFORM_LANE_HEIGHT) + ((TRACK_NAMES.length - 1) * WAVEFORM_SEPARATOR_HEIGHT)}px`,
+  );
   for (const sel of _STEM_ROW_SELECTORS) {
     for (const el of document.querySelectorAll(sel)) {
       el.classList.remove("hidden");
     }
+  }
+  for (const row of document.querySelectorAll(".mixer-column .lane-header[data-stem], .energy-row[data-stem]")) {
+    row.classList.remove("hidden");
+    row.classList.remove("unavailable");
+    row.removeAttribute("aria-disabled");
   }
 }
 
@@ -97,6 +145,8 @@ function renderPlaceholderTracks() {
 
 const OVERVIEW_WAVE_POINTS = 1500;
 const STEM_VU_FPS = 30;
+const WAVEFORM_LANE_HEIGHT = 64;
+const WAVEFORM_SEPARATOR_HEIGHT = 2;
 let visualRenderToken = 0;
 let visualAudioContext = null;
 let stemVuRafId = null;
@@ -429,6 +479,7 @@ function renderAllDecodedVisuals(stems, token) {
 
 export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("is-import");
+  document.querySelector(".app")?.classList.add("no-track");
   stopVuLoop();
   stopStemVuLoop();
   if (multitrack) {
@@ -491,6 +542,7 @@ export function destroyPlayer() {
 
 export function renderEmptyShell() {
   document.querySelector(".app")?.classList.remove("is-import");
+  document.querySelector(".app")?.classList.add("no-track");
   stopStemVuLoop();
   ensureMixerStateDefaults();
   mixerEl.innerHTML = "";
@@ -530,7 +582,19 @@ function renderAllMiniWaves(mt, stems) {
 }
 
 export function wireUpAudio(jobId, stems, duration, thumbnail) {
-  document.querySelector(".app")?.classList.remove("is-import");
+  const app = document.querySelector(".app");
+  app?.classList.remove("is-import");
+  app?.classList.remove("no-track");
+  app?.classList.remove("appbar-expanded");
+  document.getElementById("appbarToggle")?.setAttribute("aria-expanded", "false");
+  stopVuLoop();
+  stopStemVuLoop();
+  if (multitrack) {
+    multitrack.destroy();
+    setMultitrack(null);
+  }
+  playBtn.classList.remove("playing");
+  stopBtn.classList.remove("stopped");
   visualRenderToken += 1;
   const token = visualRenderToken;
   setCurrentJobId(jobId);
@@ -538,6 +602,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   loadMixIntoState(jobId);
   refreshMixerVisuals();
   setLaneControlsEnabled(true);
+  setLoopEnabled(false);
+  setLoopStart(0);
+  setLoopEnd(0);
+  loopBtn.classList.remove("active");
+  loopRegionEl.classList.add("hidden");
 
   // User-selected stems only. Backend produced all 6, but the import-
   // page toggles tell us which ones the user actually wanted to see.
@@ -584,7 +653,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       options: {
         waveColor: STEM_COLORS[s.name] || "#a0a0a0",
         progressColor: PROGRESS_COLOR,
-        height: 48,
+        height: WAVEFORM_LANE_HEIGHT,
+        barWidth: 3,
+        barGap: 2,
+        barRadius: 2,
         cursorWidth: 0,
       },
     })),
@@ -600,8 +672,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       rightButtonDrag: false,
       cursorWidth: 1.5,
       cursorColor: "#e54e4e",
-      trackBackground: "#050505",
-      trackBorderColor: "#2a2a2a",
+      trackBackground: "transparent",
+      trackBorderColor: "rgba(148, 163, 184, 0.08)",
     },
   );
   setMultitrack(mt);
@@ -619,6 +691,19 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   };
 
   mt.once("canplay", () => {
+    const ctx = mt.audioContext;
+    console.debug(
+      `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,
+      mt.audios?.map((a, i) => `${stems[i]?.name}:${a?.constructor?.name}`),
+    );
+    // Log any audio element load errors
+    mt.audios?.forEach((a, i) => {
+      if (a instanceof HTMLMediaElement) {
+        a.addEventListener("error", () =>
+          console.error(`[player] audio error stem[${i}] ${stems[i]?.name}:`, a.error?.message, a.error?.code),
+        { once: true });
+      }
+    });
     if (!totalDuration) setTotalDuration(mt.getDuration() || 0);
     timeEl.textContent = `00:00 / ${fmtTime(totalDuration)}`;
     buildRuler(totalDuration);
