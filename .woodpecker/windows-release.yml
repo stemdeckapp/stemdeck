@@ -52,7 +52,7 @@ steps:
 
         Write-Host "Running ClamAV scan over dist/..."
         docker run --rm -v "${PWD}/dist:/scan:ro" clamav/clamav:latest `
-          clamscan --recursive --infected --bell --summary /scan
+          clamscan --recursive --infected --bell /scan
         if ($LASTEXITCODE -ne 0) {
           throw "ClamAV scan failed or reported infected files. Exit code: $LASTEXITCODE"
         }
