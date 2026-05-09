@@ -832,6 +832,23 @@
   visibility: hidden;
 }
 
+.wave-loading-msg {
+  display: none;
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.6);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.wave-loading-overlay.stalled .wave-loading-msg {
+  display: block;
+}
+
 .wave-loading-glow {
   position: absolute;
   inset: 0;

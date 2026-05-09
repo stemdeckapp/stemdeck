@@ -582,7 +582,10 @@ function renderAllMiniWaves(mt, stems) {
 }
 
 function setWaveformLoading(loading) {
-  document.getElementById("waveLoadingOverlay")?.classList.toggle("hidden", !loading);
+  const el = document.getElementById("waveLoadingOverlay");
+  if (!el) return;
+  el.classList.toggle("hidden", !loading);
+  if (!loading) el.classList.remove("stalled");
 }
 
 export function buildStripStems() {
@@ -618,8 +621,14 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   visualRenderToken += 1;
   const token = visualRenderToken;
   window.setTimeout(() => {
-    if (token === visualRenderToken) setWaveformLoading(false);
+    const el = document.getElementById("waveLoadingOverlay");
+    if (token === visualRenderToken && el && !el.classList.contains("hidden")) {
+      el.classList.add("stalled");
+    }
   }, 20000);
+  window.setTimeout(() => {
+    if (token === visualRenderToken) setWaveformLoading(false);
+  }, 60000);
   setCurrentJobId(jobId);
   setTotalDuration(duration || 0);
   loadMixIntoState(jobId);
