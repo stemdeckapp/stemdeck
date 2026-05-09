@@ -49,6 +49,15 @@ steps:
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
           throw "GitHub CLI is required on the Windows agent to upload release assets."
         }
+      - |
+        $scanNote = "Windows portable packages were scanned with ClamAV in CI before upload."
+        $body = gh release view "$env:CI_COMMIT_TAG" --repo "thcp/stemdeck" --json body --jq ".body"
+        if ($body -notlike "*$scanNote*") {
+          $notesPath = Join-Path $env:TEMP "stemdeck-release-notes.md"
+          $updatedBody = (($body.TrimEnd()), "", "### Artifact scan", "", "- $scanNote") -join "`n"
+          Set-Content -Path $notesPath -Value $updatedBody -Encoding UTF8
+          gh release edit "$env:CI_COMMIT_TAG" --repo "thcp/stemdeck" --notes-file $notesPath
+        }
       - gh release upload "$env:CI_COMMIT_TAG"
           "dist/StemDeck-Windows-x64.NVIDIA.zip"
           "dist/StemDeck-Windows-x64.NVIDIA.zip.sha256"
