@@ -47,6 +47,34 @@ function minDelay(ms) {
   ]);
 }
 
+function formatElapsed(startedAt) {
+  const seconds = Math.floor((Date.now() - startedAt) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
+}
+
+function startProgressStatus(messages) {
+  const startedAt = Date.now();
+  let messageIndex = 0;
+
+  const update = () => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    while (
+      messageIndex + 1 < messages.length &&
+      elapsedSeconds >= messages[messageIndex + 1].afterSeconds
+    ) {
+      messageIndex += 1;
+    }
+
+    setStatus(`${messages[messageIndex].text} Elapsed: ${formatElapsed(startedAt)}.`);
+  };
+
+  update();
+  const timer = window.setInterval(update, 10000);
+  return () => window.clearInterval(timer);
+}
+
 async function runSetup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
@@ -89,25 +117,61 @@ async function runSetup() {
       setStep("ffmpeg", "done");
     } else {
       await runStep("ffmpeg", async () => {
-        setStatus("Downloading FFmpeg... (this may take a minute)");
-        const assets = await invoke("ensure_external_assets");
-        if (!assets.ffmpegReady) {
-          throw new Error(
-            "FFmpeg setup did not complete. Check your internet connection and retry."
-          );
+        const stopProgress = startProgressStatus([
+          {
+            afterSeconds: 0,
+            text: "Downloading FFmpeg... this can take a few minutes on first run.",
+          },
+          {
+            afterSeconds: 60,
+            text: "Still downloading FFmpeg... slow networks or antivirus scans can delay this.",
+          },
+        ]);
+
+        try {
+          const assets = await invoke("ensure_external_assets");
+          if (!assets.ffmpegReady) {
+            throw new Error(
+              "FFmpeg setup did not complete. Check your internet connection and retry."
+            );
+          }
+        } finally {
+          stopProgress();
         }
       });
     }
 
     await runStep("gpu", async () => {
-      setStatus("Configuring compute device...");
-      const gpu = await invoke("ensure_torch_device");
-      gpuSummary = gpu.gpuDetected
-        ? gpu.cudaVerified
-          ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`
-          : `${gpu.gpuName} found - falling back to CPU (CUDA unverified)`
-        : "No NVIDIA GPU - stem separation will use CPU";
-      return gpu;
+      const stopProgress = startProgressStatus([
+        {
+          afterSeconds: 0,
+          text: "Checking NVIDIA GPU and compute support...",
+        },
+        {
+          afterSeconds: 20,
+          text: "Installing NVIDIA acceleration if needed... first run can take 5-15 minutes.",
+        },
+        {
+          afterSeconds: 120,
+          text: "Still installing NVIDIA acceleration... CUDA Torch packages are large.",
+        },
+        {
+          afterSeconds: 300,
+          text: "Still working... setup should finish or time out automatically.",
+        },
+      ]);
+
+      try {
+        const gpu = await invoke("ensure_torch_device");
+        gpuSummary = gpu.gpuDetected
+          ? gpu.cudaVerified
+            ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`
+            : `${gpu.gpuName} found - falling back to CPU (CUDA unverified)`
+          : "No NVIDIA GPU - stem separation will use CPU";
+        return gpu;
+      } finally {
+        stopProgress();
+      }
     });
 
     setStep("model", "done");
