@@ -83,7 +83,7 @@ fn main() {
 #[tauri::command]
 fn probe_runtime() -> Result<RuntimeProbe, String> {
     let root = app_root()?;
-    let data_dir = root.join("data");
+    let data_dir = local_data_dir()?;
     let python = python_path(&root);
     if let Some(path) = python.as_deref() {
         patch_pyvenv_cfg(path);
@@ -111,12 +111,15 @@ fn read_config_str(data_dir: &std::path::Path, key: &str) -> Option<String> {
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
     let root = app_root()?;
-    let data = root.join("data");
+    let data = local_data_dir()?;
+    migrate_legacy_data(&root, &data);
+    fs::create_dir_all(&data)
+        .map_err(|e| format!("failed to create data dir: {e}"))?;
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
         fs::create_dir_all(data.join(dir))
             .map_err(|e| format!("failed to create data/{dir}: {e}"))?;
     }
-    if is_cpu_only_package(&root) {
+    if is_cpu_only_package(&root, &data) {
         fs::write(data.join("cpu-only"), "")
             .map_err(|e| format!("failed to write data/cpu-only: {e}"))?;
     }
@@ -134,8 +137,7 @@ fn ensure_workspace() -> Result<(), String> {
 #[tauri::command]
 fn ensure_external_assets() -> Result<AssetStatus, String> {
     ensure_workspace()?;
-    let root = app_root()?;
-    let data_dir = root.join("data");
+    let data_dir = local_data_dir()?;
     let ffmpeg = ensure_ffmpeg(&data_dir)?;
     write_setup_config(&data_dir, &ffmpeg)?;
     Ok(AssetStatus {
@@ -154,7 +156,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
 
     let root = app_root()?;
     let backend_dir = backend_dir(&root)?;
-    let data_dir = root.join("data");
+    let data_dir = local_data_dir()?;
     let python = python_path(&root).filter(|p| p.is_file()).ok_or_else(|| {
         "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
     })?;
@@ -224,10 +226,10 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
 #[tauri::command]
 fn ensure_torch_device() -> Result<GpuSetup, String> {
     let root = app_root()?;
-    let data_dir = root.join("data");
+    let data_dir = local_data_dir()?;
 
     // CPU-only portable build: skip GPU detection and pip entirely.
-    if is_cpu_only_package(&root) {
+    if is_cpu_only_package(&root, &data_dir) {
         persist_torch_device(&data_dir, "cpu");
         return Ok(GpuSetup {
             gpu_detected: false,
@@ -269,8 +271,8 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
     Ok(setup)
 }
 
-fn is_cpu_only_package(root: &Path) -> bool {
-    root.join("cpu-only").is_file() || root.join("data").join("cpu-only").is_file()
+fn is_cpu_only_package(root: &Path, data_dir: &Path) -> bool {
+    root.join("cpu-only").is_file() || data_dir.join("cpu-only").is_file()
 }
 
 fn persist_torch_device(data_dir: &std::path::Path, device: &str) {
@@ -497,6 +499,56 @@ fn stop_backend(state: &BackendState) {
             let _ = child.wait();
         }
         *guard = None;
+    }
+}
+
+/// Returns the persistent user data directory for StemDeck.
+/// On Windows: %LocalAppData%\StemDeck
+/// On Linux/macOS: $XDG_DATA_HOME/stemdeck  or  ~/.local/share/stemdeck
+/// Can be overridden by STEMDECK_DATA_DIR for development.
+fn local_data_dir() -> Result<PathBuf, String> {
+    if let Ok(path) = env::var("STEMDECK_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    #[cfg(windows)]
+    {
+        let base = env::var("LOCALAPPDATA")
+            .map_err(|_| "LOCALAPPDATA environment variable not set".to_string())?;
+        Ok(PathBuf::from(base).join("StemDeck"))
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(xdg) = env::var("XDG_DATA_HOME") {
+            return Ok(PathBuf::from(xdg).join("stemdeck"));
+        }
+        let home = env::var("HOME")
+            .map_err(|_| "HOME environment variable not set".to_string())?;
+        Ok(PathBuf::from(home).join(".local").join("share").join("stemdeck"))
+    }
+}
+
+/// One-time migration: move legacy data/models/jobs/ffmpeg from the install
+/// directory into the new per-user data directory on the user's first launch
+/// after upgrading to a version that uses local_data_dir().
+fn migrate_legacy_data(root: &Path, data_dir: &Path) {
+    let old = root.join("data");
+    // Only migrate if the old location exists and the new one doesn't yet.
+    if !old.is_dir() || data_dir.exists() {
+        return;
+    }
+    for name in ["models", "jobs", "ffmpeg", "logs", "cache"] {
+        let src = old.join(name);
+        if src.is_dir() {
+            // rename is a cheap move on the same volume; ignore errors silently
+            // so a cross-volume failure doesn't block startup.
+            let _ = fs::rename(&src, data_dir.join(name));
+        }
+    }
+    for name in ["config.json", "cpu-only"] {
+        let src = old.join(name);
+        if src.exists() {
+            let _ = fs::copy(&src, data_dir.join(name));
+        }
     }
 }
 
