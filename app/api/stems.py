@@ -15,7 +15,7 @@ router = APIRouter(tags=["stems"])
 _ALLOWED_NAMES = frozenset(STEM_NAMES) | {"original", "mix"}
 
 
-@router.get("/jobs/{job_id}/stems/{name}.wav")
+@router.api_route("/jobs/{job_id}/stems/{name}.wav", methods=["GET", "HEAD"])
 def get_stem(job_id: str, name: str) -> FileResponse:
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")

@@ -181,9 +181,8 @@ export function togglePlayPause() {
   }
   const ctx = multitrack.audioContext;
   // Safari requires play() to be called synchronously within the user-gesture
-  // handler. Calling it in a resume().then() callback breaks that guarantee on
-  // Safari's AudioBufferSourceNode path, causing silence or stuttering.
-  // Resume fire-and-forget so the context becomes live, then play() immediately.
+  // handler. Resume the AudioContext fire-and-forget so the context becomes
+  // live, then call play() immediately on the same tick.
   if (ctx && ctx.state === "suspended") {
     ctx.resume().catch(() => {});
   }

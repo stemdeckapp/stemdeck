@@ -64,27 +64,11 @@ export function applyMix() {
     // accepts any positive number, enabling real boost and reliable mute.
     const audioEl = multitrack.audios?.[idx];
     if (audioEl instanceof HTMLMediaElement) {
-      if (!audioEl._stGainNode) {
-        const ctx = multitrack.audioContext;
-        if (ctx) {
-          try {
-            if (!audioEl._stMediaSource) {
-              audioEl._stMediaSource = ctx.createMediaElementSource(audioEl);
-            }
-            audioEl._stGainNode = ctx.createGain();
-            audioEl._stMediaSource.connect(audioEl._stGainNode);
-            audioEl._stGainNode.connect(ctx.destination);
-            audioEl.volume = 1;
-          } catch (err) {
-            console.warn(`[mixer] GainNode setup failed for "${name}":`, err);
-          }
-        }
-      }
-      if (audioEl._stGainNode) {
-        audioEl._stGainNode.gain.value = targetGain;
-      } else {
-        multitrack.setTrackVolume(idx, Math.min(1, targetGain));
-      }
+      // Use the HTMLAudioElement's native volume instead of routing through a
+      // MediaElementAudioSourceNode. WKWebView (Safari) does not reliably pass
+      // audio from MediaElementSource → GainNode → destination to the speakers,
+      // so we stay on the browser's default output path and cap gain at 1.0.
+      audioEl.volume = Math.min(1, Math.max(0, targetGain));
     } else {
       multitrack.setTrackVolume(idx, targetGain);
     }
