@@ -15,14 +15,11 @@ steps:
 
   build-windows-cpu:
     image: powershell
-    depends_on:
-      - build-windows-nvidia
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1
           -PackageName StemDeck-Windows-x64
           -CpuOnly
           -StripVenv
-          -SkipTauriBuild
 
   scan-windows-artifacts:
     image: powershell
