@@ -64,6 +64,7 @@ foreach ($Dir in @("cache", "downloads", "ffmpeg", "jobs", "logs", "models")) {
   New-Item -ItemType Directory -Force (Join-Path $Stage "data\$Dir") | Out-Null
 }
 if ($CpuOnly) {
+  New-Item -ItemType File -Force (Join-Path $Stage "cpu-only") | Out-Null
   New-Item -ItemType File -Force (Join-Path $Stage "data\cpu-only") | Out-Null
 }
 

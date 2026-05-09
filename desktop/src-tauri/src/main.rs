@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::Mutex,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -85,6 +85,9 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     let root = app_root()?;
     let data_dir = root.join("data");
     let python = python_path(&root);
+    if let Some(path) = python.as_deref() {
+        patch_pyvenv_cfg(path);
+    }
     let ffmpeg = ffmpeg_path(&data_dir);
     let torch_device = read_config_str(&data_dir, "torchDevice");
     Ok(RuntimeProbe {
@@ -107,10 +110,15 @@ fn read_config_str(data_dir: &std::path::Path, key: &str) -> Option<String> {
 
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
-    let data = app_root()?.join("data");
+    let root = app_root()?;
+    let data = root.join("data");
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
         fs::create_dir_all(data.join(dir))
             .map_err(|e| format!("failed to create data/{dir}: {e}"))?;
+    }
+    if is_cpu_only_package(&root) {
+        fs::write(data.join("cpu-only"), "")
+            .map_err(|e| format!("failed to write data/cpu-only: {e}"))?;
     }
     let config = data.join("config.json");
     if !config.exists() {
@@ -149,6 +157,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
     let python = python_path(&root).filter(|p| p.is_file()).ok_or_else(|| {
         "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
     })?;
+    patch_pyvenv_cfg(&python);
     let port = free_port()?;
     let url = format!("http://127.0.0.1:{port}");
 
@@ -202,7 +211,7 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
     let data_dir = root.join("data");
 
     // CPU-only portable build: skip GPU detection and pip entirely.
-    if data_dir.join("cpu-only").exists() {
+    if is_cpu_only_package(&root) {
         persist_torch_device(&data_dir, "cpu");
         return Ok(GpuSetup {
             gpu_detected: false,
@@ -216,6 +225,7 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
     let python = python_path(&root)
         .filter(|p| p.is_file())
         .ok_or_else(|| "Python not found".to_string())?;
+    patch_pyvenv_cfg(&python);
 
     let setup = match detect_nvidia_gpu() {
         Some((gpu_name, cuda_version)) => {
@@ -241,6 +251,10 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
     // Persist so subsequent launches skip this step entirely.
     persist_torch_device(&data_dir, &setup.torch_device);
     Ok(setup)
+}
+
+fn is_cpu_only_package(root: &Path) -> bool {
+    root.join("cpu-only").is_file() || root.join("data").join("cpu-only").is_file()
 }
 
 fn persist_torch_device(data_dir: &std::path::Path, device: &str) {
@@ -270,7 +284,7 @@ fn detect_nvidia_gpu() -> Option<(String, String)> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     hide_console_window(&mut cmd);
-    let name_out = cmd.output().ok()?;
+    let name_out = command_output_with_timeout(cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
     if !name_out.status.success() {
         return None;
     }
@@ -283,7 +297,8 @@ fn detect_nvidia_gpu() -> Option<(String, String)> {
     let mut smi_cmd = Command::new(smi);
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     hide_console_window(&mut smi_cmd);
-    let smi_out = smi_cmd.output().ok()?;
+    let smi_out =
+        command_output_with_timeout(smi_cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
     let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| "12.4".to_string());
 
@@ -389,7 +404,8 @@ fn install_cuda_torch(python: &Path, index_url: &str) -> Result<(), String> {
     let torchaudio_spec = format!("torchaudio==2.6.0+{tag}");
     // --ignore-installed: overwrites even a corrupted/partial install that
     // has no RECORD file. --no-deps: only replace torch/torchaudio wheels.
-    let output = Command::new(python)
+    let mut command = Command::new(python);
+    command
         .args([
             "-m",
             "pip",
@@ -403,9 +419,9 @@ fn install_cuda_torch(python: &Path, index_url: &str) -> Result<(), String> {
             "--quiet",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to run pip: {e}"))?;
+        .stderr(Stdio::piped());
+    let output =
+        command_output_with_timeout(command, Duration::from_secs(20 * 60), "CUDA torch install")?;
 
     if output.status.success() {
         Ok(())
@@ -435,7 +451,8 @@ fn open_url(url: String) -> Result<(), String> {
         let mut cmd = Command::new("cmd");
         cmd.args(["/c", "start", "", &url]);
         hide_console_window(&mut cmd);
-        cmd.spawn().map_err(|e| format!("failed to open URL: {e}"))?;
+        cmd.spawn()
+            .map_err(|e| format!("failed to open URL: {e}"))?;
     }
     #[cfg(not(windows))]
     {
@@ -656,9 +673,8 @@ fn download_file_with_powershell(url: &str, target: &Path) -> Result<(), String>
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
-    let output = command
-        .output()
-        .map_err(|e| format!("failed to start FFmpeg download: {e}"))?;
+    let output =
+        command_output_with_timeout(command, Duration::from_secs(5 * 60), "FFmpeg download")?;
     if output.status.success() && target.is_file() {
         Ok(())
     } else {
@@ -729,8 +745,7 @@ fn verify_ffmpeg(path: &Path) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
-    let output = command
-        .output()
+    let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
         .map_err(|e| format!("failed to run FFmpeg at {}: {e}", path.display()))?;
     if output.status.success() {
         Ok(())
@@ -799,6 +814,51 @@ fn update_setup_config<const N: usize>(
         .map_err(|e| format!("failed to serialize setup config: {e}"))?;
     fs::write(&config_path, body + "\n")
         .map_err(|e| format!("failed to write {}: {e}", config_path.display()))
+}
+
+fn command_output_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to start {label}: {e}"))?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("failed to wait for {label}: {e}"))?
+        {
+            let mut stdout = Vec::new();
+            if let Some(mut pipe) = child.stdout.take() {
+                let _ = pipe.read_to_end(&mut stdout);
+            }
+
+            let mut stderr = Vec::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_end(&mut stderr);
+            }
+
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{label} timed out after {} seconds",
+                timeout.as_secs()
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(windows)]
