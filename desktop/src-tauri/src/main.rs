@@ -160,6 +160,16 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
     patch_pyvenv_cfg(&python);
     let port = free_port()?;
     let url = format!("http://127.0.0.1:{port}");
+    let log_path = data_dir.join("logs").join("backend.log");
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create backend log directory: {e}"))?;
+    }
+    let log_file = File::create(&log_path)
+        .map_err(|e| format!("failed to create backend log {}: {e}", log_path.display()))?;
+    let log_file_for_stderr = log_file
+        .try_clone()
+        .map_err(|e| format!("failed to prepare backend log {}: {e}", log_path.display()))?;
 
     let mut cmd = Command::new(python);
     cmd.args([
@@ -177,8 +187,8 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         .env("PYTHONUNBUFFERED", "1")
         .env("XDG_CACHE_HOME", data_dir.join("cache"))
         .env("TORCH_HOME", data_dir.join("models").join("torch"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_for_stderr));
 
     if let Some(ffmpeg_dir) = ffmpeg_dir_if_present(&data_dir) {
         let existing = env::var_os("PATH").unwrap_or_default();
@@ -200,7 +210,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         .map_err(|e| format!("failed to start backend: {e}"))?;
     *state.child.lock().map_err(|e| e.to_string())? = Some(child);
 
-    wait_for_health(port, Duration::from_secs(30))?;
+    wait_for_health(port, Duration::from_secs(90), &log_path)?;
     *state.url.lock().map_err(|e| e.to_string())? = Some(url.clone());
     Ok(BackendStarted { url })
 }
@@ -580,17 +590,43 @@ fn free_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn wait_for_health(port: u16, timeout: Duration) -> Result<(), String> {
+fn wait_for_health(port: u16, timeout: Duration, log_path: &Path) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
         if Instant::now() >= deadline {
-            return Err("backend did not become healthy before timeout".to_string());
+            let tail = file_tail(log_path, 30);
+            let hint = if tail.trim().is_empty() {
+                format!(
+                    "No backend log output was captured at {}.",
+                    log_path.display()
+                )
+            } else {
+                format!(
+                    "Last backend log lines from {}:\n{}",
+                    log_path.display(),
+                    tail
+                )
+            };
+            return Err(format!(
+                "backend did not become healthy within {} seconds.\n\n{}",
+                timeout.as_secs(),
+                hint
+            ));
         }
         if health_once(port).is_ok() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));
     }
+}
+
+fn file_tail(path: &Path, max_lines: usize) -> String {
+    fs::read_to_string(path)
+        .map(|text| {
+            let lines: Vec<&str> = text.lines().rev().take(max_lines).collect();
+            lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+        })
+        .unwrap_or_default()
 }
 
 fn health_once(port: u16) -> Result<(), String> {
