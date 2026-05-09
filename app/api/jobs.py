@@ -13,6 +13,7 @@ from app.core.models import Job
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
+from app.core.registry import persist as registry_persist
 from app.core.registry import register as registry_register
 from app.core.registry import remove as registry_remove
 from app.pipeline import run_pipeline
@@ -68,6 +69,15 @@ async def create_job(payload: JobRequest) -> dict[str, str]:
     return {"job_id": job.id}
 
 
+@router.get("")
+def list_jobs() -> list[dict]:
+    return [
+        job.to_state()
+        for job in sorted(registry_all_jobs().values(), key=lambda j: j.created_at)
+        if job.status == "done"
+    ]
+
+
 @router.get("/{job_id}")
 def get_job(job_id: str) -> dict:
     job = registry_get(job_id)
@@ -104,4 +114,5 @@ def delete_job(job_id: str) -> dict[str, str]:
         raise HTTPException(status_code=409, detail="job is still running")
     _rmtree_job(job_id)
     registry_remove(job_id)
+    registry_persist(JOBS_DIR)
     return {"job_id": job_id, "status": "deleted"}

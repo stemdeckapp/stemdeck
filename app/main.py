@@ -21,6 +21,7 @@ from app.core.config import (
     configure_portable_environment,
     ensure_runtime_dirs,
 )
+from app.core.registry import restore as restore_registry
 from app.pipeline.collect import sweep_old_jobs
 
 # Show our INFO-level logs through uvicorn's root handler. Without this,
@@ -113,3 +114,4 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 # Ensure runtime directories exist at startup (module-level side effect
 # moved from the old monolithic main.py; this is the canonical entrypoint).
 ensure_runtime_dirs()
+restore_registry(JOBS_DIR)

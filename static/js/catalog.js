@@ -924,6 +924,20 @@ function wireAboutDialog() {
   });
 }
 
+async function syncWithServer() {
+  try {
+    const res = await fetch("/api/jobs", { cache: "no-store" });
+    if (!res.ok) return;
+    const jobs = await res.json();
+    for (const state of jobs) {
+      if (tracks[state.job_id]) continue;
+      const track = stateMetadataToTrack(state, { id: state.job_id, status: state.status });
+      track.id = state.job_id;
+      addTrackToLibrary(track);
+    }
+  } catch { /* backend unavailable — skip silently */ }
+}
+
 export function initCatalog() {
   loadState();
   wireCatalogToggle();
@@ -939,4 +953,5 @@ export function initCatalog() {
 
   document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);
   loadCurrentVersion().finally(checkForUpdate);
+  syncWithServer();
 }

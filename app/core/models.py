@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -61,3 +62,21 @@ class Job:
             "mix_url": self.mix_url,
             "error": self.error,
         }
+
+    def to_record(self) -> dict[str, Any]:
+        return {field: getattr(self, field) for field in _JOB_FIELDS}
+
+    @classmethod
+    def from_record(cls, data: dict[str, Any]) -> Job:
+        fields = {key: value for key, value in data.items() if key in _JOB_FIELDS}
+        job_id = str(fields.pop("id", "")).strip()
+        if not job_id:
+            raise ValueError("job record missing id")
+        job = cls(id=job_id)
+        for key, value in fields.items():
+            setattr(job, key, value)
+        job.cancel_requested = False
+        return job
+
+
+_JOB_FIELDS = frozenset(f.name for f in dataclasses.fields(Job) if f.name != "cancel_requested")

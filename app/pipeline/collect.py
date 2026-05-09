@@ -9,6 +9,7 @@ from pathlib import Path
 from app.core.config import DEMUCS_MODEL, JOB_TTL_SECONDS, STEM_NAMES, ffmpeg_executable
 from app.core.models import Job
 from app.core.registry import all_jobs as registry_all
+from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
 from app.core.registry import set_proc
 
@@ -186,6 +187,7 @@ def sweep_old_jobs(jobs_dir: Path) -> None:
     if not jobs_dir.is_dir():
         return
     jobs = registry_all()
+    removed = False
     for d in jobs_dir.iterdir():
         if not d.is_dir():
             continue
@@ -199,3 +201,6 @@ def sweep_old_jobs(jobs_dir: Path) -> None:
             continue
         _rmtree(d)
         registry_remove(d.name)
+        removed = True
+    if removed:
+        registry_persist(jobs_dir)

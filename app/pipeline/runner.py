@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from app.core.models import Job, JobCancelled
+from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze
 from app.pipeline.collect import cleanup_source, collect, make_original_track, make_selected_mix
 from app.pipeline.download import _set, download
@@ -89,6 +90,7 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
     except JobCancelled:
         logger.info("pipeline cancelled for job %s", job.id)
         _set(job, status="cancelled", stage="Cancelled")
+        persist_registry(jobs_dir)
         # Drop partial files so the disk reclaim is immediate.
         _rmtree(job_dir)
         return
@@ -99,6 +101,7 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
         if job.cancel_requested:
             logger.info("pipeline cancelled (wrapped) for job %s", job.id)
             _set(job, status="cancelled", stage="Cancelled")
+            persist_registry(jobs_dir)
             _rmtree(job_dir)
             return
         logger.exception("pipeline failed for job %s: %s", job.id, e)
@@ -108,5 +111,7 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
             stage="Error: Processing failed",
             error="Audio processing failed. Please try another video.",
         )
+        persist_registry(jobs_dir)
         return
     _set(job, status="done", progress=1.0, stage="Done")
+    persist_registry(jobs_dir)
