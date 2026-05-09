@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
 import { STEM_NAMES } from "./constants.js";
-import { renderEmptyShell } from "./player.js";
+import { renderEmptyShell, buildStripStems } from "./player.js";
 import { wireJobForm } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -55,6 +55,7 @@ function handleStemChoiceClick(stem) {
   }
   saveSelectedStems();
   refreshStemChoiceVisuals();
+  buildStripStems();
 }
 
 function wireStemChoiceButtons() {
@@ -147,6 +148,26 @@ function wireAppShellControls() {
     e.stopPropagation();
     document.getElementById("catalogToggle")?.click();
   });
+
+  const app = document.querySelector(".app");
+
+  // Double-click the appbar header (outside form controls) to collapse it
+  // into the icon strip.
+  document.querySelector(".appbar-body")?.addEventListener("dblclick", (e) => {
+    if (e.target.closest("form, input, button, a, select")) return;
+    app?.classList.toggle("appbar-collapsed");
+  });
+
+  // Clicking any strip icon expands the appbar, with context-specific focus.
+  document.getElementById("appbarStrip")?.addEventListener("click", (e) => {
+    app?.classList.remove("appbar-collapsed");
+    if (e.target.closest(".strip-sq-url")) {
+      document.getElementById("url")?.focus();
+    } else if (e.target.closest(".strip-sq-process")) {
+      document.getElementById("submit")?.click();
+    }
+    // strip-sq-stems: expand only — user clicks stem buttons once visible
+  });
 }
 
 // ─── Keyboard shortcuts ───
@@ -212,4 +233,5 @@ window.addEventListener("unhandledrejection", (e) => {
 
 // ─── Bootstrap ───
 
+buildStripStems();
 renderEmptyShell();

@@ -6,7 +6,19 @@ labels:
   backend: local
 
 steps:
+  write-version:
+    image: powershell
+    commands:
+      - |
+        $tag = $env:CI_COMMIT_TAG
+        if (-not $tag) { throw "CI_COMMIT_TAG is not set" }
+        $json = "{`"version`": `"$tag`"}"
+        Set-Content -Path "static/version.json" -Value $json -Encoding UTF8
+        Write-Host "Wrote static/version.json: $json"
+
   build-windows-nvidia:
+    depends_on:
+      - write-version
     image: powershell
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1
