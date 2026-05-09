@@ -447,6 +447,10 @@ function openFolderEditor(folderId) {
 
 let dragId = null;
 
+function isTrackDragEvent(event) {
+  return dragId != null || Boolean(event?.dataTransfer?.types?.includes(TRACK_DRAG_TYPE));
+}
+
 function getDraggedTrackId(event) {
   return event?.dataTransfer?.getData(TRACK_DRAG_TYPE) || dragId;
 }
@@ -505,8 +509,7 @@ function wireMainPanelDrop() {
   lanes.dataset.libraryDropReady = "1";
 
   lanes.addEventListener("dragover", (e) => {
-    const trackId = getDraggedTrackId(e);
-    if (!trackId || !tracks[trackId]) return;
+    if (!isTrackDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     lanes.classList.add("library-drop-target");
@@ -529,8 +532,7 @@ function wireRailTrashDrop() {
   trash.dataset.dropReady = "1";
 
   trash.addEventListener("dragover", (e) => {
-    const trackId = getDraggedTrackId(e);
-    if (!trackId || !tracks[trackId]) return;
+    if (!isTrackDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     trash.classList.add("drop-target");
@@ -703,7 +705,7 @@ function renderFolder(folder) {
 
   // Drag-over for drop target
   el.addEventListener("dragover", (e) => {
-    if (!dragId) return;
+    if (!isTrackDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     el.classList.add("drop-target");
