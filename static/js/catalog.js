@@ -452,7 +452,9 @@ function isTrackDragEvent(event) {
 }
 
 function getDraggedTrackId(event) {
-  return event?.dataTransfer?.getData(TRACK_DRAG_TYPE) || dragId;
+  return event?.dataTransfer?.getData(TRACK_DRAG_TYPE)
+    || event?.dataTransfer?.getData("text/plain")
+    || dragId;
 }
 
 function startDrag(trackId, itemEl, event) {
@@ -473,16 +475,17 @@ function endDrag(itemEl) {
   document.getElementById("lanes")?.classList.remove("library-drop-target");
 }
 
-function dropOnFolder(folderId) {
-  if (!dragId) return;
+function dropOnFolder(folderId, trackId) {
+  const id = trackId ?? dragId;
+  if (!id) return;
   // Remove from current folder
   for (const f of folders) {
-    const idx = f.items.indexOf(dragId);
+    const idx = f.items.indexOf(id);
     if (idx !== -1) { f.items.splice(idx, 1); break; }
   }
   // Add to target folder
   const target = folders.find((f) => f.id === folderId);
-  if (target && !target.items.includes(dragId)) target.items.push(dragId);
+  if (target && !target.items.includes(id)) target.items.push(id);
   saveState();
   render();
 }
@@ -546,6 +549,46 @@ function wireRailTrashDrop() {
     e.preventDefault();
     trash.classList.remove("drop-target");
     moveTrackToTrash(trackId);
+  });
+}
+
+function restoreTrackFromTrash(trackId) {
+  if (!tracks[trackId]) return;
+  const trash = getTrashFolder();
+  if (!trash?.items.includes(trackId)) return;
+  trash.items = trash.items.filter((id) => id !== trackId);
+  let target = folders.find((f) => f.id !== TRASH_ID);
+  if (!target) {
+    target = makeFolder({ id: `f-${Date.now()}`, name: "Unsorted" });
+    folders.unshift(target);
+  }
+  if (!target.items.includes(trackId)) target.items.push(trackId);
+  saveState();
+  render();
+}
+
+function wireRailLibraryDrop() {
+  const btn = document.querySelector(".rail-library");
+  if (!btn || btn.dataset.dropReady === "1") return;
+  btn.dataset.dropReady = "1";
+
+  btn.addEventListener("dragover", (e) => {
+    if (!isTrackDragEvent(e) || catalogView !== "trash") return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    btn.classList.add("drop-target");
+  });
+  btn.addEventListener("dragleave", (e) => {
+    if (!btn.contains(e.relatedTarget)) btn.classList.remove("drop-target");
+  });
+  btn.addEventListener("drop", (e) => {
+    btn.classList.remove("drop-target");
+    if (catalogView !== "trash") return;
+    const trackId = getDraggedTrackId(e);
+    if (!trackId || !tracks[trackId]) return;
+    e.preventDefault();
+    restoreTrackFromTrash(trackId);
+    setCatalogView("library");
   });
 }
 
@@ -716,7 +759,7 @@ function renderFolder(folder) {
   el.addEventListener("drop", (e) => {
     e.preventDefault();
     el.classList.remove("drop-target");
-    dropOnFolder(folder.id);
+    dropOnFolder(folder.id, getDraggedTrackId(e));
   });
 
   return el;
@@ -956,6 +999,7 @@ export function initCatalog() {
   wireWidgets();
   wireMainPanelDrop();
   wireRailTrashDrop();
+  wireRailLibraryDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
   setDisplayedVersion(currentVersion);

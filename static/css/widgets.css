@@ -337,6 +337,10 @@
 .catalog {
   display: grid !important;
   grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  align-items: stretch !important;
+  height: 100% !important;
+  min-height: 0 !important;
   gap: 0 !important;
   padding: 0 !important;
   border-radius: 12px !important;
@@ -345,6 +349,8 @@
 }
 
 .catalog-rail {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -428,6 +434,8 @@
 }
 
 .catalog-main {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 10px;
