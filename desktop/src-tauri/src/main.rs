@@ -150,6 +150,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
     if let Some(url) = state.url.lock().map_err(|e| e.to_string())?.clone() {
         return Ok(BackendStarted { url });
     }
+    stop_backend(&state);
 
     let root = app_root()?;
     let backend_dir = backend_dir(&root)?;
@@ -205,12 +206,17 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to start backend: {e}"))?;
-    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
 
-    wait_for_health(port, Duration::from_secs(90), &log_path)?;
+    if let Err(err) = wait_for_health(port, Duration::from_secs(90), &log_path) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(err);
+    }
+
+    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
     *state.url.lock().map_err(|e| e.to_string())? = Some(url.clone());
     Ok(BackendStarted { url })
 }

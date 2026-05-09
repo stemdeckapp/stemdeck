@@ -91,11 +91,18 @@ async function runSetup() {
     if (runtime.pythonReady && runtime.ffmpegReady && runtime.torchDevice) {
       for (const step of steps) {
         step.classList.remove("active", "error");
-        step.classList.add("done");
+        if (step.dataset.step === "backend") {
+          step.classList.remove("done");
+        } else {
+          step.classList.add("done");
+        }
       }
-      setStatus("All systems ready. Starting StemDeck...");
-      const backend = await invoke("start_backend");
-      window.location.replace(backend.url);
+      await runStep("backend", async () => {
+        setStatus("Runtime is ready. Starting StemDeck backend...");
+        const backend = await invoke("start_backend");
+        setStatus("Opening StemDeck...");
+        window.location.replace(backend.url);
+      });
       return;
     }
 
