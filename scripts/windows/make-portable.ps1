@@ -39,6 +39,32 @@ function Copy-Tree([string]$Source, [string]$Destination) {
   Copy-Item -Recurse -Force $Source $Destination
 }
 
+function Assert-Fresh-TauriBuild {
+  if (-not (Test-Path $TargetExe)) {
+    throw "Tauri executable not found at $TargetExe. Remove -SkipTauriBuild or build the NVIDIA package first."
+  }
+
+  $exe = Get-Item $TargetExe
+  $newerSources = @(
+    Get-ChildItem -Path (Join-Path $DesktopDir "ui") -File -Recurse
+    Get-ChildItem -Path (Join-Path $TauriDir "src") -File -Recurse
+    Get-Item (Join-Path $TauriDir "Cargo.toml")
+    Get-Item (Join-Path $TauriDir "tauri.conf.json")
+  ) | Where-Object { $_.LastWriteTimeUtc -gt $exe.LastWriteTimeUtc }
+
+  if ($newerSources.Count -gt 0) {
+    $list = ($newerSources | Select-Object -First 8 | ForEach-Object { "  - $($_.FullName)" }) -join "`n"
+    throw @"
+-SkipTauriBuild would package a stale StemDeck.exe.
+
+The existing executable is older than desktop UI/Tauri source files:
+$list
+
+Remove -SkipTauriBuild or run the NVIDIA package build first so the CPU package reuses a fresh executable.
+"@
+  }
+}
+
 Require-Command "node"
 Require-Command "npm"
 Require-Command "cargo"
@@ -123,6 +149,8 @@ try {
     $env:CI = "true"  # Woodpecker sets CI=woodpecker; Tauri only accepts true/false
     rustup default stable
     npm run tauri build
+  } else {
+    Assert-Fresh-TauriBuild
   }
 } finally {
   Pop-Location
