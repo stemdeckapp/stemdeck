@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -38,12 +39,22 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         str(job_dir),
         str(source),
     ]
+    env = os.environ.copy()
+    try:
+        import certifi
+
+        env.setdefault("SSL_CERT_FILE", certifi.where())
+        env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+    except ModuleNotFoundError:
+        pass
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
         bufsize=0,
+        env=env,
     )
     if proc.stderr is None:
         raise RuntimeError("demucs subprocess has no stderr pipe")
