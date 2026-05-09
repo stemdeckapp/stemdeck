@@ -29,7 +29,33 @@ steps:
     depends_on:
       - build-windows-cpu
     commands:
-      - docker run --rm -v "${PWD}/dist:/scan" clamav/clamav:latest clamscan --no-summary --infected /scan
+      - |
+        Write-Host "Preparing ClamAV scan for Windows release artifacts..."
+        Write-Host "Artifacts staged in: $PWD\dist"
+        Get-ChildItem -Path "dist" -File |
+          Sort-Object Name |
+          Select-Object Name,
+            @{Name="SizeMB"; Expression={ [math]::Round($_.Length / 1MB, 2) }} |
+          Format-Table -AutoSize
+
+        Write-Host "SHA256 checksums:"
+        Get-ChildItem -Path "dist" -Filter "*.zip" -File |
+          Sort-Object Name |
+          ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 $_.FullName
+            Write-Host "  $($hash.Hash)  $($_.Name)"
+          }
+
+        Write-Host "Pulling latest ClamAV scanner image..."
+        docker pull clamav/clamav:latest
+
+        Write-Host "Running ClamAV scan over dist/..."
+        docker run --rm -v "${PWD}/dist:/scan:ro" clamav/clamav:latest `
+          clamscan --recursive --infected --bell --summary /scan
+        if ($LASTEXITCODE -ne 0) {
+          throw "ClamAV scan failed or reported infected files. Exit code: $LASTEXITCODE"
+        }
+        Write-Host "ClamAV scan completed successfully. No infected files reported."
 
   upload-windows-artifacts:
     image: powershell
