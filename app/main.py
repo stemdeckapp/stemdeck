@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version as package_version
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +43,21 @@ except ImportError:
 _log = logging.getLogger("stemdeck")
 
 
+def app_version() -> str:
+    version_file = STATIC_DIR / "version.json"
+    try:
+        data = json.loads(version_file.read_text(encoding="utf-8"))
+        value = str(data.get("version", "")).strip().removeprefix("v")
+        if value:
+            return value
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        return package_version("stemdeck")
+    except PackageNotFoundError:
+        return "0.0.0-dev"
+
+
 async def _sweep_loop() -> None:
     while True:
         try:
@@ -69,7 +86,7 @@ def health() -> dict[str, object]:
     return {
         "name": "StemDeck",
         "status": "ok",
-        "version": "0.1.0",
+        "version": app_version(),
         "ffmpeg_configured": FFMPEG_BIN.is_file(),
         "demucs_model": DEMUCS_MODEL,
         "demucs_device": DEMUCS_DEVICE,

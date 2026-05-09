@@ -363,12 +363,9 @@ fn cuda_tag_from_url(index_url: &str) -> &str {
     index_url.rsplit('/').next().unwrap_or("cu124")
 }
 
-/// Update pyvenv.cfg's `home` line to the actual Scripts directory of the
-/// bundled Python. The venv was created on the build machine, so `home` holds
-/// the builder's Python path (e.g. C:\Users\thale\...). pip validates that
-/// path before running and fails if it doesn't exist on the user's machine.
-/// We patch it once at runtime so every pip call works regardless of where
-/// the user extracted the zip.
+/// Update pyvenv.cfg to the bundled Python runtime. Windows venv launchers read
+/// this file before Python starts, so stale build-machine paths can prevent the
+/// backend from emitting any log output at all.
 fn patch_pyvenv_cfg(python: &Path) {
     let Some(scripts_dir) = python.parent() else {
         return;
@@ -376,17 +373,30 @@ fn patch_pyvenv_cfg(python: &Path) {
     let Some(venv_root) = scripts_dir.parent() else {
         return;
     };
+    let bundled_python = venv_root.join(if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python"
+    });
+    if !bundled_python.is_file() || !venv_root.join("Lib").join("os.py").is_file() {
+        return;
+    }
     let cfg_path = venv_root.join("pyvenv.cfg");
     let Ok(content) = fs::read_to_string(&cfg_path) else {
         return;
     };
-    let scripts_str = scripts_dir.display().to_string();
+    let root_str = venv_root.display().to_string();
+    let python_str = bundled_python.display().to_string();
     let patched: String = content
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
             if trimmed.starts_with("home") && trimmed[4..].trim_start().starts_with('=') {
-                format!("home = {scripts_str}")
+                format!("home = {root_str}")
+            } else if trimmed.starts_with("executable")
+                && trimmed["executable".len()..].trim_start().starts_with('=')
+            {
+                format!("executable = {python_str}")
             } else {
                 line.to_string()
             }

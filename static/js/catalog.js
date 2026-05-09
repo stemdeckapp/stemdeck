@@ -858,22 +858,43 @@ function wireWidgets() {
 
 // ─── Init ───
 
-const CURRENT_VERSION = "0.1.0";
+const FALLBACK_VERSION = "0.1.0";
+let currentVersion = FALLBACK_VERSION;
 const REPO_URL = "https://github.com/thcp/stemdeck";
 const RELEASES_URL = "https://github.com/thcp/stemdeck/releases";
 const RELEASES_API = "https://api.github.com/repos/thcp/stemdeck/releases/latest";
 
+function normalizeVersion(value) {
+  return String(value || "").trim().replace(/^v/i, "") || FALLBACK_VERSION;
+}
+
+function setDisplayedVersion(version) {
+  const brand = document.getElementById("brandVersion");
+  const about = document.getElementById("aboutVersion");
+  currentVersion = normalizeVersion(version);
+  if (brand) brand.textContent = `v${currentVersion}`;
+  if (about) about.textContent = `v${currentVersion}`;
+}
+
+async function loadCurrentVersion() {
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    setDisplayedVersion(data.version);
+  } catch { /* backend unavailable during bootstrap -- keep fallback */ }
+}
+
 async function checkForUpdate() {
   const el = document.getElementById("brandVersion");
   if (!el) return;
-  el.textContent = "";
   el.classList.remove("has-update");
   try {
     const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
     if (!res.ok) return;
     const data = await res.json();
-    const latest = (data.tag_name || "").replace(/^v/, "");
-    if (!latest || latest === CURRENT_VERSION) return;
+    const latest = normalizeVersion(data.tag_name);
+    if (!latest || latest === currentVersion) return;
     el.classList.add("has-update");
     el.innerHTML = `<a href="${RELEASES_URL}/tag/${data.tag_name}" target="_blank" rel="noopener noreferrer">new release available</a>`;
   } catch { /* network unavailable — silently skip */ }
@@ -887,7 +908,7 @@ function wireAboutDialog() {
   const link = dialog?.querySelector(".about-link");
   if (!btn || !dialog) return;
 
-  if (version) version.textContent = `v${CURRENT_VERSION}`;
+  if (version) version.textContent = `v${currentVersion}`;
   if (link) link.setAttribute("href", REPO_URL);
 
   const open = () => dialog.classList.remove("hidden");
@@ -913,8 +934,9 @@ export function initCatalog() {
   wireRailTrashDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
+  setDisplayedVersion(currentVersion);
   render();
 
   document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);
-  checkForUpdate();
+  loadCurrentVersion().finally(checkForUpdate);
 }

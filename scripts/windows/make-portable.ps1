@@ -2,6 +2,7 @@ param(
   [string]$Configuration = "release",
   [string]$OutputRoot    = "dist",
   [string]$PackageName   = "StemDeck-Windows-x64",
+  [string]$PackageVersion,
   [switch]$SkipTauriBuild,
   [switch]$CpuOnly,
   [switch]$StripVenv
@@ -37,6 +38,74 @@ function Copy-Tree([string]$Source, [string]$Destination) {
     Remove-Item -Recurse -Force $Destination
   }
   Copy-Item -Recurse -Force $Source $Destination
+}
+
+function Copy-TreeContents([string]$Source, [string]$Destination, [string[]]$ExcludeNames = @()) {
+  New-Item -ItemType Directory -Force $Destination | Out-Null
+  Get-ChildItem -LiteralPath $Source -Force |
+    Where-Object { $ExcludeNames -notcontains $_.Name } |
+    ForEach-Object {
+      Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+    }
+}
+
+function Set-PyvenvValue([string]$ConfigPath, [string]$Key, [string]$Value) {
+  $content = Get-Content -LiteralPath $ConfigPath
+  $pattern = "^\s*$([regex]::Escape($Key))\s*="
+  $line = "$Key = $Value"
+  $found = $false
+  $updated = foreach ($entry in $content) {
+    if ($entry -match $pattern) {
+      $found = $true
+      $line
+    } else {
+      $entry
+    }
+  }
+  if (-not $found) {
+    $updated += $line
+  }
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllLines($ConfigPath, [string[]]$updated, $utf8NoBom)
+}
+
+function Get-PackageVersion {
+  if ($PackageVersion) {
+    return $PackageVersion.TrimStart("v")
+  }
+  $tauriConfig = Get-Content -LiteralPath (Join-Path $TauriDir "tauri.conf.json") -Raw |
+    ConvertFrom-Json
+  return [string]$tauriConfig.version
+}
+
+function Bundle-PythonRuntime([string]$VenvDir, [string]$VenvPython) {
+  $baseExecutable = (& $VenvPython -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim()
+  if (-not (Test-Path $baseExecutable)) {
+    throw "Could not locate base Python executable: $baseExecutable"
+  }
+  $baseHome = Split-Path -Parent $baseExecutable
+  $baseLib = Join-Path $baseHome "Lib"
+  $baseDlls = Join-Path $baseHome "DLLs"
+  if (-not (Test-Path $baseLib)) {
+    throw "Could not locate base Python standard library: $baseLib"
+  }
+
+  Write-Host "Bundling Python runtime from $baseHome..."
+  Copy-Item -Force $baseExecutable (Join-Path $VenvDir "python.exe")
+  $basePythonw = Join-Path $baseHome "pythonw.exe"
+  if (Test-Path $basePythonw) {
+    Copy-Item -Force $basePythonw (Join-Path $VenvDir "pythonw.exe")
+  }
+  Get-ChildItem -LiteralPath $baseHome -Filter "*.dll" -File -Force |
+    Copy-Item -Destination $VenvDir -Force
+  if (Test-Path $baseDlls) {
+    Copy-Tree $baseDlls (Join-Path $VenvDir "DLLs")
+  }
+  Copy-TreeContents $baseLib (Join-Path $VenvDir "Lib") @("site-packages")
+
+  $cfg = Join-Path $VenvDir "pyvenv.cfg"
+  Set-PyvenvValue $cfg "home" $VenvDir
+  Set-PyvenvValue $cfg "executable" (Join-Path $VenvDir "python.exe")
 }
 
 function Assert-Fresh-TauriBuild {
@@ -96,6 +165,10 @@ if ($CpuOnly) {
 
 Copy-Tree (Join-Path $Root "app") (Join-Path $BackendDir "app")
 Copy-Tree (Join-Path $Root "static") (Join-Path $BackendDir "static")
+$PackageVersion = Get-PackageVersion
+$VersionJson = @{ version = $PackageVersion } | ConvertTo-Json -Compress
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Join-Path $BackendDir "static\version.json"), $VersionJson + "`n", $utf8NoBom)
 Copy-Item -Force (Join-Path $Root "pyproject.toml") (Join-Path $BackendDir "pyproject.toml")
 Copy-Item -Force (Join-Path $Root "uv.lock") (Join-Path $BackendDir "uv.lock")
 Copy-Item -Force (Join-Path $Root "packaging\windows\README-WINDOWS.txt") (Join-Path $Stage "README-WINDOWS.txt")
@@ -121,6 +194,9 @@ if ($CpuOnly) {
 }
 
 & $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile"
+
+Bundle-PythonRuntime $PythonDir $PythonExe
+& $PythonExe -c "import sys, fastapi, uvicorn; print('Portable Python:', sys.executable)"
 
 if ($StripVenv) {
   Write-Host "Stripping venv of build-time artifacts..."

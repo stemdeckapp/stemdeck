@@ -71,7 +71,7 @@ function startProgressStatus(messages) {
   };
 
   update();
-  const timer = window.setInterval(update, 10000);
+  const timer = window.setInterval(update, 1000);
   return () => window.clearInterval(timer);
 }
 
