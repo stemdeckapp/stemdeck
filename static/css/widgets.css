@@ -16,6 +16,7 @@
   gap: 12px !important;
   overflow: hidden !important;
   margin: 0 !important;
+  transition: grid-template-columns 240ms ease;
 }
 .app.cat-collapsed { --cat-w: 78px; }
 
@@ -340,6 +341,7 @@
   padding: 0 !important;
   border-radius: 12px !important;
   overflow: hidden !important;
+  transition: grid-template-columns 240ms ease;
 }
 
 .catalog-rail {
@@ -545,8 +547,14 @@
   grid-template-columns: 72px !important;
 }
 
+.catalog-main {
+  transition: opacity 200ms ease;
+}
+
 .app.cat-collapsed .catalog-main {
-  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
 }
 
 /* ─── 4. File drop pill ─── */

@@ -73,7 +73,7 @@ def restore(jobs_dir: Path) -> None:
             to_add = {}
             for record in data.get("jobs", []):
                 job = Job.from_record(record)
-                if JOB_ID_RE.match(job.id) and job.status in _TERMINAL:
+                if JOB_ID_RE.match(job.id) and job.status in _TERMINAL and job.title:
                     to_add[job.id] = job
             with _lock:
                 _jobs.update(to_add)
@@ -110,6 +110,14 @@ def _recover_done_job(job_dir: Path) -> Job | None:
     if (stems_dir / "mix.wav").is_file():
         mix_url = f"/api/jobs/{job_dir.name}/stems/mix.wav"
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
+    meta_path = job_dir / "metadata.json"
+    if not meta_path.is_file():
+        return None
+    meta: dict = {}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
     return Job(
         id=job_dir.name,
         status="done",
@@ -119,6 +127,15 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         selected_stems=selected,
         mix_url=mix_url,
         created_at=job_dir.stat().st_mtime,
+        title=meta.get("title"),
+        thumbnail=meta.get("thumbnail"),
+        duration_sec=meta.get("duration_sec"),
+        bpm=meta.get("bpm"),
+        key=meta.get("key"),
+        scale=meta.get("scale"),
+        key_confidence=meta.get("key_confidence"),
+        lufs=meta.get("lufs"),
+        peak_db=meta.get("peak_db"),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -78,6 +79,24 @@ def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _check_cancel(job)
 
 
+def _write_metadata(job: Job, job_dir: Path) -> None:
+    meta = {
+        "title": job.title,
+        "thumbnail": job.thumbnail,
+        "duration_sec": job.duration_sec,
+        "bpm": job.bpm,
+        "key": job.key,
+        "scale": job.scale,
+        "key_confidence": job.key_confidence,
+        "lufs": job.lufs,
+        "peak_db": job.peak_db,
+    }
+    try:
+        (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        logger.warning("could not write metadata.json for job %s", job.id, exc_info=True)
+
+
 async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
     job_dir = jobs_dir / job.id
     # One try/except covers everything from directory creation through pipeline
@@ -114,4 +133,5 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
         persist_registry(jobs_dir)
         return
     _set(job, status="done", progress=1.0, stage="Done")
+    _write_metadata(job, job_dir)
     persist_registry(jobs_dir)

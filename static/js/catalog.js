@@ -106,6 +106,14 @@ function loadState() {
       if ((data.v ?? 1) >= STORAGE_VERSION) {
         folders = data.folders ?? [];
         tracks = data.tracks ?? {};
+        // Drop title-less entries left over from before metadata persistence.
+        const noTitle = Object.keys(tracks).filter((id) => !tracks[id].title);
+        if (noTitle.length) {
+          const toRemove = new Set(noTitle);
+          noTitle.forEach((id) => delete tracks[id]);
+          folders.forEach((f) => { f.items = f.items.filter((id) => !toRemove.has(id)); });
+          changed = true;
+        }
       }
       // else: stale version → start fresh
     }
@@ -593,15 +601,15 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
-      <div class="cat-title">${track.title}</div>
+      <div class="cat-title">${track.title ?? "Unknown track"}</div>
       <div class="cat-sub">
-        <span>${track.channel}</span>
+        <span>${track.channel ?? ""}</span>
         <span class="dot">·</span>
         <span>${inTrash ? "Removed" : `${stemCount} stem${stemCount !== 1 ? "s" : ""}`}</span>
       </div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : ""}"></div>
-    ${inTrash ? "" : `<button class="cat-del" type="button" aria-label="Move ${track.title} to Trash" title="Move to Trash">
+    ${inTrash ? "" : `<button class="cat-del" type="button" aria-label="Move ${track.title ?? "track"} to Trash" title="Move to Trash">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="3 6 5 6 21 6"></polyline>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
