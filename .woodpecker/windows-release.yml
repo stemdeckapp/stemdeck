@@ -1,12 +1,13 @@
 when:
   - event: release
 
+labels:
+  platform: windows/amd64
+  backend: local
+
 steps:
   build-windows-nvidia:
     image: powershell
-    labels:
-      platform: windows/amd64
-      backend: local
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1
           -PackageName StemDeck-Windows-x64.NVIDIA
@@ -14,9 +15,6 @@ steps:
 
   build-windows-cpu:
     image: powershell
-    labels:
-      platform: windows/amd64
-      backend: local
     depends_on:
       - build-windows-nvidia
     commands:
@@ -28,9 +26,6 @@ steps:
 
   scan-windows-artifacts:
     image: powershell
-    labels:
-      platform: windows/amd64
-      backend: local
     depends_on:
       - build-windows-cpu
     commands:
@@ -40,9 +35,6 @@ steps:
     image: powershell
     when:
       - event: release
-    labels:
-      platform: windows/amd64
-      backend: local
     depends_on:
       - scan-windows-artifacts
     environment:
