@@ -38,6 +38,7 @@ htmlcov/
 data/
 jobs/
 .run/
+.build
 
 # Local env / secrets
 .env
