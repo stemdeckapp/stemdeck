@@ -1,5 +1,6 @@
 when:
   - event: release
+  - event: tag
 
 labels:
   platform: darwin/arm64
