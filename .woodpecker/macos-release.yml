@@ -133,7 +133,13 @@ steps:
             rm -f "$notes_path"
             ;;
         esac
-      - gh release upload "$CI_COMMIT_TAG"
+      - |
+        existing=$(gh release view "$CI_COMMIT_TAG" --repo "thcp/stemdeck" --json assets --jq '[.assets[].name] | join(" ")')
+        if echo "$existing" | grep -q "StemDeck-macOS-arm64.dmg"; then
+          echo "macOS assets already present for $CI_COMMIT_TAG — skipping upload (pre-release promotion)."
+          exit 0
+        fi
+        gh release upload "$CI_COMMIT_TAG"
           ".build/macos-dist/StemDeck-macOS-arm64.dmg"
           ".build/StemDeck-runtime-macOS-arm64.tar.zst"
           ".build/macos-dist/SHA256SUMS-macOS-arm64.txt"
@@ -141,4 +147,3 @@ steps:
           ".build/StemDeck-runtime-macOS-x64.tar.zst"
           ".build/macos-dist/SHA256SUMS-macOS-x64.txt"
           --repo "thcp/stemdeck"
-          --clobber
