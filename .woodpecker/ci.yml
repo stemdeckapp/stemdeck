@@ -78,6 +78,7 @@ steps:
           --severity HIGH,CRITICAL
           --exit-code 1
           --ignore-unfixed
+          --ignorefile .trivyignore
           --skip-dirs .venv
           --skip-dirs jobs
           .
