@@ -16,7 +16,7 @@
         <p class="subtitle">Preparing the local audio engine, first run will take a while...</p>
 
         <ol class="setup-steps" id="steps">
-          <li data-step="runtime">Checking portable runtime</li>
+          <li data-step="runtime">Setting up local runtime</li>
           <li data-step="workspace">Creating workspace</li>
           <li data-step="ffmpeg">Checking FFmpeg</li>
           <li data-step="gpu">Configuring compute device</li>
@@ -25,6 +25,9 @@
         </ol>
 
         <p class="status" id="status">Starting setup...</p>
+        <div class="progress-wrap hidden" id="progress-wrap">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
         <pre class="details hidden" id="details"></pre>
 
         <div class="actions">

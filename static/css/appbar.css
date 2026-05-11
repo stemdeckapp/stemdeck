@@ -207,6 +207,12 @@
   letter-spacing: -0.01em;
 }
 
+.brand-logo {
+  display: block;
+  width: 190px;
+  height: auto;
+}
+
 .beta-badge {
   display: inline-flex;
   align-items: center;

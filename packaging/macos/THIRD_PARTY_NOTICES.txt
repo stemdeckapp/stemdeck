@@ -1,0 +1,20 @@
+THIRD-PARTY NOTICES
+===================
+
+StemDeck for macOS uses a thin Tauri app plus a downloaded runtime pack.
+
+Bundled in StemDeck.app:
+
+- Tauri v2
+- The system WebKit WebView provided by macOS
+
+Downloaded during first-run setup:
+
+- StemDeck runtime pack containing Python and Python package dependencies
+- FFmpeg and ffprobe
+- Demucs model weights
+
+The runtime pack includes its own dependency inventory under
+runtime/licenses/pip-list.json. Before public release, generate and include
+full license texts for every packaged dependency and verify the exact FFmpeg
+build license/provenance.

@@ -1,8 +1,6 @@
 <div align="center">
 
-![StemDeck](stemdeck.png)
-
-# StemDeck
+<img src="imgs/stemdeck-svg-assets/stemdeck-logo-stacked.svg" alt="StemDeck" width="515" />
 
 **Free, local stem separation. No account. No upload. No subscription.**
 
@@ -84,7 +82,20 @@ If you need speed, quality, mobile access, or the extra musician tooling, the co
 
 ## Download
 
-Pre-built portable zips are attached to each [GitHub Release](https://github.com/thcp/stemdeck/releases). No installer needed; extract and run.
+Pre-built installers and zips are attached to each [GitHub Release](https://github.com/thcp/stemdeck/releases).
+
+**macOS**
+
+| DMG | GPU | Chip |
+|---|---|---|
+| `StemDeck-macOS-arm64.dmg` | Apple Silicon (MPS) | M1 and later |
+| `StemDeck-macOS-x64.dmg` | CPU only | Intel |
+
+Open the DMG, drag StemDeck to Applications, and launch it. On first launch the setup screen downloads the Python runtime (~500 MB), FFmpeg, and the Demucs model (~170 MB). Subsequent launches skip setup and start in seconds. No Python or system dependencies required.
+
+macOS may show a Gatekeeper prompt on first open — right-click the app and choose Open to bypass it.
+
+**Windows**
 
 | Zip | GPU | Approx. size |
 |---|---|---|
@@ -97,7 +108,7 @@ Extract the zip anywhere, run `StemDeck.exe`. On first launch the app verifies t
 
 ## Technologies
 
-StemDeck is built on **[Python 3.10+](https://python.org)** managed via **[uv](https://github.com/astral-sh/uv)**, with a **[FastAPI](https://fastapi.tiangolo.com)** backend serving REST and Server-Sent Events. Stem separation uses **[Demucs](https://github.com/facebookresearch/demucs)** (`htdemucs_6s`), Meta AI's open-source 6-stem neural network. YouTube audio is fetched via **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**; transcoding and mixing use **[FFmpeg](https://ffmpeg.org)**. BPM detection and key analysis run on **[librosa](https://librosa.org)**; loudness measurement uses **[pyloudnorm](https://github.com/csteinmetz1/pyloudnorm)** (ITU-R BS.1770). The Windows desktop shell is **[Tauri v2](https://tauri.app)** (Rust/WebView2). The frontend is vanilla JS with the Web Audio API, no framework and no build step; waveforms are rendered on `<canvas>` using min/max sample rendering.
+StemDeck is built on **[Python 3.10+](https://python.org)** managed via **[uv](https://github.com/astral-sh/uv)**, with a **[FastAPI](https://fastapi.tiangolo.com)** backend serving REST and Server-Sent Events. Stem separation uses **[Demucs](https://github.com/facebookresearch/demucs)** (`htdemucs_6s`), Meta AI's open-source 6-stem neural network. YouTube audio is fetched via **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**; transcoding and mixing use **[FFmpeg](https://ffmpeg.org)**. BPM detection and key analysis run on **[librosa](https://librosa.org)**; loudness measurement uses **[pyloudnorm](https://github.com/csteinmetz1/pyloudnorm)** (ITU-R BS.1770). The macOS and Windows desktop shells are **[Tauri v2](https://tauri.app)** (Rust/WKWebView on macOS, Rust/WebView2 on Windows). The frontend is vanilla JS with the Web Audio API, no framework and no build step; waveforms are rendered on `<canvas>` using min/max sample rendering.
 
 *Thanks to the creators and maintainers of all the open-source libraries that make StemDeck possible.*
 
@@ -105,13 +116,45 @@ StemDeck is built on **[Python 3.10+](https://python.org)** managed via **[uv](h
 
 ## Build from Source
 
-*(macOS / Linux / Windows with Python 3.10+)*
+### macOS Native App
 
-### Prerequisites
+Requires Rust, Node.js, and Python 3.10–3.13. Builds a self-contained `.app` that downloads its own runtime on first launch.
+
+```sh
+# First time only — add the cross-compilation targets
+rustup target add aarch64-apple-darwin   # Apple Silicon
+rustup target add x86_64-apple-darwin    # Intel
+
+# Build Apple Silicon
+ARCH=arm64 scripts/macos/make-runtime-pack.sh
+ARCH=arm64 scripts/macos/make-app.sh
+ARCH=arm64 scripts/macos/make-dmg.sh
+
+# Build Intel (requires Rosetta 2 and an x86_64 Python)
+ARCH=x64 scripts/macos/make-runtime-pack.sh
+ARCH=x64 scripts/macos/make-app.sh
+ARCH=x64 scripts/macos/make-dmg.sh
+```
+
+The `.app` lands at `desktop/src-tauri/target/<target>/release/bundle/macos/StemDeck.app`. The DMG lands at `.build/macos-dist/StemDeck-macOS-<arch>.dmg`.
+
+To run a fresh build directly without the DMG:
+
+```sh
+# Wipe previous app data, then open
+rm -rf ~/Library/Application\ Support/StemDeck
+open desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/StemDeck.app
+```
+
+---
+
+### Web Server (macOS / Linux / Windows with Python 3.10+)
+
+#### Prerequisites
 
 Python 3.10 or newer, `ffmpeg` on your PATH, and [uv](https://github.com/astral-sh/uv). Around 170 MB of free disk for the Demucs model, which downloads automatically on first run.
 
-### macOS / Linux (one-shot)
+#### macOS / Linux (one-shot)
 
 ```sh
 git clone https://github.com/thcp/stemdeck stemdeck && cd stemdeck
@@ -123,7 +166,7 @@ Open <http://localhost:8000>.
 
 `setup` uses Homebrew on macOS and `apt-get` on Debian/Ubuntu. For other Linux distros, install `ffmpeg` and [uv](https://github.com/astral-sh/uv) manually, then run `uv sync` followed by `./run.sh start`.
 
-### Manual (any platform)
+#### Manual (any platform)
 
 ```sh
 git clone https://github.com/thcp/stemdeck stemdeck && cd stemdeck
@@ -131,7 +174,7 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-### Docker
+#### Docker
 
 ```sh
 docker compose -f build/docker-compose.yml up --build
@@ -139,7 +182,7 @@ docker compose -f build/docker-compose.yml up --build
 
 Stems land in `./jobs/` on the host. Demucs weights are cached in a named volume so they don't re-download on rebuild. Note: no GPU passthrough on macOS Docker.
 
-### `run.sh` control script
+#### `run.sh` control script
 
 ```sh
 ./run.sh setup      # one-shot: install ffmpeg + uv, then uv sync

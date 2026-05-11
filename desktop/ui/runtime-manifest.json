@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0-alpha.1",
+  "arch": "arm64",
+  "runtimeUrl": "",
+  "runtimeSha256": "",
+  "runtimeSize": 0,
+  "archiveName": "StemDeck-runtime-macOS-arm64.tar.zst"
+}

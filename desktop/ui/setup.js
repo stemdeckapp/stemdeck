@@ -75,6 +75,59 @@ function startProgressStatus(messages) {
   return () => window.clearInterval(timer);
 }
 
+function isMac() {
+  return /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
+}
+
+async function installRuntimePack(appRoot) {
+  const status = await invoke("runtime_pack_status");
+  if (!status.manifestReady) {
+    throw new Error(
+      `Python runtime not found. Expected python/ or .venv/ under ${appRoot}, or a runtime-manifest.json for first-run setup.`
+    );
+  }
+
+  const progressWrap = document.getElementById("progress-wrap");
+  const progressFill = document.getElementById("progress-fill");
+
+  const unlisten = await window.__TAURI__.event.listen(
+    "runtime-download-progress",
+    (event) => {
+      const { received, total } = event.payload;
+      const mb = (received / 1e6).toFixed(0);
+      if (total && total > 0) {
+        const pct = Math.min(100, Math.round((received / total) * 100));
+        progressFill.style.width = `${pct}%`;
+        progressFill.classList.remove("indeterminate");
+        setStatus(`Downloading StemDeck runtime... ${mb} / ${(total / 1e6).toFixed(0)} MB`);
+      } else {
+        progressFill.classList.add("indeterminate");
+        setStatus(`Downloading StemDeck runtime... ${mb} MB received`);
+      }
+    }
+  );
+
+  progressWrap.classList.remove("hidden");
+  progressFill.style.width = "0%";
+  progressFill.classList.remove("indeterminate");
+
+  try {
+    setStatus("Downloading StemDeck runtime...");
+    await invoke("download_runtime_pack");
+    progressWrap.classList.add("hidden");
+    setStatus("Verifying StemDeck runtime...");
+    await invoke("verify_runtime_pack");
+    setStatus("Installing StemDeck runtime...");
+    const installed = await invoke("extract_runtime_pack");
+    if (!installed.runtimeReady) {
+      throw new Error("Runtime install finished but Python/backend files were not found.");
+    }
+  } finally {
+    unlisten();
+    progressWrap.classList.add("hidden");
+  }
+}
+
 async function runSetup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
@@ -83,7 +136,7 @@ async function runSetup() {
   try {
     setStep("runtime", "active");
     setStatus("Checking Python runtime...");
-    const [runtime] = await Promise.all([
+    let [runtime] = await Promise.all([
       invoke("probe_runtime"),
       minDelay(350),
     ]);
@@ -107,10 +160,13 @@ async function runSetup() {
     }
 
     if (!runtime.pythonReady) {
-      setStep("runtime", "error");
-      throw new Error(
-        `Python runtime not found. Expected python/ or .venv/ under: ${runtime.appRoot}`
-      );
+      await invoke("ensure_workspace");
+      await installRuntimePack(runtime.appRoot);
+      runtime = await invoke("probe_runtime");
+      if (!runtime.pythonReady) {
+        setStep("runtime", "error");
+        throw new Error(`Python runtime setup failed under: ${runtime.dataDir}`);
+      }
     }
     setStep("runtime", "done");
     setStatus(`Python runtime found at ${runtime.pythonPath}`);
@@ -149,32 +205,53 @@ async function runSetup() {
     }
 
     await runStep("gpu", async () => {
-      const stopProgress = startProgressStatus([
-        {
-          afterSeconds: 0,
-          text: "Checking NVIDIA GPU and compute support...",
-        },
-        {
-          afterSeconds: 20,
-          text: "Installing NVIDIA acceleration if needed... first run can take 5-15 minutes.",
-        },
-        {
-          afterSeconds: 120,
-          text: "Still installing NVIDIA acceleration... CUDA Torch packages are large.",
-        },
-        {
-          afterSeconds: 300,
-          text: "Still working... setup should finish or time out automatically.",
-        },
-      ]);
+      const macGPU = isMac();
+      const stopProgress = startProgressStatus(
+        macGPU
+          ? [
+              {
+                afterSeconds: 0,
+                text: "Checking Apple Silicon compute support...",
+              },
+              {
+                afterSeconds: 10,
+                text: "Verifying MPS acceleration for AI models...",
+              },
+            ]
+          : [
+              {
+                afterSeconds: 0,
+                text: "Checking NVIDIA GPU and compute support...",
+              },
+              {
+                afterSeconds: 20,
+                text: "Installing NVIDIA acceleration if needed... first run can take 5-15 minutes.",
+              },
+              {
+                afterSeconds: 120,
+                text: "Still installing NVIDIA acceleration... CUDA Torch packages are large.",
+              },
+              {
+                afterSeconds: 300,
+                text: "Still working... setup should finish or time out automatically.",
+              },
+            ]
+      );
 
       try {
         const gpu = await invoke("ensure_torch_device");
-        gpuSummary = gpu.gpuDetected
-          ? gpu.cudaVerified
-            ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`
-            : `${gpu.gpuName} found - falling back to CPU (CUDA unverified)`
-          : "No NVIDIA GPU - stem separation will use CPU";
+        if (macGPU) {
+          gpuSummary =
+            gpu.torchDevice === "mps"
+              ? `${gpu.gpuName} acceleration enabled`
+              : "MPS acceleration unavailable - stem separation will use CPU";
+        } else {
+          gpuSummary = gpu.gpuDetected
+            ? gpu.cudaVerified
+              ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`
+              : `${gpu.gpuName} found - falling back to CPU (CUDA unverified)`
+            : "No NVIDIA GPU - stem separation will use CPU";
+        }
         return gpu;
       } finally {
         stopProgress();

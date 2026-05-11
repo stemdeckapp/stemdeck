@@ -151,6 +151,32 @@ h1 {
   color: #cbd2da;
 }
 
+.progress-wrap {
+  height: 4px;
+  background: rgba(148, 163, 184, 0.15);
+  border-radius: 2px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.15s linear;
+}
+
+.progress-fill.indeterminate {
+  width: 35%;
+  animation: progress-slide 1.6s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% { transform: translateX(-200%); }
+  100% { transform: translateX(400%); }
+}
+
 .details {
   max-height: 180px;
   overflow: auto;

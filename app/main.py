@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
@@ -69,9 +70,32 @@ async def _sweep_loop() -> None:
         await asyncio.sleep(3600)
 
 
+async def _desktop_parent_watchdog(parent_pid: int) -> None:
+    while True:
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            _log.info("desktop parent process exited; stopping backend")
+            os._exit(0)
+        except PermissionError:
+            _log.warning("desktop parent process check denied; stopping backend")
+            os._exit(0)
+        await asyncio.sleep(1)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     asyncio.create_task(_sweep_loop())
+    if os.environ.get("STEMDECK_DESKTOP") == "1":
+        parent_pid = os.environ.get("STEMDECK_PARENT_PID")
+        if parent_pid:
+            try:
+                parent_pid_int = int(parent_pid)
+            except ValueError:
+                _log.warning("invalid STEMDECK_PARENT_PID=%r", parent_pid)
+            else:
+                if parent_pid_int > 0 and parent_pid_int != os.getpid():
+                    asyncio.create_task(_desktop_parent_watchdog(parent_pid_int))
     yield
 
 

@@ -1,0 +1,12 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">StemDeck Tray Icon Monochrome</title>
+  <g fill="currentColor">
+    <rect x="9" y="30" width="4" height="4" rx="2"/>
+    <rect x="16" y="23" width="5" height="18" rx="2.5"/>
+    <rect x="24" y="15" width="5" height="34" rx="2.5"/>
+    <rect x="32" y="25" width="4" height="14" rx="2"/>
+    <rect x="39" y="18" width="5" height="28" rx="2.5"/>
+    <rect x="48" y="25" width="5" height="14" rx="2.5"/>
+    <rect x="56" y="30" width="4" height="4" rx="2"/>
+  </g>
+</svg>

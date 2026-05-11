@@ -1,0 +1,25 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">StemDeck Horizontal Logo</title>
+  <desc id="desc">StemDeck logo with golden waveform symbol and wordmark.</desc>
+  <defs>
+    <linearGradient id="gold" x1="82" y1="48" x2="282" y2="264" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE38A"/>
+      <stop offset="0.48" stop-color="#F2B53D"/>
+      <stop offset="1" stop-color="#C98512"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#gold)">
+    <rect x="78" y="154" width="16" height="12" rx="6"/>
+    <rect x="110" y="118" width="20" height="84" rx="10"/>
+    <rect x="144" y="78" width="22" height="164" rx="11"/>
+    <rect x="178" y="126" width="18" height="68" rx="9"/>
+    <rect x="212" y="52" width="24" height="216" rx="12"/>
+    <rect x="250" y="106" width="20" height="108" rx="10"/>
+    <rect x="284" y="80" width="22" height="160" rx="11"/>
+    <rect x="318" y="128" width="20" height="64" rx="10"/>
+    <rect x="352" y="154" width="16" height="12" rx="6"/>
+  </g>
+  <text x="430" y="178" font-family="Inter, Geist, Manrope, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-4" fill="#F4F6F8">Stem</text>
+  <text x="678" y="178" font-family="Inter, Geist, Manrope, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-4" fill="#F2B53D">Deck</text>
+  <text x="435" y="232" font-family="Inter, Geist, Manrope, Arial, sans-serif" font-size="28" font-weight="500" letter-spacing="11" fill="#7F8A94">POWERED STEM SEPARATION</text>
+</svg>

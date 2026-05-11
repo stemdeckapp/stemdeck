@@ -105,7 +105,7 @@
 
 .topbar .appbar-body-inner {
   display: grid !important;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-columns: 270px minmax(0, 1fr);
   align-items: center;
   gap: 18px;
   width: 100%;
@@ -136,12 +136,16 @@
 }
 
 .topbar .brand-row {
-  gap: 9px;
+  gap: 14px;
 }
 
 .topbar .brand {
   font-size: 23px;
   letter-spacing: 0;
+}
+
+.topbar .brand-logo {
+  width: 190px;
 }
 
 .topbar .beta-badge {
@@ -154,14 +158,6 @@
 .topbar .brand-sub,
 .topbar .brand-version {
   display: none !important;
-}
-
-.topbar .brand-version.has-update {
-  display: block !important;
-  margin-top: 5px;
-  font-size: 11.5px;
-  line-height: 1.15;
-  font-weight: 600;
 }
 
 .topbar .brand-version.has-update a {
@@ -275,12 +271,16 @@
 
 @media (max-width: 1250px) {
   .topbar .appbar-body-inner {
-    grid-template-columns: 178px minmax(0, 1fr);
+    grid-template-columns: 236px minmax(0, 1fr);
     gap: 14px;
   }
 
   .topbar .brand {
     font-size: 20px;
+  }
+
+  .topbar .brand-logo {
+    width: 170px;
   }
 
   .topbar .beta-badge {

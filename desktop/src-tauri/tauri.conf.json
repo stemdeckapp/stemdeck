@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "StemDeck",
-  "version": "0.1.0-alpha.0",
+  "version": "0.4.0-alpha.1",
   "identifier": "app.stemdeck.desktop",
   "build": {
     "frontendDist": "../ui",
@@ -13,12 +13,12 @@
     "windows": [
       {
         "title": "StemDeck",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1440,
-        "minHeight": 900,
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 720,
         "backgroundColor": "#050b10",
-      "dragDropEnabled": false
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -28,6 +28,23 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
-    "icon": []
+    "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    }
   }
 }

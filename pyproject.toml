@@ -8,18 +8,28 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "yt-dlp>=2024.12.0",
     "demucs>=4.0.1",
-    # Pin torch/torchaudio to 2.6.x — torchaudio 2.7+ removed its built-in
+    # Pin torch/torchaudio to 2.6.x where available — torchaudio 2.7+ removed its built-in
     # audio writer and now requires the separate `torchcodec` package, which
     # has ABI issues with torch 2.11. Demucs 4.0.1 calls torchaudio.save() to
     # write stems, so it breaks on 2.7+.
-    "torch>=2.6,<2.7",
-    "torchaudio>=2.6,<2.7",
+    "torch>=2.6,<2.7; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torchaudio>=2.6,<2.7; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # PyTorch does not publish macOS x86_64 wheels for 2.6.x. Keep Intel macOS
+    # on the last compatible line so the x64 runtime pack can still be built.
+    "torch>=2.2,<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torchaudio>=2.2,<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     # torchaudio 2.6 dispatches WAV writes through libsndfile via soundfile.
     # Without this, demucs crashes on save with "Couldn't find appropriate
     # backend to handle uri ... drums.wav".
     "soundfile>=0.12",
     # BPM + key analysis on the downloaded source. Pulls numpy/scipy/numba.
     "librosa>=0.10",
+    # Current llvmlite releases no longer publish macOS x86_64 wheels, which
+    # makes Intel runtime builds require a full LLVM/CMake toolchain. Keep Intel
+    # macOS on a wheel-backed Numba line.
+    "numba>=0.61,<0.62; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # Torch 2.2's Intel macOS wheel was built against NumPy 1.x.
+    "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     # ITU-R BS.1770 integrated-loudness (LUFS) measurement for the
     # post-analysis loudness card. Pure Python, depends on scipy which
     # librosa already pulls in.

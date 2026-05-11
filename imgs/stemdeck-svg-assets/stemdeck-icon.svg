@@ -1,0 +1,28 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">StemDeck App Icon</title>
+  <desc id="desc">Dark rounded square app icon with a golden segmented waveform.</desc>
+  <defs>
+    <linearGradient id="bg" x1="96" y1="48" x2="416" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16212A"/>
+      <stop offset="1" stop-color="#081018"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="128" y1="96" x2="384" y2="416" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE38A"/>
+      <stop offset="0.45" stop-color="#F2B53D"/>
+      <stop offset="1" stop-color="#C98512"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect x="41" y="41" width="430" height="430" rx="103" stroke="#263744" stroke-opacity="0.72" stroke-width="2"/>
+  <g fill="url(#gold)" transform="translate(-26.5 0)">
+    <rect x="118" y="248" width="20" height="16" rx="8"/>
+    <rect x="152" y="205" width="24" height="102" rx="12"/>
+    <rect x="190" y="158" width="26" height="196" rx="13"/>
+    <rect x="230" y="212" width="22" height="88" rx="11"/>
+    <rect x="270" y="110" width="28" height="292" rx="14"/>
+    <rect x="315" y="190" width="24" height="132" rx="12"/>
+    <rect x="354" y="156" width="26" height="200" rx="13"/>
+    <rect x="394" y="214" width="24" height="84" rx="12"/>
+    <rect x="427" y="248" width="20" height="16" rx="8"/>
+  </g>
+</svg>

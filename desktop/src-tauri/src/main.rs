@@ -1,4 +1,5 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     io::{Read, Write},
@@ -9,13 +10,15 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 #[cfg(windows)]
-use {std::fs::File, zip::ZipArchive};
+use zip::ZipArchive;
 
 const SETUP_VERSION: u64 = 1;
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip";
+const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip";
 
 #[derive(Default)]
 struct BackendState {
@@ -34,6 +37,47 @@ struct RuntimeProbe {
     ffmpeg_ready: bool,
     /// Persisted from previous setup run; None means GPU step hasn't run yet.
     torch_device: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeManifest {
+    version: String,
+    arch: String,
+    runtime_url: String,
+    runtime_sha256: String,
+    runtime_size: Option<u64>,
+    archive_name: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimePackStatus {
+    manifest_ready: bool,
+    manifest_path: Option<String>,
+    runtime_ready: bool,
+    runtime_dir: String,
+    backend_ready: bool,
+    python_ready: bool,
+    archive_path: Option<String>,
+    archive_ready: bool,
+    installed_version: Option<String>,
+    manifest: Option<RuntimeManifest>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeArchive {
+    archive_path: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    received: u64,
+    total: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -65,6 +109,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             probe_runtime,
             ensure_workspace,
+            runtime_pack_status,
+            download_runtime_pack,
+            verify_runtime_pack,
+            extract_runtime_pack,
             ensure_external_assets,
             ensure_torch_device,
             start_backend,
@@ -72,11 +120,20 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
                 let state = app_handle.state::<BackendState>();
                 stop_backend(&state);
             }
+            tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::CloseRequested { .. },
+                ..
+            } => {
+                let state = app_handle.state::<BackendState>();
+                stop_backend(&state);
+                app_handle.exit(0);
+            }
+            _ => {}
         });
 }
 
@@ -109,12 +166,131 @@ fn read_config_str(data_dir: &std::path::Path, key: &str) -> Option<String> {
 }
 
 #[tauri::command]
+fn runtime_pack_status() -> Result<RuntimePackStatus, String> {
+    let root = app_root()?;
+    let data_dir = local_data_dir()?;
+    let runtime_dir = runtime_dir(&data_dir);
+    let backend_dir = runtime_dir.join("backend");
+    let python = runtime_python_path(&data_dir);
+    let manifest_path = runtime_manifest_path(&root);
+    let manifest = manifest_path
+        .as_deref()
+        .and_then(|path| read_runtime_manifest(path).ok());
+    let archive_path = manifest
+        .as_ref()
+        .map(|item| runtime_archive_path(&data_dir, item));
+    let installed_version = read_runtime_install_manifest(&runtime_dir)
+        .and_then(|value| value.get("version")?.as_str().map(|text| text.to_string()));
+
+    Ok(RuntimePackStatus {
+        manifest_ready: manifest.is_some(),
+        manifest_path: manifest_path.map(|path| path.display().to_string()),
+        runtime_ready: backend_dir.join("app").is_dir() && python.is_file(),
+        runtime_dir: runtime_dir.display().to_string(),
+        backend_ready: backend_dir.join("app").is_dir(),
+        python_ready: python.is_file(),
+        archive_ready: archive_path.as_ref().is_some_and(|path| path.is_file()),
+        archive_path: archive_path.map(|path| path.display().to_string()),
+        installed_version,
+        manifest,
+    })
+}
+
+#[tauri::command]
+async fn download_runtime_pack(app_handle: tauri::AppHandle) -> Result<RuntimeArchive, String> {
+    ensure_workspace()?;
+    let root = app_root()?;
+    let data_dir = local_data_dir()?;
+    let manifest = load_runtime_manifest(&root)?;
+    validate_runtime_manifest(&manifest)?;
+    let archive = runtime_archive_path(&data_dir, &manifest);
+    if let Some(parent) = archive.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    download_file_with_progress(&manifest.runtime_url, &archive, &app_handle).await?;
+    verify_runtime_archive(&manifest, &archive)
+}
+
+#[tauri::command]
+fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
+    let root = app_root()?;
+    let data_dir = local_data_dir()?;
+    let manifest = load_runtime_manifest(&root)?;
+    validate_runtime_manifest(&manifest)?;
+    let archive = runtime_archive_path(&data_dir, &manifest);
+    verify_runtime_archive(&manifest, &archive)
+}
+
+#[tauri::command]
+fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
+    ensure_workspace()?;
+    let root = app_root()?;
+    let data_dir = local_data_dir()?;
+    let manifest = load_runtime_manifest(&root)?;
+    validate_runtime_manifest(&manifest)?;
+    let archive = runtime_archive_path(&data_dir, &manifest);
+    verify_runtime_archive(&manifest, &archive)?;
+
+    let runtime = runtime_dir(&data_dir);
+    let tmp = data_dir.join("runtime.tmp");
+    let old = data_dir.join("runtime.old");
+    if tmp.exists() {
+        fs::remove_dir_all(&tmp).map_err(|e| format!("failed to remove {}: {e}", tmp.display()))?;
+    }
+    fs::create_dir_all(&tmp).map_err(|e| format!("failed to create {}: {e}", tmp.display()))?;
+
+    extract_tar_archive(&archive, &tmp)?;
+    let extracted = tmp.join("runtime");
+    if !extracted.join("backend").join("app").is_dir() {
+        return Err("runtime archive did not contain runtime/backend/app".to_string());
+    }
+    if !extracted
+        .join("python")
+        .join("bin")
+        .join("python")
+        .is_file()
+    {
+        return Err("runtime archive did not contain runtime/python/bin/python".to_string());
+    }
+
+    let install_manifest = serde_json::json!({
+        "version": manifest.version,
+        "arch": manifest.arch,
+        "runtimeUrl": manifest.runtime_url,
+        "runtimeSha256": manifest.runtime_sha256,
+        "installedAt": unix_timestamp(),
+    });
+    fs::write(
+        extracted.join("runtime-manifest.json"),
+        serde_json::to_string_pretty(&install_manifest)
+            .map_err(|e| format!("failed to serialize runtime install manifest: {e}"))?
+            + "\n",
+    )
+    .map_err(|e| format!("failed to write runtime manifest: {e}"))?;
+
+    if old.exists() {
+        fs::remove_dir_all(&old).map_err(|e| format!("failed to remove {}: {e}", old.display()))?;
+    }
+    if runtime.exists() {
+        fs::rename(&runtime, &old)
+            .map_err(|e| format!("failed to move existing runtime aside: {e}"))?;
+    }
+    fs::rename(&extracted, &runtime).map_err(|e| format!("failed to install runtime: {e}"))?;
+    let _ = fs::remove_dir_all(&tmp);
+    let _ = fs::remove_dir_all(&old);
+
+    let python = runtime.join("python").join("bin").join("python");
+    patch_pyvenv_cfg(&python);
+    runtime_pack_status()
+}
+
+#[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
     let root = app_root()?;
     let data = local_data_dir()?;
     migrate_legacy_data(&root, &data);
-    fs::create_dir_all(&data)
-        .map_err(|e| format!("failed to create data dir: {e}"))?;
+    fs::create_dir_all(&data).map_err(|e| format!("failed to create data dir: {e}"))?;
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
         fs::create_dir_all(data.join(dir))
             .map_err(|e| format!("failed to create data/{dir}: {e}"))?;
@@ -168,7 +344,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create backend log directory: {e}"))?;
     }
-    let log_file = File::create(&log_path)
+    let log_file = fs::File::create(&log_path)
         .map_err(|e| format!("failed to create backend log {}: {e}", log_path.display()))?;
     let log_file_for_stderr = log_file
         .try_clone()
@@ -187,6 +363,7 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
     cmd.current_dir(&backend_dir)
         .env("STEMDECK_DATA_DIR", &data_dir)
         .env("STEMDECK_DESKTOP", "1")
+        .env("STEMDECK_PARENT_PID", std::process::id().to_string())
         .env("PYTHONUNBUFFERED", "1")
         .env("XDG_CACHE_HOME", data_dir.join("cache"))
         .env("TORCH_HOME", data_dir.join("models").join("torch"))
@@ -245,30 +422,51 @@ fn ensure_torch_device() -> Result<GpuSetup, String> {
         .ok_or_else(|| "Python not found".to_string())?;
     patch_pyvenv_cfg(&python);
 
-    let setup = match detect_nvidia_gpu() {
-        Some((gpu_name, cuda_version)) => {
-            let index_url = cuda_index_url(&cuda_version);
-            install_cuda_torch(&python, &index_url)?;
-            let cuda_verified = verify_cuda_torch(&python);
-            GpuSetup {
-                gpu_detected: true,
-                gpu_name: Some(gpu_name),
-                cuda_version: Some(cuda_version),
-                torch_device: if cuda_verified { "cuda" } else { "cpu" }.to_string(),
-                cuda_verified,
-            }
-        }
-        None => GpuSetup {
-            gpu_detected: false,
-            gpu_name: None,
+    #[cfg(target_os = "macos")]
+    {
+        let mps_available = verify_mps_torch(&python);
+        let device = if mps_available { "mps" } else { "cpu" };
+        persist_torch_device(&data_dir, device);
+        Ok(GpuSetup {
+            gpu_detected: mps_available,
+            gpu_name: if mps_available {
+                Some("Apple Silicon (MPS)".to_string())
+            } else {
+                None
+            },
             cuda_version: None,
-            torch_device: "cpu".to_string(),
+            torch_device: device.to_string(),
             cuda_verified: false,
-        },
-    };
-    // Persist so subsequent launches skip this step entirely.
-    persist_torch_device(&data_dir, &setup.torch_device);
-    Ok(setup)
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let setup = match detect_nvidia_gpu() {
+            Some((gpu_name, cuda_version)) => {
+                let index_url = cuda_index_url(&cuda_version);
+                install_cuda_torch(&python, &index_url)?;
+                let cuda_verified = verify_cuda_torch(&python);
+                GpuSetup {
+                    gpu_detected: true,
+                    gpu_name: Some(gpu_name),
+                    cuda_version: Some(cuda_version),
+                    torch_device: if cuda_verified { "cuda" } else { "cpu" }.to_string(),
+                    cuda_verified,
+                }
+            }
+            None => GpuSetup {
+                gpu_detected: false,
+                gpu_name: None,
+                cuda_version: None,
+                torch_device: "cpu".to_string(),
+                cuda_verified: false,
+            },
+        };
+        // Persist so subsequent launches skip this step entirely.
+        persist_torch_device(&data_dir, &setup.torch_device);
+        Ok(setup)
+    }
 }
 
 fn is_cpu_only_package(root: &Path, data_dir: &Path) -> bool {
@@ -282,6 +480,21 @@ fn persist_torch_device(data_dir: &std::path::Path, device: &str) {
     );
 }
 
+#[cfg(target_os = "macos")]
+fn verify_mps_torch(python: &Path) -> bool {
+    Command::new(python)
+        .args([
+            "-c",
+            "import torch; exit(0 if getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available() else 1)",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn nvidia_smi_exe() -> &'static str {
     // nvidia-smi.exe lives in System32 on Windows but Tauri child processes
     // inherit a stripped PATH that may not include it.
@@ -295,6 +508,7 @@ fn nvidia_smi_exe() -> &'static str {
     "nvidia-smi"
 }
 
+#[cfg(not(target_os = "macos"))]
 fn detect_nvidia_gpu() -> Option<(String, String)> {
     let smi = nvidia_smi_exe();
     let mut cmd = Command::new(smi);
@@ -323,6 +537,7 @@ fn detect_nvidia_gpu() -> Option<(String, String)> {
     Some((gpu_name, cuda_version))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn parse_cuda_version(smi_output: &str) -> Option<String> {
     for line in smi_output.lines() {
         if let Some(pos) = line.find("CUDA Version:") {
@@ -341,6 +556,7 @@ fn parse_cuda_version(smi_output: &str) -> Option<String> {
     None
 }
 
+#[cfg(not(target_os = "macos"))]
 fn cuda_tag(cuda_version: &str) -> &'static str {
     let parts: Vec<u32> = cuda_version
         .splitn(2, '.')
@@ -354,6 +570,7 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn cuda_index_url(cuda_version: &str) -> String {
     format!(
         "https://download.pytorch.org/whl/{}",
@@ -361,6 +578,7 @@ fn cuda_index_url(cuda_version: &str) -> String {
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 fn cuda_tag_from_url(index_url: &str) -> &str {
     index_url.rsplit('/').next().unwrap_or("cu124")
 }
@@ -369,18 +587,20 @@ fn cuda_tag_from_url(index_url: &str) -> &str {
 /// this file before Python starts, so stale build-machine paths can prevent the
 /// backend from emitting any log output at all.
 fn patch_pyvenv_cfg(python: &Path) {
-    let Some(scripts_dir) = python.parent() else {
+    let Some(bin_dir) = python.parent() else {
         return;
     };
-    let Some(venv_root) = scripts_dir.parent() else {
+    let Some(venv_root) = bin_dir.parent() else {
         return;
     };
-    let bundled_python = venv_root.join(if cfg!(windows) {
-        "python.exe"
-    } else {
-        "python"
-    });
-    if !bundled_python.is_file() || !venv_root.join("Lib").join("os.py").is_file() {
+    let bundled_python = venv_root
+        .join(if cfg!(windows) { "Scripts" } else { "bin" })
+        .join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+    if !bundled_python.is_file() || !python_stdlib_present(venv_root) {
         return;
     }
     let cfg_path = venv_root.join("pyvenv.cfg");
@@ -413,6 +633,20 @@ fn patch_pyvenv_cfg(python: &Path) {
     let _ = fs::write(&cfg_path, patched);
 }
 
+fn python_stdlib_present(venv_root: &Path) -> bool {
+    if venv_root.join("Lib").join("os.py").is_file() {
+        return true;
+    }
+    let lib = venv_root.join("lib");
+    let Ok(entries) = fs::read_dir(lib) else {
+        return false;
+    };
+    entries
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().join("os.py").is_file())
+}
+
+#[cfg(not(target_os = "macos"))]
 fn install_cuda_torch(python: &Path, index_url: &str) -> Result<(), String> {
     // Skip only when CUDA torch is already active — torch.version.cuda is
     // None for CPU-only wheels, so this correctly re-installs when needed.
@@ -459,6 +693,7 @@ fn install_cuda_torch(python: &Path, index_url: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn verify_cuda_torch(python: &Path) -> bool {
     Command::new(python)
         .args([
@@ -482,7 +717,14 @@ fn open_url(url: String) -> Result<(), String> {
         cmd.spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("failed to open URL: {e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         Command::new("xdg-open")
             .arg(&url)
@@ -504,7 +746,8 @@ fn stop_backend(state: &BackendState) {
 
 /// Returns the persistent user data directory for StemDeck.
 /// On Windows: %LocalAppData%\StemDeck
-/// On Linux/macOS: $XDG_DATA_HOME/stemdeck  or  ~/.local/share/stemdeck
+/// On macOS: ~/Library/Application Support/StemDeck
+/// On Linux: $XDG_DATA_HOME/stemdeck  or  ~/.local/share/stemdeck
 /// Can be overridden by STEMDECK_DATA_DIR for development.
 fn local_data_dir() -> Result<PathBuf, String> {
     if let Ok(path) = env::var("STEMDECK_DATA_DIR") {
@@ -516,14 +759,24 @@ fn local_data_dir() -> Result<PathBuf, String> {
             .map_err(|_| "LOCALAPPDATA environment variable not set".to_string())?;
         Ok(PathBuf::from(base).join("StemDeck"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("StemDeck"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Ok(xdg) = env::var("XDG_DATA_HOME") {
             return Ok(PathBuf::from(xdg).join("stemdeck"));
         }
-        let home = env::var("HOME")
-            .map_err(|_| "HOME environment variable not set".to_string())?;
-        Ok(PathBuf::from(home).join(".local").join("share").join("stemdeck"))
+        let home = env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
+        Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("stemdeck"))
     }
 }
 
@@ -552,6 +805,257 @@ fn migrate_legacy_data(root: &Path, data_dir: &Path) {
     }
 }
 
+fn runtime_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("runtime")
+}
+
+fn runtime_python_path(data_dir: &Path) -> PathBuf {
+    runtime_dir(data_dir)
+        .join("python")
+        .join("bin")
+        .join("python")
+}
+
+fn runtime_manifest_path(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("runtime-manifest.json"),
+        root.join("desktop")
+            .join("ui")
+            .join("runtime-manifest.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn load_runtime_manifest(root: &Path) -> Result<RuntimeManifest, String> {
+    let path = runtime_manifest_path(root)
+        .ok_or_else(|| format!("runtime-manifest.json not found under {}", root.display()))?;
+    read_runtime_manifest(&path)
+}
+
+fn read_runtime_manifest(path: &Path) -> Result<RuntimeManifest, String> {
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("failed to parse {}: {e}", path.display()))
+}
+
+fn read_runtime_install_manifest(runtime_dir: &Path) -> Option<serde_json::Value> {
+    let text = fs::read_to_string(runtime_dir.join("runtime-manifest.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn validate_runtime_manifest(manifest: &RuntimeManifest) -> Result<(), String> {
+    if manifest.runtime_url.trim().is_empty() {
+        return Err("runtime manifest has an empty runtimeUrl".to_string());
+    }
+    let sha = manifest.runtime_sha256.trim();
+    if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("runtime manifest must include a 64-character runtimeSha256".to_string());
+    }
+    Ok(())
+}
+
+fn runtime_archive_path(data_dir: &Path, manifest: &RuntimeManifest) -> PathBuf {
+    let name = manifest
+        .archive_name
+        .clone()
+        .or_else(|| manifest.runtime_url.rsplit('/').next().map(str::to_string))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("StemDeck-runtime-macOS-{}.tar.zst", manifest.arch));
+    data_dir.join("downloads").join(name)
+}
+
+async fn download_file_with_progress(
+    url: &str,
+    target: &Path,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    let tmp = target.with_extension("download");
+    if tmp.exists() {
+        fs::remove_file(&tmp)
+            .map_err(|e| format!("failed to remove {}: {e}", tmp.display()))?;
+    }
+
+    if let Some(path) = url.strip_prefix("file://") {
+        fs::copy(Path::new(path), &tmp)
+            .map_err(|e| format!("failed to copy runtime pack from {url}: {e}"))?;
+        return fs::rename(&tmp, target)
+            .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()));
+    }
+    if Path::new(url).is_file() {
+        fs::copy(Path::new(url), &tmp)
+            .map_err(|e| format!("failed to copy runtime pack from {url}: {e}"))?;
+        return fs::rename(&tmp, target)
+            .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30 * 60))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("failed to start download from {url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "failed to download runtime pack from {url}: HTTP {}",
+            response.status()
+        ));
+    }
+
+    let total = response.content_length();
+    let mut file =
+        fs::File::create(&tmp).map_err(|e| format!("failed to create {}: {e}", tmp.display()))?;
+    let mut received: u64 = 0;
+    let mut last_emit = Instant::now();
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("download error: {e}"))?
+    {
+        file.write_all(&chunk)
+            .map_err(|e| format!("failed to write to {}: {e}", tmp.display()))?;
+        received += chunk.len() as u64;
+        if last_emit.elapsed() >= Duration::from_millis(150) {
+            let _ = app_handle.emit("runtime-download-progress", DownloadProgress { received, total });
+            last_emit = Instant::now();
+        }
+    }
+    let _ = app_handle.emit(
+        "runtime-download-progress",
+        DownloadProgress { received, total: Some(received) },
+    );
+
+    fs::rename(&tmp, target)
+        .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()))
+}
+
+fn download_file(url: &str, target: &Path, timeout: Duration) -> Result<(), String> {
+    let tmp = target.with_extension("download");
+    if tmp.exists() {
+        fs::remove_file(&tmp).map_err(|e| format!("failed to remove {}: {e}", tmp.display()))?;
+    }
+
+    if let Some(path) = url.strip_prefix("file://") {
+        fs::copy(Path::new(path), &tmp)
+            .map_err(|e| format!("failed to copy runtime pack from {url}: {e}"))?;
+    } else if Path::new(url).is_file() {
+        fs::copy(Path::new(url), &tmp)
+            .map_err(|e| format!("failed to copy runtime pack from {url}: {e}"))?;
+    } else {
+        let mut command = Command::new("curl");
+        command
+            .args([
+                "--fail",
+                "--location",
+                "--show-error",
+                "--output",
+                &tmp.display().to_string(),
+                "--",
+                url,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let output = command_output_with_timeout(command, timeout, "runtime pack download")?;
+        if !output.status.success() || !tmp.is_file() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "failed to download runtime pack from {url}: {}",
+                stderr.trim()
+            ));
+        }
+    }
+
+    fs::rename(&tmp, target)
+        .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()))
+}
+
+fn verify_runtime_archive(
+    manifest: &RuntimeManifest,
+    archive: &Path,
+) -> Result<RuntimeArchive, String> {
+    if !archive.is_file() {
+        return Err(format!(
+            "runtime archive not found at {}",
+            archive.display()
+        ));
+    }
+    let size = archive
+        .metadata()
+        .map_err(|e| format!("failed to stat {}: {e}", archive.display()))?
+        .len();
+    if let Some(expected) = manifest.runtime_size {
+        if expected > 0 && expected != size {
+            return Err(format!(
+                "runtime archive size mismatch: expected {expected}, got {size}"
+            ));
+        }
+    }
+    let sha256 = sha256_file(archive)?;
+    if !sha256.eq_ignore_ascii_case(manifest.runtime_sha256.trim()) {
+        return Err(format!(
+            "runtime archive checksum mismatch: expected {}, got {}",
+            manifest.runtime_sha256, sha256
+        ));
+    }
+    Ok(RuntimeArchive {
+        archive_path: archive.display().to_string(),
+        sha256,
+        size,
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("failed to open {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 64];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), String> {
+    let mut command = Command::new("tar");
+    command
+        .args([
+            "-xf",
+            &archive.display().to_string(),
+            "-C",
+            &destination.display().to_string(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let output = command_output_with_timeout(
+        command,
+        Duration::from_secs(20 * 60),
+        "runtime pack extraction",
+    )?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("failed to extract runtime pack: {}", stderr.trim()))
+    }
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
 fn app_root() -> Result<PathBuf, String> {
     if let Ok(root) = env::var("STEMDECK_ROOT") {
         return Ok(PathBuf::from(root));
@@ -567,6 +1071,15 @@ fn app_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "current exe has no parent directory".to_string())?;
     if let Some(root) = find_repo_root(exe_dir) {
         return Ok(root);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(contents) = exe_dir.parent() {
+            let resources = contents.join("Resources");
+            if resources.is_dir() {
+                return Ok(resources);
+            }
+        }
     }
     Ok(exe_dir.to_path_buf())
 }
@@ -584,6 +1097,13 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 }
 
 fn backend_dir(root: &Path) -> Result<PathBuf, String> {
+    if let Ok(data_dir) = local_data_dir() {
+        let backend = runtime_dir(&data_dir).join("backend");
+        if backend.join("app").is_dir() {
+            return Ok(backend);
+        }
+    }
+
     let portable = root.join("backend");
     if portable.join("app").is_dir() {
         return Ok(portable);
@@ -600,6 +1120,12 @@ fn backend_dir(root: &Path) -> Result<PathBuf, String> {
 fn python_path(root: &Path) -> Option<PathBuf> {
     if let Ok(path) = env::var("STEMDECK_PYTHON") {
         return Some(PathBuf::from(path));
+    }
+    if let Ok(data_dir) = local_data_dir() {
+        let python = runtime_python_path(&data_dir);
+        if python.is_file() {
+            return Some(python);
+        }
     }
     let candidates = if cfg!(windows) {
         vec![
@@ -733,10 +1259,107 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         return Ok(portable);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        download_macos_ffmpeg(data_dir)?;
+        let portable =
+            ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
+        verify_ffmpeg(&portable)?;
+        Ok(portable)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         verify_ffmpeg(Path::new("ffmpeg"))?;
         Ok(PathBuf::from("ffmpeg"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
+    let ffmpeg_url = env::var("STEMDECK_FFMPEG_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MACOS_FFMPEG_URL.to_string());
+    let ffprobe_url = env::var("STEMDECK_FFPROBE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
+    let downloads = data_dir.join("downloads");
+    let ffmpeg_zip = downloads.join("ffmpeg-macos.zip");
+    let ffprobe_zip = downloads.join("ffprobe-macos.zip");
+    fs::create_dir_all(&downloads)
+        .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
+
+    download_file(&ffmpeg_url, &ffmpeg_zip, Duration::from_secs(5 * 60))?;
+    download_file(&ffprobe_url, &ffprobe_zip, Duration::from_secs(5 * 60))?;
+
+    let ffmpeg_dir = data_dir.join("ffmpeg");
+    fs::create_dir_all(&ffmpeg_dir)
+        .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
+    extract_single_binary_from_zip(&ffmpeg_zip, &ffmpeg_dir.join("ffmpeg"), "ffmpeg")?;
+    extract_single_binary_from_zip(&ffprobe_zip, &ffmpeg_dir.join("ffprobe"), "ffprobe")?;
+
+    make_executable(&ffmpeg_dir.join("ffmpeg"))?;
+    make_executable(&ffmpeg_dir.join("ffprobe"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn extract_single_binary_from_zip(
+    archive_path: &Path,
+    target: &Path,
+    binary_name: &str,
+) -> Result<(), String> {
+    let file = fs::File::open(archive_path)
+        .map_err(|e| format!("failed to open {}: {e}", archive_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("failed to read zip {}: {e}", archive_path.display()))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("failed to read zip entry {i}: {e}"))?;
+        if !entry.is_file() {
+            continue;
+        }
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
+        let Some(file_name) = name.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name != binary_name {
+            continue;
+        }
+        let mut output = fs::File::create(target)
+            .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|e| format!("failed to extract {}: {e}", target.display()))?;
+        return Ok(());
+    }
+
+    Err(format!(
+        "downloaded archive {} did not contain {binary_name}",
+        archive_path.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn make_executable(path: &Path) -> Result<(), String> {
+    let output = Command::new("chmod")
+        .args(["+x", &path.display().to_string()])
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to chmod {}: {e}", path.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to chmod {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }
 
@@ -792,7 +1415,7 @@ fn download_file_with_powershell(url: &str, target: &Path) -> Result<(), String>
 
 #[cfg(windows)]
 fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), String> {
-    let file = File::open(archive_path)
+    let file = fs::File::open(archive_path)
         .map_err(|e| format!("failed to open {}: {e}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|e| format!("failed to read FFmpeg zip {}: {e}", archive_path.display()))?;
@@ -827,7 +1450,7 @@ fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), S
             _ => continue,
         };
         let target = ffmpeg_dir.join(target_name);
-        let mut output = File::create(&target)
+        let mut output = fs::File::create(&target)
             .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
         std::io::copy(&mut entry, &mut output)
             .map_err(|e| format!("failed to extract {}: {e}", target.display()))?;
@@ -885,8 +1508,15 @@ fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
             ),
             (
                 "ffmpegSource",
-                serde_json::json!(env::var("STEMDECK_FFMPEG_URL")
-                    .unwrap_or_else(|_| DEFAULT_WINDOWS_FFMPEG_URL.to_string())),
+                serde_json::json!(env::var("STEMDECK_FFMPEG_URL").unwrap_or_else(|_| {
+                    if cfg!(windows) {
+                        DEFAULT_WINDOWS_FFMPEG_URL.to_string()
+                    } else if cfg!(target_os = "macos") {
+                        DEFAULT_MACOS_FFMPEG_URL.to_string()
+                    } else {
+                        "system PATH".to_string()
+                    }
+                })),
             ),
             ("updatedAt", serde_json::json!(updated_at)),
         ],
