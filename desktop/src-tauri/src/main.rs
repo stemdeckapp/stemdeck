@@ -340,15 +340,10 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
     let port = free_port()?;
     let url = format!("http://127.0.0.1:{port}");
     let log_path = data_dir.join("logs").join("backend.log");
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create backend log directory: {e}"))?;
-    }
-    let log_file = fs::File::create(&log_path)
-        .map_err(|e| format!("failed to create backend log {}: {e}", log_path.display()))?;
-    let log_file_for_stderr = log_file
-        .try_clone()
-        .map_err(|e| format!("failed to prepare backend log {}: {e}", log_path.display()))?;
+    let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
+        // Logging should help diagnose startup; it should not prevent startup.
+        (Stdio::null(), Stdio::null())
+    });
 
     let mut cmd = Command::new(python);
     cmd.args([
@@ -367,8 +362,8 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         .env("PYTHONUNBUFFERED", "1")
         .env("XDG_CACHE_HOME", data_dir.join("cache"))
         .env("TORCH_HOME", data_dir.join("models").join("torch"))
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_file_for_stderr));
+        .stdout(stdout)
+        .stderr(stderr);
 
     if let Some(ffmpeg_dir) = ffmpeg_dir_if_present(&data_dir) {
         let existing = env::var_os("PATH").unwrap_or_default();
@@ -593,28 +588,21 @@ fn patch_pyvenv_cfg(python: &Path) {
     let Some(venv_root) = bin_dir.parent() else {
         return;
     };
-    let bundled_python = venv_root
-        .join(if cfg!(windows) { "Scripts" } else { "bin" })
-        .join(if cfg!(windows) {
-            "python.exe"
-        } else {
-            "python"
-        });
-    if !bundled_python.is_file() || !python_stdlib_present(venv_root) {
+    let Some((home_dir, bundled_python)) = bundled_python_home(venv_root, bin_dir) else {
         return;
-    }
+    };
     let cfg_path = venv_root.join("pyvenv.cfg");
     let Ok(content) = fs::read_to_string(&cfg_path) else {
         return;
     };
-    let root_str = venv_root.display().to_string();
+    let home_str = home_dir.display().to_string();
     let python_str = bundled_python.display().to_string();
     let patched: String = content
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
             if trimmed.starts_with("home") && trimmed[4..].trim_start().starts_with('=') {
-                format!("home = {root_str}")
+                format!("home = {home_str}")
             } else if trimmed.starts_with("executable")
                 && trimmed["executable".len()..].trim_start().starts_with('=')
             {
@@ -631,6 +619,67 @@ fn patch_pyvenv_cfg(python: &Path) {
         patched
     };
     let _ = fs::write(&cfg_path, patched);
+}
+
+fn prepare_backend_stdio(log_path: &Path) -> Result<(Stdio, Stdio), String> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create backend log directory: {e}"))?;
+    }
+    fs::File::create(log_path)
+        .map_err(|e| format!("failed to create backend log {}: {e}", log_path.display()))?;
+    let stdout = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| {
+            format!(
+                "failed to open backend stdout log {}: {e}",
+                log_path.display()
+            )
+        })?;
+    let stderr = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| {
+            format!(
+                "failed to open backend stderr log {}: {e}",
+                log_path.display()
+            )
+        })?;
+    Ok((Stdio::from(stdout), Stdio::from(stderr)))
+}
+
+fn bundled_python_home(venv_root: &Path, bin_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let executable = if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python"
+    };
+
+    if cfg!(windows) {
+        let base_home = venv_root.join("base");
+        let base_python = base_home.join(executable);
+        if base_python.is_file() && base_home.join("Lib").join("os.py").is_file() {
+            return Some((base_home, base_python));
+        }
+
+        let legacy_root_python = venv_root.join(executable);
+        if legacy_root_python.is_file() && venv_root.join("Lib").join("os.py").is_file() {
+            let launcher = bin_dir.join(executable);
+            if launcher.is_file() {
+                return Some((bin_dir.to_path_buf(), launcher));
+            }
+        }
+    } else if python_stdlib_present(venv_root) {
+        let launcher = bin_dir.join(executable);
+        if launcher.is_file() {
+            return Some((bin_dir.to_path_buf(), launcher));
+        }
+    }
+
+    None
 }
 
 fn python_stdlib_present(venv_root: &Path) -> bool {
@@ -1130,7 +1179,6 @@ fn python_path(root: &Path) -> Option<PathBuf> {
     let candidates = if cfg!(windows) {
         vec![
             root.join("python").join("Scripts").join("python.exe"),
-            root.join("python").join("python.exe"),
             root.join(".venv").join("Scripts").join("python.exe"),
         ]
     } else {

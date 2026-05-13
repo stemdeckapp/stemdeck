@@ -84,6 +84,7 @@ function Bundle-PythonRuntime([string]$VenvDir, [string]$VenvPython) {
     throw "Could not locate base Python executable: $baseExecutable"
   }
   $baseHome = Split-Path -Parent $baseExecutable
+  $portableBaseHome = Join-Path $VenvDir "base"
   $baseLib = Join-Path $baseHome "Lib"
   $baseDlls = Join-Path $baseHome "DLLs"
   if (-not (Test-Path $baseLib)) {
@@ -91,21 +92,22 @@ function Bundle-PythonRuntime([string]$VenvDir, [string]$VenvPython) {
   }
 
   Write-Host "Bundling Python runtime from $baseHome..."
-  Copy-Item -Force $baseExecutable (Join-Path $VenvDir "python.exe")
+  New-Item -ItemType Directory -Force $portableBaseHome | Out-Null
+  Copy-Item -Force $baseExecutable (Join-Path $portableBaseHome "python.exe")
   $basePythonw = Join-Path $baseHome "pythonw.exe"
   if (Test-Path $basePythonw) {
-    Copy-Item -Force $basePythonw (Join-Path $VenvDir "pythonw.exe")
+    Copy-Item -Force $basePythonw (Join-Path $portableBaseHome "pythonw.exe")
   }
   Get-ChildItem -LiteralPath $baseHome -Filter "*.dll" -File -Force |
-    Copy-Item -Destination $VenvDir -Force
+    Copy-Item -Destination $portableBaseHome -Force
   if (Test-Path $baseDlls) {
-    Copy-Tree $baseDlls (Join-Path $VenvDir "DLLs")
+    Copy-Tree $baseDlls (Join-Path $portableBaseHome "DLLs")
   }
-  Copy-TreeContents $baseLib (Join-Path $VenvDir "Lib") @("site-packages")
+  Copy-TreeContents $baseLib (Join-Path $portableBaseHome "Lib") @("site-packages")
 
   $cfg = Join-Path $VenvDir "pyvenv.cfg"
-  Set-PyvenvValue $cfg "home" $VenvDir
-  Set-PyvenvValue $cfg "executable" (Join-Path $VenvDir "python.exe")
+  Set-PyvenvValue $cfg "home" $portableBaseHome
+  Set-PyvenvValue $cfg "executable" (Join-Path $portableBaseHome "python.exe")
 }
 
 function Invoke-TauriBuild {
