@@ -122,6 +122,30 @@ copy_python_runtime_libs "$PYTHON_BIN" "$PYTHON_DIR"
 uv pip install --python "$PYTHON_DIR/bin/python" pip setuptools wheel
 uv pip install --python "$PYTHON_DIR/bin/python" "$REPO_ROOT"
 
+echo "==> Copying Python stdlib into runtime"
+PYTHON_DIR="$PYTHON_DIR" "$PYTHON_BIN" - <<'PY'
+import os, sys, shutil, pathlib
+
+exe = pathlib.Path(sys.executable).resolve()
+ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+# UV standalone Python keeps stdlib at <install_base>/lib/pythonX.Y relative to the real exe
+stdlib = exe.parent.parent / "lib" / ver
+if not stdlib.is_dir():
+    print(f"ERROR: stdlib not found at {stdlib}", file=sys.stderr)
+    sys.exit(1)
+
+target = pathlib.Path(os.environ["PYTHON_DIR"]) / "lib" / ver
+target.mkdir(parents=True, exist_ok=True)
+for item in stdlib.iterdir():
+    dest = target / item.name
+    if not dest.exists():
+        if item.is_dir():
+            shutil.copytree(item, dest, symlinks=True)
+        else:
+            shutil.copy2(item, dest)
+print(f"  stdlib copied from {stdlib}")
+PY
+
 echo "==> Verifying runtime imports"
 "$PYTHON_DIR/bin/python" - <<'PY'
 import importlib

@@ -347,6 +347,10 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         (Stdio::null(), Stdio::null())
     });
 
+    // Point Python at its bundled stdlib so it works on machines without UV/Homebrew.
+    // The venv binary has /install as its compiled-in base_prefix (UV standalone build);
+    // PYTHONHOME redirects stdlib lookup to our copied stdlib inside the runtime.
+    let venv_root = python.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf());
     let mut cmd = Command::new(python);
     cmd.args([
         "-m",
@@ -357,8 +361,13 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         "--port",
         &port.to_string(),
     ]);
+    if let Some(ref venv_root) = venv_root {
+        cmd.env("PYTHONHOME", venv_root);
+    }
+
     cmd.current_dir(&backend_dir)
         .env("STEMDECK_DATA_DIR", &data_dir)
+
         .env("STEMDECK_DESKTOP", "1")
         .env("STEMDECK_PARENT_PID", std::process::id().to_string())
         .env("PYTHONUNBUFFERED", "1")
