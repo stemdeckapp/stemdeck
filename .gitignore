@@ -60,3 +60,4 @@ Thumbs.db
 .python-version
 .claude/
 .playwright-mcp/
+.issues_docs
