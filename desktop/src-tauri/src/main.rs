@@ -10,6 +10,8 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use flate2::read::GzDecoder;
+use tar::Archive;
 use tauri::{Emitter, Manager};
 #[cfg(windows)]
 use zip::ZipArchive;
@@ -1068,30 +1070,22 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), String> {
-    let mut command = Command::new("tar");
-    command
-        .args([
-            "-xf",
-            &archive.display().to_string(),
-            "-C",
-            &destination.display().to_string(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    // Ensure Homebrew and common tool paths are available so tar can find zstd.
-    let existing_path = env::var("PATH").unwrap_or_default();
-    let extended_path = format!("/opt/homebrew/bin:/usr/local/bin:{existing_path}");
-    command.env("PATH", extended_path);
-    let output = command_output_with_timeout(
-        command,
-        Duration::from_secs(20 * 60),
-        "runtime pack extraction",
-    )?;
-    if output.status.success() {
-        Ok(())
+    let file = fs::File::open(archive)
+        .map_err(|e| format!("failed to open archive {}: {e}", archive.display()))?;
+    let is_zst = archive
+        .extension()
+        .map_or(false, |ext| ext.eq_ignore_ascii_case("zst"));
+    if is_zst {
+        let decoder = zstd::Decoder::new(file)
+            .map_err(|e| format!("failed to init zstd decoder: {e}"))?;
+        Archive::new(decoder)
+            .unpack(destination)
+            .map_err(|e| format!("failed to extract runtime pack: {e}"))
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("failed to extract runtime pack: {}", stderr.trim()))
+        let decoder = GzDecoder::new(file);
+        Archive::new(decoder)
+            .unpack(destination)
+            .map_err(|e| format!("failed to extract runtime pack: {e}"))
     }
 }
 
