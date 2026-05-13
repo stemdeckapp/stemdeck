@@ -133,20 +133,21 @@ stdlib = pathlib.Path(encodings.__file__).parent.parent
 ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
 if stdlib.name != ver:
     print(f"ERROR: unexpected stdlib dir {stdlib} (expected name {ver!r})", file=sys.stderr)
+    print(f"  encodings.__file__ = {encodings.__file__}", file=sys.stderr)
     sys.exit(1)
 
 target = pathlib.Path(os.environ["PYTHON_DIR"]) / "lib" / ver
 target.mkdir(parents=True, exist_ok=True)
-copied = 0
-for item in stdlib.iterdir():
-    dest = target / item.name
-    if not dest.exists():
-        if item.is_dir():
-            shutil.copytree(item, dest, symlinks=True)
-        else:
-            shutil.copy2(item, dest)
-        copied += 1
-print(f"  stdlib copied from {stdlib} ({copied} items)")
+
+# Merge stdlib into the venv lib dir (dirs_exist_ok preserves site-packages).
+shutil.copytree(str(stdlib), str(target), symlinks=True, dirs_exist_ok=True)
+
+# Sanity check — fail the build loudly rather than ship a broken runtime.
+if not (target / "encodings" / "__init__.py").is_file():
+    print(f"ERROR: encodings not found in {target} after copy", file=sys.stderr)
+    sys.exit(1)
+
+print(f"  stdlib copied from {stdlib} to {target}")
 PY
 
 echo "==> Verifying runtime imports"
