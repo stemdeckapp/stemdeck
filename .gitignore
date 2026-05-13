@@ -55,9 +55,9 @@ logs/
 
 # Codex: keep repo guidance, ignore local state/cache
 .codex/*
-!.codex/AGENTS.md
-!.codex/skills/
-!.codex/skills/**
+.codex/AGENTS.md
+.codex/skills/
+.codex/skills/**
 .codex/cache/
 .codex/logs/
 .codex/tmp/
