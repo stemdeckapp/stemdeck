@@ -1040,6 +1040,7 @@ fn verify_runtime_archive(
         .len();
     let sha256 = sha256_file(archive)?;
     if !sha256.eq_ignore_ascii_case(manifest.runtime_sha256.trim()) {
+        let _ = fs::remove_file(archive);
         return Err(format!(
             "runtime archive checksum mismatch: expected {}, got {}",
             manifest.runtime_sha256, sha256
