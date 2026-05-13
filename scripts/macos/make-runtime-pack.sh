@@ -126,16 +126,18 @@ echo "==> Copying Python stdlib into runtime"
 PYTHON_DIR="$PYTHON_DIR" "$PYTHON_BIN" - <<'PY'
 import os, sys, shutil, pathlib
 
-exe = pathlib.Path(sys.executable).resolve()
+# Locate stdlib via encodings — reliable regardless of compiled-in prefix.
+# UV PBS Python has /install as base_prefix which doesn't exist on user machines.
+import encodings
+stdlib = pathlib.Path(encodings.__file__).parent.parent
 ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
-# UV standalone Python keeps stdlib at <install_base>/lib/pythonX.Y relative to the real exe
-stdlib = exe.parent.parent / "lib" / ver
-if not stdlib.is_dir():
-    print(f"ERROR: stdlib not found at {stdlib}", file=sys.stderr)
+if stdlib.name != ver:
+    print(f"ERROR: unexpected stdlib dir {stdlib} (expected name {ver!r})", file=sys.stderr)
     sys.exit(1)
 
 target = pathlib.Path(os.environ["PYTHON_DIR"]) / "lib" / ver
 target.mkdir(parents=True, exist_ok=True)
+copied = 0
 for item in stdlib.iterdir():
     dest = target / item.name
     if not dest.exists():
@@ -143,7 +145,8 @@ for item in stdlib.iterdir():
             shutil.copytree(item, dest, symlinks=True)
         else:
             shutil.copy2(item, dest)
-print(f"  stdlib copied from {stdlib}")
+        copied += 1
+print(f"  stdlib copied from {stdlib} ({copied} items)")
 PY
 
 echo "==> Verifying runtime imports"
