@@ -1,31 +1,29 @@
-# Python
+# Python bytecode / native artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 
-# Virtual environments
+# Python environments and package caches
 .venv/
 venv/
 env/
-
-# uv / pip
 .uv-cache/
 pip-wheel-metadata/
 
-# Build / packaging
+# Python build outputs
 dist/
 *.egg-info/
 *.egg
 .eggs/
 
-# Desktop build outputs
+# Desktop dependencies and build outputs
 desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 
-# Test / coverage / type-check caches
+# Test, coverage, and type-check caches
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -34,30 +32,41 @@ desktop/src-tauri/gen/
 htmlcov/
 .tox/
 
-# Runtime job artifacts (downloaded audio + separated stems)
+# Runtime job artifacts and local build scratch
 data/
 jobs/
 .run/
 .build
 
-# Local env / secrets
+# Local environment and secrets
 .env
 .env.*
 !.env.example
-.docs
 
 # Logs
 *.log
 logs/
 
-# Editors / OS
+# Local notes and agent/tool state
+.docs
+.issues_docs
+.claude/
+.playwright-mcp/
+
+# Codex: keep repo guidance, ignore local state/cache
+.codex/*
+!.codex/AGENTS.md
+!.codex/skills/
+!.codex/skills/**
+.codex/cache/
+.codex/logs/
+.codex/tmp/
+
+# Editors and OS metadata
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 
-# Tooling
+# Tool versions
 .python-version
-.claude/
-.playwright-mcp/
-.issues_docs
