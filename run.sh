@@ -39,7 +39,11 @@ start() {
     fi
     nohup "$UVICORN" "${args[@]}" >"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
-    sleep 1
+    for _ in {1..10}; do
+        sleep 0.5
+        grep -q "Application startup complete\|Uvicorn running on" "$LOG_FILE" 2>/dev/null && break
+        is_running || break
+    done
     if is_running; then
         echo "started (pid $(cat "$PID_FILE"), log: $LOG_FILE)"
     else

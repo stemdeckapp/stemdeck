@@ -1036,13 +1036,6 @@ fn verify_runtime_archive(
         .metadata()
         .map_err(|e| format!("failed to stat {}: {e}", archive.display()))?
         .len();
-    if let Some(expected) = manifest.runtime_size {
-        if expected > 0 && expected != size {
-            return Err(format!(
-                "runtime archive size mismatch: expected {expected}, got {size}"
-            ));
-        }
-    }
     let sha256 = sha256_file(archive)?;
     if !sha256.eq_ignore_ascii_case(manifest.runtime_sha256.trim()) {
         return Err(format!(
@@ -1085,6 +1078,10 @@ fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), String>
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    // Ensure Homebrew and common tool paths are available so tar can find zstd.
+    let existing_path = env::var("PATH").unwrap_or_default();
+    let extended_path = format!("/opt/homebrew/bin:/usr/local/bin:{existing_path}");
+    command.env("PATH", extended_path);
     let output = command_output_with_timeout(
         command,
         Duration::from_secs(20 * 60),

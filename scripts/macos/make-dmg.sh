@@ -96,7 +96,7 @@ if command -v SetFile >/dev/null 2>&1; then
 fi
 
 if [[ -f "$MOUNT_DIR/$BACKGROUND_DIR_NAME/$BACKGROUND_PNG_NAME" ]]; then
-  osascript <<APPLESCRIPT
+  osascript <<APPLESCRIPT || echo "warning: DMG window styling failed (cosmetic only, DMG is still valid)"
 tell application "Finder"
   set dmgFolder to POSIX file "$MOUNT_DIR" as alias
   open dmgFolder

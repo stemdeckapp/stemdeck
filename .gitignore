@@ -47,6 +47,9 @@ jobs/
 *.log
 logs/
 
+# Local dev scripts
+.local/
+
 # Local notes and agent/tool state
 .docs
 .issues_docs

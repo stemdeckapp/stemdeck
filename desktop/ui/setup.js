@@ -112,9 +112,14 @@ async function installRuntimePack(appRoot) {
   progressFill.classList.remove("indeterminate");
 
   try {
-    setStatus("Downloading StemDeck runtime...");
-    await invoke("download_runtime_pack");
-    progressWrap.classList.add("hidden");
+    if (status.archiveReady) {
+      setStatus("Runtime archive found locally, verifying...");
+      progressWrap.classList.add("hidden");
+    } else {
+      setStatus("Downloading StemDeck runtime...");
+      await invoke("download_runtime_pack");
+      progressWrap.classList.add("hidden");
+    }
     setStatus("Verifying StemDeck runtime...");
     await invoke("verify_runtime_pack");
     setStatus("Installing StemDeck runtime...");
