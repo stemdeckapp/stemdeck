@@ -112,16 +112,25 @@ async function installRuntimePack(appRoot) {
   progressFill.classList.remove("indeterminate");
 
   try {
+    let verified = false;
     if (status.archiveReady) {
-      setStatus("Runtime archive found locally, verifying...");
-      progressWrap.classList.add("hidden");
-    } else {
+      try {
+        setStatus("Runtime archive found locally, verifying...");
+        progressWrap.classList.add("hidden");
+        await invoke("verify_runtime_pack");
+        verified = true;
+      } catch {
+        // Stale or corrupt archive — fall through to re-download
+      }
+    }
+    if (!verified) {
+      progressWrap.classList.remove("hidden");
       setStatus("Downloading StemDeck runtime...");
       await invoke("download_runtime_pack");
       progressWrap.classList.add("hidden");
+      setStatus("Verifying StemDeck runtime...");
+      await invoke("verify_runtime_pack");
     }
-    setStatus("Verifying StemDeck runtime...");
-    await invoke("verify_runtime_pack");
     setStatus("Installing StemDeck runtime...");
     const installed = await invoke("extract_runtime_pack");
     if (!installed.runtimeReady) {
