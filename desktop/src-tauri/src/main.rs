@@ -152,7 +152,7 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     Ok(RuntimeProbe {
         app_root: root.display().to_string(),
         data_dir: data_dir.display().to_string(),
-        python_ready: python.as_ref().is_some_and(|p| p.is_file()),
+        python_ready: python.as_ref().is_some_and(|p| python_stdlib_ok(p)),
         python_path: python.map(|p| p.display().to_string()),
         ffmpeg_ready: ffmpeg.as_ref().is_some_and(|p| p.is_file()),
         ffmpeg_path: ffmpeg.map(|p| p.display().to_string()),
@@ -691,6 +691,20 @@ fn bundled_python_home(venv_root: &Path, bin_dir: &Path) -> Option<(PathBuf, Pat
     }
 
     None
+}
+
+fn python_stdlib_ok(python: &Path) -> bool {
+    if !python.is_file() {
+        return false;
+    }
+    let pythonhome = python.parent().and_then(|b| b.parent());
+    let mut cmd = Command::new(python);
+    cmd.args(["-c", "import encodings"]);
+    if let Some(home) = pythonhome {
+        cmd.env("PYTHONHOME", home);
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn python_stdlib_present(venv_root: &Path) -> bool {
