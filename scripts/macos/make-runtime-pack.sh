@@ -116,6 +116,10 @@ fi
 # ditto preserves symlinks, HFS+ metadata, and extended attributes.
 ditto "$PYTHON_BASE_PREFIX" "$PYTHON_DIR"
 
+# PBS Python ships an EXTERNALLY-MANAGED marker that blocks uv from installing
+# packages into it. Remove it so we can treat this copy as our own install.
+find "$PYTHON_DIR/lib" -name "EXTERNALLY-MANAGED" -delete
+
 echo "==> Installing packages into bundled Python"
 # --system is required because $PYTHON_DIR is not a venv (it's a full Python install).
 uv pip install --system --python "$PYTHON_DIR/bin/python" pip setuptools wheel
