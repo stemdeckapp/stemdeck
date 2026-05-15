@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import logging
 import os
@@ -46,6 +47,26 @@ except ImportError:
 _log = logging.getLogger("stemdeck")
 
 
+def _process_exists(pid: int) -> bool:
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    ERROR_INVALID_PARAMETER = 87
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if handle:
+        kernel32.CloseHandle(handle)
+        return True
+    return ctypes.get_last_error() != ERROR_INVALID_PARAMETER
+
+
 def app_version() -> str:
     version_file = STATIC_DIR / "version.json"
     try:
@@ -72,13 +93,8 @@ async def _sweep_loop() -> None:
 
 async def _desktop_parent_watchdog(parent_pid: int) -> None:
     while True:
-        try:
-            os.kill(parent_pid, 0)
-        except ProcessLookupError:
+        if not _process_exists(parent_pid):
             _log.info("desktop parent process exited; stopping backend")
-            os._exit(0)
-        except PermissionError:
-            _log.warning("desktop parent process check denied; stopping backend")
             os._exit(0)
         await asyncio.sleep(1)
 

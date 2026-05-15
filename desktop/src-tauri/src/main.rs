@@ -347,10 +347,12 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         (Stdio::null(), Stdio::null())
     });
 
-    // Point Python at its bundled stdlib so it works on machines without UV/Homebrew.
-    // The venv binary has /install as its compiled-in base_prefix (UV standalone build);
-    // PYTHONHOME redirects stdlib lookup to our copied stdlib inside the runtime.
-    let venv_root = python.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf());
+    // Point Python at its bundled stdlib so it works on machines without a
+    // matching system Python. Windows portable builds keep stdlib in base/Lib.
+    let pythonhome = python
+        .parent()
+        .and_then(|bin_dir| bin_dir.parent().map(|venv| (venv, bin_dir)))
+        .and_then(|(venv, bin_dir)| bundled_python_home(venv, bin_dir).map(|(home, _)| home));
     let mut cmd = Command::new(python);
     cmd.args([
         "-m",
@@ -361,8 +363,8 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         "--port",
         &port.to_string(),
     ]);
-    if let Some(ref venv_root) = venv_root {
-        cmd.env("PYTHONHOME", venv_root);
+    if let Some(ref pythonhome) = pythonhome {
+        cmd.env("PYTHONHOME", pythonhome);
     }
 
     cmd.current_dir(&backend_dir)
