@@ -697,7 +697,20 @@ fn python_stdlib_ok(python: &Path) -> bool {
     if !python.is_file() {
         return false;
     }
-    let pythonhome = python.parent().and_then(|b| b.parent());
+    let venv_root = python.parent().and_then(|b| b.parent());
+    // On Windows the portable venv layout puts the stdlib in base/Lib/, not Lib/.
+    // Using the venv root as PYTHONHOME causes `import encodings` to fail because
+    // Python looks for Lib/os.py there and finds only site-packages.
+    let pythonhome = venv_root.map(|venv| {
+        #[cfg(windows)]
+        {
+            let base = venv.join("base");
+            if base.join("Lib").join("os.py").is_file() {
+                return base;
+            }
+        }
+        venv.to_path_buf()
+    });
     let mut cmd = Command::new(python);
     cmd.args(["-c", "import encodings"]);
     if let Some(home) = pythonhome {
