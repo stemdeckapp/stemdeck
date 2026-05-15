@@ -84,14 +84,14 @@ function _loadSelectedStems() {
         return new Set(arr.filter((n) => STEM_NAMES.includes(n)));
       }
     }
-  } catch { /* ignore */ }
+  } catch (e) { console.warn("[state] failed to load stem selection:", e); }
   return new Set(STEM_NAMES);
 }
 export let selectedStems = _loadSelectedStems();
 export function saveSelectedStems() {
   try {
     localStorage.setItem(_STEM_SEL_KEY, JSON.stringify([...selectedStems]));
-  } catch { /* ignore */ }
+  } catch (e) { console.warn("[state] failed to save stem selection:", e); }
 }
 export function setStemSelected(name, selected) {
   if (selected) selectedStems.add(name);

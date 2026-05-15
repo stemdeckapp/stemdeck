@@ -137,7 +137,7 @@ function saveState() {
   ensureTrash();
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: STORAGE_VERSION, folders, tracks }));
-  } catch { /* ignore */ }
+  } catch (e) { console.warn("[catalog] failed to save state:", e); }
 }
 
 // ─── Track management ───

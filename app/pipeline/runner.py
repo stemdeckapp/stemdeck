@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from app.core.config import TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled
 from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze
@@ -64,7 +65,7 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
         "-y",
         str(dest),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=300)
+    result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_FFMPEG)
     if result.returncode != 0:
         raise RuntimeError(
             "ffmpeg transcode failed: " + result.stderr.decode("utf-8", errors="replace").strip()

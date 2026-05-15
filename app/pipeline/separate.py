@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.core.config import DEMUCS_DEVICE, DEMUCS_MODEL
+from app.core.config import DEMUCS_DEVICE, DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled
 from app.core.registry import set_proc
 
@@ -19,7 +19,6 @@ _PCT_RE = re.compile(r"(\d{1,3})%")
 # Terminate demucs if stderr produces no output for this many seconds.
 # GPU processing can be silent for minutes; 30 min covers legitimate pauses
 # while still catching genuine hangs (GPU deadlock, OOM stall, etc.).
-_DEMUCS_STALL_TIMEOUT = 1800
 
 
 def separate(job: Job, source: Path, job_dir: Path) -> Path:
@@ -70,10 +69,10 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
     def _watchdog() -> None:
         while proc.poll() is None:
             time.sleep(30)
-            if time.monotonic() - last_output[0] > _DEMUCS_STALL_TIMEOUT:
+            if time.monotonic() - last_output[0] > TIMEOUT_DEMUCS_STALL:
                 logger.warning(
                     "demucs stalled for %ss with no output, terminating job %s",
-                    _DEMUCS_STALL_TIMEOUT,
+                    TIMEOUT_DEMUCS_STALL,
                     job.id,
                 )
                 proc.terminate()
@@ -115,7 +114,7 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         raise JobCancelled()
     if proc.returncode != 0:
         detail = "\n".join(tail[-15:]) if tail else "(no stderr captured)"
-        logger.error("demucs exited %s; tail:\n%s", proc.returncode, detail)
+        logger.error("[%s] demucs exited %s; tail:\n%s", job.id, proc.returncode, detail)
         last = tail[-1] if tail else f"exit status {proc.returncode}"
         raise RuntimeError(f"demucs failed: {last}")
 

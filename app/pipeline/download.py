@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -8,6 +10,44 @@ from yt_dlp import YoutubeDL
 
 from app.core.config import MAX_DURATION_SEC
 from app.core.models import Job, JobCancelled
+
+logger = logging.getLogger("stemdeck.download")
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = (2, 4, 8)  # seconds between attempts
+
+# Errors worth retrying — transient network blips.
+_RETRIABLE = (
+    "connection reset",
+    "ssl",
+    "timed out",
+    "network is unreachable",
+    "temporary failure",
+    "unable to download",
+    "read timed out",
+    "remotedisconnected",
+    "broken pipe",
+    "connection refused",
+)
+
+# Errors that will never succeed on retry — reject immediately.
+_NON_RETRIABLE = (
+    "private video",
+    "video unavailable",
+    "has been removed",
+    "http error 404",
+    "http error 403",
+    "not available in your country",
+    "age-restricted",
+)
+
+
+def _is_retriable(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    if any(s in msg for s in _NON_RETRIABLE):
+        return False
+    return any(s in msg for s in _RETRIABLE)
+
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _ALLOWED_HOSTS = frozenset(
@@ -106,6 +146,7 @@ def _set(job: Job, **fields: object) -> None:
 
 def download(job: Job, url: str, job_dir: Path) -> Path:
     url = normalize_youtube_url(url)
+    logger.info("[%s] download starting: %s", job.id, url)
     _set(job, status="downloading", progress=0.0, stage="Processing...")
 
     # Fetch metadata first (no download) so we can reject videos that are
@@ -141,8 +182,29 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
         "noplaylist": True,
         "progress_hooks": [hook],
     }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True) or {}
+    info: dict = {}
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True) or {}
+            break
+        except Exception as exc:
+            if job.cancel_requested:
+                raise JobCancelled() from exc
+            if attempt < _MAX_RETRIES and _is_retriable(exc):
+                wait = _RETRY_BACKOFF[attempt]
+                logger.warning(
+                    "[%s] download attempt %d/%d failed (%s), retrying in %ds",
+                    job.id,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    exc,
+                    wait,
+                )
+                _set(job, stage=f"Network error — retrying ({attempt + 1}/{_MAX_RETRIES})...")
+                time.sleep(wait)
+            else:
+                raise
 
     _set(
         job,
@@ -154,4 +216,5 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     candidates = sorted(job_dir.glob("source.*"))
     if not candidates:
         raise RuntimeError("yt-dlp finished but no source file was produced")
+    logger.info("[%s] download complete: %s", job.id, candidates[0].name)
     return candidates[0]

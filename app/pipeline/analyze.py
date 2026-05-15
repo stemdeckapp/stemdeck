@@ -4,7 +4,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from app.core.config import JOBS_DIR, ffmpeg_executable
+from app.core.config import JOBS_DIR, TIMEOUT_ANALYZE, ffmpeg_executable
 from app.core.models import Job
 from app.pipeline.download import _set
 
@@ -205,7 +205,7 @@ def _load_audio_ffmpeg(
         "-",  # write to stdout
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=True, timeout=120)
+        proc = subprocess.run(cmd, capture_output=True, check=True, timeout=TIMEOUT_ANALYZE)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.warning("ffmpeg decode failed for %s: %s", source, e)
         return None

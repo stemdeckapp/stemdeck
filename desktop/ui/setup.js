@@ -16,14 +16,15 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
-function showError(error) {
+function showError(error, hint) {
   for (const el of steps) {
     if (el.classList.contains("active")) {
       el.classList.replace("active", "error");
     }
   }
   setStatus("Setup could not complete.");
-  detailsEl.textContent = String(error);
+  const msg = String(error?.message ?? error);
+  detailsEl.textContent = hint ? `${msg}\n\n→ ${hint}` : msg;
   detailsEl.classList.remove("hidden");
   retryBtn.classList.remove("hidden");
 }
@@ -82,8 +83,9 @@ function isMac() {
 async function installRuntimePack(appRoot) {
   const status = await invoke("runtime_pack_status");
   if (!status.manifestReady) {
-    throw new Error(
-      `Python runtime not found. Expected python/ or .venv/ under ${appRoot}, or a runtime-manifest.json for first-run setup.`
+    throw Object.assign(
+      new Error(`Python runtime not found under ${appRoot}.`),
+      { hint: "Try reinstalling StemDeck. If the problem persists, check that your disk has at least 2 GB free." }
     );
   }
 
@@ -134,7 +136,10 @@ async function installRuntimePack(appRoot) {
     setStatus("Installing StemDeck runtime...");
     const installed = await invoke("extract_runtime_pack");
     if (!installed.runtimeReady) {
-      throw new Error("Runtime install finished but Python/backend files were not found.");
+      throw Object.assign(
+        new Error("Runtime install finished but Python/backend files were not found."),
+        { hint: "Your disk may be full or the archive may be corrupt. Free up space and click Retry to re-download." }
+      );
     }
   } finally {
     unlisten();
@@ -179,7 +184,10 @@ async function runSetup() {
       runtime = await invoke("probe_runtime");
       if (!runtime.pythonReady) {
         setStep("runtime", "error");
-        throw new Error(`Python runtime setup failed under: ${runtime.dataDir}`);
+        throw Object.assign(
+          new Error(`Python runtime setup failed under: ${runtime.dataDir}`),
+          { hint: "Check that your disk has at least 2 GB free and click Retry. If it keeps failing, try reinstalling StemDeck." }
+        );
       }
     }
     setStep("runtime", "done");
@@ -282,7 +290,7 @@ async function runSetup() {
       window.location.replace(backend.url);
     });
   } catch (error) {
-    showError(error);
+    showError(error, error?.hint);
   }
 }
 

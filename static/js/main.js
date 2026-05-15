@@ -2,9 +2,9 @@ import {
   playBtn, loopBtn, multitrack, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
-import { STEM_NAMES } from "./constants.js";
+import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems } from "./player.js";
-import { wireJobForm } from "./job.js";
+import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
@@ -67,6 +67,7 @@ function wireStemChoiceButtons() {
 
 // ─── Wire everything up ───
 
+syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
 wireTransportButtons();
 wireStemListControls();
@@ -92,11 +93,17 @@ function wireFileDrop() {
     return n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
   }
 
+  const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // must match server _MAX_UPLOAD_BYTES
+
   function applyFile(file) {
     if (!file) return;
     const lower = file.name.toLowerCase();
     if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) {
-      alert("Only MP3 and WAV files are supported.");
+      showError("Only MP3 and WAV files are supported.");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      showError(`File is too large (${formatBytes(file.size)}). Maximum is 100 MB.`);
       return;
     }
     if (fileName) fileName.textContent = file.name;

@@ -21,7 +21,7 @@ export function loadMixIntoState(jobId) {
   try {
     const raw = localStorage.getItem(`stemdeck:mix:${jobId}`);
     if (raw) stored = JSON.parse(raw);
-  } catch { /* ignore */ }
+  } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
   for (const name of TRACK_NAMES) {
     Object.assign(mixerState[name], defaultMixerEntry(), stored[name] || {});
   }
@@ -40,7 +40,7 @@ function saveMix() {
       `stemdeck:mix:${currentJobId}`,
       JSON.stringify(mixerState),
     );
-  } catch { /* ignore */ }
+  } catch (e) { console.warn("[mixer] failed to save mix state:", e); }
 }
 
 export function applyMix() {

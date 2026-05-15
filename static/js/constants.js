@@ -1,11 +1,21 @@
-export const STEM_NAMES = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+// Fallback list used before /api/config responds. Kept in sync with
+// STEM_NAMES in app/core/config.py — the API is the canonical source.
+export let STEM_NAMES = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+export let TRACK_NAMES = ["original", ...STEM_NAMES];
 
-// All track names the studio knows about, including the synthetic
-// "original" track (the full song, served alongside the extracted
-// stems whenever the user picked a strict subset). Used for mixer
-// column / mixer state / VU iteration. The import-page stem selector
-// still uses STEM_NAMES because "original" isn't a separable stem.
-export const TRACK_NAMES = ["original", ...STEM_NAMES];
+export async function syncStemNamesFromAPI() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.stem_names) && data.stem_names.length > 0) {
+      STEM_NAMES = data.stem_names;
+      TRACK_NAMES = ["original", ...STEM_NAMES];
+    }
+  } catch (e) {
+    console.warn("[constants] failed to sync stem names from API:", e);
+  }
+}
 
 export const STEM_DISPLAY = {
   vocals: "Vocals",

@@ -242,12 +242,16 @@ function connectEvents(jobId) {
       attempt = 0; // any successful frame resets backoff
       let s;
       try { s = JSON.parse(ev.data); } catch { return; }
-      applyState(s);
-      if (TERMINAL_STATUSES.has(s.status)) {
-        stopped = true;
-        es.close();
-        setEventSource(null);
-      }
+      // Defer by one tick so synchronous user event handlers (clicks,
+      // input events) always complete before SSE state is applied.
+      setTimeout(() => {
+        applyState(s);
+        if (TERMINAL_STATUSES.has(s.status)) {
+          stopped = true;
+          es.close();
+          setEventSource(null);
+        }
+      }, 0);
     };
 
     es.onerror = async () => {

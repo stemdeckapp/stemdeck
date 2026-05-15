@@ -11,6 +11,8 @@ from app.core.models import Job
 
 logger = logging.getLogger("stemdeck.registry")
 
+REGISTRY_VERSION = 1
+
 _jobs: dict[str, Job] = {}
 # Active subprocesses keyed by job_id (currently only Demucs). Lets
 # POST /cancel terminate the running process from the API thread instead
@@ -44,6 +46,18 @@ def all_jobs() -> dict[str, Job]:
         return dict(_jobs)
 
 
+def _migrate(data: dict) -> dict:
+    """Upgrade registry JSON to REGISTRY_VERSION incrementally.
+    Each block transforms v(n) → v(n+1) so older snapshots always catch up."""
+    version = data.get("version", 0)
+    if version < 1:
+        # v0 → v1: version field was absent; no structural change needed.
+        data["version"] = 1
+        version = 1
+    # Future migrations go here as `if version < N:` blocks.
+    return data
+
+
 def persist(jobs_dir: Path) -> None:
     """Persist terminal jobs so completed library entries survive restarts."""
     try:
@@ -59,7 +73,10 @@ def persist(jobs_dir: Path) -> None:
         ]
     path = jobs_dir / _REGISTRY_FILE
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"version": 1, "jobs": records}, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps({"version": REGISTRY_VERSION, "jobs": records}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     tmp.replace(path)
 
 
@@ -69,7 +86,7 @@ def restore(jobs_dir: Path) -> None:
     path = jobs_dir / _REGISTRY_FILE
     if path.is_file():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = _migrate(json.loads(path.read_text(encoding="utf-8")))
             to_add = {}
             for record in data.get("jobs", []):
                 job = Job.from_record(record)

@@ -767,10 +767,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       updateStopVisual();
       if (loopEnabled && totalDuration > 0 && t >= loopEnd) {
         if (!loopWrapLogged) {
-          console.log(
-            `[loop] wrap fired: t=${t.toFixed(3)} loopStart=${loopStart.toFixed(3)} loopEnd=${loopEnd.toFixed(3)}`,
-          );
-          loopWrapLogged = true; // log once per session, not every frame
+          loopWrapLogged = true;
         }
         mt.setTime(loopStart);
       }

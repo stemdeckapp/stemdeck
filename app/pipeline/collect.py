@@ -6,7 +6,13 @@ import subprocess
 import time
 from pathlib import Path
 
-from app.core.config import DEMUCS_MODEL, JOB_TTL_SECONDS, STEM_NAMES, ffmpeg_executable
+from app.core.config import (
+    DEMUCS_MODEL,
+    JOB_TTL_SECONDS,
+    STEM_NAMES,
+    TIMEOUT_FFMPEG,
+    ffmpeg_executable,
+)
 from app.core.models import Job
 from app.core.registry import all_jobs as registry_all
 from app.core.registry import persist as registry_persist
@@ -39,7 +45,7 @@ def _run_ffmpeg(job: Job, cmd: list[str]) -> bool:
     set_proc(job.id, proc)
     try:
         try:
-            _, stderr = proc.communicate(timeout=300)
+            _, stderr = proc.communicate(timeout=TIMEOUT_FFMPEG)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
