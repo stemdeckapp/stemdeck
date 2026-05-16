@@ -1175,6 +1175,24 @@ input, textarea { font-family: inherit; }
   border-radius: 0 !important;
 }
 
+/* Establish height chain so waves-column's calc(100%-34px) resolves correctly */
+.daw .wave-canvas { height: 100%; }
+
+/* In the original layout a 48px stem-icon strip lived INSIDE the wave panel,
+   offsetting waves-column/multitrack/waveform-layer by 48px. In our layout the
+   mixer is a separate 300px panel, so all those 48px offsets must be zero. */
+.daw .waves-column,
+.app:not(.is-import) .daw-wave-panel .waves-column {
+  padding-left: 0 !important;
+  --wave-gutter: 0px !important;
+}
+.app:not(.is-import) .daw-wave-panel #multitrack-container {
+  inset: 0 !important;        /* remove left:48px offset */
+}
+.app:not(.is-import) .daw-wave-panel .stem-waveform-layer {
+  left: 0 !important;         /* remove left:48px offset */
+}
+
 .loop-region.hidden { display: none !important; }
 
 /* Wave loading overlay */
