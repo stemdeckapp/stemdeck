@@ -20,6 +20,7 @@ const SETUP_VERSION: u64 = 1;
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip";
+#[cfg(target_os = "macos")]
 const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip";
 
 #[derive(Default)]
@@ -1032,6 +1033,7 @@ async fn download_file_with_progress(
         .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()))
 }
 
+#[cfg(target_os = "macos")]
 fn download_file(url: &str, target: &Path, timeout: Duration) -> Result<(), String> {
     let tmp = target.with_extension("download");
     if tmp.exists() {
