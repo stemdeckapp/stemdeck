@@ -1186,11 +1186,19 @@ input, textarea { font-family: inherit; }
   padding-left: 0 !important;
   --wave-gutter: 0px !important;
 }
-.app:not(.is-import) .daw-wave-panel #multitrack-container {
-  inset: 0 !important;        /* remove left:48px offset */
+/* Show WaveSurfer native bar rendering; hide the SVG overlay layer */
+.daw #multitrack-container {
+  opacity: 1 !important;
+  pointer-events: all !important;
+  position: relative !important;  /* in flow → waves-column height driven by WaveSurfer */
 }
-.app:not(.is-import) .daw-wave-panel .stem-waveform-layer {
-  left: 0 !important;         /* remove left:48px offset */
+.daw .stem-waveform-layer {
+  display: none !important;
+}
+/* waves-column must size naturally now that multitrack is in flow */
+.daw .waves-column {
+  height: auto !important;
+  min-height: 0 !important;
 }
 
 .loop-region.hidden { display: none !important; }
