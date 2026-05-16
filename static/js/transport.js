@@ -26,7 +26,7 @@ function rulerRect() {
 }
 
 function loopOverlayParent() {
-  return rulerTime || document.querySelector(".waves-column");
+  return document.querySelector(".waves-column") || rulerTime;
 }
 
 function ensureLoopRegionParent() {
