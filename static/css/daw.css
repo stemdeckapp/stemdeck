@@ -1146,38 +1146,24 @@ input, textarea { font-family: inherit; }
 .lane-header.unavailable .lane-knob { opacity: 0.25; pointer-events: none; }
 
 /* ── Waveform panel (right) ── */
+/* Layout only — waves.css handles all visual styling inside (.wave-scroll bg,
+   golden scrollbar, .loop-region, .waves-grid, .stem-waveform-layer etc.) */
 .daw-wave-panel {
   flex: 1;
   min-width: 0;
-  position: relative;
-  background: var(--bg);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.wave-scroll {
-  position: absolute; inset: 0;
-  overflow: auto;
-}
-.wave-canvas {
-  position: relative;
-  min-height: 100%;
-}
-.waves-column { position: relative; }
 
-/* WaveSurfer grid lines */
-.waves-grid {
-  position: absolute; inset: 0;
-  pointer-events: none;
-  z-index: 0;
+/* Our zoom toolbar sits outside .wave-editor (in .daw-wave-header), so
+   the wave-scroll should fill the full panel height instead of calc(100% - 32px) */
+.daw .wave-scroll {
+  flex: 1 !important;
+  height: auto !important;
 }
 
-/* Loop region */
-.loop-region {
-  position: absolute; top: 0; bottom: 0;
-  background: rgba(244,183,64,0.08);
-  border-left: 1px solid rgba(244,183,64,0.5);
-  border-right: 1px solid rgba(244,183,64,0.5);
-  pointer-events: none; z-index: 3;
-}
 .loop-region.hidden { display: none !important; }
 
 /* Wave loading overlay */

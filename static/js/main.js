@@ -65,6 +65,36 @@ function wireStemChoiceButtons() {
   }
 }
 
+function wireAllButton() {
+  const allBtn = document.getElementById("stemAllBtn");
+  if (!allBtn) return;
+
+  function syncAllBtn() {
+    allBtn.setAttribute("aria-pressed", String(selectedStems.size > 0));
+  }
+
+  allBtn.addEventListener("click", () => {
+    const noneSelected = selectedStems.size === 0;
+    const allSelected = selectedStems.size === STEM_NAMES.length;
+    if (allSelected) {
+      selectedStems.clear();
+    } else {
+      for (const n of STEM_NAMES) selectedStems.add(n);
+    }
+    saveSelectedStems();
+    refreshStemChoiceVisuals();
+    buildStripStems();
+    syncAllBtn();
+  });
+
+  /* Keep All in sync when individual stems are toggled */
+  for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
+    btn.addEventListener("click", syncAllBtn);
+  }
+
+  syncAllBtn();
+}
+
 // ─── Wire everything up ───
 
 syncStemNamesFromAPI().then(() => buildStripStems());
@@ -73,6 +103,7 @@ wireTransportButtons();
 wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
+wireAllButton();
 initCatalog();
 wireFileDrop();
 wireAppShellControls();
