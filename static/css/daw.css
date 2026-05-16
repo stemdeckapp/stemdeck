@@ -1157,11 +1157,22 @@ input, textarea { font-family: inherit; }
   overflow: hidden;
 }
 
+/* waves.css gives .wave-editor padding + border-radius for the old rounded panel
+   style. In the flat DAW layout those are unwanted — strip them. */
+.daw .wave-editor,
+.app:not(.is-import) .daw-wave-panel.wave-editor {
+  padding: 0 !important;
+  min-height: 0 !important;
+  border-radius: 0 !important;
+}
+
 /* Our zoom toolbar sits outside .wave-editor (in .daw-wave-header), so
-   the wave-scroll should fill the full panel height instead of calc(100% - 32px) */
+   the wave-scroll should fill the full panel height instead of calc(100% - 32px).
+   Also remove the rounded corners waves.css adds in active state. */
 .daw .wave-scroll {
   flex: 1 !important;
   height: auto !important;
+  border-radius: 0 !important;
 }
 
 .loop-region.hidden { display: none !important; }
