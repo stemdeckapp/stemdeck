@@ -37,7 +37,6 @@ export const loopRegionEl = $("loop-region");
 export const playheadMarker = document.querySelector(".playhead-marker");
 export const waveScroll = $("wave-scroll");
 export const waveCanvas = $("wave-canvas");
-export const zoomFitBtn = $("zoom-fit-footer");
 export const presenceRulerEl = $("presence-ruler");
 export const presencePlayheadEl = $("presence-playhead");
 export const footerTimeElapsed = $("footer-time-elapsed");
@@ -62,7 +61,6 @@ export let totalDuration = 0;
 export let loopEnabled = false;
 export let loopStart = 0;
 export let loopEnd = 0;
-export let waveZoom = 1;
 
 // Selected stems for extraction. The set determines (a) which stem
 // rows render in the studio dashboard after a job completes and (b)
@@ -118,7 +116,6 @@ export function setTotalDuration(v) { totalDuration = v; }
 export function setLoopEnabled(v) { loopEnabled = v; }
 export function setLoopStart(v) { loopStart = v; }
 export function setLoopEnd(v) { loopEnd = v; }
-export function setWaveZoom(v) { waveZoom = v; }
 export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
 export function setVuRafId(v) { vuRafId = v; }

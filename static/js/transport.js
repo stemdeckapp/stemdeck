@@ -3,17 +3,14 @@ import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
-  waveScroll, waveCanvas, zoomFitBtn,
-  waveZoom, presenceRulerEl, presencePlayheadEl,
+  waveScroll, waveCanvas,
+  presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill,
-  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setWaveZoom,
+  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
 } from "./state.js";
 import { applyMix } from "./mixer.js";
 
 const MIN_LOOP_SEC = 0.2;
-const ZOOM_MIN = 1;
-const ZOOM_MAX = 32;
-const ZOOM_STEP = 1.25;
 // rulerTime is the canonical timeline reference for both click->time
 // and time->pixel mapping. The wave-editor lays the ruler and the
 // waveform body out so they should be horizontally aligned (both gutter
@@ -284,82 +281,29 @@ function wireLoopDrag() {
 // math stays correct without any per-element width logic.
 
 export function applyWaveZoom() {
-  if (!waveCanvas) return;
-  waveCanvas.style.setProperty("--zoom", String(waveZoom));
   const wavesColumn = document.querySelector(".waves-column");
   if (wavesColumn) {
-    waveCanvas.style.setProperty("--wave-playhead-h", `${wavesColumn.clientHeight}px`);
+    const lanes = document.getElementById("lanes") || waveCanvas;
+    lanes?.style.setProperty("--wave-playhead-h", `${wavesColumn.clientHeight}px`);
   }
-  if (zoomFitBtn) zoomFitBtn.disabled = Math.abs(waveZoom - 1) < 1e-3;
-
   if (multitrack && totalDuration > 0 && waveScroll) {
     const baseWidth = waveScroll.clientWidth;
     if (baseWidth > 0) {
-      const pxPerSec = (baseWidth * waveZoom) / totalDuration;
+      const pxPerSec = baseWidth / totalDuration;
       try { multitrack.zoom(pxPerSec); } catch { /* ignore -- pre-canplay */ }
     }
   }
 }
 
-function setWaveZoomLevel(z) {
-  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-  setWaveZoom(clamped);
-  applyWaveZoom();
-}
-
-function zoomToLevelAtClientX(clientX, nextZoom) {
-  if (!waveScroll) return setWaveZoomLevel(nextZoom);
-  const rect = waveScroll.getBoundingClientRect();
-  const visualToLayout = waveScroll.clientWidth / Math.max(1, rect.width);
-  const cursorX = Math.max(0, Math.min(
-    waveScroll.clientWidth,
-    (clientX - rect.left) * visualToLayout,
-  ));
-  const before = waveScroll.scrollLeft + cursorX;
-  const oldWidth = waveScroll.firstElementChild?.scrollWidth || waveScroll.clientWidth;
-  setWaveZoomLevel(nextZoom);
-  const newWidth = waveScroll.firstElementChild?.scrollWidth || waveScroll.clientWidth;
-  const ratio = oldWidth > 0 ? newWidth / oldWidth : 1;
-  waveScroll.scrollLeft = before * ratio - cursorX;
-}
-
-function zoomAtClientX(clientX, factor) {
-  zoomToLevelAtClientX(clientX, waveZoom * factor);
-}
-
-function zoomCenteredOn(factor) {
-  if (!waveScroll) return setWaveZoomLevel(waveZoom * factor);
-  const rect = waveScroll.getBoundingClientRect();
-  zoomAtClientX(rect.left + rect.width / 2, factor);
-}
-
 function wireZoomButtons() {
-  if (zoomFitBtn) {
-    zoomFitBtn.addEventListener("click", () => {
-      setWaveZoomLevel(1);
-      if (waveScroll) waveScroll.scrollLeft = 0;
-    });
-  }
-  // Recalculate zoom + playhead height whenever the wave container is resized
-  // (window resize, sidebar open/close, etc.). Without this, --wave-playhead-h
-  // stays at the initial pixel height and multitrack's pxPerSec is stale.
   if (waveScroll) {
     const ro = new ResizeObserver(() => {
       if (multitrack && totalDuration > 0) applyWaveZoom();
     });
     ro.observe(waveScroll);
   }
-
-  // Cmd/Ctrl + wheel = zoom around cursor; plain vertical wheel pans horizontally
-  // once the waveform is zoomed wider than the viewport.
   if (waveScroll) {
     waveScroll.addEventListener("wheel", (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const factor = Math.exp(-e.deltaY * 0.002);
-        zoomAtClientX(e.clientX, factor);
-        return;
-      }
       if (waveScroll.scrollWidth <= waveScroll.clientWidth) return;
       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         e.preventDefault();

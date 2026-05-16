@@ -13,7 +13,7 @@ import {
   masterVolume, masterFader, mixerState,
   setMultitrack, setCurrentJobId, setTrackIndex, setTotalDuration,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
-  setWaveZoom, waveScroll, selectedStems,
+  waveScroll, selectedStems,
 } from "./state.js";
 import {
   loadMixIntoState, resetMixerState, refreshMixerVisuals,
@@ -528,7 +528,6 @@ export function destroyPlayer() {
   setLoopEnd(0);
   setMasterVolume(0.5);
   setTrackIndex({});
-  setWaveZoom(1);
   applyWaveZoom();
   buildPresenceRuler(0);
   updateFooterTimes(0);
