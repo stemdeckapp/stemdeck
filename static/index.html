@@ -3,487 +3,505 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>StemDeck</title>
+    <title>StemDeck — split any track into stems</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/css/variables.css" />
-    <link rel="stylesheet" href="/css/base.css" />
-    <link rel="stylesheet" href="/css/appbar.css" />
-    <link rel="stylesheet" href="/css/transport.css" />
-    <link rel="stylesheet" href="/css/master.css" />
-    <link rel="stylesheet" href="/css/mixer.css" />
     <link rel="stylesheet" href="/css/waves.css" />
-    <link rel="stylesheet" href="/css/job.css" />
-    <link rel="stylesheet" href="/css/responsive.css" />
-    <link rel="stylesheet" href="/css/catalog.css" />
-    <link rel="stylesheet" href="/css/widgets.css" />
+    <link rel="stylesheet" href="/css/daw.css" />
   </head>
   <body>
-    <div class="app">
 
-      <!-- ─ Topbar ─ -->
-      <header class="topbar appbar">
-          <div class="appbar-body">
-          <div class="appbar-body-inner">
-          <div class="brand-group">
-            <div class="brand-row">
-              <h1 class="brand">
-                <img class="brand-logo" src="/imgs/stemdeck-logo-horizontal.svg" alt="StemDeck" />
-              </h1>
-              <span class="beta-badge">ALPHA</span>
+    <div class="app daw" id="app">
+
+      <!-- ══ TOPBAR ══ -->
+      <div class="daw-topbar">
+        <!-- Brand -->
+        <div class="daw-brand">
+          <img src="/imgs/stemdeck-logo-horizontal.svg" alt="" style="height:30px;width:auto;display:block;">
+          <span class="daw-brand-name">
+            <span class="fg">Stem</span><span class="accent">Deck</span>
+          </span>
+        </div>
+        <span id="brandVersion" class="daw-version"></span>
+
+        <!-- Separator -->
+        <div class="daw-sep"></div>
+
+        <!-- Composer pill -->
+        <form id="job-form" class="daw-composer">
+
+          <!-- URL zone (JS uses .url-wrap for drag events) -->
+          <div class="daw-url-zone url-wrap">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8" style="flex-shrink:0" aria-hidden="true">
+              <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1 M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>
+            </svg>
+            <input
+              id="url"
+              type="url"
+              placeholder="Paste a YouTube link, or drop an audio file…"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <!-- File pill (shown when file selected) -->
+            <div class="file-pill hidden" id="filePill">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+              </svg>
+              <span class="file-name" id="fileName"></span>
+              <span class="file-size" id="fileSize"></span>
+              <button class="file-clear" id="fileClear" type="button" aria-label="Remove file">×</button>
             </div>
-            <span class="brand-sub">AI stem separation</span>
-            <div class="brand-version" id="brandVersion">…</div>
+            <button class="daw-upload-btn" type="button" title="Upload audio file" id="uploadFileBtn" aria-label="Upload audio file" onclick="document.getElementById('fileInput').click()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M12 3v12 M7 8l5-5 5 5 M5 21h14"/>
+              </svg>
+            </button>
+            <input id="fileInput" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" style="display:none" aria-hidden="true" />
           </div>
 
-          <form id="job-form" class="appbar-import-panel">
-            <div class="import-input-row">
-              <label class="url-wrap">
-                <svg class="url-prefix" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"></path>
-                  <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"></path>
-                </svg>
-                <input
-                  id="url"
-                  type="url"
-                  placeholder="Paste a YouTube link — or drop an MP3/WAV here…"
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-                <input id="fileInput" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" style="display:none" aria-hidden="true" />
-                <div class="file-pill hidden" id="filePill">
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13"></path>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <circle cx="18" cy="16" r="3"></circle>
+          <!-- Divider -->
+          <div class="daw-composer-sep"></div>
+
+          <!-- Stem selection -->
+          <div class="daw-stem-section">
+            <span class="daw-extract-label">Extract</span>
+            <div class="daw-stem-chips">
+              <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
+                <span class="stem-dot"></span>Vocals
+              </button>
+              <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
+                <span class="stem-dot"></span>Drums
+              </button>
+              <button class="stem-choice" type="button" data-stem="bass" aria-pressed="true" style="--color:var(--bass)">
+                <span class="stem-dot"></span>Bass
+              </button>
+              <button class="stem-choice" type="button" data-stem="guitar" aria-pressed="true" style="--color:var(--guitar)">
+                <span class="stem-dot"></span>Guitar
+              </button>
+              <button class="stem-choice" type="button" data-stem="piano" aria-pressed="true" style="--color:var(--piano)">
+                <span class="stem-dot"></span>Piano
+              </button>
+              <button class="stem-choice" type="button" data-stem="other" aria-pressed="false" style="--color:var(--other)">
+                <span class="stem-dot"></span>Other
+              </button>
+            </div>
+          </div>
+
+          <!-- Process button -->
+          <button id="submit" class="daw-process-btn" type="submit">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M13 2 3 14h7l-1 8 10-12h-7z"/>
+            </svg>
+            Split stems
+          </button>
+        </form>
+
+        <!-- Notification bell -->
+        <button class="daw-iconbtn" title="Notifications" type="button" style="position:relative;flex-shrink:0;" aria-label="Notifications">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0"/>
+          </svg>
+        </button>
+
+        <!-- Hidden collapsed strip (JS compatibility) -->
+        <div class="hidden" id="appbarStrip" aria-hidden="true" style="display:none!important">
+          <div><div class="strip-sq-stems" id="appbarStripStems"></div></div>
+        </div>
+      </div>
+
+      <!-- ══ BODY ══ -->
+      <div class="daw-body">
+
+        <!-- ── Sidebar / Catalog ── -->
+        <aside class="sidebar" id="catalogPanel">
+          <!-- Rail -->
+          <nav class="sidebar-rail" aria-label="Library navigation">
+            <button class="rail-btn active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M4 4h16v16H4z M4 9h16"/>
+              </svg>
+              <span>Library</span>
+            </button>
+            <div style="flex:1"></div>
+            <button class="rail-btn" type="button" title="Settings" aria-label="Settings">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 2v2 M12 20v2 M4 12H2 M22 12h-2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5"/>
+              </svg>
+              <span>Settings</span>
+            </button>
+            <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .8-1 1.7 M12 17h.01"/>
+              </svg>
+              <span>Help</span>
+            </button>
+          </nav>
+
+          <!-- Sidebar body -->
+          <div class="sidebar-body">
+            <!-- Search -->
+            <div class="daw-search" id="catalogToggle" role="button" tabindex="0" aria-label="Search library">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+              </svg>
+              <input id="catalogSearch" type="search" placeholder="Search library…" autocomplete="off" spellcheck="false" />
+              <span class="search-kbd" aria-hidden="true">⌘K</span>
+            </div>
+
+            <!-- Folder row -->
+            <div class="daw-lib-header">
+              <span class="uplabel daw-lib-label">
+                <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 4l3 4 3-4z"/></svg>
+                Unsorted
+                <span id="catCount" class="daw-lib-count">0</span>
+              </span>
+              <div class="daw-lib-actions">
+                <button id="newFolderBtn" type="button" title="New folder" aria-label="New folder">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    <path d="M12 11v6 M9 14h6"/>
                   </svg>
-                  <span class="file-name" id="fileName"></span>
-                  <span class="file-size" id="fileSize"></span>
-                  <button class="file-clear" id="fileClear" type="button" aria-label="Remove file">×</button>
+                </button>
+                <button type="button" title="Add track" aria-label="Add track">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M12 5v14 M5 12h14"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Catalog list (JS populates) -->
+            <div id="catalogList" class="daw-lib-list" role="list"></div>
+
+            <!-- Collapsed strip (JS compat) -->
+            <div id="catalogStrip" class="cat-collapsed-strip"></div>
+          </div>
+        </aside>
+
+        <!-- ── Main area ── -->
+        <div id="lanes" class="daw-main">
+
+          <!-- Job progress -->
+          <div id="job" class="job hidden" role="status" aria-live="polite">
+            <div class="job-header">
+              <div id="job-title" class="title"></div>
+              <div id="job-stage" class="stage"></div>
+              <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
+            </div>
+            <progress id="progress" max="100" value="0"></progress>
+            <div id="job-detail" class="job-detail" aria-live="polite"></div>
+          </div>
+          <div id="error" class="error hidden" role="alert"></div>
+
+          <!-- Track header / info panel -->
+          <div id="transport" class="daw-track-header">
+
+            <!-- Track card -->
+            <div class="daw-track-card">
+              <div class="daw-cover" id="np-art">
+                <div class="np-art-placeholder" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                  </svg>
                 </div>
-              </label>
-              <button id="submit" class="btn-primary" type="submit">
-                <svg class="icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"></path>
-                  <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path>
-                </svg>
-                <span>Process</span>
-              </button>
+                <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+              </div>
+              <div class="daw-track-meta">
+                <div class="daw-track-artist" id="track-artist"></div>
+                <div class="daw-track-title" id="title">—</div>
+                <div class="daw-track-sub num" id="t-time">—</div>
+                <div class="daw-track-chips">
+                  <span class="daw-chip" id="t-bpm">— BPM</span>
+                  <span class="daw-chip" id="t-key">— —</span>
+                  <span class="daw-chip" id="t-stems-chip">— Stems</span>
+                </div>
+              </div>
             </div>
-            <div class="stem-choice-row">
-              <span>Stems to extract</span>
-              <button class="stem-choice vocals" type="button" data-stem="vocals" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                  <path d="M12 19v3"></path>
-                </svg>
-                <span>Vocals</span>
-              </button>
-              <button class="stem-choice drums" type="button" data-stem="drums" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path>
-                  <circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle>
-                  <path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path>
-                  <path d="M4 18l16-8"></path>
-                </svg>
-                <span>Drums</span>
-              </button>
-              <button class="stem-choice bass" type="button" data-stem="bass" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path>
-                  <path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path>
-                  <path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path>
-                </svg>
-                <span>Bass</span>
-              </button>
-              <button class="stem-choice guitar" type="button" data-stem="guitar" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path>
-                  <path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path>
-                  <path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path>
-                </svg>
-                <span>Guitar</span>
-              </button>
-              <button class="stem-choice piano" type="button" data-stem="piano" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <rect x="3" y="5" width="18" height="14" rx="2"></rect>
-                  <path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path>
-                  <path d="M9.5 5v7"></path><path d="M14.5 5v7"></path>
-                </svg>
-                <span>Piano</span>
-              </button>
-              <button class="stem-choice other" type="button" data-stem="other" aria-pressed="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
-                </svg>
-                <span>Others</span>
-              </button>
-            </div>
-          </form>
-          </div><!-- /.appbar-body-inner -->
-          </div><!-- /.appbar-body -->
 
-          <!-- Collapsed icon strip (shown on double-click) -->
-          <div class="appbar-icon-strip" id="appbarStrip">
-          <div class="appbar-strip-inner">
-            <div class="strip-sq strip-sq-brand">SD</div>
-            <div class="strip-sq strip-sq-url">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"></path>
-                <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"></path>
-              </svg>
+            <!-- Stem energy -->
+            <div class="daw-energy-panel">
+              <div class="daw-energy-header">
+                <span class="uplabel">Stem Energy</span>
+                <span class="uplabel daw-playhead-label" id="daw-playhead-label"></span>
+              </div>
+              <div class="daw-energy-bars">
+                <div class="energy-row vocals" data-stem="vocals"><span>Vocals</span><b style="--v:0%"></b><em>0%</em></div>
+                <div class="energy-row drums"  data-stem="drums" ><span>Drums</span><b style="--v:0%"></b><em>0%</em></div>
+                <div class="energy-row bass"   data-stem="bass"  ><span>Bass</span><b style="--v:0%"></b><em>0%</em></div>
+                <div class="energy-row guitar" data-stem="guitar"><span>Guitar</span><b style="--v:0%"></b><em>0%</em></div>
+                <div class="energy-row piano"  data-stem="piano" ><span>Piano</span><b style="--v:0%"></b><em>0%</em></div>
+                <div class="energy-row other"  data-stem="other" ><span>Other</span><b style="--v:0%"></b><em>0%</em></div>
+              </div>
             </div>
-            <div class="strip-sq-stems" id="appbarStripStems"></div>
-            <div class="strip-sq strip-sq-process">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z"></path>
-                <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"></path>
-              </svg>
-            </div>
-          </div><!-- /.appbar-strip-inner -->
-          </div><!-- /.appbar-icon-strip -->
-      </header>
 
-      <!-- ─ Left: Catalog sidebar ─ -->
-      <aside class="catalog" id="catalogPanel">
-        <nav class="catalog-rail" aria-label="Library navigation">
-          <button class="rail-menu-btn" id="appMenuBtn" type="button" aria-label="Toggle library panel">
-            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M4 7h16M4 12h16M4 17h16"></path>
-            </svg>
-          </button>
-          <button class="rail-btn rail-library active" type="button" aria-label="Library" aria-pressed="true">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
-            </svg>
-            <span>Library</span>
-          </button>
-          <button class="rail-btn rail-trash" type="button" aria-label="Trash" aria-pressed="false">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M3 6h18"></path>
-              <path d="M8 6V4h8v2"></path>
-              <path d="M19 6l-1 14H6L5 6"></path>
-            </svg>
-            <span>Trash</span>
-          </button>
-          <div class="rail-spacer"></div>
-          <a class="rail-btn" href="https://github.com/thcp/stemdeck/issues" target="_blank" rel="noopener noreferrer" aria-label="Help">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="12" r="10"></circle>
-              <path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.2-2.2 1.4-2.7 2.8"></path>
-              <path d="M12 17h.01"></path>
-            </svg>
-            <span>Help</span>
-          </a>
-          <button class="rail-btn" id="aboutBtn" type="button" aria-label="About">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="12" r="10"></circle>
-              <path d="M12 8v4M12 16h.01"></path>
-            </svg>
-            <span>About</span>
-          </button>
-        </nav>
-        <div class="catalog-main">
-          <div class="catalog-head" id="catalogToggle" role="button" tabindex="0" aria-label="Toggle catalog">
-            <h3>Library</h3>
-            <span class="cat-count" id="catCount">0 tracks</span>
-            <svg class="cat-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="15 18 9 12 15 6"></polyline>
-            </svg>
+            <!-- Key / BPM / LUFS -->
+            <div class="daw-analysis-panel">
+              <div class="daw-analysis-item">
+                <span class="uplabel">Key</span>
+                <div class="daw-analysis-val">
+                  <span class="num daw-analysis-num" id="summary-key">—</span>
+                  <div class="daw-camelot-ring hidden" id="summary-confidence"></div>
+                </div>
+                <span class="num daw-analysis-sub" id="summary-scale"></span>
+                <span class="num daw-analysis-sub hidden" id="summary-confidence-label"></span>
+              </div>
+              <div class="daw-analysis-divider"></div>
+              <div class="daw-analysis-item">
+                <span class="uplabel">BPM</span>
+                <div class="daw-analysis-val">
+                  <span class="num daw-analysis-num accent" id="summary-bpm">—</span>
+                </div>
+                <span class="num daw-analysis-sub">—</span>
+              </div>
+              <div class="daw-analysis-divider"></div>
+              <div class="daw-analysis-item">
+                <span class="uplabel">LUFS</span>
+                <div class="daw-analysis-val">
+                  <span class="num daw-analysis-num" id="summary-lufs">—</span>
+                </div>
+                <span class="num daw-analysis-sub" id="summary-peak"></span>
+              </div>
+            </div>
+
+            <!-- Hidden info elements for JS compat -->
+            <div style="display:none" aria-hidden="true">
+              <div class="analysis-card key-card">
+                <strong id="summary-key-dup"></strong>
+                <small id="summary-scale-dup"></small>
+              </div>
+              <div class="analysis-card loudness-card hidden" id="loudness-card">
+                <span id="summary-lufs-dup"></span>
+                <span id="summary-peak-dup"></span>
+              </div>
+              <div class="analysis-card beat-card">
+                <strong id="summary-bpm-dup"></strong>
+              </div>
+            </div>
           </div>
 
-          <div class="catalog-search">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="11" cy="11" r="7"></circle>
-              <path d="m21 21-4.3-4.3"></path>
-            </svg>
-            <input id="catalogSearch" type="search" placeholder="Search library…" autocomplete="off" spellcheck="false" />
-          </div>
-
-          <button class="new-folder-btn" id="newFolderBtn" type="button">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M12 5v14M5 12h14"></path>
-            </svg>
-            New folder
-          </button>
-
-          <div class="catalog-list" id="catalogList"></div>
-
-          <!-- Collapsed strip (just thumbs) -->
-          <div class="cat-collapsed-strip" id="catalogStrip"></div>
-        </div>
-      </aside>
-
-      <!-- ─ Right: Main area ─ -->
-      <div id="lanes">
-
-        <!-- ─ Job progress ─ -->
-        <div id="job" class="job hidden" role="status" aria-live="polite">
-          <div class="job-header">
-            <div id="job-title" class="title"></div>
-            <div id="job-stage" class="stage"></div>
-            <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
-          </div>
-          <progress id="progress" max="100" value="0"></progress>
-          <div id="job-detail" class="job-detail" aria-live="polite"></div>
-        </div>
-
-        <div id="error" class="error hidden"></div>
-
-        <!-- ─ Widget: Information ─ -->
-        <section class="widget surface-panel" data-widget="info">
-          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
-            <div class="title-block">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M12 8v4M12 16h.01"></path>
-              </svg>
-              <h3>Information</h3>
+          <!-- Section ribbon -->
+          <div class="daw-section-ribbon">
+            <div class="daw-mixer-label">
+              <span class="daw-label-title">Mixer</span>
+              <span class="uplabel daw-label-sub">Drag fader · M/S</span>
             </div>
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
+            <div class="daw-sections-area" id="daw-sections"></div>
           </div>
-          <div class="widget-body">
-            <div class="body-inner">
-              <div id="transport" class="now-playing">
-                <div class="np-art" id="np-art">
-                  <div class="np-art-placeholder" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <path d="M9 18V5l12-2v13"></path>
-                      <circle cx="6" cy="18" r="3"></circle>
-                      <circle cx="18" cy="16" r="3"></circle>
+
+          <!-- Waveform header / ruler -->
+          <div class="daw-wave-header">
+            <div class="daw-wave-label">
+              <span class="uplabel">Waveform · Stem-aligned</span>
+              <div class="zoom-tools">
+                <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+                <input id="zoom-track" class="zoom-slider" type="range" min="1" max="32" step="0.01" value="1" aria-label="Waveform zoom" />
+                <button id="zoom-in" type="button" aria-label="Zoom in">＋</button>
+                <button id="zoom-fit" type="button">Fit</button>
+              </div>
+            </div>
+            <div class="daw-ruler-area">
+              <div class="lanes-ruler" data-position="top">
+                <div class="lanes-ruler-time" id="ruler-time">
+                  <div class="playhead-marker" aria-hidden="true">
+                    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                      <polygon points="0,0 10,0 5,8" fill="var(--accent)"/>
                     </svg>
-                  </div>
-                  <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
-                </div>
-
-                <div class="np-info">
-                  <div class="np-title" id="title"></div>
-                  <div class="np-chips">
-                    <span class="chip" id="t-bpm">— BPM</span>
-                    <span class="chip" id="t-key">— —</span>
-                    <span class="chip" id="t-stems-chip">— Stems</span>
-                  </div>
-                  <div class="np-play-row">
-                    <span>00:00</span>
-                    <div class="np-scrub" aria-hidden="true"><span></span></div>
-                    <span id="t-time">00:00 / 00:00</span>
-                  </div>
-                </div>
-
-                <div class="stem-energy">
-                  <h3>Stem Energy <span>i</span></h3>
-                  <div class="energy-row original" data-stem="original"><span>Original</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row vocals" data-stem="vocals"><span>Vocals</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row drums" data-stem="drums"><span>Drums</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row bass" data-stem="bass"><span>Bass</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row guitar" data-stem="guitar"><span>Guitar</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row piano" data-stem="piano"><span>Piano</span><b style="--v:0%"></b><em>0%</em></div>
-                  <div class="energy-row other" data-stem="other"><span>Others</span><b style="--v:0%"></b><em>0%</em></div>
-                </div>
-
-                <div class="analysis-card key-card">
-                  <h3>Key &amp; Scale</h3>
-                  <strong id="summary-key">—</strong>
-                  <small id="summary-scale"></small>
-                  <div class="confidence-ring hidden" id="summary-confidence"></div>
-                  <small id="summary-confidence-label" class="hidden">Confidence</small>
-                </div>
-
-                <div class="analysis-card loudness-card hidden" id="loudness-card">
-                  <h3>Loudness</h3>
-                  <strong><span id="summary-lufs">—</span> <small>LUFS<br />Integrated</small></strong>
-                  <strong><span id="summary-peak">—</span> <small>dBFS<br />Peak</small></strong>
-                </div>
-
-                <div class="analysis-card beat-card">
-                  <h3>Beat Overview</h3>
-                  <div class="beat-values">
-                    <strong id="summary-bpm">— <small>BPM</small></strong>
-                    <strong>4/4 <small>Time Sig.</small></strong>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </section>
 
-        <!-- ─ Widget: Waveform ─ -->
-        <section class="widget surface-panel" data-widget="waveform">
-          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
-            <div class="title-block">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path>
-              </svg>
-              <h3>Waveform</h3>
-            </div>
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </div>
-          <div class="widget-body">
-            <div class="body-inner">
+          <!-- Content area: stems + waveform -->
+          <div class="daw-content">
+
+            <!-- Stems panel (left — M/S controls per stem) -->
+            <div class="daw-stems-panel" aria-label="Stems">
+
               <!-- Presence panel hidden but in DOM for JS -->
               <div style="display:none" aria-hidden="true">
                 <section class="presence-panel surface-panel">
-                  <div class="panel-title">Stem Presence Timeline <span>i</span></div>
                   <div class="presence-ruler" id="presence-ruler">
                     <span></span><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b><b>0:00</b>
                   </div>
                   <div class="presence-grid">
                     <div class="presence-labels">
-                      <span class="vocals">Vocals</span>
-                      <span class="drums">Drums</span>
-                      <span class="bass">Bass</span>
-                      <span class="guitar">Guitar</span>
-                      <span class="piano">Piano</span>
-                      <span class="other">Others</span>
+                      <span class="vocals">Vocals</span><span class="drums">Drums</span>
+                      <span class="bass">Bass</span><span class="guitar">Guitar</span>
+                      <span class="piano">Piano</span><span class="other">Others</span>
                     </div>
                     <div class="presence-bars">
                       <i class="vocals" data-stem="vocals"></i>
-                      <i class="drums" data-stem="drums"></i>
-                      <i class="bass" data-stem="bass"></i>
+                      <i class="drums"  data-stem="drums"></i>
+                      <i class="bass"   data-stem="bass"></i>
                       <i class="guitar" data-stem="guitar"></i>
-                      <i class="piano" data-stem="piano"></i>
-                      <i class="other" data-stem="other"></i>
+                      <i class="piano"  data-stem="piano"></i>
+                      <i class="other"  data-stem="other"></i>
                       <div class="presence-playhead hidden" id="presence-playhead" aria-hidden="true"></div>
                     </div>
                   </div>
                 </section>
               </div>
 
-              <div class="studio-wave-grid">
-                <aside class="stems-panel" aria-label="Waveform lane icons">
-                  <div class="panel-title">Stems</div>
-                  <div class="stem-list">
-                    <span class="original" data-stem="original"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>Original</em><b class="stem-mute" data-stem="original" role="button" tabindex="0" aria-label="Mute Original" aria-pressed="false">M</b><b class="stem-solo" data-stem="original" role="button" tabindex="0" aria-label="Solo Original" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="original" aria-label="Solo only Original"></button><i class="mini-meter"></i></span>
-                    <span class="vocals" data-stem="vocals"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path></svg>Vocals</em><b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals" aria-pressed="false">M</b><b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="vocals" aria-label="Solo only Vocals"></button><i class="mini-meter"></i></span>
-                    <span class="drums" data-stem="drums"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 13.5a5 5 0 0 0 10 0"></path><path d="M7 13.5h10"></path><circle cx="9" cy="10" r="2.5"></circle><circle cx="15" cy="10" r="2.5"></circle><path d="M4 6.5h5"></path><path d="M15 6.5h5"></path><path d="M6.5 6.5v5"></path><path d="M17.5 6.5v5"></path><path d="M10 18l-2 3"></path><path d="M14 18l2 3"></path><path d="M4 18l16-8"></path></svg>Drums</em><b class="stem-mute" data-stem="drums" role="button" tabindex="0" aria-label="Mute Drums" aria-pressed="false">M</b><b class="stem-solo" data-stem="drums" role="button" tabindex="0" aria-label="Solo Drums" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="drums" aria-label="Solo only Drums"></button><i class="mini-meter"></i></span>
-                    <span class="bass" data-stem="bass"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16.5 3h4v5h-3"></path><path d="M17.5 5.5 9.8 13.2"></path><path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"></path><path d="M6.7 16.4h.01"></path><path d="M13.5 9.5l3 3"></path><path d="M18.2 3v4.6"></path><path d="M20.5 3v4"></path></svg>Bass</em><b class="stem-mute" data-stem="bass" role="button" tabindex="0" aria-label="Mute Bass" aria-pressed="false">M</b><b class="stem-solo" data-stem="bass" role="button" tabindex="0" aria-label="Solo Bass" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="bass" aria-label="Solo only Bass"></button><i class="mini-meter"></i></span>
-                    <span class="guitar" data-stem="guitar"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16 4.5 20 2l2 2-2.5 4"></path><path d="M18.2 5.8 10.2 13.8"></path><path d="M10.5 13.5c1.1 1.7.5 4.2-1.5 5.5-2.2 1.5-5.3.8-6.3-1.3-.8-1.7.1-3.6 1.9-4.2 1-.3 1.8-.1 2.7.5.1-1.1.6-2.1 1.6-2.6 1.4-.7 2.7.2 1.6 2.1Z"></path><path d="M6.5 15.1c1.3.6 2.2 1.5 2.9 2.8"></path><circle cx="7" cy="16.4" r="1.4"></circle><path d="M14 8l3 3"></path></svg>Guitar</em><b class="stem-mute" data-stem="guitar" role="button" tabindex="0" aria-label="Mute Guitar" aria-pressed="false">M</b><b class="stem-solo" data-stem="guitar" role="button" tabindex="0" aria-label="Solo Guitar" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="guitar" aria-label="Solo only Guitar"></button><i class="mini-meter"></i></span>
-                    <span class="piano" data-stem="piano"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 5v14"></path><path d="M12 5v14"></path><path d="M17 5v14"></path><path d="M9.5 5v7"></path><path d="M14.5 5v7"></path></svg>Piano</em><b class="stem-mute" data-stem="piano" role="button" tabindex="0" aria-label="Mute Piano" aria-pressed="false">M</b><b class="stem-solo" data-stem="piano" role="button" tabindex="0" aria-label="Solo Piano" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="piano" aria-label="Solo only Piano"></button><i class="mini-meter"></i></span>
-                    <span class="other" data-stem="other"><i class="drag-handle"></i><em><svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 13v-2"></path><path d="M8 17V7"></path><path d="M12 21V3"></path><path d="M16 17V7"></path><path d="M20 13v-2"></path></svg>Others</em><b class="stem-mute" data-stem="other" role="button" tabindex="0" aria-label="Mute Other" aria-pressed="false">M</b><b class="stem-solo" data-stem="other" role="button" tabindex="0" aria-label="Solo Other" aria-pressed="false">S</b><button class="stem-monitor" type="button" data-stem="other" aria-label="Solo only Other"></button><i class="mini-meter"></i></span>
-                  </div>
-                </aside>
+              <!-- Stem rows with M/S -->
+              <div class="stem-list" aria-label="Waveform lane icons">
+                <span class="original" data-stem="original">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                    Original
+                  </em>
+                  <b class="stem-mute" data-stem="original" role="button" tabindex="0" aria-label="Mute Original" aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="original" role="button" tabindex="0" aria-label="Solo Original"  aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="original" aria-label="Solo only Original"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="vocals" data-stem="vocals">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+                    Vocals
+                  </em>
+                  <b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals"  aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals"   aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="vocals" aria-label="Solo only Vocals"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="drums" data-stem="drums">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 13.5a5 5 0 0 0 10 0"/><path d="M7 13.5h10"/><circle cx="9" cy="10" r="2.5"/><circle cx="15" cy="10" r="2.5"/></svg>
+                    Drums
+                  </em>
+                  <b class="stem-mute" data-stem="drums" role="button" tabindex="0" aria-label="Mute Drums"   aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="drums" role="button" tabindex="0" aria-label="Solo Drums"    aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="drums" aria-label="Solo only Drums"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="bass" data-stem="bass">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16.5 3h4v5h-3"/><path d="M17.5 5.5 9.8 13.2"/><path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"/></svg>
+                    Bass
+                  </em>
+                  <b class="stem-mute" data-stem="bass" role="button" tabindex="0" aria-label="Mute Bass"    aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="bass" role="button" tabindex="0" aria-label="Solo Bass"     aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="bass" aria-label="Solo only Bass"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="guitar" data-stem="guitar">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16 4.5 20 2l2 2-2.5 4"/><path d="M18.2 5.8 10.2 13.8"/><circle cx="7" cy="16.4" r="1.4"/></svg>
+                    Guitar
+                  </em>
+                  <b class="stem-mute" data-stem="guitar" role="button" tabindex="0" aria-label="Mute Guitar"  aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="guitar" role="button" tabindex="0" aria-label="Solo Guitar"   aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="guitar" aria-label="Solo only Guitar"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="piano" data-stem="piano">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/></svg>
+                    Piano
+                  </em>
+                  <b class="stem-mute" data-stem="piano" role="button" tabindex="0" aria-label="Mute Piano"   aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="piano" role="button" tabindex="0" aria-label="Solo Piano"    aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="piano" aria-label="Solo only Piano"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="other" data-stem="other">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 13v-2"/><path d="M8 17V7"/><path d="M12 21V3"/><path d="M16 17V7"/><path d="M20 13v-2"/></svg>
+                    Others
+                  </em>
+                  <b class="stem-mute" data-stem="other" role="button" tabindex="0" aria-label="Mute Other"   aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="other" role="button" tabindex="0" aria-label="Solo Other"    aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="other" aria-label="Solo only Other"></button>
+                  <i class="mini-meter"></i>
+                </span>
+              </div>
 
-                <section class="wave-editor surface-panel">
-                  <div class="wave-toolbar">
-                    <div class="zoom-tools">
-                      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7"></circle>
-                        <path d="m21 21-4.3-4.3"></path>
-                      </svg>
-                      <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-                      <input id="zoom-track" class="zoom-slider" type="range" min="1" max="32" step="0.01" value="1" aria-label="Waveform zoom" />
-                      <button id="zoom-in" type="button" aria-label="Zoom in">＋</button>
-                      <button id="zoom-fit" type="button">Fit</button>
-                      <button class="kebab hidden" type="button" aria-label="More options">⋮</button>
-                    </div>
+              <!-- Mixer faders (JS populates) -->
+              <div id="mixer" class="mixer-column"></div>
+            </div>
+
+            <!-- Waveform panel -->
+            <div class="daw-wave-panel wave-editor surface-panel">
+              <div class="wave-scroll" id="wave-scroll">
+                <div class="wave-canvas" id="wave-canvas">
+                  <div class="waves-column">
+                    <div id="waves-grid" class="waves-grid" aria-hidden="true"></div>
+                    <div id="multitrack-container"></div>
+                    <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
                   </div>
-                  <div class="wave-scroll" id="wave-scroll">
-                    <div class="wave-canvas" id="wave-canvas">
-                      <div class="lanes-ruler" data-position="top">
-                        <div class="lanes-ruler-time" id="ruler-time">
-                          <div class="playhead-marker" aria-hidden="true">
-                            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-                              <polygon points="0,0 10,0 5,8" fill="#d8a84a"></polygon>
-                            </svg>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="waves-column">
-                        <div id="waves-grid" class="waves-grid" aria-hidden="true"></div>
-                        <div id="multitrack-container"></div>
-                        <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
-                      </div>
-                      <div class="wave-loading-overlay hidden" id="waveLoadingOverlay" aria-label="Loading waveform" aria-live="polite">
-                        <div class="wave-loading-glow" aria-hidden="true"></div>
-                        <div class="wave-loading-lines" aria-hidden="true">
-                          <i></i><i></i><i></i><i></i><i></i><i></i>
-                        </div>
-                        <p class="wave-loading-msg">Still loading waveform…</p>
-                      </div>
+                  <div class="wave-loading-overlay hidden" id="waveLoadingOverlay" aria-label="Loading waveform" aria-live="polite">
+                    <div class="wave-loading-glow" aria-hidden="true"></div>
+                    <div class="wave-loading-lines" aria-hidden="true">
+                      <i></i><i></i><i></i><i></i><i></i><i></i>
                     </div>
+                    <p class="wave-loading-msg">Still loading waveform…</p>
                   </div>
-                </section>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
 
-        <!-- ─ Widget: Mixer ─ -->
-        <section class="widget surface-panel" data-widget="mixer">
-          <div class="widget-head" role="button" tabindex="0" aria-expanded="true">
-            <div class="title-block">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <line x1="4" y1="21" x2="4" y2="14"></line>
-                <line x1="4" y1="10" x2="4" y2="3"></line>
-                <line x1="12" y1="21" x2="12" y2="12"></line>
-                <line x1="12" y1="8" x2="12" y2="3"></line>
-                <line x1="20" y1="21" x2="20" y2="16"></line>
-                <line x1="20" y1="12" x2="20" y2="3"></line>
-                <line x1="1" y1="14" x2="7" y2="14"></line>
-                <line x1="9" y1="8" x2="15" y2="8"></line>
-                <line x1="17" y1="16" x2="23" y2="16"></line>
+          </div><!-- /.daw-content -->
+
+          <!-- Transport footer -->
+          <footer class="daw-footer transport-footer">
+            <div class="daw-footer-left np-transport">
+              <span class="num daw-time-big" id="footer-time-elapsed">0:00</span>
+              <span class="num daw-time-total" id="footer-time-total">/ 0:00</span>
+            </div>
+            <div style="flex:1"></div>
+            <div class="daw-transport-controls">
+              <button class="daw-iconbtn" id="t-rewind" type="button" title="Rewind" aria-label="Rewind">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 5h2v14H6z M20 5 9 12l11 7z"/>
+                </svg>
+              </button>
+              <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" style="margin-left:2px">
+                  <path d="M6 4l14 8L6 20z"/>
+                </svg>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
+                  <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
+                </svg>
+              </button>
+              <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12"/>
+                </svg>
+              </button>
+              <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop (L)" aria-label="Loop">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
+                </svg>
+              </button>
+            </div>
+            <div style="flex:1"></div>
+            <div class="daw-footer-right">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
               </svg>
-              <h3>Mixer</h3>
+              <input type="range" min="0" max="100" value="80" class="daw-master-fader" id="master-vol" style="width:110px" aria-label="Master volume" />
+              <button class="daw-btn" id="zoom-fit-footer" type="button" style="height:26px;padding:0 10px;font-size:11px;">Fit</button>
             </div>
-            <span class="widget-hint">drag knobs to set gain · M = mute · S = solo</span>
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </div>
-          <div class="widget-body">
-            <div class="body-inner">
-              <div class="preview-mixer-body">
-                <div id="mixer" class="mixer-column"></div>
-              </div>
-            </div>
-          </div>
-        </section>
+          </footer>
 
-        <!-- ─ Transport footer ─ -->
-        <footer class="transport-footer">
-          <div class="np-transport">
-            <span id="footer-time-elapsed">00:00</span>
-            <div class="np-transport-row">
-              <button class="btn-transport" id="t-play" type="button" aria-label="Play / Pause">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-                  <path d="M8 5v14l11-7z"></path>
-                </svg>
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" class="pause-icon">
-                  <rect x="6" y="5" width="4" height="14"></rect>
-                  <rect x="14" y="5" width="4" height="14"></rect>
-                </svg>
-              </button>
-              <button class="btn-transport" id="t-stop" type="button" aria-label="Stop">
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
-                  <rect x="6" y="6" width="12" height="12"></rect>
-                </svg>
-              </button>
-              <button class="btn-transport loop" id="t-loop" type="button" aria-label="Loop">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <polyline points="17 1 21 5 17 9"></polyline>
-                  <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                  <polyline points="7 23 3 19 7 15"></polyline>
-                  <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
-                </svg>
-              </button>
-            </div>
-            <span id="footer-time-total">00:00</span>
-          </div>
-        </footer>
+        </div><!-- /#lanes -->
+      </div><!-- /.daw-body -->
 
-      </div><!-- /#lanes -->
+    </div><!-- /.daw -->
 
-    </div><!-- /.app -->
-
+    <!-- About dialog -->
     <div class="about-backdrop hidden" id="aboutDialog" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
       <div class="about-card">
         <button class="about-close" id="aboutClose" type="button" aria-label="Close about dialog">×</button>
