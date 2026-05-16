@@ -702,7 +702,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       // div scrolls. Fitting to view keeps the three perfectly aligned.
       minPxPerSec: 0,
       rightButtonDrag: false,
-      cursorWidth: 1.5,
+      cursorWidth: 0,
       cursorColor: "#e54e4e",
       trackBackground: "transparent",
       trackBorderColor: "rgba(148, 163, 184, 0.08)",

@@ -910,38 +910,12 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
   background: var(--bg-2);
   border-right: 1px solid var(--border);
-  padding: 0 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   min-height: 32px;
 }
 .daw-ruler-area {
   flex: 1;
   background: var(--bg-2);
-}
-
-/* Zoom tools */
-.zoom-tools {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.zoom-tools button {
-  height: 22px; padding: 0 7px;
-  background: var(--panel-2); border: 1px solid var(--border);
-  color: var(--fg-2); border-radius: 5px; font-size: 12px;
-  font-family: inherit; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background var(--t-fast);
-}
-.zoom-tools button:hover { background: var(--panel-3); color: var(--fg); }
-.zoom-slider {
-  width: 80px; height: 4px;
-  accent-color: var(--accent);
-  cursor: pointer;
+  min-height: 32px;
 }
 
 /* Ruler */
@@ -1008,10 +982,10 @@ input, textarea { font-family: inherit; }
   align-items: center;
   gap: 8px;
   padding: 0 14px;
-  height: 64px;          /* = WAVEFORM_LANE_HEIGHT */
-  min-height: 64px;
-  max-height: 64px;
-  border-bottom: 2px solid var(--border); /* = WAVEFORM_SEPARATOR_HEIGHT */
+  height: 66px;          /* = WAVEFORM_LANE_HEIGHT (64) + WAVEFORM_SEPARATOR_HEIGHT (2) */
+  min-height: 66px;
+  max-height: 66px;
+  border-bottom: 2px solid var(--border);
   background: var(--bg-2);
   flex-shrink: 0;
   position: relative;
@@ -1173,6 +1147,7 @@ input, textarea { font-family: inherit; }
   flex: 1 !important;
   height: auto !important;
   border-radius: 0 !important;
+  border: none !important;
 }
 
 /* Establish height chain so waves-column's calc(100%-34px) resolves correctly */
@@ -1191,7 +1166,11 @@ input, textarea { font-family: inherit; }
   opacity: 1 !important;
   pointer-events: all !important;
   position: relative !important;  /* in flow → waves-column height driven by WaveSurfer */
+  inset: 0 !important;             /* waves.css sets inset: 0 0 0 48px; zero left offset */
 }
+/* Zero waves.css 48px left offsets that assumed an icon strip inside the wave panel */
+.daw .waves-grid { left: 0 !important; }
+.daw .lanes-ruler { margin-left: 0 !important; }
 .daw .stem-waveform-layer {
   display: none !important;
 }
@@ -1243,7 +1222,7 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
-  display: flex;
+  display: flex !important;
   align-items: center;
   padding: 0 18px;
   gap: 16px;

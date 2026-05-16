@@ -3,7 +3,7 @@ import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
-  waveScroll, waveCanvas, zoomInBtn, zoomOutBtn, zoomFitBtn, zoomTrack,
+  waveScroll, waveCanvas, zoomFitBtn,
   waveZoom, presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setWaveZoom,
@@ -26,8 +26,7 @@ function rulerRect() {
 }
 
 function loopOverlayParent() {
-  return document.querySelector(".waves-column")
-    || rulerTime;
+  return rulerTime || document.querySelector(".waves-column");
 }
 
 function ensureLoopRegionParent() {
@@ -291,14 +290,6 @@ export function applyWaveZoom() {
   if (wavesColumn) {
     waveCanvas.style.setProperty("--wave-playhead-h", `${wavesColumn.clientHeight}px`);
   }
-  if (zoomTrack) {
-    const frac = (Math.log(waveZoom) - Math.log(ZOOM_MIN))
-      / (Math.log(ZOOM_MAX) - Math.log(ZOOM_MIN));
-    zoomTrack.style.setProperty("--zoom-frac", frac.toFixed(3));
-    if ("value" in zoomTrack) zoomTrack.value = String(waveZoom);
-  }
-  if (zoomOutBtn) zoomOutBtn.disabled = waveZoom <= ZOOM_MIN + 1e-3;
-  if (zoomInBtn) zoomInBtn.disabled = waveZoom >= ZOOM_MAX - 1e-3;
   if (zoomFitBtn) zoomFitBtn.disabled = Math.abs(waveZoom - 1) < 1e-3;
 
   if (multitrack && totalDuration > 0 && waveScroll) {
@@ -343,23 +334,10 @@ function zoomCenteredOn(factor) {
 }
 
 function wireZoomButtons() {
-  if (zoomInBtn) {
-    zoomInBtn.addEventListener("click", () => zoomCenteredOn(ZOOM_STEP));
-  }
-  if (zoomOutBtn) {
-    zoomOutBtn.addEventListener("click", () => zoomCenteredOn(1 / ZOOM_STEP));
-  }
   if (zoomFitBtn) {
     zoomFitBtn.addEventListener("click", () => {
       setWaveZoomLevel(1);
       if (waveScroll) waveScroll.scrollLeft = 0;
-    });
-  }
-  if (zoomTrack) {
-    zoomTrack.addEventListener("input", () => {
-      const rect = waveScroll?.getBoundingClientRect();
-      const centerX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
-      zoomToLevelAtClientX(centerX, Number(zoomTrack.value) || 1);
     });
   }
   // Recalculate zoom + playhead height whenever the wave container is resized
