@@ -84,7 +84,6 @@ input, textarea { font-family: inherit; }
 /* ── Composer pill ── */
 .daw-composer {
   flex: 1;
-  max-width: 1080px;
   min-width: 0;
   height: 44px;
   display: flex;
