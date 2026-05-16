@@ -70,10 +70,7 @@ input, textarea { font-family: inherit; }
 .daw-brand-name .accent{ color: var(--accent); }
 
 .daw-version {
-  font-size: 11px;
-  color: var(--muted-2);
-  flex-shrink: 0;
-  white-space: nowrap;
+  display: none !important; /* version shown in notification panel instead */
 }
 
 /* Topbar separator */
@@ -87,7 +84,7 @@ input, textarea { font-family: inherit; }
 /* ── Composer pill ── */
 .daw-composer {
   flex: 1;
-  max-width: 920px;
+  max-width: 1080px;
   min-width: 0;
   height: 44px;
   display: flex;
@@ -233,6 +230,18 @@ input, textarea { font-family: inherit; }
 }
 .stem-choice[aria-pressed="false"] .stem-dot { opacity: 0.4; }
 
+/* "All" toggle */
+.stem-choice-all {
+  border-color: var(--border-strong);
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.stem-choice-all[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(244,183,64,0.12);
+  color: var(--accent);
+}
+
 /* Process button */
 .daw-process-btn {
   height: auto;
@@ -288,6 +297,59 @@ input, textarea { font-family: inherit; }
 }
 .daw-iconbtn:hover { background: var(--panel-2); border-color: var(--border); color: var(--fg); }
 .daw-iconbtn:active { transform: scale(0.96); }
+
+/* Notification panel */
+.daw-notif-wrap { position: relative; }
+.daw-notif-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  z-index: 200;
+  overflow: hidden;
+}
+.daw-notif-wrap.open .daw-notif-panel { display: block; }
+.daw-notif-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.daw-notif-close {
+  width: 22px; height: 22px;
+  background: none; border: none;
+  color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 5px;
+}
+.daw-notif-close:hover { background: var(--panel-3); color: var(--fg); }
+.daw-notif-list { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.daw-notif-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.daw-notif-release { border-color: rgba(244,183,64,0.25); }
+.daw-notif-card-icon {
+  width: 28px; height: 28px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(244,183,64,0.12);
+  border-radius: 6px;
+  color: var(--accent);
+}
+.daw-notif-card-body { flex: 1; min-width: 0; }
+.daw-notif-card-title { font-size: 12px; font-weight: 600; color: var(--fg); }
+.daw-notif-card-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
 /* Hidden collapsed strip (JS compat, not shown in new design) */
 .appbar-icon-strip.hidden { display: none !important; }
@@ -640,7 +702,7 @@ input, textarea { font-family: inherit; }
 .daw-track-header {
   padding: 16px;
   display: grid;
-  grid-template-columns: 320px 1fr auto;
+  grid-template-columns: 380px 200px auto;
   gap: 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
@@ -917,13 +979,15 @@ input, textarea { font-family: inherit; }
   background: var(--bg-2);
 }
 
-/* Stem list rows — kept in DOM for JS (hidden visually) */
+/* Stem list rows — kept in DOM for JS hook (.stem-mute/.stem-solo toggling, hidden visually) */
 .stem-list {
   position: absolute;
   width: 0; height: 0; overflow: hidden;
   visibility: hidden; pointer-events: none;
   opacity: 0;
 }
+/* Also update the --lane-h var to match waveform lane height */
+:root { --lane-h: 66px; } /* 64px wave + 2px separator */
 .stem-icon { width: 14px; height: 14px; flex-shrink: 0; }
 .stem-mute, .stem-solo { display: none; }
 .stem-monitor { display: none; }
@@ -939,19 +1003,21 @@ input, textarea { font-family: inherit; }
   overflow-y: auto;
 }
 
-/* Each mixer row = horizontal lane */
+/* Each mixer row = horizontal lane — height must match WAVEFORM_LANE_HEIGHT (64px) + WAVEFORM_SEPARATOR_HEIGHT (2px) */
 .lane-header.mx-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  min-height: var(--lane-h, 86px);
-  max-height: var(--lane-h, 86px);
+  padding: 0 14px;
+  height: 64px;          /* = WAVEFORM_LANE_HEIGHT */
+  min-height: 64px;
+  max-height: 64px;
+  border-bottom: 2px solid var(--border); /* = WAVEFORM_SEPARATOR_HEIGHT */
   background: var(--bg-2);
   flex-shrink: 0;
   position: relative;
   transition: opacity var(--t-base);
+  box-sizing: border-box;
 }
 .lane-header.mx-row.muted { opacity: 0.45; }
 .lane-header.mx-row.hidden { display: none !important; }
