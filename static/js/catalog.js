@@ -243,14 +243,35 @@ function stateMetadataToTrack(state, fallbackTrack) {
     keyConfidence: state.key_confidence ?? fallbackTrack.keyConfidence,
     lufs: state.lufs ?? fallbackTrack.lufs,
     peakDb: state.peak_db ?? fallbackTrack.peakDb,
+    stemPresence: state.stem_presence ?? fallbackTrack.stemPresence,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
   };
+}
+
+export function applyStemPresenceCards(stemPresence) {
+  const cards = document.querySelectorAll(".stem-presence-panel .stem-card");
+  cards.forEach((card) => {
+    const stem = card.dataset.stem;
+    const pct = stemPresence?.[stem];
+    const fill = card.querySelector(".stem-card-fill");
+    const label = card.querySelector(".stem-card-pct");
+    if (pct != null) {
+      card.classList.remove("inactive");
+      if (fill) fill.style.setProperty("--pct", `${pct}%`);
+      if (label) label.textContent = `${pct}%`;
+    } else {
+      card.classList.add("inactive");
+      if (fill) fill.style.setProperty("--pct", "0%");
+      if (label) label.textContent = "—";
+    }
+  });
 }
 
 function applyTrackInfoToPanel(track) {
   titleEl.textContent = track.title || "Untitled track";
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
+  applyStemPresenceCards(track.stemPresence);
 
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");

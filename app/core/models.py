@@ -27,6 +27,7 @@ class Job:
     key_confidence: int | None = None  # 0-100 percent
     lufs: float | None = None  # ITU-R BS.1770 integrated loudness (dB)
     peak_db: float | None = None  # sample peak in dBFS (close to true peak)
+    stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     stems: list[dict[str, str]] = field(default_factory=list)
     # Subset of stems the user chose at submit. The pipeline produces all
     # 6 regardless (Demucs htdemucs_6s is fixed), but after collect we
@@ -58,6 +59,7 @@ class Job:
             "key_confidence": self.key_confidence,
             "lufs": self.lufs,
             "peak_db": self.peak_db,
+            "stem_presence": self.stem_presence,
             "stems": self.stems,
             "selected_stems": self.selected_stems,
             "mix_url": self.mix_url,

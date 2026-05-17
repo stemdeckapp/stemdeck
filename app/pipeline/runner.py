@@ -10,7 +10,7 @@ from pathlib import Path
 from app.core.config import TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled
 from app.core.registry import persist as persist_registry
-from app.pipeline.analyze import analyze
+from app.pipeline.analyze import analyze, compute_stem_presence
 from app.pipeline.collect import cleanup_source, collect, make_original_track, make_selected_mix
 from app.pipeline.download import _set, download
 from app.pipeline.separate import separate
@@ -83,6 +83,7 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     stems_root = separate(job, source, job_dir)
     found = collect(job, stems_root, job_dir)
     stems_dir = job_dir / "stems"
+    job.stem_presence = compute_stem_presence(stems_dir, found)
     # Source (100-300 MB or the local upload) is no longer needed after
     # collect; delete it before the ffmpeg amix steps in case scratch space
     # is tight.
@@ -129,6 +130,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "key_confidence": job.key_confidence,
         "lufs": job.lufs,
         "peak_db": job.peak_db,
+        "stem_presence": job.stem_presence,
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

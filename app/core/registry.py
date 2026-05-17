@@ -153,6 +153,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         key_confidence=meta.get("key_confidence"),
         lufs=meta.get("lufs"),
         peak_db=meta.get("peak_db"),
+        stem_presence=meta.get("stem_presence"),
     )
 
 

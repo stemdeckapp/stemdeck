@@ -853,6 +853,65 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 
+/* Stem presence cards */
+.stem-presence-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.stem-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stem-card-name {
+  font-size: 11px;
+  font-weight: 500;
+  width: 44px;
+  flex-shrink: 0;
+  color: var(--fg);
+}
+.stem-card-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg);
+  overflow: hidden;
+  position: relative;
+}
+.stem-card-fill {
+  height: 100%;
+  width: var(--pct, 0%);
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 200ms ease-out;
+}
+.stem-card-pct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-2);
+  width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.stem-card.inactive .stem-card-name { color: var(--muted); }
+.stem-card.inactive .stem-card-fill { background: var(--border); }
+.stem-card.inactive .stem-card-pct { color: var(--muted); }
+
+/* stem color accents for active cards */
+.stem-card[data-stem="vocals"] .stem-card-fill { background: var(--vocals); }
+.stem-card[data-stem="drums"]  .stem-card-fill { background: var(--drums); }
+.stem-card[data-stem="bass"]   .stem-card-fill { background: var(--bass); }
+.stem-card[data-stem="guitar"] .stem-card-fill { background: var(--guitar); }
+.stem-card[data-stem="piano"]  .stem-card-fill { background: var(--piano); }
+.stem-card[data-stem="other"]  .stem-card-fill { background: var(--other); opacity: 0.7; }
+.stem-card.inactive[data-stem] .stem-card-fill { background: var(--border); opacity: 1; }
+
 /* Analysis panel */
 .daw-analysis-panel {
   padding: 12px;

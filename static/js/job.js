@@ -7,7 +7,7 @@ import {
 import { destroyPlayer } from "./player.js";
 import { wireUpAudio } from "./player.js";
 import { stagePhrases } from "./phrases.js";
-import { addTrackToLibrary, setCurrentTrack, updateTrackStatus } from "./catalog.js";
+import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -114,6 +114,7 @@ function applyState(state) {
       keyConfidence: state.key_confidence,
       lufs: state.lufs,
       peakDb: state.peak_db,
+      stemPresence: state.stem_presence,
       sourceUrl: jobSources.get(state.job_id) || urlInput.value,
     });
     setCurrentTrack(state.job_id);
@@ -158,6 +159,9 @@ function applyState(state) {
     if (summaryLufs) summaryLufs.textContent = state.lufs.toFixed(1);
     if (summaryPeak) summaryPeak.textContent = state.peak_db.toFixed(1);
     loudnessCard.classList.remove("hidden");
+  }
+  if (state.stem_presence != null) {
+    applyStemPresenceCards(state.stem_presence);
   }
   // Stage label is owned by the phrase-rotation timer below; we don't
   // overwrite it from each SSE tick. The truthful backend stage goes
