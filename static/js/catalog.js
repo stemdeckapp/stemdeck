@@ -271,12 +271,12 @@ export function applyStemPresenceCards(stemPresence) {
     const stem = card.dataset.stem;
     const pct = stemPresence?.[stem];
     const label = card.querySelector(".stem-card-pct");
-    if (pct != null) {
+    if (pct != null && pct > 0) {
       card.classList.remove("inactive");
       if (label) label.textContent = `${pct}%`;
     } else {
       card.classList.add("inactive");
-      if (label) label.textContent = "—";
+      if (label) label.textContent = pct === 0 ? "0%" : "—";
     }
   });
 }
