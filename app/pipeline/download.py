@@ -213,6 +213,15 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
         thumbnail=info.get("thumbnail") or meta.get("thumbnail"),
     )
 
+    raw_tags = [
+        t.strip().lower()
+        for t in (info.get("tags") or []) + (info.get("categories") or [])
+        if isinstance(t, str) and t.strip()
+    ]
+    seen: set[str] = set()
+    deduped = [t for t in raw_tags if not (t in seen or seen.add(t))]  # type: ignore[func-returns-value]
+    _set(job, tags=deduped[:8] or None)
+
     candidates = sorted(job_dir.glob("source.*"))
     if not candidates:
         raise RuntimeError("yt-dlp finished but no source file was produced")

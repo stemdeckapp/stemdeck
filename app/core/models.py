@@ -31,6 +31,7 @@ class Job:
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     sections: list[dict] | None = None  # [{id, name, start, end, color}]
+    tags: list[str] | None = None  # YouTube tags + categories, lowercased, max 8
     stems: list[dict[str, str]] = field(default_factory=list)
     # Subset of stems the user chose at submit. The pipeline produces all
     # 6 regardless (Demucs htdemucs_6s is fixed), but after collect we
@@ -66,6 +67,7 @@ class Job:
             "tempo_stability": self.tempo_stability,
             "stem_presence": self.stem_presence,
             "sections": self.sections,
+            "tags": self.tags,
             "stems": self.stems,
             "selected_stems": self.selected_stems,
             "mix_url": self.mix_url,

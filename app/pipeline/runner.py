@@ -133,6 +133,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "dynamic_range": job.dynamic_range,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
+        "tags": job.tags,
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
