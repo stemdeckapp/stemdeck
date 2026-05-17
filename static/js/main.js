@@ -70,7 +70,7 @@ function wireAllButton() {
   if (!allBtn) return;
 
   function syncAllBtn() {
-    allBtn.setAttribute("aria-pressed", String(selectedStems.size > 0));
+    allBtn.setAttribute("aria-pressed", String(selectedStems.size === STEM_NAMES.length));
   }
 
   allBtn.addEventListener("click", () => {
