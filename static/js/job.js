@@ -116,6 +116,7 @@ function applyState(state) {
       peakDb: state.peak_db,
       stemPresence: state.stem_presence,
       sourceUrl: jobSources.get(state.job_id) || urlInput.value,
+      createdAt: state.created_at,
     });
     setCurrentTrack(state.job_id);
   }

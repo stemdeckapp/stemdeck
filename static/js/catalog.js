@@ -191,7 +191,13 @@ export function addTrackToLibrary(track) {
       replaceTrackId(existingId, track.id);
     }
   }
-  tracks[track.id] = { ...(tracks[track.id] || {}), ...track };
+  const existing = tracks[track.id] || {};
+  tracks[track.id] = {
+    ...existing,
+    ...track,
+    createdAt: existing.createdAt ?? track.createdAt ?? (Date.now() / 1000),
+    favorite: existing.favorite ?? false,
+  };
   const alreadyPlaced = folders.some((folder) => folder.items.includes(track.id));
   if (!alreadyPlaced) {
     // Put into first non-trash folder or create an "Unsorted" folder.
@@ -248,7 +254,36 @@ function stateMetadataToTrack(state, fallbackTrack) {
     dynamicRange: state.dynamic_range ?? fallbackTrack.dynamicRange,
     tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
+    createdAt: fallbackTrack.createdAt ?? state.created_at,
+    favorite: fallbackTrack.favorite ?? false,
   };
+}
+
+function fmtExtracted(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString("en-US", {
+    month: "long", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
+function deriveSource(sourceUrl) {
+  if (!sourceUrl) return "—";
+  if (sourceUrl.startsWith("local:")) return "Local file";
+  if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "YouTube";
+  return "Web";
+}
+
+function deriveQuality(sourceUrl) {
+  if (!sourceUrl) return "—";
+  if (sourceUrl.startsWith("local:")) {
+    const ext = sourceUrl.split(".").pop()?.toLowerCase();
+    if (ext === "wav") return "Lossless (WAV)";
+    if (ext === "mp3") return "Compressed (MP3)";
+    return "Local file";
+  }
+  if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "High";
+  return "—";
 }
 
 function drLabel(dr) {
@@ -304,6 +339,27 @@ function applyTrackInfoToPanel(track) {
   if (summaryLufs) summaryLufs.textContent = track.lufs != null ? Number(track.lufs).toFixed(1) : "—";
   if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? `Peak ${Number(track.peakDb).toFixed(1)} dB` : "";
   if (summaryDuration) summaryDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
+
+  const trackExtracted = document.getElementById("track-extracted");
+  const trackSource = document.getElementById("track-source");
+  const trackQuality = document.getElementById("track-quality");
+  const favBtn = document.getElementById("fav-btn");
+  if (trackExtracted) trackExtracted.textContent = fmtExtracted(track.createdAt);
+  if (trackSource) trackSource.textContent = deriveSource(track.sourceUrl);
+  if (trackQuality) trackQuality.textContent = deriveQuality(track.sourceUrl);
+  if (favBtn) {
+    favBtn.classList.toggle("active", Boolean(track.favorite));
+    favBtn.setAttribute("aria-pressed", String(Boolean(track.favorite)));
+    favBtn.onclick = () => {
+      if (!_currentTrackId) return;
+      const t = tracks[_currentTrackId];
+      if (!t) return;
+      t.favorite = !t.favorite;
+      favBtn.classList.toggle("active", t.favorite);
+      favBtn.setAttribute("aria-pressed", String(t.favorite));
+      saveState();
+    };
+  }
 
   const summaryDr = document.getElementById("summary-dr");
   const summaryDrLabel = document.getElementById("summary-dr-label");

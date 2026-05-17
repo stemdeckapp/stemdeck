@@ -69,6 +69,7 @@ class Job:
             "mix_url": self.mix_url,
             "source_url": self.source_url,
             "error": self.error,
+            "created_at": self.created_at,
         }
 
     def to_record(self) -> dict[str, Any]:

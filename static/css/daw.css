@@ -747,10 +747,10 @@ input, textarea { font-family: inherit; }
 .daw-track-card {
   display: flex;
   gap: 14px;
-  align-items: center;
+  align-items: flex-start;
   padding: 14px 16px;
   flex-shrink: 0;
-  width: 290px;
+  width: 340px;
   border-right: 1px solid var(--border);
 }
 
@@ -805,11 +805,48 @@ input, textarea { font-family: inherit; }
 }
 .np-art-img[src]:not([src=""]) { display: block; }
 
-.daw-track-meta { flex: 1; min-width: 0; }
-.daw-track-artist { font-size: 11px; color: var(--muted); }
-.daw-track-title { font-size: 17px; font-weight: 600; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.daw-track-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
-.daw-track-chips { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.daw-track-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.daw-track-title { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.daw-track-sub { font-size: 11px; color: var(--muted); }
+.daw-track-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.daw-track-sep { color: var(--border); font-size: 12px; }
+.daw-track-stems-label {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.daw-track-stems-label::before {
+  content: '';
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #4caf7d;
+  flex-shrink: 0;
+}
+.daw-fav-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: color 150ms;
+}
+.daw-fav-btn:hover { color: var(--fg); }
+.daw-fav-btn.active { color: #e54e4e; }
+.daw-fav-btn.active svg { fill: #e54e4e; stroke: #e54e4e; }
+.daw-track-details { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+.daw-detail-row { display: flex; gap: 8px; align-items: baseline; }
+.daw-detail-label { font-size: 11px; color: var(--muted); width: 64px; flex-shrink: 0; }
+.daw-detail-val { font-size: 11px; color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daw-chip {
   display: inline-flex; align-items: center;
   padding: 2px 8px;

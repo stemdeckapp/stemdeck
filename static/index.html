@@ -243,14 +243,35 @@
                   <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
                 </div>
                 <div class="daw-track-meta">
-                  <div class="daw-track-artist" id="track-artist"></div>
                   <div class="daw-track-title" id="title">—</div>
-                  <div class="daw-track-sub num" id="t-time">—</div>
-                  <div class="daw-track-chips">
-                    <span class="daw-chip" id="t-bpm">— BPM</span>
-                    <span class="daw-chip" id="t-key">— —</span>
-                    <span class="daw-chip" id="t-stems-chip">— Stems</span>
+                  <div class="daw-track-time-row">
+                    <span class="num daw-track-sub" id="t-time">—</span>
+                    <span class="daw-track-sep" aria-hidden="true">|</span>
+                    <span class="daw-track-stems-label" id="t-stems-chip">— Stems</span>
+                    <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" aria-pressed="false">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                      </svg>
+                    </button>
                   </div>
+                  <div class="daw-track-details">
+                    <div class="daw-detail-row">
+                      <span class="daw-detail-label">Extracted</span>
+                      <span class="daw-detail-val" id="track-extracted">—</span>
+                    </div>
+                    <div class="daw-detail-row">
+                      <span class="daw-detail-label">Source</span>
+                      <span class="daw-detail-val" id="track-source">—</span>
+                    </div>
+                    <div class="daw-detail-row">
+                      <span class="daw-detail-label">Quality</span>
+                      <span class="daw-detail-val" id="track-quality">—</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- Hidden for JS compat -->
+                <div style="display:none" aria-hidden="true">
+                  <span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
                 </div>
               </div>
 
