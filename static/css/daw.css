@@ -1104,6 +1104,38 @@ input, textarea { font-family: inherit; }
   caret-color: var(--sc, #4a7fff);
 }
 
+/* Sections save indicator */
+.sections-save-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: opacity 400ms;
+}
+.sections-save-indicator.hidden { display: none; }
+.sections-save-indicator.saved { color: #4caf7d; }
+.sections-save-indicator::before {
+  content: "";
+  display: block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: sections-spin 600ms linear infinite;
+}
+.sections-save-indicator.saved::before {
+  animation: none;
+  border: none;
+  width: auto; height: auto;
+  content: "✓";
+  font-size: 11px;
+}
+@keyframes sections-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Add section button — lives in the Sections label column */
 .sections-add-btn-label {
   display: inline-flex; align-items: center; gap: 4px;

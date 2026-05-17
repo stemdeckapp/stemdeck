@@ -49,6 +49,7 @@ export function destroySections() {
     _saveTimer = null;
     _save();
   }
+  _hideSaveIndicator();
   _trackId = null;
   _sections = [];
   _duration = 0;
@@ -314,21 +315,52 @@ function _openRename(id, labelEl) {
 
 // ─── Persistence ──────────────────────────────────────────
 
+let _savedTimer = null;
+
+function _showSaving() {
+  const el = document.getElementById("sectionsSaveIndicator");
+  if (!el) return;
+  clearTimeout(_savedTimer);
+  el.textContent = "Saving";
+  el.className = "sections-save-indicator";
+}
+
+function _showSaved() {
+  const el = document.getElementById("sectionsSaveIndicator");
+  if (!el) return;
+  el.textContent = "Saved";
+  el.className = "sections-save-indicator saved";
+  _savedTimer = setTimeout(() => {
+    el.className = "sections-save-indicator hidden";
+  }, 1800);
+}
+
+function _hideSaveIndicator() {
+  const el = document.getElementById("sectionsSaveIndicator");
+  if (el) el.className = "sections-save-indicator hidden";
+  clearTimeout(_savedTimer);
+}
+
 function _scheduleSave() {
   clearTimeout(_saveTimer);
+  _showSaving();
   _saveTimer = setTimeout(_save, 600);
 }
 
 async function _save() {
   if (!_trackId) return;
+  const id = _trackId;
+  const body = JSON.stringify({ sections: _sections });
   try {
-    await fetch(`/api/jobs/${_trackId}/sections`, {
+    await fetch(`/api/jobs/${id}/sections`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sections: _sections }),
+      body,
     });
+    if (id === _trackId) _showSaved();
   } catch (e) {
     console.warn("[sections] save failed:", e);
+    if (id === _trackId) _hideSaveIndicator();
   }
 }
 
