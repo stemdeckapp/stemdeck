@@ -150,7 +150,7 @@ function resetAnalysisCards() {
 
 function renderPlaceholderTracks() {
   multitrackContainer.innerHTML = "";
-  for (const name of TRACK_NAMES) {
+  for (const name of [...STEM_NAMES, "original"]) {
     const ph = document.createElement("div");
     ph.className = "lane-placeholder";
     ph.dataset.stem = name;
@@ -280,7 +280,9 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color) {
     layer.appendChild(row);
   }
   row.style.setProperty("--stem-color", color);
-  row.style.order = String(TRACK_NAMES.indexOf(stemName));
+  // STEM_NAMES occupy rows 0-5; "original" always at row 6 (bottom).
+  const _stemOrder = [...STEM_NAMES, "original"];
+  row.style.order = String(_stemOrder.indexOf(stemName) >= 0 ? _stemOrder.indexOf(stemName) : _stemOrder.length);
   row.innerHTML = `
     <svg class="stem-waveform-svg" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
       <path d="${minMaxWaveformPath(peaks, norm)}"></path>
@@ -562,7 +564,7 @@ export function renderEmptyShell() {
   stopStemVuLoop();
   ensureMixerStateDefaults();
   mixerEl.innerHTML = "";
-  for (const name of TRACK_NAMES) {
+  for (const name of [...STEM_NAMES, "original"]) {
     const { row } = renderMixerRow({ name, url: "#" });
     mixerEl.appendChild(row);
   }
@@ -581,7 +583,9 @@ export function renderEmptyShell() {
 function renderAllMiniWaves(mt, stems) {
   const wsArr = mt.wavesurfers || mt._wavesurfers;
   if (!wsArr?.length) return;
-  stems.forEach((stem, i) => {
+  stems.forEach((stem) => {
+    const i = trackIndex[stem.name];
+    if (i === undefined) return;
     const ws = wsArr[i];
     if (!ws) return;
     const color = STEM_COLORS[stem.name] || "#a0a0a0";
@@ -689,15 +693,16 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   clearOverviewWaveforms();
   renderAllDecodedVisuals(stems, token);
 
-  // Fixed positional indices: every stem always occupies the same WaveSurfer
-  // row regardless of which subset was extracted. Non-extracted stems get
-  // url:null so WaveSurfer renders a silent/empty row that visually aligns
-  // with the grayed mixer row at the same position.
+  // STEM_NAMES always occupy rows 0-5 so the mixer lanes stay aligned even
+  // when some stems are absent (they get url:null → empty grayed row).
+  // "original" is appended at row 6 only when it actually has a URL; omitting
+  // it entirely avoids a phantom 70px gap that would push all mixer rows down.
   const stemsByName = Object.fromEntries(stems.map((s) => [s.name, s]));
-  setTrackIndex(Object.fromEntries(TRACK_NAMES.map((name, i) => [name, i])));
+  const orderedNames = [...STEM_NAMES, ...(stemsByName["original"] ? ["original"] : [])];
+  setTrackIndex(Object.fromEntries(orderedNames.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
   const mt = Multitrack.create(
-    TRACK_NAMES.map((name, i) => ({
+    orderedNames.map((name, i) => ({
       id: i,
       url: stemsByName[name]?.url ?? null,
       draggable: false,
@@ -748,13 +753,13 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
     const ctx = mt.audioContext;
     console.debug(
       `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,
-      mt.audios?.map((a, i) => `${TRACK_NAMES[i]}:${a?.constructor?.name}`),
+      mt.audios?.map((a, i) => `${orderedNames[i]}:${a?.constructor?.name}`),
     );
     // Log load errors only for stems that actually have a source URL
     mt.audios?.forEach((a, i) => {
-      if (a instanceof HTMLMediaElement && stemsByName[TRACK_NAMES[i]]?.url) {
+      if (a instanceof HTMLMediaElement && stemsByName[orderedNames[i]]?.url) {
         a.addEventListener("error", () =>
-          console.error(`[player] audio error stem[${i}] ${TRACK_NAMES[i]}:`, a.error?.message, a.error?.code),
+          console.error(`[player] audio error stem[${i}] ${orderedNames[i]}:`, a.error?.message, a.error?.code),
         { once: true });
       }
     });
