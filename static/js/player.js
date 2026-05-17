@@ -750,9 +750,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,
       mt.audios?.map((a, i) => `${TRACK_NAMES[i]}:${a?.constructor?.name}`),
     );
-    // Log any audio element load errors
+    // Log load errors only for stems that actually have a source URL
     mt.audios?.forEach((a, i) => {
-      if (a instanceof HTMLMediaElement) {
+      if (a instanceof HTMLMediaElement && stemsByName[TRACK_NAMES[i]]?.url) {
         a.addEventListener("error", () =>
           console.error(`[player] audio error stem[${i}] ${TRACK_NAMES[i]}:`, a.error?.message, a.error?.code),
         { once: true });

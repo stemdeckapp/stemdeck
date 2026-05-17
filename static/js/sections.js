@@ -352,11 +352,17 @@ async function _save() {
   const id = _trackId;
   const body = JSON.stringify({ sections: _sections });
   try {
-    await fetch(`/api/jobs/${id}/sections`, {
+    const res = await fetch(`/api/jobs/${id}/sections`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body,
     });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => String(res.status));
+      console.warn("[sections] save failed:", res.status, detail);
+      if (id === _trackId) _hideSaveIndicator();
+      return;
+    }
     if (id === _trackId) _showSaved();
   } catch (e) {
     console.warn("[sections] save failed:", e);

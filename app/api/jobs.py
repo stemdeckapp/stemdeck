@@ -342,6 +342,8 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
         logger.exception("failed to write sections for %s: %s", job_id, exc)
         raise HTTPException(status_code=500, detail="failed to save sections") from exc
 
+    registry_persist(JOBS_DIR)
+
     return {"job_id": job_id, "sections": validated}
 
 
