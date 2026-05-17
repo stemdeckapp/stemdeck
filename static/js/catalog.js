@@ -2,6 +2,7 @@
 import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio } from "./player.js";
 import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
+import { fmtTime } from "./utils.js";
 
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
@@ -253,15 +254,12 @@ export function applyStemPresenceCards(stemPresence) {
   cards.forEach((card) => {
     const stem = card.dataset.stem;
     const pct = stemPresence?.[stem];
-    const fill = card.querySelector(".stem-card-fill");
     const label = card.querySelector(".stem-card-pct");
     if (pct != null) {
       card.classList.remove("inactive");
-      if (fill) fill.style.setProperty("--pct", `${pct}%`);
       if (label) label.textContent = `${pct}%`;
     } else {
       card.classList.add("inactive");
-      if (fill) fill.style.setProperty("--pct", "0%");
       if (label) label.textContent = "—";
     }
   });
@@ -276,25 +274,21 @@ function applyTrackInfoToPanel(track) {
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
   const summaryScale = document.getElementById("summary-scale");
+  const summaryScaleName = document.getElementById("summary-scale-name");
   const summaryConfidence = document.getElementById("summary-confidence");
   const summaryConfidenceLabel = document.getElementById("summary-confidence-label");
-  const loudnessCard = document.getElementById("loudness-card");
   const summaryLufs = document.getElementById("summary-lufs");
   const summaryPeak = document.getElementById("summary-peak");
+  const summaryDuration = document.getElementById("summary-duration");
 
   if (summaryKey) summaryKey.textContent = track.key || "—";
-  if (summaryBpm) {
-    summaryBpm.textContent = "";
-    if (track.bpm) {
-      const bpmNum = document.createTextNode(`${track.bpm} `);
-      const bpmUnit = document.createElement("small");
-      bpmUnit.textContent = "BPM";
-      summaryBpm.append(bpmNum, bpmUnit);
-    } else {
-      summaryBpm.innerHTML = "— <small>BPM</small>";
-    }
-  }
+  if (summaryBpm) summaryBpm.textContent = track.bpm ? String(track.bpm) : "—";
   if (summaryScale) summaryScale.textContent = track.scale || "";
+  if (summaryScaleName) summaryScaleName.textContent = track.scale || "—";
+  if (summaryLufs) summaryLufs.textContent = track.lufs != null ? Number(track.lufs).toFixed(1) : "—";
+  if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? `Peak ${Number(track.peakDb).toFixed(1)} dB` : "";
+  if (summaryDuration) summaryDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
+
   if (summaryConfidence) {
     summaryConfidence.textContent = "";
     summaryConfidence.style.removeProperty("--confidence-pct");
@@ -308,14 +302,6 @@ function applyTrackInfoToPanel(track) {
       summaryConfidence.style.setProperty("--confidence-pct", confidence);
       summaryConfidence.classList.remove("hidden");
       summaryConfidenceLabel?.classList.remove("hidden");
-    }
-  }
-  if (loudnessCard) {
-    const hasLoudness = track.lufs != null && track.peakDb != null;
-    loudnessCard.classList.toggle("hidden", !hasLoudness);
-    if (hasLoudness) {
-      if (summaryLufs) summaryLufs.textContent = Number(track.lufs).toFixed(1);
-      if (summaryPeak) summaryPeak.textContent = Number(track.peakDb).toFixed(1);
     }
   }
 }

@@ -128,20 +128,23 @@ function applyState(state) {
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
   const summaryScale = document.getElementById("summary-scale");
+  const summaryScaleName = document.getElementById("summary-scale-name");
   const summaryConfidence = document.getElementById("summary-confidence");
   const summaryConfidenceLabel = document.getElementById("summary-confidence-label");
-  const loudnessCard = document.getElementById("loudness-card");
   const summaryLufs = document.getElementById("summary-lufs");
   const summaryPeak = document.getElementById("summary-peak");
+  const summaryDuration = document.getElementById("summary-duration");
   if (summaryKey && state.key) summaryKey.textContent = state.key;
-  if (summaryBpm && state.bpm) {
-    summaryBpm.textContent = "";
-    const bpmNum = document.createTextNode(String(state.bpm) + " ");
-    const bpmUnit = document.createElement("small");
-    bpmUnit.textContent = "BPM";
-    summaryBpm.append(bpmNum, bpmUnit);
-  }
+  if (summaryBpm && state.bpm) summaryBpm.textContent = String(state.bpm);
   if (summaryScale && state.scale) summaryScale.textContent = state.scale;
+  if (summaryScaleName && state.scale) summaryScaleName.textContent = state.scale;
+  if (summaryLufs && state.lufs != null) summaryLufs.textContent = state.lufs.toFixed(1);
+  if (summaryPeak && state.peak_db != null) summaryPeak.textContent = `Peak ${state.peak_db.toFixed(1)} dB`;
+  if (summaryDuration && state.duration) {
+    const m = Math.floor(state.duration / 60);
+    const s = Math.floor(state.duration % 60).toString().padStart(2, "0");
+    summaryDuration.textContent = `${m.toString().padStart(2, "0")}:${s}`;
+  }
   if (summaryConfidence && state.key_confidence != null) {
     const confidence = Math.max(0, Math.min(100, Number(state.key_confidence)));
     const confSpan = document.createElement("span");
@@ -151,14 +154,6 @@ function applyState(state) {
     summaryConfidence.style.setProperty("--confidence-pct", confidence);
     summaryConfidence.classList.remove("hidden");
     summaryConfidenceLabel?.classList.remove("hidden");
-  }
-  // LUFS and peak surface only when the analyzer produced numeric values.
-  // Silence or extremely short clips return null -- we keep the card
-  // hidden in that case rather than render "— LUFS".
-  if (loudnessCard && state.lufs != null && state.peak_db != null) {
-    if (summaryLufs) summaryLufs.textContent = state.lufs.toFixed(1);
-    if (summaryPeak) summaryPeak.textContent = state.peak_db.toFixed(1);
-    loudnessCard.classList.remove("hidden");
   }
   if (state.stem_presence != null) {
     applyStemPresenceCards(state.stem_presence);

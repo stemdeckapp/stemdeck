@@ -231,105 +231,99 @@
           <!-- Track header / info panel -->
           <div id="transport" class="daw-track-header">
 
-            <!-- Track card -->
-            <div class="daw-track-card">
-              <div class="daw-cover" id="np-art">
-                <div class="np-art-placeholder" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                  </svg>
+            <!-- Row 1: track card + metadata cards -->
+            <div class="daw-info-row">
+              <div class="daw-track-card">
+                <div class="daw-cover" id="np-art">
+                  <div class="np-art-placeholder" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                    </svg>
+                  </div>
+                  <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
                 </div>
-                <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+                <div class="daw-track-meta">
+                  <div class="daw-track-artist" id="track-artist"></div>
+                  <div class="daw-track-title" id="title">—</div>
+                  <div class="daw-track-sub num" id="t-time">—</div>
+                  <div class="daw-track-chips">
+                    <span class="daw-chip" id="t-bpm">— BPM</span>
+                    <span class="daw-chip" id="t-key">— —</span>
+                    <span class="daw-chip" id="t-stems-chip">— Stems</span>
+                  </div>
+                </div>
               </div>
-              <div class="daw-track-meta">
-                <div class="daw-track-artist" id="track-artist"></div>
-                <div class="daw-track-title" id="title">—</div>
-                <div class="daw-track-sub num" id="t-time">—</div>
-                <div class="daw-track-chips">
-                  <span class="daw-chip" id="t-bpm">— BPM</span>
-                  <span class="daw-chip" id="t-key">— —</span>
-                  <span class="daw-chip" id="t-stems-chip">— Stems</span>
+
+              <div class="daw-meta-card" data-meta="key">
+                <span class="meta-card-label">KEY</span>
+                <div class="meta-card-main">
+                  <span class="meta-card-value" id="summary-key">—</span>
+                  <div class="daw-camelot-ring hidden" id="summary-confidence"></div>
+                </div>
+                <span class="meta-card-sub" id="summary-scale"></span>
+                <span class="meta-card-sub hidden" id="summary-confidence-label"></span>
+              </div>
+
+              <div class="daw-meta-card" data-meta="bpm">
+                <span class="meta-card-label">BPM</span>
+                <div class="meta-card-main">
+                  <span class="meta-card-value accent" id="summary-bpm">—</span>
+                </div>
+              </div>
+
+              <div class="daw-meta-card" data-meta="lufs">
+                <span class="meta-card-label">LUFS</span>
+                <div class="meta-card-main">
+                  <span class="meta-card-value" id="summary-lufs">—</span>
+                </div>
+                <span class="meta-card-sub" id="summary-peak"></span>
+              </div>
+
+              <div class="daw-meta-card" data-meta="duration">
+                <span class="meta-card-label">DURATION</span>
+                <div class="meta-card-main">
+                  <span class="meta-card-value num" id="summary-duration">—</span>
+                </div>
+              </div>
+
+              <div class="daw-meta-card" data-meta="scale">
+                <span class="meta-card-label">SCALE</span>
+                <div class="meta-card-main">
+                  <span class="meta-card-value" id="summary-scale-name">—</span>
                 </div>
               </div>
             </div>
 
-            <!-- Stem presence cards -->
+            <!-- Row 2: stem presence cards -->
             <div class="stem-presence-panel">
               <div class="stem-card inactive" data-stem="vocals">
-                <span class="stem-card-name">Vocals</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">VOCAL PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="drums">
-                <span class="stem-card-name">Drums</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">DRUM INTENSITY</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="bass">
-                <span class="stem-card-name">Bass</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">BASS DEPTH</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="guitar">
-                <span class="stem-card-name">Guitar</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">GUITAR PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="piano">
-                <span class="stem-card-name">Piano</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">PIANO PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="other">
-                <span class="stem-card-name">Other</span>
-                <div class="stem-card-bar"><div class="stem-card-fill" style="--pct:0%"></div></div>
+                <span class="stem-card-label">OTHER</span>
                 <span class="stem-card-pct">—</span>
               </div>
             </div>
 
-            <!-- Key / BPM / LUFS -->
-            <div class="daw-analysis-panel">
-              <div class="daw-analysis-item">
-                <span class="uplabel">Key</span>
-                <div class="daw-analysis-val">
-                  <span class="num daw-analysis-num" id="summary-key">—</span>
-                  <div class="daw-camelot-ring hidden" id="summary-confidence"></div>
-                </div>
-                <span class="num daw-analysis-sub" id="summary-scale"></span>
-                <span class="num daw-analysis-sub hidden" id="summary-confidence-label"></span>
-              </div>
-              <div class="daw-analysis-divider"></div>
-              <div class="daw-analysis-item">
-                <span class="uplabel">BPM</span>
-                <div class="daw-analysis-val">
-                  <span class="num daw-analysis-num accent" id="summary-bpm">—</span>
-                </div>
-                <span class="num daw-analysis-sub">—</span>
-              </div>
-              <div class="daw-analysis-divider"></div>
-              <div class="daw-analysis-item">
-                <span class="uplabel">LUFS</span>
-                <div class="daw-analysis-val">
-                  <span class="num daw-analysis-num" id="summary-lufs">—</span>
-                </div>
-                <span class="num daw-analysis-sub" id="summary-peak"></span>
-              </div>
-            </div>
-
-            <!-- Hidden info elements for JS compat -->
-            <div style="display:none" aria-hidden="true">
-              <div class="analysis-card key-card">
-                <strong id="summary-key-dup"></strong>
-                <small id="summary-scale-dup"></small>
-              </div>
-              <div class="analysis-card loudness-card hidden" id="loudness-card">
-                <span id="summary-lufs-dup"></span>
-                <span id="summary-peak-dup"></span>
-              </div>
-              <div class="analysis-card beat-card">
-                <strong id="summary-bpm-dup"></strong>
-              </div>
-            </div>
+            <!-- Hidden compat -->
+            <div style="display:none" aria-hidden="true"><div id="loudness-card"></div></div>
           </div>
 
           <!-- Section ribbon -->
