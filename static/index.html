@@ -145,6 +145,12 @@
               </svg>
               <span>Library</span>
             </button>
+            <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              <span>Favorites</span>
+            </button>
             <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
@@ -179,13 +185,9 @@
               <span class="search-kbd" aria-hidden="true">⌘K</span>
             </div>
 
-            <!-- Folder row -->
+            <!-- Folder action row -->
             <div class="daw-lib-header">
-              <span class="uplabel daw-lib-label">
-                <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 4l3 4 3-4z"/></svg>
-                Unsorted
-                <span id="catCount" class="daw-lib-count">0</span>
-              </span>
+              <span id="catCount" style="display:none"></span>
               <button id="newFolderBtn" class="new-folder-btn" type="button" aria-label="New folder">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>

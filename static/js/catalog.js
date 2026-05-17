@@ -77,11 +77,16 @@ function normalizeSearch(value) {
 function trackMatchesSearch(track) {
   const q = normalizeSearch(catalogSearchQuery);
   if (!q) return true;
+  if (q.startsWith("#")) {
+    const tag = q.slice(1);
+    return (track?.tags ?? []).some((t) => String(t).toLowerCase() === tag);
+  }
   return [
     track?.title,
     track?.channel,
     track?.sourceUrl,
     ...(track?.stems || []),
+    ...(track?.tags || []),
   ].some((value) => String(value || "").toLowerCase().includes(q));
 }
 
@@ -253,6 +258,7 @@ function stateMetadataToTrack(state, fallbackTrack) {
     stemPresence: state.stem_presence ?? fallbackTrack.stemPresence,
     dynamicRange: state.dynamic_range ?? fallbackTrack.dynamicRange,
     tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
+    tags: state.tags ?? fallbackTrack.tags ?? [],
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
     createdAt: fallbackTrack.createdAt ?? state.created_at,
     favorite: fallbackTrack.favorite ?? false,
@@ -401,9 +407,9 @@ function moveTrackToTrash(trackId) {
 }
 
 function setCatalogView(view) {
-  catalogView = view === "trash" ? "trash" : "library";
+  catalogView = ["trash", "favorites"].includes(view) ? view : "library";
   const app = document.querySelector(".app");
-  if (catalogView === "trash") {
+  if (catalogView === "trash" || catalogView === "favorites") {
     app?.classList.remove("cat-collapsed");
     localStorage.setItem("stemdeck.catalog.collapsed", "0");
   }
@@ -784,6 +790,58 @@ function wireLibraryDeleteKeys() {
   });
 }
 
+// ─── Rendering helpers ───
+
+function getRecentTracks(trashIds, n = 3) {
+  return Object.entries(tracks)
+    .filter(([id, t]) => !trashIds.has(id) && t.title)
+    .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    .slice(0, n)
+    .map(([id]) => id);
+}
+
+function getAllTags(trashIds) {
+  const counts = {};
+  for (const [id, track] of Object.entries(tracks)) {
+    if (trashIds.has(id)) continue;
+    for (const tag of track.tags ?? []) {
+      counts[tag] = (counts[tag] || 0) + 1;
+    }
+  }
+  return Object.entries(counts).sort(([, a], [, b]) => b - a);
+}
+
+function makeSectionEl(labelText) {
+  const section = document.createElement("div");
+  section.className = "lib-section";
+  const head = document.createElement("div");
+  head.className = "lib-section-head";
+  head.textContent = labelText;
+  section.appendChild(head);
+  return section;
+}
+
+function renderRecentItem(trackId) {
+  const track = tracks[trackId];
+  if (!track) return null;
+  const el = document.createElement("div");
+  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}`;
+  el.dataset.id = trackId;
+  const duration = track.duration ? fmtTime(track.duration) : "";
+  const stemCount = track.stems?.length ?? 0;
+  const sub = [duration, `${stemCount} stem${stemCount !== 1 ? "s" : ""}`].filter(Boolean).join(" · ");
+  el.innerHTML = `
+    <div class="cat-thumb">${thumbHtml(track)}</div>
+    <div class="cat-meta">
+      <div class="cat-title">${track.title ?? "Unknown track"}</div>
+      <div class="cat-sub"><span>${sub}</span></div>
+    </div>
+    <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : ""}"></div>
+  `;
+  wireTrackDragAndLoad(el, trackId);
+  return el;
+}
+
 // ─── Rendering ───
 
 function thumbHtml(track) {
@@ -1014,10 +1072,34 @@ function renderFolder(folder) {
   return el;
 }
 
+function renderStrip(strip, nonTrash) {
+  if (!strip) return;
+  const folderTrackIds = new Set(folders.flatMap((folder) => folder.items));
+  for (const [trackId, track] of Object.entries(tracks)) {
+    if (folderTrackIds.has(trackId)) continue;
+    strip.appendChild(makeStripItem({
+      className: trackId === _currentTrackId ? "active" : "",
+      id: trackId,
+      title: track.title,
+      html: thumbHtml(track),
+      trackId,
+    }));
+  }
+  for (const folder of nonTrash) {
+    const folderColor = normalizeFolderColor(folder.color);
+    strip.appendChild(makeStripItem({
+      className: "folder-thumb",
+      id: folder.id,
+      title: `${folder.name} (${folder.items.length})`,
+      html: folderThumbHtml(false),
+      color: folderColor,
+    }));
+  }
+}
+
 function render() {
   const list = document.getElementById("catalogList");
   const strip = document.getElementById("catalogStrip");
-  const count = document.getElementById("catCount");
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
   if (!list) return;
@@ -1027,30 +1109,27 @@ function render() {
 
   const trash = getTrashFolder();
   const trashIds = new Set(trash?.items || []);
-  const totalTracks = Object.keys(tracks).filter((id) => !trashIds.has(id)).length;
   const isTrashView = catalogView === "trash";
+  const isFavoritesView = catalogView === "favorites";
+  const isLibraryView = !isTrashView && !isFavoritesView;
 
   catalog?.classList.toggle("trash-view", isTrashView);
-  document.querySelector(".rail-library")?.classList.toggle("active", !isTrashView);
-  document.querySelector(".rail-library")?.setAttribute("aria-pressed", String(!isTrashView));
+  catalog?.classList.toggle("favorites-view", isFavoritesView);
+
+  document.querySelector(".rail-library")?.classList.toggle("active", isLibraryView);
+  document.querySelector(".rail-library")?.setAttribute("aria-pressed", String(isLibraryView));
+  document.querySelector(".rail-favorites")?.classList.toggle("active", isFavoritesView);
+  document.querySelector(".rail-favorites")?.setAttribute("aria-pressed", String(isFavoritesView));
   document.querySelector(".rail-trash")?.classList.toggle("active", isTrashView);
   document.querySelector(".rail-trash")?.setAttribute("aria-pressed", String(isTrashView));
-  if (count) {
-    if (isTrashView) {
-      count.textContent = `${trashIds.size} deleted`;
-    } else {
-      const unsorted = folders.find((f) => f.id === "f-unsorted");
-      const n = unsorted ? unsorted.items.filter((id) => !trashIds.has(id)).length : 0;
-      count.textContent = `${n} track${n !== 1 ? "s" : ""}`;
-    }
-  }
+
   if (searchInput) {
-    searchInput.placeholder = isTrashView
-      ? "Search trash…"
-      : "Search library…";
+    searchInput.placeholder = isTrashView ? "Search trash…" : isFavoritesView ? "Search favorites…" : "Search library…";
   }
 
   const nonTrash = folders.filter((f) => f.id !== TRASH_ID && !f.parentId);
+
+  // ── Trash view ──
   if (isTrashView) {
     const visibleTrashItems = (trash?.items || []).filter((id) => trackMatchesSearch(tracks[id]));
     if (!trash?.items.length) {
@@ -1066,51 +1145,85 @@ function render() {
     return;
   }
 
-  let renderedFolders = 0;
-  for (const folder of nonTrash) {
-    if (folder.id === "f-unsorted") {
-      // Render unsorted items flat — no folder chrome, section header is the label.
-      const visible = folder.items.filter((id) => trackMatchesSearch(tracks[id]));
-      for (const id of visible) {
-        const item = renderTrackItem(id);
-        if (item) { list.appendChild(item); renderedFolders += 1; }
+  // ── Favorites view ──
+  if (isFavoritesView) {
+    const favIds = Object.entries(tracks)
+      .filter(([id, t]) => !trashIds.has(id) && t.favorite && trackMatchesSearch(t))
+      .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .map(([id]) => id);
+    if (!favIds.length) {
+      list.innerHTML = `<span class="folder-empty trash-empty">${catalogSearchQuery ? "No favorites match your search" : "No favorites yet — click ♥ on a track to save it"}</span>`;
+    } else {
+      for (const id of favIds) {
+        const item = renderRecentItem(id);
+        if (item) list.appendChild(item);
       }
-      continue;
     }
-    const el = renderFolder(folder);
-    if (!el) continue;
-    list.appendChild(el);
-    renderedFolders += 1;
-  }
-  if (catalogSearchQuery && renderedFolders === 0) {
-    list.innerHTML = '<span class="folder-empty trash-empty">No tracks match your search</span>';
+    renderStrip(strip, nonTrash);
+    return;
   }
 
-  // Collapsed strip: top-level structure only. Show unfiled songs,
-  // folders only. Trash lives in the side rail.
-  if (strip) {
-    const folderTrackIds = new Set(folders.flatMap((folder) => folder.items));
-    for (const [trackId, track] of Object.entries(tracks)) {
-      if (folderTrackIds.has(trackId)) continue;
-      strip.appendChild(makeStripItem({
-        className: trackId === _currentTrackId ? "active" : "",
-        id: trackId,
-        title: track.title,
-        html: thumbHtml(track),
-        trackId,
-      }));
+  // ── Library view — Recent · Stem Collections · Tags ──
+
+  // Recent section
+  const recentIds = getRecentTracks(trashIds).filter((id) => trackMatchesSearch(tracks[id]));
+  if (recentIds.length) {
+    const section = makeSectionEl("Recent");
+    for (const id of recentIds) {
+      const item = renderRecentItem(id);
+      if (item) section.appendChild(item);
     }
-    for (const folder of nonTrash) {
-      const folderColor = normalizeFolderColor(folder.color);
-      strip.appendChild(makeStripItem({
-        className: "folder-thumb",
-        id: folder.id,
-        title: `${folder.name} (${folder.items.length})`,
-        html: folderThumbHtml(false),
-        color: folderColor,
-      }));
-    }
+    list.appendChild(section);
   }
+
+  // Stem Collections section
+  const collectionsSection = makeSectionEl("Stem Collections");
+  let hasCollections = false;
+  for (const folder of nonTrash) {
+    const el = renderFolder(folder);
+    if (!el) continue;
+    collectionsSection.appendChild(el);
+    hasCollections = true;
+  }
+  if (hasCollections) list.appendChild(collectionsSection);
+
+  // Empty state when search yields nothing
+  if (catalogSearchQuery && !recentIds.length && !hasCollections) {
+    list.innerHTML = '<span class="folder-empty trash-empty">No tracks match your search</span>';
+    return;
+  }
+
+  // Tags section
+  const tags = getAllTags(trashIds);
+  if (tags.length) {
+    const section = makeSectionEl("Tags");
+    const row = document.createElement("div");
+    row.className = "lib-tags-row";
+    const activeTag = catalogSearchQuery.startsWith("#") ? catalogSearchQuery.slice(1) : null;
+    for (const [tag, count] of tags) {
+      const chip = document.createElement("button");
+      chip.className = `lib-tag-chip${activeTag === tag ? " active" : ""}`;
+      chip.type = "button";
+      chip.dataset.tag = tag;
+      chip.innerHTML = `${tag} <span class="lib-tag-count">${count}</span>`;
+      chip.addEventListener("click", () => {
+        const input = document.getElementById("catalogSearch");
+        if (catalogSearchQuery === `#${tag}`) {
+          catalogSearchQuery = "";
+          if (input) input.value = "";
+        } else {
+          catalogSearchQuery = `#${tag}`;
+          if (input) input.value = `#${tag}`;
+        }
+        render();
+      });
+      row.appendChild(chip);
+    }
+    section.appendChild(row);
+    list.appendChild(section);
+  }
+
+  renderStrip(strip, nonTrash);
 }
 
 // ─── Catalog panel collapse ───
@@ -1138,6 +1251,7 @@ function wireCatalogToggle() {
 
 function wireCatalogRailViews() {
   document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
+  document.querySelector(".rail-favorites")?.addEventListener("click", () => setCatalogView("favorites"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
   document.getElementById("clearBinBtn")?.addEventListener("click", () => {
     const trash = getTrashFolder();

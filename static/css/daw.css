@@ -1491,10 +1491,63 @@ input, textarea { font-family: inherit; }
 }
 .about-link:hover { text-decoration: underline; }
 
+/* ── Library sections (Recent · Stem Collections · Tags) ── */
+.lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 14px;
+}
+.lib-section + .lib-section {
+  border-top: 1px solid var(--border);
+}
+.lib-section-head {
+  padding: 0 4px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Tag chips */
+.lib-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+.lib-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+  white-space: nowrap;
+}
+.lib-tag-chip:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+  border-color: rgba(255,255,255,0.15);
+}
+.lib-tag-chip.active {
+  background: rgba(244,183,64,0.12);
+  color: var(--accent);
+  border-color: rgba(244,183,64,0.3);
+}
+.lib-tag-count { color: var(--muted); font-size: 11px; }
+
 /* ── Clear bin bar (trash view only) ── */
 .clear-bin-bar { display: none; padding: 6px 10px 4px; }
 .sidebar.trash-view .clear-bin-bar { display: block; }
 .sidebar.trash-view .daw-lib-header { display: none; }
+.sidebar.favorites-view .daw-lib-header { display: none; }
 .clear-bin-btn {
   display: flex; align-items: center; gap: 5px;
   width: 100%; padding: 6px 10px; border-radius: 6px;

@@ -186,7 +186,7 @@ function wireAppShellControls() {
     e.stopPropagation();
     const app = document.querySelector(".app");
     // In trash view: switch back to library.
-    if (document.querySelector(".sidebar.trash-view")) {
+    if (document.querySelector(".sidebar.trash-view, .sidebar.favorites-view")) {
       document.querySelector(".rail-library")?.click();
     }
     // If collapsed: open. Never collapse from the library button.
