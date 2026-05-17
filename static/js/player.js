@@ -150,7 +150,7 @@ function resetAnalysisCards() {
 
 function renderPlaceholderTracks() {
   multitrackContainer.innerHTML = "";
-  for (const name of [...STEM_NAMES, "original"]) {
+  for (const name of ["original", ...STEM_NAMES]) {
     const ph = document.createElement("div");
     ph.className = "lane-placeholder";
     ph.dataset.stem = name;
@@ -280,9 +280,7 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color) {
     layer.appendChild(row);
   }
   row.style.setProperty("--stem-color", color);
-  // STEM_NAMES occupy rows 0-5; "original" always at row 6 (bottom).
-  const _stemOrder = [...STEM_NAMES, "original"];
-  row.style.order = String(_stemOrder.indexOf(stemName) >= 0 ? _stemOrder.indexOf(stemName) : _stemOrder.length);
+  row.style.order = String(TRACK_NAMES.indexOf(stemName));
   row.innerHTML = `
     <svg class="stem-waveform-svg" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
       <path d="${minMaxWaveformPath(peaks, norm)}"></path>
@@ -564,7 +562,7 @@ export function renderEmptyShell() {
   stopStemVuLoop();
   ensureMixerStateDefaults();
   mixerEl.innerHTML = "";
-  for (const name of [...STEM_NAMES, "original"]) {
+  for (const name of ["original", ...STEM_NAMES]) {
     const { row } = renderMixerRow({ name, url: "#" });
     mixerEl.appendChild(row);
   }
@@ -693,12 +691,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   clearOverviewWaveforms();
   renderAllDecodedVisuals(stems, token);
 
-  // STEM_NAMES always occupy rows 0-5 so the mixer lanes stay aligned even
-  // when some stems are absent (they get url:null → empty grayed row).
-  // "original" is appended at row 6 only when it actually has a URL; omitting
-  // it entirely avoids a phantom 70px gap that would push all mixer rows down.
+  // "original" is prepended at row 0 only when it actually has a URL so it
+  // appears at the top. Omitting it when absent avoids a phantom 70px gap.
+  // STEM_NAMES follow at the next consecutive rows so mixer lanes stay aligned.
   const stemsByName = Object.fromEntries(stems.map((s) => [s.name, s]));
-  const orderedNames = [...STEM_NAMES, ...(stemsByName["original"] ? ["original"] : [])];
+  const orderedNames = [...(stemsByName["original"] ? ["original"] : []), ...STEM_NAMES];
   setTrackIndex(Object.fromEntries(orderedNames.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
   const mt = Multitrack.create(
