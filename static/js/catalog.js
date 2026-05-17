@@ -245,8 +245,24 @@ function stateMetadataToTrack(state, fallbackTrack) {
     lufs: state.lufs ?? fallbackTrack.lufs,
     peakDb: state.peak_db ?? fallbackTrack.peakDb,
     stemPresence: state.stem_presence ?? fallbackTrack.stemPresence,
+    dynamicRange: state.dynamic_range ?? fallbackTrack.dynamicRange,
+    tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
   };
+}
+
+function drLabel(dr) {
+  if (dr < 7) return "Compressed";
+  if (dr < 10) return "Moderate";
+  if (dr < 14) return "High";
+  return "Wide";
+}
+
+function stabilityLabel(pct) {
+  if (pct >= 90) return "Very Stable";
+  if (pct >= 70) return "Stable";
+  if (pct >= 50) return "Moderate";
+  return "Variable";
 }
 
 export function applyStemPresenceCards(stemPresence) {
@@ -288,6 +304,18 @@ function applyTrackInfoToPanel(track) {
   if (summaryLufs) summaryLufs.textContent = track.lufs != null ? Number(track.lufs).toFixed(1) : "—";
   if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? `Peak ${Number(track.peakDb).toFixed(1)} dB` : "";
   if (summaryDuration) summaryDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
+
+  const summaryDr = document.getElementById("summary-dr");
+  const summaryDrLabel = document.getElementById("summary-dr-label");
+  const summaryStability = document.getElementById("summary-stability");
+  const summaryStabilityLabel = document.getElementById("summary-stability-label");
+  if (summaryDr) summaryDr.textContent = track.dynamicRange != null ? String(track.dynamicRange) : "—";
+  if (summaryDrLabel) summaryDrLabel.textContent = track.dynamicRange != null ? drLabel(track.dynamicRange) : "";
+  if (summaryStability) {
+    summaryStability.textContent = track.tempoStability != null ? `${track.tempoStability}%` : "—";
+    summaryStability.className = "meta-card-value" + (track.tempoStability != null && track.tempoStability >= 80 ? " stability-high" : "");
+  }
+  if (summaryStabilityLabel) summaryStabilityLabel.textContent = track.tempoStability != null ? stabilityLabel(track.tempoStability) : "";
 
   if (summaryConfidence) {
     summaryConfidence.textContent = "";

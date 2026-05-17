@@ -130,6 +130,8 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "key_confidence": job.key_confidence,
         "lufs": job.lufs,
         "peak_db": job.peak_db,
+        "dynamic_range": job.dynamic_range,
+        "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
     }
     try:

@@ -785,6 +785,7 @@ input, textarea { font-family: inherit; }
   font-family: var(--font-mono);
 }
 .meta-card-value.accent { color: var(--accent); }
+.meta-card-value.stability-high { color: #4caf7d; }
 .meta-card-sub {
   font-size: 11px;
   color: var(--muted);

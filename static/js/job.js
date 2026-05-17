@@ -155,6 +155,23 @@ function applyState(state) {
     summaryConfidence.classList.remove("hidden");
     summaryConfidenceLabel?.classList.remove("hidden");
   }
+  const summaryDr = document.getElementById("summary-dr");
+  const summaryDrLabel = document.getElementById("summary-dr-label");
+  const summaryStability = document.getElementById("summary-stability");
+  const summaryStabilityLabel = document.getElementById("summary-stability-label");
+  if (summaryDr && state.dynamic_range != null) summaryDr.textContent = String(state.dynamic_range);
+  if (summaryDrLabel && state.dynamic_range != null) {
+    const dr = state.dynamic_range;
+    summaryDrLabel.textContent = dr < 7 ? "Compressed" : dr < 10 ? "Moderate" : dr < 14 ? "High" : "Wide";
+  }
+  if (summaryStability && state.tempo_stability != null) {
+    summaryStability.textContent = `${state.tempo_stability}%`;
+    summaryStability.className = "meta-card-value" + (state.tempo_stability >= 80 ? " stability-high" : "");
+  }
+  if (summaryStabilityLabel && state.tempo_stability != null) {
+    const s = state.tempo_stability;
+    summaryStabilityLabel.textContent = s >= 90 ? "Very Stable" : s >= 70 ? "Stable" : s >= 50 ? "Moderate" : "Variable";
+  }
   if (state.stem_presence != null) {
     applyStemPresenceCards(state.stem_presence);
   }

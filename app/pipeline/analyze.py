@@ -273,7 +273,7 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         # smear, no kick fundamentals leaking in).
         y_harmonic, y_percussive = librosa.effects.hpss(y)
 
-        tempo_arr, _ = librosa.beat.beat_track(y=y_percussive, sr=sr)
+        tempo_arr, beat_frames = librosa.beat.beat_track(y=y_percussive, sr=sr)
         try:
             tempo = float(tempo_arr[0])  # type: ignore[index]
         except (TypeError, IndexError):
@@ -295,6 +295,22 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         # it's good enough for a UI display and adds ~50 ms to analyze.
         lufs, peak_db = _measure_loudness(y, sr)
 
+        dynamic_range: float | None = None
+        if lufs is not None and peak_db is not None:
+            dynamic_range = round(peak_db - lufs, 1)
+
+        # Beat interval coefficient of variation → stability 0-100.
+        # CV = std/mean of inter-beat intervals; CV=0 is perfectly metronomic.
+        tempo_stability: int | None = None
+        import numpy as np
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+        if len(beat_times) > 2:
+            intervals = np.diff(beat_times)
+            mean_iv = float(intervals.mean())
+            if mean_iv > 0:
+                cv = float(intervals.std() / mean_iv)
+                tempo_stability = max(0, min(100, round((1 - min(cv, 1)) * 100)))
+
         _set(
             job,
             bpm=bpm,
@@ -303,6 +319,8 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
             key_confidence=key_confidence,
             lufs=lufs,
             peak_db=peak_db,
+            dynamic_range=dynamic_range,
+            tempo_stability=tempo_stability,
             progress=1.0,
             stage="Analysis complete",
         )

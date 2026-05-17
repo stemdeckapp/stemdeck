@@ -27,6 +27,8 @@ class Job:
     key_confidence: int | None = None  # 0-100 percent
     lufs: float | None = None  # ITU-R BS.1770 integrated loudness (dB)
     peak_db: float | None = None  # sample peak in dBFS (close to true peak)
+    dynamic_range: float | None = None  # peak_db - integrated LUFS (dB)
+    tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     stems: list[dict[str, str]] = field(default_factory=list)
     # Subset of stems the user chose at submit. The pipeline produces all
@@ -59,6 +61,8 @@ class Job:
             "key_confidence": self.key_confidence,
             "lufs": self.lufs,
             "peak_db": self.peak_db,
+            "dynamic_range": self.dynamic_range,
+            "tempo_stability": self.tempo_stability,
             "stem_presence": self.stem_presence,
             "stems": self.stems,
             "selected_stems": self.selected_stems,
