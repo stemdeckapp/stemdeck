@@ -8,6 +8,7 @@ import { destroyPlayer } from "./player.js";
 import { wireUpAudio } from "./player.js";
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
+import { initSections } from "./sections.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -214,6 +215,7 @@ function applyState(state) {
         state.duration || 0,
         state.thumbnail,
       );
+      initSections(state.job_id, state.sections, state.duration || 0);
     }
     setSubmitProcessing(false);
   }

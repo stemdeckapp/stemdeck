@@ -156,6 +156,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         dynamic_range=meta.get("dynamic_range"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
+        sections=meta.get("sections"),
     )
 
 

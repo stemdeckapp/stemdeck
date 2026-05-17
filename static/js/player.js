@@ -27,6 +27,7 @@ import {
   updatePresencePlayhead,
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
+import { destroySections } from "./sections.js";
 
 // Stem-selection filter: the import-page stem-choice toggles set
 // selectedStems (state.js). Backend always processes all 6 -- we
@@ -495,6 +496,7 @@ function renderAllDecodedVisuals(stems, token) {
 export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("is-import");
   document.querySelector(".app")?.classList.add("no-track");
+  destroySections();
   stopVuLoop();
   stopStemVuLoop();
   if (multitrack) {

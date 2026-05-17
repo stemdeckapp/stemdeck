@@ -1,6 +1,7 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio } from "./player.js";
+import { initSections } from "./sections.js";
 import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { fmtTime } from "./utils.js";
 
@@ -259,6 +260,7 @@ function stateMetadataToTrack(state, fallbackTrack) {
     dynamicRange: state.dynamic_range ?? fallbackTrack.dynamicRange,
     tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
     tags: state.tags ?? fallbackTrack.tags ?? [],
+    sections: state.sections ?? fallbackTrack.sections ?? null,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
     createdAt: fallbackTrack.createdAt ?? state.created_at,
     favorite: fallbackTrack.favorite ?? false,
@@ -459,6 +461,7 @@ async function loadTrackIntoStudio(trackId) {
 
   applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb);
+  initSections(trackId, track.sections, track.duration || 0);
 }
 
 export function setCurrentTrack(trackId) {

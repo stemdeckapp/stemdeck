@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.config import (
     JOB_ID_RE,
@@ -269,6 +269,80 @@ def cancel_job(job_id: str) -> dict:
     if proc is not None and proc.poll() is None:
         proc.terminate()
     return job.to_state()
+
+
+_SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+
+
+class SectionItem(BaseModel):
+    id: str
+    name: str
+    start: float
+    end: float
+    color: str
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, v: str) -> str:
+        if not _SECTION_ID_RE.match(v):
+            raise ValueError("invalid section id")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return v.strip()[:64] or "Section"
+
+    @field_validator("color")
+    @classmethod
+    def _check_color(cls, v: str) -> str:
+        if not _COLOR_RE.match(v):
+            raise ValueError("invalid color")
+        return v
+
+    @field_validator("start", "end")
+    @classmethod
+    def _check_time(cls, v: float) -> float:
+        if not (0 <= v < 86400):
+            raise ValueError("time out of range")
+        return round(v, 3)
+
+
+class SectionsBody(BaseModel):
+    sections: list[SectionItem]
+
+
+@router.patch("/{job_id}/sections")
+def update_sections(job_id: str, body: SectionsBody) -> dict:
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    validated = [s.model_dump() for s in body.sections]
+    job.sections = validated
+
+    job_dir = (JOBS_DIR / job_id).resolve()
+    if not job_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    meta_path = job_dir / "metadata.json"
+
+    meta: dict = {}
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    meta["sections"] = validated
+    try:
+        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.exception("failed to write sections for %s: %s", job_id, exc)
+        raise HTTPException(status_code=500, detail="failed to save sections") from exc
+
+    return {"job_id": job_id, "sections": validated}
 
 
 @router.delete("/{job_id}")
