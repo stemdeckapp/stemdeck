@@ -435,17 +435,17 @@ async function loadTrackIntoStudio(trackId) {
   if (!track) return;
   const hadStoredAudio = Boolean(track.audioStems?.length);
 
-  if (!track.audioStems?.length || !hasTrackAnalysis(track)) {
-    try {
-      const res = await fetch(`/api/jobs/${trackId}`);
-      if (res.ok) {
-        const state = await res.json();
-        track = stateMetadataToTrack(state, track);
-        tracks[trackId] = track;
-        saveState();
-      }
-    } catch { /* ignore; the stored track may be from a previous server run */ }
-  }
+  // Always fetch fresh state so server-side changes (sections, analysis, stems)
+  // are reflected — cached localStorage data can be stale.
+  try {
+    const res = await fetch(`/api/jobs/${trackId}`);
+    if (res.ok) {
+      const state = await res.json();
+      track = stateMetadataToTrack(state, track);
+      tracks[trackId] = track;
+      saveState();
+    }
+  } catch { /* ignore; use stored track if server unreachable */ }
 
   if (!track.audioStems?.length) return;
   if (track.status !== "done" && !hadStoredAudio) return;

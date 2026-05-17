@@ -40,8 +40,15 @@ export function initSections(trackId, sections, duration) {
 }
 
 export function destroySections() {
-  clearTimeout(_saveTimer);
-  _saveTimer = null;
+  // Flush any pending debounced save before clearing state so switching tracks
+  // never drops unsaved sections. _save() serializes _sections synchronously
+  // (JSON.stringify runs before the first await) so it's safe to clear state
+  // after calling it.
+  if (_saveTimer !== null) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    _save();
+  }
   _trackId = null;
   _sections = [];
   _duration = 0;
