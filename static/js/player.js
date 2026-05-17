@@ -687,17 +687,22 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   clearOverviewWaveforms();
   renderAllDecodedVisuals(stems, token);
 
-  setTrackIndex(Object.fromEntries(stems.map((s, i) => [s.name, i])));
+  // Fixed positional indices: every stem always occupies the same WaveSurfer
+  // row regardless of which subset was extracted. Non-extracted stems get
+  // url:null so WaveSurfer renders a silent/empty row that visually aligns
+  // with the grayed mixer row at the same position.
+  const stemsByName = Object.fromEntries(stems.map((s) => [s.name, s]));
+  setTrackIndex(Object.fromEntries(TRACK_NAMES.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
   const mt = Multitrack.create(
-    stems.map((s, i) => ({
+    TRACK_NAMES.map((name, i) => ({
       id: i,
-      url: s.url,
+      url: stemsByName[name]?.url ?? null,
       draggable: false,
       startPosition: 0,
-      volume: 1,
+      volume: stemsByName[name] ? 1 : 0,
       options: {
-        waveColor: STEM_COLORS[s.name] || "#a0a0a0",
+        waveColor: STEM_COLORS[name] || "#a0a0a0",
         progressColor: PROGRESS_COLOR,
         height: WAVEFORM_LANE_HEIGHT,
         barWidth: 3,
@@ -741,13 +746,13 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
     const ctx = mt.audioContext;
     console.debug(
       `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,
-      mt.audios?.map((a, i) => `${stems[i]?.name}:${a?.constructor?.name}`),
+      mt.audios?.map((a, i) => `${TRACK_NAMES[i]}:${a?.constructor?.name}`),
     );
     // Log any audio element load errors
     mt.audios?.forEach((a, i) => {
       if (a instanceof HTMLMediaElement) {
         a.addEventListener("error", () =>
-          console.error(`[player] audio error stem[${i}] ${stems[i]?.name}:`, a.error?.message, a.error?.code),
+          console.error(`[player] audio error stem[${i}] ${TRACK_NAMES[i]}:`, a.error?.message, a.error?.code),
         { once: true });
       }
     });
