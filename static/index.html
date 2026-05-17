@@ -367,15 +367,22 @@
 
           <!-- Sections bar -->
           <div class="daw-section-ribbon">
-            <div class="daw-mixer-label">
+            <div class="daw-mixer-label daw-sections-header">
               <span class="daw-label-title">Sections</span>
+              <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                Add
+              </button>
             </div>
             <div class="daw-sections-area" id="daw-sections"></div>
           </div>
 
           <!-- Waveform header / ruler -->
           <div class="daw-wave-header">
-            <div class="daw-wave-label"></div>
+            <div class="daw-wave-label">
+              <span class="daw-label-title">Mixer</span>
+              <span class="uplabel daw-label-sub">Drag fader · M/S</span>
+            </div>
             <div class="daw-ruler-area">
               <div class="lanes-ruler" data-position="top">
                 <div class="lanes-ruler-time" id="ruler-time">

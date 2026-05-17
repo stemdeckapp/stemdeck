@@ -1020,6 +1020,7 @@ input, textarea { font-family: inherit; }
 }
 .daw-label-title { font-size: 12px; font-weight: 600; }
 .daw-label-sub { font-size: 9px; }
+.daw-sections-header { justify-content: space-between; }
 .daw-sections-area {
   flex: 1;
   position: relative;
@@ -1103,22 +1104,32 @@ input, textarea { font-family: inherit; }
   caret-color: var(--sc, #4a7fff);
 }
 
-.sections-add-btn {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 22px; height: 22px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--panel);
+/* Add section button — lives in the Sections label column */
+.sections-add-btn-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 6px;
+  background: none;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--muted);
+  font-size: 10px; font-weight: 600;
   cursor: pointer;
-  z-index: 5;
-  transition: background var(--t-fast), color var(--t-fast);
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
 }
-.sections-add-btn:hover { background: var(--panel-2); color: var(--fg); }
+.sections-add-btn-label:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+  border-color: rgba(255,255,255,0.18);
+}
+
+/* Wave label (left column in wave header — Mixer label) */
+.daw-wave-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+}
 
 /* ── Waveform header ── */
 .daw-wave-header {

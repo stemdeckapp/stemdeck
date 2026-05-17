@@ -28,6 +28,14 @@ export function initSections(trackId, sections, duration) {
   _sections = (sections || []).map((s) => ({ ...s }));
   _container = document.getElementById("daw-sections");
   if (!_container) return;
+
+  // Wire the static "Add" button in the label area (may already be wired)
+  const addBtn = document.getElementById("sectionsAddBtn");
+  if (addBtn && !addBtn.dataset.sectionsWired) {
+    addBtn.dataset.sectionsWired = "1";
+    addBtn.addEventListener("click", () => _addSection());
+  }
+
   _render();
 }
 
@@ -52,15 +60,6 @@ function _render() {
   for (const section of sorted) {
     _container.appendChild(_makeSectionEl(section));
   }
-
-  const addBtn = document.createElement("button");
-  addBtn.className = "sections-add-btn";
-  addBtn.type = "button";
-  addBtn.title = "Add section";
-  addBtn.setAttribute("aria-label", "Add section");
-  addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
-  addBtn.addEventListener("click", () => _addSection());
-  _container.appendChild(addBtn);
 }
 
 function _makeSectionEl(section) {
