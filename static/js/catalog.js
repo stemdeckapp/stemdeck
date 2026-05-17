@@ -5,6 +5,7 @@ import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./s
 
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
+const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 
 let folders = [];
 let tracks = {};
@@ -19,13 +20,26 @@ const PROCESSING_STATUSES = new Set(["queued", "downloading", "analyzing", "sepa
 const FOLDER_COLORS = ["#d8a84a", "#e85f6f", "#64c86f", "#4f9de8", "#a985f4"];
 const DEFAULT_FOLDER_COLOR = FOLDER_COLORS[0];
 const TRACK_DRAG_TYPE = "application/x-stemdeck-track";
+const FOLDER_DRAG_TYPE = "application/x-stemdeck-folder";
+
+function getDeletedJobIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(DELETED_JOBS_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+
+function markJobsDeleted(ids) {
+  const set = getDeletedJobIds();
+  for (const id of ids) set.add(id);
+  try { localStorage.setItem(DELETED_JOBS_KEY, JSON.stringify([...set])); }
+  catch (e) { console.warn("[catalog] failed to persist deleted jobs", e); }
+}
 
 function normalizeFolderColor(color) {
   return FOLDER_COLORS.includes(color) ? color : DEFAULT_FOLDER_COLOR;
 }
 
-function makeFolder({ id = `f-${Date.now()}`, name = "New folder", collapsed = false, items = [] } = {}) {
-  return { id, name, collapsed, items, color: DEFAULT_FOLDER_COLOR };
+function makeFolder({ id = `f-${Date.now()}`, name = "New folder", collapsed = false, items = [], parentId = null } = {}) {
+  return { id, name, collapsed, items, color: DEFAULT_FOLDER_COLOR, parentId: parentId ?? null };
 }
 
 function ensureTrash() {
@@ -112,6 +126,13 @@ function loadState() {
       if ((data.v ?? 1) >= STORAGE_VERSION) {
         folders = data.folders ?? [];
         tracks = data.tracks ?? {};
+        // Migrate old timestamp-based "Unsorted" folder to reserved ID.
+        const oldUnsorted = folders.find((f) => f.id !== TRASH_ID && f.name === "Unsorted" && f.id !== "f-unsorted");
+        if (oldUnsorted) { oldUnsorted.id = "f-unsorted"; changed = true; }
+        // Ensure all folders have parentId field.
+        for (const f of folders) {
+          if (!Object.prototype.hasOwnProperty.call(f, "parentId")) { f.parentId = null; changed = true; }
+        }
         // Drop title-less entries left over from before metadata persistence.
         const noTitle = Object.keys(tracks).filter((id) => !tracks[id].title);
         if (noTitle.length) {
@@ -135,7 +156,13 @@ function loadState() {
       }
     }
   }
-  changed = purgeTrash() || changed;
+  // Remove trash refs whose track data is missing (orphaned), but don't auto-empty.
+  const trashFolder = folders.find((f) => f.id === TRASH_ID);
+  if (trashFolder) {
+    const before = trashFolder.items.length;
+    trashFolder.items = trashFolder.items.filter((id) => tracks[id]);
+    if (trashFolder.items.length !== before) changed = true;
+  }
   if (changed) saveState();
 }
 
@@ -169,7 +196,7 @@ export function addTrackToLibrary(track) {
     // Put into first non-trash folder or create an "Unsorted" folder.
     let target = folders.find((folder) => folder.id !== TRASH_ID);
     if (!target) {
-      target = makeFolder({ id: `f-${Date.now()}`, name: "Unsorted" });
+      target = makeFolder({ id: "f-unsorted", name: "Unsorted" });
       folders.unshift(target);
     }
     target.items.unshift(track.id);
@@ -356,8 +383,11 @@ function createFolder() {
 }
 
 function deleteFolder(folderId) {
+  if (folderId === TRASH_ID) return;
+  // Cascade: delete children first.
+  for (const child of folders.filter((f) => f.parentId === folderId)) deleteFolder(child.id);
   const idx = folders.findIndex((f) => f.id === folderId);
-  if (idx === -1 || folders[idx].id === TRASH_ID) return;
+  if (idx === -1) return;
   const [folder] = folders.splice(idx, 1);
   const trash = getTrashFolder();
   for (const trackId of folder.items) {
@@ -365,6 +395,37 @@ function deleteFolder(folderId) {
       trash.items.unshift(trackId);
     }
   }
+  saveState();
+  render();
+}
+
+function reorderFolder(draggedId, targetId, before) {
+  if (draggedId === targetId) return;
+  const dragged = folders.find((f) => f.id === draggedId);
+  const target = folders.find((f) => f.id === targetId);
+  if (!dragged || !target) return;
+  folders.splice(folders.indexOf(dragged), 1);
+  const toIdx = folders.indexOf(target);
+  folders.splice(before ? toIdx : toIdx + 1, 0, dragged);
+  saveState();
+  render();
+}
+
+function isFolderDescendant(ancestorId, candidateId) {
+  let cur = folders.find((f) => f.id === candidateId);
+  while (cur?.parentId) {
+    if (cur.parentId === ancestorId) return true;
+    cur = folders.find((f) => f.id === cur.parentId);
+  }
+  return false;
+}
+
+function reparentFolder(childId, newParentId) {
+  if (childId === newParentId) return;
+  if (isFolderDescendant(childId, newParentId)) return; // would create cycle
+  const child = folders.find((f) => f.id === childId);
+  if (!child) return;
+  child.parentId = newParentId;
   saveState();
   render();
 }
@@ -468,6 +529,7 @@ function openFolderEditor(folderId) {
 // ─── Drag-and-drop ───
 
 let dragId = null;
+let folderDragId = null;
 
 function isTrackDragEvent(event) {
   return dragId != null || Boolean(event?.dataTransfer?.types?.includes(TRACK_DRAG_TYPE));
@@ -581,7 +643,7 @@ function restoreTrackFromTrash(trackId) {
   trash.items = trash.items.filter((id) => id !== trackId);
   let target = folders.find((f) => f.id !== TRASH_ID);
   if (!target) {
-    target = makeFolder({ id: `f-${Date.now()}`, name: "Unsorted" });
+    target = makeFolder({ id: "f-unsorted", name: "Unsorted" });
     folders.unshift(target);
   }
   if (!target.items.includes(trackId)) target.items.push(trackId);
@@ -696,43 +758,66 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
 
 function renderFolder(folder) {
   const isTrash = folder.id === TRASH_ID;
+  const isSubfolder = Boolean(folder.parentId);
   if (!isTrash) folder.color = normalizeFolderColor(folder.color);
 
   const el = document.createElement("div");
-  el.className = `folder${folder.collapsed ? " collapsed" : ""}`;
+  el.className = `folder${folder.collapsed ? " collapsed" : ""}${isSubfolder ? " subfolder" : ""}`;
   el.dataset.id = folder.id;
 
   const head = document.createElement("div");
   head.className = "folder-head";
   if (!isTrash) head.style.setProperty("--folder-color", folder.color);
+
   const folderIcon = isTrash
     ? `<svg class="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`
     : `<svg class="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
+
   head.innerHTML = `
+    ${isTrash ? "" : `<span class="f-grip" title="Drag to reorder">
+      <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true">
+        <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+        <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+        <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+      </svg>
+    </span>`}
     <svg class="f-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
     ${folderIcon}
     <span class="f-name">${folder.name}</span>
     <span class="f-count">${folder.items.length}</span>
-    ${isTrash ? "" : `<button class="f-del" type="button" aria-label="Delete folder" title="Delete folder">
-      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
-    </button>`}
+    ${isTrash ? "" : `
+      <button class="f-subfolder" type="button" aria-label="New subfolder" title="New subfolder">
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <path d="M12 11v6M9 14h6"/>
+        </svg>
+      </button>
+      <button class="f-del" type="button" aria-label="Delete folder" title="Delete folder">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
+      </button>
+    `}
   `;
 
   const body = document.createElement("div");
   body.className = "folder-body";
 
   const visibleItems = folder.items.filter((id) => trackMatchesSearch(tracks[id]));
+  const childFolders = folders.filter((f) => f.parentId === folder.id);
 
-  if (catalogSearchQuery && visibleItems.length === 0) {
+  if (catalogSearchQuery && visibleItems.length === 0 && childFolders.length === 0) {
     return null;
   }
 
-  if (visibleItems.length === 0) {
+  if (visibleItems.length === 0 && childFolders.length === 0) {
     body.innerHTML = '<span class="folder-empty">Empty folder</span>';
   } else {
     for (const id of visibleItems) {
       const item = renderTrackItem(id);
       if (item) body.appendChild(item);
+    }
+    for (const child of childFolders) {
+      const childEl = renderFolder(child);
+      if (childEl) body.appendChild(childEl);
     }
   }
 
@@ -740,9 +825,9 @@ function renderFolder(folder) {
 
   let folderClickTimer = null;
 
-  // Toggle folder collapse on a single click. Double-click is reserved for edit.
+  // Toggle folder collapse on single click.
   head.addEventListener("click", (e) => {
-    if (e.target.closest(".f-del")) return;
+    if (e.target.closest(".f-del, .f-subfolder, .f-grip")) return;
     if (e.detail !== 1) return;
     window.clearTimeout(folderClickTimer);
     folderClickTimer = window.setTimeout(() => {
@@ -752,34 +837,85 @@ function renderFolder(folder) {
     }, 180);
   });
 
-  // Edit folder name + color on double-click (not for trash).
   if (!isTrash) {
     head.addEventListener("dblclick", (e) => {
-      if (e.target.closest(".f-del")) return;
+      if (e.target.closest(".f-del, .f-subfolder, .f-grip")) return;
       window.clearTimeout(folderClickTimer);
       e.stopPropagation();
       openFolderEditor(folder.id);
     });
   }
 
-  // Delete
   head.querySelector(".f-del")?.addEventListener("click", (e) => {
     e.stopPropagation();
     deleteFolder(folder.id);
   });
 
-  // Drag-over for drop target
+  head.querySelector(".f-subfolder")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const child = makeFolder({ parentId: folder.id });
+    folders.push(child);
+    folder.collapsed = false;
+    el.classList.remove("collapsed");
+    saveState();
+    render();
+    openFolderEditor(child.id);
+  });
+
+  // Folder drag handle — reorder folders.
+  const grip = head.querySelector(".f-grip");
+  if (grip) {
+    grip.draggable = true;
+    grip.addEventListener("dragstart", (e) => {
+      folderDragId = folder.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData(FOLDER_DRAG_TYPE, folder.id);
+      e.stopPropagation();
+      requestAnimationFrame(() => el.classList.add("folder-dragging"));
+    });
+    grip.addEventListener("dragend", () => {
+      folderDragId = null;
+      el.classList.remove("folder-dragging");
+      for (const f of document.querySelectorAll(".folder.drop-before, .folder.drop-after, .folder.drop-into")) {
+        f.classList.remove("drop-before", "drop-after", "drop-into");
+      }
+    });
+  }
+
+  // Dragover: folder reorder/nest indicator OR track drop target.
   el.addEventListener("dragover", (e) => {
+    if (folderDragId && folderDragId !== folder.id && !isTrash) {
+      if (isFolderDescendant(folderDragId, folder.id)) return; // prevent cycle
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = head.getBoundingClientRect();
+      const rel = (e.clientY - rect.top) / rect.height;
+      el.classList.toggle("drop-before", rel < 0.25);
+      el.classList.toggle("drop-into", rel >= 0.25 && rel < 0.75);
+      el.classList.toggle("drop-after", rel >= 0.75);
+      return;
+    }
     if (!isTrackDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     el.classList.add("drop-target");
   });
   el.addEventListener("dragleave", (e) => {
-    if (!el.contains(e.relatedTarget)) el.classList.remove("drop-target");
+    if (!el.contains(e.relatedTarget)) {
+      el.classList.remove("drop-target", "drop-before", "drop-after", "drop-into");
+    }
   });
   el.addEventListener("drop", (e) => {
     e.preventDefault();
+    if (folderDragId && folderDragId !== folder.id && !isTrash) {
+      const rect = head.getBoundingClientRect();
+      const rel = (e.clientY - rect.top) / rect.height;
+      el.classList.remove("drop-before", "drop-after", "drop-into");
+      if (rel < 0.25) reorderFolder(folderDragId, folder.id, true);
+      else if (rel >= 0.75) reorderFolder(folderDragId, folder.id, false);
+      else reparentFolder(folderDragId, folder.id);
+      return;
+    }
     el.classList.remove("drop-target");
     dropOnFolder(folder.id, getDraggedTrackId(e));
   });
@@ -809,10 +945,13 @@ function render() {
   document.querySelector(".rail-trash")?.classList.toggle("active", isTrashView);
   document.querySelector(".rail-trash")?.setAttribute("aria-pressed", String(isTrashView));
   if (count) {
-    const n = isTrashView ? trashIds.size : totalTracks;
-    count.textContent = isTrashView
-      ? `${n} deleted`
-      : `${n} track${n !== 1 ? "s" : ""}`;
+    if (isTrashView) {
+      count.textContent = `${trashIds.size} deleted`;
+    } else {
+      const unsorted = folders.find((f) => f.id === "f-unsorted");
+      const n = unsorted ? unsorted.items.filter((id) => !trashIds.has(id)).length : 0;
+      count.textContent = `${n} track${n !== 1 ? "s" : ""}`;
+    }
   }
   if (searchInput) {
     searchInput.placeholder = isTrashView
@@ -820,7 +959,7 @@ function render() {
       : "Search library…";
   }
 
-  const nonTrash = folders.filter((f) => f.id !== TRASH_ID);
+  const nonTrash = folders.filter((f) => f.id !== TRASH_ID && !f.parentId);
   if (isTrashView) {
     const visibleTrashItems = (trash?.items || []).filter((id) => trackMatchesSearch(tracks[id]));
     if (!trash?.items.length) {
@@ -838,6 +977,15 @@ function render() {
 
   let renderedFolders = 0;
   for (const folder of nonTrash) {
+    if (folder.id === "f-unsorted") {
+      // Render unsorted items flat — no folder chrome, section header is the label.
+      const visible = folder.items.filter((id) => trackMatchesSearch(tracks[id]));
+      for (const id of visible) {
+        const item = renderTrackItem(id);
+        if (item) { list.appendChild(item); renderedFolders += 1; }
+      }
+      continue;
+    }
     const el = renderFolder(folder);
     if (!el) continue;
     list.appendChild(el);
@@ -885,9 +1033,12 @@ function wireCatalogToggle() {
   const collapsed = localStorage.getItem("stemdeck.catalog.collapsed") === "1";
   if (collapsed) app.classList.add("cat-collapsed");
 
-  toggle.addEventListener("click", () => {
-    const isNowCollapsed = app.classList.toggle("cat-collapsed");
-    localStorage.setItem("stemdeck.catalog.collapsed", isNowCollapsed ? "1" : "0");
+  toggle.addEventListener("click", (e) => {
+    // Only expand — never collapse from within the sidebar.
+    if (!app.classList.contains("cat-collapsed")) return;
+    app.classList.remove("cat-collapsed");
+    localStorage.setItem("stemdeck.catalog.collapsed", "0");
+    toggle.querySelector("input")?.focus();
   });
   toggle.addEventListener("keydown", (e) => {
     if (e.code === "Enter" || e.code === "Space") { e.preventDefault(); toggle.click(); }
@@ -898,9 +1049,15 @@ function wireCatalogRailViews() {
   document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
   document.getElementById("clearBinBtn")?.addEventListener("click", () => {
+    const trash = getTrashFolder();
+    const toDelete = [...(trash?.items || [])];
+    markJobsDeleted(toDelete); // persist before purge so reload can't re-import
     purgeTrash();
     saveState();
     render();
+    for (const id of toDelete) {
+      fetch(`/api/jobs/${id}`, { method: "DELETE" }).catch(() => {});
+    }
   });
 }
 
@@ -1009,8 +1166,12 @@ async function syncWithServer() {
     const res = await fetch("/api/jobs", { cache: "no-store" });
     if (!res.ok) return;
     const jobs = await res.json();
+    const trashIds = new Set(getTrashFolder()?.items || []);
+    const deletedIds = getDeletedJobIds();
     for (const state of jobs) {
       if (tracks[state.job_id]) continue;
+      if (trashIds.has(state.job_id)) continue;   // soft-deleted, skip
+      if (deletedIds.has(state.job_id)) continue; // hard-deleted, skip
       const track = stateMetadataToTrack(state, { id: state.job_id, status: state.status });
       track.id = state.job_id;
       addTrackToLibrary(track);

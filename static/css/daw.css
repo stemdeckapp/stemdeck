@@ -369,7 +369,7 @@ input, textarea { font-family: inherit; }
    SIDEBAR / CATALOG
    ═══════════════════════════════════ */
 .sidebar {
-  width: 260px;
+  width: 390px;
   flex-shrink: 0;
   background: var(--bg-2);
   border-right: 1px solid var(--border);
@@ -469,16 +469,23 @@ input, textarea { font-family: inherit; }
   gap: 4px;
 }
 .daw-lib-count { color: var(--muted-2); font-weight: 500; margin-left: 4px; }
-.daw-lib-actions { display: flex; gap: 2px; }
-.daw-lib-actions button {
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: none; border: none;
-  color: var(--muted); border-radius: 4px;
+.new-folder-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px 3px 7px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px; font-weight: 500;
   cursor: pointer;
-  transition: background var(--t-fast), color var(--t-fast);
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
 }
-.daw-lib-actions button:hover { background: var(--panel); color: var(--fg-2); }
+.new-folder-btn:hover {
+  background: var(--panel);
+  color: var(--fg-2);
+  border-color: var(--border-2, rgba(255,255,255,0.15));
+}
 
 /* Lib list (JS populates with .lib-item, .folder, .cat-item) */
 .daw-lib-list {
@@ -584,14 +591,35 @@ input, textarea { font-family: inherit; }
   border-radius: 999px; background: var(--folder-color); cursor: pointer; padding: 0;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.22);
 }
-.folder-head .f-del {
+.folder-head .f-del,
+.folder-head .f-subfolder {
   width: 18px; height: 18px; border: none; background: transparent;
   color: var(--muted); cursor: pointer; opacity: 0;
   display: flex; align-items: center; justify-content: center;
-  border-radius: 4px; padding: 0; transition: opacity var(--t-fast);
+  border-radius: 4px; padding: 0; transition: opacity var(--t-fast), color var(--t-fast);
+  flex-shrink: 0;
 }
-.folder-head:hover .f-del { opacity: 1; }
+.folder-head:hover .f-del,
+.folder-head:hover .f-subfolder { opacity: 1; }
 .folder-head .f-del:hover { background: rgba(21,31,39,0.8); color: var(--danger); }
+.folder-head .f-subfolder:hover { background: rgba(21,31,39,0.8); color: var(--fg-2); }
+/* Drag grip */
+.f-grip {
+  display: none; align-items: center; justify-content: center;
+  cursor: grab; color: var(--muted); flex-shrink: 0;
+  padding: 2px; border-radius: 3px;
+  transition: color var(--t-fast);
+}
+.f-grip:active { cursor: grabbing; }
+.folder-head:hover .f-grip { display: flex; }
+/* Drop indicators for folder reorder / nest */
+.folder.drop-before > .folder-head { box-shadow: 0 -2px 0 var(--accent); border-radius: 7px 7px 0 0; }
+.folder.drop-after > .folder-head { box-shadow: 0 2px 0 var(--accent); border-radius: 0 0 7px 7px; }
+.folder.drop-into > .folder-head { box-shadow: 0 0 0 1px var(--accent); background: var(--panel); }
+/* Folder being dragged */
+.folder.folder-dragging { opacity: 0.35; pointer-events: none; }
+/* Subfolder indentation */
+.folder.subfolder { margin-left: 12px; }
 .folder-body { display: flex; flex-direction: column; gap: 3px; padding: 3px 0 3px 14px; margin-left: 7px; border-left: 1px solid rgba(157,170,182,0.1); }
 .folder.collapsed .folder-body { display: none; }
 .folder-empty { color: var(--muted); font-size: 11px; padding: 5px 8px; font-style: italic; }

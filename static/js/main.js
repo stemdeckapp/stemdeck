@@ -184,12 +184,15 @@ function wireFileDrop() {
 function wireAppShellControls() {
   document.getElementById("appMenuBtn")?.addEventListener("click", (e) => {
     e.stopPropagation();
-    // In trash view: switch back to library without collapsing.
+    const app = document.querySelector(".app");
+    // In trash view: switch back to library.
     if (document.querySelector(".sidebar.trash-view")) {
       document.querySelector(".rail-library")?.click();
-      return;
     }
-    document.getElementById("catalogToggle")?.click();
+    // If collapsed: open. Never collapse from the library button.
+    if (app?.classList.contains("cat-collapsed")) {
+      document.getElementById("catalogToggle")?.click();
+    }
   });
 
 }
