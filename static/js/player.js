@@ -71,8 +71,9 @@ function applyStemSelectionFilter(presentNames) {
   for (const name of STEM_NAMES) {
     if (presentNames.has(name)) visibleMixerNames.push(name);
   }
+  const mixerCap = STEM_NAMES.length + (presentNames.has("original") ? 1 : 0);
   for (const name of STEM_NAMES) {
-    if (visibleMixerNames.length >= STEM_NAMES.length) break;
+    if (visibleMixerNames.length >= mixerCap) break;
     if (!visibleMixerNames.includes(name)) visibleMixerNames.push(name);
   }
   const visibleMixerSet = new Set(visibleMixerNames);
