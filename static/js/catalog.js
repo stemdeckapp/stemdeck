@@ -46,7 +46,13 @@ function removeTrackFromFolders(trackId) {
 }
 
 function normalizeSource(value) {
-  return String(value || "").trim();
+  const s = String(value || "").trim();
+  if (!s) return s;
+  // Normalize YouTube URLs to the bare video ID so that youtu.be/xxx,
+  // youtube.com/watch?v=xxx, and variants with &t= / ?si= all match.
+  const yt = s.match(/(?:youtu\.be\/|[?&]v=)([a-zA-Z0-9_-]{11})/);
+  if (yt) return `yt:${yt[1]}`;
+  return s;
 }
 
 function normalizeSearch(value) {
@@ -145,7 +151,18 @@ function saveState() {
 export function addTrackToLibrary(track) {
   // track: { id, title, channel, thumb, stems, status, sourceUrl }
   const existingId = findTrackBySource(track.sourceUrl, track.id);
-  if (existingId) replaceTrackId(existingId, track.id);
+  if (existingId) {
+    const trash = getTrashFolder();
+    const inTrash = trash?.items.includes(existingId);
+    if (inTrash) {
+      // Old track was trashed — delete it silently so the new import lands
+      // in the library instead of inheriting the trash placement.
+      delete tracks[existingId];
+      for (const f of folders) f.items = f.items.filter((id) => id !== existingId);
+    } else {
+      replaceTrackId(existingId, track.id);
+    }
+  }
   tracks[track.id] = { ...(tracks[track.id] || {}), ...track };
   const alreadyPlaced = folders.some((folder) => folder.items.includes(track.id));
   if (!alreadyPlaced) {
@@ -880,6 +897,11 @@ function wireCatalogToggle() {
 function wireCatalogRailViews() {
   document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
+  document.getElementById("clearBinBtn")?.addEventListener("click", () => {
+    purgeTrash();
+    saveState();
+    render();
+  });
 }
 
 function wireCatalogSearch() {

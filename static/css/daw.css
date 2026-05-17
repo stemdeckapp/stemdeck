@@ -42,7 +42,7 @@ input, textarea { font-family: inherit; }
    TOPBAR
    ═══════════════════════════════════ */
 .daw-topbar {
-  height: 64px;
+  height: 70px;
   flex-shrink: 0;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
@@ -105,6 +105,9 @@ input, textarea { font-family: inherit; }
   min-width: 0;
   cursor: text;
 }
+/* Hide decorative SVG icons in the topbar */
+.daw-url-zone > svg { display: none; }
+.daw-process-btn > svg { display: none; }
 .daw-url-zone svg { flex-shrink: 0; }
 
 .daw-url-zone input[type="url"] {
@@ -960,7 +963,7 @@ input, textarea { font-family: inherit; }
   opacity: 0;
 }
 /* Also update the --lane-h var to match waveform lane height */
-:root { --lane-h: 66px; } /* 64px wave + 2px separator */
+:root { --lane-h: 72px; } /* 70px wave + 2px separator */
 .stem-icon { width: 14px; height: 14px; flex-shrink: 0; }
 .stem-mute, .stem-solo { display: none; }
 .stem-monitor { display: none; }
@@ -976,15 +979,15 @@ input, textarea { font-family: inherit; }
   overflow-y: auto;
 }
 
-/* Each mixer row = horizontal lane — height must match WAVEFORM_LANE_HEIGHT (64px) + WAVEFORM_SEPARATOR_HEIGHT (2px) */
+/* Each mixer row = horizontal lane — height must match WAVEFORM_LANE_HEIGHT (70px) + WAVEFORM_SEPARATOR_HEIGHT (2px) */
 .lane-header.mx-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  height: 66px;          /* = WAVEFORM_LANE_HEIGHT (64) + WAVEFORM_SEPARATOR_HEIGHT (2) */
-  min-height: 66px;
-  max-height: 66px;
+  gap: 6px;
+  padding: 0 10px;
+  height: 72px;          /* = WAVEFORM_LANE_HEIGHT (70) + WAVEFORM_SEPARATOR_HEIGHT (2) */
+  min-height: 72px;
+  max-height: 72px;
   border-bottom: 2px solid var(--border);
   background: var(--bg-2);
   flex-shrink: 0;
@@ -997,79 +1000,110 @@ input, textarea { font-family: inherit; }
 
 .lane-stripe { display: none; }
 
-/* Stem icon */
-.mx-icon {
-  width: 14px; height: 14px; flex-shrink: 0;
+/* Name + VU stacked vertically */
+.lane-name-vu {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 76px;
+  flex-shrink: 0;
 }
-.mx-icon svg { width: 14px; height: 14px; }
+
+/* Stem icon — hidden per user preference */
+.mx-icon { display: none; }
 
 /* Stem name */
 .mx-name {
   font-size: 13px; font-weight: 500;
-  min-width: 52px; flex-shrink: 0;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Fader (horizontal, drag) */
+/* Fader (horizontal, native range input) */
 .lane-knob.mx-fader {
   flex: 1;
-  position: relative;
-  height: 22px;
   display: flex;
   align-items: center;
-  cursor: col-resize;
-  touch-action: none;
   min-width: 0;
 }
 .lane-knob-indicator { display: none; }
-.mx-fader-track {
-  position: absolute; left: 0; right: 0; top: 50%;
-  transform: translateY(-50%);
-  height: 3px; border-radius: 1.5px;
-  background: var(--bg);
-  box-shadow: inset 0 1px 1px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.04);
-  overflow: hidden;
+.mx-fader-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: ew-resize;
+  outline: none;
+  margin: 0;
 }
-.mx-fader-fill {
-  position: absolute; left: 0; top: 0; bottom: 0;
-  border-radius: 1.5px;
-  opacity: 0.9;
-}
-.mx-fader-knob {
-  position: absolute; top: -4px; bottom: -4px;
-  width: 8px;
+.mx-fader-input::-webkit-slider-runnable-track {
+  height: 4px;
   border-radius: 2px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(0,0,0,0.4);
-  transform: translateX(-50%);
-  opacity: 0.7;
+  background: linear-gradient(
+    to right,
+    var(--fader-color, #888) 0%,
+    var(--fader-color, #888) calc(var(--lane-pos, 0.5) * 100%),
+    rgba(255,255,255,0.08) calc(var(--lane-pos, 0.5) * 100%)
+  );
+}
+.mx-fader-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--fader-color, #888);
+  margin-top: -5px;
+  border: 2px solid rgba(0,0,0,0.35);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
+  cursor: ew-resize;
+}
+.mx-fader-input::-moz-range-track {
+  height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,0.08);
+}
+.mx-fader-input::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--fader-color, #888);
+  border: 2px solid rgba(0,0,0,0.35);
+  cursor: ew-resize;
 }
 
-/* VU meter */
+/* VU meter — sits below stem name in .lane-left-col, spans full column width */
 .lane-vu.mx-meter {
-  display: flex; gap: 1px;
-  height: 5px; width: 64px;
+  position: relative;
+  height: 5px;
+  width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 2px;
-  padding: 1px;
-  flex-shrink: 0;
+  border-radius: 3px;
   overflow: hidden;
+  --vu-level: 0%;
+  --vu-peak: 0%;
 }
 .lane-vu-bar {
-  flex: 1;
-  background: var(--bg-2);
-  border-radius: 0.5px;
-  transition: background var(--t-fast);
+  display: none;
 }
-.lane-vu-bar.mx-meter-fill { background: #22c55e; }
+.lane-vu-bar.mx-meter-fill {
+  display: block;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--vu-level, 0%);
+  background: linear-gradient(90deg, #22c55e 0%, #86efac 80%, #f97316 95%, #ef4444 100%);
+  border-radius: 2px;
+  transition: width 40ms linear;
+}
 
 /* dB value */
 .mx-val {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   color: var(--fg);
-  width: 48px;
+  width: 36px;
   text-align: right;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -1079,7 +1113,7 @@ input, textarea { font-family: inherit; }
 .lane-icon-toggle.mx-btn,
 .ms-btn.mx-btn,
 .lane-dl.mx-btn {
-  width: 26px; height: 22px;
+  width: 22px; height: 20px;
   background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
@@ -1116,8 +1150,9 @@ input, textarea { font-family: inherit; }
 /* Disabled state */
 .lane-header.unavailable .lane-icon-toggle.mx-btn,
 .lane-header.unavailable .ms-btn.mx-btn,
-.lane-header.unavailable .lane-dl.mx-btn,
-.lane-header.unavailable .lane-knob { opacity: 0.25; pointer-events: none; }
+.lane-header.unavailable .lane-dl.mx-btn { opacity: 0.25; pointer-events: none; }
+.lane-header.unavailable .lane-knob { opacity: 0.25; }
+.mx-fader-input { touch-action: pan-y; }
 
 /* ── Waveform panel (right) ── */
 /* Layout only — waves.css handles all visual styling inside (.wave-scroll bg,
@@ -1218,7 +1253,7 @@ input, textarea { font-family: inherit; }
 
 /* ── Transport footer ── */
 .daw-footer {
-  height: 56px;
+  height: 72px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -1254,12 +1289,13 @@ input, textarea { font-family: inherit; }
 
 /* Transport controls */
 .daw-transport-controls {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%;
 }
 .daw-play-btn {
   background: var(--accent);
   color: #1a1206;
-  width: 40px; height: 40px;
+  width: 52px; height: 52px;
   border-radius: 50%; border: none;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
@@ -1273,6 +1309,12 @@ input, textarea { font-family: inherit; }
 /* JS toggles these to show play vs pause icon */
 .btn-transport.playing .pause-icon { display: block !important; }
 .btn-transport.playing > svg:first-child { display: none; }
+
+/* Bigger stop/loop buttons inside the footer transport row */
+.daw-footer .daw-iconbtn.btn-transport {
+  width: 44px; height: 44px;
+  border-radius: 10px;
+}
 
 /* Loop active state */
 .daw-iconbtn.loop.active,
@@ -1308,6 +1350,20 @@ input, textarea { font-family: inherit; }
   text-decoration: none; font-family: var(--font-mono);
 }
 .about-link:hover { text-decoration: underline; }
+
+/* ── Clear bin bar (trash view only) ── */
+.clear-bin-bar { display: none; padding: 6px 10px 4px; }
+.sidebar.trash-view .clear-bin-bar { display: block; }
+.sidebar.trash-view .daw-lib-header { display: none; }
+.clear-bin-btn {
+  display: flex; align-items: center; gap: 5px;
+  width: 100%; padding: 6px 10px; border-radius: 6px;
+  background: rgba(229, 78, 78, 0.12); border: 1px solid rgba(229, 78, 78, 0.28);
+  color: #e54e4e; font-size: 12px; font-weight: 500; cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.clear-bin-btn:hover { background: rgba(229, 78, 78, 0.22); border-color: rgba(229, 78, 78, 0.5); }
+.clear-bin-btn:active { background: rgba(229, 78, 78, 0.32); }
 
 /* ── App state classes (set by JS) ── */
 /* No track loaded: hide main waveform content */

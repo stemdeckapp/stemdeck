@@ -57,18 +57,13 @@ export function applyMix() {
 
     const targetGain = effective * masterVolume;
 
-    // HTMLAudioElement.volume is capped at [0,1] by the browser spec.
-    // Values > 1 throw in Firefox/Safari (breaking the whole loop) and
-    // are silently clamped in Chrome (boost never audible). Route each
-    // HTMLAudioElement through a Web Audio GainNode instead — gain.value
-    // accepts any positive number, enabling real boost and reliable mute.
     const audioEl = multitrack.audios?.[idx];
     if (audioEl instanceof HTMLMediaElement) {
-      // Use the HTMLAudioElement's native volume instead of routing through a
-      // MediaElementAudioSourceNode. WKWebView (Safari) does not reliably pass
-      // audio from MediaElementSource → GainNode → destination to the speakers,
-      // so we stay on the browser's default output path and cap gain at 1.0.
-      audioEl.volume = Math.min(1, Math.max(0, targetGain));
+      // WKWebView does not pass audio through MediaElementSource → GainNode →
+      // destination. Use the native HTMLAudioElement volume path instead and
+      // cap at 1.0 (the spec limit). Boost above unity is not supported on
+      // this platform but basic volume/mute works reliably.
+      audioEl.volume = Math.max(0, Math.min(1, targetGain));
     } else {
       multitrack.setTrackVolume(idx, targetGain);
     }
@@ -79,8 +74,18 @@ export function updateLaneKnobVisual(knobEl, v) {
   const frac = Math.max(0, Math.min(1, v / LANE_VOLUME_MAX));
   knobEl.style.setProperty("--lane-pos", frac.toFixed(3));
   knobEl.setAttribute("aria-valuenow", v.toFixed(2));
+  const input = knobEl.querySelector(".mx-fader-input");
+  if (input) {
+    input.value = String(v);
+    // Set --lane-pos directly on the input so ::webkit-slider-runnable-track
+    // can see it — WebKit shadow DOM pseudo-elements don't inherit vars from ancestors.
+    input.style.setProperty("--lane-pos", frac.toFixed(3));
+  }
   const val = knobEl.closest(".lane-header")?.querySelector(".mx-val");
-  if (val) val.textContent = String(Math.round(frac * 100));
+  if (val) {
+    const db = v <= 0 ? "-∞" : (20 * Math.log10(v)).toFixed(1);
+    val.textContent = db === "-∞" ? "-∞" : `${parseFloat(db) > 0 ? "+" : ""}${db}`;
+  }
 }
 
 export function setLaneVolume(name, v) {
@@ -247,72 +252,27 @@ function makeVolumeKnob(stemName, color) {
   const wrap = document.createElement("div");
   wrap.className = "lane-knob mx-fader";
   wrap.dataset.stem = stemName;
-  wrap.tabIndex = 0;
-  wrap.setAttribute("role", "slider");
-  wrap.setAttribute("aria-label", `${STEM_DISPLAY[stemName] || stemName} gain`);
-  wrap.setAttribute("aria-valuemin", "0");
-  wrap.setAttribute("aria-valuemax", String(LANE_VOLUME_MAX));
-  wrap.setAttribute("aria-valuenow", "1");
-  wrap.title = "Drag to adjust \u00b7 double-click to reset to 0\u00a0dB \u00b7 scroll to nudge";
 
-  const track = document.createElement("div");
-  track.className = "mx-fader-track";
-  const fill = document.createElement("div");
-  fill.className = "mx-fader-fill";
-  fill.style.background = color;
-  const knob = document.createElement("div");
-  knob.className = "mx-fader-knob";
-  knob.style.background = color;
-  track.append(fill, knob);
-  wrap.appendChild(track);
+  const input = document.createElement("input");
+  input.type = "range";
+  input.className = "mx-fader-input";
+  input.setAttribute("min", "0");
+  input.setAttribute("max", String(LANE_VOLUME_MAX));
+  input.setAttribute("step", "0.01");
+  input.setAttribute("value", "1");
+  input.style.setProperty("--fader-color", color);
+  input.style.setProperty("--lane-pos", "0.5");
+  input.setAttribute("aria-label", `${STEM_DISPLAY[stemName] || stemName} volume`);
+  input.addEventListener("input", () => setLaneVolume(stemName, parseFloat(input.value)));
+  input.addEventListener("dblclick", (e) => { e.stopPropagation(); setLaneVolume(stemName, 1); });
+  wrap.appendChild(input);
 
-  // Legacy indicator kept for CSS compat (display:none via widgets.css)
-  const indicator = document.createElement("div");
-  indicator.className = "lane-knob-indicator";
-  wrap.appendChild(indicator);
-
-  let dragging = false;
-  let startX = 0;
-  let startVolume = 1;
-
-  const onMove = (e) => {
-    if (!dragging) return;
-    const dx = e.clientX - startX;
-    const travelPx = Math.max(1, wrap.getBoundingClientRect().width);
-    setLaneVolume(stemName, startVolume + dx * (LANE_VOLUME_MAX / travelPx));
-  };
-  const onUp = () => {
-    dragging = false;
-    wrap.classList.remove("dragging");
-    document.removeEventListener("pointermove", onMove);
-    document.removeEventListener("pointerup", onUp);
-  };
-  wrap.addEventListener("pointerdown", (e) => {
-    dragging = true;
-    wrap.classList.add("dragging");
-    startX = e.clientX;
-    startVolume = mixerState[stemName]?.volume ?? 1;
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    e.preventDefault();
-  });
   wrap.addEventListener("dblclick", () => setLaneVolume(stemName, 1));
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const cur = mixerState[stemName]?.volume ?? 1;
-    const step = e.shiftKey ? 0.2 : 0.04;
-    setLaneVolume(stemName, cur - Math.sign(e.deltaY) * step);
+    setLaneVolume(stemName, cur - Math.sign(e.deltaY) * (e.shiftKey ? 0.2 : 0.04));
   }, { passive: false });
-  wrap.addEventListener("keydown", (e) => {
-    const cur = mixerState[stemName]?.volume ?? 1;
-    let next = cur;
-    if (e.code === "ArrowUp" || e.code === "ArrowRight") next = cur + 0.1;
-    else if (e.code === "ArrowDown" || e.code === "ArrowLeft") next = cur - 0.1;
-    else if (e.code === "Home") next = 1;
-    else return;
-    e.preventDefault();
-    setLaneVolume(stemName, next);
-  });
 
   return wrap;
 }
@@ -399,7 +359,12 @@ export function renderMixerRow(stem) {
   dl.title = `Download ${display}`;
   dl.appendChild(downloadIcon());
 
-  row.append(iconCell, nameEl, fader, vu, val, muteBtn, soloBtn, dl);
+  // Wrap name + VU in a column so VU appears below the name
+  const nameVuCol = document.createElement("div");
+  nameVuCol.className = "lane-name-vu";
+  nameVuCol.append(nameEl, vu);
+
+  row.append(iconCell, nameVuCol, fader, val, muteBtn, soloBtn, dl);
 
   muteBtn.addEventListener("click", () => toggleStemMute(stem.name));
   soloBtn.addEventListener("click", () => toggleStemSolo(stem.name));

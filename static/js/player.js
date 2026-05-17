@@ -145,7 +145,7 @@ function renderPlaceholderTracks() {
 
 const OVERVIEW_WAVE_POINTS = 1500;
 const STEM_VU_FPS = 30;
-const WAVEFORM_LANE_HEIGHT = 64;
+const WAVEFORM_LANE_HEIGHT = 70;
 const WAVEFORM_SEPARATOR_HEIGHT = 2;
 let visualRenderToken = 0;
 let visualAudioContext = null;
@@ -774,6 +774,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
     ws.on("play", () => {
       playBtn.classList.add("playing");
       stopBtn.classList.remove("stopped");
+      applyMix();
     });
     ws.on("pause", () => {
       playBtn.classList.remove("playing");

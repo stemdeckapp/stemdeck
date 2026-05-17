@@ -184,6 +184,11 @@ function wireFileDrop() {
 function wireAppShellControls() {
   document.getElementById("appMenuBtn")?.addEventListener("click", (e) => {
     e.stopPropagation();
+    // In trash view: switch back to library without collapsing.
+    if (document.querySelector(".sidebar.trash-view")) {
+      document.querySelector(".rail-library")?.click();
+      return;
+    }
     document.getElementById("catalogToggle")?.click();
   });
 

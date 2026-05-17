@@ -139,11 +139,17 @@
         <aside class="sidebar" id="catalogPanel">
           <!-- Rail -->
           <nav class="sidebar-rail" aria-label="Library navigation">
-            <button class="rail-btn active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true">
+            <button class="rail-btn rail-library active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M4 4h16v16H4z M4 9h16"/>
               </svg>
               <span>Library</span>
+            </button>
+            <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
+              </svg>
+              <span>Trash</span>
             </button>
             <div style="flex:1"></div>
             <button class="rail-btn" type="button" title="Settings" aria-label="Settings">
@@ -193,6 +199,16 @@
                   </svg>
                 </button>
               </div>
+            </div>
+
+            <!-- Clear bin (visible only in trash-view) -->
+            <div id="clearBinBar" class="clear-bin-bar">
+              <button id="clearBinBtn" class="clear-bin-btn" type="button">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
+                </svg>
+                Empty trash
+              </button>
             </div>
 
             <!-- Catalog list (JS populates) -->
@@ -469,42 +485,25 @@
 
           <!-- Transport footer -->
           <footer class="daw-footer transport-footer">
-            <div class="daw-footer-left np-transport">
-              <span class="num daw-time-big" id="footer-time-elapsed">0:00</span>
-              <span class="num daw-time-total" id="footer-time-total">/ 0:00</span>
-            </div>
-            <div style="flex:1"></div>
             <div class="daw-transport-controls">
-              <button class="daw-iconbtn" id="t-rewind" type="button" title="Rewind" aria-label="Rewind">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M6 5h2v14H6z M20 5 9 12l11 7z"/>
-                </svg>
-              </button>
               <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" style="margin-left:2px">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="margin-left:2px">
                   <path d="M6 4l14 8L6 20z"/>
                 </svg>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
                   <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
                 </svg>
               </button>
               <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12"/>
                 </svg>
               </button>
               <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop (L)" aria-label="Loop">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
                 </svg>
               </button>
-            </div>
-            <div style="flex:1"></div>
-            <div class="daw-footer-right">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" aria-hidden="true">
-                <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
-              </svg>
-              <input type="range" min="0" max="100" value="80" class="daw-master-fader" id="master-vol" style="width:110px" aria-label="Master volume" />
             </div>
           </footer>
 
