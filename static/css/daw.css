@@ -1289,11 +1289,9 @@ input, textarea { font-family: inherit; }
 .lane-dl.mx-btn:hover { color: var(--fg); border-color: var(--border); }
 .lane-dl.mx-btn svg { width: 13px; height: 13px; }
 
-/* Disabled state */
-.lane-header.unavailable .lane-icon-toggle.mx-btn,
-.lane-header.unavailable .ms-btn.mx-btn,
-.lane-header.unavailable .lane-dl.mx-btn { opacity: 0.25; pointer-events: none; }
-.lane-header.unavailable .lane-knob { opacity: 0.25; }
+/* Unavailable stems — gray entire mixer row and waveform row */
+.lane-header.unavailable { opacity: 0.25; pointer-events: none; }
+.stem-waveform-row.unavailable { opacity: 0.2; pointer-events: none; }
 .mx-fader-input { touch-action: pan-y; }
 
 /* ── Waveform panel (right) ── */

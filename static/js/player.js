@@ -36,11 +36,22 @@ const _STEM_ROW_SELECTORS = [
   ".stem-list span[data-stem]",
   ".presence-bars i[data-stem]",
   ".presence-labels span",
-  ".stem-waveform-row[data-stem]",
 ];
 
 function applyStemSelectionFilter(presentNames) {
-  const visibleTrackCount = Math.max(1, presentNames.size || TRACK_NAMES.length);
+  // Waveform rows: original hides if absent; STEM_NAMES rows always show, grayed if absent
+  for (const el of document.querySelectorAll(".stem-waveform-row[data-stem]")) {
+    const stem = el.dataset.stem;
+    if (stem === "original") {
+      el.classList.toggle("hidden", !presentNames.has(stem));
+      el.classList.remove("unavailable");
+    } else {
+      el.classList.remove("hidden");
+      el.classList.toggle("unavailable", !presentNames.has(stem));
+    }
+  }
+  const originalRow = presentNames.has("original") ? 1 : 0;
+  const visibleTrackCount = originalRow + STEM_NAMES.length;
   const app = document.querySelector(".app");
   app?.style.setProperty("--visible-track-count", String(visibleTrackCount));
   app?.style.setProperty(
@@ -102,6 +113,10 @@ function clearStemSelectionFilter() {
     for (const el of document.querySelectorAll(sel)) {
       el.classList.remove("hidden");
     }
+  }
+  for (const el of document.querySelectorAll(".stem-waveform-row[data-stem]")) {
+    el.classList.remove("hidden");
+    el.classList.remove("unavailable");
   }
   for (const row of document.querySelectorAll(".mixer-column .lane-header[data-stem], .energy-row[data-stem]")) {
     row.classList.remove("hidden");
