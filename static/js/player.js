@@ -718,11 +718,14 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
-  // Reset and re-init footer waveform from the mix/original stem
+  // Reset and re-init footer waveform — prefer the full selected-stems mix,
+  // fall back to the complement "original" track, then first available stem.
   _footerWavePeaks = null;
   setFooterWaveDrawFn(null);
-  const mixStem = stems.find((s) => s.name === "original") || stems[0];
-  if (mixStem?.url) initFooterWaveform(mixStem.url);
+  const waveformUrl = _mixUrl
+    || stems.find((s) => s.name === "original")?.url
+    || stems[0]?.url;
+  if (waveformUrl) initFooterWaveform(waveformUrl);
 
   for (const stem of stems) {
     const row = mixerEl.querySelector(`.lane-header[data-stem="${stem.name}"]`);
