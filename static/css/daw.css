@@ -42,7 +42,7 @@ input, textarea { font-family: inherit; }
    TOPBAR
    ═══════════════════════════════════ */
 .daw-topbar {
-  height: 70px;
+  height: 77px;
   flex-shrink: 0;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
@@ -85,7 +85,7 @@ input, textarea { font-family: inherit; }
 .daw-composer {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: 50px;
   display: flex;
   align-items: stretch;
   background: var(--panel);
@@ -117,7 +117,7 @@ input, textarea { font-family: inherit; }
   border: none;
   outline: none;
   color: var(--fg-2);
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
   letter-spacing: -0.005em;
 }
@@ -125,8 +125,8 @@ input, textarea { font-family: inherit; }
 
 /* Upload button inside URL zone */
 .daw-upload-btn {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -193,7 +193,7 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 .daw-extract-label {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -203,13 +203,13 @@ input, textarea { font-family: inherit; }
 
 /* Stem choice buttons */
 .stem-choice {
-  height: 26px;
-  padding: 0 9px;
+  height: 30px;
+  padding: 0 11px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: none;
   color: var(--muted-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   font-family: inherit;
   letter-spacing: -0.005em;
@@ -236,7 +236,7 @@ input, textarea { font-family: inherit; }
 .stem-choice-all {
   border-color: var(--border-strong);
   color: var(--fg-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 .stem-choice-all[aria-pressed="true"] {
   border-color: var(--accent);
@@ -247,13 +247,13 @@ input, textarea { font-family: inherit; }
 /* Process button */
 .daw-process-btn {
   height: auto;
-  padding: 0 18px;
+  padding: 0 20px;
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
   border: none;
   border-left: 1px solid #b97f1c;
   color: #1a1206;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
   display: inline-flex;
   align-items: center;
@@ -1641,7 +1641,12 @@ input, textarea { font-family: inherit; }
   display: flex; flex-direction: column; justify-content: center;
   gap: 6px;
 }
+.footer-track-title-row {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.footer-track-title-row .daw-fav-btn { margin-left: 0; }
 .footer-track-title {
+  min-width: 0; flex-shrink: 1;
   font-size: 14px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--fg);

@@ -171,7 +171,7 @@ let visualAudioContext = null;
 let stemVuRafId = null;
 let _footerWavePeaks = null;
 let _lastFooterProgress = 0;
-const _FOOTER_BARS = 150;
+const _FOOTER_BARS = 300;
 
 function isAudioBufferLike(value) {
   return value && typeof value.getChannelData === "function";
@@ -860,7 +860,7 @@ function _drawPlaceholderWave() {
   canvas.height = Math.round(h * dpr);
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const n = 150;
+  const n = 300;
   const barW = canvas.width / n;
   const gap = 1;
   const cy = canvas.height / 2;
@@ -872,8 +872,9 @@ function _drawPlaceholderWave() {
       0.2 * Math.abs(Math.sin(t * Math.PI * 21.3 + 2.8))
     );
     const barH = Math.max(3, amp * canvas.height * 0.78);
-    const x = Math.round(i * barW + gap / 2);
-    const bw = Math.max(1, Math.round(barW - gap));
+    const x = Math.round(i * barW);
+    const nextX = i === n - 1 ? canvas.width : Math.round((i + 1) * barW);
+    const bw = Math.max(1, nextX - x - gap);
     ctx.fillStyle = "rgba(255,255,255,0.07)";
     ctx.fillRect(x, cy - barH / 2, bw, barH);
   }
@@ -910,8 +911,9 @@ function _drawFooterWave(progress) {
     const top = cy - mx * norm * cy * 0.78;
     const bot = cy - mn * norm * cy * 0.78;
     const barH = Math.max(3, bot - top);
-    const x = Math.round(i * barW + gap / 2);
-    const bw = Math.max(1, Math.round(barW - gap));
+    const x = Math.round(i * barW);
+    const nextX = i === n - 1 ? canvas.width : Math.round((i + 1) * barW);
+    const bw = Math.max(1, nextX - x - gap);
     ctx.fillStyle = i < playedIdx ? "#f4b740" : "rgba(255,255,255,0.13)";
     ctx.fillRect(x, top, bw, barH);
   }
