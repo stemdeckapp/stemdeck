@@ -1862,6 +1862,13 @@ input, textarea { font-family: inherit; }
 .daw.no-track .daw-wave-header,
 .daw.no-track .daw-content { opacity: 0.3; pointer-events: none; }
 
+.app.no-track #t-export-btn,
+.app.is-import #t-export-btn {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
+
 /* When track is playing */
 .daw-play-btn .pause-icon { display: none; }
 
