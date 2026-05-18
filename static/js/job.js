@@ -4,8 +4,7 @@ import {
   eventSource, setEventSource, setCurrentJobId, currentJobId,
   selectedStems,
 } from "./state.js";
-import { destroyPlayer } from "./player.js";
-import { wireUpAudio } from "./player.js";
+import { destroyPlayer, wireUpAudio, setWaveformLoading } from "./player.js";
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
@@ -196,11 +195,13 @@ function applyState(state) {
   if (state.status === "error") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "error");
+    setWaveformLoading(false);
     showError(state.error || "Unknown error");
     setSubmitProcessing(false);
   } else if (state.status === "cancelled") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "cancelled");
+    setWaveformLoading(false);
     jobBox.classList.add("hidden");
     setSubmitProcessing(false);
   } else if (state.status === "done") {
@@ -355,6 +356,7 @@ export function wireJobForm() {
     const postUrlText = document.getElementById("post-url-text");
     if (postUrlText) postUrlText.textContent = displayTitle;
 
+    setWaveformLoading(true);
     // Show progress box immediately for file uploads — the HTTP upload of a
     // large file takes time and the UI would otherwise appear frozen.
     if (file) {

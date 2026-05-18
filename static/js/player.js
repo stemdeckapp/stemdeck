@@ -603,7 +603,7 @@ function renderAllMiniWaves(mt, stems) {
 let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
 
-function setWaveformLoading(loading) {
+export function setWaveformLoading(loading) {
   const el = document.getElementById("waveLoadingOverlay");
   if (!el) return;
   if (loading) {
