@@ -1024,11 +1024,10 @@ function _exportMixUrl() {
 
 function _exportFilename(ext) {
   const safe = _currentTitle
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
-    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
-    .replace(/_+$/, "");
+    .replace(/^_+|_+$/g, "");
   return safe ? `${safe}_exported_mix.${ext}` : `exported_mix.${ext}`;
 }
 
