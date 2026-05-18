@@ -616,6 +616,7 @@ function renderAllMiniWaves(mt, stems) {
 let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
 let _currentStems = [];
+let _mixUrl = null;
 
 export function setWaveformLoading(loading) {
   const el = document.getElementById("waveLoadingOverlay");
@@ -665,7 +666,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail) {
+export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -711,6 +712,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   // rows for it stay hidden.)
   stems = stems.filter((s) => s.name === "original" || selectedStems.has(s.name));
   _currentStems = stems;
+  _mixUrl = mixUrl || null;
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
@@ -999,25 +1001,35 @@ export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}
 }
 
 function _triggerDownload(url, filename) {
+  const fullUrl = url.startsWith("http") ? url : `${location.origin}${url}`;
+  if (window.__TAURI__?.core?.invoke) {
+    window.__TAURI__.core.invoke("open_url", { url: fullUrl });
+    return;
+  }
   const a = document.createElement("a");
-  a.href = url;
+  a.href = fullUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
-export function downloadCurrentMix() {
+function _exportMixUrl() {
+  if (_mixUrl) return _mixUrl;
   const orig = _currentStems.find((s) => s.name === "original");
-  if (!orig) return;
-  _triggerDownload(orig.url, "mix.wav");
+  return orig?.url ?? null;
+}
+
+export function downloadCurrentMix() {
+  const url = _exportMixUrl();
+  if (!url) return;
+  _triggerDownload(url, "mix.wav");
 }
 
 export function downloadCurrentMixMp3() {
-  const orig = _currentStems.find((s) => s.name === "original");
-  if (!orig) return;
-  // Replace .wav extension with .mp3 for the backend conversion endpoint
-  _triggerDownload(orig.url.replace(/\.wav$/, ".mp3"), "mix.mp3");
+  const url = _exportMixUrl();
+  if (!url) return;
+  _triggerDownload(url.replace(/\.wav$/, ".mp3"), "mix.mp3");
 }
 
 export function downloadCurrentStems() {

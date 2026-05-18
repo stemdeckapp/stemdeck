@@ -224,6 +224,7 @@ function applyState(state) {
         state.stems || [],
         state.duration || 0,
         state.thumbnail,
+        state.mix_url ?? null,
       );
       initSections(state.job_id, state.sections, state.duration || 0);
     }
