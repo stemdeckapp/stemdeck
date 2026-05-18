@@ -50,10 +50,16 @@ async def get_stem_mp3(job_id: str, name: str) -> StreamingResponse:
     async def _stream():
         proc = await asyncio.create_subprocess_exec(
             ffmpeg_executable(),
-            "-nostdin", "-loglevel", "error",
-            "-i", str(wav_path),
-            "-q:a", "2",  # VBR ~190 kbps
-            "-f", "mp3", "pipe:1",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(wav_path),
+            "-q:a",
+            "2",  # VBR ~190 kbps
+            "-f",
+            "mp3",
+            "pipe:1",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

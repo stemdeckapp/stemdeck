@@ -232,7 +232,7 @@ def compute_stem_presence(stems_dir: Path, selected_stems: list[str]) -> dict[st
         if loaded is None:
             continue
         y, _ = loaded
-        rms_values[name] = float(np.sqrt(np.mean(y ** 2)))
+        rms_values[name] = float(np.sqrt(np.mean(y**2)))
 
     if not rms_values:
         return result
@@ -303,6 +303,7 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         # CV = std/mean of inter-beat intervals; CV=0 is perfectly metronomic.
         tempo_stability: int | None = None
         import numpy as np
+
         beat_times = librosa.frames_to_time(beat_frames, sr=sr)
         if len(beat_times) > 2:
             intervals = np.diff(beat_times)
