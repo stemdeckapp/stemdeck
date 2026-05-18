@@ -579,6 +579,7 @@ export function renderEmptyShell() {
     const { row } = renderMixerRow({ name, url: "#" });
     mixerEl.appendChild(row);
   }
+  requestAnimationFrame(() => _applyLaneHeight(1 + STEM_NAMES.length));
   applyStemSelectionFilter(new Set(STEM_NAMES));
   titleEl.textContent = "Ready to import a track";
   bpmChip.textContent = "\u2014 BPM";
@@ -647,6 +648,21 @@ export function buildStripStems() {
     if (srcSvg) sq.appendChild(srcSvg.cloneNode(true));
     container.appendChild(sq);
   }
+}
+
+function _applyLaneHeight(count) {
+  const wavePanel = document.querySelector(".daw-wave-panel");
+  const panelH = wavePanel?.clientHeight ?? 0;
+  const laneH = panelH > 0 && count > 0
+    ? Math.max(WAVEFORM_LANE_HEIGHT, Math.floor(panelH / count))
+    : WAVEFORM_LANE_HEIGHT;
+  const appEl = document.querySelector(".app");
+  appEl?.style.setProperty("--lane-h", `${laneH + 2}px`);
+  appEl?.style.setProperty(
+    "--wave-widget-track-stack-h",
+    `${count * laneH + (count - 1) * WAVEFORM_SEPARATOR_HEIGHT}px`,
+  );
+  return laneH;
 }
 
 export function wireUpAudio(jobId, stems, duration, thumbnail) {
@@ -732,6 +748,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   const orderedNames = [...(stemsByName["original"] ? ["original"] : []), ...STEM_NAMES];
   setTrackIndex(Object.fromEntries(orderedNames.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
+
+  const laneH = _applyLaneHeight(orderedNames.length);
+
   const mt = Multitrack.create(
     orderedNames.map((name, i) => ({
       id: i,
@@ -742,7 +761,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       options: {
         waveColor: STEM_COLORS[name] || "#a0a0a0",
         progressColor: PROGRESS_COLOR,
-        height: WAVEFORM_LANE_HEIGHT,
+        height: laneH,
         barWidth: 3,
         barGap: 2,
         barRadius: 2,

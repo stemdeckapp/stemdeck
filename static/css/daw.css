@@ -1244,18 +1244,18 @@ input, textarea { font-family: inherit; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-/* Each mixer row = horizontal lane — height must match WAVEFORM_LANE_HEIGHT (70px) + WAVEFORM_SEPARATOR_HEIGHT (2px) */
+/* Each mixer row height is driven by --lane-h (set dynamically in JS to fill available space) */
 .lane-header.mx-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 10px;
-  height: 72px;          /* = WAVEFORM_LANE_HEIGHT (70) + WAVEFORM_SEPARATOR_HEIGHT (2) */
+  height: var(--lane-h, 72px);
   min-height: 72px;
-  max-height: 72px;
+  max-height: none;
   border-bottom: 2px solid var(--border);
   background: var(--bg-2);
   flex-shrink: 0;
