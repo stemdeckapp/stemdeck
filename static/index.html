@@ -537,7 +537,13 @@
 
           <!-- Transport footer -->
           <footer class="daw-footer transport-footer">
-            <div class="daw-transport-controls">
+            <!-- Left: playback time -->
+            <div class="daw-footer-left">
+              <span class="num daw-time-big" id="footer-time-elapsed">0:00</span>
+              <span class="num daw-time-total" id="footer-time-total">/ 0:00</span>
+            </div>
+            <!-- Center: transport controls -->
+            <div class="daw-transport-controls np-transport">
               <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="margin-left:2px">
                   <path d="M6 4l14 8L6 20z"/>
@@ -555,6 +561,21 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
                 </svg>
+              </button>
+            </div>
+            <!-- Right: export actions -->
+            <div class="daw-footer-right footer-actions">
+              <button class="daw-btn footer-btn" id="t-export-mix" type="button" aria-label="Export mix">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Mix
+              </button>
+              <button class="daw-btn footer-btn" id="t-export-stems" type="button" aria-label="Export individual stems">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                </svg>
+                Stems
               </button>
             </div>
           </footer>

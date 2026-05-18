@@ -602,6 +602,7 @@ function renderAllMiniWaves(mt, stems) {
 
 let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
+let _currentStems = [];
 
 export function setWaveformLoading(loading) {
   const el = document.getElementById("waveLoadingOverlay");
@@ -681,6 +682,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   // original.wav, so it's simply not in `stems` and the mixer/sidebar
   // rows for it stay hidden.)
   stems = stems.filter((s) => s.name === "original" || selectedStems.has(s.name));
+  _currentStems = stems;
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
 
   for (const stem of stems) {
@@ -818,5 +820,27 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
       updateStopVisual();
     });
     ws.on("seeking", updateStopVisual);
+  });
+}
+
+function _triggerDownload(url, filename) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+export function downloadCurrentMix() {
+  const orig = _currentStems.find((s) => s.name === "original");
+  if (!orig) return;
+  _triggerDownload(orig.url, "mix.wav");
+}
+
+export function downloadCurrentStems() {
+  const stems = _currentStems.filter((s) => s.name !== "original");
+  stems.forEach((s, i) => {
+    window.setTimeout(() => _triggerDownload(s.url, `${s.name}.wav`), i * 150);
   });
 }

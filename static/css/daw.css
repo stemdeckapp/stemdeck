@@ -1527,6 +1527,7 @@ input, textarea { font-family: inherit; }
   align-items: baseline;
   gap: 6px;
   min-width: 140px;
+  flex: 1;
 }
 .daw-time-big {
   font-size: 20px; font-weight: 600; letter-spacing: -0.01em;
@@ -1535,6 +1536,7 @@ input, textarea { font-family: inherit; }
 .daw-footer-right {
   display: flex; align-items: center; gap: 8px;
   min-width: 140px; justify-content: flex-end;
+  flex: 1;
 }
 .daw-master-fader { accent-color: var(--accent); cursor: pointer; }
 .daw-btn {
@@ -1549,7 +1551,6 @@ input, textarea { font-family: inherit; }
 /* Transport controls */
 .daw-transport-controls {
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%;
 }
 .daw-play-btn {
   background: var(--accent);
@@ -1578,6 +1579,19 @@ input, textarea { font-family: inherit; }
 /* Loop active state */
 .daw-iconbtn.loop.active,
 .btn-transport.loop.active { color: var(--accent); }
+
+/* Export buttons in footer */
+.daw-footer .footer-btn {
+  padding: 0 14px;
+  height: 36px;
+  border-radius: 8px;
+  gap: 6px;
+  white-space: nowrap;
+}
+.daw-footer .footer-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 /* ── About dialog ── */
 .about-backdrop {

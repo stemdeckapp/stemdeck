@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentStems } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -100,6 +100,8 @@ function wireAllButton() {
 syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
 wireTransportButtons();
+document.getElementById("t-export-mix")?.addEventListener("click", downloadCurrentMix);
+document.getElementById("t-export-stems")?.addEventListener("click", downloadCurrentStems);
 wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
