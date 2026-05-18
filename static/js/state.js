@@ -43,7 +43,10 @@ export const footerTimeElapsed = $("footer-time-elapsed");
 export const footerTimeTotal = $("footer-time-total");
 export const stemListEl = document.querySelector(".stem-list");
 export const npScrubEl = document.querySelector(".np-scrub");
-export const npScrubFill = document.querySelector(".np-scrub > span");
+export const npScrubFill     = $("footer-scrub-fill");
+export const footerTitle     = $("footer-title");
+export const footerMeta      = $("footer-meta");
+export const footerThumb     = $("footer-thumb");
 
 // ─── Mutable state ───
 

@@ -1,9 +1,9 @@
 import {
-  playBtn, loopBtn, multitrack, loopEnabled, loopStart, loopEnd,
+  playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentStems } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3 } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -100,8 +100,7 @@ function wireAllButton() {
 syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
 wireTransportButtons();
-document.getElementById("t-export-mix")?.addEventListener("click", downloadCurrentMix);
-document.getElementById("t-export-stems")?.addEventListener("click", downloadCurrentStems);
+wireFooterControls();
 wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
@@ -109,6 +108,104 @@ wireAllButton();
 initCatalog();
 wireFileDrop();
 wireAppShellControls();
+
+// ─── Footer: speed dropdown, export dropdown, scrub seek ───
+
+function wireFooterControls() {
+  // ── Speed dropdown ──
+  const speedBtn   = document.getElementById("t-speed-btn");
+  const speedPanel = document.getElementById("t-speed-panel");
+  const speedLabel = document.getElementById("t-speed-label");
+
+  function applyRate(rate) {
+    const audios = multitrack?.audios;
+    if (audios?.length) {
+      for (const a of audios) {
+        const el = (a instanceof HTMLMediaElement) ? a : (a?.media ?? a?.getMediaElement?.());
+        if (!(el instanceof HTMLMediaElement)) continue;
+        el.playbackRate = rate;
+        if ("preservesPitch" in el)        el.preservesPitch    = true;
+        else if ("mozPreservesPitch" in el) el.mozPreservesPitch = true;
+      }
+    }
+    if (speedLabel) speedLabel.textContent = `Speed ${rate === 1 ? "1.0" : rate}×`;
+    speedPanel?.querySelectorAll(".chip-panel-item").forEach((btn) => {
+      btn.classList.toggle("active", parseFloat(btn.dataset.rate) === rate);
+    });
+  }
+
+  speedBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !speedPanel?.classList.contains("hidden");
+    closeAllChipPanels();
+    if (!open) {
+      speedPanel?.classList.remove("hidden");
+      speedBtn.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  speedPanel?.addEventListener("click", (e) => {
+    const item = e.target.closest(".chip-panel-item[data-rate]");
+    if (!item) return;
+    applyRate(parseFloat(item.dataset.rate));
+    speedPanel.classList.add("hidden");
+    speedBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  // ── Export dropdown ──
+  const exportBtn   = document.getElementById("t-export-btn");
+  const exportPanel = document.getElementById("t-export-panel");
+
+  exportBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !exportPanel?.classList.contains("hidden");
+    closeAllChipPanels();
+    if (!open) {
+      exportPanel?.classList.remove("hidden");
+      exportBtn.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  document.getElementById("t-export-wav")?.addEventListener("click", () => {
+    downloadCurrentMix();
+    exportPanel?.classList.add("hidden");
+    exportBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  document.getElementById("t-export-mp3")?.addEventListener("click", () => {
+    downloadCurrentMixMp3();
+    exportPanel?.classList.add("hidden");
+    exportBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  // ── Scrub bar seek ──
+  const scrub = document.getElementById("footer-scrub");
+  if (scrub) {
+    function seekToX(clientX) {
+      if (!multitrack || !totalDuration) return;
+      const rect = scrub.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      multitrack.setTime(frac * totalDuration);
+    }
+    let _scrubbing = false;
+    scrub.addEventListener("mousedown", (e) => {
+      _scrubbing = true;
+      seekToX(e.clientX);
+    });
+    document.addEventListener("mousemove", (e) => { if (_scrubbing) seekToX(e.clientX); });
+    document.addEventListener("mouseup",   () => { _scrubbing = false; });
+  }
+
+  // ── Close panels on outside click ──
+  document.addEventListener("click", closeAllChipPanels);
+}
+
+function closeAllChipPanels() {
+  document.querySelectorAll(".footer-chip-panel:not(.hidden)").forEach((p) => {
+    p.classList.add("hidden");
+    p.previousElementSibling?.setAttribute("aria-expanded", "false");
+  });
+}
 
 // ─── File drop on URL input ───
 

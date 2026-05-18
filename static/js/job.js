@@ -4,7 +4,7 @@ import {
   eventSource, setEventSource, setCurrentJobId, currentJobId,
   selectedStems,
 } from "./state.js";
-import { destroyPlayer, wireUpAudio, setWaveformLoading } from "./player.js";
+import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
@@ -126,6 +126,15 @@ function applyState(state) {
   }
   if (state.bpm) bpmChip.textContent = `${state.bpm} BPM`;
   if (state.key) keyChip.textContent = state.key;
+  if (state.title || state.bpm || state.key || state.thumbnail) {
+    updateFooterTrack({
+      title: state.title,
+      thumbnail: state.thumbnail,
+      key: state.key,
+      bpm: state.bpm,
+      stemCount: state.stems ? state.stems.filter((s) => s.name !== "original").length : null,
+    });
+  }
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
   const summaryScale = document.getElementById("summary-scale");

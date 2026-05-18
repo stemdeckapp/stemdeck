@@ -1,6 +1,6 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { STEM_NAMES } from "./constants.js";
-import { wireUpAudio } from "./player.js";
+import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { fmtTime } from "./utils.js";
@@ -328,6 +328,13 @@ function applyTrackInfoToPanel(track) {
   titleEl.textContent = track.title || "Untitled track";
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
+  updateFooterTrack({
+    title: track.title,
+    thumbnail: track.thumb,
+    key: track.key,
+    bpm: track.bpm,
+    stemCount: (track.audioStems || track.stems || []).filter((s) => (s.name ?? s) !== "original").length || null,
+  });
   applyStemPresenceCards(track.stemPresence);
 
   const summaryKey = document.getElementById("summary-key");

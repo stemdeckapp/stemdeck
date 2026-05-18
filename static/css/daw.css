@@ -1512,7 +1512,7 @@ input, textarea { font-family: inherit; }
 
 /* ── Transport footer ── */
 .daw-footer {
-  height: 72px;
+  height: 80px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -1592,6 +1592,105 @@ input, textarea { font-family: inherit; }
   opacity: 0.4;
   cursor: default;
 }
+
+/* ── Footer redesign ── */
+
+/* Track info (art + title + meta) */
+.footer-track {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 0; flex-shrink: 0; max-width: 220px;
+}
+.footer-art {
+  width: 44px; height: 44px; border-radius: 6px;
+  background: var(--panel-3); flex-shrink: 0; overflow: hidden;
+}
+.footer-thumb-img {
+  width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transition: opacity 0.2s;
+}
+.footer-thumb-img.loaded { opacity: 1; }
+.footer-info {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.footer-title {
+  font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg);
+}
+.footer-meta {
+  font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Time + scrub */
+.footer-time-scrub {
+  display: flex; flex-direction: column; gap: 5px;
+  flex: 1; min-width: 120px; max-width: 240px;
+}
+.footer-time-row {
+  display: flex; align-items: baseline; gap: 5px;
+}
+.footer-elapsed {
+  font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg);
+}
+.footer-total {
+  font-size: 12px; color: var(--muted);
+}
+.footer-time-sep { font-size: 12px; color: var(--muted); }
+
+.footer-scrub {
+  height: 4px; border-radius: 2px;
+  background: var(--panel-3); cursor: pointer; position: relative;
+}
+.footer-scrub:hover { background: var(--panel-4, var(--border-strong)); }
+.footer-scrub-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--accent); width: 0%; pointer-events: none;
+  transition: width 0.1s linear;
+}
+
+/* Transport buttons in new footer layout */
+.footer-transport {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+
+/* Speed + export chip buttons */
+.footer-chip-wrap {
+  position: relative; flex-shrink: 0;
+}
+.footer-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  color: var(--fg); border-radius: 8px; font-size: 12px; font-weight: 500;
+  font-family: inherit; cursor: pointer; padding: 0 12px; height: 36px;
+  white-space: nowrap;
+  transition: background var(--t-fast);
+}
+.footer-chip:hover { background: var(--panel-3); }
+.footer-chip-primary {
+  background: var(--accent); color: #1a1206;
+  border-color: transparent;
+}
+.footer-chip-primary:hover { background: color-mix(in srgb, var(--accent) 85%, white); }
+
+.footer-chip-panel {
+  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  border-radius: 10px; padding: 4px;
+  min-width: 120px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.footer-chip-panel.hidden { display: none !important; }
+
+.chip-panel-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 12px;
+  background: none; border: none; border-radius: 7px;
+  color: var(--fg); font-size: 13px; font-family: inherit;
+  cursor: pointer; text-align: left; white-space: nowrap;
+}
+.chip-panel-item:hover { background: var(--panel-3); }
+.chip-panel-item.active { color: var(--accent); font-weight: 600; }
 
 /* ── About dialog ── */
 .about-backdrop {

@@ -14,6 +14,7 @@ import {
   setMultitrack, setCurrentJobId, setTrackIndex, setTotalDuration,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
+  footerTitle, footerMeta, footerThumb,
 } from "./state.js";
 import {
   loadMixIntoState, resetMixerState, refreshMixerVisuals,
@@ -684,6 +685,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   stems = stems.filter((s) => s.name === "original" || selectedStems.has(s.name));
   _currentStems = stems;
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
+  updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
   for (const stem of stems) {
     const row = mixerEl.querySelector(`.lane-header[data-stem="${stem.name}"]`);
@@ -823,6 +825,27 @@ export function wireUpAudio(jobId, stems, duration, thumbnail) {
   });
 }
 
+export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}) {
+  if (footerThumb) {
+    if (thumbnail) {
+      footerThumb.src = thumbnail;
+      footerThumb.onload = () => footerThumb.classList.add("loaded");
+      footerThumb.onerror = () => footerThumb.classList.remove("loaded");
+    } else {
+      footerThumb.removeAttribute("src");
+      footerThumb.classList.remove("loaded");
+    }
+  }
+  if (footerTitle) footerTitle.textContent = title || "—";
+  if (footerMeta) {
+    const parts = [];
+    if (key) parts.push(key);
+    if (bpm) parts.push(`${Math.round(bpm)} BPM`);
+    if (stemCount != null) parts.push(`${stemCount} Stems`);
+    footerMeta.textContent = parts.join(" • ");
+  }
+}
+
 function _triggerDownload(url, filename) {
   const a = document.createElement("a");
   a.href = url;
@@ -836,6 +859,13 @@ export function downloadCurrentMix() {
   const orig = _currentStems.find((s) => s.name === "original");
   if (!orig) return;
   _triggerDownload(orig.url, "mix.wav");
+}
+
+export function downloadCurrentMixMp3() {
+  const orig = _currentStems.find((s) => s.name === "original");
+  if (!orig) return;
+  // Replace .wav extension with .mp3 for the backend conversion endpoint
+  _triggerDownload(orig.url.replace(/\.wav$/, ".mp3"), "mix.mp3");
 }
 
 export function downloadCurrentStems() {
