@@ -600,11 +600,23 @@ function renderAllMiniWaves(mt, stems) {
   });
 }
 
+let _loadingShownAt = 0;
+const _LOADING_MIN_MS = 900;
+
 function setWaveformLoading(loading) {
   const el = document.getElementById("waveLoadingOverlay");
   if (!el) return;
-  el.classList.toggle("hidden", !loading);
-  if (!loading) el.classList.remove("stalled");
+  if (loading) {
+    _loadingShownAt = performance.now();
+    el.classList.remove("hidden");
+  } else {
+    const elapsed = performance.now() - _loadingShownAt;
+    const delay = Math.max(0, _LOADING_MIN_MS - elapsed);
+    window.setTimeout(() => {
+      el.classList.add("hidden");
+      el.classList.remove("stalled");
+    }, delay);
+  }
 }
 
 export function buildStripStems() {
