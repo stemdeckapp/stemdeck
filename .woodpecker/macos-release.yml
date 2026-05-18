@@ -17,8 +17,10 @@ steps:
         fi
         VERSION="${CI_COMMIT_TAG#v}"
         printf '{ "version": "%s" }\n' "$VERSION" > static/version.json
+        sed -i "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
+        sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
         echo "VERSION=$VERSION" > .macos-release.env
-        echo "Wrote static/version.json for $VERSION"
+        echo "Wrote version $VERSION to static/version.json, Cargo.toml, tauri.conf.json"
 
   build-macos-arm64:
     image: bash
