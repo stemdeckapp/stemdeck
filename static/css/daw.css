@@ -1574,6 +1574,7 @@ input, textarea { font-family: inherit; }
 .daw-footer .daw-iconbtn.btn-transport {
   width: 44px; height: 44px;
   border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 
 /* Loop active state */
@@ -1624,8 +1625,8 @@ input, textarea { font-family: inherit; }
 
 /* Time + scrub */
 .footer-time-scrub {
-  display: flex; flex-direction: column; gap: 5px;
-  flex: 1; min-width: 120px; max-width: 240px;
+  display: flex; flex-direction: column; justify-content: center; gap: 5px;
+  flex: 1; min-width: 120px; max-width: 240px; align-self: center;
 }
 .footer-time-row {
   display: flex; align-items: baseline; gap: 5px;
@@ -1642,7 +1643,7 @@ input, textarea { font-family: inherit; }
   height: 4px; border-radius: 2px;
   background: var(--panel-3); cursor: pointer; position: relative;
 }
-.footer-scrub:hover { background: var(--panel-4, var(--border-strong)); }
+.footer-scrub:hover .footer-scrub-fill { filter: brightness(1.15); }
 .footer-scrub-fill {
   height: 100%; border-radius: 2px;
   background: var(--accent); width: 0%; pointer-events: none;
@@ -1653,10 +1654,20 @@ input, textarea { font-family: inherit; }
 .footer-transport {
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;
 }
+.footer-transport .daw-iconbtn.btn-transport {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+  color: var(--fg-2);
+}
+.footer-transport .daw-iconbtn.btn-transport:hover {
+  background: var(--panel-3);
+  color: var(--fg);
+}
 
 /* Speed + export chip buttons */
 .footer-chip-wrap {
   position: relative; flex-shrink: 0;
+  display: flex; align-items: center;
 }
 .footer-chip {
   display: inline-flex; align-items: center; gap: 6px;
