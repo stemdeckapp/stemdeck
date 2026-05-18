@@ -668,6 +668,13 @@ input, textarea { font-family: inherit; }
 /* ═══════════════════════════════════
    MAIN AREA (#lanes)
    ═══════════════════════════════════ */
+.daw-main-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
 .daw-main {
   flex: 1;
   display: flex;
@@ -1511,15 +1518,14 @@ input, textarea { font-family: inherit; }
 .presence-panel { display: none; }
 
 /* ── Transport footer ── */
+
 .daw-footer {
-  height: 80px;
+  height: 200px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
   display: flex !important;
-  align-items: center;
-  padding: 0 18px;
-  gap: 16px;
+  flex-direction: column;
 }
 
 .daw-footer-left {
@@ -1555,7 +1561,7 @@ input, textarea { font-family: inherit; }
 .daw-play-btn {
   background: var(--accent);
   color: #1a1206;
-  width: 52px; height: 52px;
+  width: 56px; height: 56px;
   border-radius: 50%; border: none;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
@@ -1570,10 +1576,10 @@ input, textarea { font-family: inherit; }
 .btn-transport.playing .pause-icon { display: block !important; }
 .btn-transport.playing > svg:first-child { display: none; }
 
-/* Bigger stop/loop buttons inside the footer transport row */
+/* Stop/loop buttons inside the footer transport row */
 .daw-footer .daw-iconbtn.btn-transport {
-  width: 44px; height: 44px;
-  border-radius: 10px;
+  width: 40px; height: 40px;
+  border-radius: 9px;
   display: inline-flex; align-items: center; justify-content: center;
 }
 
@@ -1596,15 +1602,67 @@ input, textarea { font-family: inherit; }
 
 /* ── Footer redesign ── */
 
+/* ── Footer layout ── */
+.footer-content {
+  display: flex; flex-direction: row; align-items: center;
+  padding: 0 20px; flex: 1; min-height: 0;
+  justify-content: space-between;
+}
+.footer-center {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 0 24px;
+}
+.footer-chips {
+  flex: 1;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  min-width: 0;
+}
+
+/* Wave bar at the bottom of the footer */
+.footer-wave-bar {
+  height: 40px; flex-shrink: 0;
+  position: relative; overflow: hidden;
+}
+#footer-waveform {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; display: block;
+}
+.footer-scrub {
+  position: absolute; inset: 0;
+  cursor: pointer; z-index: 2;
+  background: transparent;
+}
+.footer-scrub-fill { display: none; }
+
 /* Track info (art + title + meta) */
 .footer-track {
-  display: flex; align-items: center; gap: 10px;
-  min-width: 0; flex-shrink: 0; max-width: 220px;
+  flex: 1; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 6px;
 }
+.footer-track-title {
+  font-size: 14px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg);
+}
+.footer-track-body {
+  display: flex; align-items: flex-start; gap: 10px; min-width: 0;
+}
+.footer-cover {
+  width: 56px !important; height: 56px !important;
+  flex-shrink: 0;
+}
+.footer-track-body .daw-track-meta { flex: 1; min-width: 0; gap: 4px; }
+.footer-track .daw-track-details   { gap: 2px; }
+.footer-track .daw-detail-label    { font-size: 10px; width: 58px; }
+.footer-track .daw-detail-val      { font-size: 10px; }
 .footer-art {
   width: 44px; height: 44px; border-radius: 6px;
   background: var(--panel-3); flex-shrink: 0; overflow: hidden;
+  display: none;
 }
+.footer-art.has-art { display: block; }
 .footer-thumb-img {
   width: 100%; height: 100%; object-fit: cover;
   opacity: 0; transition: opacity 0.2s;
@@ -1623,34 +1681,20 @@ input, textarea { font-family: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Time + scrub */
-.footer-time-scrub {
-  display: flex; flex-direction: column; justify-content: center; gap: 5px;
-  flex: 1; min-width: 120px; max-width: 240px; align-self: center;
-}
+/* Time display below transport buttons */
 .footer-time-row {
-  display: flex; align-items: baseline; gap: 5px;
+  display: flex; align-items: baseline; gap: 4px;
+  justify-content: center;
 }
 .footer-elapsed {
-  font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg);
+  font-size: 17px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg);
 }
 .footer-total {
-  font-size: 12px; color: var(--muted);
+  font-size: 13px; font-weight: 400; color: var(--muted);
 }
-.footer-time-sep { font-size: 12px; color: var(--muted); }
+.footer-time-sep { font-size: 13px; color: var(--muted); }
 
-.footer-scrub {
-  height: 4px; border-radius: 2px;
-  background: var(--panel-3); cursor: pointer; position: relative;
-}
-.footer-scrub:hover .footer-scrub-fill { filter: brightness(1.15); }
-.footer-scrub-fill {
-  height: 100%; border-radius: 2px;
-  background: var(--accent); width: 0%; pointer-events: none;
-  transition: width 0.1s linear;
-}
-
-/* Transport buttons in new footer layout */
+/* Transport buttons */
 .footer-transport {
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;
 }

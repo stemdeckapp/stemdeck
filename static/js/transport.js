@@ -5,7 +5,7 @@ import {
   multitrack, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas,
   presenceRulerEl, presencePlayheadEl,
-  footerTimeElapsed, footerTimeTotal, npScrubFill,
+  footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
 } from "./state.js";
 import { applyMix } from "./mixer.js";
@@ -100,10 +100,9 @@ export function updateFooterTimes(currentSec) {
   if (!totalDuration) return;
   if (footerTimeElapsed) footerTimeElapsed.textContent = fmtTime(currentSec);
   if (footerTimeTotal) footerTimeTotal.textContent = fmtTime(totalDuration);
-  if (npScrubFill) {
-    const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
-    npScrubFill.style.width = `${pct}%`;
-  }
+  const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
+  if (npScrubFill) npScrubFill.style.width = `${pct}%`;
+  footerWaveDrawFn?.(pct / 100);
 }
 
 // Build the presence-panel ruler labels from the actual track duration.

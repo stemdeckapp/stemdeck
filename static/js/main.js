@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3 } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -101,6 +101,7 @@ syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
 wireTransportButtons();
 wireFooterControls();
+requestAnimationFrame(drawFooterPlaceholder);
 wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();

@@ -124,3 +124,7 @@ export function setMasterVolume(v) { masterVolume = v; }
 export function setVuRafId(v) { vuRafId = v; }
 export function setMasterBusGain(v) { masterBusGain = v; }
 export function setMasterLimiter(v) { masterLimiter = v; }
+
+// Footer waveform draw callback — set by player.js, called by transport.js
+export let footerWaveDrawFn = null;
+export function setFooterWaveDrawFn(fn) { footerWaveDrawFn = fn; }
