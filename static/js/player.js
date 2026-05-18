@@ -617,6 +617,7 @@ let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
 let _currentStems = [];
 let _mixUrl = null;
+let _currentTitle = "";
 
 export function setWaveformLoading(loading) {
   const el = document.getElementById("waveLoadingOverlay");
@@ -666,7 +667,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null) {
+export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "") {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -713,14 +714,18 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null) {
   stems = stems.filter((s) => s.name === "original" || selectedStems.has(s.name));
   _currentStems = stems;
   _mixUrl = mixUrl || null;
+  _currentTitle = title || "";
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
-  // Reset and re-init footer waveform from the mix/original stem
+  // Reset and re-init footer waveform — prefer the full selected-stems mix,
+  // fall back to the complement "original" track, then first available stem.
   _footerWavePeaks = null;
   setFooterWaveDrawFn(null);
-  const mixStem = stems.find((s) => s.name === "original") || stems[0];
-  if (mixStem?.url) initFooterWaveform(mixStem.url);
+  const waveformUrl = _mixUrl
+    || stems.find((s) => s.name === "original")?.url
+    || stems[0]?.url;
+  if (waveformUrl) initFooterWaveform(waveformUrl);
 
   for (const stem of stems) {
     const row = mixerEl.querySelector(`.lane-header[data-stem="${stem.name}"]`);
@@ -1020,16 +1025,25 @@ function _exportMixUrl() {
   return orig?.url ?? null;
 }
 
+function _exportFilename(ext) {
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  return safe ? `${safe}_exported_mix.${ext}` : `exported_mix.${ext}`;
+}
+
 export function downloadCurrentMix() {
   const url = _exportMixUrl();
   if (!url) return;
-  _triggerDownload(url, "mix.wav");
+  _triggerDownload(url, _exportFilename("wav"));
 }
 
 export function downloadCurrentMixMp3() {
   const url = _exportMixUrl();
   if (!url) return;
-  _triggerDownload(url.replace(/\.wav$/, ".mp3"), "mix.mp3");
+  _triggerDownload(url.replace(/\.wav$/, ".mp3"), _exportFilename("mp3"));
 }
 
 export function downloadCurrentStems() {

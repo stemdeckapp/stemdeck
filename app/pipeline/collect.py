@@ -153,8 +153,8 @@ def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | Non
     sum back to (close to) the original signal, so a 2-stem subset
     fits comfortably below 0 dBFS without normalization headroom."""
     selected = [s for s in job.selected_stems if s in found]
-    if not selected or set(selected) == set(found):
-        return None  # no subset -> "mix" would just be the original
+    if not selected:
+        return None
     if len(selected) == 1:
         return stems_dir / f"{selected[0]}.wav"
     inputs = [stems_dir / f"{name}.wav" for name in selected]

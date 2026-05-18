@@ -435,6 +435,7 @@ input, textarea { font-family: inherit; }
   color: var(--muted);
   font-size: 12px;
   flex-shrink: 0;
+  position: relative;
 }
 .daw-search svg { flex-shrink: 0; }
 .daw-search input {
@@ -1803,6 +1804,34 @@ input, textarea { font-family: inherit; }
 }
 
 /* Tag chips */
+/* ── Tag autocomplete dropdown ── */
+.tag-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  z-index: 50;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 4px;
+  list-style: none;
+  margin: 0;
+  box-shadow: var(--shadow-panel);
+}
+.tag-suggest:empty { display: none; }
+.tag-suggest-item {
+  padding: 7px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.tag-suggest-item:hover,
+.tag-suggest-item.focused {
+  background: var(--panel-3);
+  color: var(--fg);
+}
+
 .lib-tags-row {
   display: flex;
   flex-wrap: wrap;
@@ -1861,6 +1890,13 @@ input, textarea { font-family: inherit; }
 .daw.no-track .daw-section-ribbon,
 .daw.no-track .daw-wave-header,
 .daw.no-track .daw-content { opacity: 0.3; pointer-events: none; }
+
+.app.no-track #t-export-btn,
+.app.is-import #t-export-btn {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
 
 /* When track is playing */
 .daw-play-btn .pause-icon { display: none; }

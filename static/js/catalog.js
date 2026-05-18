@@ -80,7 +80,8 @@ function trackMatchesSearch(track) {
   if (!q) return true;
   if (q.startsWith("#")) {
     const tag = q.slice(1);
-    return (track?.tags ?? []).some((t) => String(t).toLowerCase() === tag);
+    if (!tag) return true;
+    return (track?.tags ?? []).some((t) => String(t).toLowerCase().includes(tag));
   }
   return [
     track?.title,
@@ -468,7 +469,7 @@ async function loadTrackIntoStudio(trackId) {
   }
 
   applyTrackInfoToPanel(track);
-  wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null);
+  wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "");
   initSections(trackId, track.sections, track.duration || 0);
 }
 
@@ -1281,9 +1282,68 @@ function wireCatalogSearch() {
   const input = document.getElementById("catalogSearch");
   if (!input || input.dataset.searchReady === "1") return;
   input.dataset.searchReady = "1";
+
+  const suggest = document.getElementById("tagSuggest");
+
+  function hideSuggest() {
+    if (suggest) suggest.innerHTML = "";
+  }
+
+  function showTagSuggestions(prefix) {
+    if (!suggest) return;
+    suggest.innerHTML = "";
+    if (!prefix) { hideSuggest(); return; }
+    const trashIds = new Set(folders.find((f) => f.id === TRASH_ID)?.items || []);
+    const all = getAllTags(trashIds);
+    const matches = all.filter(([t]) => t.toLowerCase().includes(prefix));
+    if (!matches.length) { hideSuggest(); return; }
+    for (const [tag] of matches.slice(0, 8)) {
+      const li = document.createElement("li");
+      li.className = "tag-suggest-item";
+      li.setAttribute("role", "option");
+      li.textContent = `#${tag}`;
+      li.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        input.value = `#${tag}`;
+        catalogSearchQuery = `#${tag}`;
+        hideSuggest();
+        render();
+      });
+      suggest.appendChild(li);
+    }
+  }
+
   input.addEventListener("input", () => {
     catalogSearchQuery = normalizeSearch(input.value);
     render();
+    const val = input.value;
+    if (val.startsWith("#")) {
+      showTagSuggestions(val.slice(1).toLowerCase());
+    } else {
+      hideSuggest();
+    }
+  });
+
+  input.addEventListener("blur", () => setTimeout(hideSuggest, 150));
+  input.addEventListener("keydown", (e) => {
+    if (!suggest?.children.length) return;
+    if (e.key === "Escape") { hideSuggest(); return; }
+    const items = [...suggest.querySelectorAll(".tag-suggest-item")];
+    const active = suggest.querySelector(".tag-suggest-item.focused");
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = active ? (items[items.indexOf(active) + 1] || items[0]) : items[0];
+      active?.classList.remove("focused");
+      next.classList.add("focused");
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const prev = active ? (items[items.indexOf(active) - 1] || items[items.length - 1]) : items[items.length - 1];
+      active?.classList.remove("focused");
+      prev.classList.add("focused");
+    } else if (e.key === "Enter" && active) {
+      e.preventDefault();
+      active.dispatchEvent(new MouseEvent("mousedown"));
+    }
   });
 }
 

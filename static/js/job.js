@@ -225,6 +225,7 @@ function applyState(state) {
         state.duration || 0,
         state.thumbnail,
         state.mix_url ?? null,
+        state.title || "",
       );
       initSections(state.job_id, state.sections, state.duration || 0);
     }
