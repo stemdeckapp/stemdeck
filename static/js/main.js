@@ -1,6 +1,6 @@
 import {
   playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
-  setLoopStart, setLoopEnd, selectedStems, saveSelectedStems,
+  setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, drawFooterPlaceholder } from "./player.js";
@@ -9,6 +9,7 @@ import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
 import { initCatalog } from "./catalog.js";
+import { runStoreMigrationIfNeeded } from "./utils.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -106,9 +107,15 @@ wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
 wireAllButton();
-initCatalog();
 wireFileDrop();
 wireAppShellControls();
+
+(async () => {
+  await runStoreMigrationIfNeeded();
+  await stemSelectionReady;
+  refreshStemChoiceVisuals();
+  await initCatalog();
+})().catch(console.error);
 
 // ─── Footer: speed dropdown, export dropdown, scrub seek ───
 

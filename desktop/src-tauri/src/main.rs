@@ -13,6 +13,7 @@ use std::{
 };
 use tar::Archive;
 use tauri::{Emitter, Manager};
+use tauri_plugin_store::StoreExt;
 #[cfg(windows)]
 use zip::ZipArchive;
 
@@ -108,6 +109,37 @@ struct GpuSetup {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .setup(|app| {
+            let data_dir = match local_data_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("[stemdeck] could not resolve data_dir, skipping version check: {e}");
+                    return Ok(());
+                }
+            };
+            let _ = fs::create_dir_all(&data_dir);
+
+            let version_file   = data_dir.join("last_version.txt");
+            let migration_flag = data_dir.join("store_migration_done");
+            let current = env!("CARGO_PKG_VERSION");
+            let last    = fs::read_to_string(&version_file).unwrap_or_default();
+
+            if last.trim() != current {
+                if migration_flag.exists() {
+                    #[cfg(target_os = "macos")]
+                    clear_webkit_data();
+                }
+                // Only update the version file if write succeeds. If it fails, skip
+                // cleanup — a missing version file would otherwise cause every launch
+                // to wipe WebKit data.
+                if let Err(e) = fs::write(&version_file, current) {
+                    eprintln!("[stemdeck] failed to write version file, skipping cleanup: {e}");
+                }
+            }
+            let _ = app; // suppress unused warning
+            Ok(())
+        })
         .manage(BackendState::default())
         .invoke_handler(tauri::generate_handler![
             probe_runtime,
@@ -120,6 +152,9 @@ fn main() {
             ensure_torch_device,
             start_backend,
             open_url,
+            store_get,
+            store_set,
+            mark_store_migration_done,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
@@ -138,6 +173,70 @@ fn main() {
             }
             _ => {}
         });
+}
+
+/// Returns ~/Documents/StemDeck/user-data.json, creating the directory if needed.
+/// Using Documents makes the library visible in Finder and eligible for iCloud backup.
+fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let documents = app.path().document_dir().map_err(|e| e.to_string())?;
+    let dir = documents.join("StemDeck");
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create ~/Documents/StemDeck: {e}"))?;
+    Ok(dir.join("user-data.json"))
+}
+
+/// Get a value from the persistent user-data store.
+#[tauri::command]
+fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
+    let path = documents_store_path(&app)?;
+    let store = app.store(path).map_err(|e| e.to_string())?;
+    Ok(store.get(&key))
+}
+
+/// Set a value in the persistent user-data store and immediately flush to disk.
+#[tauri::command]
+fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    let path = documents_store_path(&app)?;
+    let store = app.store(path).map_err(|e| e.to_string())?;
+    store.set(key, value);
+    store.save().map_err(|e| e.to_string())
+}
+
+/// Called by JS after the one-time localStorage → store migration completes.
+/// Writing this flag allows the setup hook to safely clear stale WebKit data
+/// on subsequent version upgrades.
+#[tauri::command]
+fn mark_store_migration_done() {
+    match local_data_dir() {
+        Ok(d) => {
+            if let Err(e) = fs::write(d.join("store_migration_done"), "") {
+                eprintln!("[stemdeck] failed to write migration flag: {e}");
+            }
+        }
+        Err(e) => eprintln!("[stemdeck] could not write migration flag: {e}"),
+    }
+}
+
+/// Delete stale WebKit data directories on macOS so a new app version starts
+/// with a clean WebView. Only called after the JS store migration is confirmed
+/// (store_migration_done flag exists), ensuring no user data is lost.
+#[cfg(target_os = "macos")]
+fn clear_webkit_data() {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let targets = [
+        format!("{home}/Library/WebKit/app.stemdeck.desktop"),
+        format!("{home}/Library/WebKit/stemdeck"),
+    ];
+    for path in &targets {
+        if let Err(e) = fs::remove_dir_all(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("[stemdeck] WebKit cleanup failed for {path}: {e}");
+            }
+        }
+    }
 }
 
 #[tauri::command]

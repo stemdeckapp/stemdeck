@@ -1,4 +1,4 @@
-import { $ } from "./utils.js";
+import { $, storeGet, storeSet } from "./utils.js";
 import { STEM_NAMES } from "./constants.js";
 
 // ─── DOM refs ───
@@ -73,23 +73,33 @@ export let loopEnd = 0;
 // so a user who turns off "Vocals" stays set up that way for the
 // next song.
 const _STEM_SEL_KEY = "stemdeck:selected-stems";
-function _loadSelectedStems() {
+
+// Start with all stems selected (safe default). The async store load below
+// updates this binding once the store is available; ES module live bindings
+// ensure all importers see the updated value on next read.
+export let selectedStems = new Set(STEM_NAMES);
+
+// Resolves when the persisted stem selection has been loaded from the store.
+// Consumers that need the exact stored selection (e.g. the stem-choice UI)
+// should await this before reading selectedStems.
+export const stemSelectionReady = (async () => {
   try {
-    const raw = localStorage.getItem(_STEM_SEL_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr) && arr.length > 0) {
-        return new Set(arr.filter((n) => STEM_NAMES.includes(n)));
+    const arr = await storeGet(_STEM_SEL_KEY, null);
+    if (Array.isArray(arr) && arr.length > 0) {
+      const valid = arr.filter((n) => STEM_NAMES.includes(n));
+      if (valid.length > 0) {
+        selectedStems = new Set(valid);
+        return;
       }
     }
   } catch (e) { console.warn("[state] failed to load stem selection:", e); }
-  return new Set(STEM_NAMES);
-}
-export let selectedStems = _loadSelectedStems();
+  // Keep the all-stems default.
+})();
+
 export function saveSelectedStems() {
-  try {
-    localStorage.setItem(_STEM_SEL_KEY, JSON.stringify([...selectedStems]));
-  } catch (e) { console.warn("[state] failed to save stem selection:", e); }
+  storeSet(_STEM_SEL_KEY, [...selectedStems]).catch((e) =>
+    console.warn("[state] failed to save stem selection:", e)
+  );
 }
 export function setStemSelected(name, selected) {
   if (selected) selectedStems.add(name);

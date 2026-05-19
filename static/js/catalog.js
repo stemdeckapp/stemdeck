@@ -3,7 +3,7 @@ import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
-import { fmtTime } from "./utils.js";
+import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
@@ -11,6 +11,7 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 
 let folders = [];
 let tracks = {};
+let _deletedJobIds = new Set();
 let _currentTrackId = null;
 let catalogView = "library";
 let catalogSearchQuery = "";
@@ -25,15 +26,14 @@ const TRACK_DRAG_TYPE = "application/x-stemdeck-track";
 const FOLDER_DRAG_TYPE = "application/x-stemdeck-folder";
 
 function getDeletedJobIds() {
-  try { return new Set(JSON.parse(localStorage.getItem(DELETED_JOBS_KEY) || "[]")); }
-  catch { return new Set(); }
+  return _deletedJobIds;
 }
 
 function markJobsDeleted(ids) {
-  const set = getDeletedJobIds();
-  for (const id of ids) set.add(id);
-  try { localStorage.setItem(DELETED_JOBS_KEY, JSON.stringify([...set])); }
-  catch (e) { console.warn("[catalog] failed to persist deleted jobs", e); }
+  for (const id of ids) _deletedJobIds.add(id);
+  storeSet(DELETED_JOBS_KEY, [..._deletedJobIds]).catch((e) =>
+    console.warn("[catalog] failed to persist deleted jobs", e)
+  );
 }
 
 function normalizeFolderColor(color) {
@@ -125,12 +125,11 @@ function purgeTrash() {
   return true;
 }
 
-function loadState() {
+async function loadState() {
   let changed = false;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
+    const data = await storeGet(STORAGE_KEY, null);
+    if (data) {
       if ((data.v ?? 1) >= STORAGE_VERSION) {
         folders = data.folders ?? [];
         tracks = data.tracks ?? {};
@@ -154,6 +153,11 @@ function loadState() {
     }
   } catch { /* ignore */ }
 
+  try {
+    const arr = await storeGet(DELETED_JOBS_KEY, []);
+    if (Array.isArray(arr)) _deletedJobIds = new Set(arr);
+  } catch (e) { console.warn("[catalog] failed to load deleted jobs", e); }
+
   ensureTrash();
   for (const folder of folders) {
     if (folder.id !== TRASH_ID) {
@@ -176,9 +180,9 @@ function loadState() {
 
 function saveState() {
   ensureTrash();
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: STORAGE_VERSION, folders, tracks }));
-  } catch (e) { console.warn("[catalog] failed to save state:", e); }
+  storeSet(STORAGE_KEY, { v: STORAGE_VERSION, folders, tracks }).catch((e) =>
+    console.warn("[catalog] failed to save state:", e)
+  );
 }
 
 // ─── Track management ───
@@ -1455,8 +1459,8 @@ async function syncWithServer() {
   } catch { /* backend unavailable — skip silently */ }
 }
 
-export function initCatalog() {
-  loadState();
+export async function initCatalog() {
+  await loadState();
   wireCatalogToggle();
   wireCatalogRailViews();
   wireCatalogSearch();

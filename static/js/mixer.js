@@ -5,6 +5,7 @@ import {
   mixerState, mixerEl, stemListEl, currentJobId, multitrack, trackIndex,
   masterVolume,
 } from "./state.js";
+import { storeGet, storeSetDebounced } from "./utils.js";
 
 function defaultMixerEntry() {
   return { volume: 1, muted: false, soloed: false };
@@ -16,11 +17,11 @@ export function ensureMixerStateDefaults() {
   }
 }
 
-export function loadMixIntoState(jobId) {
+export async function loadMixIntoState(jobId) {
   let stored = {};
   try {
-    const raw = localStorage.getItem(`stemdeck:mix:${jobId}`);
-    if (raw) stored = JSON.parse(raw);
+    const data = await storeGet(`stemdeck:mix:${jobId}`, {});
+    if (data && typeof data === "object") stored = data;
   } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
   for (const name of TRACK_NAMES) {
     Object.assign(mixerState[name], defaultMixerEntry(), stored[name] || {});
@@ -35,12 +36,7 @@ export function resetMixerState() {
 
 function saveMix() {
   if (!currentJobId) return;
-  try {
-    localStorage.setItem(
-      `stemdeck:mix:${currentJobId}`,
-      JSON.stringify(mixerState),
-    );
-  } catch (e) { console.warn("[mixer] failed to save mix state:", e); }
+  storeSetDebounced(`stemdeck:mix:${currentJobId}`, mixerState);
 }
 
 export function applyMix() {
