@@ -1381,8 +1381,8 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
 
-    download_file(&ffmpeg_url, &ffmpeg_zip, Duration::from_secs(5 * 60))?;
-    download_file(&ffprobe_url, &ffprobe_zip, Duration::from_secs(5 * 60))?;
+    download_file(&ffmpeg_url, &ffmpeg_zip, Duration::from_secs(30 * 60))?;
+    download_file(&ffprobe_url, &ffprobe_zip, Duration::from_secs(30 * 60))?;
 
     let ffmpeg_dir = data_dir.join("ffmpeg");
     fs::create_dir_all(&ffmpeg_dir)
@@ -1491,7 +1491,7 @@ fn download_file_with_powershell(url: &str, target: &Path) -> Result<(), String>
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
     let output =
-        command_output_with_timeout(command, Duration::from_secs(5 * 60), "FFmpeg download")?;
+        command_output_with_timeout(command, Duration::from_secs(30 * 60), "FFmpeg download")?;
     if output.status.success() && target.is_file() {
         Ok(())
     } else {
