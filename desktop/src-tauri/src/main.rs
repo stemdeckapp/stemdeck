@@ -175,14 +175,33 @@ fn main() {
         });
 }
 
-/// Returns ~/Documents/StemDeck/user-data.json, creating the directory if needed.
-/// Using Documents makes the library visible in Finder and eligible for iCloud backup.
-fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/// Returns ~/Documents/StemDeck/, creating it if needed.
+/// All user-facing content (library metadata + stem audio) lives here so it is
+/// visible in Finder, eligible for iCloud backup, and survives app reinstalls.
+fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let documents = app.path().document_dir().map_err(|e| e.to_string())?;
     let dir = documents.join("StemDeck");
     fs::create_dir_all(&dir)
         .map_err(|e| format!("failed to create ~/Documents/StemDeck: {e}"))?;
-    Ok(dir.join("user-data.json"))
+    Ok(dir)
+}
+
+/// Returns ~/Documents/StemDeck/user-data.json (library metadata store).
+fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(documents_stemdeck_dir(app)?.join("user-data.json"))
+}
+
+/// Returns ~/Documents/StemDeck/jobs/ (stem audio files).
+/// Falls back to data_dir/jobs if document_dir is unavailable.
+fn documents_dir_for_jobs(app: &tauri::AppHandle) -> PathBuf {
+    match documents_stemdeck_dir(app) {
+        Ok(dir) => {
+            let jobs = dir.join("jobs");
+            let _ = fs::create_dir_all(&jobs);
+            jobs
+        }
+        Err(_) => local_data_dir().map(|d| d.join("jobs")).unwrap_or_else(|_| PathBuf::from("jobs")),
+    }
 }
 
 /// Get a value from the persistent user-data store.
@@ -426,7 +445,7 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
 }
 
 #[tauri::command]
-fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, String> {
+fn start_backend(app_handle: tauri::AppHandle, state: tauri::State<BackendState>) -> Result<BackendStarted, String> {
     if let Some(url) = state.url.lock().map_err(|e| e.to_string())?.clone() {
         return Ok(BackendStarted { url });
     }
@@ -472,8 +491,13 @@ fn start_backend(state: tauri::State<BackendState>) -> Result<BackendStarted, St
         cmd.env("PYTHONHOME", pythonhome);
     }
 
+    // Jobs (stem audio files) live in ~/Documents/StemDeck/jobs/ so the user's
+    // library is visible in Finder, backed up by iCloud, and survives app reinstalls.
+    let jobs_dir = documents_dir_for_jobs(&app_handle);
+
     cmd.current_dir(&backend_dir)
         .env("STEMDECK_DATA_DIR", &data_dir)
+        .env("STEMDECK_JOBS_DIR", &jobs_dir)
         .env("STEMDECK_DESKTOP", "1")
         .env("STEMDECK_PARENT_PID", std::process::id().to_string())
         .env("PYTHONUNBUFFERED", "1")
