@@ -20,3 +20,6 @@ tauri = { version = "2", features = [] }
 tauri-plugin-store = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
