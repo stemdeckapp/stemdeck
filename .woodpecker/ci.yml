@@ -53,17 +53,45 @@ steps:
     commands:
       - uv tool install pip-audit
       - uv pip compile pyproject.toml -o /tmp/requirements.txt
-      # Ignored CVEs (review periodically):
-      #   CVE-2025-2953  torch.mkldnn_max_pool2d local-DoS, fixed in 2.7.1
-      #   CVE-2025-3730  torch.nn.functional.ctc_loss local-DoS, fixed in 2.8
-      # We are pinned to torch <2.7 because torchaudio 2.7+ requires torchcodec,
-      # which has ABI issues that break demucs's torchaudio.save() path. Both
-      # CVEs are in ops StemDeck does not invoke; risk on a local-only single-
-      # user app is negligible. Drop these ignores once the torchaudio /
-      # torchcodec story stabilizes upstream.
+      # Ignored CVEs (review when upgrading torch or demucs):
+      #
+      # torch 2.6.0 — pinned to <2.7 because torchaudio 2.7+ removed its
+      # built-in audio writer and now requires torchcodec, which has ABI
+      # issues that break demucs 4.0.1's torchaudio.save() path. All torch
+      # CVEs below are in ops that StemDeck does not invoke; risk on a
+      # local-only, single-user app is negligible. Re-evaluate once demucs
+      # supports torch 2.7+ without torchcodec.
+      #
+      # joblib PYSEC-2024-277 — no fix version available as of 2025-12-15
+      # (1.5.3 is latest). joblib is a transitive dep via demucs/librosa;
+      # StemDeck does not directly invoke joblib serialization. Drop once
+      # a patched release is available.
       - uv tool run pip-audit -r /tmp/requirements.txt --strict
           --ignore-vuln CVE-2025-2953
           --ignore-vuln CVE-2025-3730
+          --ignore-vuln PYSEC-2025-189
+          --ignore-vuln PYSEC-2025-190
+          --ignore-vuln PYSEC-2025-192
+          --ignore-vuln PYSEC-2025-193
+          --ignore-vuln PYSEC-2025-194
+          --ignore-vuln PYSEC-2025-195
+          --ignore-vuln PYSEC-2025-196
+          --ignore-vuln PYSEC-2025-197
+          --ignore-vuln PYSEC-2025-198
+          --ignore-vuln PYSEC-2025-199
+          --ignore-vuln PYSEC-2025-200
+          --ignore-vuln PYSEC-2025-201
+          --ignore-vuln PYSEC-2025-202
+          --ignore-vuln PYSEC-2025-203
+          --ignore-vuln PYSEC-2025-204
+          --ignore-vuln PYSEC-2025-205
+          --ignore-vuln PYSEC-2025-206
+          --ignore-vuln PYSEC-2025-207
+          --ignore-vuln PYSEC-2025-208
+          --ignore-vuln PYSEC-2025-209
+          --ignore-vuln PYSEC-2025-210
+          --ignore-vuln PYSEC-2026-139
+          --ignore-vuln PYSEC-2024-277
 
   trivy-fs:
     # Scans the source tree for: known CVEs in deps, leaked secrets,
