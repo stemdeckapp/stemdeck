@@ -7,3 +7,12 @@
 # Drop this ignore once PyTorch publishes 2.6.x macOS x86_64 wheels or once
 # the torchaudio/torchcodec story stabilises and the pin can be lifted.
 CVE-2025-32434
+
+# DS-0002: Dockerfile missing USER instruction.
+# The image intentionally starts as root so the entrypoint script
+# (build/docker-entrypoint.sh) can re-chown the bind-mounted /app/jobs
+# directory before dropping to the app user (uid 1001) via gosu. The
+# process runs as non-root for its entire lifetime after the entrypoint
+# executes. Trivy's check does not account for the gosu privilege-drop
+# pattern.
+DS-0002
