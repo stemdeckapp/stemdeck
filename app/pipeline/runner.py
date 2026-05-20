@@ -37,17 +37,18 @@ def _check_cancel(job: Job) -> None:
 
 
 def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
-    """Transcode an MP3 local upload to 16-bit 44.1 kHz stereo WAV before
-    handing it to Demucs. Avoids silent failures from VBR MP3, non-standard
-    sample rates, or unusual channel layouts. WAV uploads are used as-is.
+    """Transcode any local upload to 16-bit 44.1 kHz stereo WAV before
+    handing it to Demucs. Normalises MP3 and non-standard WAV formats
+    (24-bit, 32-bit float, high sample rate, multi-channel) that Demucs
+    would otherwise process silently and output as silence.
 
-    Deletes the original source.mp3 after a successful transcode."""
-    if source.suffix.lower() != ".mp3":
-        return source
-
+    Deletes the original source file after a successful transcode."""
     from app.core.config import ffmpeg_executable
 
     dest = job_dir / "source.wav"
+    if source.resolve() == dest.resolve():
+        return source
+
     _set(job, stage="Preparing audio...")
     cmd = [
         ffmpeg_executable(),

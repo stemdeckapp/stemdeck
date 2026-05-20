@@ -70,6 +70,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
         ca-certificates \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Deno binary fetched in stage 1 (single self-contained file).
@@ -90,14 +91,18 @@ WORKDIR /app
 COPY app/ ./app/
 COPY static/ ./static/
 
-# Run as a non-root user. /app is owned by app so the process can
-# write nothing surprising; /cache is writable for torch/demucs model
-# downloads and /jobs is the standard mount point for job artifacts.
+# Create the app user and own all non-bind-mounted paths. /app/jobs is a
+# bind mount at runtime -- the entrypoint script re-chowns it to app:app
+# before dropping privileges, handling the case where Docker creates the
+# host directory as root on first run.
 RUN groupadd --system --gid 1001 app \
     && useradd --system --uid 1001 --gid app --home /app --no-create-home app \
     && mkdir -p /cache /jobs \
     && chown -R app:app /app /cache /jobs
-USER app
+
+COPY build/docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
