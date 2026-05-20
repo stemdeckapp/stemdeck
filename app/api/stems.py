@@ -70,7 +70,10 @@ async def get_stem_mp3(job_id: str, name: str) -> StreamingResponse:
                     break
                 yield chunk
         finally:
-            proc.stdout.close()
+            # asyncio.StreamReader has no .close(); kill ffmpeg if it's still
+            # running (e.g. client disconnected mid-stream) then wait for exit.
+            if proc.returncode is None:
+                proc.kill()
             await proc.wait()
 
     return StreamingResponse(
