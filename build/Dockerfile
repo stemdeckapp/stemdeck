@@ -50,7 +50,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY app/ ./app/
 COPY static/ ./static/
-RUN pip install .
+RUN pip install . --timeout 300
 
 # ─── Stage 2: runner ─────────────────────────────────────────────
 FROM python:3.12-slim AS runner

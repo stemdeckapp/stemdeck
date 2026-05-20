@@ -139,7 +139,7 @@ setup() {
     fi
 
     echo "==> uv sync"
-    uv sync
+    uv sync --python 3.12
 
     echo
     echo "setup complete. start the server with: ./run.sh start"

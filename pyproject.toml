@@ -2,7 +2,7 @@
 name = "stemdeck"
 version = "0.3.0-alpha.1"
 description = "Paste a YouTube URL, get audio stems split into a DAW-style player."
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
