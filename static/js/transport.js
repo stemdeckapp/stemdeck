@@ -139,9 +139,9 @@ export function updatePresencePlayhead(currentSec) {
 }
 
 export function updateLoopRegionVisual() {
-  const regionWrap = document.getElementById("footer-region-wrap");
+  const regionBtn = document.getElementById("t-region-btn");
   const hasRegion = loopEnabled && totalDuration > 0 && loopEnd > loopStart;
-  regionWrap?.classList.toggle("hidden", !hasRegion);
+  if (regionBtn) regionBtn.disabled = !hasRegion;
   if (!loopEnabled || !totalDuration) {
     loopRegionEl.classList.add("hidden");
     return;

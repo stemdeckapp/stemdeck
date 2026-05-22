@@ -75,10 +75,10 @@ async def get_stem(
         "-nostdin",
         "-loglevel",
         "error",
+        "-ss", str(start),
         "-i",
         str(path),
-        "-af",
-        f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS",
+        "-t", str(end - start),
         "-c:a",
         "pcm_s16le",
         "-f",
@@ -108,18 +108,18 @@ async def get_stem_mp3(
             detail="start and end are both required and start must be less than end",
         )
 
-    af_filter = []
-    if start is not None:
-        af_filter = ["-af", f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS"]
+    pre_seek = ["-ss", str(start)] if start is not None else []
+    post_seek = ["-t", str(end - start)] if start is not None else []
 
     cmd = [
         ffmpeg_executable(),
         "-nostdin",
         "-loglevel",
         "error",
+        *pre_seek,
         "-i",
         str(path),
-        *af_filter,
+        *post_seek,
         "-q:a",
         "2",  # VBR ~190 kbps
         "-f",
