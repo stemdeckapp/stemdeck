@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, drawFooterPlaceholder } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, downloadRegionMix, downloadRegionMixMp3, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -159,7 +159,33 @@ function wireFooterControls() {
     speedBtn?.setAttribute("aria-expanded", "false");
   });
 
-  // ── Export dropdown ──
+  // ── Export Region dropdown ──
+  const regionBtn   = document.getElementById("t-region-btn");
+  const regionPanel = document.getElementById("t-region-panel");
+
+  regionBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !regionPanel?.classList.contains("hidden");
+    closeAllChipPanels();
+    if (!open) {
+      regionPanel?.classList.remove("hidden");
+      regionBtn.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  document.getElementById("t-region-wav")?.addEventListener("click", () => {
+    downloadRegionMix();
+    regionPanel?.classList.add("hidden");
+    regionBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  document.getElementById("t-region-mp3")?.addEventListener("click", () => {
+    downloadRegionMixMp3();
+    regionPanel?.classList.add("hidden");
+    regionBtn?.setAttribute("aria-expanded", "false");
+  });
+
+  // ── Export Mix dropdown ──
   const exportBtn   = document.getElementById("t-export-btn");
   const exportPanel = document.getElementById("t-export-panel");
 

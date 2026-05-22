@@ -1055,3 +1055,27 @@ export function downloadCurrentStems() {
     window.setTimeout(() => _triggerDownload(s.url, `${s.name}.wav`), i * 150);
   });
 }
+
+function _regionFilename(ext) {
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  return `${safe || "region"}_region.${ext}`;
+}
+
+export function downloadRegionMix() {
+  if (!loopEnabled || loopStart >= loopEnd) return;
+  const url = _exportMixUrl();
+  if (!url) return;
+  _triggerDownload(`${url}?start=${loopStart.toFixed(3)}&end=${loopEnd.toFixed(3)}`, _regionFilename("wav"));
+}
+
+export function downloadRegionMixMp3() {
+  if (!loopEnabled || loopStart >= loopEnd) return;
+  const url = _exportMixUrl();
+  if (!url) return;
+  const mp3Url = url.replace(/\.wav$/, ".mp3");
+  _triggerDownload(`${mp3Url}?start=${loopStart.toFixed(3)}&end=${loopEnd.toFixed(3)}`, _regionFilename("mp3"));
+}

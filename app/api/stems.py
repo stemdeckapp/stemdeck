@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import JOB_ID_RE, JOBS_DIR, STEM_NAMES, ffmpeg_executable
@@ -17,9 +17,8 @@ router = APIRouter(tags=["stems"])
 _ALLOWED_NAMES = frozenset(STEM_NAMES) | {"original", "mix"}
 
 
-@router.api_route("/jobs/{job_id}/stems/{name}.wav", methods=["GET", "HEAD"])
-def get_stem(job_id: str, name: str) -> FileResponse:
-    """Download a WAV stem (vocals, drums, bass, guitar, piano, other, original, mix)."""
+def _validate_stem_path(job_id: str, name: str):
+    """Shared guard: validate job_id, name, job state, and path. Returns resolved Path."""
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     if name not in _ALLOWED_NAMES:
@@ -27,59 +26,109 @@ def get_stem(job_id: str, name: str) -> FileResponse:
     job = registry_get(job_id)
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="job not ready")
-    # Resolve and confirm the path stays under JOBS_DIR -- belt and suspenders
-    # on top of the regex above. Mirrors the check in app/pipeline/analyze.py.
     path = (JOBS_DIR / job_id / "stems" / f"{name}.wav").resolve()
     if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="stem not found")
-    return FileResponse(path, media_type="audio/wav", filename=f"{name}.wav")
+    return path
+
+
+async def _stream_ffmpeg(cmd: list[str]):
+    """Yield ffmpeg stdout in 64 KB chunks; kill process on client disconnect."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+
+
+@router.api_route("/jobs/{job_id}/stems/{name}.wav", methods=["GET", "HEAD"], response_model=None)
+async def get_stem(
+    job_id: str,
+    name: str,
+    start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
+    end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
+) -> FileResponse | StreamingResponse:
+    """Download a WAV stem. Optional ?start=&end= trims to a time region."""
+    path = _validate_stem_path(job_id, name)
+
+    if start is None and end is None:
+        return FileResponse(path, media_type="audio/wav", filename=f"{name}.wav")
+
+    if start is None or end is None or start >= end:
+        raise HTTPException(
+            status_code=422,
+            detail="start and end are both required and start must be less than end",
+        )
+
+    cmd = [
+        ffmpeg_executable(),
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-af",
+        f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        "pipe:1",
+    ]
+    return StreamingResponse(
+        _stream_ffmpeg(cmd),
+        media_type="audio/wav",
+        headers={"Content-Disposition": f'attachment; filename="{name}_region.wav"'},
+    )
 
 
 @router.get("/jobs/{job_id}/stems/{name}.mp3")
-async def get_stem_mp3(job_id: str, name: str) -> StreamingResponse:
-    """Stream a stem as MP3 (VBR ~190 kbps). Transcoded on-the-fly from WAV via ffmpeg."""
-    if not JOB_ID_RE.match(job_id):
-        raise HTTPException(status_code=404, detail="job not found")
-    if name not in _ALLOWED_NAMES:
-        raise HTTPException(status_code=404, detail="unknown stem")
-    job = registry_get(job_id)
-    if job is None or job.status != "done":
-        raise HTTPException(status_code=404, detail="job not ready")
-    wav_path = (JOBS_DIR / job_id / "stems" / f"{name}.wav").resolve()
-    if not wav_path.is_file() or not wav_path.is_relative_to(JOBS_DIR.resolve()):
-        raise HTTPException(status_code=404, detail="stem not found")
+async def get_stem_mp3(
+    job_id: str,
+    name: str,
+    start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
+    end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
+) -> StreamingResponse:
+    """Stream a stem as MP3 (VBR ~190 kbps). Optional ?start=&end= trims to a time region."""
+    path = _validate_stem_path(job_id, name)
 
-    async def _stream():
-        proc = await asyncio.create_subprocess_exec(
-            ffmpeg_executable(),
-            "-nostdin",
-            "-loglevel",
-            "error",
-            "-i",
-            str(wav_path),
-            "-q:a",
-            "2",  # VBR ~190 kbps
-            "-f",
-            "mp3",
-            "pipe:1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+    if (start is None) != (end is None) or (start is not None and start >= end):
+        raise HTTPException(
+            status_code=422,
+            detail="start and end are both required and start must be less than end",
         )
-        try:
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            # asyncio.StreamReader has no .close(); kill ffmpeg if it's still
-            # running (e.g. client disconnected mid-stream) then wait for exit.
-            if proc.returncode is None:
-                proc.kill()
-            await proc.wait()
 
+    af_filter = []
+    if start is not None:
+        af_filter = ["-af", f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS"]
+
+    cmd = [
+        ffmpeg_executable(),
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        *af_filter,
+        "-q:a",
+        "2",  # VBR ~190 kbps
+        "-f",
+        "mp3",
+        "pipe:1",
+    ]
+    filename = f"{name}_region.mp3" if start is not None else f"{name}.mp3"
     return StreamingResponse(
-        _stream(),
+        _stream_ffmpeg(cmd),
         media_type="audio/mpeg",
-        headers={"Content-Disposition": f'attachment; filename="{name}.mp3"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
