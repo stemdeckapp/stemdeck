@@ -1,6 +1,4 @@
 use flate2::read::GzDecoder;
-#[cfg(unix)]
-use libc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -940,9 +938,9 @@ fn open_url(url: String) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/c", "start", "", &url]);
-        hide_console_window(&mut cmd);
+        // Use explorer.exe directly to avoid cmd.exe interpreting '&' in query strings.
+        let mut cmd = Command::new("explorer.exe");
+        cmd.arg(&url);
         cmd.spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
