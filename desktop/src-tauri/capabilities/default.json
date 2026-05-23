@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default StemDeck desktop window permissions",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-save"]
 }

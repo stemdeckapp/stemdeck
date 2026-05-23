@@ -109,6 +109,7 @@ struct GpuSetup {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             let data_dir = match local_data_dir() {
@@ -152,6 +153,7 @@ fn main() {
             ensure_torch_device,
             start_backend,
             open_url,
+            save_audio_file,
             store_get,
             store_set,
             mark_store_migration_done,
@@ -958,6 +960,35 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn save_audio_file(app: tauri::AppHandle, url: String, filename: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("only http/https URLs are permitted".to_string());
+    }
+    use tauri_plugin_dialog::DialogExt;
+    let dest = app
+        .dialog()
+        .file()
+        .set_file_name(&filename)
+        .blocking_save_file();
+    let Some(file_path) = dest else {
+        return Ok(()); // user cancelled
+    };
+    let dest = file_path.into_path().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("backend returned HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("read failed: {e}"))?;
+    std::fs::write(&dest, &bytes).map_err(|e| format!("write failed: {e}"))?;
     Ok(())
 }
 

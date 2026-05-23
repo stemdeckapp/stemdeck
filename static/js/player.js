@@ -1011,7 +1011,7 @@ export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}
 function _triggerDownload(url, filename) {
   const fullUrl = url.startsWith("http") ? url : `${location.origin}${url}`;
   if (window.__TAURI__?.core?.invoke) {
-    window.__TAURI__.core.invoke("open_url", { url: fullUrl });
+    window.__TAURI__.core.invoke("save_audio_file", { url: fullUrl, filename });
     return;
   }
   const a = document.createElement("a");
