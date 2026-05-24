@@ -360,7 +360,9 @@ export function wireJobForm() {
     setSubmitProcessing(true);
 
     const fileInput = document.getElementById("fileInput");
-    const file = fileInput?.files?.[0] ?? null;
+    // Prefer _file cache: browsers (WKWebView, Chromium) silently clear
+    // fileInput.files after a fetch() submission, breaking re-submits.
+    const file = fileInput?._file ?? fileInput?.files?.[0] ?? null;
     const sanitized = file ? sanitizeFilename(file.name) : null;
     const sourceUrl = file ? `local:${sanitized}` : urlInput.value;
     const displayTitle = sanitized ?? (urlInput.value || "Processing track");

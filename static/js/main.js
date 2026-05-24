@@ -233,7 +233,10 @@ function wireFileDrop() {
     if (fileSize) fileSize.textContent = formatBytes(file.size);
     filePill.classList.remove("hidden");
     urlWrap.classList.add("has-file");
-    // Store file on the hidden input for job.js to pick up
+    // Cache the File object directly on the element so job.js can always
+    // retrieve it even after the browser clears fileInput.files following
+    // a fetch() submission (known WKWebView / Chromium behaviour).
+    fileInput._file = file;
     const dt = new DataTransfer();
     dt.items.add(file);
     fileInput.files = dt.files;
@@ -244,6 +247,7 @@ function wireFileDrop() {
   function clearFile() {
     filePill.classList.add("hidden");
     urlWrap.classList.remove("has-file");
+    fileInput._file = null;
     fileInput.value = "";
     urlInput.setAttribute("required", "");
   }
