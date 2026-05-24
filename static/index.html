@@ -232,15 +232,6 @@
         <div id="lanes" class="daw-main">
 
           <!-- Job progress -->
-          <div id="job" class="job hidden" role="status" aria-live="polite">
-            <div class="job-header">
-              <div id="job-title" class="title"></div>
-              <div id="job-stage" class="stage"></div>
-              <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
-            </div>
-            <progress id="progress" max="100" value="0"></progress>
-            <div id="job-detail" class="job-detail" aria-live="polite"></div>
-          </div>
           <div id="error" class="error hidden" role="alert"></div>
 
           <!-- Track header / info panel -->
@@ -487,6 +478,15 @@
 
             <!-- Waveform panel -->
             <div class="daw-wave-panel wave-editor surface-panel">
+              <div id="job" class="job hidden" role="status" aria-live="polite">
+                <div class="job-header">
+                  <div id="job-title" class="title"></div>
+                  <div id="job-stage" class="stage"></div>
+                  <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
+                </div>
+                <progress id="progress" max="100" value="0"></progress>
+                <div id="job-detail" class="job-detail" aria-live="polite"></div>
+              </div>
               <div class="wave-scroll" id="wave-scroll">
                 <div class="wave-canvas" id="wave-canvas">
                   <div class="waves-column">

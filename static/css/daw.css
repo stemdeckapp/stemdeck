@@ -722,7 +722,7 @@ input, textarea { font-family: inherit; }
 /* ── Job progress overlay ── */
 .job {
   position: absolute;
-  top: 64px; left: 260px; right: 0; bottom: 56px;
+  inset: 0;
   z-index: 20;
   background: rgb(7, 13, 19);
   display: flex;
@@ -1474,6 +1474,7 @@ input, textarea { font-family: inherit; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 /* waves.css gives .wave-editor padding + border-radius for the old rounded panel
