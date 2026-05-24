@@ -432,11 +432,15 @@ input, textarea { font-family: inherit; }
 .rail-btn span { white-space: nowrap; }
 .settings-coming-soon {
   position: fixed;
+  display: none;
   background: var(--panel-2); border: 1px solid var(--border-strong);
   border-radius: var(--radius); padding: 8px 12px;
   font-size: 12px; color: var(--muted); white-space: nowrap;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4); z-index: 300;
   pointer-events: none;
+}
+#settingsBtn:hover .settings-coming-soon {
+  display: block;
 }
 
 /* Sidebar body */
@@ -1846,9 +1850,12 @@ input, textarea { font-family: inherit; }
   text-decoration: none; transition: background 0.15s;
 }
 .about-link-primary {
-  background: var(--accent); color: #000; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--border);
+  color: var(--fg-2); font-weight: 600;
 }
-.about-link-primary:hover { filter: brightness(1.1); }
+.about-link-primary:hover {
+  background: var(--accent); border-color: var(--accent); color: #000;
+}
 .about-link-secondary {
   background: var(--panel); border: 1px solid var(--border);
   color: var(--fg-2);
