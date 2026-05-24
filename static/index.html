@@ -723,23 +723,21 @@
           wrap.classList.remove('open');
           document.getElementById('notifBtn')?.setAttribute('aria-expanded', 'false');
         }
-        /* Hide settings tooltip on outside click */
-        const tip = document.getElementById('settingsComingSoon');
-        if (tip && !tip.classList.contains('hidden') && !document.getElementById('settingsBtn')?.contains(e.target)) {
-          tip.classList.add('hidden');
-        }
       });
-      /* Settings button: show coming soon tooltip */
-      document.getElementById('settingsBtn')?.addEventListener('click', () => {
+      /* Settings button: show coming soon tooltip on hover */
+      (function() {
+        const btn = document.getElementById('settingsBtn');
         const tip = document.getElementById('settingsComingSoon');
-        if (!tip) return;
-        if (!tip.classList.contains('hidden')) { tip.classList.add('hidden'); return; }
-        const rect = document.getElementById('settingsBtn').getBoundingClientRect();
-        tip.style.top = (rect.top + rect.height / 2) + 'px';
-        tip.style.left = (rect.right + 8) + 'px';
-        tip.style.transform = 'translateY(-50%)';
-        tip.classList.remove('hidden');
-      });
+        if (!btn || !tip) return;
+        btn.addEventListener('mouseenter', () => {
+          const rect = btn.getBoundingClientRect();
+          tip.style.top = (rect.top + rect.height / 2) + 'px';
+          tip.style.left = (rect.right + 8) + 'px';
+          tip.style.transform = 'translateY(-50%)';
+          tip.classList.remove('hidden');
+        });
+        btn.addEventListener('mouseleave', () => tip.classList.add('hidden'));
+      })();
     </script>
   </body>
 </html>

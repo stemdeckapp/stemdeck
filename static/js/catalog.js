@@ -708,10 +708,6 @@ function wireTrackDragAndLoad(el, trackId) {
   el.addEventListener("dragend", () => endDrag(el));
   el.addEventListener("click", (e) => {
     if (e.target.closest(".cat-del")) return;
-    setCurrentTrack(trackId);
-  });
-  el.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".cat-del")) return;
     loadTrackIntoStudio(trackId);
   });
 }

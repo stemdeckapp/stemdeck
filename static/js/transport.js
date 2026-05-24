@@ -327,8 +327,11 @@ export function applyWaveZoom() {
 
 function wireZoomButtons() {
   if (waveScroll) {
+    let rafId = null;
     const ro = new ResizeObserver(() => {
-      if (multitrack && totalDuration > 0) applyWaveZoom();
+      if (!multitrack || totalDuration <= 0) return;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => { rafId = null; applyWaveZoom(); });
     });
     ro.observe(waveScroll);
   }
