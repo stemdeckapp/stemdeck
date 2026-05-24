@@ -1982,6 +1982,9 @@ input, textarea { font-family: inherit; }
 .daw.no-track .daw-section-ribbon,
 .daw.no-track .daw-wave-header,
 .daw.no-track .daw-content { opacity: 0.3; pointer-events: none; }
+/* Overlay and job progress live inside .daw-content but must stay fully visible while processing */
+.daw.no-track .daw-content .wave-loading-overlay,
+.daw.no-track .daw-content .job { opacity: 1; pointer-events: auto; }
 
 .app.no-track #t-export-btn,
 .app.is-import #t-export-btn {
