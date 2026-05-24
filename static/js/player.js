@@ -594,11 +594,14 @@ let _currentStems = [];
 let _mixUrl = null;
 let _currentTitle = "";
 
-export function setWaveformLoading(loading) {
+export function setWaveformLoading(loading, phrase) {
   const el = document.getElementById("waveLoadingOverlay");
   if (!el) return;
   if (loading) {
     _loadingShownAt = performance.now();
+    const phraseEl = document.getElementById("waveLoadingPhrase");
+    if (phraseEl && phrase !== undefined) phraseEl.textContent = phrase;
+    else if (phraseEl && !phraseEl.textContent) phraseEl.textContent = "Still loading waveform…";
     el.classList.remove("hidden");
   } else {
     const elapsed = performance.now() - _loadingShownAt;
@@ -606,6 +609,8 @@ export function setWaveformLoading(loading) {
     window.setTimeout(() => {
       el.classList.add("hidden");
       el.classList.remove("stalled");
+      const phraseEl = document.getElementById("waveLoadingPhrase");
+      if (phraseEl) phraseEl.textContent = "";
     }, delay);
   }
 }

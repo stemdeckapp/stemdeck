@@ -34,13 +34,21 @@ function pickPhrase(status) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function setOverlayPhrase(text) {
+  const el = document.getElementById("waveLoadingPhrase");
+  if (el) el.textContent = text;
+}
+
 function startPhraseRotation(status) {
   stopPhraseRotation();
-  jobStageEl.textContent = pickPhrase(status);
-  phraseTimerId = setInterval(
-    () => { jobStageEl.textContent = pickPhrase(status); },
-    ROTATION_MS,
-  );
+  const phrase = pickPhrase(status);
+  jobStageEl.textContent = phrase;
+  setOverlayPhrase(phrase);
+  phraseTimerId = setInterval(() => {
+    const p = pickPhrase(status);
+    jobStageEl.textContent = p;
+    setOverlayPhrase(p);
+  }, ROTATION_MS);
 }
 
 function stopPhraseRotation() {
@@ -48,6 +56,7 @@ function stopPhraseRotation() {
     clearInterval(phraseTimerId);
     phraseTimerId = null;
   }
+  jobStageEl.textContent = "";
 }
 
 function stopJobPolling() {
@@ -370,14 +379,10 @@ export function wireJobForm() {
     const postUrlText = document.getElementById("post-url-text");
     if (postUrlText) postUrlText.textContent = displayTitle;
 
-    setWaveformLoading(true);
-    // Show progress box immediately for file uploads — the HTTP upload of a
-    // large file takes time and the UI would otherwise appear frozen.
+    // Show overlay immediately for both paths. File uploads show "Uploading…"
+    // in the overlay phrase until the fetch completes and SSE takes over.
+    setWaveformLoading(true, file ? "Uploading…" : "");
     if (file) {
-      jobBox.classList.remove("hidden");
-      jobCancelBtn.classList.add("hidden");
-      jobDetailEl.textContent = "Uploading…";
-      startPhraseRotation("queued");
       lastStatus = "queued";
     }
 
@@ -434,16 +439,12 @@ export function wireJobForm() {
     });
     setCurrentTrack(jobId);
 
-    if (!file) {
-      // YouTube path: keep progress box hidden until SSE events arrive.
-      jobBox.classList.add("hidden");
-      jobCancelBtn.classList.add("hidden");
-      startPhraseRotation("queued");
-      lastStatus = "queued";
-    } else {
-      // File path: clear the upload message — SSE will take over from here.
-      jobDetailEl.textContent = "";
-    }
+    // Both paths: keep job box hidden, overlay drives the UI.
+    // Start phrase rotation now that the job exists on the server.
+    jobBox.classList.add("hidden");
+    jobCancelBtn.classList.add("hidden");
+    startPhraseRotation("queued");
+    lastStatus = "queued";
 
     connectEvents(jobId);
   });
