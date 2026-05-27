@@ -50,7 +50,7 @@ def _is_retriable(exc: Exception) -> bool:
 
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-_ALLOWED_HOSTS = frozenset(
+_YOUTUBE_HOSTS = frozenset(
     (
         "youtube.com",
         "www.youtube.com",
@@ -59,6 +59,8 @@ _ALLOWED_HOSTS = frozenset(
         "youtu.be",
     )
 )
+_SOUNDCLOUD_HOSTS = frozenset(("soundcloud.com", "www.soundcloud.com", "on.soundcloud.com"))
+_ALLOWED_HOSTS = _YOUTUBE_HOSTS | _SOUNDCLOUD_HOSTS
 
 
 class InvalidYouTubeURL(ValueError):
@@ -66,9 +68,9 @@ class InvalidYouTubeURL(ValueError):
 
 
 def validate_youtube_url(url: str) -> str:
-    """Reject anything that isn't an http(s) URL on a known YouTube host, then
-    return the normalized single-video form. Keeps StemDeck from acting as a
-    generic URL fetcher and gives callers a clean 422 instead of a yt-dlp
+    """Reject anything that isn't an http(s) URL on a known supported host.
+    YouTube URLs are normalized to single-video form; SoundCloud URLs are
+    passed through as-is. Gives callers a clean 422 instead of a yt-dlp
     extractor stack trace."""
     if not isinstance(url, str) or not url.strip():
         raise InvalidYouTubeURL("URL is required")
@@ -82,6 +84,9 @@ def validate_youtube_url(url: str) -> str:
     host = (parsed.hostname or "").lower()
     if host not in _ALLOWED_HOSTS:
         raise InvalidYouTubeURL(f"unsupported host: {host or '(empty)'}")
+
+    if host in _SOUNDCLOUD_HOSTS:
+        return url
 
     normalized = normalize_youtube_url(url)
     # normalize_youtube_url returns the original on playlist-only URLs with

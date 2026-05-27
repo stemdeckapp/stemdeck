@@ -295,6 +295,7 @@ function deriveSource(sourceUrl) {
   if (!sourceUrl) return "—";
   if (sourceUrl.startsWith("local:")) return "Local file";
   if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "YouTube";
+  if (sourceUrl.includes("soundcloud.com")) return "SoundCloud";
   return "Web";
 }
 
@@ -307,6 +308,7 @@ function deriveQuality(sourceUrl) {
     return "Local file";
   }
   if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "High";
+  if (sourceUrl.includes("soundcloud.com")) return "Compressed (MP3)";
   return "—";
 }
 
