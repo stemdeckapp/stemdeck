@@ -1796,7 +1796,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "demucs", specifier = ">=4.0.1" },
-    { name = "fastapi", specifier = ">=0.115" },
+    { name = "fastapi", specifier = ">=0.115,!=0.136.3" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "librosa", specifier = ">=0.10" },
     { name = "numba", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=0.61,<0.62" },
