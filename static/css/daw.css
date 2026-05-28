@@ -1896,6 +1896,9 @@ input, textarea { font-family: inherit; }
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 /* Tag chips */
@@ -1962,8 +1965,8 @@ input, textarea { font-family: inherit; }
 /* ── Clear bin bar (trash view only) ── */
 .clear-bin-bar { display: none; padding: 6px 10px 4px; }
 .sidebar.trash-view .clear-bin-bar { display: block; }
-.sidebar.trash-view .daw-lib-header { display: none; }
-.sidebar.favorites-view .daw-lib-header { display: none; }
+.sidebar.trash-view .lib-section-head .new-folder-btn { display: none; }
+.sidebar.favorites-view .lib-section-head .new-folder-btn { display: none; }
 .clear-bin-btn {
   display: flex; align-items: center; gap: 5px;
   width: 100%; padding: 6px 10px; border-radius: 6px;

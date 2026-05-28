@@ -1224,6 +1224,14 @@ function render() {
 
   // Stem Collections section
   const collectionsSection = makeSectionEl("Stem Collections");
+  const newFolderBtn = document.createElement("button");
+  newFolderBtn.id = "newFolderBtn";
+  newFolderBtn.className = "new-folder-btn";
+  newFolderBtn.type = "button";
+  newFolderBtn.setAttribute("aria-label", "New folder");
+  newFolderBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6 M9 14h6"/></svg>New folder`;
+  newFolderBtn.addEventListener("click", createFolder);
+  collectionsSection.querySelector(".lib-section-head").appendChild(newFolderBtn);
   let hasCollections = false;
   for (const folder of nonTrash) {
     const el = renderFolder(folder);
@@ -1537,7 +1545,7 @@ export async function initCatalog() {
   setDisplayedVersion(currentVersion);
   render();
 
-  document.getElementById("newFolderBtn")?.addEventListener("click", createFolder);
+
   loadCurrentVersion().finally(checkForUpdate);
   syncWithServer();
 }
