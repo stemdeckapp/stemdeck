@@ -294,6 +294,25 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color) {
   `;
 }
 
+function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
+  let globalMax = 0;
+  for (const stem of stems) {
+    const pts = peaksData[stem.name];
+    if (!pts?.length) continue;
+    for (const [mn, mx] of pts) {
+      if (mx > globalMax) globalMax = mx;
+      if (-mn > globalMax) globalMax = -mn;
+    }
+  }
+  if (globalMax <= 0) return;
+  const norm = 1 / globalMax;
+  for (const stem of stems) {
+    const pts = peaksData[stem.name];
+    if (!pts?.length) continue;
+    renderOverviewWaveformPath(stem.name, pts, norm, STEM_COLORS[stem.name] || "#a0a0a0");
+  }
+}
+
 // Normalize all stems to a single shared max so the overview waveforms
 // preserve real amplitude relationships (drums tall, piano short),
 // matching what a DAW shows. Per-stem normalization made every lane
@@ -647,7 +666,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "") {
+export async function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "") {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -700,14 +719,43 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
-  // Reset and re-init footer waveform — prefer the full selected-stems mix,
-  // fall back to the complement "original" track, then first available stem.
+  // Reset footer waveform state — will be re-populated below after peaks fetch.
   _footerWavePeaks = null;
   setFooterWaveDrawFn(null);
   const waveformUrl = _mixUrl
     || stems.find((s) => s.name === "original")?.url
     || stems[0]?.url;
-  if (waveformUrl) initFooterWaveform(waveformUrl);
+
+  // Fetch pre-computed peaks (best-effort — old jobs 404, degrade gracefully).
+  let precomputedPeaks = {};
+  if (jobId) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 3000);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/stems/peaks.json`, { signal: ac.signal });
+      if (res.ok) precomputedPeaks = await res.json();
+    } catch (_) {
+      // 404 for old jobs or timeout — proceed without peaks
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Bail out if another wireUpAudio call started while we were awaiting the peaks fetch.
+  if (token !== visualRenderToken) return;
+
+  // Footer waveform: use pre-computed peaks if available, skip the full WAV decode.
+  const footerStemName = stems.find((s) => s.name === "original") ? "original" : stems[0]?.name;
+  const footerPeaks = precomputedPeaks[footerStemName]
+    || precomputedPeaks[Object.keys(precomputedPeaks)[0]];
+  if (footerPeaks?.length) {
+    const step = Math.ceil(footerPeaks.length / _FOOTER_BARS);
+    _footerWavePeaks = footerPeaks.filter((_, i) => i % step === 0).slice(0, _FOOTER_BARS);
+    setFooterWaveDrawFn(_drawFooterWave);
+    _drawFooterWave(0);
+  } else if (waveformUrl) {
+    initFooterWaveform(waveformUrl);
+  }
 
   for (const stem of stems) {
     const row = mixerEl.querySelector(`.lane-header[data-stem="${stem.name}"]`);
@@ -774,6 +822,14 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   );
   setMultitrack(mt);
 
+  // Render overview waveforms immediately from pre-computed peaks so they
+  // appear before audio decoding completes. canplay still fires normally
+  // since we don't pass peaks to WaveSurfer (avoids empty-src deferral).
+  const hasPeaks = Object.keys(precomputedPeaks).length > 0;
+  if (hasPeaks) {
+    renderAllOverviewWaveformsFromPeaks(stems, precomputedPeaks);
+  }
+
   // Stop button glows iff transport is paused AND at the "start" (0,
   // or loopStart if loop is on). Centralised here so manual seeks via
   // the ruler also update the visual without extra plumbing.
@@ -839,8 +895,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       });
       Promise.all(waits).then(() => {
         if (token !== visualRenderToken) return;
-        clearOverviewWaveforms();
-        renderAllOverviewWaveforms(stems, decoded);
+        if (!hasPeaks) {
+          clearOverviewWaveforms();
+          renderAllOverviewWaveforms(stems, decoded);
+        }
         renderStemEnergyBaseline(stems, decoded);
         startStemVuLoop(stems, decoded, token);
       });

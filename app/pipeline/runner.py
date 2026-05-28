@@ -11,7 +11,13 @@ from app.core.config import TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze, compute_stem_presence
-from app.pipeline.collect import cleanup_source, collect, make_original_track, make_selected_mix
+from app.pipeline.collect import (
+    cleanup_source,
+    collect,
+    compute_stem_peaks,
+    make_original_track,
+    make_selected_mix,
+)
 from app.pipeline.download import download
 from app.pipeline.separate import separate
 
@@ -106,6 +112,11 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     if mix_path is not None:
         job.mix_url = f"/api/jobs/{job.id}/stems/{mix_path.name}"
     _check_cancel(job)
+
+    all_stem_names = [s["name"] for s in job.stems]
+    if mix_path is not None and mix_path.stem not in all_stem_names:
+        all_stem_names.append(mix_path.stem)
+    compute_stem_peaks(stems_dir, all_stem_names)
 
 
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:

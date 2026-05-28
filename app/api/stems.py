@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from app.core.config import JOB_ID_RE, JOBS_DIR, STEM_NAMES, ffmpeg_executable
 from app.core.registry import get as registry_get
@@ -49,6 +49,24 @@ async def _stream_ffmpeg(cmd: list[str]):
         if proc.returncode is None:
             proc.kill()
         await proc.wait()
+
+
+@router.get("/jobs/{job_id}/stems/peaks.json")
+async def get_stem_peaks(job_id: str) -> Response:
+    """Return pre-computed waveform peaks for all stems."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not ready")
+    path = (JOBS_DIR / job_id / "stems" / "peaks.json").resolve()
+    if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="peaks not found")
+    return FileResponse(
+        path,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.api_route("/jobs/{job_id}/stems/{name}.wav", methods=["GET", "HEAD"], response_model=None)

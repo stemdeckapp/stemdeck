@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import numpy as np
+import soundfile as sf
 
 from app.core.config import (
     DEMUCS_MODEL,
@@ -177,6 +181,43 @@ def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | Non
         str(out),
     ]
     return out if _run_ffmpeg(job, cmd) else None
+
+
+_PEAK_POINTS = 1500  # matches OVERVIEW_WAVE_POINTS in player.js
+
+
+def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> None:
+    """Compute and cache [min, max] waveform peaks for each stem.
+    Failure is non-fatal — missing peaks.json degrades to client-side decode."""
+    peaks: dict[str, list[list[float]]] = {}
+    for name in stem_names:
+        path = stems_dir / f"{name}.wav"
+        if not path.is_file():
+            continue
+        try:
+            data, _ = sf.read(path, dtype="float32", always_2d=True)
+            ch = data[:, 0]
+            n = len(ch)
+            if n == 0:
+                continue
+            chunk = max(1, n // _PEAK_POINTS)
+            result: list[list[float]] = []
+            for i in range(0, n, chunk):
+                block = ch[i : i + chunk]
+                result.append([float(np.min(block)), float(np.max(block))])
+            peaks[name] = result[:_PEAK_POINTS]
+        except Exception:
+            logger.warning("could not compute peaks for %s/%s", stems_dir.name, name, exc_info=True)
+
+    if not peaks:
+        return
+
+    try:
+        tmp = stems_dir / "peaks.json.tmp"
+        tmp.write_text(json.dumps(peaks), encoding="utf-8")
+        tmp.replace(stems_dir / "peaks.json")
+    except Exception:
+        logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
 
 
 def sweep_old_jobs(jobs_dir: Path) -> None:

@@ -50,3 +50,17 @@ def test_rejects_bad_urls(url: str, reason_substring: str) -> None:
     with pytest.raises(InvalidYouTubeURL) as exc:
         validate_youtube_url(url)
     assert reason_substring in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://soundcloud.com/artist/track",
+        "https://www.soundcloud.com/artist/track",
+        "https://on.soundcloud.com/abc123",
+        "  https://soundcloud.com/artist/track  ",
+    ],
+)
+def test_accepts_soundcloud_urls(url: str) -> None:
+    result = validate_youtube_url(url)
+    assert result == url.strip()
