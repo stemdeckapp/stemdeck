@@ -591,6 +591,9 @@ input, textarea { font-family: inherit; }
 .cat-sub { color: var(--muted); font-size: 10.5px; display: flex; gap: 5px; white-space: nowrap; overflow: hidden; }
 .cat-status { width: 6px; height: 6px; border-radius: 50%; background: #5fbc56; flex-shrink: 0; }
 .cat-status.processing { background: var(--accent); animation: cat-pulse 1.4s infinite; }
+.cat-status.unavailable { background: #666; }
+.cat-item.unavailable { cursor: not-allowed; }
+.cat-item.unavailable .cat-meta { opacity: 0.45; }
 @keyframes cat-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 .cat-del {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
