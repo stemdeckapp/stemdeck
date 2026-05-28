@@ -666,7 +666,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "") {
+export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -726,14 +726,14 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     || stems.find((s) => s.name === "original")?.url
     || stems[0]?.url;
 
-  // Kick off peaks fetch without awaiting — Multitrack.create must run
-  // synchronously during the user gesture so WKWebView initialises its
-  // AudioContext while the gesture handler is still on the call stack.
-  // Awaiting before create breaks that chain and causes choppy audio.
+  // Use the pre-started peaks promise from catalog.js (started in parallel with
+  // the job-data fetch) so peaks.json is resolved before Multitrack.create fires
+  // its stem WAV fetches. This keeps peaks.json out of Safari's 6-connection-per-
+  // origin window, preventing stem WAV queuing that causes buffer underruns.
   let precomputedPeaks = {};
   let _canplayFired = false;
   const _footerStemName = stems.find((s) => s.name === "original") ? "original" : stems[0]?.name;
-  const _peaksPromise = jobId
+  const _peaksPromise = peaksPromise ?? (jobId
     ? (() => {
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 3000);
@@ -742,7 +742,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
           .catch(() => ({}))
           .finally(() => clearTimeout(timer));
       })()
-    : Promise.resolve({});
+    : Promise.resolve({}));
 
   for (const stem of stems) {
     const row = mixerEl.querySelector(`.lane-header[data-stem="${stem.name}"]`);

@@ -470,6 +470,13 @@ async function loadTrackIntoStudio(trackId) {
   const hadStoredAudio = Boolean(track.audioStems?.length);
   const token = ++_loadTrackToken;
 
+  // Start peaks fetch immediately — runs in parallel with job-data fetch so it
+  // resolves before wireUpAudio calls Multitrack.create. This prevents peaks.json
+  // from competing with stem WAV fetches for Safari's 6-connection-per-origin limit.
+  const peaksPromise = fetch(`/api/jobs/${trackId}/stems/peaks.json`)
+    .then((r) => (r.ok ? r.json() : {}))
+    .catch(() => ({}));
+
   // Always fetch fresh state so server-side changes (sections, analysis, stems)
   // are reflected — cached localStorage data can be stale.
   try {
@@ -504,7 +511,7 @@ async function loadTrackIntoStudio(trackId) {
   }
 
   applyTrackInfoToPanel(track);
-  wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "");
+  wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise);
   initSections(trackId, track.sections, track.duration || 0);
 }
 
