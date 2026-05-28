@@ -6,7 +6,6 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from app.pipeline.collect import _PEAK_POINTS, compute_stem_peaks
 
