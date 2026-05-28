@@ -1980,6 +1980,7 @@ input, textarea { font-family: inherit; }
 .daw.is-import .daw-section-ribbon,
 .daw.is-import .daw-wave-header,
 .daw.is-import .daw-content { opacity: 0.3; pointer-events: none; }
+.daw.is-import .daw-content .mixer-column { opacity: 1; pointer-events: auto; }
 
 .daw.no-track .daw-track-header,
 .daw.no-track .daw-section-ribbon,
