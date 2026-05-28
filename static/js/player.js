@@ -731,6 +731,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // AudioContext while the gesture handler is still on the call stack.
   // Awaiting before create breaks that chain and causes choppy audio.
   let precomputedPeaks = {};
+  let _canplayFired = false;
   const _footerStemName = stems.find((s) => s.name === "original") ? "original" : stems[0]?.name;
   const _peaksPromise = jobId
     ? (() => {
@@ -822,7 +823,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     } else if (waveformUrl) {
       initFooterWaveform(waveformUrl);
     }
-    if (Object.keys(peaks).length) {
+    // Edge case: canplay fired before peaks arrived, so the canplay handler
+    // couldn't render from peaks. Render now that we have them.
+    if (_canplayFired && Object.keys(peaks).length) {
       clearOverviewWaveforms();
       renderAllOverviewWaveformsFromPeaks(stems, peaks);
     }
@@ -841,6 +844,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   };
 
   mt.once("canplay", () => {
+    _canplayFired = true;
     setWaveformLoading(false);
     const ctx = mt.audioContext;
     console.debug(
@@ -867,6 +871,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     setLoopEnd(totalDuration * LOOP_DEFAULT_END_FRAC);
     renderAllMiniWaves(mt, stems);
     applyWaveZoom();
+    if (Object.keys(precomputedPeaks).length) {
+      clearOverviewWaveforms();
+      renderAllOverviewWaveformsFromPeaks(stems, precomputedPeaks);
+    }
 
     // CRITICAL: the Multitrack class itself does NOT emit play / pause /
     // timeupdate / seeking — those fire on the individual wavesurfer
