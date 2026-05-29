@@ -579,58 +579,54 @@
           </div>
 
           <div class="footer-chips">
-            <div class="footer-export-stack">
             <div class="footer-chip-wrap" id="footer-export-wrap">
-              <button class="footer-chip footer-chip-primary" id="t-export-btn" type="button" aria-haspopup="true" aria-expanded="false">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <button class="footer-chip footer-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
+                <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
-                Export Mix
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <svg class="export-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/>
+                </svg>
+                <span class="export-btn-label" id="t-export-label">Export Mix</span>
+                <svg class="export-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
               </button>
-              <div class="footer-chip-panel hidden" id="t-export-panel" role="menu">
-                <button class="chip-panel-item" id="t-export-mp3" role="menuitem">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                  </svg>
-                  MP3
+              <div class="footer-chip-panel chip-panel-export hidden" id="t-export-panel" role="menu" aria-label="Export options">
+                <div class="export-format-toggle" role="radiogroup" aria-label="Export format">
+                  <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
+                  <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
+                </div>
+                <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
+                  <span class="chip-item-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
+                  </span>
+                  <span class="chip-item-text">
+                    <span class="chip-item-title">Export Mix</span>
+                    <span class="chip-item-desc">Export the mixed audio</span>
+                  </span>
+                  <svg class="chip-item-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
                 </button>
-                <button class="chip-panel-item" id="t-export-wav" role="menuitem">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                  </svg>
-                  WAV
+                <button class="chip-panel-item export-item" id="t-export-stems" type="button" role="menuitem">
+                  <span class="chip-item-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
+                  </span>
+                  <span class="chip-item-text">
+                    <span class="chip-item-title">Export All Stems</span>
+                    <span class="chip-item-desc">All stems as a .zip</span>
+                  </span>
                 </button>
-              </div>
-            </div>
-            <div class="footer-chip-wrap" id="footer-region-wrap">
-              <button class="footer-chip footer-chip-primary" id="t-region-btn" type="button" aria-haspopup="true" aria-expanded="false" disabled>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>
-                </svg>
-                Export Region
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-              <div class="footer-chip-panel hidden" id="t-region-panel" role="menu">
-                <button class="chip-panel-item" id="t-region-mp3" role="menuitem">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                  </svg>
-                  MP3
-                </button>
-                <button class="chip-panel-item" id="t-region-wav" role="menuitem">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                  </svg>
-                  WAV
+                <button class="chip-panel-item export-item" id="t-export-region" type="button" role="menuitem" aria-disabled="true">
+                  <span class="chip-item-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+                  </span>
+                  <span class="chip-item-text">
+                    <span class="chip-item-title">Export Current Region</span>
+                    <span class="chip-item-desc">Export selected region</span>
+                  </span>
                 </button>
               </div>
             </div>
-            </div><!-- /.footer-export-stack -->
           </div>
 
         </div><!-- /.footer-content -->

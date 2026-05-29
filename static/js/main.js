@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, downloadRegionMix, downloadRegionMixMp3, drawFooterPlaceholder } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, downloadAllStemsZip, downloadRegionMix, downloadRegionMixMp3, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -119,56 +119,107 @@ wireAppShellControls();
 // ─── Footer: speed dropdown, export dropdown, scrub seek ───
 
 function wireFooterControls() {
-  // ── Export Region dropdown ──
-  const regionBtn   = document.getElementById("t-region-btn");
-  const regionPanel = document.getElementById("t-region-panel");
-
-  regionBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const open = !regionPanel?.classList.contains("hidden");
-    closeAllChipPanels();
-    if (!open) {
-      regionPanel?.classList.remove("hidden");
-      regionBtn.setAttribute("aria-expanded", "true");
-    }
-  });
-
-  document.getElementById("t-region-wav")?.addEventListener("click", () => {
-    downloadRegionMix();
-    regionPanel?.classList.add("hidden");
-    regionBtn?.setAttribute("aria-expanded", "false");
-  });
-
-  document.getElementById("t-region-mp3")?.addEventListener("click", () => {
-    downloadRegionMixMp3();
-    regionPanel?.classList.add("hidden");
-    regionBtn?.setAttribute("aria-expanded", "false");
-  });
-
-  // ── Export Mix dropdown ──
+  // ── Export split-button dropdown ──
+  // The full button toggles the export menu. Export actions live inside
+  // the dropdown so the hit target is predictable.
+  // The menu offers Mix / All Stems / Current Region, with a WAV/MP3 toggle in
+  // the header. All exports reuse the backend-served download helpers.
   const exportBtn   = document.getElementById("t-export-btn");
   const exportPanel = document.getElementById("t-export-panel");
+  const exportLabel = document.getElementById("t-export-label");
+  const fmtWav   = document.getElementById("t-fmt-wav");
+  const fmtMp3   = document.getElementById("t-fmt-mp3");
+  const itemMix    = document.getElementById("t-export-mix");
+  const itemStems  = document.getElementById("t-export-stems");
+  const itemRegion = document.getElementById("t-export-region");
+  const actionItems = () => [itemMix, itemStems, itemRegion];
+
+  let format = "wav";
+  let busy = false;
+
+  const panelOpen = () => exportPanel && !exportPanel.classList.contains("hidden");
+  function openPanel() {
+    closeAllChipPanels();
+    exportPanel?.classList.remove("hidden");
+    exportBtn?.setAttribute("aria-expanded", "true");
+  }
+  function closePanel() {
+    exportPanel?.classList.add("hidden");
+    exportBtn?.setAttribute("aria-expanded", "false");
+  }
+
+  function setFormat(f) {
+    format = f;
+    fmtWav?.classList.toggle("active", f === "wav");
+    fmtWav?.setAttribute("aria-checked", String(f === "wav"));
+    fmtMp3?.classList.toggle("active", f === "mp3");
+    fmtMp3?.setAttribute("aria-checked", String(f === "mp3"));
+  }
+  fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
+  fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
+
+  function resetBusy() {
+    busy = false;
+    exportBtn?.classList.remove("is-busy");
+    if (exportLabel) exportLabel.textContent = "Export Mix";
+    itemMix?.removeAttribute("aria-disabled");
+    itemStems?.removeAttribute("aria-disabled");
+    updateLoopRegionVisual(); // restores the region item's disabled state
+  }
+
+  // Single-file (mix/region) downloads give no JS-observable byte progress, so
+  // show a brief indeterminate "Exporting…" state, then reset.
+  function flashBusy() {
+    busy = true;
+    exportBtn?.classList.add("is-busy");
+    if (exportLabel) exportLabel.textContent = "Exporting…";
+    actionItems().forEach((it) => it?.setAttribute("aria-disabled", "true"));
+    closePanel();
+    window.setTimeout(resetBusy, 1200);
+  }
 
   exportBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
-    const open = !exportPanel?.classList.contains("hidden");
-    closeAllChipPanels();
-    if (!open) {
-      exportPanel?.classList.remove("hidden");
-      exportBtn.setAttribute("aria-expanded", "true");
+    if (busy) return;
+    panelOpen() ? closePanel() : openPanel();
+  });
+
+  itemMix?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    if (format === "mp3") downloadCurrentMixMp3(); else downloadCurrentMix();
+    flashBusy();
+  });
+
+  itemRegion?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
+    if (format === "mp3") downloadRegionMixMp3(); else downloadRegionMix();
+    flashBusy();
+  });
+
+  // All Stems = a single backend-built ZIP, named after the song.
+  itemStems?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    downloadAllStemsZip(format);
+    flashBusy();
+  });
+
+  // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.
+  exportBtn?.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!panelOpen()) openPanel();
+      actionItems().find((it) => it?.getAttribute("aria-disabled") !== "true")?.focus();
     }
   });
-
-  document.getElementById("t-export-wav")?.addEventListener("click", () => {
-    downloadCurrentMix();
-    exportPanel?.classList.add("hidden");
-    exportBtn?.setAttribute("aria-expanded", "false");
-  });
-
-  document.getElementById("t-export-mp3")?.addEventListener("click", () => {
-    downloadCurrentMixMp3();
-    exportPanel?.classList.add("hidden");
-    exportBtn?.setAttribute("aria-expanded", "false");
+  exportPanel?.addEventListener("keydown", (e) => {
+    const focusable = actionItems().filter((it) => it && it.getAttribute("aria-disabled") !== "true");
+    const idx = focusable.indexOf(document.activeElement);
+    if (e.key === "Escape") { closePanel(); exportBtn?.focus(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); focusable[(idx + 1) % focusable.length]?.focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); focusable[(idx - 1 + focusable.length) % focusable.length]?.focus(); }
   });
 
   // ── Scrub bar seek ──

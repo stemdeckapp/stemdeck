@@ -1120,11 +1120,40 @@ export function downloadCurrentMixMp3() {
   _triggerDownload(url.replace(/\.wav$/, ".mp3"), _exportFilename("mp3"));
 }
 
-export function downloadCurrentStems() {
+export function downloadCurrentStems(format = "wav", onProgress) {
   const stems = _currentStems.filter((s) => s.name !== "original");
+  const total = stems.length;
+  if (!total) { onProgress?.(0, 0); return; }
+  // Name each file "<song title>_<instrument>.<ext>" using the same title
+  // sanitization as the mix/region exports.
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
   stems.forEach((s, i) => {
-    window.setTimeout(() => _triggerDownload(s.url, `${s.name}.wav`), i * 150);
+    window.setTimeout(() => {
+      const url = format === "mp3" ? s.url.replace(/\.wav(\?|$)/, ".mp3$1") : s.url;
+      const fname = safe ? `${safe}_${s.name}.${format}` : `${s.name}.${format}`;
+      _triggerDownload(url, fname);
+      onProgress?.(i + 1, total);
+    }, i * 150);
   });
+}
+
+export function downloadAllStemsZip(format = "wav") {
+  if (!currentJobId) return;
+  // Only the active (selected) stems loaded in the DAW — not all 6.
+  const names = _currentStems.filter((s) => s.name !== "original").map((s) => s.name);
+  if (!names.length) return;
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  const name = safe ? `${safe}_stems.zip` : "stems.zip";
+  const q = new URLSearchParams({ format, stems: names.join(",") });
+  _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name);
 }
 
 function _regionFilename(ext) {

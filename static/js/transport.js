@@ -139,9 +139,9 @@ export function updatePresencePlayhead(currentSec) {
 }
 
 export function updateLoopRegionVisual() {
-  const regionBtn = document.getElementById("t-region-btn");
+  const regionItem = document.getElementById("t-export-region");
   const hasRegion = loopEnabled && totalDuration > 0 && loopEnd > loopStart;
-  if (regionBtn) regionBtn.disabled = !hasRegion;
+  if (regionItem) regionItem.setAttribute("aria-disabled", String(!hasRegion));
   if (!loopEnabled || !totalDuration) {
     loopRegionEl.classList.add("hidden");
     return;

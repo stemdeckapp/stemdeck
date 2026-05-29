@@ -1666,12 +1666,6 @@ input, textarea { font-family: inherit; }
   display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   min-width: 0;
 }
-.footer-export-stack {
-  display: flex; flex-direction: column; gap: 4px; align-items: stretch;
-}
-.footer-export-stack .footer-chip-wrap,
-.footer-export-stack .footer-chip { width: 100%; }
-
 /* Wave bar at the bottom of the footer */
 .footer-wave-bar {
   height: 40px; flex-shrink: 0;
@@ -1808,6 +1802,53 @@ input, textarea { font-family: inherit; }
 }
 .chip-panel-item:hover { background: var(--panel-3); }
 .chip-panel-item.active { color: var(--accent); font-weight: 600; }
+
+/* ── Export split-button dropdown ── */
+/* The whole button toggles the menu, so the caret is purely a decorative
+   open/close indicator (no separate hit area). */
+.export-caret { opacity: 0.8; }
+/* Primary button busy state: swap the download icon for a spinner. */
+.export-spinner { display: none; }
+.footer-chip.is-busy .export-dl-icon { display: none; }
+.footer-chip.is-busy .export-spinner { display: inline-block; animation: sections-spin 700ms linear infinite; }
+
+.chip-panel-export { min-width: 260px; padding: 6px; }
+
+/* WAV / MP3 segmented toggle in the panel header */
+.export-format-toggle {
+  display: flex; gap: 3px; padding: 3px;
+  margin-bottom: 4px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.export-fmt {
+  flex: 1; padding: 5px 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.export-fmt:hover { color: var(--fg-2); }
+.export-fmt.active { background: var(--panel-3); color: var(--accent); }
+
+/* Action rows — two-line: icon + (title/desc) + trailing check/count */
+.export-item {
+  align-items: center; gap: 11px;
+  padding: 9px 10px; white-space: normal;
+}
+.export-item .chip-item-icon {
+  flex-shrink: 0; width: 22px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.export-item .chip-item-text {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+}
+.chip-item-title { font-size: 13px; font-weight: 500; color: var(--fg); }
+.chip-item-desc { font-size: 11px; color: var(--muted); }
+.chip-item-check { color: var(--accent); flex-shrink: 0; }
+.export-item:hover:not([aria-disabled="true"]) { background: var(--panel-3); }
+.export-item[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
 
 /* ── About dialog ── */
 .about-backdrop {
