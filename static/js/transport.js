@@ -3,7 +3,7 @@ import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
-  waveScroll, waveCanvas,
+  waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
@@ -11,6 +11,9 @@ import {
 import { applyMix } from "./mixer.js";
 
 const MIN_LOOP_SEC = 0.2;
+// Below this visible width the waveform stops compressing to fit and instead
+// keeps a minimum size, overflowing horizontally so .wave-scroll can scroll.
+const WAVE_MIN_WIDTH = 720;
 // rulerTime is the canonical timeline reference for both click->time
 // and time->pixel mapping. The wave-editor lays the ruler and the
 // waveform body out so they should be horizontally aligned (both gutter
@@ -310,17 +313,41 @@ function wireLoopDrag() {
 // loop region) automatically stretch with the canvas, so the loop drag
 // math stays correct without any per-element width logic.
 
+// Keep the header ruler horizontally aligned with the (possibly wider, scrolled)
+// waveform body. The ruler lives outside .wave-scroll, so translate it by the
+// same scrollLeft; .daw-ruler-area uses overflow-x: clip to hide the spill while
+// leaving the vertical playhead line (overflow-y: visible) intact.
+export function syncRulerScroll() {
+  if (rulerTime && waveScroll) {
+    rulerTime.style.transform = `translateX(${-waveScroll.scrollLeft}px)`;
+  }
+}
+
 export function applyWaveZoom() {
+  const lanes = document.getElementById("lanes") || waveCanvas;
   const wavesColumn = document.querySelector(".waves-column");
   if (wavesColumn) {
-    const lanes = document.getElementById("lanes") || waveCanvas;
     lanes?.style.setProperty("--wave-playhead-h", `${wavesColumn.clientHeight}px`);
   }
   if (multitrack && totalDuration > 0 && waveScroll) {
     const baseWidth = waveScroll.clientWidth;
     if (baseWidth > 0) {
-      const pxPerSec = baseWidth / totalDuration;
-      try { multitrack.zoom(pxPerSec); } catch { /* ignore -- pre-canplay */ }
+      // Fit to the visible width, but never compress below WAVE_MIN_WIDTH.
+      const contentWidth = Math.max(baseWidth, WAVE_MIN_WIDTH);
+      const zoom = contentWidth / baseWidth;
+      // Widen the container via --zoom FIRST. Then, after the browser has
+      // reflowed it, zoom WaveSurfer to fit the container's *actual* width.
+      // Measuring post-reflow avoids the resize race where WaveSurfer renders
+      // wider than its container and exposes its own (unstyled, light) internal
+      // horizontal scrollbar — the only horizontal scroll must come from the
+      // outer .wave-scroll, which also keeps the ruler/playhead aligned.
+      lanes?.style.setProperty("--zoom", String(zoom));
+      requestAnimationFrame(() => {
+        if (!multitrack || totalDuration <= 0) return;
+        const w = multitrackContainer?.clientWidth || contentWidth;
+        try { multitrack.zoom(w / totalDuration); } catch { /* ignore -- pre-canplay */ }
+        syncRulerScroll();
+      });
     }
   }
 }
@@ -343,8 +370,26 @@ function wireZoomButtons() {
         waveScroll.scrollLeft += e.deltaY;
       }
     }, { passive: false });
+    waveScroll.addEventListener("scroll", syncRulerScroll, { passive: true });
   }
   applyWaveZoom();
+}
+
+// Keep the mixer column and the waveform area scrolled in lockstep so stem
+// controls stay aligned with their lanes when the stack overflows (#159).
+function wireLaneScrollSync() {
+  const mixer = document.getElementById("mixer");
+  if (!mixer || !waveScroll) return;
+  let syncing = false;
+  const link = (src, dst) =>
+    src.addEventListener("scroll", () => {
+      if (syncing) return;
+      syncing = true;
+      dst.scrollTop = src.scrollTop;
+      requestAnimationFrame(() => { syncing = false; });
+    });
+  link(mixer, waveScroll);
+  link(waveScroll, mixer);
 }
 
 // ─── Wire transport buttons ───
@@ -356,6 +401,7 @@ export function wireTransportButtons() {
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
   wireZoomButtons();
+  wireLaneScrollSync();
   masterFader?.addEventListener("input", () => {
     setMasterVolume(parseFloat(masterFader.value));
     applyMix();

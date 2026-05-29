@@ -531,6 +531,60 @@ input, textarea { font-family: inherit; }
   gap: 2px;
 }
 
+/* Thin auto-hide scrollbar shared by the library list, the mixer column and the
+   waveform panel (both axes) — hidden until the area is hovered/focused, reserves
+   no visible gutter. `.daw .wave-scroll` overrides the gold bar from waves.css. */
+.daw-lib-list,
+.mixer-column,
+.daw .wave-scroll {
+  /* Firefox: thin overlay-style bar, fades to transparent track */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.daw-lib-list:hover,
+.daw-lib-list:focus-within,
+.mixer-column:hover,
+.mixer-column:focus-within,
+.daw .wave-scroll:hover,
+.daw .wave-scroll:focus-within {
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+/* WebKit (Chrome/Safari/WKWebView): thin thumb, hidden until hover/scroll */
+.daw-lib-list::-webkit-scrollbar,
+.mixer-column::-webkit-scrollbar,
+.daw .wave-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.daw-lib-list::-webkit-scrollbar-track,
+.mixer-column::-webkit-scrollbar-track,
+.daw .wave-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.daw-lib-list::-webkit-scrollbar-thumb,
+.mixer-column::-webkit-scrollbar-thumb,
+.daw .wave-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.daw-lib-list:hover::-webkit-scrollbar-thumb,
+.daw-lib-list:focus-within::-webkit-scrollbar-thumb,
+.mixer-column:hover::-webkit-scrollbar-thumb,
+.mixer-column:focus-within::-webkit-scrollbar-thumb,
+.daw .wave-scroll:hover::-webkit-scrollbar-thumb,
+.daw .wave-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  background-clip: padding-box;
+}
+.daw-lib-list::-webkit-scrollbar-thumb:hover,
+.mixer-column::-webkit-scrollbar-thumb:hover,
+.daw .wave-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+  background-clip: padding-box;
+}
+
 /* Library item */
 .lib-item {
   display: flex;
@@ -1234,6 +1288,10 @@ input, textarea { font-family: inherit; }
   flex: 1;
   background: var(--bg-2);
   min-height: 32px;
+  /* Clip the horizontally-scrolled ruler spill. overflow-x: clip (not hidden)
+     keeps overflow-y visible so the vertical playhead line still extends down
+     over the waveform lanes. */
+  overflow-x: clip;
 }
 
 /* Ruler */
@@ -1243,6 +1301,12 @@ input, textarea { font-family: inherit; }
   font-family: var(--font-mono);
   font-size: 9px;
   color: var(--muted);
+}
+/* Match the zoomed waveform width so ticks/playhead stay aligned; JS translates
+   it by scrollLeft. Left-anchored (right: auto) so width drives the size. */
+.daw .lanes-ruler-time {
+  right: auto;
+  width: calc(100% * var(--zoom, 1));
 }
 .playhead-marker {
   position: absolute;
@@ -1291,7 +1355,8 @@ input, textarea { font-family: inherit; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Each mixer row height is driven by --lane-h (set dynamically in JS to fill available space) */
@@ -1497,10 +1562,12 @@ input, textarea { font-family: inherit; }
   height: auto !important;
   border-radius: 0 !important;
   border: none !important;
+  overflow-y: auto;
 }
 
-/* Establish height chain so waves-column's calc(100%-34px) resolves correctly */
-.daw .wave-canvas { height: 100%; }
+/* Canvas fills the panel when lanes fit, but grows with the track stack when
+   they overflow (#159) so .wave-scroll can scroll the extra lanes vertically. */
+.daw .wave-canvas { min-height: 100%; height: auto; }
 
 /* In the original layout a 48px stem-icon strip lived INSIDE the wave panel,
    offsetting waves-column/multitrack/waveform-layer by 48px. In our layout the
@@ -1516,6 +1583,14 @@ input, textarea { font-family: inherit; }
   pointer-events: all !important;
   position: relative !important;  /* in flow → waves-column height driven by WaveSurfer */
   inset: 0 !important;             /* waves.css sets inset: 0 0 0 48px; zero left offset */
+}
+/* The wavesurfer-multitrack bundle wraps its tracks in its own
+   `<div style="overflow-x: scroll">`, which renders a permanently visible
+   horizontal scrollbar — an empty light bar when the content fits (the "white
+   bar" bug). We fit the bundle to its container and let the outer .wave-scroll
+   own horizontal scrolling, so suppress the bundle's wrapper scrollbar. */
+.daw #multitrack-container > div {
+  overflow-x: hidden !important;
 }
 /* Zero waves.css 48px left offsets that assumed an icon strip inside the wave panel */
 .daw .waves-grid { left: 0 !important; }
