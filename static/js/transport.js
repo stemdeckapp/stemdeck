@@ -380,14 +380,14 @@ function wireZoomButtons() {
 function wireLaneScrollSync() {
   const mixer = document.getElementById("mixer");
   if (!mixer || !waveScroll) return;
-  let syncing = false;
+  // Mirror scrollTop between the two panes by assigning only when the values
+  // differ. The echo stops on its own (once equal, the partner's handler is a
+  // no-op), so no reentrancy guard / rAF is needed — that frame-delayed guard
+  // was what made inertial scrolling stutter (#163).
   const link = (src, dst) =>
     src.addEventListener("scroll", () => {
-      if (syncing) return;
-      syncing = true;
-      dst.scrollTop = src.scrollTop;
-      requestAnimationFrame(() => { syncing = false; });
-    });
+      if (dst.scrollTop !== src.scrollTop) dst.scrollTop = src.scrollTop;
+    }, { passive: true });
   link(mixer, waveScroll);
   link(waveScroll, mixer);
 }
