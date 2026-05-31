@@ -3,7 +3,7 @@ import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
-import { showError } from "./job.js";
+import { showError, importFromUrl } from "./job.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -1538,6 +1538,231 @@ async function syncWithServer() {
   } catch (e) { console.warn("[catalog] failed to load jobs from backend:", e); }
 }
 
+// ─── Settings menu + Library editor ───
+
+let libraryEditor = null;
+let libraryEditorOnKey = null;
+
+// Human-readable "Location" for a track: the imported filename for local
+// uploads, otherwise the source URL.
+function libraryLocation(sourceUrl) {
+  if (!sourceUrl) return "—";
+  if (sourceUrl.startsWith("local:")) return sourceUrl.slice(6) || "Imported file";
+  return sourceUrl;
+}
+
+// Count library tracks (excluding Trash) whose audio is gone.
+function libraryUnavailableCount() {
+  const trashIds = new Set(getTrashFolder()?.items || []);
+  return Object.entries(tracks)
+    .filter(([id, t]) => !trashIds.has(id) && t.status === "unavailable").length;
+}
+
+// Update the editor's footer line with the out-of-sync count (red) or an
+// all-clear message. Safe no-op when the editor isn't open.
+function refreshLibrarySyncSummary() {
+  const statusEl = libraryEditor?.querySelector(".library-editor-status");
+  if (!statusEl) return;
+  const n = libraryUnavailableCount();
+  statusEl.classList.toggle("out-of-sync", n > 0);
+  statusEl.textContent = n > 0
+    ? `${n} ${n === 1 ? "track is" : "tracks are"} out of sync`
+    : "All tracks in sync";
+}
+
+function closeLibraryEditor() {
+  if (libraryEditorOnKey) {
+    document.removeEventListener("keydown", libraryEditorOnKey);
+    libraryEditorOnKey = null;
+  }
+  libraryEditor?.remove();
+  libraryEditor = null;
+}
+
+// Fill the editor's table body from `tracks` (skips Trash). Built via DOM +
+// textContent — titles/URLs are untrusted (YouTube/SoundCloud) so never
+// interpolate them into innerHTML.
+function renderLibraryRows(tbody) {
+  tbody.textContent = "";
+  const trashIds = new Set(getTrashFolder()?.items || []);
+  const entries = Object.entries(tracks)
+    .filter(([id]) => !trashIds.has(id))
+    .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
+
+  if (!entries.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 3;
+    td.className = "library-editor-empty";
+    td.textContent = "No tracks in your library yet.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const [id, t] of entries) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = id;
+    if (t.status === "unavailable") tr.className = "unavailable";
+
+    const name = document.createElement("td");
+    name.className = "le-name";
+    name.textContent = t.title || "—";
+    name.title = t.title || "";
+    if (t.status === "unavailable") {
+      const badge = document.createElement("span");
+      badge.className = "le-badge";
+      badge.textContent = "unavailable";
+      name.appendChild(badge);
+    }
+
+    const source = document.createElement("td");
+    source.className = "le-source";
+    source.textContent = deriveSource(t.sourceUrl);
+
+    const loc = document.createElement("td");
+    loc.className = "le-loc";
+    const locText = libraryLocation(t.sourceUrl);
+    loc.textContent = locText;
+    loc.title = locText;
+
+    tr.append(name, source, loc);
+    tbody.appendChild(tr);
+  }
+}
+
+function openLibraryEditor() {
+  closeFolderEditor();
+  closeLibraryEditor();
+
+  const overlay = document.createElement("div");
+  overlay.className = "library-editor-backdrop";
+  overlay.innerHTML = `
+    <div class="library-editor" role="dialog" aria-modal="true" aria-label="Edit library">
+      <div class="library-editor-head">
+        <span>Edit Library</span>
+        <button class="library-editor-close" type="button" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="library-editor-table-wrap">
+        <table class="library-editor-table">
+          <thead><tr><th>Name</th><th>Source</th><th>Location</th></tr></thead>
+          <tbody class="library-editor-body"></tbody>
+        </table>
+      </div>
+      <div class="library-editor-foot">
+        <span class="library-editor-status" aria-live="polite"></span>
+        <button class="library-editor-sync" type="button">Sync again</button>
+      </div>
+    </div>
+  `;
+
+  renderLibraryRows(overlay.querySelector(".library-editor-body"));
+
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeLibraryEditor(); });
+  // (status summary is filled in after the overlay is in the DOM, below)
+  overlay.querySelector(".library-editor-close")?.addEventListener("click", closeLibraryEditor);
+  overlay.querySelector(".library-editor-sync")?.addEventListener("click", () => resyncLibrary());
+  // Escape closes from anywhere (the overlay isn't focused, so listen on document).
+  libraryEditorOnKey = (e) => { if (e.code === "Escape") closeLibraryEditor(); };
+  document.addEventListener("keydown", libraryEditorOnKey);
+
+  document.body.appendChild(overlay);
+  libraryEditor = overlay;
+  refreshLibrarySyncSummary();
+}
+
+// Poll a job until it reaches a terminal state, so auto-restores run one at a
+// time (applyState/connectEvents drive a single active studio job — overlapping
+// restores would fight over the studio). Caps at 30 min as a safety net.
+async function waitForJobTerminal(jobId) {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const r = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+      if (r.status === 404) return;
+      const s = await r.json();
+      if (s.status === "done" || s.status === "error" || s.status === "cancelled") return;
+    } catch { /* transient — keep waiting */ }
+  }
+}
+
+// "Sync again": reconcile the library with the backend, then auto-restore the
+// tracks that fell out of sync.
+//   forward  — add server jobs missing locally (syncWithServer)
+//   reverse  — flag local "done" tracks the server no longer has as
+//              "unavailable"; restore ones that reappeared on the server.
+//   restore  — re-import every currently-unavailable URL-sourced track
+//              (re-download + re-separate). Local-file tracks can't be
+//              auto-restored (the original file isn't kept) — they stay flagged.
+// Only done↔unavailable are reconciled, so in-progress imports are never
+// mis-flagged (they aren't on the server's done-list yet).
+async function resyncLibrary() {
+  const statusEl = libraryEditor?.querySelector(".library-editor-status");
+  const syncBtn = libraryEditor?.querySelector(".library-editor-sync");
+  if (statusEl) statusEl.textContent = "Syncing…";
+  if (syncBtn) syncBtn.disabled = true;
+
+  try {
+    const res = await fetch("/api/jobs", { cache: "no-store" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const jobs = await res.json();
+    const serverIds = new Set(jobs.map((j) => j.job_id));
+
+    await syncWithServer(); // forward: pull in any new server jobs
+
+    const trashIds = new Set(getTrashFolder()?.items || []);
+    for (const [id, t] of Object.entries(tracks)) {
+      if (trashIds.has(id)) continue;
+      if (t.status === "done" && !serverIds.has(id)) t.status = "unavailable";
+      else if (t.status === "unavailable" && serverIds.has(id)) t.status = "done";
+    }
+    saveState();
+    render();
+    if (libraryEditor) renderLibraryRows(libraryEditor.querySelector(".library-editor-body"));
+
+    // Collect what's still unavailable; auto-restore the ones with a URL source.
+    const unavailable = Object.entries(tracks)
+      .filter(([id, t]) => !trashIds.has(id) && t.status === "unavailable")
+      .map(([, t]) => t);
+    const restorable = unavailable.filter((t) => t.sourceUrl && !t.sourceUrl.startsWith("local:"));
+
+    if (restorable.length) {
+      // Re-import each from its source. Close the editor so the studio overlay
+      // shows progress; restore sequentially (single active studio job).
+      closeLibraryEditor();
+      for (const t of restorable) {
+        const jobId = await importFromUrl(t.sourceUrl, {
+          title: t.title,
+          stems: t.selectedStems,
+        });
+        if (jobId) await waitForJobTerminal(jobId);
+      }
+      return;
+    }
+
+    // Nothing auto-restorable left — show the out-of-sync count (local-file
+    // tracks can't be re-fetched and stay flagged).
+    refreshLibrarySyncSummary();
+  } catch (e) {
+    console.warn("[catalog] resync failed:", e);
+    if (statusEl) statusEl.textContent = "Sync failed — check your connection.";
+  } finally {
+    if (syncBtn) syncBtn.disabled = false;
+  }
+}
+
+function wireSettingsMenu() {
+  const btn = document.getElementById("settingsBtn");
+  if (!btn || btn.dataset.menuReady === "1") return;
+  btn.dataset.menuReady = "1";
+  // The only setting today is the library, so Settings opens the Edit Library
+  // window directly (a centered modal, like the About dialog).
+  btn.addEventListener("click", openLibraryEditor);
+}
+
 export async function initCatalog() {
   await loadState();
   wireCatalogToggle();
@@ -1549,6 +1774,7 @@ export async function initCatalog() {
   wireRailLibraryDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
+  wireSettingsMenu();
   setDisplayedVersion(currentVersion);
   render();
 

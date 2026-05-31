@@ -430,18 +430,6 @@ input, textarea { font-family: inherit; }
 .rail-btn.active { color: var(--accent); background: var(--panel); }
 .rail-btn svg { flex-shrink: 0; }
 .rail-btn span { white-space: nowrap; }
-.settings-coming-soon {
-  position: fixed;
-  display: none;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: var(--radius); padding: 8px 12px;
-  font-size: 12px; color: var(--muted); white-space: nowrap;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4); z-index: 300;
-  pointer-events: none;
-}
-#settingsBtn:hover .settings-coming-soon {
-  display: block;
-}
 
 /* Sidebar body */
 .sidebar-body {
@@ -742,6 +730,47 @@ input, textarea { font-family: inherit; }
 .folder-editor-actions button { min-height: 30px; border-radius: 7px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; padding: 0 11px; }
 .folder-editor-cancel { border: 1px solid var(--border); background: rgba(21,31,39,0.52); color: var(--muted); }
 .folder-editor-save { border: 1px solid rgba(244,183,64,0.3); background: rgba(244,183,64,0.16); color: var(--accent); }
+
+/* Edit Library modal (Settings → opens this centered window) */
+.library-editor-backdrop {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: center;
+  background: rgba(3,8,13,0.42); backdrop-filter: blur(2px);
+}
+.library-editor {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(70vh, 620px);
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(28,39,48,0.98), rgba(13,21,29,0.98));
+  box-shadow: var(--shadow-panel);
+  padding: 12px; color: var(--fg); font-family: var(--font-mono);
+}
+.library-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.library-editor-close { width: 24px; height: 24px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.library-editor-close:hover { background: rgba(21,31,39,0.8); color: var(--fg); }
+.library-editor-table-wrap { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 7px; background: rgba(10,17,24,0.5); }
+.library-editor-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.library-editor-table thead th {
+  position: sticky; top: 0;
+  text-align: left; font-weight: 600; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); background: rgba(13,21,29,0.96);
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.library-editor-table tbody td { padding: 7px 10px; border-bottom: 1px solid rgba(148,163,184,0.07); color: var(--fg-2); vertical-align: middle; }
+.library-editor-table tbody tr:last-child td { border-bottom: none; }
+.library-editor-table .le-name { color: var(--fg); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-editor-table .le-loc { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-editor-table tr.unavailable .le-name { color: var(--danger); }
+.le-badge { margin-left: 7px; padding: 1px 6px; border-radius: 5px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(214,90,74,0.16); color: var(--danger); }
+.library-editor-empty { color: var(--muted); text-align: center; padding: 22px 10px !important; }
+.library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
+.library-editor-status { font-size: 10.5px; color: var(--muted); }
+.library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
+.library-editor-sync { min-height: 30px; border-radius: 7px; border: 1px solid rgba(244,183,64,0.3); background: rgba(244,183,64,0.16); color: var(--accent); font-family: var(--font-mono); font-size: 11px; padding: 0 13px; cursor: pointer; }
+.library-editor-sync:disabled { opacity: 0.55; cursor: default; }
 
 /* Color picker popover */
 .color-picker-popover {

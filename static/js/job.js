@@ -360,6 +360,64 @@ function sanitizeFilename(name) {
     .slice(0, 120);
 }
 
+// Programmatic URL import — re-uses the full studio/SSE pipeline (same as the
+// import form's URL path). Used by the library "Sync again" auto-restore to
+// re-download + re-separate a track whose backend audio was swept. Takes over
+// the studio like a normal import. Returns the new job id, or null on failure.
+export async function importFromUrl(url, { title, stems } = {}) {
+  if (!url || url.startsWith("local:")) return null; // local files can't auto-restore
+  reset();
+  setSubmitProcessing(true);
+  setWaveformLoading(true, "");
+  const stemSel = stems?.length ? stems : [...selectedStems];
+
+  let jobId;
+  try {
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, stems: stemSel }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    jobId = data.job_id;
+  } catch (err) {
+    showError(`Failed to restore track: ${err.message}`);
+    setSubmitProcessing(false);
+    return null;
+  }
+
+  setCurrentJobId(jobId);
+  jobSources.set(jobId, url);
+  // Merges into the existing library entry by sourceUrl (replaceTrackId),
+  // preserving its folder placement; status updates as SSE frames arrive.
+  addTrackToLibrary({
+    id: jobId,
+    title: title || url || "Processing track",
+    channel: "Processing",
+    thumb: "",
+    stems: stemSel,
+    selectedStems: stemSel,
+    audioStems: [],
+    status: "processing",
+    bpm: null,
+    key: null,
+    scale: null,
+    keyConfidence: null,
+    lufs: null,
+    peakDb: null,
+    sourceUrl: url,
+  });
+  setCurrentTrack(jobId);
+
+  jobBox.classList.add("hidden");
+  jobCancelBtn.classList.add("hidden");
+  startPhraseRotation("queued");
+  lastStatus = "queued";
+  connectEvents(jobId);
+  return jobId;
+}
+
 export function wireJobForm() {
   jobCancelBtn.addEventListener("click", cancelCurrentJob);
 

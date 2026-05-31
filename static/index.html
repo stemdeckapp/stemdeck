@@ -168,13 +168,12 @@
               <span>Trash</span>
             </button>
             <div style="flex:1"></div>
-            <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings">
+            <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M12 2v2 M12 20v2 M4 12H2 M22 12h-2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5"/>
               </svg>
               <span>Settings</span>
-              <div class="settings-coming-soon" id="settingsComingSoon" role="tooltip">More features coming soon</div>
             </button>
             <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -707,19 +706,6 @@
           document.getElementById('notifBtn')?.setAttribute('aria-expanded', 'false');
         }
       });
-      /* Settings button: position the fixed tooltip on hover enter.
-         Visibility is controlled entirely by CSS (#settingsBtn:hover .settings-coming-soon). */
-      (function() {
-        const btn = document.getElementById('settingsBtn');
-        const tip = document.getElementById('settingsComingSoon');
-        if (!btn || !tip) return;
-        btn.addEventListener('mouseenter', () => {
-          const rect = btn.getBoundingClientRect();
-          tip.style.top = (rect.top + rect.height / 2) + 'px';
-          tip.style.left = (rect.right + 8) + 'px';
-          tip.style.transform = 'translateY(-50%)';
-        });
-      })();
     </script>
   </body>
 </html>
