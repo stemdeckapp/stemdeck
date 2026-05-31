@@ -1689,11 +1689,17 @@ input, textarea { font-family: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
   box-shadow: 0 2px 10px rgba(244,183,64,0.35), inset 0 1px 0 rgba(255,255,255,0.18);
-  transition: transform var(--t-fast), box-shadow var(--t-fast);
+  transition: transform var(--t-fast), box-shadow var(--t-fast), background var(--t-fast);
   flex-shrink: 0;
 }
 .daw-play-btn:hover { box-shadow: 0 2px 16px rgba(244,183,64,0.5), inset 0 1px 0 rgba(255,255,255,0.22); }
 .daw-play-btn:active { transform: scale(0.96); }
+/* Playing = green (go); idle/ready stays gold. */
+.daw-play-btn.playing {
+  background: #4caf7d;
+  box-shadow: 0 2px 12px rgba(76,175,125,0.45), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.daw-play-btn.playing:hover { box-shadow: 0 2px 18px rgba(76,175,125,0.6), inset 0 1px 0 rgba(255,255,255,0.24); }
 
 /* JS toggles these to show play vs pause icon */
 .btn-transport.playing .pause-icon { display: block !important; }
@@ -1829,10 +1835,24 @@ input, textarea { font-family: inherit; }
   background: var(--panel-2);
   border-color: var(--border-strong);
   color: var(--fg-2);
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .footer-transport .daw-iconbtn.btn-transport:hover {
   background: var(--panel-3);
   color: var(--fg);
+}
+/* Active transport states: stop = red while stopped, loop = blue while looping. */
+.footer-transport .btn-transport.stopped,
+.footer-transport .btn-transport.stopped:hover {
+  background: rgba(214,90,74,0.16);
+  border-color: rgba(214,90,74,0.55);
+  color: var(--danger);
+}
+.footer-transport .btn-transport.loop.active,
+.footer-transport .btn-transport.loop.active:hover {
+  background: rgba(74,140,255,0.16);
+  border-color: rgba(74,140,255,0.55);
+  color: #4a8cff;
 }
 
 /* Speed + export chip buttons */
