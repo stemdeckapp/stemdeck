@@ -11,12 +11,14 @@ import {
   multitrack, currentJobId, trackIndex, totalDuration, loopEnabled,
   loopStart, loopEnd, trackAnalysers,
   masterVolume, masterFader, mixerState,
+  audioEngine, setAudioEngine,
   setMultitrack, setCurrentJobId, setTrackIndex, setTotalDuration,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
   footerTitle, footerMeta, footerThumb,
   setFooterWaveDrawFn,
 } from "./state.js";
+import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import {
   loadMixIntoState, resetMixerState, refreshMixerVisuals,
   setLaneControlsEnabled, ensureMixerStateDefaults, applyMix,
@@ -29,6 +31,22 @@ import {
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
+
+// Feature flag for the Web Audio decode-and-mix engine (audioEngine.js).
+// Playback runs off decoded AudioBuffers on a single AudioContext clock instead
+// of N streaming <audio> elements — fixes Safari/WKWebView choppiness. Default
+// ON (the desktop app is WKWebView for every macOS user); set
+// localStorage "stemdeck.audioEngine" = "0" to opt back into the legacy
+// streaming path for A/B without a rebuild.
+function audioEngineEnabled() {
+  try { return localStorage.getItem("stemdeck.audioEngine") !== "0"; }
+  catch (e) { console.warn("[player] audioEngine flag read failed:", e); return true; }
+}
+
+// Above this estimated decoded-PCM size the engine is skipped and playback
+// falls back to streaming, so a long full-stem track can't exhaust WKWebView's
+// memory. ~1.2 GB ≈ 6 stems × ~10 min (or 4 stems × ~15 min) at 44.1 kHz/Float32.
+const MAX_ENGINE_DECODED_BYTES = 1.2e9;
 
 // Stem-selection filter: the import-page stem-choice toggles set
 // selectedStems (state.js). Backend always processes all 6 -- we
@@ -438,8 +456,11 @@ function startStemVuLoop(stems, decodedMap, token) {
   if (!meters.length) return;
   const tick = () => {
     if (token !== visualRenderToken || !multitrack) return;
-    const playing = multitrack.isPlaying?.() ?? false;
-    const time = multitrack.getCurrentTime?.() ?? 0;
+    // When the Web Audio engine owns playback, the multitrack is silent — read
+    // the clock/transport state from the engine so the meters track real audio.
+    const src = audioEngine ?? multitrack;
+    const playing = src.isPlaying?.() ?? false;
+    const time = src.getCurrentTime?.() ?? 0;
     for (const m of meters) {
       const idx = Math.max(0, Math.min(m.env.length - 1, Math.floor(time * STEM_VU_FPS)));
       const gain = stemVuGain(m.name);
@@ -493,6 +514,10 @@ export function destroyPlayer() {
   destroySections();
   stopVuLoop();
   stopStemVuLoop();
+  if (audioEngine) {
+    audioEngine.destroy();
+    setAudioEngine(null);
+  }
   if (multitrack) {
     multitrack.destroy();
     setMultitrack(null);
@@ -836,10 +861,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // the ruler also update the visual without extra plumbing.
   const STOP_TOLERANCE_SEC = 0.15;
   const updateStopVisual = () => {
-    const t = mt.getCurrentTime?.() ?? 0;
+    const src = audioEngine ?? mt;
+    const t = src.getCurrentTime?.() ?? 0;
     const startPos = loopEnabled ? loopStart : 0;
     const atStart = Math.abs(t - startPos) < STOP_TOLERANCE_SEC;
-    const stopped = !mt.isPlaying() && atStart;
+    const stopped = !src.isPlaying() && atStart;
     stopBtn.classList.toggle("stopped", stopped);
   };
 
@@ -937,6 +963,63 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       updateStopVisual();
     });
     ws.on("seeking", updateStopVisual);
+
+    // ── Web Audio engine (flag-gated) ──────────────────────────────────────
+    // When enabled, decode the active stems and play them off a single
+    // AudioContext clock instead of the streaming <audio> elements above. The
+    // multitrack stays mounted for visuals only (it never plays), so the ws
+    // play/pause/timeupdate handlers wired above simply don't fire — the engine
+    // drives the identical UI updates via onTime/onEnded. transport.js, mixer
+    // applyMix, the VU loop, and updateStopVisual all route through
+    // `audioEngine ?? multitrack`, so flag-off is byte-identical to before.
+    const engineStemCount = stems.filter((s) => s.url).length;
+    const engineTooLarge =
+      estimateDecodedBytes(totalDuration, engineStemCount) > MAX_ENGINE_DECODED_BYTES;
+    if (engineTooLarge) {
+      console.warn(
+        `[player] track too large for Web Audio engine `
+        + `(~${Math.round(estimateDecodedBytes(totalDuration, engineStemCount) / 1e6)} MB `
+        + `for ${engineStemCount} stems × ${Math.round(totalDuration)}s); using streaming path`,
+      );
+    }
+    if (audioEngineEnabled() && !engineTooLarge) {
+      // Mirror the streaming "timeupdate" handler body so playhead/footer/
+      // presence/stop-visual update the same way regardless of which clock runs.
+      const driveTransportUi = (t) => {
+        timeEl.textContent = `${fmtTime(t)} / ${fmtTime(totalDuration)}`;
+        updatePlayheadMarker(t);
+        updateFooterTimes(t);
+        updatePresencePlayhead(t);
+        updateStopVisual();
+      };
+      if (audioEngine) { audioEngine.destroy(); setAudioEngine(null); }
+      const eng = createAudioEngine(stems, {
+        onTime: driveTransportUi,
+        onEnded: () => { playBtn.classList.remove("playing"); updateStopVisual(); },
+      });
+      setAudioEngine(eng);
+      eng.ready.then((ok) => {
+        // Bail if the user switched tracks while we were decoding.
+        if (token !== visualRenderToken || multitrack !== mt) {
+          eng.destroy();
+          if (audioEngine === eng) setAudioEngine(null);
+          return;
+        }
+        if (!ok) {
+          // No decodable stems — fall back to the streaming path transparently.
+          console.warn("[player] audio engine had no decodable stems; using streaming path");
+          eng.destroy();
+          setAudioEngine(null);
+          return;
+        }
+        eng.setLoop(loopEnabled, loopStart, loopEnd);
+        applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
+      }).catch((e) => {
+        console.warn("[player] audio engine init failed; using streaming path:", e);
+        eng.destroy();
+        if (audioEngine === eng) setAudioEngine(null);
+      });
+    }
   });
 }
 

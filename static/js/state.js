@@ -52,6 +52,8 @@ export const footerThumb     = $("footer-thumb");
 
 export let eventSource = null;
 export let multitrack = null;
+// Web Audio decode-and-mix engine (Safari-safe playback). Null = legacy streaming path.
+export let audioEngine = null;
 export let currentJobId = null;
 
 // `mixerState` is mutated in place (never reassigned). renderMixerRow's
@@ -123,6 +125,7 @@ export let masterLimiter = null;
 
 export function setEventSource(v) { eventSource = v; }
 export function setMultitrack(v) { multitrack = v; }
+export function setAudioEngine(v) { audioEngine = v; }
 export function setCurrentJobId(v) { currentJobId = v; }
 export function setTrackIndex(v) { trackIndex = v; }
 export function setTotalDuration(v) { totalDuration = v; }

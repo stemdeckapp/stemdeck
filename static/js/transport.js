@@ -2,7 +2,7 @@ import { fmtTime, fmtTickLabel } from "./utils.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
-  multitrack, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
+  multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
@@ -45,9 +45,10 @@ function timeFromClientX(clientX) {
 }
 
 function setPlayheadTime(sec) {
-  if (!multitrack || !totalDuration) return;
+  const tx = audioEngine ?? multitrack;
+  if (!tx || !totalDuration) return;
   const next = Math.max(0, Math.min(totalDuration, sec));
-  multitrack.setTime(next);
+  tx.setTime(next);
   updatePlayheadMarker(next);
   updateFooterTimes(next);
   updatePresencePlayhead(next);
@@ -145,6 +146,9 @@ export function updateLoopRegionVisual() {
   const regionItem = document.getElementById("t-export-region");
   const hasRegion = loopEnabled && totalDuration > 0 && loopEnd > loopStart;
   if (regionItem) regionItem.setAttribute("aria-disabled", String(!hasRegion));
+  // Keep the engine's loop bounds in sync with every loop change (toggle/drag);
+  // the engine wraps playback itself off these values. No-op on streaming path.
+  audioEngine?.setLoop(loopEnabled, loopStart, loopEnd);
   if (!loopEnabled || !totalDuration) {
     loopRegionEl.classList.add("hidden");
     return;
@@ -203,12 +207,18 @@ function _playWhenReady() {
 }
 
 export function togglePlayPause() {
-  if (!multitrack) return;
-  if (multitrack.isPlaying()) {
-    multitrack.pause();
+  const eng = audioEngine;
+  const tx = eng ?? multitrack;
+  if (!tx) return;
+  if (tx.isPlaying()) {
+    tx.pause();
+    // The engine emits no play/pause events (the multitrack stays silent), so
+    // the play-button visual that the ws "pause" handler normally toggles must
+    // be driven here directly.
+    if (eng) playBtn.classList.remove("playing");
     return;
   }
-  const ctx = multitrack.audioContext;
+  const ctx = tx.audioContext;
   // Safari requires play() to be called synchronously within the user-gesture
   // handler. Resume the AudioContext fire-and-forget so the context becomes
   // live, then call play() immediately on the same tick.
@@ -217,15 +227,24 @@ export function togglePlayPause() {
   }
   // Snap playhead to loopStart on play (DAW convention).
   if (loopEnabled && totalDuration > 0) {
-    multitrack.setTime(loopStart);
+    tx.setTime(loopStart);
   }
-  _playWhenReady();
+  if (eng) {
+    eng.play();
+    playBtn.classList.add("playing");
+    stopBtn.classList.remove("stopped");
+  } else {
+    _playWhenReady();
+  }
 }
 
 export function stopTransport() {
-  if (!multitrack) return;
-  multitrack.pause();
-  multitrack.setTime(loopEnabled ? loopStart : 0);
+  const eng = audioEngine;
+  const tx = eng ?? multitrack;
+  if (!tx) return;
+  tx.pause();
+  tx.setTime(loopEnabled ? loopStart : 0); // engine: setTime → onTime → stop visual
+  if (eng) playBtn.classList.remove("playing");
 }
 
 export function toggleLoop() {

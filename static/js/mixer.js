@@ -3,7 +3,7 @@ import {
 } from "./constants.js";
 import {
   mixerState, mixerEl, stemListEl, currentJobId, multitrack, trackIndex,
-  masterVolume,
+  masterVolume, audioEngine,
 } from "./state.js";
 import { storeGet, storeSetDebounced } from "./utils.js";
 
@@ -57,6 +57,14 @@ export function applyMix() {
     if (idx === undefined) continue;
 
     const targetGain = effective * masterVolume;
+
+    if (audioEngine) {
+      // Web Audio engine owns playback: set the per-stem gain directly (no 1.0
+      // cap, so >1.0 lane boost works), and skip the streaming volume path —
+      // the multitrack is mounted for visuals only and never plays.
+      audioEngine.setGain(name, targetGain);
+      continue;
+    }
 
     const audioEl = multitrack.audios?.[idx];
     if (audioEl instanceof HTMLMediaElement) {
