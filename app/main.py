@@ -149,14 +149,35 @@ def health() -> dict[str, object]:
     }
 
 
+# Content-Security-Policy. Defense-in-depth so an injected string in the webview
+# can't run script (and, in the desktop app, reach the exposed Tauri IPC) — #171.
+# script-src has no 'unsafe-inline'/'eval': all JS is same-origin modules and the
+# inline scripts/onclick were moved out. 'unsafe-inline' is allowed for *styles*
+# only (the UI sets many style attributes). Allowances:
+#   connect-src  -> same-origin API/SSE, the GitHub update check, Tauri IPC
+#   img-src https: -> remote YouTube/SoundCloud thumbnails
+#   style/font   -> the Google Fonts <link>
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data: blob: https:; "
+    "media-src 'self' blob: data:; "
+    "connect-src 'self' https://api.github.com ipc: http://ipc.localhost; "
+    "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+)
+
+
 # Force browsers to revalidate static assets on every request. Without
 # this the JS/CSS modules can stick in disk cache across server
 # restarts -- updated HTML loads against stale modules and the form
 # silently breaks. `must-revalidate` keeps 304s working (cheap) while
 # guaranteeing the latest mtime is honored.
 @app.middleware("http")
-async def no_cache_static(request: Request, call_next):
+async def security_and_cache_headers(request: Request, call_next):
     response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CSP
     if not request.url.path.startswith("/api"):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
