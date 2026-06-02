@@ -18,6 +18,10 @@ steps:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     environment:
       UV_LINK_MODE: copy
+      # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
+      # makes setuptools_scm raise, so pin a placeholder for the build — CI only
+      # lints/tests and never publishes. #169
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
     commands:
       - uv sync --frozen --all-extras
       - uv run ruff check app/ tests/
@@ -28,6 +32,10 @@ steps:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     environment:
       UV_LINK_MODE: copy
+      # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
+      # makes setuptools_scm raise, so pin a placeholder for the build — CI only
+      # lints/tests and never publishes. #169
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
     commands:
       - apt-get update && apt-get install -y --no-install-recommends ffmpeg
       - uv sync --frozen --all-extras
@@ -42,6 +50,10 @@ steps:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     environment:
       UV_LINK_MODE: copy
+      # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
+      # makes setuptools_scm raise, so pin a placeholder for the build — CI only
+      # lints/tests and never publishes. #169
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
     commands:
       - uv tool install bandit
       - uv tool run bandit -r app/ -ll  # fail on medium+ severity
@@ -50,6 +62,10 @@ steps:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     environment:
       UV_LINK_MODE: copy
+      # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
+      # makes setuptools_scm raise, so pin a placeholder for the build — CI only
+      # lints/tests and never publishes. #169
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
     commands:
       - uv tool install pip-audit
       - uv pip compile pyproject.toml -o /tmp/requirements.txt

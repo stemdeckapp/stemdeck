@@ -62,6 +62,10 @@ build-backend = "hatchling.build"
 # runtime fallback for environments without installed package metadata.
 [tool.hatch.version]
 source = "vcs"
+# Used when the tag can't be reached (e.g. CI's shallow/tagless clone) so the
+# build never hard-fails. Real builds derive from the tag or the pinned
+# SETUPTOOLS_SCM_PRETEND_VERSION. (#169)
+fallback-version = "0.0.0"
 
 [tool.hatch.build.hooks.vcs]
 version-file = "app/_version.py"
