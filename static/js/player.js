@@ -34,13 +34,16 @@ import { destroySections } from "./sections.js";
 
 // Feature flag for the Web Audio decode-and-mix engine (audioEngine.js).
 // Playback runs off decoded AudioBuffers on a single AudioContext clock instead
-// of N streaming <audio> elements — fixes Safari/WKWebView choppiness. Default
-// ON (the desktop app is WKWebView for every macOS user); set
-// localStorage "stemdeck.audioEngine" = "0" to opt back into the legacy
-// streaming path for A/B without a rebuild.
+// of N streaming <audio> elements — fixes Safari/WKWebView choppiness.
+//
+// Default OFF: shipping it default-on (alpha.4) regressed the Windows/WebView2
+// client — the engine's extra AudioContext + concurrent full-WAV decodes wedge
+// the multitrack media loads, so `canplay` never fires and neither the waveform
+// nor playback appear. Until the engine is made WebView2-safe, it's opt-in:
+// set localStorage "stemdeck.audioEngine" = "1" to enable it (e.g. on Safari).
 function audioEngineEnabled() {
-  try { return localStorage.getItem("stemdeck.audioEngine") !== "0"; }
-  catch (e) { console.warn("[player] audioEngine flag read failed:", e); return true; }
+  try { return localStorage.getItem("stemdeck.audioEngine") === "1"; }
+  catch (e) { console.warn("[player] audioEngine flag read failed:", e); return false; }
 }
 
 // Above this estimated decoded-PCM size the engine is skipped and playback
