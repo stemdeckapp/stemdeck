@@ -36,14 +36,24 @@ import { destroySections } from "./sections.js";
 // Playback runs off decoded AudioBuffers on a single AudioContext clock instead
 // of N streaming <audio> elements — fixes Safari/WKWebView choppiness.
 //
-// Default OFF: shipping it default-on (alpha.4) regressed the Windows/WebView2
-// client — the engine's extra AudioContext + concurrent full-WAV decodes wedge
-// the multitrack media loads, so `canplay` never fires and neither the waveform
-// nor playback appear. Until the engine is made WebView2-safe, it's opt-in:
-// set localStorage "stemdeck.audioEngine" = "1" to enable it (e.g. on Safari).
+// Default is OS-based: the engine works on WKWebView (macOS) and Chromium, but
+// regresses Windows/WebView2 (the extra AudioContext + concurrent full-WAV
+// decodes wedge the multitrack media loads, so `canplay` never fires and the
+// waveform + playback never appear). So default ON everywhere except Windows.
+// This is a heuristic stopgap — the proper fix is a WebView2-safe engine
+// (tracked separately). An explicit localStorage "stemdeck.audioEngine" of
+// "1"/"0" always overrides the OS default.
 function audioEngineEnabled() {
-  try { return localStorage.getItem("stemdeck.audioEngine") === "1"; }
-  catch (e) { console.warn("[player] audioEngine flag read failed:", e); return false; }
+  try {
+    const pref = localStorage.getItem("stemdeck.audioEngine");
+    if (pref === "1") return true;
+    if (pref === "0") return false;
+  } catch (e) {
+    console.warn("[player] audioEngine flag read failed:", e);
+  }
+  const isWindows = /Windows/i.test(navigator.userAgent || "");
+  console.debug(`[player] audioEngine default — ${isWindows ? "Windows → off" : "non-Windows → on"}`);
+  return !isWindows;
 }
 
 // Above this estimated decoded-PCM size the engine is skipped and playback
