@@ -726,6 +726,8 @@ input, textarea { font-family: inherit; }
 .folder-editor-name:focus { border-color: rgba(244,183,64,0.5); box-shadow: 0 0 0 2px rgba(244,183,64,0.12); }
 .folder-editor-colors { display: flex; align-items: center; gap: 9px; }
 .folder-editor-colors .folder-color-dot { width: 22px; height: 22px; }
+.folder-editor-msg { color: var(--danger); font-size: 11px; margin-top: 8px; }
+.folder-editor-msg:empty { display: none; }
 .folder-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .folder-editor-actions button { min-height: 30px; border-radius: 7px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; padding: 0 11px; }
 .folder-editor-cancel { border: 1px solid var(--border); background: rgba(21,31,39,0.52); color: var(--muted); }

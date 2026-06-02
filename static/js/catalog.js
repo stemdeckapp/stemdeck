@@ -601,6 +601,12 @@ function closeFolderEditor() {
   folderEditor = null;
 }
 
+// Folder names accept letters (any language), digits, spaces, and a small safe
+// punctuation set — markup/symbols are rejected so names like the XSS probe or
+// "±!@£$%^&*" can't be created (#170 follow-up).
+const FOLDER_NAME_RE = /^[\p{L}\p{M}\p{N} '’&().,_-]+$/u;
+const isValidFolderName = (s) => FOLDER_NAME_RE.test(s);
+
 function openFolderEditor(folderId) {
   const folder = folders.find((f) => f.id === folderId);
   if (!folder || folder.id === TRASH_ID) return;
@@ -629,6 +635,7 @@ function openFolderEditor(folderId) {
           ${folderColorButtonsHtml(selectedColor)}
         </div>
       </div>
+      <div class="folder-editor-msg" role="alert" aria-live="polite"></div>
       <div class="folder-editor-actions">
         <button class="folder-editor-cancel" type="button">Cancel</button>
         <button class="folder-editor-save" type="submit">Save</button>
@@ -659,9 +666,19 @@ function openFolderEditor(folderId) {
       refreshDots();
     });
   }
+  const msgEl = overlay.querySelector(".folder-editor-msg");
+  input.addEventListener("input", () => { msgEl.textContent = ""; });
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    folder.name = input.value.trim() || folder.name;
+    const name = input.value.trim();
+    if (!isValidFolderName(name)) {
+      msgEl.textContent = name
+        ? "Use letters, numbers, spaces, or - _ ' & ( ) . ,"
+        : "Enter a folder name.";
+      input.focus();
+      return; // don't save or close until the name is valid
+    }
+    folder.name = name;
     folder.color = selectedColor;
     saveState();
     closeFolderEditor();
