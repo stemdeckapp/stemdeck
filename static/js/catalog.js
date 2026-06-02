@@ -30,6 +30,8 @@ let catalogSearchQuery = "";
 // ─── Persistence ───
 
 const TRASH_ID = "trash";
+// The default landing folder for unorganized tracks — protected from deletion.
+const UNSORTED_ID = "f-unsorted";
 const PROCESSING_STATUSES = new Set(["queued", "downloading", "analyzing", "separating", "processing"]);
 const FOLDER_COLORS = ["#d8a84a", "#e85f6f", "#64c86f", "#4f9de8", "#a985f4"];
 const DEFAULT_FOLDER_COLOR = FOLDER_COLORS[0];
@@ -534,7 +536,7 @@ function createFolder() {
 }
 
 function deleteFolder(folderId) {
-  if (folderId === TRASH_ID) return;
+  if (folderId === TRASH_ID || folderId === UNSORTED_ID) return;
   // Cascade: delete children first.
   for (const child of folders.filter((f) => f.parentId === folderId)) deleteFolder(child.id);
   const idx = folders.findIndex((f) => f.id === folderId);
@@ -986,6 +988,7 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
 
 function renderFolder(folder) {
   const isTrash = folder.id === TRASH_ID;
+  const isUnsorted = folder.id === UNSORTED_ID;
   const isSubfolder = Boolean(folder.parentId);
   if (!isTrash) folder.color = normalizeFolderColor(folder.color);
 
@@ -1020,9 +1023,9 @@ function renderFolder(folder) {
           <path d="M12 11v6M9 14h6"/>
         </svg>
       </button>
-      <button class="f-del" type="button" aria-label="Delete folder" title="Delete folder">
+      ${isUnsorted ? "" : `<button class="f-del" type="button" aria-label="Delete folder" title="Delete folder">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
-      </button>
+      </button>`}
     `}
   `;
 
