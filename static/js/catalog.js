@@ -605,6 +605,7 @@ function closeFolderEditor() {
 // punctuation set — markup/symbols are rejected so names like the XSS probe or
 // "±!@£$%^&*" can't be created (#170 follow-up).
 const FOLDER_NAME_RE = /^[\p{L}\p{M}\p{N} '’&().,_-]+$/u;
+const MAX_FOLDER_NAME_LEN = 100;
 const isValidFolderName = (s) => FOLDER_NAME_RE.test(s);
 
 function openFolderEditor(folderId) {
@@ -627,7 +628,7 @@ function openFolderEditor(folderId) {
       </div>
       <label class="folder-editor-field">
         <span>Name</span>
-        <input class="folder-editor-name" type="text" maxlength="48" autocomplete="off" spellcheck="false" />
+        <input class="folder-editor-name" type="text" maxlength="100" autocomplete="off" spellcheck="false" />
       </label>
       <div class="folder-editor-field">
         <span>Color</span>
@@ -671,10 +672,18 @@ function openFolderEditor(folderId) {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const name = input.value.trim();
+    if (!name) {
+      msgEl.textContent = "Enter a folder name.";
+      input.focus();
+      return;
+    }
+    if (name.length > MAX_FOLDER_NAME_LEN) {
+      msgEl.textContent = `Folder name is too long (max ${MAX_FOLDER_NAME_LEN}).`;
+      input.focus();
+      return;
+    }
     if (!isValidFolderName(name)) {
-      msgEl.textContent = name
-        ? "Use letters, numbers, spaces, or - _ ' & ( ) . ,"
-        : "Enter a folder name.";
+      msgEl.textContent = "Use letters, numbers, spaces, or - _ ' & ( ) . ,";
       input.focus();
       return; // don't save or close until the name is valid
     }
