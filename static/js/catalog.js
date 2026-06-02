@@ -985,7 +985,7 @@ function renderFolder(folder) {
     </span>`}
     <svg class="f-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
     ${folderIcon}
-    <span class="f-name">${folder.name}</span>
+    <span class="f-name">${esc(folder.name)}</span>
     <span class="f-count">${folder.items.length}</span>
     ${isTrash ? "" : `
       <button class="f-subfolder" type="button" aria-label="New subfolder" title="New subfolder">
@@ -1473,6 +1473,9 @@ async function checkForUpdate() {
     const data = await res.json();
     const latest = normalizeVersion(data.tag_name);
     if (!latest || latest === currentVersion) return;
+    // Dev/source builds report a git-derived version (e.g. 0.7.0a5.dev3+g…) that
+    // is *ahead* of the last release — don't nag them with an "update" banner.
+    if (/\bdev\b|\+/.test(currentVersion)) return;
 
     let dismissed = null;
     try { dismissed = localStorage.getItem(DISMISSED_UPDATE_KEY); } catch (e) { console.warn(e); }

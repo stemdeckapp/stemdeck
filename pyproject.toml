@@ -1,6 +1,9 @@
 [project]
 name = "stemdeck"
-version = "0.6.0-alpha.2"
+# Version is derived from the git tag by hatch-vcs (see [tool.hatch.version]),
+# so it is never hand-edited — `git tag vX.Y.Z` is the single source of truth.
+# Builds between tags report a dev version (e.g. 0.7.0a5.dev3+g<sha>). (#169)
+dynamic = ["version"]
 description = "Paste a YouTube URL, get audio stems split into a DAW-style player."
 requires-python = ">=3.10,<3.14"
 dependencies = [
@@ -52,8 +55,16 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+# Derive the version from git tags. Writes app/_version.py at build time as a
+# runtime fallback for environments without installed package metadata.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "app/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

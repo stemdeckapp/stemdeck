@@ -50,7 +50,11 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY app/ ./app/
 COPY static/ ./static/
-RUN pip install . --timeout 300
+# The version is git-derived (hatch-vcs), but the build context has no .git, so
+# pin it explicitly: `docker build --build-arg VERSION=0.7.0-alpha.4 ...`
+# (defaults to 0.0.0 for ad-hoc local builds). #169
+ARG VERSION=0.0.0
+RUN SETUPTOOLS_SCM_PRETEND_VERSION="${VERSION#v}" pip install . --timeout 300
 
 # ─── Stage 2: runner ─────────────────────────────────────────────
 FROM python:3.12-slim AS runner

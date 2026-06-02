@@ -18,6 +18,10 @@ dist/
 *.egg
 .eggs/
 
+# Version is git-derived (hatch-vcs); these are generated artifacts, never committed.
+app/_version.py
+static/version.json
+
 # Desktop dependencies and build outputs
 desktop/node_modules/
 desktop/src-tauri/target/

@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ARCH="${ARCH:-arm64}"
-VERSION="${VERSION:-LOCAL_DEV_TEST}"
-VERSION="${VERSION#v}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Default the version to the current git tag so local builds match the tag with
+# no VERSION passed; falls back to a dev label outside a tagged checkout. (#169)
+VERSION="${VERSION:-$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo 0.0.0-dev)}"
+VERSION="${VERSION#v}"
 BUILD_DIR="${REPO_ROOT}/.build"
 
 if [[ "$(uname)" != "Darwin" ]]; then

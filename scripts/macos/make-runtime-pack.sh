@@ -123,7 +123,10 @@ find "$PYTHON_DIR/lib" -name "EXTERNALLY-MANAGED" -delete
 echo "==> Installing packages into bundled Python"
 # --system is required because $PYTHON_DIR is not a venv (it's a full Python install).
 uv pip install --system --python "$PYTHON_DIR/bin/python" pip setuptools wheel
-uv pip install --system --python "$PYTHON_DIR/bin/python" "$REPO_ROOT"
+# The project version is git-derived (hatch-vcs). Pin it explicitly from $VERSION
+# so the install doesn't depend on git tags being present in the build checkout (#169).
+SETUPTOOLS_SCM_PRETEND_VERSION="${VERSION#v}" \
+  uv pip install --system --python "$PYTHON_DIR/bin/python" "$REPO_ROOT"
 
 echo "==> Verifying stdlib and imports"
 PYTHON_DIR="$PYTHON_DIR" PYTHONHOME="$PYTHON_DIR" "$PYTHON_DIR/bin/python" - <<'PY'

@@ -192,6 +192,11 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) {
 
 & $PythonExe -m pip install --upgrade pip
 
+# The project version is git-derived (hatch-vcs). Pin it from $PackageVersion so
+# the install doesn't depend on git tags in the build checkout (#169).
+if ($PackageVersion) {
+  $env:SETUPTOOLS_SCM_PRETEND_VERSION = ($PackageVersion -replace '^v', '')
+}
 & $PythonExe -m pip install "$Root"
 
 if ($CpuOnly) {

@@ -59,8 +59,16 @@ _YOUTUBE_HOSTS = frozenset(
         "youtu.be",
     )
 )
-_SOUNDCLOUD_HOSTS = frozenset(("soundcloud.com", "www.soundcloud.com", "on.soundcloud.com"))
+# Note: on.soundcloud.com (the share shortener) is intentionally excluded — it
+# redirects to arbitrary targets, which is an SSRF vector once handed to yt-dlp
+# (#173). Users must paste the full soundcloud.com URL.
+_SOUNDCLOUD_HOSTS = frozenset(("soundcloud.com", "www.soundcloud.com"))
 _ALLOWED_HOSTS = _YOUTUBE_HOSTS | _SOUNDCLOUD_HOSTS
+
+# Restrict yt-dlp to the extractors we actually support. Crucially this excludes
+# the "generic" extractor, so even a URL that slips past host validation cannot
+# make yt-dlp fetch an arbitrary host/redirect target (#173).
+_ALLOWED_EXTRACTORS = ["youtube", "soundcloud"]
 
 
 class InvalidYouTubeURL(ValueError):
@@ -147,7 +155,9 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
 
     # Fetch metadata first (no download) so we can reject videos that are
     # too long before wasting bandwidth and disk.
-    with YoutubeDL({"quiet": True, "noplaylist": True}) as ydl:
+    with YoutubeDL(
+        {"quiet": True, "noplaylist": True, "allowed_extractors": _ALLOWED_EXTRACTORS}
+    ) as ydl:
         meta = ydl.extract_info(url, download=False) or {}
     duration = meta.get("duration") or 0
     if duration > MAX_DURATION_SEC:
@@ -176,6 +186,7 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
         "quiet": True,
         "noprogress": True,
         "noplaylist": True,
+        "allowed_extractors": _ALLOWED_EXTRACTORS,
         "progress_hooks": [hook],
     }
     info: dict = {}

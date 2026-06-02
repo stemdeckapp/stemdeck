@@ -44,6 +44,9 @@ def test_accepts_youtube_urls(url: str, expected: str) -> None:
         ("https://example.com/foo", "unsupported host"),
         ("https://www.youtube.com/playlist?list=PLfoo", "video ID"),
         ("https://evil.com/watch?v=dQw4w9WgXcQ", "unsupported host"),
+        # The on.soundcloud.com share shortener is rejected — it redirects to
+        # arbitrary targets, an SSRF vector once handed to yt-dlp (#173).
+        ("https://on.soundcloud.com/abc123", "unsupported host"),
     ],
 )
 def test_rejects_bad_urls(url: str, reason_substring: str) -> None:
@@ -57,7 +60,6 @@ def test_rejects_bad_urls(url: str, reason_substring: str) -> None:
     [
         "https://soundcloud.com/artist/track",
         "https://www.soundcloud.com/artist/track",
-        "https://on.soundcloud.com/abc123",
         "  https://soundcloud.com/artist/track  ",
     ],
 )

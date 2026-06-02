@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
-import json
 import logging
 import os
 import signal
@@ -69,17 +68,18 @@ def _process_exists(pid: int) -> bool:
 
 
 def app_version() -> str:
-    version_file = STATIC_DIR / "version.json"
-    try:
-        data = json.loads(version_file.read_text(encoding="utf-8"))
-        value = str(data.get("version", "")).strip().removeprefix("v")
-        if value:
-            return value
-    except (OSError, json.JSONDecodeError):
-        pass
+    # Version is git-tag-derived via hatch-vcs (#169). Prefer installed package
+    # metadata (set at install/build from the tag); fall back to the generated
+    # app/_version.py for non-installed runs, then a dev placeholder.
     try:
         return package_version("stemdeck")
     except PackageNotFoundError:
+        pass
+    try:
+        from app._version import __version__
+
+        return str(__version__)
+    except Exception:
         return "0.0.0-dev"
 
 
