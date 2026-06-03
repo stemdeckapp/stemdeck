@@ -500,6 +500,10 @@ async function loadTrackIntoStudio(trackId) {
   } catch (e) { console.warn("[catalog] server sync failed, using stored track:", e); }
 
   if (token !== _loadTrackToken) return;
+  // A reprocessing track may still carry the previous extraction's stems
+  // (hadStoredAudio), but it isn't ready — loading it would replace the live
+  // job-progress overlay with stale audio. Leave the progress UI in place.
+  if (PROCESSING_STATUSES.has(track.status)) return;
   if (!track.audioStems?.length) return;
   if (track.status !== "done" && !hadStoredAudio) return;
   applyStoredStemSelection(track);

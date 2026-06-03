@@ -36,13 +36,14 @@ import { destroySections } from "./sections.js";
 // Playback runs off decoded AudioBuffers on a single AudioContext clock instead
 // of N streaming <audio> elements — fixes Safari/WKWebView choppiness.
 //
-// Default is OS-based: the engine works on WKWebView (macOS) and Chromium, but
-// regresses Windows/WebView2 (the extra AudioContext + concurrent full-WAV
-// decodes wedge the multitrack media loads, so `canplay` never fires and the
-// waveform + playback never appear). So default ON everywhere except Windows.
-// This is a heuristic stopgap — the proper fix is a WebView2-safe engine
-// (tracked separately). An explicit localStorage "stemdeck.audioEngine" of
-// "1"/"0" always overrides the OS default.
+// Default ON everywhere. The prior Windows regression (waveform stuck, no audio)
+// was caused by connection competition: both the multitrack and the engine
+// fetched the same 6 stem WAVs concurrently, saturating the 6-connection
+// HTTP/1.1 limit on WebView2/WKWebView and stalling multitrack's blob fetches
+// so `canplay` never fired. Fixed by passing null URLs to the multitrack when
+// the engine is active (wireUpAudio), giving the engine exclusive HTTP access.
+// An explicit localStorage "stemdeck.audioEngine" = "0" forces the streaming
+// path; "1" forces the engine (useful for debugging).
 function audioEngineEnabled() {
   try {
     const pref = localStorage.getItem("stemdeck.audioEngine");
@@ -51,9 +52,7 @@ function audioEngineEnabled() {
   } catch (e) {
     console.warn("[player] audioEngine flag read failed:", e);
   }
-  const isWindows = /Windows/i.test(navigator.userAgent || "");
-  console.debug(`[player] audioEngine default — ${isWindows ? "Windows → off" : "non-Windows → on"}`);
-  return !isWindows;
+  return true; // default ON — smooth audio everywhere
 }
 
 // Above this estimated decoded-PCM size the engine is skipped and playback
@@ -769,7 +768,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // its stem WAV fetches. This keeps peaks.json out of Safari's 6-connection-per-
   // origin window, preventing stem WAV queuing that causes buffer underruns.
   let precomputedPeaks = {};
-  let _canplayFired = false;
   const _footerStemName = stems.find((s) => s.name === "original") ? "original" : stems[0]?.name;
   const _peaksPromise = peaksPromise ?? (jobId
     ? (() => {
@@ -810,12 +808,29 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   setTrackIndex(Object.fromEntries(orderedNames.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
 
+  // Decide up front whether the Web Audio engine will own playback. When it
+  // does, the multitrack is mounted for visuals only and must NOT load the stem
+  // WAVs — otherwise its 6 blob fetches compete with the engine's 6 decodes for
+  // the 6-connection HTTP/1.1 limit and `canplay` stalls (the WebView2/WKWebView
+  // freeze). Null URLs make the multitrack's <audio> elements ready instantly.
+  const engineStemCount = stems.filter((s) => s.url).length;
+  const engineTooLarge =
+    estimateDecodedBytes(totalDuration, engineStemCount) > MAX_ENGINE_DECODED_BYTES;
+  const useEngine = audioEngineEnabled() && !engineTooLarge;
+  if (engineTooLarge) {
+    console.warn(
+      `[player] track too large for Web Audio engine `
+      + `(~${Math.round(estimateDecodedBytes(totalDuration, engineStemCount) / 1e6)} MB `
+      + `for ${engineStemCount} stems × ${Math.round(totalDuration)}s); using streaming path`,
+    );
+  }
+
   const laneH = _applyLaneHeight(orderedNames.length);
 
   const mt = Multitrack.create(
     orderedNames.map((name, i) => ({
       id: i,
-      url: stemsByName[name]?.url ?? null,
+      url: useEngine ? null : (stemsByName[name]?.url ?? null),
       draggable: false,
       startPosition: 0,
       volume: stemsByName[name] ? 1 : 0,
@@ -861,9 +876,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     } else if (waveformUrl) {
       initFooterWaveform(waveformUrl);
     }
-    // Edge case: canplay fired before peaks arrived, so the canplay handler
-    // couldn't render from peaks. Render now that we have them.
-    if (_canplayFired && Object.keys(peaks).length) {
+    // Render the overview as soon as peaks arrive — independent of the audio
+    // `canplay` event, so the waveform appears even if the engine owns playback
+    // (null-URL multitrack) or canplay is delayed. Idempotent: the canplay
+    // handler also renders peaks, but both clearOverviewWaveforms() first.
+    if (Object.keys(peaks).length) {
       clearOverviewWaveforms();
       renderAllOverviewWaveformsFromPeaks(stems, peaks);
     }
@@ -883,7 +900,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   };
 
   mt.once("canplay", () => {
-    _canplayFired = true;
     setWaveformLoading(false);
     const ctx = mt.audioContext;
     console.debug(
@@ -908,7 +924,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     mixReady.then(() => { if (currentJobId === jobId && multitrack === mt) applyMix(); });
     setLoopStart(totalDuration * LOOP_DEFAULT_START_FRAC);
     setLoopEnd(totalDuration * LOOP_DEFAULT_END_FRAC);
-    renderAllMiniWaves(mt, stems);
+    // When the engine owns playback the multitrack has null URLs and no decoded
+    // audio, so mini-waves are driven from the engine's buffers instead (below).
+    if (!useEngine) renderAllMiniWaves(mt, stems);
     applyWaveZoom();
     if (Object.keys(precomputedPeaks).length) {
       clearOverviewWaveforms();
@@ -921,11 +939,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     // stems are kept in sync by the bundle's startSync() loop.
     const wsArr = mt.wavesurfers || mt._wavesurfers;
 
-    // Render overview waveforms, energy bars, and VU loop from wavesurfer's
-    // already-decoded buffers rather than issuing a separate full-file fetch
-    // per stem. The duplicate downloads race with streaming and cause audio
-    // chopping in WKWebView due to its tighter per-origin connection limit.
-    if (wsArr?.length) {
+    // Streaming path only (engine off): render overview/energy/VU from
+    // wavesurfer's decoded buffers. When the engine is on, the multitrack has
+    // null URLs (no decode), so these are driven from the engine's buffers in
+    // the eng.ready handler below instead.
+    if (!useEngine && wsArr?.length) {
       const decoded = new Map();
       const waits = stems.map((stem) => {
         const idx = orderedNames.indexOf(stem.name);
@@ -985,17 +1003,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     // drives the identical UI updates via onTime/onEnded. transport.js, mixer
     // applyMix, the VU loop, and updateStopVisual all route through
     // `audioEngine ?? multitrack`, so flag-off is byte-identical to before.
-    const engineStemCount = stems.filter((s) => s.url).length;
-    const engineTooLarge =
-      estimateDecodedBytes(totalDuration, engineStemCount) > MAX_ENGINE_DECODED_BYTES;
-    if (engineTooLarge) {
-      console.warn(
-        `[player] track too large for Web Audio engine `
-        + `(~${Math.round(estimateDecodedBytes(totalDuration, engineStemCount) / 1e6)} MB `
-        + `for ${engineStemCount} stems × ${Math.round(totalDuration)}s); using streaming path`,
-      );
-    }
-    if (audioEngineEnabled() && !engineTooLarge) {
+    if (useEngine) {
       // Mirror the streaming "timeupdate" handler body so playhead/footer/
       // presence/stop-visual update the same way regardless of which clock runs.
       const driveTransportUi = (t) => {
@@ -1027,6 +1035,22 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
         }
         eng.setLoop(loopEnabled, loopStart, loopEnd);
         applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
+        // Drive the decode-dependent visuals from the engine's own decoded
+        // buffers (the null-URL multitrack has none): overview waveforms (when
+        // no precomputed peaks), energy bars, VU envelopes, and lane mini-waves.
+        const decoded = eng.getBuffers();
+        if (!Object.keys(precomputedPeaks).length) {
+          clearOverviewWaveforms();
+          renderAllOverviewWaveforms(stems, decoded);
+        }
+        renderStemEnergyBaseline(stems, decoded);
+        startStemVuLoop(stems, decoded, token);
+        for (const stem of stems) {
+          const buf = decoded.get(stem.name);
+          if (isAudioBufferLike(buf)) {
+            renderDecodedStemVisuals(stem.name, buf, STEM_COLORS[stem.name] || "#a0a0a0");
+          }
+        }
       }).catch((e) => {
         console.warn("[player] audio engine init failed; using streaming path:", e);
         eng.destroy();

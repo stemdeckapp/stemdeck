@@ -162,6 +162,14 @@ export function createAudioEngine(stems, { onTime, onEnded } = {}) {
     setGain,
     setMasterGain,
     getAnalyser: (name) => tracks.get(name)?.analyser ?? null,
+    // Decoded AudioBuffers keyed by stem name — reused by the visuals (overview
+    // waveforms, mini-waves, VU envelopes, energy bars) so they don't need the
+    // multitrack to also decode the audio. Map<name, AudioBuffer>.
+    getBuffers: () => {
+      const m = new Map();
+      for (const [name, t] of tracks) m.set(name, t.buffer);
+      return m;
+    },
     destroy,
     audioContext: ctx,
   };
