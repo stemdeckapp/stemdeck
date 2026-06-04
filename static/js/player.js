@@ -522,6 +522,7 @@ function startStemVuLoop(stems, decodedMap, token) {
 
 export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("is-import");
+  document.querySelector(".app")?.classList.remove("engine-waveforms");
   document.querySelector(".app")?.classList.add("no-track");
   destroySections();
   stopVuLoop();
@@ -817,6 +818,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   const engineTooLarge =
     estimateDecodedBytes(totalDuration, engineStemCount) > MAX_ENGINE_DECODED_BYTES;
   const useEngine = audioEngineEnabled() && !engineTooLarge;
+  // The null-URL multitrack (engine path) has no WaveSurfer canvas, so reveal the
+  // SVG overview layer as the visible waveform (CSS hides it on the streaming path).
+  document.querySelector(".app")?.classList.toggle("engine-waveforms", useEngine);
   if (engineTooLarge) {
     console.warn(
       `[player] track too large for Web Audio engine `

@@ -1629,6 +1629,12 @@ input, textarea { font-family: inherit; }
 .daw .stem-waveform-layer {
   display: none !important;
 }
+/* When the Web Audio engine owns playback, the multitrack is mounted with null
+   URLs and never decodes audio, so the WaveSurfer canvas is empty. Show the SVG
+   overview layer (rendered from peaks.json) as the visual source instead. */
+.daw.engine-waveforms .stem-waveform-layer {
+  display: flex !important;
+}
 /* waves-column must size naturally now that multitrack is in flow */
 .daw .waves-column {
   height: auto !important;
