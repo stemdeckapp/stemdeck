@@ -164,7 +164,11 @@ _CSP = (
     "font-src 'self' https://fonts.gstatic.com data:; "
     "img-src 'self' data: blob: https:; "
     "media-src 'self' blob: data:; "
-    "connect-src 'self' https://api.github.com ipc: http://ipc.localhost; "
+    # data:/blob: are required by multitrack.js (it fetches a data: URI during
+    # track init); without them Multitrack.create throws and no audio loads
+    # (#186). They are inline/same-origin schemes, not network endpoints, so
+    # they add no exfiltration channel — script-src below stays locked.
+    "connect-src 'self' https://api.github.com ipc: http://ipc.localhost data: blob:; "
     "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
 )
 
