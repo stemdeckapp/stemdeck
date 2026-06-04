@@ -349,12 +349,7 @@ export function applyWaveZoom() {
     lanes?.style.setProperty("--wave-playhead-h", `${wavesColumn.clientHeight}px`);
   }
   if (multitrack && totalDuration > 0 && waveScroll) {
-    // Measure from offsetWidth (border-box), not clientWidth. clientWidth shrinks
-    // when the vertical scrollbar appears; feeding that into the zoom calc let the
-    // scrollbar toggle re-zoom the waveform, which toggled the scrollbar again, a
-    // feedback loop that showed as the waveform shaking while scrolled (#182).
-    // offsetWidth is the layout width and does not change when a scrollbar appears.
-    const baseWidth = waveScroll.offsetWidth;
+    const baseWidth = waveScroll.clientWidth;
     if (baseWidth > 0) {
       // Fit to the visible width, but never compress below WAVE_MIN_WIDTH.
       const contentWidth = Math.max(baseWidth, WAVE_MIN_WIDTH);
@@ -379,15 +374,8 @@ export function applyWaveZoom() {
 function wireZoomButtons() {
   if (waveScroll) {
     let rafId = null;
-    let lastWidth = 0;
     const ro = new ResizeObserver(() => {
       if (!multitrack || totalDuration <= 0) return;
-      // Only re-zoom on real width changes. Height-only changes (e.g. the
-      // horizontal scrollbar appearing) do not affect the zoom and must not
-      // trigger a re-render, which is part of avoiding the shake loop (#182).
-      const width = waveScroll.offsetWidth;
-      if (width === lastWidth) return;
-      lastWidth = width;
       if (rafId) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => { rafId = null; applyWaveZoom(); });
     });

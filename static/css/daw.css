@@ -1594,11 +1594,13 @@ input, textarea { font-family: inherit; }
   border-radius: 0 !important;
   border: none !important;
   overflow-y: auto;
-  /* Reserve the vertical scrollbar gutter so its appearance never reflows the
-     content width. With offsetWidth driving the zoom calc this is polish, not
-     load-bearing, but it keeps the lanes from shifting when the scrollbar shows
-     (part of the #182 shake fix). Ignored harmlessly on older WebKit. */
-  scrollbar-gutter: stable;
+  /* waves.css sets scroll-behavior: smooth. In the studio the mixer column and
+     the wave lanes mirror each other's scrollTop (wireLaneScrollSync), and a
+     smooth programmatic scroll turns that mirror into a feedback loop: each
+     echo re-targets the in-flight animation, so a vertical wheel-scroll to the
+     middle oscillates instead of settling, i.e. the lanes shake (#182). Instant
+     scrolling makes the mirror a no-op once both panes match. */
+  scroll-behavior: auto;
 }
 
 /* Canvas fills the panel when lanes fit, but grows with the track stack when
