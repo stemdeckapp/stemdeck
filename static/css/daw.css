@@ -1594,6 +1594,11 @@ input, textarea { font-family: inherit; }
   border-radius: 0 !important;
   border: none !important;
   overflow-y: auto;
+  /* Reserve the vertical scrollbar gutter so its appearance never reflows the
+     content width. With offsetWidth driving the zoom calc this is polish, not
+     load-bearing, but it keeps the lanes from shifting when the scrollbar shows
+     (part of the #182 shake fix). Ignored harmlessly on older WebKit. */
+  scrollbar-gutter: stable;
 }
 
 /* Canvas fills the panel when lanes fit, but grows with the track stack when
