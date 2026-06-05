@@ -225,7 +225,11 @@ async function runSetup() {
     const runtimeStatus = await invoke("runtime_pack_status");
     const expectedVersion = runtimeStatus.manifest?.version;
     const installedVersion = runtimeStatus.installedVersion;
-    const versionMismatch = expectedVersion && installedVersion && expectedVersion !== installedVersion;
+    // Mismatch when this build expects a version the installed runtime isn't.
+    // An unknown installedVersion (a runtime from a build that never recorded
+    // one) also counts, so an upgrade still refreshes it. Self-heals: after one
+    // refresh the install records the version and subsequent launches match.
+    const versionMismatch = Boolean(expectedVersion) && installedVersion !== expectedVersion;
 
     if (runtime.pythonReady && runtime.ffmpegReady && runtime.torchDevice && !versionMismatch) {
       for (const step of steps) {
@@ -247,7 +251,7 @@ async function runSetup() {
 
     if (!runtime.pythonReady || versionMismatch) {
       if (versionMismatch) {
-        setStatus(`Updating runtime from ${installedVersion} to ${expectedVersion}...`);
+        setStatus(`Updating runtime from ${installedVersion || "an older build"} to ${expectedVersion}...`);
       }
       await invoke("ensure_workspace");
       await installRuntimePack(runtime.appRoot);
