@@ -217,7 +217,17 @@ async function runSetup() {
       minDelay(350),
     ]);
 
-    if (runtime.pythonReady && runtime.ffmpegReady && runtime.torchDevice) {
+    // Compare the installed runtime against the version this app bundle expects.
+    // On a DMG upgrade the old runtime is still fully "ready", so this MUST be
+    // checked before the early-return below -- otherwise setup starts the stale
+    // backend + frontend and the new release (e.g. new features, version) never
+    // takes effect until the runtime is manually cleared.
+    const runtimeStatus = await invoke("runtime_pack_status");
+    const expectedVersion = runtimeStatus.manifest?.version;
+    const installedVersion = runtimeStatus.installedVersion;
+    const versionMismatch = expectedVersion && installedVersion && expectedVersion !== installedVersion;
+
+    if (runtime.pythonReady && runtime.ffmpegReady && runtime.torchDevice && !versionMismatch) {
       for (const step of steps) {
         step.classList.remove("active", "error");
         if (step.dataset.step === "backend") {
@@ -234,11 +244,6 @@ async function runSetup() {
       });
       return;
     }
-
-    const runtimeStatus = await invoke("runtime_pack_status");
-    const expectedVersion = runtimeStatus.manifest?.version;
-    const installedVersion = runtimeStatus.installedVersion;
-    const versionMismatch = expectedVersion && installedVersion && expectedVersion !== installedVersion;
 
     if (!runtime.pythonReady || versionMismatch) {
       if (versionMismatch) {

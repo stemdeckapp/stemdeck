@@ -1482,6 +1482,20 @@ function normalizeVersion(value) {
   return String(value || "").trim().replace(/^v/i, "") || FALLBACK_VERSION;
 }
 
+// Fold a version into one canonical form so the GitHub release tag
+// ("0.7.0-alpha.9") and the backend's PEP440 package version ("0.7.0a9", from
+// hatch-vcs via /api/health) compare equal. Without this the update banner
+// shows on every release because the two strings never match literally.
+function canonicalVersion(value) {
+  return normalizeVersion(value)
+    .toLowerCase()
+    .replace(/[-_]/g, "")            // 0.7.0-alpha.9 -> 0.7.0alpha.9
+    .replace(/alpha/g, "a")
+    .replace(/beta/g, "b")
+    .replace(/preview|pre/g, "rc")
+    .replace(/(a|b|rc)\.?(\d)/g, "$1$2"); // alpha.9/a.9 -> a9
+}
+
 function setDisplayedVersion(version) {
   const brand = document.getElementById("brandVersion");
   const about = document.getElementById("aboutVersion");
@@ -1505,7 +1519,9 @@ async function checkForUpdate() {
     if (!res.ok) return;
     const data = await res.json();
     const latest = normalizeVersion(data.tag_name);
-    if (!latest || latest === currentVersion) return;
+    // Compare canonically so a PEP440 current version (0.7.0a9) matches the
+    // release tag form (0.7.0-alpha.9) and we don't nag an already-current app.
+    if (!latest || canonicalVersion(latest) === canonicalVersion(currentVersion)) return;
     // Dev/source builds report a git-derived version (e.g. 0.7.0a5.dev3+g…) that
     // is *ahead* of the last release — don't nag them with an "update" banner.
     if (/\bdev\b|\+/.test(currentVersion)) return;
