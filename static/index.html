@@ -57,7 +57,7 @@
                 <path d="M12 3v12 M7 8l5-5 5 5 M5 21h14"/>
               </svg>
             </button>
-            <input id="fileInput" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" style="display:none" aria-hidden="true" />
+            <input id="fileInput" type="file" accept=".mp3,.wav,.flac,audio/mpeg,audio/wav,audio/flac" style="display:none" aria-hidden="true" />
           </div>
 
           <!-- Divider -->
@@ -595,6 +595,7 @@
                 <div class="export-format-toggle" role="radiogroup" aria-label="Export format">
                   <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
                   <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
+                  <button class="export-fmt" id="t-fmt-flac" type="button" role="radio" aria-checked="false">FLAC</button>
                 </div>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
                   <span class="chip-item-icon" aria-hidden="true">

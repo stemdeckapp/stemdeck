@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentMixMp3, downloadAllStemsZip, downloadRegionMix, downloadRegionMixMp3, drawFooterPlaceholder } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -129,6 +129,7 @@ function wireFooterControls() {
   const exportLabel = document.getElementById("t-export-label");
   const fmtWav   = document.getElementById("t-fmt-wav");
   const fmtMp3   = document.getElementById("t-fmt-mp3");
+  const fmtFlac  = document.getElementById("t-fmt-flac");
   const itemMix    = document.getElementById("t-export-mix");
   const itemStems  = document.getElementById("t-export-stems");
   const itemRegion = document.getElementById("t-export-region");
@@ -150,13 +151,14 @@ function wireFooterControls() {
 
   function setFormat(f) {
     format = f;
-    fmtWav?.classList.toggle("active", f === "wav");
-    fmtWav?.setAttribute("aria-checked", String(f === "wav"));
-    fmtMp3?.classList.toggle("active", f === "mp3");
-    fmtMp3?.setAttribute("aria-checked", String(f === "mp3"));
+    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"]]) {
+      btn?.classList.toggle("active", f === val);
+      btn?.setAttribute("aria-checked", String(f === val));
+    }
   }
   fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
   fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
+  fmtFlac?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("flac"); });
 
   function resetBusy() {
     busy = false;
@@ -187,7 +189,7 @@ function wireFooterControls() {
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy) return;
-    const ok = format === "mp3" ? downloadCurrentMixMp3() : downloadCurrentMix();
+    const ok = downloadCurrentMix(format);
     if (!ok) { showError("All stems are muted - nothing to export."); return; }
     flashBusy();
   });
@@ -195,7 +197,7 @@ function wireFooterControls() {
   itemRegion?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
-    const ok = format === "mp3" ? downloadRegionMixMp3() : downloadRegionMix();
+    const ok = downloadRegionMix(format);
     if (!ok) { showError("All stems are muted - nothing to export."); return; }
     flashBusy();
   });
@@ -274,8 +276,8 @@ function wireFileDrop() {
   function applyFile(file) {
     if (!file) return;
     const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) {
-      showError("Only MP3 and WAV files are supported.");
+    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav") && !lower.endsWith(".flac")) {
+      showError("Only MP3, WAV, and FLAC files are supported.");
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {

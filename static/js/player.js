@@ -1303,17 +1303,10 @@ function _exportFilename(ext) {
 // The download functions return true when a download was triggered and false
 // when there is nothing audible to export (every lane muted), so the caller can
 // surface a message.
-export function downloadCurrentMix() {
-  const url = _mixdownUrl("wav", false);
+export function downloadCurrentMix(ext = "wav") {
+  const url = _mixdownUrl(ext, false);
   if (!url) return false;
-  _triggerDownload(url, _exportFilename("wav"));
-  return true;
-}
-
-export function downloadCurrentMixMp3() {
-  const url = _mixdownUrl("mp3", false);
-  if (!url) return false;
-  _triggerDownload(url, _exportFilename("mp3"));
+  _triggerDownload(url, _exportFilename(ext));
   return true;
 }
 
@@ -1362,18 +1355,10 @@ function _regionFilename(ext) {
   return `${safe || "region"}_region.${ext}`;
 }
 
-export function downloadRegionMix() {
+export function downloadRegionMix(ext = "wav") {
   if (!loopEnabled || loopStart >= loopEnd) return false;
-  const url = _mixdownUrl("wav", true);
+  const url = _mixdownUrl(ext, true);
   if (!url) return false;
-  _triggerDownload(url, _regionFilename("wav"));
-  return true;
-}
-
-export function downloadRegionMixMp3() {
-  if (!loopEnabled || loopStart >= loopEnd) return false;
-  const url = _mixdownUrl("mp3", true);
-  if (!url) return false;
-  _triggerDownload(url, _regionFilename("mp3"));
+  _triggerDownload(url, _regionFilename(ext));
   return true;
 }

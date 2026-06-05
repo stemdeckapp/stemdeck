@@ -33,7 +33,7 @@ from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
 router = APIRouter(tags=["jobs"])
 logger = logging.getLogger("stemdeck.api")
 
-_ALLOWED_EXTS = frozenset((".mp3", ".wav"))
+_ALLOWED_EXTS = frozenset((".mp3", ".wav", ".flac"))
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 _WS_RE = re.compile(r"\s+")
 
@@ -177,7 +177,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
     if ext not in _ALLOWED_EXTS:
         raise HTTPException(
             status_code=422,
-            detail=f"Unsupported file type '{ext}': only .mp3 and .wav are accepted",
+            detail=f"Unsupported file type '{ext}': only .mp3, .wav, and .flac are accepted",
         )
 
     # Validate stems list from form field

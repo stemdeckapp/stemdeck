@@ -33,6 +33,16 @@ _ALLOWED_NAMES = frozenset(STEM_NAMES) | {"original", "mix"}
 _MIXDOWN_NAMES = frozenset(STEM_NAMES) | {"original"}
 _MIXDOWN_MAX_GAIN = 4.0
 
+# Output encoders by container/extension, shared by the dynamic mixdown and the
+# stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps.
+_ENCODE_ARGS = {
+    "wav": ["-c:a", "pcm_s16le"],
+    "mp3": ["-q:a", "2"],
+    "flac": ["-c:a", "flac"],
+}
+MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
+MIXDOWN_MEDIA_TYPES = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}
+
 
 def _validate_stem_path(job_id: str, name: str):
     """Shared guard: validate job_id, name, job state, and path. Returns resolved Path."""
@@ -185,7 +195,7 @@ async def get_mixdown(
     exported file matches what is heard. The master fader is intentionally not
     applied -- it is a monitoring level, not part of the mix. Optional ?start=&end=
     trims to a loop region."""
-    if ext not in ("wav", "mp3"):
+    if ext not in ("wav", "mp3", "flac"):
         raise HTTPException(status_code=404, detail="not found")
 
     names = [s for s in stems.split(",") if s]
@@ -227,10 +237,10 @@ async def get_mixdown(
         out_label = "[mix]"
     else:
         out_label = "[a0]"
-    codec = ["-c:a", "pcm_s16le", "-f", "wav"] if ext == "wav" else ["-q:a", "2", "-f", "mp3"]
+    codec = MIXDOWN_CODECS[ext]
     cmd += ["-filter_complex", ";".join(filters), "-map", out_label, *post_seek, *codec, "pipe:1"]
 
-    media_type = "audio/wav" if ext == "wav" else "audio/mpeg"
+    media_type = MIXDOWN_MEDIA_TYPES[ext]
     return StreamingResponse(
         _stream_ffmpeg(cmd),
         media_type=media_type,
@@ -246,17 +256,18 @@ def _safe_title(title: str | None) -> str:
 
 
 def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> None:
-    """Blocking: write the stems into a ZIP. WAV files are stored as-is; MP3 is
-    transcoded per stem via ffmpeg. ZIP_STORED throughout — audio doesn't
+    """Blocking: write the stems into a ZIP. WAV files are stored as-is; MP3 and
+    FLAC are transcoded per stem via ffmpeg. ZIP_STORED throughout - audio doesn't
     meaningfully compress, and STORED keeps the build fast. Runs in a thread."""
     if fmt == "wav":
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
             for name, p in sources:
                 zf.write(p, arcname=f"{name}.wav")
         return
+    encode = _ENCODE_ARGS[fmt]
     with tempfile.TemporaryDirectory() as td, zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
         for name, p in sources:
-            out = os.path.join(td, f"{name}.mp3")
+            out = os.path.join(td, f"{name}.{fmt}")
             cmd = [
                 ffmpeg_executable(),
                 "-nostdin",
@@ -264,10 +275,9 @@ def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> N
                 "error",
                 "-i",
                 str(p),
-                "-q:a",
-                "2",  # VBR ~190 kbps, matches the per-stem mp3 endpoint
+                *encode,
                 "-f",
-                "mp3",
+                fmt,
                 out,
             ]
             proc = subprocess.run(  # noqa: S603 — list args, no shell, trusted ffmpeg
@@ -280,7 +290,7 @@ def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> N
             if proc.returncode != 0:
                 tail = proc.stderr[-2000:].decode("utf-8", "replace")
                 raise RuntimeError(f"ffmpeg failed for {name}: {tail}")
-            zf.write(out, arcname=f"{name}.mp3")
+            zf.write(out, arcname=f"{name}.{fmt}")
 
 
 @router.get("/jobs/{job_id}/stems/all.zip")
@@ -295,8 +305,8 @@ async def get_all_stems_zip(
     every available stem is included."""
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
-    if fmt not in ("wav", "mp3"):
-        raise HTTPException(status_code=422, detail="format must be 'wav' or 'mp3'")
+    if fmt not in ("wav", "mp3", "flac"):
+        raise HTTPException(status_code=422, detail="format must be 'wav', 'mp3', or 'flac'")
     job = registry_get(job_id)
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="job not ready")

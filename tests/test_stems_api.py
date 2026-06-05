@@ -173,7 +173,7 @@ def test_all_stems_zip_rejects_bad_format(client, tmp_path):
     job.status = "done"
     _jobs[job.id] = job
     _make_stem_file(tmp_path, job.id, "vocals")
-    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=flac")
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=ogg")
     assert r.status_code == 422
 
 
@@ -355,3 +355,32 @@ def test_mixdown_region_trim(client, tmp_path):
     )
     assert r.status_code == 200
     assert r.content[:4] == b"RIFF"
+
+
+def test_mixdown_flac_happy(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000014", ["vocals", "bass"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.flac?stems=vocals,bass&gains=1,1")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/flac"
+    assert r.content[:4] == b"fLaC"  # FLAC stream marker
+
+
+def test_mixdown_rejects_unknown_ext_still(client):
+    # ogg remains unsupported even after adding flac.
+    r = client.get("/api/jobs/abcdef000001/mixdown.ogg?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_all_stems_zip_flac(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000015", ["vocals"])
+    job.title = "Track"
+    import io
+    import zipfile
+
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=flac")
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert zf.namelist() == ["vocals.flac"]
+    assert zf.read("vocals.flac")[:4] == b"fLaC"

@@ -173,6 +173,16 @@ def test_upload_wav_returns_job_id(upload_client):
     assert "job_id" in r.json()
 
 
+def test_upload_flac_returns_job_id(upload_client):
+    data = io.BytesIO(b"fLaC" + b"\x00" * 128)
+    r = upload_client.post(
+        "/api/jobs",
+        files={"file": ("my_track.flac", data, "audio/flac")},
+    )
+    assert r.status_code == 200
+    assert "job_id" in r.json()
+
+
 # ─── Sections endpoint ────────────────────────────────────────────────────────
 
 
