@@ -20,9 +20,23 @@ use zip::ZipArchive;
 const SETUP_VERSION: u64 = 1;
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
-const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip";
+// macOS FFmpeg is pinned to a specific evermeet build and verified by SHA256
+// before it is extracted or executed (#172). evermeet publishes no .sha256
+// companion (only a GPG signature and a size), so unlike the Windows gyan.dev
+// path we cannot fetch the hash at runtime -- instead we pin the hash of a
+// specific versioned zip, captured at build time from evermeet's TLS endpoint
+// (the download size matched evermeet's signed release info). Bump the version
+// and BOTH hashes together when updating FFmpeg. The rolling getrelease/latest
+// URL is intentionally avoided so the pinned hash stays valid.
+const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip";
 #[cfg(target_os = "macos")]
-const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip";
+const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/ffprobe-8.1.1.zip";
+#[cfg(target_os = "macos")]
+const DEFAULT_MACOS_FFMPEG_SHA256: &str =
+    "4610988e2f54c243c50da73a09e4e2c36d9bb77546f9aa6c84cb328dcb1a98c1";
+#[cfg(target_os = "macos")]
+const DEFAULT_MACOS_FFPROBE_SHA256: &str =
+    "aeade29dee3c3844e9bcc974f4ae4b29cc4f87994177d77003a8589fa531009e";
 
 struct BackendHandles {
     child: Child,
@@ -1788,6 +1802,44 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     }
 }
 
+// Pick the SHA256 to enforce for a download: the pinned hash when the URL is the
+// built-in default, otherwise an explicit override hash from `env_var` if set,
+// else None (skip). Mirrors the Windows path's "verify default, skip override".
+#[cfg(target_os = "macos")]
+fn expected_ffmpeg_sha256(
+    url: &str,
+    default_url: &str,
+    pinned_sha256: &str,
+    env_var: &str,
+) -> Option<String> {
+    if url == default_url {
+        return Some(pinned_sha256.to_ascii_lowercase());
+    }
+    env::var(env_var)
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
+// Verify a freshly downloaded archive against an expected SHA256 before it is
+// extracted or made executable (#172). On mismatch the file is removed so a
+// corrupt or tampered binary is never run. `None` means no hash to enforce.
+#[cfg(target_os = "macos")]
+fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Result<(), String> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let actual = sha256_file(path)?;
+    if !actual.eq_ignore_ascii_case(expected) {
+        let _ = fs::remove_file(path);
+        return Err(format!(
+            "{label} archive checksum mismatch (expected {expected}, got {actual}). \
+             The download may be corrupt or tampered. Click Retry to try again."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     let ffmpeg_url = env_path_override("STEMDECK_FFMPEG_URL")
@@ -1796,6 +1848,21 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     let ffprobe_url = env_path_override("STEMDECK_FFPROBE_URL")
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
+    // Verify the pinned hash for the default (built-in) URLs; for custom override
+    // URLs honour an explicit STEMDECK_FFMPEG_SHA256 / STEMDECK_FFPROBE_SHA256 when
+    // provided, otherwise skip (parity with the Windows override behaviour).
+    let ffmpeg_expected = expected_ffmpeg_sha256(
+        &ffmpeg_url,
+        DEFAULT_MACOS_FFMPEG_URL,
+        DEFAULT_MACOS_FFMPEG_SHA256,
+        "STEMDECK_FFMPEG_SHA256",
+    );
+    let ffprobe_expected = expected_ffmpeg_sha256(
+        &ffprobe_url,
+        DEFAULT_MACOS_FFPROBE_URL,
+        DEFAULT_MACOS_FFPROBE_SHA256,
+        "STEMDECK_FFPROBE_SHA256",
+    );
     let downloads = data_dir.join("downloads");
     let ffmpeg_zip = downloads.join("ffmpeg-macos.zip");
     let ffprobe_zip = downloads.join("ffprobe-macos.zip");
@@ -1803,7 +1870,9 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
 
     download_file(&ffmpeg_url, &ffmpeg_zip, Duration::from_secs(30 * 60))?;
+    verify_pinned_sha256(&ffmpeg_zip, ffmpeg_expected.as_deref(), "FFmpeg")?;
     download_file(&ffprobe_url, &ffprobe_zip, Duration::from_secs(30 * 60))?;
+    verify_pinned_sha256(&ffprobe_zip, ffprobe_expected.as_deref(), "ffprobe")?;
 
     let ffmpeg_dir = data_dir.join("ffmpeg");
     fs::create_dir_all(&ffmpeg_dir)
@@ -2288,5 +2357,62 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
         // clear_webkit_data suppresses NotFound — this is the correct behavior.
+    }
+
+    // --- macOS FFmpeg checksum verification (#172) ---
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn verify_pinned_sha256_accepts_matching_hash() {
+        let dir = make_tmp();
+        let f = dir.path().join("a.bin");
+        fs::write(&f, b"hello").unwrap();
+        // sha256("hello")
+        let sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert!(super::verify_pinned_sha256(&f, Some(sha), "test").is_ok());
+        assert!(f.exists(), "a valid download must be kept");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn verify_pinned_sha256_rejects_and_removes_on_mismatch() {
+        let dir = make_tmp();
+        let f = dir.path().join("a.bin");
+        fs::write(&f, b"hello").unwrap();
+        let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(super::verify_pinned_sha256(&f, Some(wrong), "test").is_err());
+        assert!(!f.exists(), "a tampered/corrupt download must be removed");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn verify_pinned_sha256_none_skips() {
+        let dir = make_tmp();
+        let f = dir.path().join("a.bin");
+        fs::write(&f, b"hello").unwrap();
+        assert!(super::verify_pinned_sha256(&f, None, "test").is_ok());
+        assert!(f.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn expected_sha_pins_default_url_and_skips_unknown_override() {
+        // Default URL -> the pinned hash.
+        let got = super::expected_ffmpeg_sha256(
+            super::DEFAULT_MACOS_FFMPEG_URL,
+            super::DEFAULT_MACOS_FFMPEG_URL,
+            super::DEFAULT_MACOS_FFMPEG_SHA256,
+            "STEMDECK_FFMPEG_SHA256_TEST_UNSET_172",
+        );
+        assert_eq!(got.as_deref(), Some(super::DEFAULT_MACOS_FFMPEG_SHA256));
+        // Custom override URL with no override hash env set -> None (skip,
+        // matching the Windows override behaviour).
+        let none = super::expected_ffmpeg_sha256(
+            "https://example.com/custom.zip",
+            super::DEFAULT_MACOS_FFMPEG_URL,
+            super::DEFAULT_MACOS_FFMPEG_SHA256,
+            "STEMDECK_FFMPEG_SHA256_TEST_UNSET_172",
+        );
+        assert!(none.is_none());
     }
 }
