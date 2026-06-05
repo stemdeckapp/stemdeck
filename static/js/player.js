@@ -378,8 +378,14 @@ function overviewLaneNames(stems) {
 
 function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
   const laneNames = overviewLaneNames(stems);
+  // Only the extracted/selected stems (plus original) get a waveform, even if
+  // peaks.json carries data for stems the user didn't keep (Demucs separates
+  // all 6 internally). Every lane still gets a ROW so the overlay stays aligned;
+  // non-selected lanes just render empty.
+  const present = new Set(stems.map((s) => s.name));
   let globalMax = 0;
   for (const name of laneNames) {
+    if (!present.has(name)) continue;
     const pts = peaksData[name];
     if (!pts?.length) continue;
     for (const [mn, mx] of pts) {
@@ -390,7 +396,7 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
   const norm = globalMax > 0 ? 1 / globalMax : 0;
   const bars = overviewBarCount();
   for (const name of laneNames) {
-    const pts = peaksData[name];
+    const pts = present.has(name) ? peaksData[name] : null;
     renderOverviewWaveformPath(name, pts, norm, STEM_COLORS[name] || "#a0a0a0", bars);
   }
 }
