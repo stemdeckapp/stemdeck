@@ -187,14 +187,16 @@ function wireFooterControls() {
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy) return;
-    if (format === "mp3") downloadCurrentMixMp3(); else downloadCurrentMix();
+    const ok = format === "mp3" ? downloadCurrentMixMp3() : downloadCurrentMix();
+    if (!ok) { showError("All stems are muted - nothing to export."); return; }
     flashBusy();
   });
 
   itemRegion?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
-    if (format === "mp3") downloadRegionMixMp3(); else downloadRegionMix();
+    const ok = format === "mp3" ? downloadRegionMixMp3() : downloadRegionMix();
+    if (!ok) { showError("All stems are muted - nothing to export."); return; }
     flashBusy();
   });
 

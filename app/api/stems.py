@@ -26,6 +26,13 @@ router = APIRouter(tags=["stems"])
 # amix of the user's selected stems.
 _ALLOWED_NAMES = frozenset(STEM_NAMES) | {"original", "mix"}
 
+# Lanes the dynamic mixdown may sum: the 6 stems plus "original" (the complement
+# track shown when the user picked a subset). "mix" is excluded -- it is the
+# static pre-render this endpoint replaces. Gains are linear; the studio caps a
+# lane at 2.0, so this generous bound just rejects abusive values.
+_MIXDOWN_NAMES = frozenset(STEM_NAMES) | {"original"}
+_MIXDOWN_MAX_GAIN = 4.0
+
 
 def _validate_stem_path(job_id: str, name: str):
     """Shared guard: validate job_id, name, job state, and path. Returns resolved Path."""
@@ -161,6 +168,73 @@ async def get_stem_mp3(
         _stream_ffmpeg(cmd),
         media_type="audio/mpeg",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/jobs/{job_id}/mixdown.{ext}", response_model=None)
+async def get_mixdown(
+    job_id: str,
+    ext: str,
+    stems: str = Query(..., description="Comma-separated lane names to sum"),
+    gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
+    start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
+    end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
+) -> StreamingResponse:
+    """Render a fresh mixdown of the given lanes at the given gains, streamed as
+    WAV or MP3. Mirrors the studio mixer (per-stem volume, mute, solo) so the
+    exported file matches what is heard. The master fader is intentionally not
+    applied -- it is a monitoring level, not part of the mix. Optional ?start=&end=
+    trims to a loop region."""
+    if ext not in ("wav", "mp3"):
+        raise HTTPException(status_code=404, detail="not found")
+
+    names = [s for s in stems.split(",") if s]
+    raw_gains = [g for g in gains.split(",") if g]
+    if not names or len(names) != len(raw_gains):
+        raise HTTPException(
+            status_code=422, detail="stems and gains must be non-empty and equal length"
+        )
+    try:
+        parsed_gains = [float(g) for g in raw_gains]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="gains must be numbers") from None
+    if any(g < 0 or g > _MIXDOWN_MAX_GAIN for g in parsed_gains):
+        raise HTTPException(status_code=422, detail="gain out of range")
+    if not set(names) <= _MIXDOWN_NAMES:
+        raise HTTPException(status_code=422, detail="unknown stem requested")
+    if (start is None) != (end is None) or (start is not None and start >= end):
+        raise HTTPException(
+            status_code=422,
+            detail="start and end are both required and start must be less than end",
+        )
+
+    # Validates job_id (404), job done (404), and path traversal (404) per stem.
+    paths = [_validate_stem_path(job_id, name) for name in names]
+
+    pre_seek = ["-ss", str(start)] if start is not None else []
+    post_seek = ["-t", str(end - start)] if start is not None else []
+
+    cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
+    for p in paths:
+        cmd += [*pre_seek, "-i", str(p)]
+    # Apply each lane's gain, then sum with amix (normalize=0 keeps levels faithful,
+    # matching collect.py). A single audible lane skips amix (a 1-input amix is a no-op).
+    filters = [f"[{i}:a]volume={g:.6f}[a{i}]" for i, g in enumerate(parsed_gains)]
+    n = len(paths)
+    if n > 1:
+        labels = "".join(f"[a{i}]" for i in range(n))
+        filters.append(f"{labels}amix=inputs={n}:normalize=0[mix]")
+        out_label = "[mix]"
+    else:
+        out_label = "[a0]"
+    codec = ["-c:a", "pcm_s16le", "-f", "wav"] if ext == "wav" else ["-q:a", "2", "-f", "mp3"]
+    cmd += ["-filter_complex", ";".join(filters), "-map", out_label, *post_seek, *codec, "pipe:1"]
+
+    media_type = "audio/wav" if ext == "wav" else "audio/mpeg"
+    return StreamingResponse(
+        _stream_ffmpeg(cmd),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
     )
 
 

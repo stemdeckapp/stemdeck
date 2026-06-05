@@ -230,3 +230,128 @@ def test_all_stems_zip_mp3(client, tmp_path):
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     assert zf.namelist() == ["vocals.mp3"]
     assert len(zf.read("vocals.mp3")) > 0
+
+
+# --- dynamic mixdown endpoint (#183) ---
+
+
+def _tiny_wav(seconds: float = 0.2, sr: int = 8000) -> bytes:
+    """A minimal silent PCM16 mono WAV so ffmpeg can decode/mix it."""
+    import struct
+
+    nframes = int(sr * seconds)
+    data = b"\x00\x00" * nframes
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE"
+    hdr += b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+    hdr += b"data" + struct.pack("<I", len(data))
+    return hdr + data
+
+
+def _done_job_with_stems(tmp_path, job_id: str, names) -> Job:
+    job = Job(id=job_id)
+    job.status = "done"
+    job.title = "Track"
+    _jobs[job.id] = job
+    for name in names:
+        _make_stem_file(tmp_path, job_id, name, _tiny_wav())
+    return job
+
+
+def test_mixdown_rejects_bad_ext(client):
+    r = client.get("/api/jobs/abcdef000001/mixdown.ogg?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_mixdown_rejects_length_mismatch(client):
+    r = client.get("/api/jobs/abcdef000001/mixdown.wav?stems=vocals,drums&gains=1")
+    assert r.status_code == 422
+
+
+def test_mixdown_rejects_empty(client):
+    r = client.get("/api/jobs/abcdef000001/mixdown.wav?stems=&gains=")
+    assert r.status_code == 422
+
+
+def test_mixdown_rejects_bad_gain(client):
+    for gains in ("abc", "-1", "99"):
+        r = client.get(f"/api/jobs/abcdef000001/mixdown.wav?stems=vocals&gains={gains}")
+        assert r.status_code == 422, f"gains={gains!r} should 422"
+
+
+def test_mixdown_rejects_unknown_stem(client):
+    # "mix" is intentionally excluded (it is the static pre-render we replace).
+    for stem in ("banjo", "mix"):
+        r = client.get(f"/api/jobs/abcdef000001/mixdown.wav?stems={stem}&gains=1")
+        assert r.status_code == 422, f"stem={stem!r} should 422"
+
+
+def test_mixdown_rejects_bad_region(client):
+    r = client.get("/api/jobs/abcdef000001/mixdown.wav?stems=vocals&gains=1&start=5&end=2")
+    assert r.status_code == 422
+
+
+def test_mixdown_rejects_malformed_job_id(client):
+    r = client.get("/api/jobs/ZZZ/mixdown.wav?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_mixdown_requires_done(client, tmp_path):
+    job = Job(id="abcdef000002")
+    job.status = "separating"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "vocals", _tiny_wav())
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_mixdown_404_for_missing_stem_file(client, tmp_path):
+    job = Job(id="abcdef000003")
+    job.status = "done"
+    _jobs[job.id] = job  # no stem files on disk
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def _skip_without_ffmpeg():
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        import pytest
+
+        pytest.skip("ffmpeg not available")
+
+
+def test_mixdown_wav_happy(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000010", ["vocals", "drums"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1.000,0.500")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.content[:4] == b"RIFF"
+
+
+def test_mixdown_single_lane_skips_amix(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000011", ["bass"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=bass&gains=1.500")
+    assert r.status_code == 200
+    assert r.content[:4] == b"RIFF"
+
+
+def test_mixdown_mp3_happy(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000012", ["vocals", "bass"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.mp3?stems=vocals,bass&gains=1,1")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/mpeg"
+    assert len(r.content) > 0
+
+
+def test_mixdown_region_trim(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000013", ["vocals", "drums"])
+    r = client.get(
+        f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,1&start=0.05&end=0.15"
+    )
+    assert r.status_code == 200
+    assert r.content[:4] == b"RIFF"

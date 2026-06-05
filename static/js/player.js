@@ -2,7 +2,7 @@ import Multitrack from "/vendor/multitrack.js";
 import { fmtTime } from "./utils.js";
 import {
   STEM_NAMES, TRACK_NAMES, STEM_COLORS, PROGRESS_COLOR,
-  LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC,
+  LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC, LANE_VOLUME_MAX,
 } from "./constants.js";
 import {
   mixerEl, multitrackContainer, bpmChip, keyChip, stemsChip, timeEl,
@@ -1253,10 +1253,42 @@ function _triggerDownload(url, filename) {
   a.remove();
 }
 
-function _exportMixUrl() {
-  if (_mixUrl) return _mixUrl;
-  const orig = _currentStems.find((s) => s.name === "original");
-  return orig?.url ?? null;
+// Per-lane effective gain mirroring mixer.js applyMix (volume + mute + solo),
+// minus the master fader (a monitoring level, not part of the mix). Returns the
+// audible lanes and their gains so the backend can render a mixdown matching what
+// is heard. _currentStems already includes "original" when the user picked a
+// subset, so summing these lanes reconstructs the adjusted full song.
+function _effectiveMixGains() {
+  const anySolo = _currentStems.some((s) => mixerState[s.name]?.soloed);
+  const names = [];
+  const gains = [];
+  for (const s of _currentStems) {
+    if (s.name === "mix") continue;
+    const m = mixerState[s.name];
+    if (!m) continue;
+    const g = m.muted ? 0 : (anySolo && !m.soloed ? 0 : m.volume);
+    if (g <= 0) continue;
+    names.push(s.name);
+    gains.push(Math.max(0, Math.min(LANE_VOLUME_MAX, g)));
+  }
+  return { names, gains };
+}
+
+// Dynamic mixdown URL for the current mixer state. Returns null (no download)
+// when every lane is silenced; `region` appends the loop bounds.
+function _mixdownUrl(ext, region) {
+  if (!currentJobId) return null;
+  const { names, gains } = _effectiveMixGains();
+  if (!names.length) return null;
+  const q = new URLSearchParams({
+    stems: names.join(","),
+    gains: gains.map((g) => g.toFixed(3)).join(","),
+  });
+  if (region) {
+    q.set("start", loopStart.toFixed(3));
+    q.set("end", loopEnd.toFixed(3));
+  }
+  return `/api/jobs/${currentJobId}/mixdown.${ext}?${q}`;
 }
 
 function _exportFilename(ext) {
@@ -1268,16 +1300,21 @@ function _exportFilename(ext) {
   return safe ? `${safe}_exported_mix.${ext}` : `exported_mix.${ext}`;
 }
 
+// The download functions return true when a download was triggered and false
+// when there is nothing audible to export (every lane muted), so the caller can
+// surface a message.
 export function downloadCurrentMix() {
-  const url = _exportMixUrl();
-  if (!url) return;
+  const url = _mixdownUrl("wav", false);
+  if (!url) return false;
   _triggerDownload(url, _exportFilename("wav"));
+  return true;
 }
 
 export function downloadCurrentMixMp3() {
-  const url = _exportMixUrl();
-  if (!url) return;
-  _triggerDownload(url.replace(/\.wav$/, ".mp3"), _exportFilename("mp3"));
+  const url = _mixdownUrl("mp3", false);
+  if (!url) return false;
+  _triggerDownload(url, _exportFilename("mp3"));
+  return true;
 }
 
 export function downloadCurrentStems(format = "wav", onProgress) {
@@ -1326,16 +1363,17 @@ function _regionFilename(ext) {
 }
 
 export function downloadRegionMix() {
-  if (!loopEnabled || loopStart >= loopEnd) return;
-  const url = _exportMixUrl();
-  if (!url) return;
-  _triggerDownload(`${url}?start=${loopStart.toFixed(3)}&end=${loopEnd.toFixed(3)}`, _regionFilename("wav"));
+  if (!loopEnabled || loopStart >= loopEnd) return false;
+  const url = _mixdownUrl("wav", true);
+  if (!url) return false;
+  _triggerDownload(url, _regionFilename("wav"));
+  return true;
 }
 
 export function downloadRegionMixMp3() {
-  if (!loopEnabled || loopStart >= loopEnd) return;
-  const url = _exportMixUrl();
-  if (!url) return;
-  const mp3Url = url.replace(/\.wav$/, ".mp3");
-  _triggerDownload(`${mp3Url}?start=${loopStart.toFixed(3)}&end=${loopEnd.toFixed(3)}`, _regionFilename("mp3"));
+  if (!loopEnabled || loopStart >= loopEnd) return false;
+  const url = _mixdownUrl("mp3", true);
+  if (!url) return false;
+  _triggerDownload(url, _regionFilename("mp3"));
+  return true;
 }
