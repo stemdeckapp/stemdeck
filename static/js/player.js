@@ -350,6 +350,16 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
   }
   row.style.setProperty("--stem-color", color);
   row.style.order = String(TRACK_NAMES.indexOf(stemName));
+  // A row is created for every mixer lane, including stems with no audio (e.g.
+  // a subset extraction). The rows are flex-distributed across the lane stack,
+  // so they only stay 1:1 with the mixer lanes when their count matches; an
+  // empty lane renders nothing but keeps that alignment. Without this, fewer
+  // waveform rows than lanes stretch to fill the stack and drift off their
+  // tracks.
+  if (!peaks?.length) {
+    row.innerHTML = "";
+    return;
+  }
   const bars = barCount || overviewBarCount();
   row.innerHTML = `
     <svg class="stem-waveform-svg" viewBox="0 0 ${bars} 48" preserveAspectRatio="none" aria-hidden="true">
@@ -358,23 +368,30 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
   `;
 }
 
+// The lane set must mirror the mixer/multitrack lanes (orderedNames in
+// wireUpAudio): "original" plus the stems when an original lane is present,
+// otherwise just the stems. Rendering a row for every lane keeps the overlay
+// aligned even when only a subset of stems was extracted.
+function overviewLaneNames(stems) {
+  return stems.some((s) => s.name === "original") ? TRACK_NAMES : STEM_NAMES;
+}
+
 function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
+  const laneNames = overviewLaneNames(stems);
   let globalMax = 0;
-  for (const stem of stems) {
-    const pts = peaksData[stem.name];
+  for (const name of laneNames) {
+    const pts = peaksData[name];
     if (!pts?.length) continue;
     for (const [mn, mx] of pts) {
       if (mx > globalMax) globalMax = mx;
       if (-mn > globalMax) globalMax = -mn;
     }
   }
-  if (globalMax <= 0) return;
-  const norm = 1 / globalMax;
+  const norm = globalMax > 0 ? 1 / globalMax : 0;
   const bars = overviewBarCount();
-  for (const stem of stems) {
-    const pts = peaksData[stem.name];
-    if (!pts?.length) continue;
-    renderOverviewWaveformPath(stem.name, pts, norm, STEM_COLORS[stem.name] || "#a0a0a0", bars);
+  for (const name of laneNames) {
+    const pts = peaksData[name];
+    renderOverviewWaveformPath(name, pts, norm, STEM_COLORS[name] || "#a0a0a0", bars);
   }
 }
 
@@ -383,26 +400,23 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
 // matching what a DAW shows. Per-stem normalization made every lane
 // fill its row regardless of how loud the stem actually was.
 function renderAllOverviewWaveforms(stems, decodedMap) {
+  const laneNames = overviewLaneNames(stems);
   const peaksByStem = new Map();
   let globalMax = 0;
-  for (const stem of stems) {
-    const buf = decodedMap.get(stem.name);
+  for (const name of laneNames) {
+    const buf = decodedMap.get(name);
     if (!isAudioBufferLike(buf)) continue;
     const peaks = bufferMinMaxPeaks(buf, OVERVIEW_WAVE_POINTS);
-    peaksByStem.set(stem.name, peaks);
+    peaksByStem.set(name, peaks);
     for (const [mn, mx] of peaks) {
       if (mx > globalMax) globalMax = mx;
       if (-mn > globalMax) globalMax = -mn;
     }
   }
-  if (globalMax <= 0) return;
-  const norm = 1 / globalMax;
+  const norm = globalMax > 0 ? 1 / globalMax : 0;
   const bars = overviewBarCount();
-  for (const stem of stems) {
-    const peaks = peaksByStem.get(stem.name);
-    if (!peaks) continue;
-    const color = STEM_COLORS[stem.name] || "#a0a0a0";
-    renderOverviewWaveformPath(stem.name, peaks, norm, color, bars);
+  for (const name of laneNames) {
+    renderOverviewWaveformPath(name, peaksByStem.get(name), norm, STEM_COLORS[name] || "#a0a0a0", bars);
   }
 }
 
