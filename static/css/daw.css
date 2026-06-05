@@ -1635,6 +1635,13 @@ input, textarea { font-family: inherit; }
 .daw .lanes-ruler { margin-left: 0 !important; }
 .daw .stem-waveform-layer {
   display: none !important;
+  /* waves.css offsets this layer by left:48px for the legacy icon-strip layout.
+     The DAW layout has no in-panel strip, so it must start at 0 like .waves-grid
+     and #multitrack-container above; otherwise the overview waveform is shifted
+     48px right of the ruler/playhead, so t=0 in the audio lands ~48px before the
+     drawn waveform begins (a constant gap that scales with track length, #189). */
+  left: 0 !important;
+  right: 0 !important;
 }
 /* When the Web Audio engine owns playback, the multitrack is mounted with null
    URLs and never decodes audio, so the WaveSurfer canvas is empty. Show the SVG
