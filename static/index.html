@@ -175,6 +175,13 @@
               </svg>
               <span>Settings</span>
             </button>
+            <button class="rail-btn" id="friendsBtn" type="button" title="Supporters" aria-label="Supporters" aria-haspopup="dialog">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <rect x="2" y="7" width="20" height="13" rx="2"/>
+                <path d="m17 2-5 5-5-5"/>
+              </svg>
+              <span>Supporters</span>
+            </button>
             <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/>
@@ -694,6 +701,24 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
           </a>
         </div>
+      </div>
+    </div>
+
+    <!-- Our Friends dialog -->
+    <div class="about-backdrop hidden" id="friendsDialog" role="dialog" aria-modal="true" aria-labelledby="friendsTitle">
+      <div class="about-card friends-card">
+        <button class="about-close" id="friendsClose" type="button" aria-label="Close friends dialog">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <div class="about-logo" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="2" y="7" width="20" height="13" rx="2"/>
+            <path d="m17 2-5 5-5-5"/>
+          </svg>
+        </div>
+        <h2 id="friendsTitle">Supporters</h2>
+        <p class="about-tagline">Shops and makers we love. Go say hi.</p>
+        <div class="lib-friends-grid" id="friendsDialogGrid"></div>
       </div>
     </div>
 

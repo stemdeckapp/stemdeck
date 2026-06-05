@@ -19,6 +19,15 @@ const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
 const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 
+// Curated "Our Friends" partners shown at the bottom of the library. Add an
+// entry here to feature another store/band/etc. Logos are bundled under
+// static/img/friends/ so they render offline. Links open externally via the
+// document-level a[target="_blank"] handler in main.js (Tauri open_url).
+const FRIENDS = [
+  { name: "Dlima Guitars", url: "https://dlimaguitars.com", logo: "/img/friends/dlima-guitars.png" },
+  { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
+];
+
 let folders = [];
 let tracks = {};
 let _deletedJobIds = new Set();
@@ -1572,6 +1581,46 @@ function wireAboutDialog() {
   });
 }
 
+// Supporters dialog: a TV rail button opens a centered modal (like About) with
+// the partner tiles. Links open externally via the document-level
+// a[target="_blank"] handler in main.js (Tauri open_url on desktop).
+function wireSupportersDialog() {
+  const btn = document.getElementById("friendsBtn");
+  const dialog = document.getElementById("friendsDialog");
+  const close = document.getElementById("friendsClose");
+  const grid = document.getElementById("friendsDialogGrid");
+  if (!btn || !dialog) return;
+
+  if (grid && grid.dataset.ready !== "1") {
+    grid.dataset.ready = "1";
+    for (const f of FRIENDS) {
+      const a = document.createElement("a");
+      a.className = "lib-friend";
+      a.href = f.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = f.name;
+      const img = document.createElement("img");
+      img.className = "lib-friend-logo";
+      img.src = f.logo;
+      img.alt = f.name;
+      img.loading = "lazy";
+      const name = document.createElement("span");
+      name.className = "lib-friend-name";
+      name.textContent = f.name;
+      a.append(img, name);
+      grid.appendChild(a);
+    }
+  }
+
+  const open = () => dialog.classList.remove("hidden");
+  const hide = () => dialog.classList.add("hidden");
+  btn.addEventListener("click", open);
+  close?.addEventListener("click", hide);
+  dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) hide(); });
+  dialog.addEventListener("keydown", (e) => { if (e.code === "Escape") hide(); });
+}
+
 async function syncWithServer() {
   try {
     const res = await fetch("/api/jobs", { cache: "no-store" });
@@ -1826,6 +1875,7 @@ export async function initCatalog() {
   wireRailLibraryDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
+  wireSupportersDialog();
   wireSettingsMenu();
   setDisplayedVersion(currentVersion);
   render();

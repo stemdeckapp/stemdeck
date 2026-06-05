@@ -398,7 +398,7 @@ input, textarea { font-family: inherit; }
 
 /* Rail */
 .sidebar-rail {
-  width: 56px;
+  width: 66px;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -784,7 +784,7 @@ input, textarea { font-family: inherit; }
 
 /* Collapsed sidebar strip */
 .cat-collapsed-strip { display: none; }
-.daw.cat-collapsed .sidebar { width: 56px; }
+.daw.cat-collapsed .sidebar { width: 66px; }
 .daw.cat-collapsed .sidebar-body { opacity: 0; pointer-events: none; visibility: hidden; }
 .daw.cat-collapsed .cat-collapsed-strip { display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 8px 0; overflow-y: auto; }
 
@@ -2148,6 +2148,54 @@ input, textarea { font-family: inherit; }
   border-color: rgba(244,183,64,0.3);
 }
 .lib-tag-count { color: var(--muted); font-size: 11px; }
+
+/* Supporters (partner tiles, shown in the TV-icon dialog) */
+/* Slightly wider card so 3 tiles breathe; grid spans the card. */
+.friends-card { width: min(360px, calc(100vw - 32px)); }
+.friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
+.lib-friends-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 2px 0 0;
+}
+.lib-friend {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 5px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-2);
+  text-decoration: none;
+  text-align: center;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.lib-friend:hover {
+  background: var(--panel-2);
+  color: var(--fg);
+  border-color: rgba(255,255,255,0.15);
+}
+/* Logos are transparent wordmarks; span the tile width, keep aspect, cap height. */
+.lib-friend-logo {
+  width: 100%;
+  height: auto;
+  max-height: 30px;
+  object-fit: contain;
+}
+.lib-friend-name {
+  width: 100%;
+  font-size: 10.5px;
+  line-height: 1.2;
+  /* full name across up to 2 lines, then ellipsis */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* ── Clear bin bar (trash view only) ── */
 .clear-bin-bar { display: none; padding: 6px 10px 4px; }
