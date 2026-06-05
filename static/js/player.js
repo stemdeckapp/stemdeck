@@ -264,18 +264,51 @@ function bufferMinMaxPeaks(audioBuffer, count) {
   return peaks;
 }
 
-function minMaxWaveformPath(peaks, norm) {
+// The overview lanes are drawn as discrete vertical bars (mirrored around the
+// center line), matching WaveSurfer's barWidth:3 / barGap:2 / barRadius:2 look
+// used on the streaming path -- so the engine path (this SVG, from peaks.json)
+// is visually identical to the WaveSurfer canvas. We set the SVG viewBox width
+// to the bar count and stretch it across the lane (preserveAspectRatio="none"),
+// so one viewBox unit == one bar slot. Choosing barCount = laneWidth / 5 makes
+// each slot 5px, and a 0.6-unit bar renders as ~3px with a ~2px gap.
+const OVERVIEW_BAR_SLOT_PX = 5; // 3px bar + 2px gap, matches WaveSurfer defaults
+const OVERVIEW_BAR_FRAC = 0.6; // bar width as a fraction of its slot (3/5)
+
+// How many bars fit across the current lane width. Falls back to a sane count
+// before layout settles. Returned bars are clamped so very narrow panels still
+// show a readable waveform.
+function overviewBarCount() {
+  const w = document.querySelector(".waves-column")?.clientWidth || 0;
+  const t = w > 0 ? Math.round(w / OVERVIEW_BAR_SLOT_PX) : 220;
+  return Math.max(40, t);
+}
+
+// Downsample signed [min,max] peaks to `barCount` mirrored bars and emit them as
+// <rect>s in a viewBox whose width == barCount (1 unit per slot). `norm` is the
+// shared cross-stem normalization so loudness relationships are preserved.
+function barsWaveformSvg(peaks, norm, barCount) {
   const n = peaks.length;
-  const top = new Array(n);
-  const bottom = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const x = ((i / (n - 1)) * 100).toFixed(3);
-    const mx = Math.min(1, peaks[i][1] * norm);
-    const mn = Math.max(-1, peaks[i][0] * norm);
-    top[i] = `${i === 0 ? "M" : "L"}${x} ${(24 - mx * 21).toFixed(3)}`;
-    bottom[n - 1 - i] = `L${x} ${(24 - mn * 21).toFixed(3)}`;
+  if (!n) return "";
+  const off = (1 - OVERVIEW_BAR_FRAC) / 2;
+  const rects = new Array(barCount);
+  for (let i = 0; i < barCount; i++) {
+    const start = Math.floor((i * n) / barCount);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * n) / barCount));
+    let mn = 0;
+    let mx = 0;
+    for (let j = start; j < end && j < n; j++) {
+      if (peaks[j][0] < mn) mn = peaks[j][0];
+      if (peaks[j][1] > mx) mx = peaks[j][1];
+    }
+    const amp = Math.min(1, Math.max(-mn, mx) * norm);
+    // Min height keeps silent regions as a faint baseline dotted line (as the
+    // WaveSurfer bars did) instead of vanishing entirely.
+    const h = Math.max(0.7, amp * 44);
+    rects[i] =
+      `<rect x="${(i + off).toFixed(3)}" y="${(24 - h / 2).toFixed(2)}" `
+      + `width="${OVERVIEW_BAR_FRAC}" height="${h.toFixed(2)}" rx="0.3"></rect>`;
   }
-  return `${top.join(" ")} ${bottom.join(" ")} Z`;
+  return rects.join("");
 }
 
 // Mixer-column mini-wave keeps a per-stem normalized envelope (each
@@ -306,7 +339,7 @@ function waveformPath(peaks) {
   return `${top.join(" ")} ${bottom.join(" ")} Z`;
 }
 
-function renderOverviewWaveformPath(stemName, peaks, norm, color) {
+function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
   const layer = ensureOverviewWaveformLayer();
   let row = layer.querySelector(`[data-stem="${stemName}"]`);
   if (!row) {
@@ -317,9 +350,10 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color) {
   }
   row.style.setProperty("--stem-color", color);
   row.style.order = String(TRACK_NAMES.indexOf(stemName));
+  const bars = barCount || overviewBarCount();
   row.innerHTML = `
-    <svg class="stem-waveform-svg" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
-      <path d="${minMaxWaveformPath(peaks, norm)}"></path>
+    <svg class="stem-waveform-svg" viewBox="0 0 ${bars} 48" preserveAspectRatio="none" aria-hidden="true">
+      ${barsWaveformSvg(peaks, norm, bars)}
     </svg>
   `;
 }
@@ -336,10 +370,11 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
   }
   if (globalMax <= 0) return;
   const norm = 1 / globalMax;
+  const bars = overviewBarCount();
   for (const stem of stems) {
     const pts = peaksData[stem.name];
     if (!pts?.length) continue;
-    renderOverviewWaveformPath(stem.name, pts, norm, STEM_COLORS[stem.name] || "#a0a0a0");
+    renderOverviewWaveformPath(stem.name, pts, norm, STEM_COLORS[stem.name] || "#a0a0a0", bars);
   }
 }
 
@@ -362,11 +397,12 @@ function renderAllOverviewWaveforms(stems, decodedMap) {
   }
   if (globalMax <= 0) return;
   const norm = 1 / globalMax;
+  const bars = overviewBarCount();
   for (const stem of stems) {
     const peaks = peaksByStem.get(stem.name);
     if (!peaks) continue;
     const color = STEM_COLORS[stem.name] || "#a0a0a0";
-    renderOverviewWaveformPath(stem.name, peaks, norm, color);
+    renderOverviewWaveformPath(stem.name, peaks, norm, color, bars);
   }
 }
 

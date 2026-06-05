@@ -730,7 +730,8 @@
   overflow: visible;
 }
 
-.stem-waveform-svg path {
+.stem-waveform-svg path,
+.stem-waveform-svg rect {
   fill: var(--stem-color);
   opacity: 0.78;
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--stem-color) 30%, transparent));
@@ -966,7 +967,8 @@
   height: 100%;
 }
 
-.app:not(.is-import) .stem-waveform-svg path {
+.app:not(.is-import) .stem-waveform-svg path,
+.app:not(.is-import) .stem-waveform-svg rect {
   opacity: 0.92;
   filter: none;
 }
