@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Discussion
+    url: https://github.com/stemdeckapp/stemdeck/discussions
+    about: Ask questions, share setups, or discuss ideas with the community.
+  - name: Discord
+    url: https://discord.gg/2MVsWqaPRe
+    about: Chat with the StemDeck community in real time.
+  - name: Report a security vulnerability
+    url: https://github.com/stemdeckapp/stemdeck/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
