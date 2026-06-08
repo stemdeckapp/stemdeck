@@ -4,7 +4,7 @@ set -euo pipefail
 ARCH="${ARCH:-arm64}"
 VERSION="${VERSION:-LOCAL_DEV_TEST}"
 VERSION="${VERSION#v}"
-RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com/thcp/stemdeck/releases/download/v${VERSION}}"
+RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com/stemdeckapp/stemdeck/releases/download/v${VERSION}}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/.build"
 STAGING="${BUILD_DIR}/runtime-staging-${ARCH}"
