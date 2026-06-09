@@ -2174,7 +2174,7 @@ input, textarea { font-family: inherit; }
   align-items: center;
   gap: 6px;
   min-width: 0;
-  padding: 9px 5px;
+  padding: 9px 5px 12px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
