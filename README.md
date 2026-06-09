@@ -363,6 +363,19 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 
 ---
 
+## We Recommend
+
+A few makers and artists we love. **StemDeck is not accepting any money, sponsorship, or funding from anyone listed here.** We share them purely for the joy of letting people know about these amazing people. Go say hi.
+
+| Supporter | What they do | Link |
+|---|---|---|
+| Dlima Guitars | Custom guitars and basses | [dlimaguitars.com](https://dlimaguitars.com) |
+| Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
+| Joao Gaspar | Producer/Film Scorer, Touring/Session Musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
+| Kris Luthier | Luthier and Musical Instrument Repair, Lisboa | [@krisluthier](https://www.instagram.com/krisluthier) |
+
+---
+
 ## Environment Variables
 
 These are for development and testing. Release builds only recognize the variables marked "release".
