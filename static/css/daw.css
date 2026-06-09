@@ -2200,6 +2200,14 @@ input, textarea { font-family: inherit; }
   max-height: 30px;
   object-fit: contain;
 }
+/* Instagram profile photos render as round avatars */
+.lib-friend-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
 .lib-friend-name {
   width: 100%;
   font-size: 10.5px;

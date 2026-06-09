@@ -24,19 +24,21 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 // static/img/friends/ so they render offline. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url).
 const FRIENDS = [
-  { name: "Dlima Guitars", url: "https://www.instagram.com/dlimaguitars", logo: "/img/friends/dlima-guitars-ig.jpg" },
+  { name: "Dlima Guitars", url: "https://www.instagram.com/dlimaguitars", logo: "/img/friends/dlima-guitars-ig.jpg", avatar: true },
   { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
   {
     name: "Joao Gaspar",
     role: "Producer/Film Scorer, Touring/Session Musician",
     url: "https://www.instagram.com/jay_glaspar",
     logo: "/img/friends/joao-gaspar.jpg",
+    avatar: true,
   },
   {
     name: "Kris Luthier",
     role: "Luthier and Musical Instrument Repair, Lisboa",
     url: "https://www.instagram.com/krisluthier",
     logo: "/img/friends/kris-luthier.jpg",
+    avatar: true,
   },
 ];
 
@@ -1627,7 +1629,7 @@ function wireSupportersDialog() {
       a.style.setProperty("--tilt", tilts[i % tilts.length]);
       if (f.logo) {
         const img = document.createElement("img");
-        img.className = "lib-friend-logo";
+        img.className = f.avatar ? "lib-friend-avatar" : "lib-friend-logo";
         img.src = f.logo;
         img.alt = f.name;
         img.loading = "lazy";
