@@ -369,7 +369,7 @@ A few makers and artists we love. **StemDeck is not accepting any money, sponsor
 
 | Supporter | What they do | Link |
 |---|---|---|
-| Dlima Guitars | Custom guitars and basses | [dlimaguitars.com](https://dlimaguitars.com) |
+| Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
 | Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
 | Joao Gaspar | Producer/Film Scorer, Touring/Session Musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
 | Kris Luthier | Luthier and Musical Instrument Repair, Lisboa | [@krisluthier](https://www.instagram.com/krisluthier) |

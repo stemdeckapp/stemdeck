@@ -24,7 +24,7 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 // static/img/friends/ so they render offline. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url).
 const FRIENDS = [
-  { name: "Dlima Guitars", url: "https://dlimaguitars.com", logo: "/img/friends/dlima-guitars.png" },
+  { name: "Dlima Guitars", url: "https://www.instagram.com/dlimaguitars", logo: "/img/friends/dlima-guitars.png" },
   { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
   {
     name: "Joao Gaspar",
