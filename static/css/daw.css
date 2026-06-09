@@ -2208,6 +2208,17 @@ input, textarea { font-family: inherit; }
   object-fit: cover;
   border: 1px solid var(--border);
 }
+/* Small Instagram glyph under the text on tiles that link to Instagram */
+.lib-friend-ig {
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  fill: currentColor;
+  opacity: 0.65;
+}
+.lib-friend:hover .lib-friend-ig {
+  opacity: 1;
+}
 .lib-friend-name {
   width: 100%;
   font-size: 10.5px;
