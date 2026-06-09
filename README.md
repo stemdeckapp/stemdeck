@@ -365,7 +365,7 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 
 ## We Recommend
 
-A few makers and artists we love. **StemDeck is not accepting any money, sponsorship, or funding from anyone listed here.** We share them purely for the joy of letting people know about these amazing people. Go say hi.
+A few makers and artists we love. **StemDeck is not accepting any money, sponsorship, or funding from anyone listed here.** We share them purely for the joy of letting people know about these amazing people. These are wonderful people doing beautiful work, go meet them ❤️
 
 | Supporter | What they do | Link |
 |---|---|---|
