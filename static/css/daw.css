@@ -2154,10 +2154,19 @@ input, textarea { font-family: inherit; }
 .friends-card { width: min(360px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
 .lib-friends-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Masonry columns: each column stacks independently so a tall tile does not
+     push others down. Tiles are round-robined into these columns in JS. */
+  display: flex;
+  align-items: flex-start;
   gap: 6px;
   padding: 2px 0 0;
+}
+.lib-friends-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .lib-friend {
   display: flex;
@@ -2172,12 +2181,17 @@ input, textarea { font-family: inherit; }
   color: var(--fg-2);
   text-decoration: none;
   text-align: center;
-  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+  /* deliberately-uneven "frames on a wall" tilt; per-tile angle set in JS */
+  transform: rotate(var(--tilt, 0deg));
+  transition: background var(--t-fast), color var(--t-fast),
+    border-color var(--t-fast), transform var(--t-fast);
 }
 .lib-friend:hover {
   background: var(--panel-2);
   color: var(--fg);
   border-color: rgba(255,255,255,0.15);
+  /* straighten the frame on hover */
+  transform: rotate(0deg);
 }
 /* Logos are transparent wordmarks; span the tile width, keep aspect, cap height. */
 .lib-friend-logo {
@@ -2195,6 +2209,14 @@ input, textarea { font-family: inherit; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.lib-friend-role {
+  width: 100%;
+  margin-top: 2px;
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--fg-3, var(--fg-2));
+  /* show the full role; the tile grows to fit it */
 }
 
 /* ── Clear bin bar (trash view only) ── */

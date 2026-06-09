@@ -26,6 +26,18 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 const FRIENDS = [
   { name: "Dlima Guitars", url: "https://dlimaguitars.com", logo: "/img/friends/dlima-guitars.png" },
   { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
+  {
+    name: "Joao Gaspar",
+    role: "Producer/Film Scorer, Touring/Session Musician",
+    url: "https://www.instagram.com/jay_glaspar",
+    logo: "/img/friends/joao-gaspar.jpg",
+  },
+  {
+    name: "Kris Luthier",
+    role: "Luthier and Musical Instrument Repair, Lisboa",
+    url: "https://www.instagram.com/krisluthier",
+    logo: "/img/friends/kris-luthier.jpg",
+  },
 ];
 
 let folders = [];
@@ -1593,24 +1605,46 @@ function wireSupportersDialog() {
 
   if (grid && grid.dataset.ready !== "1") {
     grid.dataset.ready = "1";
-    for (const f of FRIENDS) {
+    // Masonry: round-robin tiles into fixed columns so a tall tile in one
+    // column does not push the next row down. Small per-tile tilt gives the
+    // deliberately-uneven "frames on a wall" look.
+    const COLS = 3;
+    const tilts = ["-2deg", "1.5deg", "-1deg", "2deg", "-1.5deg", "1deg"];
+    const cols = [];
+    for (let i = 0; i < COLS; i++) {
+      const col = document.createElement("div");
+      col.className = "lib-friends-col";
+      cols.push(col);
+      grid.appendChild(col);
+    }
+    FRIENDS.forEach((f, i) => {
       const a = document.createElement("a");
       a.className = "lib-friend";
       a.href = f.url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.title = f.name;
-      const img = document.createElement("img");
-      img.className = "lib-friend-logo";
-      img.src = f.logo;
-      img.alt = f.name;
-      img.loading = "lazy";
+      a.style.setProperty("--tilt", tilts[i % tilts.length]);
+      if (f.logo) {
+        const img = document.createElement("img");
+        img.className = "lib-friend-logo";
+        img.src = f.logo;
+        img.alt = f.name;
+        img.loading = "lazy";
+        a.appendChild(img);
+      }
       const name = document.createElement("span");
       name.className = "lib-friend-name";
       name.textContent = f.name;
-      a.append(img, name);
-      grid.appendChild(a);
-    }
+      a.appendChild(name);
+      if (f.role) {
+        const role = document.createElement("span");
+        role.className = "lib-friend-role";
+        role.textContent = f.role;
+        a.appendChild(role);
+      }
+      cols[i % COLS].appendChild(a);
+    });
   }
 
   const open = () => dialog.classList.remove("hidden");
