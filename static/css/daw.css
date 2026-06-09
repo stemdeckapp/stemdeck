@@ -2210,9 +2210,12 @@ input, textarea { font-family: inherit; }
 }
 /* Small Instagram glyph under the text on tiles that link to Instagram */
 .lib-friend-ig {
+  /* block + no-shrink avoids the WebKit baseline clip on small inline SVGs */
+  display: block;
+  flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  margin-top: 4px;
+  margin-top: 2px;
   fill: currentColor;
   opacity: 0.65;
 }
