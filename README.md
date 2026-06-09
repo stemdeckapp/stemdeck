@@ -36,7 +36,7 @@ Drop an MP3 or WAV, or paste a YouTube URL. StemDeck splits the audio into up to
 
 ![StemDeck screenshot](imgs/screenshot/stemdeck.png)
 
-If you find StemDeck useful, consider [buying the maker a coffee](https://www.buymeacoffee.com/stemdeckapp); these donations are being used to random acts of kindness toward others 
+StemDeck is free and does not accept donations or funding. If you would like to give back, check out the makers and artists we love in [We Recommend](#we-recommend) and go support them directly.
 
 ---
 
