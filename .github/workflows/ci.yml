@@ -25,7 +25,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: uv sync --frozen --all-extras
       - run: uv run ruff check app/ tests/
       - run: uv run ruff format --check app/ tests/
@@ -36,7 +36,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: apt-get update && apt-get install -y --no-install-recommends ffmpeg
       - run: uv sync --frozen --all-extras
       - run: uv run pytest tests/ -q
@@ -46,7 +46,7 @@ jobs:
     container:
       image: node:20-alpine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: for f in static/js/*.js; do node --check "$f"; done
 
   sast-bandit:
@@ -54,7 +54,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: uv tool install bandit
       - run: uv tool run bandit -r app/ -ll  # fail on medium+ severity
 
@@ -63,7 +63,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: uv tool install pip-audit
       - run: uv pip compile pyproject.toml -o /tmp/requirements.txt
       # Ignored CVEs (review when upgrading torch or demucs):
@@ -116,7 +116,7 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Scans the source tree for: known CVEs in deps, leaked secrets,
       # and Dockerfile / compose misconfigurations. Skips .venv (it can
       # be left over from earlier steps in the shared workspace; trivy
