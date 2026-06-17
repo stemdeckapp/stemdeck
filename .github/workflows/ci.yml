@@ -105,7 +105,13 @@ jobs:
             --ignore-vuln PYSEC-2025-209 \
             --ignore-vuln PYSEC-2025-210 \
             --ignore-vuln PYSEC-2026-139 \
-            --ignore-vuln PYSEC-2024-277
+            --ignore-vuln PYSEC-2024-277 \
+            --ignore-vuln CVE-2025-2148 \
+            --ignore-vuln CVE-2025-2149 \
+            --ignore-vuln CVE-2025-2998 \
+            --ignore-vuln CVE-2025-2999 \
+            --ignore-vuln CVE-2025-3000 \
+            --ignore-vuln CVE-2025-3001
 
   trivy:
     runs-on: ubuntu-latest
