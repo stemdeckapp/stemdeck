@@ -1,0 +1,107 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-upload:
+    # Runner must be windows/x64 with PowerShell, Docker, and rustup.
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: clean workspace
+        run: |
+          Remove-Item -Recurse -Force .build, dist -ErrorAction SilentlyContinue
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: write version files
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if (-not $tag) { throw "GITHUB_REF_NAME is not set" }
+          $version = $tag -replace '^v', ''
+          $json = "{`"version`": `"$version`"}"
+          Set-Content -Path "static/version.json" -Value $json -Encoding UTF8
+          (Get-Content "desktop/src-tauri/Cargo.toml") -replace '^version = ".*"', "version = `"$version`"" |
+            Set-Content "desktop/src-tauri/Cargo.toml"
+          (Get-Content "desktop/src-tauri/tauri.conf.json") -replace '"version": "[^"]*"', "`"version`": `"$version`"" |
+            Set-Content "desktop/src-tauri/tauri.conf.json"
+          (Get-Content "pyproject.toml") -replace '^version = ".*"', "version = `"$version`"" |
+            Set-Content "pyproject.toml"
+          (Get-Content "desktop/package.json") -replace '"version": "[^"]*"', "`"version`": `"$version`"" |
+            Set-Content "desktop/package.json"
+          Write-Host "Wrote version $version to all version files"
+
+      - name: build Windows NVIDIA
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
+            -PackageName StemDeck-Windows-x64.NVIDIA `
+            -PackageVersion "$env:GITHUB_REF_NAME" `
+            -StripVenv
+
+      - name: build Windows CPU
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
+            -PackageName StemDeck-Windows-x64 `
+            -PackageVersion "$env:GITHUB_REF_NAME" `
+            -CpuOnly `
+            -StripVenv
+
+      - name: scan artifacts
+        run: |
+          Write-Host "Preparing ClamAV scan for Windows release artifacts..."
+          Write-Host "Artifacts staged in: $PWD\dist"
+          Get-ChildItem -Path "dist" -File |
+            Sort-Object Name |
+            Select-Object Name,
+              @{Name="SizeMB"; Expression={ [math]::Round($_.Length / 1MB, 2) }} |
+            Format-Table -AutoSize
+
+          Write-Host "SHA256 checksums:"
+          Get-ChildItem -Path "dist" -Filter "*.zip" -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 $_.FullName
+              Write-Host "  $($hash.Hash)  $($_.Name)"
+            }
+
+          Write-Host "Pulling latest ClamAV scanner image..."
+          docker pull clamav/clamav:latest
+
+          Write-Host "Running ClamAV scan over dist/..."
+          docker run --rm -v "${PWD}/dist:/scan:ro" clamav/clamav:latest `
+            clamscan --recursive --infected --bell /scan
+          if ($LASTEXITCODE -ne 0) {
+            throw "ClamAV scan failed or reported infected files. Exit code: $LASTEXITCODE"
+          }
+          Write-Host "ClamAV scan completed successfully. No infected files reported."
+
+      - name: upload artifacts
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            dist/StemDeck-Windows-x64.NVIDIA.zip
+            dist/StemDeck-Windows-x64.NVIDIA.zip.sha256
+            dist/StemDeck-Windows-x64.zip
+            dist/StemDeck-Windows-x64.zip.sha256
+          append_body: true
+          body: |
+            ### Artifact scan
+
+            - Windows portable packages were scanned with ClamAV in CI before upload.

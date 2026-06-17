@@ -1,0 +1,132 @@
+name: macOS Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-upload:
+    # Runner must be darwin/arm64 with Rosetta 2, Xcode CLT, Homebrew, rustup, and zstd.
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: clean workspace
+        run: rm -rf .build dist
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: write version files
+        run: |
+          if [ -z "${GITHUB_REF_NAME:-}" ]; then
+            echo "GITHUB_REF_NAME is not set" >&2
+            exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          printf '{ "version": "%s" }\n' "$VERSION" > static/version.json
+          sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
+          sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
+          sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/package.json
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Wrote version $VERSION to all version files"
+
+      - name: build macOS arm64
+        env:
+          SSL_CERT_FILE: /etc/ssl/cert.pem
+          REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+        run: |
+          command -v zstd
+          command -v uv >/dev/null 2>&1 || brew install uv
+          uv python install cpython-3.12-macos-aarch64-none
+          ARM64_PYTHON="$(uv python find cpython-3.12-macos-aarch64-none)"
+          scripts/macos/make-iconset.sh
+          ARCH=arm64 VERSION="$VERSION" PYTHON_BIN="$ARM64_PYTHON" scripts/macos/make-runtime-pack.sh
+          ARCH=arm64 VERSION="$VERSION" scripts/macos/make-app.sh
+          ARCH=arm64 VERSION="$VERSION" scripts/macos/make-dmg.sh
+
+      - name: build macOS x64
+        env:
+          SSL_CERT_FILE: /etc/ssl/cert.pem
+          REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+        run: |
+          command -v zstd
+          if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            echo "ERROR: Rosetta 2 is required to build the x64 runtime on this agent." >&2
+            exit 1
+          fi
+          rustup default stable
+          rustup target add x86_64-apple-darwin
+          command -v uv >/dev/null 2>&1 || brew install uv
+          uv python install cpython-3.12-macos-x86_64-none
+          X64_PYTHON="$(uv python find cpython-3.12-macos-x86_64-none)"
+          ARCH=x64 VERSION="$VERSION" PYTHON_BIN="$X64_PYTHON" scripts/macos/make-runtime-pack.sh
+          ARCH=x64 VERSION="$VERSION" scripts/macos/make-app.sh
+          ARCH=x64 VERSION="$VERSION" scripts/macos/make-dmg.sh
+
+      - name: inspect artifacts
+        run: |
+          test -f .build/macos-dist/StemDeck-macOS-arm64.dmg
+          test -f .build/StemDeck-runtime-macOS-arm64.tar.zst
+          test -f .build/macos-dist/SHA256SUMS-macOS-arm64.txt
+          test -f .build/macos-dist/StemDeck-macOS-x64.dmg
+          test -f .build/StemDeck-runtime-macOS-x64.tar.zst
+          test -f .build/macos-dist/SHA256SUMS-macOS-x64.txt
+          cat .build/macos-dist/SHA256SUMS-macOS-arm64.txt
+          cat .build/macos-dist/SHA256SUMS-macOS-x64.txt
+          du -sh .build/macos-dist/StemDeck-macOS-arm64.dmg .build/StemDeck-runtime-macOS-arm64.tar.zst
+          du -sh .build/macos-dist/StemDeck-macOS-x64.dmg .build/StemDeck-runtime-macOS-x64.tar.zst
+          if find desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/StemDeck.app \
+            \( -iname '*python*' -o -iname '*torch*' -o -iname '*ffmpeg*' -o -iname '*ffprobe*' \) |
+            grep -q .; then
+            echo "arm64 StemDeck.app contains runtime binaries that should stay outside the DMG." >&2
+            exit 1
+          fi
+          if find desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/StemDeck.app \
+            \( -iname '*python*' -o -iname '*torch*' -o -iname '*ffmpeg*' -o -iname '*ffprobe*' \) |
+            grep -q .; then
+            echo "x64 StemDeck.app contains runtime binaries that should stay outside the DMG." >&2
+            exit 1
+          fi
+          for arch in arm64 x64; do
+            mountpoint="$(mktemp -d /tmp/stemdeck-dmg.XXXXXX)"
+            hdiutil attach ".build/macos-dist/StemDeck-macOS-$arch.dmg" -readonly -nobrowse -mountpoint "$mountpoint"
+            trap 'hdiutil detach "$mountpoint" >/dev/null 2>&1 || true; rmdir "$mountpoint" >/dev/null 2>&1 || true' EXIT
+            test -d "$mountpoint/StemDeck.app"
+            test -L "$mountpoint/Applications"
+            test -f "$mountpoint/README-macOS.txt"
+            test -f "$mountpoint/THIRD_PARTY_NOTICES.txt"
+            hdiutil detach "$mountpoint"
+            rmdir "$mountpoint"
+            trap - EXIT
+          done
+
+      - name: upload artifacts
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            .build/macos-dist/StemDeck-macOS-arm64.dmg
+            .build/StemDeck-runtime-macOS-arm64.tar.zst
+            .build/macos-dist/SHA256SUMS-macOS-arm64.txt
+            .build/macos-dist/StemDeck-macOS-x64.dmg
+            .build/StemDeck-runtime-macOS-x64.tar.zst
+            .build/macos-dist/SHA256SUMS-macOS-x64.txt
+          append_body: true
+          body: |
+            ### Artifact build
+
+            - macOS arm64 and x64 DMGs and runtime packs were built and inspected on a macOS GitHub Actions runner before upload.
