@@ -33,8 +33,8 @@ from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
 router = APIRouter(tags=["jobs"])
 logger = logging.getLogger("stemdeck.api")
 
-_ALLOWED_EXTS = frozenset((".mp3", ".wav", ".flac"))
-_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+_ALLOWED_EXTS = frozenset((".mp3", ".wav", ".flac", ".mp4", ".m4a"))
+_MAX_UPLOAD_BYTES = 400 * 1024 * 1024  # 400 MB
 _WS_RE = re.compile(r"\s+")
 
 
@@ -161,7 +161,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
     if cl_header:
         try:
             if int(cl_header) > _MAX_UPLOAD_BYTES + 4096:
-                raise HTTPException(status_code=422, detail="File exceeds 100 MB limit")
+                raise HTTPException(status_code=422, detail="File exceeds 400 MB limit")
         except ValueError:
             pass
 
@@ -177,7 +177,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
     if ext not in _ALLOWED_EXTS:
         raise HTTPException(
             status_code=422,
-            detail=f"Unsupported file type '{ext}': only .mp3, .wav, and .flac are accepted",
+            detail=f"Unsupported file type '{ext}': accepted formats are .mp3, .wav, .flac, .mp4, and .m4a",
         )
 
     # Validate stems list from form field
@@ -196,7 +196,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
     if file_size == 0:
         raise HTTPException(status_code=422, detail="Uploaded file is empty")
     if file_size > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=422, detail="File exceeds 100 MB limit")
+        raise HTTPException(status_code=422, detail="File exceeds 400 MB limit")
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id

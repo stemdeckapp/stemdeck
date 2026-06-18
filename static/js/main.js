@@ -271,17 +271,18 @@ function wireFileDrop() {
     return n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
   }
 
-  const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // must match server _MAX_UPLOAD_BYTES
+  const MAX_UPLOAD_BYTES = 400 * 1024 * 1024; // must match server _MAX_UPLOAD_BYTES
 
   function applyFile(file) {
     if (!file) return;
     const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav") && !lower.endsWith(".flac")) {
-      showError("Only MP3, WAV, and FLAC files are supported.");
+    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav") && !lower.endsWith(".flac") &&
+        !lower.endsWith(".mp4") && !lower.endsWith(".m4a")) {
+      showError("Only MP3, WAV, FLAC, MP4, and M4A files are supported.");
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
-      showError(`File is too large (${formatBytes(file.size)}). Maximum is 100 MB.`);
+      showError(`File is too large (${formatBytes(file.size)}). Maximum is 400 MB.`);
       return;
     }
     if (fileName) fileName.textContent = file.name;
