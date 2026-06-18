@@ -1,9 +1,6 @@
 name: macOS Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   release:
     types: [published]
 
@@ -115,7 +112,6 @@ jobs:
           done
 
       - name: upload artifacts
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           files: |
