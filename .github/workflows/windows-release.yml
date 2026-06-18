@@ -19,7 +19,7 @@ jobs:
       contents: write
     defaults:
       run:
-        shell: pwsh
+        shell: powershell
     steps:
       - name: clean workspace
         run: |
