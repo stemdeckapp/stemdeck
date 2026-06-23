@@ -679,8 +679,8 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
     #[cfg(not(target_os = "macos"))]
     {
         let setup = match detect_nvidia_gpu() {
-            Some((gpu_name, cuda_version)) => {
-                let index_url = cuda_index_url(&cuda_version);
+            Some((gpu_name, cuda_version, compute_cap)) => {
+                let index_url = cuda_index_url(compute_cap.as_deref(), &cuda_version);
                 install_cuda_torch(&python, &index_url, &state)?;
                 let cuda_verified = verify_cuda_torch(&python);
                 GpuSetup {
@@ -745,7 +745,7 @@ fn nvidia_smi_exe() -> &'static str {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_nvidia_gpu() -> Option<(String, String)> {
+fn detect_nvidia_gpu() -> Option<(String, String, Option<String>)> {
     let smi = nvidia_smi_exe();
     let mut cmd = Command::new(smi);
     cmd.args(["--query-gpu=name", "--format=csv,noheader"])
@@ -770,7 +770,38 @@ fn detect_nvidia_gpu() -> Option<(String, String)> {
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
     let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| "12.4".to_string());
 
-    Some((gpu_name, cuda_version))
+    // Read the GPU's compute capability (e.g. "12.0" for Blackwell sm_120,
+    // "8.9" for Ada). Drives the wheel choice: stock torch 2.6 cu12x wheels
+    // have no sm_120 kernels, so Blackwell needs a cu128 / torch 2.7 build.
+    // Failure here is non-fatal — we fall back to the CUDA-version heuristic.
+    let compute_cap = detect_compute_cap(smi);
+
+    Some((gpu_name, cuda_version, compute_cap))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn detect_compute_cap(smi: &str) -> Option<String> {
+    let mut cmd = Command::new(smi);
+    cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console_window(&mut cmd);
+    let out = command_output_with_timeout(cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Multi-GPU systems print one line per GPU; take the first.
+    let cap = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if cap.is_empty() || cap == "N/A" {
+        None
+    } else {
+        Some(cap)
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -806,11 +837,27 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
     }
 }
 
+/// Pick the PyTorch wheel tag. Keyed primarily on the GPU's compute capability:
+/// Blackwell (sm_100 / sm_120, major >= 10) has no kernels in the stock torch
+/// 2.6 cu12x wheels and needs a cu128 / torch 2.7 build (#217). Everything else
+/// falls back to the driver-CUDA-version heuristic.
 #[cfg(not(target_os = "macos"))]
-fn cuda_index_url(cuda_version: &str) -> String {
+fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
+    if let Some(cap) = compute_cap {
+        if let Some(major) = cap.split('.').next().and_then(|m| m.parse::<u32>().ok()) {
+            if major >= 10 {
+                return "cu128";
+            }
+        }
+    }
+    cuda_tag(cuda_version)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn cuda_index_url(compute_cap: Option<&str>, cuda_version: &str) -> String {
     format!(
         "https://download.pytorch.org/whl/{}",
-        cuda_tag(cuda_version)
+        wheel_tag(compute_cap, cuda_version)
     )
 }
 
@@ -1012,9 +1059,14 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
     // Use the explicit local-version suffix (e.g. torch==2.6.0+cu124) so pip
     // treats the CUDA wheel as a distinct version from the CPU-only 2.6.0
     // wheel and doesn't skip the install as "already satisfied".
+    //
+    // Blackwell (cu128) only has wheels for torch 2.7+; every other tag stays
+    // on the validated 2.6.0 line (#217). torchaudio.save() routes through
+    // soundfile here, so the 2.7 torchaudio codec change doesn't affect us.
     let tag = cuda_tag_from_url(index_url);
-    let torch_spec = format!("torch==2.6.0+{tag}");
-    let torchaudio_spec = format!("torchaudio==2.6.0+{tag}");
+    let torch_version = if tag == "cu128" { "2.7.1" } else { "2.6.0" };
+    let torch_spec = format!("torch=={torch_version}+{tag}");
+    let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
     // --ignore-installed: overwrites even a corrupted/partial install that
     // has no RECORD file. --no-deps: only replace torch/torchaudio wheels.
     let mut command = Command::new(python);
@@ -1080,10 +1132,19 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
 
 #[cfg(not(target_os = "macos"))]
 fn verify_cuda_torch(python: &Path) -> bool {
+    // Don't trust torch.cuda.is_available() alone: it returns True even when the
+    // installed wheel has no kernels for the device (e.g. sm_120 on a cu124
+    // build), which then crashes mid-extraction with "no kernel image is
+    // available" (#217). Force a real kernel launch so an incompatible wheel is
+    // caught here and the app falls back to CPU cleanly.
     Command::new(python)
         .args([
             "-c",
-            "import torch; exit(0 if torch.cuda.is_available() else 1)",
+            "import torch; \
+             exit(1) if not torch.cuda.is_available() else None; \
+             (torch.ones(8, device='cuda') * 2).sum().item(); \
+             torch.cuda.synchronize(); \
+             exit(0)",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2414,5 +2475,21 @@ mod tests {
             "STEMDECK_FFMPEG_SHA256_TEST_UNSET_172",
         );
         assert!(none.is_none());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn wheel_tag_routes_blackwell_to_cu128() {
+        // Blackwell (sm_120 / sm_100, major >= 10) -> cu128 regardless of the
+        // driver CUDA version.
+        assert_eq!(super::wheel_tag(Some("12.0"), "12.8"), "cu128");
+        assert_eq!(super::wheel_tag(Some("10.0"), "12.4"), "cu128");
+        // Non-Blackwell cards fall back to the CUDA-version heuristic.
+        assert_eq!(super::wheel_tag(Some("8.9"), "12.4"), "cu124");
+        assert_eq!(super::wheel_tag(Some("8.6"), "12.1"), "cu121");
+        assert_eq!(super::wheel_tag(Some("7.5"), "11.8"), "cu118");
+        // Missing / unparseable compute capability also falls back.
+        assert_eq!(super::wheel_tag(None, "12.1"), "cu121");
+        assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
     }
 }
