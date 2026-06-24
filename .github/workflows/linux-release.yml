@@ -56,11 +56,15 @@ jobs:
       - name: write version files
         env:
           DISPATCH_VERSION: ${{ inputs.version }}
+          # github.ref_name (evaluated by Actions) instead of $GITHUB_REF_NAME,
+          # which is only injected by runner >= 2.290 — empty on older
+          # self-hosted runners.
+          REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${DISPATCH_VERSION#v}"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${REF_NAME#v}"
           fi
           if [ -z "$VERSION" ]; then
             echo "Could not determine a version" >&2

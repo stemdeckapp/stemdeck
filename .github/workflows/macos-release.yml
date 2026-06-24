@@ -27,12 +27,17 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
       - name: write version files
+        env:
+          # github.ref_name (evaluated by Actions) instead of $GITHUB_REF_NAME,
+          # which is only injected by runner >= 2.290 — empty on older
+          # self-hosted runners.
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -z "${GITHUB_REF_NAME:-}" ]; then
-            echo "GITHUB_REF_NAME is not set" >&2
+          if [ -z "${REF_NAME:-}" ]; then
+            echo "REF_NAME is not set" >&2
             exit 1
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${REF_NAME#v}"
           printf '{ "version": "%s" }\n' "$VERSION" > static/version.json
           sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
           sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
