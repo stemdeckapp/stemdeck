@@ -3,6 +3,15 @@ name: Linux Release
 on:
   release:
     types: [published]
+  # Manual test build: builds and scans both variants on the self-hosted runner
+  # but does NOT upload (no release to attach to). Lets you validate the runner
+  # toolchain and the CUDA build without cutting a release tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the test build (must be valid PEP 440, e.g. 0.0.0)"
+        required: false
+        default: "0.0.0"
 
 permissions: {}
 
@@ -45,12 +54,18 @@ jobs:
         run: rustup default stable
 
       - name: write version files
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
         run: |
-          if [ -z "${GITHUB_REF_NAME:-}" ]; then
-            echo "GITHUB_REF_NAME is not set" >&2
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${DISPATCH_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "Could not determine a version" >&2
             exit 1
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
           printf '{ "version": "%s" }\n' "$VERSION" > static/version.json
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
@@ -62,7 +77,7 @@ jobs:
       - name: build Linux CPU
         run: |
           PACKAGE_NAME=StemDeck-Linux-x64 \
-          PACKAGE_VERSION="$GITHUB_REF_NAME" \
+          PACKAGE_VERSION="$VERSION" \
             bash scripts/linux/make-portable.sh
           # Drop the uncompressed stage but keep the tarball; frees disk for the
           # larger NVIDIA build. The Tauri binary under target/ is preserved.
@@ -73,7 +88,7 @@ jobs:
           # CPU_ONLY=0 keeps the CUDA torch wheel; SKIP_TAURI_BUILD=1 reuses the
           # binary built in the CPU step (identical for both variants).
           PACKAGE_NAME=StemDeck-Linux-x64.NVIDIA \
-          PACKAGE_VERSION="$GITHUB_REF_NAME" \
+          PACKAGE_VERSION="$VERSION" \
           CPU_ONLY=0 \
           SKIP_TAURI_BUILD=1 \
             bash scripts/linux/make-portable.sh
@@ -95,6 +110,8 @@ jobs:
           echo "ClamAV scan completed successfully. No infected files reported."
 
       - name: upload artifacts
+        # Only attach to a real release; a manual test build has nothing to upload to.
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           files: |
