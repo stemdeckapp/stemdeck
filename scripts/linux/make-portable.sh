@@ -114,6 +114,19 @@ echo "==> Baking CPU-only torch (NVIDIA variant downloads CUDA at first run)"
   --index-url https://download.pytorch.org/whl/cpu \
   --force-reinstall --no-deps
 
+# The project install above pulled the default Linux torch, which is the CUDA
+# build, dragging in nvidia-* CUDA runtime packages (cuDNN, cuBLAS, NCCL, ...) and
+# triton -- together ~2.5 GB. The CPU torch swap used --no-deps, so those packages
+# are now orphaned but still installed, bloating the tarball past GitHub's 2 GiB
+# asset limit. Remove them: CPU torch does not use them, and the NVIDIA variant
+# re-downloads CUDA at first run anyway.
+echo "==> Removing orphaned CUDA runtime packages"
+orphans=$("$BUNDLED_PYTHON" -m pip list --format=freeze 2>/dev/null \
+  | sed -n 's/^\(nvidia-[^=]*\)==.*/\1/p')
+orphans="$orphans triton"
+echo "    removing:$orphans"
+"$BUNDLED_PYTHON" -m pip uninstall -y $orphans 2>/dev/null || true
+
 echo "==> Verifying imports"
 "$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
