@@ -12,7 +12,8 @@ concurrency:
 
 jobs:
   build-and-upload:
-    runs-on: ubuntu-latest
+    # Runner must be linux/x64 with rustup, Node.js, Docker, and sudo apt access.
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
     permissions:
       contents: write
@@ -57,14 +58,6 @@ jobs:
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/package.json
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Wrote version $VERSION to all version files"
-
-      - name: free disk space
-        run: |
-          # The NVIDIA package bundles CUDA-enabled torch (several GB). Reclaim
-          # space the hosted runner spends on preinstalled SDKs we don't use.
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
-            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
-          df -h /
 
       - name: build Linux CPU
         run: |
