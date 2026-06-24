@@ -17,6 +17,11 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+    # Source the tag from the github context (evaluated by Actions) rather than
+    # $env:GITHUB_REF_NAME, which is only injected by runner >= 2.290. Keeps the
+    # build working on older self-hosted runners. (#212 follow-up)
+    env:
+      REF_NAME: ${{ github.ref_name }}
     defaults:
       run:
         shell: powershell
@@ -29,8 +34,8 @@ jobs:
 
       - name: write version files
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          if (-not $tag) { throw "GITHUB_REF_NAME is not set" }
+          $tag = $env:REF_NAME
+          if (-not $tag) { throw "REF_NAME is not set" }
           $version = $tag -replace '^v', ''
           $json = "{`"version`": `"$version`"}"
           Set-Content -Path "static/version.json" -Value $json -Encoding UTF8
@@ -48,14 +53,14 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64.NVIDIA `
-            -PackageVersion "$env:GITHUB_REF_NAME" `
+            -PackageVersion "$env:REF_NAME" `
             -StripVenv
 
       - name: build Windows CPU
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64 `
-            -PackageVersion "$env:GITHUB_REF_NAME" `
+            -PackageVersion "$env:REF_NAME" `
             -CpuOnly `
             -StripVenv
 
