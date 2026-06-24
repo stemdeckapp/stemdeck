@@ -36,14 +36,31 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
       - name: install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
           # Tauri v2 build deps + tooling. webkit2gtk-4.1 matches the tauri = "2"
           # crate; ffmpeg is a runtime dependency, not bundled.
-          sudo apt-get install -y --no-install-recommends \
+          #
+          # apt is best-effort and hard-capped here: on the persistent self-hosted
+          # runner these packages are usually already installed, and a stuck dpkg
+          # lock (e.g. unattended-upgrades) must not hang the release for 90 min.
+          # `timeout` bounds the wall time; DPkg::Lock::Timeout bounds lock waits;
+          # we then verify the critical library is actually present and fail only
+          # if it is genuinely missing.
+          sudo timeout 420 apt-get update -o DPkg::Lock::Timeout=120 \
+            || echo "apt-get update did not finish in time; continuing"
+          sudo timeout 600 apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 \
             build-essential curl file wget libssl-dev libxdo-dev \
             libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev
+            libayatana-appindicator3-dev librsvg2-dev \
+            || echo "apt-get install did not finish in time; continuing"
+          if ! pkg-config --exists webkit2gtk-4.1; then
+            echo "ERROR: webkit2gtk-4.1 is not available and apt could not install it." >&2
+            echo "Install the Tauri build deps on the runner, then re-run." >&2
+            exit 1
+          fi
+          echo "Build dependencies present."
 
       - name: install uv
         run: |
