@@ -550,11 +550,14 @@ fn start_backend(
             (Stdio::null(), Stdio::null())
         });
 
-        // On macOS, python-build-standalone detects its own prefix by walking up from
-        // bin/ — PYTHONHOME is not needed and actively breaks startup when mis-computed.
-        // On Windows the venv launcher needs PYTHONHOME to locate the bundled stdlib.
+        // On macOS and Linux, python-build-standalone detects its own prefix by
+        // walking up from bin/ — PYTHONHOME is not needed and actively breaks
+        // startup when mis-computed (it would point at python/bin, whose
+        // lib/python3.X has no stdlib, so even `encodings` fails to import).
+        // Only Windows, whose portable venv keeps the stdlib under base/Lib,
+        // needs PYTHONHOME to locate the bundled stdlib.
         // Compute before moving python into Command::new.
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
         let pythonhome = python
             .parent()
             .and_then(|bin_dir| bin_dir.parent().map(|venv| (venv, bin_dir)))
@@ -570,7 +573,7 @@ fn start_backend(
             "--port",
             &port.to_string(),
         ]);
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
         if let Some(ref pythonhome) = pythonhome {
             cmd.env("PYTHONHOME", pythonhome);
         }
@@ -929,17 +932,17 @@ fn python_stdlib_ok(python: &Path) -> bool {
     }
     let mut cmd = Command::new(python);
     cmd.args(["-c", "import encodings"]);
-    #[cfg(not(target_os = "macos"))]
+    // Only Windows needs PYTHONHOME: its portable venv keeps the stdlib under
+    // base/Lib. macOS and Linux use python-build-standalone, which auto-detects
+    // its prefix from bin/ — setting PYTHONHOME there points at the wrong dir
+    // and breaks the import (parity with start_backend).
+    #[cfg(windows)]
     {
         let venv_root = python.parent().and_then(|b| b.parent());
-        // On Windows the portable venv layout puts the stdlib in base/Lib/, not Lib/.
         let pythonhome = venv_root.map(|venv| {
-            #[cfg(windows)]
-            {
-                let base = venv.join("base");
-                if base.join("Lib").join("os.py").is_file() {
-                    return base;
-                }
+            let base = venv.join("base");
+            if base.join("Lib").join("os.py").is_file() {
+                return base;
             }
             venv.to_path_buf()
         });
