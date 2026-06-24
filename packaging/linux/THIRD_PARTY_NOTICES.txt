@@ -1,0 +1,77 @@
+THIRD-PARTY NOTICES
+===================
+
+StemDeck includes third-party open-source software. Each component is
+copyrighted by its respective authors and distributed under its own license.
+
+This starter notice is not a substitute for the full license inventory that
+must be generated from the final packaged Python runtime before a public
+release.
+
+Bundled Components
+------------------
+
+Python
+License: Python Software Foundation License
+Website: https://www.python.org/
+
+Tauri
+License: MIT or Apache-2.0, depending on component
+Website: https://tauri.app/
+
+FastAPI
+License: MIT
+Website: https://fastapi.tiangolo.com/
+
+Uvicorn
+License: BSD
+Website: https://www.uvicorn.org/
+
+yt-dlp
+License: Unlicense
+Website: https://github.com/yt-dlp/yt-dlp
+
+Demucs
+License: MIT
+Website: https://github.com/facebookresearch/demucs
+
+PyTorch / Torch
+License: BSD-style
+Website: https://pytorch.org/
+
+torchaudio
+License: BSD-style
+Website: https://pytorch.org/audio/
+
+librosa
+License: ISC
+Website: https://librosa.org/
+
+pyloudnorm
+License: MIT
+Website: https://github.com/csteinmetz1/pyloudnorm
+
+soundfile
+License: BSD
+Website: https://github.com/bastibe/python-soundfile
+
+System Requirements (Not Bundled)
+---------------------------------
+
+FFmpeg is not bundled in the Linux package. StemDeck calls the `ffmpeg` binary
+from your PATH; install it via your system package manager. FFmpeg may be
+distributed under LGPL or GPL terms depending on how your distribution compiles
+it.
+
+WebKitGTK and GTK shared libraries are provided by your Linux distribution and
+are not bundled. They are distributed under LGPL terms.
+
+Demucs model weights are not bundled. They are downloaded during first use.
+StemDeck should display the model source and license/usage terms before or
+during download.
+
+Disclaimer
+----------
+
+This notice file is not legal advice. Before public release, verify the exact
+licenses of every bundled package and generated binary artifact.
