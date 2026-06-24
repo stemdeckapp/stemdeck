@@ -31,6 +31,11 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-dist}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 TORCH_VERSION="${TORCH_VERSION:-2.6.0}"
 SKIP_TAURI_BUILD="${SKIP_TAURI_BUILD:-0}"
+# CPU_ONLY=1 (default): force the CPU-only torch wheel and mark the package so the
+# desktop shell skips GPU detection. CPU_ONLY=0: keep the project's default torch,
+# which on Linux x86_64 is the CUDA build (NVIDIA variant) — the shell then detects
+# the GPU and uses CUDA at runtime.
+CPU_ONLY="${CPU_ONLY:-1}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 STAGE="${REPO_ROOT}/${OUTPUT_ROOT}/${PACKAGE_NAME}"
@@ -92,18 +97,22 @@ if [[ -n "$PACKAGE_VERSION" ]]; then
 fi
 uv pip install --system --python "$BUNDLED_PYTHON" "$REPO_ROOT"
 
-# Linux PyPI torch wheels bundle CUDA. Force-reinstall the CPU-only variant
-# afterwards: pip strips the local '+cpu' version when resolving, so the project
-# install pulls the CUDA wheel even if a CPU wheel was requested. Mirrors the
-# proven Windows swap (--force-reinstall --no-deps replaces just torch wheels).
-echo "==> Forcing CPU-only torch"
-"$BUNDLED_PYTHON" -m pip install \
-  "torch==${TORCH_VERSION}+cpu" "torchaudio==${TORCH_VERSION}+cpu" \
-  --index-url https://download.pytorch.org/whl/cpu \
-  --force-reinstall --no-deps
+if [[ "$CPU_ONLY" == "1" ]]; then
+  # Linux PyPI torch wheels bundle CUDA. Force-reinstall the CPU-only variant
+  # afterwards: pip strips the local '+cpu' version when resolving, so the project
+  # install pulls the CUDA wheel even if a CPU wheel was requested. Mirrors the
+  # proven Windows swap (--force-reinstall --no-deps replaces just torch wheels).
+  echo "==> Forcing CPU-only torch"
+  "$BUNDLED_PYTHON" -m pip install \
+    "torch==${TORCH_VERSION}+cpu" "torchaudio==${TORCH_VERSION}+cpu" \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --force-reinstall --no-deps
+else
+  echo "==> Keeping CUDA torch (NVIDIA variant)"
+fi
 
 echo "==> Verifying imports"
-"$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile; print('torch', torch.__version__)"
+"$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 echo "==> Staging backend"
 cp -R "$REPO_ROOT/app" "$BACKEND_DIR/app"
@@ -117,7 +126,10 @@ cp "$REPO_ROOT/packaging/linux/README-LINUX.txt" "$STAGE/README-LINUX.txt"
 cp "$REPO_ROOT/packaging/linux/THIRD_PARTY_NOTICES.txt" "$STAGE/THIRD_PARTY_NOTICES.txt"
 
 # CPU-only marker: read by is_cpu_only_package so the shell skips GPU detection.
-touch "$STAGE/cpu-only"
+# Omitted for the NVIDIA variant so the shell detects the GPU and uses CUDA.
+if [[ "$CPU_ONLY" == "1" ]]; then
+  touch "$STAGE/cpu-only"
+fi
 
 echo "==> Stripping build-time artifacts from bundled Python"
 find "$PYTHON_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
@@ -153,7 +165,11 @@ tar -czf "$ARCHIVE_PATH" -C "${REPO_ROOT}/${OUTPUT_ROOT}" "$PACKAGE_NAME"
 ( cd "${REPO_ROOT}/${OUTPUT_ROOT}" && sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256" )
 
 echo "==> Done"
-echo "Variant : CPU-only"
+if [[ "$CPU_ONLY" == "1" ]]; then
+  echo "Variant : CPU-only"
+else
+  echo "Variant : NVIDIA/CUDA"
+fi
 echo "Stage   : ${STAGE}"
 echo "Archive : ${ARCHIVE_PATH}"
 echo "Checksum: ${CHECKSUM_PATH}"

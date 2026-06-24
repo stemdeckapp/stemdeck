@@ -1,14 +1,20 @@
-StemDeck Linux Portable Alpha (CPU)
-===================================
+StemDeck Linux Portable Alpha
+=============================
+
+This comes in two variants. Pick one:
+
+- StemDeck-Linux-x64.tar.gz         CPU-only (smaller; runs anywhere)
+- StemDeck-Linux-x64.NVIDIA.tar.gz  NVIDIA/CUDA (larger; much faster on an
+                                    NVIDIA GPU, falls back to CPU if no GPU)
 
 Run
 ---
 
-1. Extract the tarball:
+1. Extract the tarball, e.g.:
      tar -xzf StemDeck-Linux-x64.tar.gz
 2. Install the runtime prerequisites (see below).
 3. Run the launcher:
-     cd StemDeck-Linux-x64
+     cd StemDeck-Linux-x64        # or StemDeck-Linux-x64.NVIDIA
      ./StemDeck
 4. Let first-run setup prepare local runtime assets.
 
@@ -29,11 +35,24 @@ expects FFmpeg on your PATH. Install both with your package manager.
   Arch:
     sudo pacman -S webkit2gtk-4.1 gtk3 ffmpeg
 
+NVIDIA variant
+--------------
+
+The NVIDIA/CUDA build bundles a CUDA-enabled PyTorch. To use the GPU you also
+need a working NVIDIA driver on the host such that `nvidia-smi` runs and reports
+your GPU. The CUDA runtime itself is bundled — you do NOT need a separate CUDA
+toolkit install, only the driver.
+
+  Check your driver:
+    nvidia-smi
+
+If no usable GPU is detected, the NVIDIA build still runs but falls back to CPU.
+If you do not have an NVIDIA GPU, use the CPU-only tarball instead — it is
+smaller and avoids downloading the CUDA runtime.
+
 Notes
 -----
 
-- This is the CPU-only build. Stem separation runs on the CPU and is slower
-  than a GPU build; an NVIDIA/CUDA variant may ship later.
 - This is a portable folder, not a system package. No .desktop entry, service,
   or package-manager integration is created.
 - User data lives under $XDG_DATA_HOME/stemdeck (or ~/.local/share/stemdeck).

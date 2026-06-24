@@ -58,11 +58,33 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Wrote version $VERSION to all version files"
 
+      - name: free disk space
+        run: |
+          # The NVIDIA package bundles CUDA-enabled torch (several GB). Reclaim
+          # space the hosted runner spends on preinstalled SDKs we don't use.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          df -h /
+
       - name: build Linux CPU
         run: |
           PACKAGE_NAME=StemDeck-Linux-x64 \
           PACKAGE_VERSION="$GITHUB_REF_NAME" \
             bash scripts/linux/make-portable.sh
+          # Drop the uncompressed stage but keep the tarball; frees disk for the
+          # larger NVIDIA build. The Tauri binary under target/ is preserved.
+          rm -rf dist/StemDeck-Linux-x64
+
+      - name: build Linux NVIDIA
+        run: |
+          # CPU_ONLY=0 keeps the CUDA torch wheel; SKIP_TAURI_BUILD=1 reuses the
+          # binary built in the CPU step (identical for both variants).
+          PACKAGE_NAME=StemDeck-Linux-x64.NVIDIA \
+          PACKAGE_VERSION="$GITHUB_REF_NAME" \
+          CPU_ONLY=0 \
+          SKIP_TAURI_BUILD=1 \
+            bash scripts/linux/make-portable.sh
+          rm -rf dist/StemDeck-Linux-x64.NVIDIA
 
       - name: scan artifacts
         run: |
@@ -85,8 +107,10 @@ jobs:
           files: |
             dist/StemDeck-Linux-x64.tar.gz
             dist/StemDeck-Linux-x64.tar.gz.sha256
+            dist/StemDeck-Linux-x64.NVIDIA.tar.gz
+            dist/StemDeck-Linux-x64.NVIDIA.tar.gz.sha256
           append_body: true
           body: |
             ### Artifact scan
 
-            - The Linux portable package (CPU) was scanned with ClamAV in CI before upload.
+            - The Linux portable packages (CPU and NVIDIA) were scanned with ClamAV in CI before upload.
