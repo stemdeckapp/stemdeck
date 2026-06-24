@@ -38,17 +38,20 @@ expects FFmpeg on your PATH. Install both with your package manager.
 NVIDIA variant
 --------------
 
-The NVIDIA/CUDA build bundles a CUDA-enabled PyTorch. To use the GPU you also
-need a working NVIDIA driver on the host such that `nvidia-smi` runs and reports
-your GPU. The CUDA runtime itself is bundled — you do NOT need a separate CUDA
-toolkit install, only the driver.
+To use the GPU you need a working NVIDIA driver on the host such that
+`nvidia-smi` runs and reports your GPU.
 
   Check your driver:
     nvidia-smi
 
-If no usable GPU is detected, the NVIDIA build still runs but falls back to CPU.
-If you do not have an NVIDIA GPU, use the CPU-only tarball instead — it is
-smaller and avoids downloading the CUDA runtime.
+On first launch, the NVIDIA build detects your GPU and downloads the matching
+CUDA-enabled PyTorch (a few GB) into your data directory — so the first run
+needs an internet connection and some disk space. You do NOT need a separate
+CUDA toolkit install, only the driver.
+
+If no usable GPU is detected, the NVIDIA build still runs and falls back to CPU.
+If you do not have an NVIDIA GPU, use the CPU-only tarball instead — it skips
+the CUDA download entirely.
 
 Notes
 -----

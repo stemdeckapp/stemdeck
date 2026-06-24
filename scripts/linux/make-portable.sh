@@ -97,19 +97,22 @@ if [[ -n "$PACKAGE_VERSION" ]]; then
 fi
 uv pip install --system --python "$BUNDLED_PYTHON" "$REPO_ROOT"
 
-if [[ "$CPU_ONLY" == "1" ]]; then
-  # Linux PyPI torch wheels bundle CUDA. Force-reinstall the CPU-only variant
-  # afterwards: pip strips the local '+cpu' version when resolving, so the project
-  # install pulls the CUDA wheel even if a CPU wheel was requested. Mirrors the
-  # proven Windows swap (--force-reinstall --no-deps replaces just torch wheels).
-  echo "==> Forcing CPU-only torch"
-  "$BUNDLED_PYTHON" -m pip install \
-    "torch==${TORCH_VERSION}+cpu" "torchaudio==${TORCH_VERSION}+cpu" \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --force-reinstall --no-deps
-else
-  echo "==> Keeping CUDA torch (NVIDIA variant)"
-fi
+# Always bake the small CPU-only torch wheel — for BOTH variants. On Linux the
+# default PyPI torch wheel bundles the full CUDA runtime (~2.5 GB), which makes
+# the packaged tarball exceed GitHub's 2 GiB per-asset release limit. So we
+# mirror what the Windows NVIDIA package actually does: ship CPU torch, and let
+# the desktop shell download the matching CUDA wheel at first run on GPU
+# machines (install_cuda_torch, gated cfg(not(macos)) so it covers Linux). The
+# NVIDIA variant differs only by omitting the cpu-only marker below.
+#
+# pip strips the local '+cpu' version when resolving, so the project install
+# pulls the CUDA wheel even if a CPU wheel was requested; --force-reinstall
+# --no-deps replaces just the torch/torchaudio wheels (proven on Windows).
+echo "==> Baking CPU-only torch (NVIDIA variant downloads CUDA at first run)"
+"$BUNDLED_PYTHON" -m pip install \
+  "torch==${TORCH_VERSION}+cpu" "torchaudio==${TORCH_VERSION}+cpu" \
+  --index-url https://download.pytorch.org/whl/cpu \
+  --force-reinstall --no-deps
 
 echo "==> Verifying imports"
 "$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
