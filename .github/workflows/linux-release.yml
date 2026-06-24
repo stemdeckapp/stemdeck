@@ -42,25 +42,30 @@ jobs:
           # Tauri v2 build deps + tooling. webkit2gtk-4.1 matches the tauri = "2"
           # crate; ffmpeg is a runtime dependency, not bundled.
           #
-          # apt is best-effort and hard-capped here: on the persistent self-hosted
-          # runner these packages are usually already installed, and a stuck dpkg
-          # lock (e.g. unattended-upgrades) must not hang the release for 90 min.
-          # `timeout` bounds the wall time; DPkg::Lock::Timeout bounds lock waits;
-          # we then verify the critical library is actually present and fail only
-          # if it is genuinely missing.
-          sudo timeout 420 apt-get update -o DPkg::Lock::Timeout=120 \
-            || echo "apt-get update did not finish in time; continuing"
-          sudo timeout 600 apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 \
-            build-essential curl file wget libssl-dev libxdo-dev \
-            libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            || echo "apt-get install did not finish in time; continuing"
-          if ! pkg-config --exists webkit2gtk-4.1; then
-            echo "ERROR: webkit2gtk-4.1 is not available and apt could not install it." >&2
-            echo "Install the Tauri build deps on the runner, then re-run." >&2
+          # The self-hosted runner does NOT have passwordless sudo, so a bare
+          # `sudo apt-get` hangs forever at the password prompt. These packages are
+          # already installed on the persistent runner, so check first (dpkg needs
+          # no sudo) and skip apt entirely when everything is present. Only if a
+          # package is genuinely missing do we touch apt, via `sudo -n` (fails fast
+          # instead of prompting) so a release never hangs on sudo again.
+          PKGS="build-essential curl file wget libssl-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev"
+          missing=""
+          for p in $PKGS; do
+            dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
+          done
+          if [ -z "$missing" ]; then
+            echo "All build dependencies already installed; skipping apt."
+            exit 0
+          fi
+          echo "Missing packages:$missing"
+          if ! sudo -n true 2>/dev/null; then
+            echo "ERROR: build deps missing and passwordless sudo is not available." >&2
+            echo "Install on the runner:  sudo apt-get install -y$missing" >&2
             exit 1
           fi
-          echo "Build dependencies present."
+          sudo -n apt-get update -o DPkg::Lock::Timeout=120
+          sudo -n apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 $missing
 
       - name: install uv
         run: |
