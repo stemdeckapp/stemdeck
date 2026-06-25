@@ -309,6 +309,7 @@ Stems land in `./jobs/` on the host. Demucs weights are cached in a named volume
 | PATCH | `/api/jobs/{id}/sections` | Save waveform section markers for a job |
 | GET | `/api/jobs/{id}/stems/{name}.wav` | Stream a single stem WAV file |
 | GET | `/api/jobs/{id}/stems/{name}.mp3` | Transcode and stream a stem as MP3 |
+| GET | `/api/jobs/{id}/video.mp4` | Mux the current mix with the source video (MP4 upload or YouTube) into a karaoke MP4 |
 | DELETE | `/api/jobs/{id}` | Remove job dir from disk (terminal jobs only) |
 
 ---

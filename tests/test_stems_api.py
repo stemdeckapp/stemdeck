@@ -384,3 +384,67 @@ def test_all_stems_zip_flac(client, tmp_path):
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     assert zf.namelist() == ["vocals.flac"]
     assert zf.read("vocals.flac")[:4] == b"fLaC"
+
+
+# --- karaoke video mux endpoint (#219) ---
+
+
+def _make_video_file(tmp_path, job_id: str) -> None:
+    """Generate a tiny real MP4 with a video stream at <job>/video.mp4 so the
+    mux endpoint has something to stream-copy. Requires ffmpeg."""
+    import subprocess
+
+    job_dir = tmp_path / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.3:r=10",
+            "-c:v", "mpeg4", "-an",
+            str(job_dir / "video.mp4"),
+        ],
+        check=True,
+        timeout=30,
+    )
+
+
+def test_video_404_when_no_video_track(client, tmp_path):
+    job = _done_job_with_stems(tmp_path, "abcdef000020", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/video.mp4?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_video_requires_done(client, tmp_path):
+    job = Job(id="abcdef000021")
+    job.status = "separating"
+    _jobs[job.id] = job
+    r = client.get(f"/api/jobs/{job.id}/video.mp4?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_video_rejects_malformed_job_id(client):
+    r = client.get("/api/jobs/ZZZ/video.mp4?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_video_rejects_bad_params(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000022", ["vocals", "drums"])
+    _make_video_file(tmp_path, job.id)
+    # length mismatch, bad gain, unknown stem all 422 once the video track exists.
+    assert client.get(f"/api/jobs/{job.id}/video.mp4?stems=vocals,drums&gains=1").status_code == 422
+    assert client.get(f"/api/jobs/{job.id}/video.mp4?stems=vocals&gains=99").status_code == 422
+    assert client.get(f"/api/jobs/{job.id}/video.mp4?stems=mix&gains=1").status_code == 422
+
+
+def test_video_mux_happy(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000023", ["vocals", "drums"])
+    _make_video_file(tmp_path, job.id)
+    r = client.get(f"/api/jobs/{job.id}/video.mp4?stems=vocals,drums&gains=1.0,0.5")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "video/mp4"
+    # ISO-BMFF: bytes 4-8 of the first box are the "ftyp" type.
+    assert r.content[4:8] == b"ftyp"
+
+

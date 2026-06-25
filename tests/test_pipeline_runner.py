@@ -7,7 +7,13 @@ import pytest
 
 from app.core.models import Job, JobCancelled
 from app.core.registry import _jobs
-from app.pipeline.runner import run_local_pipeline, run_pipeline
+from app.pipeline.runner import _extract_video_track, run_local_pipeline, run_pipeline
+
+
+def _ffmpeg_available() -> bool:
+    import shutil
+
+    return shutil.which("ffmpeg") is not None
 
 
 @pytest.mark.asyncio
@@ -136,3 +142,58 @@ async def test_local_pipeline_error_cleans_up_job_dir(tmp_path: Path):
 
     assert job.status == "error"
     assert not (tmp_path / job.id).exists(), "job dir should be removed on local error"
+
+
+def test_extract_video_track_from_mp4(tmp_path: Path):
+    """#219: an mp4 with a video stream yields video.mp4 and sets has_video."""
+    if not _ffmpeg_available():
+        pytest.skip("ffmpeg not available")
+    import subprocess
+
+    job = Job(id="vid000000001")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.3:r=10",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-shortest", "-c:v", "mpeg4", "-c:a", "aac",
+            str(source),
+        ],
+        check=True,
+        timeout=30,
+    )
+
+    _extract_video_track(job, source, job_dir)
+
+    assert job.has_video is True
+    assert (job_dir / "video.mp4").is_file()
+    assert (job_dir / "video.mp4").stat().st_size > 0
+
+
+def test_extract_video_track_audio_only_mp4(tmp_path: Path):
+    """An mp4 with no video stream leaves has_video false and no video.mp4."""
+    if not _ffmpeg_available():
+        pytest.skip("ffmpeg not available")
+    import subprocess
+
+    job = Job(id="vid000000002")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo:d=0.3",
+            "-c:a", "aac", str(source),
+        ],
+        check=True,
+        timeout=30,
+    )
+
+    _extract_video_track(job, source, job_dir)
+
+    assert job.has_video is False
+    assert not (job_dir / "video.mp4").exists()

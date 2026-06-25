@@ -706,6 +706,9 @@ const _LOADING_MIN_MS = 900;
 let _currentStems = [];
 let _mixUrl = null;
 let _currentTitle = "";
+// Whether the current job has a preserved video track (mp4 upload). Gates the
+// "Export Mix (with video)" item (CSS .has-video) and downloadCurrentVideo().
+let _currentHasVideo = false;
 
 export function setWaveformLoading(loading, phrase) {
   const el = document.getElementById("waveLoadingOverlay");
@@ -760,7 +763,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null) {
+export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -810,6 +813,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   _currentStems = stems;
   _mixUrl = mixUrl || null;
   _currentTitle = title || "";
+  _currentHasVideo = !!hasVideo;
+  document.getElementById("footer-export-wrap")?.classList.toggle("has-video", !!hasVideo);
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
@@ -1327,6 +1332,27 @@ export function downloadCurrentMix(ext = "wav") {
   const url = _mixdownUrl(ext, false);
   if (!url) return false;
   _triggerDownload(url, _exportFilename(ext));
+  return true;
+}
+
+// Karaoke video: the preserved source video muxed with the current audio mix.
+// Only meaningful for mp4-sourced jobs (currentJobHasVideo()); returns false when
+// there's no video track or every lane is muted.
+export function downloadCurrentVideo() {
+  if (!currentJobId || !_currentHasVideo) return false;
+  const { names, gains } = _effectiveMixGains();
+  if (!names.length) return false;
+  const q = new URLSearchParams({
+    stems: names.join(","),
+    gains: gains.map((g) => g.toFixed(3)).join(","),
+  });
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  const name = safe ? `${safe}_karaoke.mp4` : "karaoke.mp4";
+  _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name);
   return true;
 }
 

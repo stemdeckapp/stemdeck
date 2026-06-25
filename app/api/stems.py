@@ -59,6 +59,27 @@ def _validate_stem_path(job_id: str, name: str):
     return path
 
 
+def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
+    """Parse and validate parallel comma-separated lane names and linear gains.
+    Shared by the audio mixdown and the karaoke-video mux. Raises HTTPException
+    on malformed input, unknown lanes, or out-of-range gains."""
+    names = [s for s in stems.split(",") if s]
+    raw_gains = [g for g in gains.split(",") if g]
+    if not names or len(names) != len(raw_gains):
+        raise HTTPException(
+            status_code=422, detail="stems and gains must be non-empty and equal length"
+        )
+    try:
+        parsed_gains = [float(g) for g in raw_gains]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="gains must be numbers") from None
+    if any(g < 0 or g > _MIXDOWN_MAX_GAIN for g in parsed_gains):
+        raise HTTPException(status_code=422, detail="gain out of range")
+    if not set(names) <= _MIXDOWN_NAMES:
+        raise HTTPException(status_code=422, detail="unknown stem requested")
+    return names, parsed_gains
+
+
 async def _stream_ffmpeg(cmd: list[str]):
     """Yield ffmpeg stdout in 64 KB chunks; kill process on client disconnect."""
     proc = await asyncio.create_subprocess_exec(
@@ -198,20 +219,7 @@ async def get_mixdown(
     if ext not in ("wav", "mp3", "flac"):
         raise HTTPException(status_code=404, detail="not found")
 
-    names = [s for s in stems.split(",") if s]
-    raw_gains = [g for g in gains.split(",") if g]
-    if not names or len(names) != len(raw_gains):
-        raise HTTPException(
-            status_code=422, detail="stems and gains must be non-empty and equal length"
-        )
-    try:
-        parsed_gains = [float(g) for g in raw_gains]
-    except ValueError:
-        raise HTTPException(status_code=422, detail="gains must be numbers") from None
-    if any(g < 0 or g > _MIXDOWN_MAX_GAIN for g in parsed_gains):
-        raise HTTPException(status_code=422, detail="gain out of range")
-    if not set(names) <= _MIXDOWN_NAMES:
-        raise HTTPException(status_code=422, detail="unknown stem requested")
+    names, parsed_gains = _parse_lane_gains(stems, gains)
     if (start is None) != (end is None) or (start is not None and start >= end):
         raise HTTPException(
             status_code=422,
@@ -253,6 +261,70 @@ def _safe_title(title: str | None) -> str:
     safe = re.sub(r"[^a-zA-Z0-9]+", "_", title or "")
     safe = re.sub(r"_{2,}", "_", safe).strip("_")[:80].strip("_")
     return safe or "stems"
+
+
+@router.get("/jobs/{job_id}/video.mp4", response_model=None)
+async def get_video_mixdown(
+    job_id: str,
+    stems: str = Query(..., description="Comma-separated lane names to sum"),
+    gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
+) -> StreamingResponse:
+    """Mux a fresh audio mixdown of the current mixer state with the job's preserved
+    video into a karaoke MP4 (issue #219). Mirrors get_mixdown's audio graph (encoded
+    as AAC) and stream-copies video.mp4 -- the silent video kept from an .mp4 upload
+    or the real video stream downloaded for a YouTube job. 404 when the job has no
+    video (SoundCloud / plain audio uploads).
+
+    Streamed as fragmented MP4 (frag_keyframe+empty_moov) since the output pipe is
+    not seekable -- +faststart would require a seekable file. The full song is
+    exported; no region trim, to avoid A/V drift from stream-copy seeking."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not ready")
+
+    video_path = (JOBS_DIR / job_id / "video.mp4").resolve()
+    if not video_path.is_file() or not video_path.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="no video track for this job")
+
+    names, parsed_gains = _parse_lane_gains(stems, gains)
+    # Validates job_id (404), job done (404), and path traversal (404) per stem.
+    paths = [_validate_stem_path(job_id, name) for name in names]
+
+    cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
+    for p in paths:
+        cmd += ["-i", str(p)]
+    cmd += ["-i", str(video_path)]
+    video_idx = len(paths)
+    # Per-lane gain then amix (normalize=0 keeps levels faithful). A single audible
+    # lane skips amix (a 1-input amix is a no-op), matching get_mixdown.
+    filters = [f"[{i}:a]volume={g:.6f}[a{i}]" for i, g in enumerate(parsed_gains)]
+    n = len(paths)
+    if n > 1:
+        labels = "".join(f"[a{i}]" for i in range(n))
+        filters.append(f"{labels}amix=inputs={n}:normalize=0[mix]")
+        out_label = "[mix]"
+    else:
+        out_label = "[a0]"
+    cmd += [
+        "-filter_complex", ";".join(filters),
+        "-map", out_label,
+        "-map", f"{video_idx}:v",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        "-movflags", "frag_keyframe+empty_moov",
+        "-f", "mp4",
+        "pipe:1",
+    ]
+
+    filename = f"{_safe_title(job.title)}_karaoke.mp4"
+    return StreamingResponse(
+        _stream_ffmpeg(cmd),
+        media_type="video/mp4",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> None:

@@ -1996,6 +1996,16 @@ input, textarea { font-family: inherit; }
 .export-item:hover:not([aria-disabled="true"]) { background: var(--panel-3); }
 .export-item[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
 
+/* MP4 is offered as an export format only when the job has a preserved video
+   track (mp4 upload or YouTube). player.js toggles .has-video on the wrap. */
+.export-fmt-video { display: none; }
+#footer-export-wrap.has-video .export-fmt-video { display: block; flex: 1; }
+
+/* In MP4 mode only "Export Mix" applies — the audio-only Stems/Region rows
+   are hidden. main.js toggles .fmt-mp4 on the panel. */
+#t-export-panel.fmt-mp4 #t-export-stems,
+#t-export-panel.fmt-mp4 #t-export-region { display: none; }
+
 /* ── About dialog ── */
 .about-backdrop {
   position: fixed; inset: 0; z-index: 100;

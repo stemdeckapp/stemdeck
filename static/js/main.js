@@ -3,7 +3,7 @@ import {
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { wireTransportButtons } from "./transport.js";
 import { togglePlayPause, updateLoopRegionVisual } from "./transport.js";
@@ -130,10 +130,20 @@ function wireFooterControls() {
   const fmtWav   = document.getElementById("t-fmt-wav");
   const fmtMp3   = document.getElementById("t-fmt-mp3");
   const fmtFlac  = document.getElementById("t-fmt-flac");
+  const fmtMp4   = document.getElementById("t-fmt-mp4");
+  const exportWrap = document.getElementById("footer-export-wrap");
   const itemMix    = document.getElementById("t-export-mix");
   const itemStems  = document.getElementById("t-export-stems");
   const itemRegion = document.getElementById("t-export-region");
-  const actionItems = () => [itemMix, itemStems, itemRegion];
+  const mixDescEl  = itemMix?.querySelector(".chip-item-desc");
+  // Only the rows actually visible in the current format mode (MP4 hides the
+  // audio-only Stems/Region rows).
+  const actionItems = () =>
+    [itemMix, itemStems, itemRegion].filter((it) => it && it.offsetParent !== null);
+
+  // MP4 is a format choice, shown only for jobs with a preserved video track.
+  // It applies to the mix only — stems/region are audio-only.
+  const videoAvailable = () => !!exportWrap?.classList.contains("has-video");
 
   let format = "wav";
   let busy = false;
@@ -141,6 +151,8 @@ function wireFooterControls() {
   const panelOpen = () => exportPanel && !exportPanel.classList.contains("hidden");
   function openPanel() {
     closeAllChipPanels();
+    // A previous (video) job may have left MP4 selected; revert if unavailable now.
+    if (format === "mp4" && !videoAvailable()) setFormat("wav");
     exportPanel?.classList.remove("hidden");
     exportBtn?.setAttribute("aria-expanded", "true");
   }
@@ -151,22 +163,35 @@ function wireFooterControls() {
 
   function setFormat(f) {
     format = f;
-    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"]]) {
+    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"], [fmtMp4, "mp4"]]) {
       btn?.classList.toggle("active", f === val);
       btn?.setAttribute("aria-checked", String(f === val));
     }
+    applyFormatState();
   }
   fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
   fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
   fmtFlac?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("flac"); });
+  fmtMp4?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp4"); });
+
+  // MP4 exports the mix muxed with the source video. Stems and region have no
+  // video equivalent, so they're hidden (via .fmt-mp4) while MP4 is selected,
+  // leaving just "Export Mix" relabelled for karaoke.
+  function applyFormatState() {
+    const video = format === "mp4";
+    exportPanel?.classList.toggle("fmt-mp4", video);
+    if (mixDescEl) {
+      mixDescEl.textContent = video ? "Export mix with video for karaoke" : "Export the mixed audio";
+    }
+    if (!video) updateLoopRegionVisual(); // restores the region item's disabled state
+  }
 
   function resetBusy() {
     busy = false;
     exportBtn?.classList.remove("is-busy");
     if (exportLabel) exportLabel.textContent = "Export Mix";
     itemMix?.removeAttribute("aria-disabled");
-    itemStems?.removeAttribute("aria-disabled");
-    updateLoopRegionVisual(); // restores the region item's disabled state
+    applyFormatState(); // restores stems/region per the active format
   }
 
   // Single-file (mix/region) downloads give no JS-observable byte progress, so
@@ -186,10 +211,11 @@ function wireFooterControls() {
     panelOpen() ? closePanel() : openPanel();
   });
 
+  // Export Mix: MP4 produces the karaoke video; any other format an audio mix.
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy) return;
-    const ok = downloadCurrentMix(format);
+    const ok = format === "mp4" ? downloadCurrentVideo() : downloadCurrentMix(format);
     if (!ok) { showError("All stems are muted - nothing to export."); return; }
     flashBusy();
   });
@@ -202,10 +228,11 @@ function wireFooterControls() {
     flashBusy();
   });
 
-  // All Stems = a single backend-built ZIP, named after the song.
+  // All Stems = a single backend-built ZIP, named after the song. Audio-only,
+  // so it's disabled (and inert) while MP4 is the selected format.
   itemStems?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (busy) return;
+    if (busy || itemStems.getAttribute("aria-disabled") === "true") return;
     downloadAllStemsZip(format);
     flashBusy();
   });

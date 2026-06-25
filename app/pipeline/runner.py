@@ -42,13 +42,51 @@ def _check_cancel(job: Job) -> None:
         raise JobCancelled()
 
 
+def _extract_video_track(job: Job, source: Path, job_dir: Path) -> None:
+    """For an .mp4 upload, preserve a silent video-only track at
+    video.mp4 so the studio can later mux it with a custom stem mix
+    into a karaoke video (issue #219). Stream-copies the video (no
+    re-encode) -- fast and lossless.
+
+    Best-effort: an .mp4 with no video stream (audio-only container)
+    fails harmlessly and leaves has_video false."""
+    from app.core.config import ffmpeg_executable
+
+    dest = job_dir / "video.mp4"
+    cmd = [
+        ffmpeg_executable(),
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-an",  # drop audio -- the mix is added at export time
+        "-c:v",
+        "copy",
+        "-movflags",
+        "+faststart",
+        "-y",
+        str(dest),
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_FFMPEG)
+    if result.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        logger.info(
+            "no video track preserved for job %s (source has no video stream?)", job.id
+        )
+        return
+    job.has_video = True
+
+
 def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
     """Transcode any local upload to 16-bit 44.1 kHz stereo WAV before
     handing it to Demucs. Normalises MP3 and non-standard WAV formats
     (24-bit, 32-bit float, high sample rate, multi-channel) that Demucs
     would otherwise process silently and output as silence.
 
-    Deletes the original source file after a successful transcode."""
+    For .mp4 uploads, first preserves a silent video.mp4 for later
+    karaoke-video export. Deletes the original source file after a
+    successful transcode."""
     from app.core.config import ffmpeg_executable
 
     dest = job_dir / "source.wav"
@@ -56,6 +94,8 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
         return source
 
     _set(job, stage="Preparing audio...")
+    if source.suffix.lower() == ".mp4":
+        _extract_video_track(job, source, job_dir)
     cmd = [
         ffmpeg_executable(),
         "-nostdin",
@@ -146,6 +186,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "tags": job.tags,
+        "has_video": job.has_video,
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

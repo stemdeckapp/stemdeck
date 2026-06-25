@@ -8,7 +8,7 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from app.core.config import MAX_DURATION_SEC
+from app.core.config import FFMPEG_DIR, MAX_DURATION_SEC, VIDEO_MAX_HEIGHT
 from app.core.models import Job, JobCancelled, _set
 
 logger = logging.getLogger("stemdeck.download")
@@ -148,6 +148,68 @@ def normalize_youtube_url(url: str) -> str:
     return url
 
 
+def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
+    """Best-effort: download a video-only H.264/MP4 stream to video.mp4 for the
+    karaoke-MP4 export (issue #219). The audio source is downloaded separately as
+    usual; this is a second, additive fetch so the audio pipeline is untouched.
+
+    Video-only MP4 needs no ffmpeg merge, so this can't break an audio-only job:
+    any failure (no progressive MP4 video, network error, unsupported codec) is
+    logged and swallowed, leaving has_video False. A cancel mid-download raises
+    JobCancelled, which the runner treats like any other cancellation.
+
+    Capped at VIDEO_MAX_HEIGHT to keep downloads reasonable -- a full song at
+    1080p is large, and karaoke playback doesn't need it."""
+
+    def vhook(d: dict) -> None:
+        if job.cancel_requested:
+            raise JobCancelled()
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            if total:
+                p = float(d.get("downloaded_bytes", 0)) / float(total)
+                _set(job, stage=f"Fetching video {int(p * 100)}%")
+
+    # Prefer H.264 (avc1) so the exported MP4 plays everywhere -- YouTube also
+    # serves AV1/VP9 in mp4 containers, which many players (Safari/iOS, older
+    # devices) can't decode. Fall back to any <=cap mp4 only if no avc1 exists.
+    ydl_opts = {
+        "format": (
+            f"bestvideo[height<={VIDEO_MAX_HEIGHT}][vcodec^=avc1]"
+            f"/bestvideo[height<={VIDEO_MAX_HEIGHT}][ext=mp4]"
+        ),
+        "outtmpl": str(job_dir / "video.%(ext)s"),
+        "quiet": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "allowed_extractors": _ALLOWED_EXTRACTORS,
+        "progress_hooks": [vhook],
+    }
+    # Point yt-dlp at the bundled ffmpeg in case a DASH stream needs remuxing;
+    # in portable builds ffmpeg is not on PATH.
+    if FFMPEG_DIR.is_dir():
+        ydl_opts["ffmpeg_location"] = str(FFMPEG_DIR)
+
+    _set(job, stage="Fetching video...")
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        if job.cancel_requested:
+            raise JobCancelled() from exc
+        logger.warning("[%s] video track unavailable (audio-only): %s", job.id, exc)
+
+    video = job_dir / "video.mp4"
+    if video.is_file() and video.stat().st_size > 0:
+        job.has_video = True
+    else:
+        # Drop any partial/non-mp4 leftover so the export endpoint sees nothing.
+        for f in job_dir.glob("video.*"):
+            f.unlink(missing_ok=True)
+
+
 def download(job: Job, url: str, job_dir: Path) -> Path:
     url = normalize_youtube_url(url)
     logger.info("[%s] download starting: %s", job.id, url)
@@ -176,6 +238,10 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
                 _set(job, progress=p, stage=f"Downloading {int(p * 100)}%")
         elif d.get("status") == "finished":
             _set(job, progress=1.0, stage="Download complete")
+
+    # YouTube jobs additionally fetch the real video stream (below) for the
+    # karaoke-MP4 export (issue #219). SoundCloud is audio-only and excluded.
+    is_youtube = url.startswith("https://www.youtube.com/")
 
     # No postprocessors -- Demucs reads the raw audio container (webm/m4a/opus/...)
     # directly via torchaudio + ffmpeg. Skipping the WAV transcode saves the slowest
@@ -228,6 +294,11 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     seen: set[str] = set()
     deduped = [t for t in raw_tags if not (t in seen or seen.add(t))]  # type: ignore[func-returns-value]
     _set(job, tags=deduped[:8] or None)
+
+    # Best-effort: fetch the real video stream for the karaoke-MP4 export.
+    # Non-fatal -- on any failure the job proceeds audio-only.
+    if is_youtube:
+        _download_video_track(job, url, job_dir)
 
     candidates = sorted(job_dir.glob("source.*"))
     if not candidates:

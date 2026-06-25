@@ -52,6 +52,9 @@ class Job:
     selected_stems: list[str] = field(default_factory=list)
     mix_url: str | None = None  # populated when a strict subset was selected
     source_url: str | None = None  # original URL or "local:<filename>" for file uploads
+    # True when a silent video track (video.mp4) was preserved from an .mp4
+    # upload, enabling the "Export Mix (with video)" karaoke export.
+    has_video: bool = False
     error: str | None = None
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
@@ -84,6 +87,7 @@ class Job:
             "selected_stems": self.selected_stems,
             "mix_url": self.mix_url,
             "source_url": self.source_url,
+            "has_video": self.has_video,
             "error": self.error,
             "created_at": self.created_at,
         }
