@@ -21,19 +21,20 @@ Run
 Prerequisites
 -------------
 
-This portable package bundles its own Python runtime (torch + demucs), but the
-desktop shell links against your system's WebKitGTK libraries, and StemDeck
-expects FFmpeg on your PATH. Install both with your package manager.
+This portable package bundles its own Python runtime (torch + demucs), and
+StemDeck downloads FFmpeg automatically on first launch (or uses a system
+`ffmpeg` if one is already on your PATH). The only system libraries you need
+are your distro's WebKitGTK + GTK, which the desktop shell links against.
 
   Debian / Ubuntu:
     sudo apt update
-    sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0 ffmpeg
+    sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0
 
   Fedora:
-    sudo dnf install webkit2gtk4.1 gtk3 ffmpeg
+    sudo dnf install webkit2gtk4.1 gtk3
 
   Arch:
-    sudo pacman -S webkit2gtk-4.1 gtk3 ffmpeg
+    sudo pacman -S webkit2gtk-4.1 gtk3
 
 NVIDIA variant
 --------------
@@ -68,8 +69,9 @@ Troubleshooting
 
 - "./StemDeck: error while loading shared libraries" — install the WebKitGTK
   and GTK packages listed above.
-- "ffmpeg not found" or a job failing immediately — install ffmpeg and ensure
-  `ffmpeg -version` works in your shell.
+- A job failing immediately with an FFmpeg error — first-run setup downloads
+  FFmpeg automatically; check internet access and retry, or install a system
+  `ffmpeg` so `ffmpeg -version` works in your shell.
 - If setup fails, check internet access and retry.
 - Inspect logs under the data directory's logs/ folder.
 - Deleting the data directory forces first-run setup to recreate runtime state.

@@ -37,6 +37,13 @@ const DEFAULT_MACOS_FFMPEG_SHA256: &str =
 #[cfg(target_os = "macos")]
 const DEFAULT_MACOS_FFPROBE_SHA256: &str =
     "aeade29dee3c3844e9bcc974f4ae4b29cc4f87994177d77003a8589fa531009e";
+// Linux: a static amd64 build (ffmpeg + ffprobe in one .tar.xz) downloaded at
+// first launch, mirroring the Windows/macOS model so we never redistribute
+// FFmpeg ourselves. Overridable via STEMDECK_FFMPEG_URL. The archive unpacks to
+// ffmpeg-<ver>-amd64-static/{ffmpeg,ffprobe}; extraction uses the system `tar`.
+#[cfg(all(unix, not(target_os = "macos")))]
+const DEFAULT_LINUX_FFMPEG_URL: &str =
+    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
 
 struct BackendHandles {
     child: Child,
@@ -1507,7 +1514,7 @@ async fn download_file_with_progress(
         .map_err(|e| format!("failed to move runtime pack to {}: {e}", target.display()))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn download_file(url: &str, target: &Path, timeout: Duration) -> Result<(), String> {
     let tmp = target.with_extension("download");
     if tmp.exists() {
@@ -1861,9 +1868,77 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        verify_ffmpeg(Path::new("ffmpeg"))?;
-        Ok(PathBuf::from("ffmpeg"))
+        // Prefer a system ffmpeg on PATH (dev installs, or users who already have
+        // one) so we skip the download entirely. Otherwise fetch a static build
+        // into data_dir/ffmpeg -- the shared config.json PATH plumbing then lets
+        // the Demucs subprocess find it too.
+        if verify_ffmpeg(Path::new("ffmpeg")).is_ok() {
+            return Ok(PathBuf::from("ffmpeg"));
+        }
+        download_linux_ffmpeg(data_dir)?;
+        let portable =
+            ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
+        verify_ffmpeg(&portable)?;
+        Ok(portable)
     }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn download_linux_ffmpeg(data_dir: &Path) -> Result<(), String> {
+    let url = env_path_override("STEMDECK_FFMPEG_URL")
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| DEFAULT_LINUX_FFMPEG_URL.to_string());
+    let downloads = data_dir.join("downloads");
+    fs::create_dir_all(&downloads)
+        .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
+    let archive = downloads.join("ffmpeg-linux.tar.xz");
+    download_file(&url, &archive, Duration::from_secs(30 * 60))?;
+
+    // Extract with the system tar (xz support is standard on desktop Linux). The
+    // static build unpacks to a single ffmpeg-<ver>-amd64-static/ directory.
+    let extract_dir = downloads.join("ffmpeg-linux");
+    let _ = fs::remove_dir_all(&extract_dir);
+    fs::create_dir_all(&extract_dir)
+        .map_err(|e| format!("failed to create {}: {e}", extract_dir.display()))?;
+    let status = Command::new("tar")
+        .args([
+            "-xJf",
+            &archive.display().to_string(),
+            "-C",
+            &extract_dir.display().to_string(),
+        ])
+        .status()
+        .map_err(|e| format!("failed to run tar (is it installed?): {e}"))?;
+    if !status.success() {
+        let _ = fs::remove_file(&archive);
+        return Err("failed to extract the FFmpeg archive".to_string());
+    }
+
+    // The archive holds one top-level dir; ffmpeg + ffprobe live directly inside.
+    let inner = fs::read_dir(&extract_dir)
+        .map_err(|e| format!("failed to read {}: {e}", extract_dir.display()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.is_dir())
+        .ok_or_else(|| "FFmpeg archive had no extracted directory".to_string())?;
+
+    let ffmpeg_dir = data_dir.join("ffmpeg");
+    fs::create_dir_all(&ffmpeg_dir)
+        .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
+    for name in ["ffmpeg", "ffprobe"] {
+        let src = inner.join(name);
+        if !src.is_file() {
+            return Err(format!("{name} not found in the FFmpeg archive"));
+        }
+        let dest = ffmpeg_dir.join(name);
+        fs::copy(&src, &dest)
+            .map_err(|e| format!("failed to copy {name} to {}: {e}", dest.display()))?;
+        make_executable(&dest)?;
+    }
+
+    let _ = fs::remove_dir_all(&extract_dir);
+    let _ = fs::remove_file(&archive);
+    Ok(())
 }
 
 // Pick the SHA256 to enforce for a download: the pinned hash when the URL is the
@@ -1989,7 +2064,7 @@ fn extract_single_binary_from_zip(
     ))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn make_executable(path: &Path) -> Result<(), String> {
     let output = Command::new("chmod")
         .args(["+x", &path.display().to_string()])

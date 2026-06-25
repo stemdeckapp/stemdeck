@@ -58,10 +58,11 @@ Website: https://github.com/bastibe/python-soundfile
 System Requirements (Not Bundled)
 ---------------------------------
 
-FFmpeg is not bundled in the Linux package. StemDeck calls the `ffmpeg` binary
-from your PATH; install it via your system package manager. FFmpeg may be
-distributed under LGPL or GPL terms depending on how your distribution compiles
-it.
+FFmpeg is not bundled in the Linux package. On first launch StemDeck downloads a
+static FFmpeg build into your user data directory (or uses a system `ffmpeg`
+already on your PATH). The download is fetched directly from the upstream
+provider, not redistributed by StemDeck. FFmpeg may be distributed under LGPL or
+GPL terms depending on how the build was compiled.
 
 WebKitGTK and GTK shared libraries are provided by your Linux distribution and
 are not bundled. They are distributed under LGPL terms.

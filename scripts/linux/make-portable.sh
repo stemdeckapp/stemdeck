@@ -10,9 +10,10 @@
 # desktop shell checks for the stdlib under python/lib/ (python_stdlib_present
 # in desktop/src-tauri/src/main.rs).
 #
-# Phase 1 ships the CPU-only variant. FFmpeg is NOT bundled: the Linux desktop
-# shell expects `ffmpeg` on PATH (see ensure_ffmpeg), so users install it via
-# their package manager (e.g. `sudo apt install ffmpeg`).
+# Phase 1 ships the CPU-only variant. FFmpeg is NOT bundled in the tarball (so we
+# don't redistribute it); instead the desktop shell downloads a static build on
+# first launch into the user data dir, falling back to a system `ffmpeg` on PATH
+# when one exists (see ensure_ffmpeg / download_linux_ffmpeg).
 #
 # Layout produced (so find_repo_root matches its backend/app + python branch):
 #   StemDeck-Linux-x64/
