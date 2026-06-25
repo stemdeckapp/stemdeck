@@ -308,14 +308,23 @@ async def get_video_mixdown(
     else:
         out_label = "[a0]"
     cmd += [
-        "-filter_complex", ";".join(filters),
-        "-map", out_label,
-        "-map", f"{video_idx}:v",
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "192k",
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        out_label,
+        "-map",
+        f"{video_idx}:v",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
         "-shortest",
-        "-movflags", "frag_keyframe+empty_moov",
-        "-f", "mp4",
+        "-movflags",
+        "frag_keyframe+empty_moov",
+        "-f",
+        "mp4",
         "pipe:1",
     ]
 

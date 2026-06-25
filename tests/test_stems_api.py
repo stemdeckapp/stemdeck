@@ -398,9 +398,18 @@ def _make_video_file(tmp_path, job_id: str) -> None:
     job_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
-            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.3:r=10",
-            "-c:v", "mpeg4", "-an",
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=0.3:r=10",
+            "-c:v",
+            "mpeg4",
+            "-an",
             str(job_dir / "video.mp4"),
         ],
         check=True,
@@ -446,5 +455,3 @@ def test_video_mux_happy(client, tmp_path):
     assert r.headers["content-type"] == "video/mp4"
     # ISO-BMFF: bytes 4-8 of the first box are the "ftyp" type.
     assert r.content[4:8] == b"ftyp"
-
-

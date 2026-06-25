@@ -71,9 +71,7 @@ def _extract_video_track(job: Job, source: Path, job_dir: Path) -> None:
     result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_FFMPEG)
     if result.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
         dest.unlink(missing_ok=True)
-        logger.info(
-            "no video track preserved for job %s (source has no video stream?)", job.id
-        )
+        logger.info("no video track preserved for job %s (source has no video stream?)", job.id)
         return
     job.has_video = True
 
