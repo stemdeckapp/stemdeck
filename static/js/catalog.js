@@ -42,7 +42,7 @@ const FRIENDS = [
   },
   {
     name: "Thomann",
-    role: "Musical instruments & music gear",
+    role: "Online Music Store",
     url: "https://www.instagram.com/thomann.music",
     logo: "/img/friends/thomann.jpg",
     avatar: true,

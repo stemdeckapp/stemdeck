@@ -46,7 +46,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding** - no
 | Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
 | Joao Gaspar | Producer/Film Scorer, Touring/Session Musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
 | Kris Luthier | Luthier and Musical Instrument Repair, Lisboa | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Thomann | Musical instruments & music gear | [@thomann.music](https://www.instagram.com/thomann.music) |
+| Thomann | Online Music Store | [@thomann.music](https://www.instagram.com/thomann.music) |
 | Analog4Lyfe | Analog music gear | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Empress Effects | Effects pedals | [empresseffects.com](https://empresseffects.com) |
 
