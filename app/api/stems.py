@@ -61,7 +61,7 @@ def _validate_stem_path(job_id: str, name: str):
 
 def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
     """Parse and validate parallel comma-separated lane names and linear gains.
-    Shared by the audio mixdown and the karaoke-video mux. Raises HTTPException
+    Shared by the audio mixdown and the MP4 video mux. Raises HTTPException
     on malformed input, unknown lanes, or out-of-range gains."""
     names = [s for s in stems.split(",") if s]
     raw_gains = [g for g in gains.split(",") if g]
@@ -270,7 +270,7 @@ async def get_video_mixdown(
     gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
 ) -> StreamingResponse:
     """Mux a fresh audio mixdown of the current mixer state with the job's preserved
-    video into a karaoke MP4 (issue #219). Mirrors get_mixdown's audio graph (encoded
+    video into an MP4 (issue #219). Mirrors get_mixdown's audio graph (encoded
     as AAC) and stream-copies video.mp4 -- the silent video kept from an .mp4 upload
     or the real video stream downloaded for a YouTube job. 404 when the job has no
     video (SoundCloud / plain audio uploads).
@@ -328,7 +328,7 @@ async def get_video_mixdown(
         "pipe:1",
     ]
 
-    filename = f"{_safe_title(job.title)}_karaoke.mp4"
+    filename = f"{_safe_title(job.title)}_video.mp4"
     return StreamingResponse(
         _stream_ffmpeg(cmd),
         media_type="video/mp4",

@@ -45,7 +45,7 @@ def _check_cancel(job: Job) -> None:
 def _extract_video_track(job: Job, source: Path, job_dir: Path) -> None:
     """For an .mp4 upload, preserve a silent video-only track at
     video.mp4 so the studio can later mux it with a custom stem mix
-    into a karaoke video (issue #219). Stream-copies the video (no
+    into an MP4 (issue #219). Stream-copies the video (no
     re-encode) -- fast and lossless.
 
     Best-effort: an .mp4 with no video stream (audio-only container)
@@ -83,7 +83,7 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
     would otherwise process silently and output as silence.
 
     For .mp4 uploads, first preserves a silent video.mp4 for later
-    karaoke-video export. Deletes the original source file after a
+    MP4 export. Deletes the original source file after a
     successful transcode."""
     from app.core.config import ffmpeg_executable
 

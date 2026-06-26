@@ -53,7 +53,7 @@ class Job:
     mix_url: str | None = None  # populated when a strict subset was selected
     source_url: str | None = None  # original URL or "local:<filename>" for file uploads
     # True when a silent video track (video.mp4) was preserved from an .mp4
-    # upload, enabling the "Export Mix (with video)" karaoke export.
+    # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
     error: str | None = None
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.

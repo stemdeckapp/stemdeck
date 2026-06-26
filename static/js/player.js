@@ -1335,7 +1335,7 @@ export function downloadCurrentMix(ext = "wav") {
   return true;
 }
 
-// Karaoke video: the preserved source video muxed with the current audio mix.
+// MP4 export: the preserved source video muxed with the current audio mix.
 // Only meaningful for mp4-sourced jobs (currentJobHasVideo()); returns false when
 // there's no video track or every lane is muted.
 export function downloadCurrentVideo() {
@@ -1351,7 +1351,7 @@ export function downloadCurrentVideo() {
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
-  const name = safe ? `${safe}_karaoke.mp4` : "karaoke.mp4";
+  const name = safe ? `${safe}_video.mp4` : "video.mp4";
   _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name);
   return true;
 }

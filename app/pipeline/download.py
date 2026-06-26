@@ -150,7 +150,7 @@ def normalize_youtube_url(url: str) -> str:
 
 def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
     """Best-effort: download a video-only H.264/MP4 stream to video.mp4 for the
-    karaoke-MP4 export (issue #219). The audio source is downloaded separately as
+    MP4 export (issue #219). The audio source is downloaded separately as
     usual; this is a second, additive fetch so the audio pipeline is untouched.
 
     Video-only MP4 needs no ffmpeg merge, so this can't break an audio-only job:
@@ -159,7 +159,7 @@ def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
     JobCancelled, which the runner treats like any other cancellation.
 
     Capped at VIDEO_MAX_HEIGHT to keep downloads reasonable -- a full song at
-    1080p is large, and karaoke playback doesn't need it."""
+    1080p is large, and the MP4 export doesn't need it."""
 
     def vhook(d: dict) -> None:
         if job.cancel_requested:
@@ -240,7 +240,7 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
             _set(job, progress=1.0, stage="Download complete")
 
     # YouTube jobs additionally fetch the real video stream (below) for the
-    # karaoke-MP4 export (issue #219). SoundCloud is audio-only and excluded.
+    # MP4 export (issue #219). SoundCloud is audio-only and excluded.
     is_youtube = url.startswith("https://www.youtube.com/")
 
     # No postprocessors -- Demucs reads the raw audio container (webm/m4a/opus/...)
@@ -295,7 +295,7 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     deduped = [t for t in raw_tags if not (t in seen or seen.add(t))]  # type: ignore[func-returns-value]
     _set(job, tags=deduped[:8] or None)
 
-    # Best-effort: fetch the real video stream for the karaoke-MP4 export.
+    # Best-effort: fetch the real video stream for the MP4 export.
     # Non-fatal -- on any failure the job proceeds audio-only.
     if is_youtube:
         _download_video_track(job, url, job_dir)

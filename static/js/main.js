@@ -176,12 +176,12 @@ function wireFooterControls() {
 
   // MP4 exports the mix muxed with the source video. Stems and region have no
   // video equivalent, so they're hidden (via .fmt-mp4) while MP4 is selected,
-  // leaving just "Export Mix" relabelled for karaoke.
+  // leaving just "Export Mix".
   function applyFormatState() {
     const video = format === "mp4";
     exportPanel?.classList.toggle("fmt-mp4", video);
     if (mixDescEl) {
-      mixDescEl.textContent = video ? "Export mix with video for karaoke" : "Export the mixed audio";
+      mixDescEl.textContent = video ? "Export mix with the original video" : "Export the mixed audio";
     }
     if (!video) updateLoopRegionVisual(); // restores the region item's disabled state
   }
@@ -211,7 +211,7 @@ function wireFooterControls() {
     panelOpen() ? closePanel() : openPanel();
   });
 
-  // Export Mix: MP4 produces the karaoke video; any other format an audio mix.
+  // Export Mix: MP4 produces the video; any other format an audio mix.
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy) return;

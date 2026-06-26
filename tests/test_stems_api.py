@@ -386,7 +386,7 @@ def test_all_stems_zip_flac(client, tmp_path):
     assert zf.read("vocals.flac")[:4] == b"fLaC"
 
 
-# --- karaoke video mux endpoint (#219) ---
+# --- MP4 video mux endpoint (#219) ---
 
 
 def _make_video_file(tmp_path, job_id: str) -> None:

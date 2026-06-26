@@ -74,7 +74,7 @@ MAX_PENDING_JOBS = max(1, min(50, _env_int("STEMDECK_MAX_PENDING_JOBS", 3)))
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
-# Max height for the karaoke-MP4 video stream pulled from YouTube (issue #219).
+# Max height for the MP4 video stream pulled from YouTube (issue #219).
 # Capped to keep downloads reasonable; 1080p of a full song is large.
 VIDEO_MAX_HEIGHT = max(144, _env_int("STEMDECK_VIDEO_MAX_HEIGHT", 720))
 
