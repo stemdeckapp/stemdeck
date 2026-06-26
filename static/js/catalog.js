@@ -40,6 +40,20 @@ const FRIENDS = [
     logo: "/img/friends/kris-luthier.jpg",
     avatar: true,
   },
+  {
+    name: "Thomann",
+    role: "Musical instruments & music gear",
+    url: "https://www.instagram.com/thomann.music",
+    logo: "/img/friends/thomann.jpg",
+    avatar: true,
+  },
+  {
+    name: "Analog4Lyfe",
+    role: "Analog music gear",
+    url: "https://www.instagram.com/analog4lyfe",
+    logo: "/img/friends/analog4lyfe.jpg",
+    avatar: true,
+  },
 ];
 
 // Instagram glyph (Simple Icons), shown under tiles that link to Instagram.
@@ -1632,13 +1646,25 @@ function wireSupportersDialog() {
       a.rel = "noopener noreferrer";
       a.title = f.name;
       a.style.setProperty("--tilt", tilts[i % tilts.length]);
+      // A monogram avatar (first initial) keeps the tile on-brand when an entry
+      // has no image, or its image fails to load (e.g. before the asset is added).
+      const makeMonogram = () => {
+        const m = document.createElement("span");
+        m.className = "lib-friend-monogram";
+        m.textContent = (f.name || "?").trim().charAt(0).toUpperCase();
+        m.setAttribute("aria-hidden", "true");
+        return m;
+      };
       if (f.logo) {
         const img = document.createElement("img");
         img.className = f.avatar ? "lib-friend-avatar" : "lib-friend-logo";
         img.src = f.logo;
         img.alt = f.name;
         img.loading = "lazy";
+        img.addEventListener("error", () => img.replaceWith(makeMonogram()));
         a.appendChild(img);
+      } else {
+        a.appendChild(makeMonogram());
       }
       const name = document.createElement("span");
       name.className = "lib-friend-name";

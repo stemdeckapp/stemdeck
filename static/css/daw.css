@@ -430,6 +430,10 @@ input, textarea { font-family: inherit; }
 .rail-btn.active { color: var(--accent); background: var(--panel); }
 .rail-btn svg { flex-shrink: 0; }
 .rail-btn span { white-space: nowrap; }
+/* "We Recommend" is wider than the other one-word rail labels, so it stacks onto
+   two centered lines; let the button grow so the second line + icon aren't clipped. */
+.rail-btn.rail-recommend { height: auto; min-height: 40px; padding: 3px 0; }
+.rail-btn.rail-recommend span { white-space: normal; text-align: center; line-height: 1.1; }
 
 /* Sidebar body */
 .sidebar-body {
@@ -2216,6 +2220,22 @@ input, textarea { font-family: inherit; }
   height: 44px;
   border-radius: 50%;
   object-fit: cover;
+  border: 1px solid var(--border);
+}
+/* Monogram fallback when a tile has no image (or it fails to load): matches the
+   round avatar size, in the accent colour, so the grid stays on-brand. */
+.lib-friend-monogram {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--panel-3);
   border: 1px solid var(--border);
 }
 /* Small Instagram glyph under the text on tiles that link to Instagram */
