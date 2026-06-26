@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-and-upload:
     # Runner must be darwin/arm64 with Rosetta 2, Xcode CLT, Homebrew, rustup, and zstd.
-    runs-on: [self-hosted, osx, arm64]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 120
     permissions:
       contents: write
