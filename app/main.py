@@ -83,7 +83,20 @@ def app_version() -> str:
         return "0.0.0-dev"
 
 
+def _sweep_disabled() -> bool:
+    """The desktop app is a personal, user-curated library (folders + Trash),
+    with its track list persisted permanently in ~/Documents/StemDeck. The 24h
+    job TTL sweep -- a sensible disk-hygiene default for the shared server/Docker
+    deployment -- would wrongly purge stems the user kept, leaving orphaned
+    library entries that ask to "re-upload to restore". So skip the sweep under
+    the desktop shell (STEMDECK_DESKTOP=1); the user manages disk via Trash."""
+    return os.environ.get("STEMDECK_DESKTOP") == "1"
+
+
 async def _sweep_loop() -> None:
+    if _sweep_disabled():
+        _log.info("desktop mode: job TTL sweep disabled (library is user-managed)")
+        return
     while True:
         try:
             await asyncio.to_thread(sweep_old_jobs, JOBS_DIR)

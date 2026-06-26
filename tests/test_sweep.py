@@ -55,6 +55,29 @@ def test_sweeps_terminal_old_job(tmp_path: Path):
     assert job.id not in _jobs
 
 
+def test_sweep_disabled_under_desktop(monkeypatch):
+    """The desktop shell (STEMDECK_DESKTOP=1) opts out of the TTL sweep so a
+    user's curated library isn't purged; the server/Docker default keeps it."""
+    from app.main import _sweep_disabled
+
+    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
+    assert _sweep_disabled() is True
+    monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
+    assert _sweep_disabled() is False
+
+
+@pytest.mark.asyncio
+async def test_sweep_loop_returns_immediately_under_desktop(monkeypatch):
+    """In desktop mode the loop returns at once instead of entering the hourly
+    cycle (wait_for would time out if it looped)."""
+    import asyncio
+
+    from app.main import _sweep_loop
+
+    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
+    await asyncio.wait_for(_sweep_loop(), timeout=2)
+
+
 def test_keeps_recent_terminal_job(tmp_path: Path):
     d = _mkdir(tmp_path, "abcdefabcded")
     job = Job(id="abcdefabcded")
