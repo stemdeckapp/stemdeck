@@ -54,6 +54,12 @@ const FRIENDS = [
     logo: "/img/friends/analog4lyfe.jpg",
     avatar: true,
   },
+  {
+    name: "Empress Effects",
+    role: "Effects pedals",
+    url: "https://empresseffects.com",
+    logo: "/img/friends/empress-effects.png",
+  },
 ];
 
 // Instagram glyph (Simple Icons), shown under tiles that link to Instagram.
