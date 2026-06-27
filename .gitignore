@@ -78,3 +78,6 @@ Thumbs.db
 
 # Tool versions
 .python-version
+
+# Imported design references (kept local, not shipped)
+design/

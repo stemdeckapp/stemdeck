@@ -315,14 +315,17 @@ def _local_ips() -> frozenset[str]:
         for info in socket.getaddrinfo(hostname, None):
             ips.add(info[4][0])
     except Exception:
-        pass
+        # Best-effort: name resolution can fail on odd hostnames/configs; we
+        # still try the outbound-socket probe below and fall back to loopback.
+        _log.debug("hostname IP enumeration failed", exc_info=True)
     try:  # primary outbound IP, robust when the hostname doesn't resolve them all
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ips.add(s.getsockname()[0])
         s.close()
     except Exception:
-        pass
+        # Best-effort: no default route / offline — just return what we have.
+        _log.debug("outbound IP probe failed", exc_info=True)
     return frozenset(ips)
 
 

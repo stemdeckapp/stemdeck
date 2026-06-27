@@ -14,10 +14,13 @@ nothing changes until the user overrides a value.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 
 from app.core.config import DATA_DIR, MAX_DURATION_SEC, VIDEO_MAX_HEIGHT
+
+_log = logging.getLogger("stemdeck.settings")
 
 _SETTINGS_PATH = DATA_DIR / "settings.json"
 _LOCK = threading.RLock()
@@ -42,8 +45,11 @@ def _load() -> dict:
         data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return data
+    except FileNotFoundError:
+        pass  # no settings file yet — first run; use defaults
     except Exception:
-        pass
+        # Corrupt/unreadable file: fall back to defaults rather than crash.
+        _log.warning("could not read settings from %s", _SETTINGS_PATH, exc_info=True)
     return {}
 
 
@@ -59,7 +65,9 @@ def _save() -> None:
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         _SETTINGS_PATH.write_text(json.dumps(_ensure()), encoding="utf-8")
     except Exception:
-        pass
+        # Persistence is best-effort (read-only FS, permissions): the in-memory
+        # value still applies for this session, so don't fail the request.
+        _log.warning("could not persist settings to %s", _SETTINGS_PATH, exc_info=True)
 
 
 def _num(v: object) -> int | None:
