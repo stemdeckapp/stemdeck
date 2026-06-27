@@ -63,6 +63,14 @@ def test_runtime_settings_round_trip_and_clamp():
     assert settings_mod.set_video_max_height(99999) == 2160  # ceil
 
 
+def test_port_default_and_clamp():
+    assert settings_mod.get_port() == 8080  # default
+    with TestClient(app) as c:
+        assert c.post("/api/settings", json={"port": 9000}).json()["port"] == 9000
+    assert settings_mod.set_port(80) == 1024  # floor (privileged ports rejected)
+    assert settings_mod.set_port(70000) == 65535  # ceil
+
+
 def test_settings_reject_non_integer():
     with TestClient(app) as c:
         assert c.post("/api/settings", json={"max_duration_sec": "abc"}).status_code == 422

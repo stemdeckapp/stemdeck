@@ -31,9 +31,11 @@ from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
     get_max_duration_sec,
+    get_port,
     get_video_max_height,
     set_allow_network,
     set_max_duration_sec,
+    set_port,
     set_video_max_height,
 )
 from app.pipeline.collect import sweep_old_jobs
@@ -223,6 +225,7 @@ def _settings_payload() -> dict[str, object]:
         "allow_network": get_allow_network(),
         "max_duration_sec": get_max_duration_sec(),
         "video_max_height": get_video_max_height(),
+        "port": get_port(),
     }
 
 
@@ -249,6 +252,7 @@ async def update_settings(request: Request) -> dict[str, object]:
     for key, setter in (
         ("max_duration_sec", set_max_duration_sec),
         ("video_max_height", set_video_max_height),
+        ("port", set_port),
     ):
         if key in body:
             try:

@@ -555,7 +555,7 @@ fn start_backend(
             "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
         })?;
         patch_pyvenv_cfg(&python);
-        let (port, port_guard) = free_port()?;
+        let (port, port_guard) = reserve_port(configured_port())?;
         let url = format!("http://127.0.0.1:{port}");
         let log_path = data_dir.join("logs").join("backend.log");
         let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
@@ -1797,6 +1797,35 @@ fn free_port() -> Result<(u16, TcpListener), String> {
         TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port bind failed: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok((port, listener))
+}
+
+/// The user's preferred port (Settings -> port), read from the backend's
+/// settings.json before launch. Defaults to 8080.
+fn configured_port() -> u16 {
+    const DEFAULT_PORT: u16 = 8080;
+    let Ok(data_dir) = local_data_dir() else {
+        return DEFAULT_PORT;
+    };
+    let Ok(text) = fs::read_to_string(data_dir.join("settings.json")) else {
+        return DEFAULT_PORT;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return DEFAULT_PORT;
+    };
+    match json.get("port").and_then(serde_json::Value::as_u64) {
+        Some(p) if (1024..=65535).contains(&p) => p as u16,
+        _ => DEFAULT_PORT,
+    }
+}
+
+/// Reserve the user's preferred port; fall back to any free port if it's taken,
+/// so a port conflict can never block startup.
+fn reserve_port(desired: u16) -> Result<(u16, TcpListener), String> {
+    if let Ok(listener) = TcpListener::bind(("127.0.0.1", desired)) {
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        return Ok((port, listener));
+    }
+    free_port()
 }
 
 fn wait_for_health(port: u16, timeout: Duration, log_path: &Path) -> Result<(), String> {

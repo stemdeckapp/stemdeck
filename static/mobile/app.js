@@ -103,6 +103,24 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
+// Cover/thumbnail art. Uses the real YouTube/SoundCloud thumbnail when present
+// (layered over the gradient as a fallback if it fails to load); otherwise the
+// gradient + initial. The URL is constrained to a clean https URL so it can't
+// break out of the CSS url().
+function safeThumb(url) {
+  return typeof url === "string" && /^https:\/\/[^"'()\\\s]+$/.test(url) ? url : "";
+}
+function artStyle(card) {
+  const g = (card && card.gradient) || DEFAULT_GRADIENT;
+  const t = card && safeThumb(card.thumb);
+  return t
+    ? `background-image:url('${t}'), ${g};background-size:cover;background-position:center;`
+    : `background:${g};`;
+}
+function artLabel(card) {
+  return card && safeThumb(card.thumb) ? "" : esc((card && card.initial) || "♪");
+}
+
 // ─── Mixer / engine helpers ───
 function lanes() {
   return state.current?.detail?.lanes || [];
@@ -161,6 +179,21 @@ function extractAnalysis(d, laneList) {
   return { stats, presence };
 }
 
+// Repaint the main waveform's played (yellow) vs. remaining bars as playback
+// advances. Only touches the DOM when the played-bar count actually changes
+// (≤ N times over the whole track), not every animation frame.
+let _lastPlayedBar = -1;
+function paintWaveProgress() {
+  const bars = app.querySelectorAll(".wave-bars > i");
+  if (!bars.length) return;
+  const played = Math.round(state.progress * bars.length);
+  if (played === _lastPlayedBar) return;
+  for (let i = 0; i < bars.length; i++) {
+    bars[i].style.background = i <= played ? "#f5b417" : "#34343c";
+  }
+  _lastPlayedBar = played;
+}
+
 function onEngineTime(t) {
   const dur = curDuration() || 1;
   state.progress = Math.max(0, Math.min(1, t / dur));
@@ -168,6 +201,7 @@ function onEngineTime(t) {
   const cur = app.querySelector(".wave-times .cur");
   if (head) head.style.left = state.progress * 100 + "%";
   if (cur) cur.textContent = fmt(t);
+  paintWaveProgress();
 }
 
 // Load a track: fetch detail, build lanes, spin up the Web Audio engine.
@@ -386,7 +420,6 @@ function analysisBody() {
 
 function mixerScreen() {
   const c = state.current || { title: "No track selected", sub: "Pick one from your Library", initial: "♪", gradient: DEFAULT_GRADIENT, stemCount: 0 };
-  const bg = c.gradient || DEFAULT_GRADIENT;
   const sourceTag = c.sub || "—";
   const stemTag = c.stemCount ? `${c.stemCount} stems` : "";
   const dur = curDuration();
@@ -403,7 +436,7 @@ function mixerScreen() {
         <button class="icon-btn">${ICON.dots}</button>
       </div>
       <div class="cover-wrap">
-        <div class="cover" style="background:${bg}"><span>${esc(c.initial)}</span></div>
+        <div class="cover" style="${artStyle(c)}"><span>${artLabel(c)}</span></div>
         <div class="track-title">${esc(c.title)}</div>
         <div class="track-sub">${esc(c.sub)}</div>
         <div class="tags"><span class="tag">${esc(sourceTag)}</span>${stemTag ? `<span class="tag">${stemTag}</span>` : ""}</div>
@@ -443,7 +476,7 @@ function libraryBody() {
     ${state.tracks.map((t) => `<div class="track-wrap${state.swipedTrackId === t.id ? " swiped" : ""}">
       <button class="track-delete" data-action="delete" data-id="${esc(t.id)}">Delete</button>
       <div class="track" data-action="open" data-id="${esc(t.id)}">
-        <div class="track-art" style="background:${t.gradient}">${esc(t.initial)}</div>
+        <div class="track-art" style="${artStyle(t)}">${artLabel(t)}</div>
         <div class="track-info"><div class="t">${esc(t.title)}</div><div class="s">${esc(t.sub)}</div><div class="m">${esc(t.meta)}</div></div>
         <div class="track-dot ${t.status}"></div>
         <button class="track-load" data-action="open" data-id="${esc(t.id)}">Load</button>
@@ -606,9 +639,8 @@ function followExtraction(jobId) {
 function miniPlayer() {
   if (state.tab === "mixer" || !state.current) return "";
   const c = state.current;
-  const bg = c.gradient || DEFAULT_GRADIENT;
   return `<div class="mini" data-action="tab" data-tab="mixer">
-    <div class="mini-art" style="background:${bg}">${esc(c.initial)}</div>
+    <div class="mini-art" style="${artStyle(c)}">${artLabel(c)}</div>
     <div class="mini-info"><div class="t">${esc(c.title)}</div><div class="s">${esc(c.sub)}</div></div>
     <button class="mini-play" data-action="play-mini">${state.playing ? ICON.pause(17, "#1a1206") : ICON.play(18, "#1a1206")}</button>
   </div>`;
@@ -624,6 +656,7 @@ function render() {
   if (state.tab === "library") screen = libraryScreen();
   else if (state.tab === "extract") screen = extractScreen();
   app.innerHTML = screen + miniPlayer() + tabBar();
+  _lastPlayedBar = -1; // bars were just rebuilt; force a repaint on next tick
   wireFaders();
   wireSwipe();
 }
@@ -753,6 +786,8 @@ function wireFaders() {
         if (head) head.style.left = frac * 100 + "%";
         const cur = app.querySelector(".wave-times .cur");
         if (cur) cur.textContent = fmt(frac * curDuration());
+        state.progress = frac;
+        paintWaveProgress();
         seekToFraction(frac);
       };
       seek(e.clientX);

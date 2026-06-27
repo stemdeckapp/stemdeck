@@ -71,5 +71,6 @@ export function jobToCard(state) {
     createdAt: state.created_at || 0,
     initial: coverInitial(title),
     gradient: coverGradient(id || title),
+    thumb: typeof state.thumbnail === "string" ? state.thumbnail : "",
   };
 }

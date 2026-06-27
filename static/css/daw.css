@@ -782,11 +782,14 @@ input, textarea { font-family: inherit; }
 .settings-pane.hidden { display: none; }
 .settings-pane[data-pane="advanced"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
 .settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
-.settings-num { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
-.settings-num input { width: 62px; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 8px; text-align: right; }
-.settings-num-unit { color: var(--muted); font-size: 11px; }
-.settings-select { flex-shrink: 0; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 9px; cursor: pointer; }
-.settings-num input:focus, .settings-select:focus { outline: none; border-color: rgba(244,183,64,0.5); }
+.settings-foot { display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border); }
+.settings-done { min-height: 32px; border-radius: 7px; border: 1px solid rgba(244,183,64,0.35); background: rgba(244,183,64,0.16); color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 0 22px; cursor: pointer; }
+.settings-done:hover { background: rgba(244,183,64,0.24); }
+/* Right-aligned form controls share a fixed width so they line up down the column. */
+.settings-num-input, .settings-select { flex-shrink: 0; width: 84px; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 9px; }
+.settings-num-input { text-align: right; }
+.settings-select { cursor: pointer; }
+.settings-num-input:focus, .settings-select:focus { outline: none; border-color: rgba(244,183,64,0.5); }
 
 /* Settings → network access section */
 .settings-section { margin-bottom: 12px; }

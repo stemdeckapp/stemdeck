@@ -1848,12 +1848,22 @@ function networkSettingsHtml() {
 async function wireGeneralSettings(overlay) {
   const durInput = overlay.querySelector(".set-max-duration");
   const heightSel = overlay.querySelector(".set-video-height");
-  if (!durInput && !heightSel) return;
+  const portInput = overlay.querySelector(".set-port");
+  if (!durInput && !heightSel && !portInput) return;
 
   const apply = (d) => {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
+    if (portInput && d.port) portInput.value = String(d.port);
   };
+
+  // Keep the text inputs digit-only as the user types (maxlength caps the rest).
+  const digitsOnly = (input) => input?.addEventListener("input", () => {
+    const cleaned = input.value.replace(/\D/g, "");
+    if (cleaned !== input.value) input.value = cleaned;
+  });
+  digitsOnly(durInput);
+  digitsOnly(portInput);
 
   try {
     const r = await fetch("/api/settings", { cache: "no-store" });
@@ -1877,6 +1887,10 @@ async function wireGeneralSettings(overlay) {
   });
   heightSel?.addEventListener("change", () => {
     post({ video_max_height: parseInt(heightSel.value, 10) });
+  });
+  portInput?.addEventListener("change", () => {
+    const port = Math.max(1024, Math.min(65535, parseInt(portInput.value, 10) || 8080));
+    post({ port });
   });
 }
 
@@ -1961,12 +1975,9 @@ function openLibraryEditor() {
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-title">Max track length</div>
-              <div class="settings-row-desc">Longest track accepted for processing.</div>
+              <div class="settings-row-desc">Longest track accepted for processing, in minutes (max 20).</div>
             </div>
-            <div class="settings-num">
-              <input type="number" class="set-max-duration" min="1" max="20" step="1" inputmode="numeric" />
-              <span class="settings-num-unit">min</span>
-            </div>
+            <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" />
           </div>
         </div>
         <div class="settings-section">
@@ -1986,6 +1997,15 @@ function openLibraryEditor() {
       </div>
       <div class="settings-pane hidden" data-pane="advanced">
         ${networkSettingsHtml()}
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Port</div>
+              <div class="settings-row-desc">Port StemDeck runs on. Restart to apply.</div>
+            </div>
+            <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" />
+          </div>
+        </div>
         <div class="settings-subhead">Out of sync tracks</div>
         <div class="library-editor-table-wrap">
           <table class="library-editor-table">
@@ -1997,6 +2017,9 @@ function openLibraryEditor() {
           <span class="library-editor-status" aria-live="polite"></span>
           <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
         </div>
+      </div>
+      <div class="settings-foot">
+        <button class="settings-done" type="button">Done</button>
       </div>
     </div>
   `;
@@ -2014,6 +2037,7 @@ function openLibraryEditor() {
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeLibraryEditor(); });
   // (status summary is filled in after the overlay is in the DOM, below)
   overlay.querySelector(".library-editor-close")?.addEventListener("click", closeLibraryEditor);
+  overlay.querySelector(".settings-done")?.addEventListener("click", closeLibraryEditor);
   overlay.querySelector(".library-editor-sync")?.addEventListener("click", () => resyncLibrary());
   // Escape closes from anywhere (the overlay isn't focused, so listen on document).
   libraryEditorOnKey = (e) => { if (e.code === "Escape") closeLibraryEditor(); };

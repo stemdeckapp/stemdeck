@@ -29,6 +29,8 @@ _state: dict | None = None  # whole settings dict, loaded lazily
 # Clamp bounds. Max track length is capped at 20 min (the product ceiling).
 _DURATION_MIN, _DURATION_MAX = 60, 1200  # 1 min .. 20 min
 _HEIGHT_MIN, _HEIGHT_MAX = 144, 2160
+_PORT_MIN, _PORT_MAX = 1024, 65535
+DEFAULT_PORT = 8080
 
 
 def _default_allow_network() -> bool:
@@ -114,5 +116,23 @@ def set_video_max_height(value: int) -> int:
     with _LOCK:
         clamped = max(_HEIGHT_MIN, min(_HEIGHT_MAX, int(value)))
         _ensure()["video_max_height"] = clamped
+        _save()
+        return clamped
+
+
+# ── port ──
+# The preferred port the server binds on launch. The desktop launcher reads this
+# (default 8080) before spawning the backend; a self-hosted server's --port wins.
+# Changing it needs a restart — the socket is bound at startup.
+def get_port() -> int:
+    with _LOCK:
+        v = _num(_ensure().get("port"))
+        return max(_PORT_MIN, min(_PORT_MAX, v)) if v is not None else DEFAULT_PORT
+
+
+def set_port(value: int) -> int:
+    with _LOCK:
+        clamped = max(_PORT_MIN, min(_PORT_MAX, int(value)))
+        _ensure()["port"] = clamped
         _save()
         return clamped
