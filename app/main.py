@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import functools
 import logging
 import os
+import re
 import signal
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
@@ -24,6 +28,14 @@ from app.core.config import (
     ensure_runtime_dirs,
 )
 from app.core.registry import restore as restore_registry
+from app.core.settings import (
+    get_allow_network,
+    get_max_duration_sec,
+    get_video_max_height,
+    set_allow_network,
+    set_max_duration_sec,
+    set_video_max_height,
+)
 from app.pipeline.collect import sweep_old_jobs
 
 # Show our INFO-level logs through uvicorn's root handler. Without this,
@@ -137,12 +149,44 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+# Phones hitting the self-hosted server URL get the mobile UI; everything
+# else (desktop browsers, and the Tauri webviews, which all report desktop
+# user-agents) gets the DAW. Tablets are intentionally treated as desktop —
+# the DAW layout is usable there. "Mobi" is the cross-browser marker for a
+# phone form factor (Chrome/Firefox/Safari all include it); the rest cover
+# vendors that don't.
+_MOBILE_UA_RE = re.compile(
+    r"Mobi|Android|iPhone|iPod|IEMobile|BlackBerry|Opera Mini", re.IGNORECASE
+)
+
+
+def _is_mobile_ua(user_agent: str) -> bool:
+    return bool(user_agent) and _MOBILE_UA_RE.search(user_agent) is not None
+
+
 app = FastAPI(
     title="StemDeck",
     description="Paste a YouTube URL or upload an audio file, get audio stems split into a DAW-style player.",
     version=app_version(),
     lifespan=lifespan,
 )
+
+
+@app.get("/", include_in_schema=False)
+def index(request: Request) -> FileResponse:
+    """Serve the mobile shell to phones, the DAW to everyone else. `?ui=mobile`
+    / `?ui=desktop` forces either one (handy for testing from a desktop). This
+    route is registered before the StaticFiles mount at "/", so it wins for the
+    bare path while the mount still serves every other asset."""
+    ui = request.query_params.get("ui")
+    if ui == "mobile":
+        mobile = True
+    elif ui == "desktop":
+        mobile = False
+    else:
+        mobile = _is_mobile_ua(request.headers.get("user-agent", ""))
+    page = "mobile/index.html" if mobile else "index.html"
+    return FileResponse(STATIC_DIR / page)
 
 
 @app.get("/health", include_in_schema=False)
@@ -160,6 +204,58 @@ def health() -> dict[str, object]:
         "demucs_model": DEMUCS_MODEL,
         "demucs_device": DEMUCS_DEVICE,
     }
+
+
+def _is_lan_ipv4(ip: str) -> bool:
+    """A reachable IPv4 LAN address to show another device: not IPv6 (link-local
+    needs a zone index and won't work in a browser), not loopback, not the
+    169.254.x auto-config range."""
+    if ":" in ip:  # IPv6
+        return False
+    if _is_loopback(ip) or ip.startswith("169.254."):
+        return False
+    parts = ip.split(".")
+    return len(parts) == 4 and all(p.isdigit() for p in parts)
+
+
+def _settings_payload() -> dict[str, object]:
+    return {
+        "allow_network": get_allow_network(),
+        "max_duration_sec": get_max_duration_sec(),
+        "video_max_height": get_video_max_height(),
+    }
+
+
+@app.get("/api/settings", tags=["settings"])
+def get_settings(request: Request) -> dict[str, object]:
+    # LAN addresses other devices can use — loopback excluded (only works on the
+    # host). The port is whatever this request came in on.
+    port = request.url.port or 8000
+    addresses = sorted(f"http://{ip}:{port}" for ip in _local_ips() if _is_lan_ipv4(ip))
+    return {**_settings_payload(), "lan_addresses": addresses}
+
+
+@app.post("/api/settings", tags=["settings"])
+async def update_settings(request: Request) -> dict[str, object]:
+    """Update runtime settings. Reachable from the host machine always; from a
+    LAN device only while network access is currently on (the gate below), so a
+    phone can't change settings once the owner turned access off."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if "allow_network" in body:
+        set_allow_network(bool(body["allow_network"]))
+    for key, setter in (
+        ("max_duration_sec", set_max_duration_sec),
+        ("video_max_height", set_video_max_height),
+    ):
+        if key in body:
+            try:
+                setter(int(body[key]))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
+    return _settings_payload()
 
 
 # Content-Security-Policy. Defense-in-depth so an injected string in the webview
@@ -198,6 +294,65 @@ async def security_and_cache_headers(request: Request, call_next):
     if not request.url.path.startswith("/api"):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
+
+
+def _is_loopback(host: str | None) -> bool:
+    if not host:
+        return False
+    if host.startswith("::ffff:"):  # IPv4-mapped IPv6
+        host = host[7:]
+    return host in {"127.0.0.1", "::1", "localhost"} or host.startswith("127.")
+
+
+@functools.lru_cache(maxsize=1)
+def _local_ips() -> frozenset[str]:
+    """The machine's own interface IPs. Used so the host always reaches the app
+    even via its LAN address (e.g. 192.168.x.x), not just 127.0.0.1 — turning
+    network access off must never cut the host off from its own server."""
+    ips: set[str] = set()
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    try:  # primary outbound IP, robust when the hostname doesn't resolve them all
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    return frozenset(ips)
+
+
+def _is_host_request(host: str | None) -> bool:
+    """True when the request originates from the machine StemDeck runs on —
+    whether via loopback or one of its own interface addresses."""
+    if _is_loopback(host):
+        return True
+    if not host:
+        return False
+    h = host[7:] if host.startswith("::ffff:") else host
+    return h in _local_ips()
+
+
+# Network availability gate (Settings → "Make StemDeck available on your
+# network"). Added after the headers middleware so it is the OUTERMOST layer and
+# short-circuits before anything else. It NEVER stops the server — it only
+# refuses requests from OTHER devices when availability is off. The host machine
+# (loopback or its own LAN IP) is always served, so the app keeps working
+# locally regardless of this setting.
+@app.middleware("http")
+async def network_gate(request: Request, call_next):
+    if not get_allow_network():
+        client_host = request.client.host if request.client else None
+        if not _is_host_request(client_host):
+            return PlainTextResponse(
+                "StemDeck is not available on the network. Enable it in Settings on the host machine.",
+                status_code=403,
+            )
+    return await call_next(request)
 
 
 app.include_router(router, prefix="/api")

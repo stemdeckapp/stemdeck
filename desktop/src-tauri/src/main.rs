@@ -202,6 +202,7 @@ fn main() {
             ensure_external_assets,
             ensure_torch_device,
             start_backend,
+            local_ip,
             open_url,
             save_audio_file,
             store_get,
@@ -528,6 +529,11 @@ fn start_backend(
     app_handle: tauri::AppHandle,
     state: tauri::State<BackendState>,
 ) -> Result<BackendStarted, String> {
+    // Always bind all interfaces; whether other devices are actually served is
+    // controlled live by the backend's network gate (Settings → "Make StemDeck
+    // available on your network"), which defaults off and always allows
+    // loopback. The WebView itself connects via 127.0.0.1 regardless.
+    let bind_host = "0.0.0.0";
     // Gate concurrent calls: return immediately if already running or starting (#145).
     {
         let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
@@ -576,7 +582,7 @@ fn start_backend(
             "uvicorn",
             "app.main:app",
             "--host",
-            "127.0.0.1",
+            bind_host,
             "--port",
             &port.to_string(),
         ]);
@@ -642,6 +648,21 @@ fn start_backend(
             Ok(BackendStarted { url })
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Best-effort primary LAN IPv4, shown in Settings so the user knows the address
+/// to open StemDeck from another device. Uses the "connect a UDP socket" trick:
+/// no packets are sent — connect() just makes the OS pick the source IP for the
+/// default route. Returns None when offline / no route.
+#[tauri::command]
+fn local_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    match sock.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(v4) if !v4.is_loopback() => Some(v4.to_string()),
+        _ => None,
     }
 }
 

@@ -8,8 +8,9 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from app.core.config import FFMPEG_DIR, MAX_DURATION_SEC, VIDEO_MAX_HEIGHT
+from app.core.config import FFMPEG_DIR
 from app.core.models import Job, JobCancelled, _set
+from app.core.settings import get_max_duration_sec, get_video_max_height
 
 logger = logging.getLogger("stemdeck.download")
 
@@ -173,10 +174,11 @@ def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
     # Prefer H.264 (avc1) so the exported MP4 plays everywhere -- YouTube also
     # serves AV1/VP9 in mp4 containers, which many players (Safari/iOS, older
     # devices) can't decode. Fall back to any <=cap mp4 only if no avc1 exists.
+    max_height = get_video_max_height()
     ydl_opts = {
         "format": (
-            f"bestvideo[height<={VIDEO_MAX_HEIGHT}][vcodec^=avc1]"
-            f"/bestvideo[height<={VIDEO_MAX_HEIGHT}][ext=mp4]"
+            f"bestvideo[height<={max_height}][vcodec^=avc1]"
+            f"/bestvideo[height<={max_height}][ext=mp4]"
         ),
         "outtmpl": str(job_dir / "video.%(ext)s"),
         "quiet": True,
@@ -222,8 +224,9 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     ) as ydl:
         meta = ydl.extract_info(url, download=False) or {}
     duration = meta.get("duration") or 0
-    if duration > MAX_DURATION_SEC:
-        mins = MAX_DURATION_SEC // 60
+    max_duration = get_max_duration_sec()
+    if duration > max_duration:
+        mins = max_duration // 60
         raise RuntimeError(f"Video is {int(duration // 60)} min -- limit is {mins} min")
 
     def hook(d: dict) -> None:

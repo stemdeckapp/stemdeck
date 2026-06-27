@@ -1770,8 +1770,9 @@ function closeLibraryEditor() {
 function renderLibraryRows(tbody) {
   tbody.textContent = "";
   const trashIds = new Set(getTrashFolder()?.items || []);
+  // Only out-of-sync (audio missing) tracks — this table sits next to Resync.
   const entries = Object.entries(tracks)
-    .filter(([id]) => !trashIds.has(id))
+    .filter(([id, t]) => !trashIds.has(id) && t.status === "unavailable")
     .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
 
   if (!entries.length) {
@@ -1779,7 +1780,7 @@ function renderLibraryRows(tbody) {
     const td = document.createElement("td");
     td.colSpan = 3;
     td.className = "library-editor-empty";
-    td.textContent = "No tracks in your library yet.";
+    td.textContent = "All tracks are in sync.";
     tr.appendChild(td);
     tbody.appendChild(tr);
     return;
@@ -1816,6 +1817,127 @@ function renderLibraryRows(tbody) {
   }
 }
 
+// "Make StemDeck available on your network" toggle. The backend always binds
+// all interfaces and gates LAN access on a runtime flag (GET/POST /api/settings)
+// — so this works live, no restart, identically in the desktop app and the
+// self-hosted server. Loopback is always allowed, so the owner can't lock
+// themselves out of this control.
+function networkSettingsHtml() {
+  return `
+    <div class="settings-section">
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <div class="settings-row-title">Make StemDeck available on your network</div>
+          <div class="settings-row-desc">Let other devices (like your phone) open StemDeck at the address below.</div>
+        </div>
+        <label class="settings-switch">
+          <input type="checkbox" class="net-access-input" />
+          <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-net hidden">
+        <div class="settings-net-label">Access on your local network by any of these addresses:</div>
+        <div class="settings-net-list"></div>
+      </div>
+    </div>
+  `;
+}
+
+// General settings: max track length (minutes) + MP4 video quality. Read live
+// and POSTed on change to /api/settings (same runtime store as the toggle).
+async function wireGeneralSettings(overlay) {
+  const durInput = overlay.querySelector(".set-max-duration");
+  const heightSel = overlay.querySelector(".set-video-height");
+  if (!durInput && !heightSel) return;
+
+  const apply = (d) => {
+    if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
+    if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
+  };
+
+  try {
+    const r = await fetch("/api/settings", { cache: "no-store" });
+    if (r.ok) apply(await r.json());
+  } catch { /* leave blank */ }
+
+  const post = async (patch) => {
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (r.ok) apply(await r.json()); // reflect the server's clamped value
+    } catch { /* ignore */ }
+  };
+
+  durInput?.addEventListener("change", () => {
+    const mins = Math.max(1, Math.min(20, parseInt(durInput.value, 10) || 20));
+    post({ max_duration_sec: mins * 60 });
+  });
+  heightSel?.addEventListener("change", () => {
+    post({ video_max_height: parseInt(heightSel.value, 10) });
+  });
+}
+
+async function wireNetworkSetting(overlay) {
+  const input = overlay.querySelector(".net-access-input");
+  const netWrap = overlay.querySelector(".settings-net");
+  const list = overlay.querySelector(".settings-net-list");
+  if (!input) return;
+
+  let enabled = false;
+  let addresses = [];
+  try {
+    const r = await fetch("/api/settings", { cache: "no-store" });
+    if (r.ok) {
+      const data = await r.json();
+      enabled = data.allow_network === true;
+      addresses = Array.isArray(data.lan_addresses) ? data.lan_addresses : [];
+    }
+  } catch { /* leave defaults */ }
+
+  // Build the address list with textContent (URLs are server data, but never
+  // interpolate untrusted strings into innerHTML).
+  if (list) {
+    list.textContent = "";
+    if (addresses.length) {
+      for (const a of addresses) {
+        const code = document.createElement("code");
+        code.textContent = a;
+        list.appendChild(code);
+      }
+    } else {
+      const span = document.createElement("span");
+      span.className = "settings-net-empty";
+      span.textContent = "No local network connection detected.";
+      list.appendChild(span);
+    }
+  }
+
+  input.checked = enabled;
+  const refresh = () => netWrap?.classList.toggle("hidden", !input.checked);
+  refresh();
+
+  input.addEventListener("change", async () => {
+    const want = input.checked;
+    input.disabled = true;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_network: want }),
+      });
+      input.checked = r.ok ? (await r.json()).allow_network === true : !want;
+    } catch {
+      input.checked = !want; // revert on failure
+    } finally {
+      input.disabled = false;
+      refresh();
+    }
+  });
+}
+
 function openLibraryEditor() {
   closeFolderEditor();
   closeLibraryEditor();
@@ -1823,27 +1945,71 @@ function openLibraryEditor() {
   const overlay = document.createElement("div");
   overlay.className = "library-editor-backdrop";
   overlay.innerHTML = `
-    <div class="library-editor" role="dialog" aria-modal="true" aria-label="Edit library">
+    <div class="library-editor" role="dialog" aria-modal="true" aria-label="Settings">
       <div class="library-editor-head">
-        <span>Edit Library</span>
+        <span>Settings</span>
         <button class="library-editor-close" type="button" aria-label="Close">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
         </button>
       </div>
-      <div class="library-editor-table-wrap">
-        <table class="library-editor-table">
-          <thead><tr><th>Name</th><th>Source</th><th>Location</th></tr></thead>
-          <tbody class="library-editor-body"></tbody>
-        </table>
+      <div class="settings-tabs" role="tablist">
+        <button class="settings-tab active" type="button" data-tab="general" role="tab">General</button>
+        <button class="settings-tab" type="button" data-tab="advanced" role="tab">Advanced</button>
       </div>
-      <div class="library-editor-foot">
-        <span class="library-editor-status" aria-live="polite"></span>
-        <button class="library-editor-sync" type="button">Sync again</button>
+      <div class="settings-pane" data-pane="general">
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Max track length</div>
+              <div class="settings-row-desc">Longest track accepted for processing.</div>
+            </div>
+            <div class="settings-num">
+              <input type="number" class="set-max-duration" min="1" max="20" step="1" inputmode="numeric" />
+              <span class="settings-num-unit">min</span>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">MP4 video quality</div>
+              <div class="settings-row-desc">Max resolution for MP4 export and YouTube video.</div>
+            </div>
+            <select class="settings-select set-video-height">
+              <option value="360">360p</option>
+              <option value="480">480p</option>
+              <option value="720">720p</option>
+              <option value="1080">1080p</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane hidden" data-pane="advanced">
+        ${networkSettingsHtml()}
+        <div class="settings-subhead">Out of sync tracks</div>
+        <div class="library-editor-table-wrap">
+          <table class="library-editor-table">
+            <thead><tr><th>Name</th><th>Source</th><th>Location</th></tr></thead>
+            <tbody class="library-editor-body"></tbody>
+          </table>
+        </div>
+        <div class="library-editor-foot">
+          <span class="library-editor-status" aria-live="polite"></span>
+          <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
+        </div>
       </div>
     </div>
   `;
 
   renderLibraryRows(overlay.querySelector(".library-editor-body"));
+
+  overlay.querySelectorAll(".settings-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const name = tab.dataset.tab;
+      overlay.querySelectorAll(".settings-tab").forEach((t) => t.classList.toggle("active", t === tab));
+      overlay.querySelectorAll(".settings-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
+    });
+  });
 
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeLibraryEditor(); });
   // (status summary is filled in after the overlay is in the DOM, below)
@@ -1856,6 +2022,8 @@ function openLibraryEditor() {
   document.body.appendChild(overlay);
   libraryEditor = overlay;
   refreshLibrarySyncSummary();
+  wireGeneralSettings(overlay);
+  wireNetworkSetting(overlay);
 }
 
 // Poll a job until it reaches a terminal state, so auto-restores run one at a

@@ -772,6 +772,44 @@ input, textarea { font-family: inherit; }
 .library-editor-table tr.unavailable .le-name { color: var(--danger); }
 .le-badge { margin-left: 7px; padding: 1px 6px; border-radius: 5px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(214,90,74,0.16); color: var(--danger); }
 .library-editor-empty { color: var(--muted); text-align: center; padding: 22px 10px !important; }
+/* Settings → tabs */
+.settings-tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.settings-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 5px 12px 9px; cursor: pointer; margin-bottom: -1px; }
+.settings-tab:hover { color: var(--fg-2); }
+.settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.settings-pane { display: flex; flex-direction: column; min-height: 0; }
+.settings-pane[data-pane="general"] { flex: 1; }
+.settings-pane.hidden { display: none; }
+.settings-pane[data-pane="advanced"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
+.settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
+.settings-num { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+.settings-num input { width: 62px; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 8px; text-align: right; }
+.settings-num-unit { color: var(--muted); font-size: 11px; }
+.settings-select { flex-shrink: 0; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 9px; cursor: pointer; }
+.settings-num input:focus, .settings-select:focus { outline: none; border-color: rgba(244,183,64,0.5); }
+
+/* Settings → network access section */
+.settings-section { margin-bottom: 12px; }
+.settings-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.settings-row-text { min-width: 0; }
+.settings-row-title { font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.settings-row-desc { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.settings-switch { position: relative; flex-shrink: 0; width: 42px; height: 24px; cursor: pointer; }
+.settings-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.settings-switch-track { position: absolute; inset: 0; border-radius: 999px; background: rgba(148,163,184,0.22); border: 1px solid var(--border-strong); transition: background 0.15s ease; }
+.settings-switch-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--fg); transition: transform 0.15s ease; }
+.settings-switch input:checked + .settings-switch-track { background: rgba(244,183,64,0.55); border-color: rgba(244,183,64,0.5); }
+.settings-switch input:checked + .settings-switch-track .settings-switch-thumb { transform: translateX(18px); background: var(--accent); }
+.settings-switch.disabled { cursor: default; opacity: 0.7; }
+.settings-switch.disabled input { cursor: default; }
+.settings-net { margin-top: 10px; font-size: 11px; color: var(--muted); }
+.settings-net.hidden { display: none; }
+.settings-net-label { margin-bottom: 7px; }
+.settings-net-list { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.settings-net-list code { color: var(--accent); background: rgba(244,183,64,0.1); padding: 3px 9px; border-radius: 5px; font-size: 11.5px; }
+.settings-net-empty { color: var(--muted); }
+.settings-subhead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; margin: 4px 0 7px; }
+
 .library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
 .library-editor-status { font-size: 10.5px; color: var(--muted); }
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }

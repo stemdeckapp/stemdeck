@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -99,6 +100,50 @@ async def _stream_ffmpeg(cmd: list[str]):
         await proc.wait()
 
 
+async def _ensure_cached_mp3(src: Path) -> Path:
+    """Transcode `src` (a stem WAV) to a sibling `<name>.mp3`, cached on disk.
+    Re-encoding a full song on every request is the slow part of loading a track
+    on mobile (≈3s/stem × 6 in parallel); caching makes repeat loads instant.
+    Written atomically (temp + rename) so concurrent fetches can't serve a
+    partial file."""
+    dest = src.with_suffix(".mp3")
+    if dest.is_file() and dest.stat().st_mtime >= src.stat().st_mtime:
+        return dest
+    tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp")
+    cmd = [
+        ffmpeg_executable(),
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(src),
+        "-q:a",
+        "2",  # VBR ~190 kbps
+        "-f",
+        "mp3",
+        str(tmp),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT_FFMPEG)
+    except (TimeoutError, asyncio.TimeoutError):
+        proc.kill()
+        await proc.wait()
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(status_code=504, detail="mp3 transcode timed out") from None
+    if proc.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        logger.warning(
+            "mp3 transcode failed for %s: %s", src.name, (stderr or b"").decode("utf-8", "replace")
+        )
+        raise HTTPException(status_code=500, detail="mp3 transcode failed")
+    os.replace(tmp, dest)
+    return dest
+
+
 @router.get("/jobs/{job_id}/stems/peaks.json")
 async def get_stem_peaks(job_id: str) -> Response:
     """Return pre-computed waveform peaks for all stems."""
@@ -166,14 +211,30 @@ async def get_stem_mp3(
     name: str,
     start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
-) -> StreamingResponse:
-    """Stream a stem as MP3 (VBR ~190 kbps). Optional ?start=&end= trims to a time region."""
+) -> Response:
+    """Stem as MP3 (VBR ~190 kbps). Full stems are cached to disk; ?start=&end=
+    streams a freshly-trimmed region (uncached)."""
     path = _validate_stem_path(job_id, name)
 
     if (start is None) != (end is None) or (start is not None and start >= end):
         raise HTTPException(
             status_code=422,
             detail="start and end are both required and start must be less than end",
+        )
+
+    # Full-stem requests (no trim) are cached to disk so repeat loads — the
+    # common case for the mobile player — are instant instead of re-encoding.
+    if start is None:
+        cached = await _ensure_cached_mp3(path)
+        return FileResponse(
+            cached,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f'attachment; filename="{name}.mp3"',
+                # Stems are immutable once a job is done — let the phone cache
+                # them so a re-load is instant and offline-friendly.
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
         )
 
     pre_seek = ["-ss", str(start)] if start is not None else []

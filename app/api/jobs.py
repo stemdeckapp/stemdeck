@@ -12,14 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
-from app.core.config import (
-    JOB_ID_RE,
-    JOBS_DIR,
-    MAX_DURATION_SEC,
-    MAX_PENDING_JOBS,
-    STEM_NAMES,
-    ffprobe_executable,
-)
+from app.core.config import JOB_ID_RE, JOBS_DIR, MAX_PENDING_JOBS, STEM_NAMES, ffprobe_executable
 from app.core.models import Job
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
@@ -27,6 +20,7 @@ from app.core.registry import get_proc as registry_get_proc
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
+from app.core.settings import get_max_duration_sec
 from app.pipeline import run_local_pipeline, run_pipeline
 from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
 
@@ -213,12 +207,11 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Could not read file duration: {e}") from e
 
-        if duration > MAX_DURATION_SEC:
+        max_duration = get_max_duration_sec()
+        if duration > max_duration:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"File is {int(duration // 60)} min — limit is {MAX_DURATION_SEC // 60} min"
-                ),
+                detail=(f"File is {int(duration // 60)} min — limit is {max_duration // 60} min"),
             )
     except HTTPException:
         shutil.rmtree(job_dir, ignore_errors=True)

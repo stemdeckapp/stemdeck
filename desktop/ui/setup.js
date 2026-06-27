@@ -2,6 +2,12 @@ const { invoke } = window.__TAURI__.core;
 
 let _runtimeUnlisten = null;
 
+// The backend always binds all interfaces; network availability is gated live
+// by the backend itself (Settings → "Make StemDeck available on your network").
+function startBackend() {
+  return invoke("start_backend");
+}
+
 const statusEl = document.getElementById("status");
 const detailsEl = document.getElementById("details");
 const retryBtn = document.getElementById("retry");
@@ -242,7 +248,7 @@ async function runSetup() {
       }
       await runStep("backend", async () => {
         setStatus("Runtime is ready. Starting StemDeck backend...");
-        const backend = await invoke("start_backend");
+        const backend = await startBackend();
         setStatus("Opening StemDeck...");
         window.location.replace(backend.url);
       });
@@ -359,7 +365,7 @@ async function runSetup() {
 
     await runStep("backend", async () => {
       setStatus(gpuSummary ? `${gpuSummary} - starting backend...` : "Starting StemDeck backend...");
-      const backend = await invoke("start_backend");
+      const backend = await startBackend();
       setStatus("Opening StemDeck...");
       window.location.replace(backend.url);
     });

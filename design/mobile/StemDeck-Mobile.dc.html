@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:#08080a; }
+  [data-fader]{ touch-action:none; }
+  .scrl::-webkit-scrollbar{ display:none; }
+  .scrl{ scrollbar-width:none; }
+  @keyframes barpulse{ 0%,100%{ transform:scaleY(.55); } 50%{ transform:scaleY(1); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px 24px;background:radial-gradient(120% 80% at 50% 0%, #15131c 0%, #0a0a0c 55%, #08080a 100%);font-family:'Space Grotesk',sans-serif;">
+
+  <div style="position:relative;width:414px;height:868px;background:linear-gradient(160deg,#202024,#0c0c0e);border-radius:58px;padding:13px;box-shadow:0 0 0 2px #2a2a2e, 0 50px 100px -20px rgba(0,0,0,.8);flex-shrink:0;">
+    <div style="position:relative;width:388px;height:842px;background:#0b0b0d;border-radius:46px;overflow:hidden;">
+
+      <!-- dynamic island -->
+      <div style="position:absolute;top:12px;left:50%;transform:translateX(-50%);width:118px;height:33px;background:#000;border-radius:18px;z-index:60;"></div>
+
+      <!-- status bar -->
+      <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 9px;z-index:55;pointer-events:none;">
+        <span style="font-family:'JetBrains Mono';font-size:14px;font-weight:600;color:#fff;letter-spacing:.5px;">9:41</span>
+        <div style="display:flex;align-items:center;gap:7px;">
+          <svg width="18" height="12" viewBox="0 0 18 12" fill="#fff"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0.5" width="3" height="11.5" rx="1"/></svg>
+          <span style="font-family:'JetBrains Mono';font-size:11px;font-weight:600;color:#fff;">5G</span>
+          <div style="width:24px;height:12px;border:1.4px solid rgba(255,255,255,.55);border-radius:3px;padding:1.6px;position:relative;"><div style="height:100%;width:80%;background:#fff;border-radius:1px;"></div></div>
+        </div>
+      </div>
+
+      <!-- ============ MIXER / PLAYER ============ -->
+      <sc-if value="{{ isMixer }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="Mixer" class="scrl" style="position:absolute;inset:54px 0 0 0;overflow-y:auto;">
+        <div style="padding:6px 20px 0;">
+          <!-- header -->
+          <div style="display:flex;align-items:center;justify-content:space-between;height:40px;">
+            <button onClick="{{ onTabLib }}" style="width:34px;height:34px;border-radius:10px;border:none;background:#161619;color:#cfcfd4;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+            <span style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:#6a6a72;">NOW PLAYING</span>
+            <button style="width:34px;height:34px;border-radius:10px;border:none;background:#161619;color:#cfcfd4;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          </div>
+
+          <!-- cover -->
+          <div style="display:flex;flex-direction:column;align-items:center;margin-top:14px;">
+            <div style="position:relative;width:172px;height:172px;border-radius:26px;background:{{ coverBg }};box-shadow:0 24px 50px -16px rgba(90,60,200,.45), inset 0 1px 0 rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;overflow:hidden;">
+              <div style="position:absolute;inset:0;background:radial-gradient(80% 60% at 30% 20%, rgba(255,255,255,.22), transparent 60%);"></div>
+              <span style="font-size:60px;font-weight:700;color:rgba(255,255,255,.92);text-shadow:0 2px 20px rgba(0,0,0,.3);">{{ coverInitial }}</span>
+            </div>
+            <div style="font-size:21px;font-weight:600;color:#f2f2f4;margin-top:18px;text-align:center;letter-spacing:-.2px;">{{ trackTitle }}</div>
+            <div style="font-size:14px;color:#85858d;margin-top:3px;">{{ trackSub }}</div>
+            <div style="display:flex;gap:7px;margin-top:12px;">
+              <span style="font-family:'JetBrains Mono';font-size:10px;font-weight:500;color:#9a9aa2;background:#161619;border:1px solid rgba(255,255,255,.06);padding:4px 9px;border-radius:7px;letter-spacing:.3px;">YouTube</span>
+              <span style="font-family:'JetBrains Mono';font-size:10px;font-weight:500;color:#9a9aa2;background:#161619;border:1px solid rgba(255,255,255,.06);padding:4px 9px;border-radius:7px;letter-spacing:.3px;">6 stems</span>
+              <span style="font-family:'JetBrains Mono';font-size:10px;font-weight:500;color:#9a9aa2;background:#161619;border:1px solid rgba(255,255,255,.06);padding:4px 9px;border-radius:7px;letter-spacing:.3px;">High</span>
+            </div>
+          </div>
+
+          <!-- waveform -->
+          <div style="margin-top:22px;">
+            <div style="position:relative;height:44px;display:flex;align-items:center;gap:2px;">
+              <sc-for list="{{ bars }}" as="b" hint-placeholder-count="40">
+                <div style="{{ b.style }}"></div>
+              </sc-for>
+              <div style="position:absolute;top:-3px;bottom:-3px;width:2px;background:#f5b417;left:{{ progressLeft }};box-shadow:0 0 10px #f5b417;border-radius:2px;"><div style="position:absolute;top:-5px;left:50%;transform:translateX(-50%);width:11px;height:11px;border-radius:50%;background:#f5b417;box-shadow:0 0 8px #f5b417;"></div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:9px;font-family:'JetBrains Mono';font-size:11px;font-weight:500;">
+              <span style="color:#f5b417;">{{ curTime }}</span>
+              <span style="color:#6a6a72;">{{ durTime }}</span>
+            </div>
+          </div>
+
+          <!-- transport -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:22px;margin-top:8px;">
+            <button style="background:none;border:none;color:#85858d;font-family:'JetBrains Mono';font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>.75x</button>
+            <button style="background:none;border:none;color:#d8d8dc;cursor:pointer;display:flex;"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M7 6v12M19 6l-9 6 9 6z"/></svg></button>
+            <button onClick="{{ togglePlay }}" style="width:66px;height:66px;border-radius:50%;border:none;background:linear-gradient(160deg,#fbc94a,#f5a516);box-shadow:0 12px 30px -6px rgba(245,165,22,.6);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+              <sc-if value="{{ playing }}" hint-placeholder-val="{{ false }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="#1a1206"><rect x="6" y="5" width="4" height="14" rx="1.3"/><rect x="14" y="5" width="4" height="14" rx="1.3"/></svg></sc-if>
+              <sc-if value="{{ notPlaying }}" hint-placeholder-val="{{ true }}"><svg width="28" height="28" viewBox="0 0 24 24" fill="#1a1206"><path d="M8 5.5v13l11-6.5z"/></svg></sc-if>
+            </button>
+            <button style="background:none;border:none;color:#d8d8dc;cursor:pointer;display:flex;"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M17 6v12M5 6l9 6-9 6z"/></svg></button>
+            <button style="background:none;border:none;color:#85858d;cursor:pointer;display:flex;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></button>
+          </div>
+
+          <!-- segmented -->
+          <div style="display:flex;gap:4px;background:#141417;border:1px solid rgba(255,255,255,.05);border-radius:12px;padding:4px;margin-top:24px;">
+            <button onClick="{{ onSegStems }}" style="{{ segStemsStyle }}">Stems</button>
+            <button onClick="{{ onSegAnalysis }}" style="{{ segAnalStyle }}">Analysis</button>
+          </div>
+        </div>
+
+        <!-- STEMS view -->
+        <sc-if value="{{ showStems }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:14px 16px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <sc-for list="{{ stems }}" as="st" hint-placeholder-count="6">
+            <div style="background:#101013;border:1px solid rgba(255,255,255,.05);border-radius:13px;padding:10px 11px;">
+              <div style="display:flex;align-items:center;gap:7px;">
+                <div style="{{ st.dotStyle }}"></div>
+                <div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;{{ st.nameColor }}">{{ st.name }}</div>
+                <button onClick="{{ st.onMute }}" style="{{ st.mStyle }}">M</button>
+                <button onClick="{{ st.onSolo }}" style="{{ st.sStyle }}">S</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:1.5px;height:22px;margin-top:10px;">
+                <sc-for list="{{ st.wave }}" as="w" hint-placeholder-count="28">
+                  <div style="{{ w.style }}"></div>
+                </sc-for>
+              </div>
+              <div data-fader onPointerDown="{{ st.onDown }}" style="position:relative;height:18px;display:flex;align-items:center;cursor:pointer;margin-top:8px;">
+                <div style="position:absolute;left:0;right:0;height:4px;border-radius:3px;background:#202025;"></div>
+                <div style="{{ st.fillStyle }}"></div>
+                <div style="{{ st.knobStyle }}"></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        </sc-if>
+
+        <!-- ANALYSIS view -->
+        <sc-if value="{{ showAnalysis }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:16px 20px 0;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <sc-for list="{{ stats }}" as="x" hint-placeholder-count="6">
+              <div style="background:#121215;border:1px solid rgba(255,255,255,.05);border-radius:14px;padding:13px 14px;">
+                <div style="font-size:9.5px;font-weight:600;letter-spacing:1.2px;color:#65656d;">{{ x.k }}</div>
+                <div style="font-family:'JetBrains Mono';font-size:20px;font-weight:600;color:#eaeaec;margin-top:5px;">{{ x.v }}</div>
+                <div style="font-size:11px;color:#7a7a82;margin-top:2px;">{{ x.s }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:22px 0 4px;">STEM PRESENCE</div>
+          <sc-for list="{{ presence }}" as="p" hint-placeholder-count="6">
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+              <div style="width:46px;font-size:12.5px;font-weight:600;color:#cfcfd4;flex-shrink:0;">{{ p.name }}</div>
+              <div style="flex:1;height:7px;border-radius:4px;background:#1c1c21;overflow:hidden;"><div style="{{ p.barStyle }}"></div></div>
+              <span style="width:38px;text-align:right;font-family:'JetBrains Mono';font-size:12px;font-weight:500;color:#9a9aa2;flex-shrink:0;">{{ p.val }}</span>
+            </div>
+          </sc-for>
+          <button style="width:100%;margin-top:18px;height:52px;border-radius:14px;border:none;background:linear-gradient(160deg,#fbc94a,#f5a516);color:#1a1206;font-family:'Space Grotesk';font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 10px 26px -8px rgba(245,165,22,.5);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 21h16"/></svg>Export mix</button>
+        </div>
+        </sc-if>
+
+        <div style="height:120px;"></div>
+      </div>
+      </sc-if>
+
+      <!-- ============ LIBRARY ============ -->
+      <sc-if value="{{ isLibrary }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Library" class="scrl" style="position:absolute;inset:54px 0 0 0;overflow-y:auto;">
+        <div style="padding:8px 20px 0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:27px;font-weight:700;color:#f2f2f4;letter-spacing:-.5px;">Library</span>
+            <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(150deg,#f5a516,#d2541f);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#1a1206;">JS</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;background:#141417;border:1px solid rgba(255,255,255,.06);border-radius:13px;padding:12px 14px;margin-top:16px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#65656d" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <span style="font-size:14px;color:#65656d;">Search your library</span>
+          </div>
+          <div class="scrl" style="display:flex;gap:8px;margin-top:16px;overflow-x:auto;">
+            <span style="flex-shrink:0;font-size:12.5px;font-weight:600;color:#1a1206;background:#f5b417;padding:7px 14px;border-radius:20px;">All</span>
+            <span style="flex-shrink:0;font-size:12.5px;font-weight:500;color:#a8a8b0;background:#161619;border:1px solid rgba(255,255,255,.06);padding:7px 14px;border-radius:20px;">Favorites</span>
+            <span style="flex-shrink:0;font-size:12.5px;font-weight:500;color:#a8a8b0;background:#161619;border:1px solid rgba(255,255,255,.06);padding:7px 14px;border-radius:20px;">Synthwave</span>
+            <span style="flex-shrink:0;font-size:12.5px;font-weight:500;color:#a8a8b0;background:#161619;border:1px solid rgba(255,255,255,.06);padding:7px 14px;border-radius:20px;">Indie Rock</span>
+            <span style="flex-shrink:0;font-size:12.5px;font-weight:500;color:#a8a8b0;background:#161619;border:1px solid rgba(255,255,255,.06);padding:7px 14px;border-radius:20px;">Lo-Fi</span>
+          </div>
+
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:24px 0 6px;">RECENT</div>
+          <sc-for list="{{ recent }}" as="t" hint-placeholder-count="5">
+            <div onClick="{{ t.onTap }}" style="display:flex;align-items:center;gap:13px;padding:9px 0;cursor:pointer;">
+              <div style="width:50px;height:50px;border-radius:13px;background:{{ t.g }};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:rgba(255,255,255,.9);box-shadow:inset 0 1px 0 rgba(255,255,255,.15);">{{ t.initial }}</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:14.5px;font-weight:600;color:#eaeaec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ t.title }}</div>
+                <div style="font-size:12.5px;color:#7a7a82;margin-top:1px;">{{ t.sub }}</div>
+                <div style="font-family:'JetBrains Mono';font-size:10.5px;color:#5c5c64;margin-top:3px;">{{ t.meta }}</div>
+              </div>
+              <div style="width:7px;height:7px;border-radius:50%;background:#3fcf6e;box-shadow:0 0 8px #3fcf6e88;flex-shrink:0;"></div>
+              <button onClick="{{ t.onTap }}" style="width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.1);background:#161619;color:#e8e8ea;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></button>
+            </div>
+          </sc-for>
+
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:24px 0 10px;">COLLECTIONS</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <sc-for list="{{ collections }}" as="c" hint-placeholder-count="4">
+              <div style="background:#121215;border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:14px;cursor:pointer;">
+                <div style="position:relative;height:42px;width:54px;">
+                  <div style="position:absolute;left:10px;top:2px;width:38px;height:38px;border-radius:10px;background:{{ c.g2 }};opacity:.55;"></div>
+                  <div style="position:absolute;left:0;top:5px;width:38px;height:38px;border-radius:10px;background:{{ c.g1 }};box-shadow:0 4px 10px rgba(0,0,0,.4);"></div>
+                </div>
+                <div style="font-size:14px;font-weight:600;color:#eaeaec;margin-top:12px;">{{ c.name }}</div>
+                <div style="font-family:'JetBrains Mono';font-size:11px;color:#6a6a72;margin-top:2px;">{{ c.count }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="height:170px;"></div>
+      </div>
+      </sc-if>
+
+      <!-- ============ EXTRACT ============ -->
+      <sc-if value="{{ isExtract }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Extract" class="scrl" style="position:absolute;inset:54px 0 0 0;overflow-y:auto;">
+        <div style="padding:8px 20px 0;">
+          <div style="font-size:27px;font-weight:700;color:#f2f2f4;letter-spacing:-.5px;">Extract stems</div>
+          <div style="font-size:14px;color:#85858d;margin-top:5px;">Paste a link or upload audio to split into stems.</div>
+
+          <div style="display:flex;align-items:center;gap:10px;background:#141417;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px;margin-top:22px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#65656d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+            <span style="font-size:13.5px;color:#65656d;flex:1;">Paste YouTube or audio URL</span>
+            <span style="font-size:12px;font-weight:600;color:#f5b417;">Paste</span>
+          </div>
+          <button style="width:100%;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:9px;background:transparent;border:1.5px dashed rgba(255,255,255,.13);border-radius:14px;padding:15px;color:#a8a8b0;font-family:'Space Grotesk';font-size:13.5px;font-weight:500;cursor:pointer;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Upload audio file</button>
+
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:26px 0 10px;">STEMS TO EXTRACT</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <sc-for list="{{ selectedChips }}" as="ch" hint-placeholder-count="6">
+              <button onClick="{{ ch.onTap }}" style="{{ ch.chipStyle }}">
+                <div style="{{ ch.dotStyle }}"></div>
+                <span style="flex:1;text-align:left;">{{ ch.name }}</span>
+                <sc-if value="{{ ch.on }}" hint-placeholder-val="{{ true }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></sc-if>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:26px 0 10px;">QUALITY</div>
+          <div style="display:flex;gap:4px;background:#141417;border:1px solid rgba(255,255,255,.05);border-radius:12px;padding:4px;">
+            <button onClick="{{ onQualStd }}" style="{{ qualStdStyle }}">Standard</button>
+            <button onClick="{{ onQualHigh }}" style="{{ qualHighStyle }}">High</button>
+          </div>
+
+          <button style="width:100%;margin-top:22px;height:54px;border-radius:15px;border:none;background:linear-gradient(160deg,#fbc94a,#f5a516);color:#1a1206;font-family:'Space Grotesk';font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;box-shadow:0 12px 30px -8px rgba(245,165,22,.55);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>Split stems</button>
+
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#65656d;margin:26px 0 10px;">IN PROGRESS</div>
+          <div style="background:#121215;border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:14px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(140deg,#2bd4c4,#1a6d9e);flex-shrink:0;"></div>
+              <div style="flex:1;">
+                <div style="font-size:14px;font-weight:600;color:#eaeaec;">Lunar Tides</div>
+                <div style="font-size:12px;color:#7a7a82;margin-top:1px;">Separating 6 stems…</div>
+              </div>
+              <span style="font-family:'JetBrains Mono';font-size:13px;font-weight:600;color:#f5b417;">64%</span>
+            </div>
+            <div style="height:6px;border-radius:4px;background:#1c1c21;margin-top:12px;overflow:hidden;"><div style="height:100%;width:64%;border-radius:4px;background:linear-gradient(90deg,#f5a516,#fbc94a);"></div></div>
+          </div>
+        </div>
+        <div style="height:170px;"></div>
+      </div>
+      </sc-if>
+
+      <!-- mini player -->
+      <sc-if value="{{ showMini }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ onTabMix }}" style="position:absolute;left:10px;right:10px;bottom:92px;height:60px;background:rgba(22,22,26,.82);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.07);border-radius:18px;display:flex;align-items:center;gap:12px;padding:0 12px;z-index:45;cursor:pointer;box-shadow:0 12px 30px -10px rgba(0,0,0,.6);">
+        <div style="width:42px;height:42px;border-radius:11px;background:{{ coverBg }};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:rgba(255,255,255,.9);">{{ coverInitial }}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13.5px;font-weight:600;color:#eaeaec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ trackTitle }}</div>
+          <div style="font-size:12px;color:#7a7a82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ trackSub }}</div>
+        </div>
+        <button onClick="{{ togglePlayStop }}" style="width:40px;height:40px;border-radius:50%;border:none;background:linear-gradient(160deg,#fbc94a,#f5a516);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
+          <sc-if value="{{ playing }}" hint-placeholder-val="{{ false }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="#1a1206"><rect x="6" y="5" width="4" height="14" rx="1.3"/><rect x="14" y="5" width="4" height="14" rx="1.3"/></svg></sc-if>
+          <sc-if value="{{ notPlaying }}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="#1a1206"><path d="M8 5.5v13l11-6.5z"/></svg></sc-if>
+        </button>
+      </div>
+      </sc-if>
+
+      <!-- tab bar -->
+      <div style="position:absolute;left:0;right:0;bottom:0;height:88px;background:rgba(11,11,13,.88);backdrop-filter:blur(24px);border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-around;padding:12px 30px 0;z-index:50;">
+        <button onClick="{{ onTabLib }}" style="{{ tabLibStyle }}"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Library</button>
+        <button onClick="{{ onTabMix }}" style="{{ tabMixStyle }}"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.4" fill="currentColor" stroke="none"/><circle cx="15" cy="16" r="2.4" fill="currentColor" stroke="none"/></svg>Mixer</button>
+        <button onClick="{{ onTabExt }}" style="{{ tabExtStyle }}"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><path d="M20 4L8.5 15.5M14 14.5L20 20M8.5 8.5L11.5 11.5"/></svg>Extract</button>
+      </div>
+
+      <!-- home indicator -->
+      <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:rgba(255,255,255,.35);z-index:60;"></div>
+
+    </div>
+  </div>
+
+  <div style="font-family:'JetBrains Mono';font-size:11px;color:#4a4a52;letter-spacing:.5px;">StemDeck — mobile concept · tap tabs, drag faders, M/S, play</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    tab: 'mixer',
+    mixerView: 'stems',
+    playing: false,
+    progress: 0.34,
+    vols: { vocals: 0.86, drums: 0.72, bass: 0.58, guitar: 0.44, piano: 0.30, other: 0.52 },
+    muted: {},
+    solo: {},
+    selected: { vocals: true, drums: true, bass: true, guitar: true, piano: true, other: true },
+    quality: 'High',
+    current: { title: 'Neon Skyline', sub: 'Echoes in the Rain', g: 'linear-gradient(150deg,#7b46f0,#3f6ef0 55%,#1b245f)', initial: 'N' }
+  };
+
+  STEMS = [
+    { id: 'vocals', name: 'Vocals', color: '#f0506e' },
+    { id: 'drums', name: 'Drums', color: '#f5862b' },
+    { id: 'bass', name: 'Bass', color: '#f5c518' },
+    { id: 'guitar', name: 'Guitar', color: '#3fcf6e' },
+    { id: 'piano', name: 'Piano', color: '#9b6cf0' },
+    { id: 'other', name: 'Other', color: '#4a9bf5' }
+  ];
+  PRESENCE = { vocals: 100, drums: 77, bass: 35, guitar: 10, piano: 0, other: 29 };
+  DUR = 247;
+
+  componentDidMount() {
+    this._t = setInterval(() => {
+      if (this.state.playing) {
+        this.setState(s => { let p = s.progress + 0.5 / this.DUR; if (p > 1) p = 0; return { progress: p }; });
+      }
+    }, 500);
+  }
+  componentWillUnmount() { clearInterval(this._t); }
+
+  fmt(sec) { const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return m + ':' + String(s).padStart(2, '0'); }
+
+  onFaderDown(e, id) {
+    const el = e.currentTarget; const rect = el.getBoundingClientRect();
+    const set = (cx) => { let v = (cx - rect.left) / rect.width; v = Math.max(0, Math.min(1, v)); this.setState(s => ({ vols: { ...s.vols, [id]: v } })); };
+    set(e.clientX);
+    const mv = (ev) => { ev.preventDefault(); set(ev.clientX); };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  }
+
+  renderVals() {
+    const st = this.state;
+    const tab = st.tab;
+    const anySolo = Object.values(st.solo).some(Boolean);
+
+    const btnBase = { width: '26px', height: '24px', borderRadius: '7px', fontSize: '11px', fontWeight: 600, border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Space Grotesk',sans-serif", cursor: 'pointer', flexShrink: 0 };
+
+    const stems = this.STEMS.map((s, idx) => {
+      const vol = st.vols[s.id] ?? 0.5;
+      const muted = !!st.muted[s.id];
+      const soloed = !!st.solo[s.id];
+      const eff = muted || (anySolo && !soloed);
+      const pct = Math.round(vol * 100) + '%';
+      const db = vol <= 0.01 ? '-∞' : ((vol * 18 - 12).toFixed(1));
+      const wn = 28; const wplayed = Math.round(st.progress * wn); const wave = [];
+      for (let i = 0; i < wn; i++) {
+        let wh = 16 + Math.abs(Math.sin(i * (0.55 + idx * 0.13)) + Math.sin(i * 0.33 + idx) * 0.6) * 62 + ((i * (7 + idx * 3)) % 9);
+        wh = Math.max(7, Math.min(98, wh)) * (0.3 + 0.7 * vol);
+        const wc = eff ? '#34343c' : (i <= wplayed ? s.color : s.color + '3d');
+        wave.push({ style: { flex: '1', minWidth: '1.5px', height: wh + '%', borderRadius: '1.5px', background: wc } });
+      }
+      return {
+        id: s.id, name: s.name,
+        db, wave,
+        dotStyle: { width: '9px', height: '9px', borderRadius: '50%', background: s.color, boxShadow: '0 0 8px ' + s.color + '88', opacity: eff ? 0.4 : 1, flexShrink: 0 },
+        nameColor: 'color:' + (eff ? '#6a6a72' : s.color) + ';',
+        fillStyle: { position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', height: '4px', borderRadius: '3px', width: pct, background: eff ? '#46464e' : s.color },
+        knobStyle: { position: 'absolute', top: '50%', left: pct, transform: 'translate(-50%,-50%)', width: '15px', height: '15px', borderRadius: '50%', background: eff ? '#8a8a90' : '#fff', boxShadow: '0 2px 6px rgba(0,0,0,.55)' },
+        mStyle: { ...btnBase, ...(muted ? { background: s.color, color: '#15100a', borderColor: s.color } : { background: 'transparent', color: '#7a7a82', borderColor: 'rgba(255,255,255,.12)' }) },
+        sStyle: { ...btnBase, ...(soloed ? { background: '#f5b417', color: '#1a1206', borderColor: '#f5b417' } : { background: 'transparent', color: '#7a7a82', borderColor: 'rgba(255,255,255,.12)' }) },
+        onDown: (e) => this.onFaderDown(e, s.id),
+        onMute: () => this.setState(x => ({ muted: { ...x.muted, [s.id]: !x.muted[s.id] } })),
+        onSolo: () => this.setState(x => ({ solo: { ...x.solo, [s.id]: !x.solo[s.id] } }))
+      };
+    });
+
+    const N = 56; const played = Math.round(st.progress * N); const bars = [];
+    for (let i = 0; i < N; i++) {
+      let h = 24 + Math.abs(Math.sin(i * 0.7) + Math.sin(i * 0.21) * 0.7) * 46 + ((i * 37) % 11);
+      h = Math.max(14, Math.min(98, h));
+      bars.push({ style: { flex: '1', minWidth: '2px', height: h + '%', borderRadius: '2px', background: i <= played ? '#f5b417' : '#34343c' } });
+    }
+
+    const presence = this.STEMS.map(s => ({ name: s.name, val: this.PRESENCE[s.id] + '%', barStyle: { height: '100%', borderRadius: '4px', width: this.PRESENCE[s.id] + '%', background: s.color } }));
+
+    const chipBase = { display: 'flex', alignItems: 'center', gap: '9px', padding: '13px 13px', borderRadius: '13px', border: '1.5px solid', fontFamily: "'Space Grotesk',sans-serif", fontSize: '13.5px', fontWeight: 600, cursor: 'pointer' };
+    const selectedChips = this.STEMS.map(s => {
+      const on = !!st.selected[s.id];
+      return {
+        id: s.id, name: s.name, on,
+        chipStyle: { ...chipBase, ...(on ? { borderColor: s.color, background: s.color + '1c', color: '#f2f2f4' } : { borderColor: 'rgba(255,255,255,.09)', background: 'transparent', color: '#85858d' }) },
+        dotStyle: { width: '11px', height: '11px', borderRadius: '50%', background: s.color, opacity: on ? 1 : 0.4, flexShrink: 0 },
+        onTap: () => this.setState(x => ({ selected: { ...x.selected, [s.id]: !x.selected[s.id] } }))
+      };
+    });
+
+    const gmap = {
+      'Neon Skyline': 'linear-gradient(150deg,#7b46f0,#3f6ef0 55%,#1b245f)',
+      'Lunar Tides': 'linear-gradient(140deg,#2bd4c4,#1a6d9e)',
+      'Violet Drive': 'linear-gradient(150deg,#c44ad0,#5a2b9e)',
+      'The Midnight Parade': 'linear-gradient(150deg,#f06a6a,#7a2b4e)',
+      'Paper Planes': 'linear-gradient(150deg,#4a9bf5,#2b3a7a)'
+    };
+    const recentRaw = [
+      { title: 'Lunar Tides', sub: 'Crystalline', meta: '03:21 · 6 stems' },
+      { title: 'Neon Skyline', sub: 'Echoes in the Rain', meta: '04:07 · 6 stems' },
+      { title: 'Violet Drive', sub: 'Midnight Signals', meta: '03:46 · 6 stems' },
+      { title: 'The Midnight Parade', sub: 'Fading Lights', meta: '04:12 · 6 stems' },
+      { title: 'Paper Planes', sub: 'Weightless', meta: '03:33 · 6 stems' }
+    ];
+    const recent = recentRaw.map(t => ({ ...t, initial: t.title[0], g: gmap[t.title], onTap: () => this.setState({ current: { title: t.title, sub: t.sub, g: gmap[t.title], initial: t.title[0] }, tab: 'mixer' }) }));
+
+    const collections = [
+      { name: 'Synthwave', count: '3 tracks', g1: 'linear-gradient(150deg,#7b46f0,#3f6ef0)', g2: 'linear-gradient(150deg,#c44ad0,#5a2b9e)' },
+      { name: 'Indie Rock', count: '2 tracks', g1: 'linear-gradient(150deg,#2bd4c4,#1a6d9e)', g2: 'linear-gradient(150deg,#4a9bf5,#2b3a7a)' },
+      { name: 'Lo-Fi', count: '1 track', g1: 'linear-gradient(150deg,#f06a6a,#7a2b4e)', g2: 'linear-gradient(150deg,#f5862b,#a23d1f)' },
+      { name: 'Unsorted', count: '0 tracks', g1: 'linear-gradient(150deg,#3a3a42,#202026)', g2: 'linear-gradient(150deg,#2a2a30,#161619)' }
+    ];
+
+    const stats = [
+      { k: 'KEY', v: 'G# maj', s: 'Major' },
+      { k: 'TEMPO', v: '112', s: 'BPM' },
+      { k: 'LUFS', v: '-13.4', s: 'Peak 1.9 dB' },
+      { k: 'DURATION', v: '4:07', s: 'Full length' },
+      { k: 'DYN RANGE', v: '15.3', s: 'Wide' },
+      { k: 'STABILITY', v: '98%', s: 'Very stable' }
+    ];
+
+    const segActive = { flex: 1, padding: '9px 0', borderRadius: '9px', fontSize: '13px', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: "'Space Grotesk',sans-serif", background: '#26262c', color: '#fff' };
+    const segIdle = { flex: 1, padding: '9px 0', borderRadius: '9px', fontSize: '13px', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: "'Space Grotesk',sans-serif", background: 'transparent', color: '#7a7a82' };
+
+    const tabBase = (active) => ({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Space Grotesk',sans-serif", fontSize: '10.5px', fontWeight: 600, padding: 0, color: active ? '#f5b417' : '#62626a' });
+
+    return {
+      isMixer: tab === 'mixer', isLibrary: tab === 'library', isExtract: tab === 'extract',
+      showMini: tab !== 'mixer',
+      showStems: st.mixerView === 'stems', showAnalysis: st.mixerView === 'analysis',
+      playing: st.playing, notPlaying: !st.playing,
+      progressLeft: (st.progress * 100) + '%',
+      curTime: this.fmt(st.progress * this.DUR), durTime: this.fmt(this.DUR),
+      trackTitle: st.current.title, trackSub: st.current.sub, coverBg: st.current.g, coverInitial: st.current.initial,
+      bars, stems, presence, stats, selectedChips, recent, collections,
+      segStemsStyle: st.mixerView === 'stems' ? segActive : segIdle,
+      segAnalStyle: st.mixerView === 'analysis' ? segActive : segIdle,
+      qualStdStyle: st.quality === 'Standard' ? segActive : segIdle,
+      qualHighStyle: st.quality === 'High' ? segActive : segIdle,
+      tabLibStyle: tabBase(tab === 'library'),
+      tabMixStyle: tabBase(tab === 'mixer'),
+      tabExtStyle: tabBase(tab === 'extract'),
+      onTabLib: () => this.setState({ tab: 'library' }),
+      onTabMix: () => this.setState({ tab: 'mixer' }),
+      onTabExt: () => this.setState({ tab: 'extract' }),
+      onSegStems: () => this.setState({ mixerView: 'stems' }),
+      onSegAnalysis: () => this.setState({ mixerView: 'analysis' }),
+      onQualStd: () => this.setState({ quality: 'Standard' }),
+      onQualHigh: () => this.setState({ quality: 'High' }),
+      togglePlay: () => this.setState(s => ({ playing: !s.playing })),
+      togglePlayStop: (e) => { e.stopPropagation(); this.setState(s => ({ playing: !s.playing })); }
+    };
+  }
+}
+</script>
+</body>
+</html>

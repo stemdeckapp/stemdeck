@@ -19,8 +19,12 @@ const AudioCtx = window.AudioContext || window.webkitAudioContext;
  * @param {{name:string,url:string}[]} stems  Active stems only (caller filters).
  * @param {{onTime?:(t:number)=>void, onEnded?:()=>void}} cbs
  */
-export function createAudioEngine(stems, { onTime, onEnded } = {}) {
-  const ctx = new AudioCtx();
+export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
+  // Mobile/iOS only starts audio from a context resumed inside a user gesture.
+  // Callers can pass a shared, gesture-unlocked `context` (the mobile UI does);
+  // desktop passes none and we own a fresh one. We only close contexts we own.
+  const ctx = context || new AudioCtx();
+  const ownsCtx = !context;
   const master = ctx.createGain();
   master.connect(ctx.destination);
 
@@ -146,7 +150,7 @@ export function createAudioEngine(stems, { onTime, onEnded } = {}) {
     stopSources();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     tracks.clear();
-    ctx.close().catch(() => {});
+    if (ownsCtx) ctx.close().catch(() => {});
   }
 
   return {
