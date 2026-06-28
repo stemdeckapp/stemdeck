@@ -2053,6 +2053,10 @@ function openLibraryEditor() {
     overlay.querySelector(".net-access-input")?.setAttribute("disabled", "");
     overlay.querySelector(".set-port")?.setAttribute("readonly", "");
     overlay.querySelector(".set-port")?.setAttribute("disabled", "");
+    const note = document.createElement("p");
+    note.className = "settings-server-note";
+    note.textContent = "These settings are read-only in server mode. To change them, update your server configuration (e.g. docker-compose.yml) and restart.";
+    overlay.querySelector("[data-pane='advanced']")?.prepend(note);
   }
 }
 

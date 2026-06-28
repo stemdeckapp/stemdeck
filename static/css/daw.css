@@ -811,6 +811,7 @@ input, textarea { font-family: inherit; }
 .settings-net-list { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
 .settings-net-list code { color: var(--accent); background: rgba(244,183,64,0.1); padding: 3px 9px; border-radius: 5px; font-size: 11.5px; }
 .settings-net-empty { color: var(--muted); }
+.settings-server-note { font-size: 10.5px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
 .settings-subhead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; margin: 4px 0 7px; }
 
 .library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
