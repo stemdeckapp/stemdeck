@@ -148,7 +148,7 @@ def normalize_youtube_url(url: str) -> str:
             return f"https://www.youtube.com/watch?v={vid}"
 
     if host == "youtube.com" and parsed.path.startswith("/shorts/"):
-        vid = parsed.path[len("/shorts/"):].lstrip("/").split("/")[0]
+        vid = parsed.path[len("/shorts/") :].lstrip("/").split("/")[0]
         if _VIDEO_ID_RE.match(vid):
             return f"https://www.youtube.com/watch?v={vid}"
 
