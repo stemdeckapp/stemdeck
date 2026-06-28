@@ -34,12 +34,14 @@ DEFAULT_PORT = 8080
 
 
 def _default_allow_network() -> bool:
-    # Off by default everywhere — the user explicitly opts other devices in.
-    # STEMDECK_ALLOW_NETWORK=1 can pre-enable it (e.g. headless/Docker deploys).
+    # STEMDECK_ALLOW_NETWORK takes precedence when set explicitly.
+    # Otherwise: desktop keeps network off (user opts in via UI toggle);
+    # server/Docker deployments open it by default since network access is
+    # the entire point of a headless deployment.
     env = os.environ.get("STEMDECK_ALLOW_NETWORK")
     if env is not None:
         return env.strip() == "1"
-    return False
+    return os.environ.get("STEMDECK_DESKTOP") != "1"
 
 
 def _load() -> dict:

@@ -13,8 +13,7 @@ services:
     image: stemdeck
     container_name: stemdeck
     ports:
-      # Bind to loopback only -- StemDeck has no auth and is local-only.
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
     volumes:
       # Stems and downloaded audio land in <project root>/jobs on the
       # host so you can grab them without going through the container.
