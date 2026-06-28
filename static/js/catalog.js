@@ -1996,6 +1996,7 @@ function openLibraryEditor() {
         </div>
       </div>
       <div class="settings-pane hidden" data-pane="advanced">
+        ${Boolean(window.__TAURI__?.core?.invoke) ? `
         ${networkSettingsHtml()}
         <div class="settings-section">
           <div class="settings-row">
@@ -2005,7 +2006,7 @@ function openLibraryEditor() {
             </div>
             <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" />
           </div>
-        </div>
+        </div>` : ""}
         <div class="settings-subhead">Out of sync tracks</div>
         <div class="library-editor-table-wrap">
           <table class="library-editor-table">
@@ -2047,7 +2048,7 @@ function openLibraryEditor() {
   libraryEditor = overlay;
   refreshLibrarySyncSummary();
   wireGeneralSettings(overlay);
-  wireNetworkSetting(overlay);
+  if (Boolean(window.__TAURI__?.core?.invoke)) wireNetworkSetting(overlay);
 }
 
 // Poll a job until it reaches a terminal state, so auto-restores run one at a
