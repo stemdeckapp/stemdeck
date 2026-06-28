@@ -28,6 +28,14 @@ from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
             "  https://www.youtube.com/watch?v=dQw4w9WgXcQ  ",
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ),
+        (
+            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
+        (
+            "https://m.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
     ],
 )
 def test_accepts_youtube_urls(url: str, expected: str) -> None:

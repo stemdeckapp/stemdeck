@@ -115,6 +115,7 @@ def normalize_youtube_url(url: str) -> str:
         playlists embed the seed in the list ID; YouTube refuses to view the
         playlist directly with "This playlist type is unviewable.")
       * `youtu.be/<videoId>` -> `watch?v=<videoId>`
+      * `youtube.com/shorts/<videoId>` -> `watch?v=<videoId>`
     Everything else (PL/OL/algorithmic playlists with no derivable seed) is
     left alone -- yt-dlp will surface its own error.
     """
@@ -143,6 +144,11 @@ def normalize_youtube_url(url: str) -> str:
 
     if host == "youtu.be":
         vid = parsed.path.lstrip("/")
+        if _VIDEO_ID_RE.match(vid):
+            return f"https://www.youtube.com/watch?v={vid}"
+
+    if host == "youtube.com" and parsed.path.startswith("/shorts/"):
+        vid = parsed.path[len("/shorts/"):].lstrip("/").split("/")[0]
         if _VIDEO_ID_RE.match(vid):
             return f"https://www.youtube.com/watch?v={vid}"
 
