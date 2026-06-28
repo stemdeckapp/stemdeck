@@ -36,10 +36,18 @@ def test_host_request_recognizes_own_lan_ip(monkeypatch):
     assert _is_host_request("192.168.1.99") is False  # a different device
 
 
-def test_default_is_off(monkeypatch):
-    # Off by default everywhere — the user must opt in.
+def test_default_is_off_in_desktop_mode(monkeypatch):
+    # Desktop keeps network off; the user opts in via the UI toggle.
     monkeypatch.delenv("STEMDECK_ALLOW_NETWORK", raising=False)
+    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
     assert settings_mod._default_allow_network() is False
+
+
+def test_default_is_on_in_server_mode(monkeypatch):
+    # Server/Docker deployments open the gate by default.
+    monkeypatch.delenv("STEMDECK_ALLOW_NETWORK", raising=False)
+    monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
+    assert settings_mod._default_allow_network() is True
 
 
 def test_env_var_pre_enables(monkeypatch):
