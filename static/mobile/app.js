@@ -5,7 +5,6 @@
 // Extract is still mock pending the SSE/upload wiring (next step).
 import { fetchJobs, jobToCard } from "../js/shared/jobs.js";
 import { createAudioEngine, estimateDecodedBytes } from "../js/audioEngine.js";
-
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
 const STEM_META = {
@@ -46,135 +45,6 @@ function ensureAudioCtx() {
   return audioCtx;
 }
 
-// Streaming audio engine for tracks too large to decode into AudioBuffers.
-// Uses <audio> elements + createMediaElementSource instead of decodeAudioData,
-// so no PCM is held in RAM -- the browser streams on demand.
-function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {}) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const ctx = context || new AC();
-  const ownsCtx = !context;
-  const master = ctx.createGain();
-  master.connect(ctx.destination);
-
-  const tracks = new Map();
-  let primaryAudio = null;
-  let duration = 0;
-  let playing = false;
-  let rafId = null;
-  let destroyed = false;
-
-  for (const s of stemDefs) {
-    if (!s?.url) continue;
-    const audio = new Audio();
-    audio.crossOrigin = "anonymous";
-    audio.preload = "auto";
-    audio.src = s.url;
-    const source = ctx.createMediaElementSource(audio);
-    const gain = ctx.createGain();
-    source.connect(gain);
-    gain.connect(master);
-    tracks.set(s.name, { audio, gain });
-    if (!primaryAudio) primaryAudio = audio;
-  }
-
-  const ready = new Promise((resolve) => {
-    if (!primaryAudio) { resolve(false); return; }
-    const done = () => { duration = isFinite(primaryAudio.duration) ? primaryAudio.duration : 0; resolve(tracks.size > 0); };
-    if (primaryAudio.readyState >= 3) { done(); return; }
-    primaryAudio.addEventListener("canplay", done, { once: true });
-    primaryAudio.addEventListener("error", () => resolve(false), { once: true });
-  });
-
-  // Snap all secondary elements back to the primary's position if they drift.
-  // 50 ms is the threshold -- inaudible as a correction, noticeable as drift.
-  function syncSecondaries(refTime) {
-    for (const { audio } of tracks.values()) {
-      if (audio !== primaryAudio && Math.abs(audio.currentTime - refTime) > 0.05) {
-        audio.currentTime = refTime;
-      }
-    }
-  }
-
-  let _tickCount = 0;
-  function tick() {
-    if (!playing || !primaryAudio) return;
-    const t = primaryAudio.currentTime;
-    if (duration > 0 && t >= duration) {
-      playing = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-      onEnded?.();
-      return;
-    }
-    // Correct accumulated drift roughly every second (60 frames at 60fps).
-    if (++_tickCount % 60 === 0) syncSecondaries(t);
-    onTime?.(t);
-    rafId = requestAnimationFrame(tick);
-  }
-
-  function startAll() {
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    for (const { audio } of tracks.values()) audio.play().catch(() => {});
-    playing = true;
-    rafId = requestAnimationFrame(tick);
-  }
-
-  return {
-    ready,
-    play() {
-      if (playing || destroyed || !primaryAudio) return;
-      startAll();
-    },
-    pause() {
-      if (!playing) return;
-      for (const { audio } of tracks.values()) audio.pause();
-      playing = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-    },
-    seek(t) {
-      const clamped = Math.max(0, Math.min(t, duration || 0));
-      const wasPlaying = playing;
-      // Pause everything first so no element advances while others are seeking.
-      if (wasPlaying) {
-        for (const { audio } of tracks.values()) audio.pause();
-        playing = false;
-        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-      }
-      for (const { audio } of tracks.values()) audio.currentTime = clamped;
-      onTime?.(clamped);
-      if (wasPlaying) {
-        // Wait one frame for currentTime assignments to settle in the browser,
-        // then re-read the primary's actual position and align all secondaries
-        // to it before starting -- eliminates seek-induced startup desync.
-        requestAnimationFrame(() => {
-          if (destroyed) return;
-          const syncTo = primaryAudio.currentTime;
-          syncSecondaries(syncTo);
-          startAll();
-        });
-      }
-    },
-    setTime(t) { this.seek(t); },
-    isPlaying: () => playing,
-    getCurrentTime: () => (primaryAudio ? primaryAudio.currentTime : 0),
-    getDuration: () => duration,
-    setLoop: () => {},
-    setGain(name, v) {
-      const t = tracks.get(name);
-      if (t) t.gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
-    },
-    setMasterGain(v) { master.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01); },
-    getAnalyser: () => null,
-    getBuffers: () => new Map(),
-    destroy() {
-      destroyed = true;
-      this.pause();
-      for (const { audio } of tracks.values()) { audio.pause(); audio.src = ""; }
-      tracks.clear();
-      if (ownsCtx) ctx.close().catch(() => {});
-    },
-    audioContext: ctx,
-  };
-}
 
 const ICON = {
   chevron: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
@@ -387,21 +257,25 @@ async function openTrack(card, { autoplay = false } = {}) {
     return;
   }
 
-  // Tracks too large to decode into AudioBuffers (which would OOM mobile browsers)
-  // fall back to a streaming engine that uses <audio> elements instead. 200 MB
-  // covers ~4.5 min x 4 stems at 44.1 kHz / Float32.
-  const MOBILE_DECODE_LIMIT = 200e6;
+  // Streaming <audio> elements cause underruns on mobile Safari (HTTP/1.1
+  // connection cap + small buffers). The buffer engine decodes all stems into
+  // AudioBuffers first, giving glitch-free playback at the cost of RAM.
+  // 600 MB covers ~14 min x 4 stems at 44.1 kHz / Float32, which is well
+  // within the per-tab budget of any post-2019 phone. Tracks that exceed this
+  // will show an error rather than play with constant chopping.
+  const MOBILE_DECODE_LIMIT = 600e6;
   const estimatedBytes = estimateDecodedBytes(detail.duration || 0, laneList.length);
-  const useStreaming = estimatedBytes > MOBILE_DECODE_LIMIT;
+  if (estimatedBytes > MOBILE_DECODE_LIMIT) {
+    state.current.error = "Track too long to load on mobile (over ~14 minutes). Try a shorter track.";
+    render();
+    return;
+  }
   const engineOpts = {
     onTime: onEngineTime,
     onEnded: () => { state.playing = false; render(); },
     context: ensureAudioCtx(),
   };
-  const stemList = laneList.map((l) => ({ name: l.name, url: l.url }));
-  engine = useStreaming
-    ? createStreamingAudioEngine(stemList, engineOpts)
-    : createAudioEngine(stemList, engineOpts);
+  engine = createAudioEngine(laneList.map((l) => ({ name: l.name, url: l.url })), engineOpts);
   engineTrackId = card.id;
   render();
 
