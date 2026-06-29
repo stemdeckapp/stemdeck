@@ -1936,7 +1936,10 @@ async function wireNetworkSetting(overlay) {
         const label = document.createElement("div");
         label.className = "qr-label";
         label.textContent = mobileUrl;
-        card.append(img, label);
+        const imgWrap = document.createElement("div");
+        imgWrap.className = "qr-img-wrap";
+        imgWrap.appendChild(img);
+        card.append(imgWrap, label);
         row.appendChild(card);
       }
       qrWrap.appendChild(row);
