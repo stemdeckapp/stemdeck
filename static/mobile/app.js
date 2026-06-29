@@ -260,13 +260,14 @@ async function openTrack(card, { autoplay = false } = {}) {
   // Streaming <audio> elements cause underruns on mobile Safari (HTTP/1.1
   // connection cap + small buffers). The buffer engine decodes all stems into
   // AudioBuffers first, giving glitch-free playback at the cost of RAM.
-  // 600 MB covers ~14 min x 4 stems at 44.1 kHz / Float32, which is well
-  // within the per-tab budget of any post-2019 phone. Tracks that exceed this
-  // will show an error rather than play with constant chopping.
+  // 600 MB at Float32 / 44.1 kHz / stereo = ~425 s per stem-slot, so the
+  // practical cap is ~7 min for 4 stems or ~14 min for 2 stems. Tracks that
+  // exceed this will show an error rather than play with constant chopping.
   const MOBILE_DECODE_LIMIT = 600e6;
   const estimatedBytes = estimateDecodedBytes(detail.duration || 0, laneList.length);
   if (estimatedBytes > MOBILE_DECODE_LIMIT) {
-    state.current.error = "Track too long to load on mobile (over ~14 minutes). Try a shorter track.";
+    const maxMin = Math.round(MOBILE_DECODE_LIMIT / (laneList.length * 2 * 44100 * 4) / 60);
+    state.current.error = `Track too long to load on mobile (limit is ~${maxMin} min for ${laneList.length} stems). Try a shorter track.`;
     render();
     return;
   }
