@@ -248,18 +248,6 @@ button {
   gap: 22px;
   margin-top: 8px;
 }
-.t-ghost {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-}
 .t-step {
   width: 48px;
   height: 48px;
