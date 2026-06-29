@@ -348,6 +348,11 @@ async function runSetup() {
               ? `${gpu.gpuName} acceleration enabled`
               : "MPS acceleration unavailable - stem separation will use CPU";
         } else {
+          if (gpu.gpuDetected && !gpu.cudaVerified) {
+            showError(
+              `GPU detected (${gpu.gpuName}) but CUDA setup failed - stem separation will use CPU.\nCheck logs/setup.log in the StemDeck data folder for details.`
+            );
+          }
           gpuSummary = gpu.gpuDetected
             ? gpu.cudaVerified
               ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`

@@ -1093,9 +1093,11 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
     //
     // Blackwell (cu128) only has wheels for torch 2.7+; every other tag stays
     // on the validated 2.6.0 line (#217). torchaudio.save() routes through
-    // soundfile here, so the 2.7 torchaudio codec change doesn't affect us.
+    // soundfile here, so minor torchaudio codec changes don't affect us.
+    // cu128 uses 2.8.0: 2.7.1 shipped incomplete sm_120 kernels for Blackwell
+    // (RTX 5000 series), causing verify_cuda_torch to fail (#239).
     let tag = cuda_tag_from_url(index_url);
-    let torch_version = if tag == "cu128" { "2.7.1" } else { "2.6.0" };
+    let torch_version = if tag == "cu128" { "2.8.0" } else { "2.6.0" };
     let torch_spec = format!("torch=={torch_version}+{tag}");
     let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
     // --ignore-installed: overwrites even a corrupted/partial install that
@@ -1168,7 +1170,7 @@ fn verify_cuda_torch(python: &Path) -> bool {
     // build), which then crashes mid-extraction with "no kernel image is
     // available" (#217). Force a real kernel launch so an incompatible wheel is
     // caught here and the app falls back to CPU cleanly.
-    Command::new(python)
+    let result = Command::new(python)
         .args([
             "-c",
             "import torch; \
@@ -1178,10 +1180,36 @@ fn verify_cuda_torch(python: &Path) -> bool {
              exit(0)",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stderr(Stdio::piped())
+        .output();
+
+    match result {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if !stderr.trim().is_empty() {
+                if let Ok(data_dir) = local_data_dir() {
+                    let log_path = data_dir.join("logs").join("setup.log");
+                    if let Some(parent) = log_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    if let Ok(mut f) = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                    {
+                        let _ = writeln!(
+                            f,
+                            "[stemdeck] CUDA verify failed. stderr:\n{}",
+                            stderr.trim()
+                        );
+                    }
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// Opens an http/https URL in the system browser. Rejects non-http schemes.
