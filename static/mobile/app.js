@@ -85,6 +85,17 @@ function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {})
     primaryAudio.addEventListener("error", () => resolve(false), { once: true });
   });
 
+  // Snap all secondary elements back to the primary's position if they drift.
+  // 50 ms is the threshold -- inaudible as a correction, noticeable as drift.
+  function syncSecondaries(refTime) {
+    for (const { audio } of tracks.values()) {
+      if (audio !== primaryAudio && Math.abs(audio.currentTime - refTime) > 0.05) {
+        audio.currentTime = refTime;
+      }
+    }
+  }
+
+  let _tickCount = 0;
   function tick() {
     if (!playing || !primaryAudio) return;
     const t = primaryAudio.currentTime;
@@ -94,7 +105,16 @@ function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {})
       onEnded?.();
       return;
     }
+    // Correct accumulated drift roughly every second (60 frames at 60fps).
+    if (++_tickCount % 60 === 0) syncSecondaries(t);
     onTime?.(t);
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function startAll() {
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    for (const { audio } of tracks.values()) audio.play().catch(() => {});
+    playing = true;
     rafId = requestAnimationFrame(tick);
   }
 
@@ -102,10 +122,7 @@ function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {})
     ready,
     play() {
       if (playing || destroyed || !primaryAudio) return;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      for (const { audio } of tracks.values()) audio.play().catch((e) => console.warn("[streaming] play:", e));
-      playing = true;
-      rafId = requestAnimationFrame(tick);
+      startAll();
     },
     pause() {
       if (!playing) return;
@@ -115,14 +132,26 @@ function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {})
     },
     seek(t) {
       const clamped = Math.max(0, Math.min(t, duration || 0));
-      // Pause all elements before seeking so they all start from the same
-      // position — setting currentTime while playing causes each element to
-      // arrive at the new position at a slightly different moment (desync).
       const wasPlaying = playing;
-      if (wasPlaying) for (const { audio } of tracks.values()) audio.pause();
+      // Pause everything first so no element advances while others are seeking.
+      if (wasPlaying) {
+        for (const { audio } of tracks.values()) audio.pause();
+        playing = false;
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      }
       for (const { audio } of tracks.values()) audio.currentTime = clamped;
-      if (wasPlaying) for (const { audio } of tracks.values()) audio.play().catch(() => {});
       onTime?.(clamped);
+      if (wasPlaying) {
+        // Wait one frame for currentTime assignments to settle in the browser,
+        // then re-read the primary's actual position and align all secondaries
+        // to it before starting -- eliminates seek-induced startup desync.
+        requestAnimationFrame(() => {
+          if (destroyed) return;
+          const syncTo = primaryAudio.currentTime;
+          syncSecondaries(syncTo);
+          startAll();
+        });
+      }
     },
     setTime(t) { this.seek(t); },
     isPlaying: () => playing,
