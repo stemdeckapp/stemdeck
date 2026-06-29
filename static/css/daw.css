@@ -810,7 +810,7 @@ input, textarea { font-family: inherit; }
 .settings-net-empty { color: var(--muted); }
 .settings-net-qr { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
 .qr-hint { font-size: 10px; color: var(--muted); margin: 0; line-height: 1.4; }
-.qr-cards-row { display: flex; flex-wrap: wrap; gap: 16px; }
+.qr-cards-row { display: flex; flex-wrap: wrap; gap: 28px; }
 .qr-card { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
 .qr-card img { border-radius: 6px; border: 1px solid var(--border-strong); width: 130px; height: 130px; transition: filter 0.25s ease; }
 .qr-card.qr-blurred img { filter: blur(8px); }
