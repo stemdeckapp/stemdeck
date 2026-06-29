@@ -44,6 +44,9 @@ dependencies = [
     # decompression-bomb bypass fixed in 2.7.0. urllib3 is a transitive
     # dep via requests; pin floor to pull in the fix.
     "urllib3>=2.7.0",
+    # Pure-Python QR code generator used by the /api/qr endpoint (server
+    # access QR codes in the desktop settings panel).
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

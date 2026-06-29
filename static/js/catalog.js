@@ -1838,6 +1838,7 @@ function networkSettingsHtml() {
       <div class="settings-net hidden">
         <div class="settings-net-label">Access on your local network by any of these addresses:</div>
         <div class="settings-net-list"></div>
+        <div class="settings-net-qr"></div>
       </div>
     </div>
   `;
@@ -1898,6 +1899,7 @@ async function wireNetworkSetting(overlay) {
   const input = overlay.querySelector(".net-access-input");
   const netWrap = overlay.querySelector(".settings-net");
   const list = overlay.querySelector(".settings-net-list");
+  const qrWrap = overlay.querySelector(".settings-net-qr");
   if (!input) return;
 
   let enabled = false;
@@ -1926,6 +1928,27 @@ async function wireNetworkSetting(overlay) {
       span.className = "settings-net-empty";
       span.textContent = "No local network connection detected.";
       list.appendChild(span);
+    }
+  }
+
+  // QR codes: one per LAN address, each encodes the /mobile/ URL so the
+  // phone camera opens StemDeck directly.
+  if (qrWrap) {
+    qrWrap.textContent = "";
+    for (const a of addresses) {
+      const mobileUrl = `${a}/mobile/`;
+      const card = document.createElement("div");
+      card.className = "qr-card";
+      const img = document.createElement("img");
+      img.src = `/api/qr?url=${encodeURIComponent(mobileUrl)}`;
+      img.alt = `QR code for ${mobileUrl}`;
+      img.width = 130;
+      img.height = 130;
+      const label = document.createElement("div");
+      label.className = "qr-label";
+      label.textContent = mobileUrl;
+      card.append(img, label);
+      qrWrap.appendChild(card);
     }
   }
 
