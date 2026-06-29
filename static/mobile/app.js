@@ -46,6 +46,101 @@ function ensureAudioCtx() {
   return audioCtx;
 }
 
+// Streaming audio engine for tracks too large to decode into AudioBuffers.
+// Uses <audio> elements + createMediaElementSource instead of decodeAudioData,
+// so no PCM is held in RAM -- the browser streams on demand.
+function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {}) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = context || new AC();
+  const ownsCtx = !context;
+  const master = ctx.createGain();
+  master.connect(ctx.destination);
+
+  const tracks = new Map();
+  let primaryAudio = null;
+  let duration = 0;
+  let playing = false;
+  let rafId = null;
+  let destroyed = false;
+
+  for (const s of stemDefs) {
+    if (!s?.url) continue;
+    const audio = new Audio();
+    audio.crossOrigin = "anonymous";
+    audio.preload = "auto";
+    audio.src = s.url;
+    const source = ctx.createMediaElementSource(audio);
+    const gain = ctx.createGain();
+    source.connect(gain);
+    gain.connect(master);
+    tracks.set(s.name, { audio, gain });
+    if (!primaryAudio) primaryAudio = audio;
+  }
+
+  const ready = new Promise((resolve) => {
+    if (!primaryAudio) { resolve(false); return; }
+    const done = () => { duration = isFinite(primaryAudio.duration) ? primaryAudio.duration : 0; resolve(tracks.size > 0); };
+    if (primaryAudio.readyState >= 3) { done(); return; }
+    primaryAudio.addEventListener("canplay", done, { once: true });
+    primaryAudio.addEventListener("error", () => resolve(false), { once: true });
+  });
+
+  function tick() {
+    if (!playing || !primaryAudio) return;
+    const t = primaryAudio.currentTime;
+    if (duration > 0 && t >= duration) {
+      playing = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      onEnded?.();
+      return;
+    }
+    onTime?.(t);
+    rafId = requestAnimationFrame(tick);
+  }
+
+  return {
+    ready,
+    play() {
+      if (playing || destroyed || !primaryAudio) return;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      for (const { audio } of tracks.values()) audio.play().catch((e) => console.warn("[streaming] play:", e));
+      playing = true;
+      rafId = requestAnimationFrame(tick);
+    },
+    pause() {
+      if (!playing) return;
+      for (const { audio } of tracks.values()) audio.pause();
+      playing = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    },
+    seek(t) {
+      const clamped = Math.max(0, Math.min(t, duration || 0));
+      for (const { audio } of tracks.values()) audio.currentTime = clamped;
+      onTime?.(clamped);
+    },
+    setTime(t) { this.seek(t); },
+    isPlaying: () => playing,
+    getCurrentTime: () => (primaryAudio ? primaryAudio.currentTime : 0),
+    getDuration: () => duration,
+    setLoop: () => {},
+    setGain(name, v) {
+      const t = tracks.get(name);
+      if (t) t.gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
+    },
+    setMasterGain(v) { master.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01); },
+    getAnalyser: () => null,
+    getBuffers: () => new Map(),
+    destroy() {
+      destroyed = true;
+      this.pause();
+      for (const { audio } of tracks.values()) { audio.pause(); audio.src = ""; }
+      tracks.clear();
+      if (ownsCtx) ctx.close().catch(() => {});
+    },
+    audioContext: ctx,
+  };
+}
+
 const ICON = {
   chevron: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
   dots: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
@@ -259,21 +354,21 @@ async function openTrack(card, { autoplay = false } = {}) {
     return;
   }
 
-  // Mobile browsers crash (OOM tab kill) when decoding all stems into AudioBuffers
-  // for long tracks. 200 MB covers ~4.5 min x 4 stems at 44.1 kHz / Float32.
+  // Tracks too large to decode into AudioBuffers (which would OOM mobile browsers)
+  // fall back to a streaming engine that uses <audio> elements instead. 200 MB
+  // covers ~4.5 min x 4 stems at 44.1 kHz / Float32.
   const MOBILE_DECODE_LIMIT = 200e6;
   const estimatedBytes = estimateDecodedBytes(detail.duration || 0, laneList.length);
-  if (estimatedBytes > MOBILE_DECODE_LIMIT) {
-    state.current.error = "Track too long to load on mobile. Try a shorter track (under ~5 minutes).";
-    render();
-    return;
-  }
-
-  engine = createAudioEngine(laneList.map((l) => ({ name: l.name, url: l.url })), {
+  const useStreaming = estimatedBytes > MOBILE_DECODE_LIMIT;
+  const engineOpts = {
     onTime: onEngineTime,
     onEnded: () => { state.playing = false; render(); },
     context: ensureAudioCtx(),
-  });
+  };
+  const stemList = laneList.map((l) => ({ name: l.name, url: l.url }));
+  engine = useStreaming
+    ? createStreamingAudioEngine(stemList, engineOpts)
+    : createAudioEngine(stemList, engineOpts);
   engineTrackId = card.id;
   render();
 
