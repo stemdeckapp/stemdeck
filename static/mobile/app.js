@@ -4,7 +4,7 @@
 // (GET /api/jobs, /api/jobs/{id}, the Web Audio engine, mixdown export).
 // Extract is still mock pending the SSE/upload wiring (next step).
 import { fetchJobs, jobToCard } from "../js/shared/jobs.js";
-import { createAudioEngine, estimateDecodedBytes } from "../js/audioEngine.js";
+import { createChunkedAudioEngine } from "../js/chunkedAudioEngine.js";
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
 const STEM_META = {
@@ -230,12 +230,12 @@ async function openTrack(card, { autoplay = false } = {}) {
   }
   if (token !== engineToken) return;
 
-  // Use the MP3 stem variant on mobile: ~10-20x smaller than WAV, so it
-  // downloads in seconds and decodes in far less memory (full-song WAV stems
-  // can be hundreds of MB and exhaust a phone's RAM).
+  // Use WAV stems with range-request chunking (chunkedAudioEngine.js): fetches
+  // 10-second windows at a time, so the first audio starts after ~7 MB instead
+  // of the full file, and peak RAM stays around 28 MB regardless of track length.
   const laneList = (detail.stems || [])
     .filter((s) => s && s.name !== "original" && s.url)
-    .map((s, i) => ({ name: s.name, url: s.url.replace(/\.wav(\?|$)/, ".mp3$1"), ...stemMeta(s.name, i) }));
+    .map((s, i) => ({ name: s.name, url: s.url, ...stemMeta(s.name, i) }));
 
   state.vols = {};
   state.muted = {};
@@ -257,26 +257,12 @@ async function openTrack(card, { autoplay = false } = {}) {
     return;
   }
 
-  // Streaming <audio> elements cause underruns on mobile Safari (HTTP/1.1
-  // connection cap + small buffers). The buffer engine decodes all stems into
-  // AudioBuffers first, giving glitch-free playback at the cost of RAM.
-  // 600 MB at Float32 / 44.1 kHz / stereo = ~425 s per stem-slot, so the
-  // practical cap is ~7 min for 4 stems or ~14 min for 2 stems. Tracks that
-  // exceed this will show an error rather than play with constant chopping.
-  const MOBILE_DECODE_LIMIT = 600e6;
-  const estimatedBytes = estimateDecodedBytes(detail.duration || 0, laneList.length);
-  if (estimatedBytes > MOBILE_DECODE_LIMIT) {
-    const maxMin = Math.round(MOBILE_DECODE_LIMIT / (laneList.length * 2 * 44100 * 4) / 60);
-    state.current.error = `Track too long to load on mobile (limit is ~${maxMin} min for ${laneList.length} stems). Try a shorter track.`;
-    render();
-    return;
-  }
   const engineOpts = {
     onTime: onEngineTime,
     onEnded: () => { state.playing = false; render(); },
     context: ensureAudioCtx(),
   };
-  engine = createAudioEngine(laneList.map((l) => ({ name: l.name, url: l.url })), engineOpts);
+  engine = createChunkedAudioEngine(laneList.map((l) => ({ name: l.name, url: l.url })), engineOpts);
   engineTrackId = card.id;
   render();
 
