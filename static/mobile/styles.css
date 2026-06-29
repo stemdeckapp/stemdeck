@@ -261,21 +261,21 @@ button {
   font-weight: 600;
 }
 .t-step {
-  width: 44px;
-  height: 44px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  color: #d8d8dc;
+  width: 48px;
+  height: 48px;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  color: #c8c8cc;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s, color 0.12s, transform 0.08s;
+  transition: color 0.12s, transform 0.1s, opacity 0.12s;
 }
-.t-step:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); color: #fff; }
-.t-step:active { transform: scale(0.96); }
-.t-step:disabled { opacity: 0.3; cursor: default; }
+.t-step:hover { color: #fff; }
+.t-step:active { transform: scale(0.88); opacity: 0.7; }
+.t-step:disabled { opacity: 0.22; cursor: default; }
 .t-play {
   width: 66px;
   height: 66px;
