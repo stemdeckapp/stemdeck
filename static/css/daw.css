@@ -779,6 +779,7 @@ input, textarea { font-family: inherit; }
 .settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 .settings-pane { display: flex; flex-direction: column; min-height: 0; }
 .settings-pane[data-pane="general"] { flex: 1; }
+.settings-pane[data-pane="advanced"] { flex: 1; overflow-y: auto; }
 .settings-pane.hidden { display: none; }
 .settings-pane[data-pane="advanced"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
 .settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
