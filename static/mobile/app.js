@@ -393,6 +393,20 @@ async function openTrack(card, { autoplay = false } = {}) {
   if (pendingPlay) { pendingPlay = false; engine.play(); state.playing = engine.isPlaying(); render(); }
 }
 
+function prevTrack() {
+  if (!state.tracks.length || !state.current) return;
+  const idx = state.tracks.findIndex((t) => t.id === state.current.id);
+  const target = state.tracks[idx - 1];
+  if (target) openTrack(target, { autoplay: state.playing });
+}
+
+function nextTrack() {
+  if (!state.tracks.length || !state.current) return;
+  const idx = state.tracks.findIndex((t) => t.id === state.current.id);
+  const target = state.tracks[idx + 1];
+  if (target) openTrack(target, { autoplay: state.playing });
+}
+
 function togglePlay() {
   if (!state.current) return;
   ensureAudioCtx(); // unlock audio within this gesture
@@ -538,6 +552,9 @@ function mixerScreen() {
   const ready = engineReady && engineTrackId === state.current?.id;
   const preparing = !!state.current && !state.current.loading && !state.current.error && !ready;
   const canPlay = ready;
+  const curIdx = state.current ? state.tracks.findIndex((t) => t.id === state.current.id) : -1;
+  const hasPrev = curIdx > 0;
+  const hasNext = curIdx >= 0 && curIdx < state.tracks.length - 1;
 
   return `<div class="screen scrl">
     <div class="pad">
@@ -558,9 +575,9 @@ function mixerScreen() {
       </div>
       <div class="transport">
         <button class="t-ghost">${ICON.clock}.75x</button>
-        <button class="t-step">${ICON.prev}</button>
+        <button class="t-step" data-action="prev" ${hasPrev ? "" : "disabled"}>${ICON.prev}</button>
         <button class="t-play" data-action="play" data-playing="${state.playing}" ${canPlay ? "" : "disabled style=opacity:.45"}>${state.playing ? ICON.pause(26, "#1a1206") : ICON.play(28, "#1a1206")}</button>
-        <button class="t-step">${ICON.next}</button>
+        <button class="t-step" data-action="next" ${hasNext ? "" : "disabled"}>${ICON.next}</button>
         <button class="t-ghost" style="color:#85858d">${ICON.loop}</button>
       </div>
       ${preparing ? '<div class="mx-prep">Preparing audio…</div>' : ""}
@@ -935,6 +952,12 @@ app.addEventListener("click", (e) => {
     case "mixview":
       state.mixerView = t.dataset.view;
       break;
+    case "prev":
+      prevTrack();
+      return;
+    case "next":
+      nextTrack();
+      return;
     case "play":
     case "play-mini":
       e.stopPropagation();

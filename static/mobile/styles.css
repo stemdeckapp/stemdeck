@@ -261,12 +261,21 @@ button {
   font-weight: 600;
 }
 .t-step {
-  background: none;
-  border: none;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: #d8d8dc;
   cursor: pointer;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, transform 0.08s;
 }
+.t-step:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); color: #fff; }
+.t-step:active { transform: scale(0.96); }
+.t-step:disabled { opacity: 0.3; cursor: default; }
 .t-play {
   width: 66px;
   height: 66px;
