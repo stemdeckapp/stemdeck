@@ -4,7 +4,7 @@
 // (GET /api/jobs, /api/jobs/{id}, the Web Audio engine, mixdown export).
 // Extract is still mock pending the SSE/upload wiring (next step).
 import { fetchJobs, jobToCard } from "../js/shared/jobs.js";
-import { createAudioEngine } from "../js/audioEngine.js";
+import { createAudioEngine, estimateDecodedBytes } from "../js/audioEngine.js";
 
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
@@ -255,6 +255,16 @@ async function openTrack(card, { autoplay = false } = {}) {
 
   if (!laneList.length) {
     state.current.error = "This track has no playable stems yet.";
+    render();
+    return;
+  }
+
+  // Mobile browsers crash (OOM tab kill) when decoding all stems into AudioBuffers
+  // for long tracks. 200 MB covers ~4.5 min x 4 stems at 44.1 kHz / Float32.
+  const MOBILE_DECODE_LIMIT = 200e6;
+  const estimatedBytes = estimateDecodedBytes(detail.duration || 0, laneList.length);
+  if (estimatedBytes > MOBILE_DECODE_LIMIT) {
+    state.current.error = "Track too long to load on mobile. Try a shorter track (under ~5 minutes).";
     render();
     return;
   }
@@ -890,7 +900,6 @@ async function loadLibrary() {
     const jobs = await fetchJobs();
     state.tracks = jobs.map(jobToCard).sort((a, b) => b.createdAt - a.createdAt);
     state.libState = state.tracks.length ? "ready" : "empty";
-    if (!state.current && state.tracks.length) state.current = state.tracks[0];
   } catch (e) {
     console.warn("[mobile] failed to load library:", e);
     state.libState = "error";
