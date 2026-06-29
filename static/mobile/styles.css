@@ -278,6 +278,11 @@ button {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.t-play[data-playing="true"] {
+  background: linear-gradient(135deg, #3fcf6e 0%, #1fa84e 100%);
+  box-shadow: 0 12px 30px -6px rgba(63, 207, 110, 0.65);
 }
 
 .mx-prep {

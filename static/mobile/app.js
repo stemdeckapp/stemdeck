@@ -115,7 +115,13 @@ function createStreamingAudioEngine(stemDefs, { onTime, onEnded, context } = {})
     },
     seek(t) {
       const clamped = Math.max(0, Math.min(t, duration || 0));
+      // Pause all elements before seeking so they all start from the same
+      // position — setting currentTime while playing causes each element to
+      // arrive at the new position at a slightly different moment (desync).
+      const wasPlaying = playing;
+      if (wasPlaying) for (const { audio } of tracks.values()) audio.pause();
       for (const { audio } of tracks.values()) audio.currentTime = clamped;
+      if (wasPlaying) for (const { audio } of tracks.values()) audio.play().catch(() => {});
       onTime?.(clamped);
     },
     setTime(t) { this.seek(t); },
@@ -553,7 +559,7 @@ function mixerScreen() {
       <div class="transport">
         <button class="t-ghost">${ICON.clock}.75x</button>
         <button class="t-step">${ICON.prev}</button>
-        <button class="t-play" data-action="play" ${canPlay ? "" : "disabled style=opacity:.45"}>${state.playing ? ICON.pause(26, "#1a1206") : ICON.play(28, "#1a1206")}</button>
+        <button class="t-play" data-action="play" data-playing="${state.playing}" ${canPlay ? "" : "disabled style=opacity:.45"}>${state.playing ? ICON.pause(26, "#1a1206") : ICON.play(28, "#1a1206")}</button>
         <button class="t-step">${ICON.next}</button>
         <button class="t-ghost" style="color:#85858d">${ICON.loop}</button>
       </div>
