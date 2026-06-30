@@ -27,7 +27,7 @@ import {
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
   applyWaveZoom, buildPresenceRuler, updateFooterTimes,
-  updatePresencePlayhead,
+  updatePresencePlayhead, resetSpeed,
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
@@ -583,6 +583,7 @@ export function destroyPlayer() {
   destroySections();
   stopVuLoop();
   stopStemVuLoop();
+  resetSpeed();
   if (audioEngine) {
     audioEngine.destroy();
     setAudioEngine(null);

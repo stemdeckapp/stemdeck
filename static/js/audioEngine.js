@@ -37,6 +37,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let rafId = null;
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
+  let _playbackRate = 1.0;
 
   // Decode all stems up front. Resolves true once at least one stem is ready.
   const ready = (async () => {
@@ -63,7 +64,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     return tracks.size > 0;
   })();
 
-  const now = () => (playing ? ctx.currentTime - startCtxTime + startOffset : startOffset);
+  const now = () => (playing ? (ctx.currentTime - startCtxTime) * _playbackRate + startOffset : startOffset);
 
   function stopSources() {
     for (const t of tracks.values()) {
@@ -80,6 +81,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     for (const t of tracks.values()) {
       const src = ctx.createBufferSource();
       src.buffer = t.buffer;
+      src.playbackRate.value = _playbackRate;
       src.connect(t.gain);
       src.start(when, Math.max(0, Math.min(offset, t.buffer.duration)));
       t.source = src;
@@ -163,6 +165,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     getCurrentTime: now,
     getDuration: () => duration,
     setLoop: (enabled, start, end) => { loop = { enabled, start, end }; },
+    setPlaybackRate(rate) {
+      _playbackRate = rate;
+      for (const t of tracks.values()) {
+        if (t.source) t.source.playbackRate.value = rate;
+      }
+    },
     setGain,
     setMasterGain,
     getAnalyser: (name) => tracks.get(name)?.analyser ?? null,

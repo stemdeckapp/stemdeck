@@ -1,12 +1,13 @@
 import { fmtTime, fmtTickLabel } from "./utils.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
+  speedEl, speedLabelEl,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
-  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
+  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
 } from "./state.js";
 import { applyMix } from "./mixer.js";
 
@@ -430,4 +431,38 @@ export function wireTransportButtons() {
     setMasterVolume(0.5);
     applyMix();
   });
+  wireSpeedControl();
+}
+
+function applySpeed(rate) {
+  const clamped = Math.max(0.5, Math.min(2, rate));
+  setPlaybackSpeed(clamped);
+  if (speedEl) {
+    speedEl.value = String(clamped);
+    // 0.5=0%, 1.0=33%, 1.25=50%, 2.0=100% -- map [0.5,2] to [0%,100%]
+    const pct = ((clamped - 0.5) / 1.5) * 100;
+    speedEl.style.setProperty("--speed-pct", `${pct.toFixed(1)}%`);
+  }
+  if (speedLabelEl) speedLabelEl.textContent = `${clamped % 1 === 0 ? clamped.toFixed(1) : clamped}x`;
+  audioEngine?.setPlaybackRate?.(clamped);
+  if (multitrack) {
+    for (const a of (multitrack.audios ?? [])) {
+      try { a.playbackRate = clamped; } catch { /* noop */ }
+    }
+  }
+}
+
+export function resetSpeed() {
+  applySpeed(1.0);
+}
+
+function wireSpeedControl() {
+  if (!speedEl) return;
+  speedEl.addEventListener("input", () => applySpeed(parseFloat(speedEl.value)));
+  speedEl.addEventListener("dblclick", () => applySpeed(1.0));
+  speedEl.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    applySpeed(parseFloat(speedEl.value) + delta);
+  }, { passive: false });
 }

@@ -282,6 +282,35 @@ button {
   box-shadow: 0 12px 30px -6px rgba(63, 207, 110, 0.65);
 }
 
+/* ── speed control ── */
+.speed-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 12px; padding: 0 4px;
+}
+.speed-row-label {
+  font-size: 12px; font-weight: 600; color: #9899a6;
+  text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
+  width: 42px;
+}
+.speed-row-val {
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: #e8c96a; width: 38px; text-align: right; white-space: nowrap;
+}
+.speed-slider {
+  -webkit-appearance: none; appearance: none; flex: 1;
+  height: 4px; border-radius: 999px; outline: none; cursor: pointer;
+  background: rgba(148,163,184,0.2);
+}
+.speed-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: #e8c96a; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(232,201,106,0.4);
+}
+.speed-slider::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%; border: none;
+  background: #e8c96a; cursor: pointer;
+}
+
 .mx-prep {
   text-align: center;
   margin-top: 10px;

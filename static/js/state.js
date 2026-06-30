@@ -17,6 +17,8 @@ export const keyChip = $("t-key");
 export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
 export const masterFader = $("t-master");
+export const speedEl = $("t-speed");
+export const speedLabelEl = $("t-speed-label");
 export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 
@@ -134,6 +136,8 @@ export function setLoopStart(v) { loopStart = v; }
 export function setLoopEnd(v) { loopEnd = v; }
 export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
+export let playbackSpeed = 1.0;
+export function setPlaybackSpeed(v) { playbackSpeed = v; }
 export function setVuRafId(v) { vuRafId = v; }
 export function setMasterBusGain(v) { masterBusGain = v; }
 export function setMasterLimiter(v) { masterLimiter = v; }

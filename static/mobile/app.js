@@ -72,6 +72,7 @@ const state = {
   vols: {}, // per-stem gain 0..1, keyed by backend stem name
   muted: {},
   solo: {},
+  speed: 1.0,
   selected: { vocals: true, drums: true, bass: true, guitar: true, piano: true, other: true },
   quality: "High",
   filter: "All",
@@ -208,6 +209,7 @@ async function openTrack(card, { autoplay = false } = {}) {
   state.current = { ...card, detail: null, loading: true, error: null };
   state.playing = false;
   state.progress = 0;
+  state.speed = 1.0;
   render();
 
   if (engine) { engine.destroy(); engine = null; engineTrackId = null; }
@@ -465,6 +467,11 @@ function mixerScreen() {
         <button class="t-step" data-action="prev" ${hasPrev ? "" : "disabled"}>${ICON.prev}</button>
         <button class="t-play" data-action="play" data-playing="${state.playing}" ${canPlay ? "" : "disabled style=opacity:.45"}>${state.playing ? ICON.pause(26, "#1a1206") : ICON.play(28, "#1a1206")}</button>
         <button class="t-step" data-action="next" ${hasNext ? "" : "disabled"}>${ICON.next}</button>
+      </div>
+      <div class="speed-row">
+        <span class="speed-row-label">Speed</span>
+        <input type="range" class="speed-slider" data-speed min="0.5" max="2" step="0.25" value="${state.speed}">
+        <span class="speed-row-val">${state.speed % 1 === 0 ? state.speed.toFixed(1) : state.speed}x</span>
       </div>
       ${preparing ? '<div class="mx-prep">Preparing audio…</div>' : ""}
       <div class="segmented">
@@ -787,6 +794,17 @@ function wireFaders() {
       el.addEventListener("pointerup", up);
     });
   });
+
+  const speedSlider = app.querySelector("[data-speed]");
+  if (speedSlider) {
+    speedSlider.addEventListener("input", () => {
+      const rate = parseFloat(speedSlider.value);
+      state.speed = rate;
+      const valEl = speedSlider.parentElement?.querySelector(".speed-row-val");
+      if (valEl) valEl.textContent = `${rate % 1 === 0 ? rate.toFixed(1) : rate}x`;
+      if (engine) engine.setPlaybackRate(rate);
+    });
+  }
 
   const bars = app.querySelector("[data-seek]");
   if (bars) {
