@@ -13,9 +13,9 @@
 // The backend's FileResponse already handles Range requests natively (Starlette
 // 1.3.x), so no server-side changes are needed.
 //
-// Graph: per-stem AudioBufferSourceNode -> GainNode -> masterGain -> destination
+// Graph: per-stem AudioBufferSourceNode -> GainNode -> masterGain -> SoundTouchNode -> destination
 
-const CHUNK_SEC = 10;     // seconds of audio per chunk
+const CHUNK_SEC = 5;      // seconds of audio per chunk
 const LOOKAHEAD_SEC = 12; // schedule next chunk this far ahead of playhead
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,19 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   const ctx = context || new AC();
   const ownsCtx = !context;
   const master = ctx.createGain();
-  master.connect(ctx.destination);
+
+  let stNode = null;
+  let _playbackRate = 1.0;
+  const _workletReady = (ctx.audioWorklet
+    ? ctx.audioWorklet.addModule('/vendor/soundtouch-processor.js').then(() => {
+        stNode = new AudioWorkletNode(ctx, 'soundtouch-processor');
+        master.connect(stNode);
+        stNode.connect(ctx.destination);
+      }).catch((err) => {
+        console.warn('[chunkedEngine] SoundTouch worklet failed, tape-effect fallback:', err);
+        master.connect(ctx.destination);
+      })
+    : Promise.resolve().then(() => { master.connect(ctx.destination); }));
 
   // Per-stem state: url, parsed WAV header, gain node, currently playing nodes
   const stemMap = new Map();
@@ -152,7 +164,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   function _getCurrentTime() {
     if (!playing || !_audioStarted) return _startOffset;
-    return Math.min(ctx.currentTime - _startCtxTime + _startOffset, _duration);
+    return Math.min((ctx.currentTime - _startCtxTime) * _playbackRate + _startOffset, _duration);
   }
 
   // --- fetch helpers ---
@@ -356,28 +368,29 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     if (wasPlaying) play();
   }
 
-  // Initialize: fetch all WAV headers in parallel, decode chunk 0, pre-fetch
-  // chunk 1. Resolves true once at least one stem is ready.
+  // Initialize: fetch all WAV headers in parallel and load the SoundTouch worklet.
+  // Chunk 0 is kicked off in the background so ready() resolves quickly (headers
+  // only, ~6 x 1 KB) instead of blocking on the full first-chunk download (~5 MB).
+  // play() handles the case where chunk 0 is not yet cached.
   const ready = (async () => {
     if (!stemMap.size) return false;
 
-    await Promise.all(
-      [...stemMap.values()].map(async (stem) => {
+    await Promise.all([
+      _workletReady,
+      ...[...stemMap.values()].map(async (stem) => {
         try { stem.header = await _fetchHeader(stem.url); }
         catch (e) { console.warn("[chunked] header fetch failed:", e); }
-      })
-    );
+      }),
+    ]);
 
     for (const stem of stemMap.values()) {
       if (stem.header) _duration = Math.max(_duration, stem.header.duration);
     }
     if (!_duration) return false;
 
-    // Pre-decode chunk 0 so play() can schedule it without awaiting.
-    const chunk0 = await _fetchChunk(0);
-    if (!chunk0.size) return false;
-
-    _fetchChunk(1); // pre-fetch chunk 1 in background
+    // Kick off chunk 0 and 1 in the background; play() picks up the cached result.
+    _fetchChunk(0);
+    _fetchChunk(1);
     return true;
   })();
 
@@ -398,11 +411,18 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     setMasterGain(v) {
       master.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
     },
+    setPlaybackRate(rate) {
+      _playbackRate = rate;
+      if (stNode) {
+        stNode.parameters.get('tempo').value = rate;
+      }
+    },
     getAnalyser: () => null,
     getBuffers: () => new Map(),
     destroy() {
       destroyed = true;
       if (playing) pause();
+      if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
       _cache.clear();
       stemMap.clear();
       if (ownsCtx) ctx.close().catch(() => {});
