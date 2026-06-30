@@ -1983,8 +1983,8 @@ input, textarea { font-family: inherit; }
   height: 4px; border-radius: 999px; outline: none; cursor: pointer;
   background: linear-gradient(
     90deg,
-    var(--gold) 0 var(--speed-pct, 33%),
-    rgba(148,163,184,0.18) var(--speed-pct, 33%) 100%
+    var(--gold) 0 var(--speed-pct, 50%),
+    rgba(148,163,184,0.18) var(--speed-pct, 50%) 100%
   );
 }
 #t-speed::-webkit-slider-thumb {

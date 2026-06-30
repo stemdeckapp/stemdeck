@@ -470,7 +470,7 @@ function mixerScreen() {
       </div>
       <div class="speed-row">
         <span class="speed-row-label">Speed</span>
-        <input type="range" class="speed-slider" data-speed min="0.5" max="2" step="0.25" value="${state.speed}">
+        <input type="range" class="speed-slider" data-speed min="0" max="2" step="0.25" value="${state.speed}">
         <span class="speed-row-val">${state.speed % 1 === 0 ? state.speed.toFixed(1) : state.speed}x</span>
       </div>
       ${preparing ? '<div class="mx-prep">Preparing audio…</div>' : ""}

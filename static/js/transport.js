@@ -435,12 +435,12 @@ export function wireTransportButtons() {
 }
 
 function applySpeed(rate) {
-  const clamped = Math.max(0.5, Math.min(2, rate));
+  const clamped = Math.max(0.25, Math.min(2, rate));
   setPlaybackSpeed(clamped);
   if (speedEl) {
     speedEl.value = String(clamped);
-    // 0.5=0%, 1.0=33%, 1.25=50%, 2.0=100% -- map [0.5,2] to [0%,100%]
-    const pct = ((clamped - 0.5) / 1.5) * 100;
+    // range is 0-2; 1.0 sits at exactly 50%
+    const pct = (clamped / 2) * 100;
     speedEl.style.setProperty("--speed-pct", `${pct.toFixed(1)}%`);
   }
   if (speedLabelEl) speedLabelEl.textContent = `${clamped % 1 === 0 ? clamped.toFixed(1) : clamped}x`;
