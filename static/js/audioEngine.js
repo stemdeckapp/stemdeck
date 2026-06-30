@@ -75,7 +75,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
           console.warn(`[audioEngine] decode failed for ${s.name}:`, e);
         }
       }),
-    );
+    ]);
     return tracks.size > 0;
   })();
 
