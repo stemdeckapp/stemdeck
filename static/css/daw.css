@@ -1959,13 +1959,13 @@ input, textarea { font-family: inherit; }
 }
 
 /* Speed control */
+.play-speed-stack {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
 .speed-control {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: 8px; padding: 4px 10px; cursor: default; user-select: none;
-  transition: border-color var(--t-fast);
+  cursor: default; user-select: none;
 }
-.speed-control:hover { border-color: var(--line-strong); }
 .speed-label {
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
   color: var(--fg-2); line-height: 1; white-space: nowrap;
