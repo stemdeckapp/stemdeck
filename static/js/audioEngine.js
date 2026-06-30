@@ -8,7 +8,7 @@
 // no drift. Works identically on WKWebView, Safari, and Chrome.
 //
 // Graph:  per-stem AudioBufferSourceNode -> GainNode (vol/mute/solo) -> AnalyserNode (VU)
-//                                                                    -> masterGain -> destination
+//                                                                    -> masterGain -> SoundTouchNode -> destination
 //
 // Used behind a feature flag (see player.js) so it can be A/B'd against the legacy
 // streaming path before cutover.
@@ -26,7 +26,20 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const ctx = context || new AudioCtx();
   const ownsCtx = !context;
   const master = ctx.createGain();
-  master.connect(ctx.destination);
+
+  // SoundTouch pitch-preserving time-stretch on the master bus.
+  // Falls back to tape-effect (playbackRate) if AudioWorklet is unavailable.
+  let stNode = null;
+  const _workletReady = (ctx.audioWorklet
+    ? ctx.audioWorklet.addModule('/vendor/soundtouch-processor.js').then(() => {
+        stNode = new AudioWorkletNode(ctx, 'soundtouch-processor');
+        master.connect(stNode);
+        stNode.connect(ctx.destination);
+      }).catch((err) => {
+        console.warn('[audioEngine] SoundTouch worklet load failed, using tape-effect fallback:', err);
+        master.connect(ctx.destination);
+      })
+    : Promise.resolve().then(() => { master.connect(ctx.destination); }));
 
   /** @type {Map<string,{buffer:AudioBuffer,gain:GainNode,analyser:AnalyserNode,source:AudioBufferSourceNode|null}>} */
   const tracks = new Map();
@@ -39,10 +52,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let loop = { enabled: false, start: 0, end: 0 };
   let _playbackRate = 1.0;
 
-  // Decode all stems up front. Resolves true once at least one stem is ready.
+  // Decode all stems up front AND load the SoundTouch worklet in parallel.
+  // Resolves true once at least one stem is ready (worklet load is best-effort).
   const ready = (async () => {
-    await Promise.all(
-      stems.map(async (s) => {
+    await Promise.all([
+      _workletReady,
+      ...stems.map(async (s) => {
         if (!s?.url) return;
         try {
           const res = await fetch(s.url);
@@ -81,7 +96,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     for (const t of tracks.values()) {
       const src = ctx.createBufferSource();
       src.buffer = t.buffer;
-      src.playbackRate.value = _playbackRate;
+      // SoundTouch handles time-stretch; playbackRate stays 1.0.
+      // Falls back to tape-effect only when the worklet is unavailable.
+      if (!stNode) src.playbackRate.value = _playbackRate;
       src.connect(t.gain);
       src.start(when, Math.max(0, Math.min(offset, t.buffer.duration)));
       t.source = src;
@@ -152,6 +169,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     stopSources();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     tracks.clear();
+    if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
     if (ownsCtx) ctx.close().catch(() => {});
   }
 
@@ -167,8 +185,14 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     setLoop: (enabled, start, end) => { loop = { enabled, start, end }; },
     setPlaybackRate(rate) {
       _playbackRate = rate;
-      for (const t of tracks.values()) {
-        if (t.source) t.source.playbackRate.value = rate;
+      if (stNode) {
+        // Pitch-preserving: update SoundTouch tempo parameter
+        stNode.parameters.get('tempo').value = rate;
+      } else {
+        // Tape-effect fallback
+        for (const t of tracks.values()) {
+          if (t.source) t.source.playbackRate.value = rate;
+        }
       }
     },
     setGain,
