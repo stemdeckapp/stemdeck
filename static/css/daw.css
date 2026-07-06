@@ -1930,6 +1930,28 @@ input, textarea { font-family: inherit; }
 }
 .footer-time-sep { font-size: 13px; color: var(--muted); }
 
+/* Exact loop start/end inputs */
+.footer-loop-times {
+  display: flex; align-items: center; gap: 6px;
+  justify-content: center; margin-top: 4px;
+  cursor: default; user-select: none;
+}
+.loop-times-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--fg-2); flex-shrink: 0;
+}
+.loop-times-sep { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+.loop-time-input {
+  width: 8ch; box-sizing: content-box;
+  padding: 2px 6px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 5px; outline: none;
+  color: var(--fg); font-family: inherit; font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; text-align: center;
+}
+.loop-time-input:focus { border-color: var(--accent); }
+.loop-time-input:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* Transport buttons */
 .footer-transport {
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;

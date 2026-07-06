@@ -1,4 +1,4 @@
-import { fmtTime, fmtTickLabel } from "./utils.js";
+import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode } from "./utils.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   speedEl, speedLabelEl,
@@ -7,6 +7,7 @@ import {
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
+  loopStartInput, loopEndInput,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
 } from "./state.js";
 import { applyMix } from "./mixer.js";
@@ -150,6 +151,8 @@ export function updateLoopRegionVisual() {
   // Keep the engine's loop bounds in sync with every loop change (toggle/drag);
   // the engine wraps playback itself off these values. No-op on streaming path.
   audioEngine?.setLoop(loopEnabled, loopStart, loopEnd);
+  // Mirror the bounds into the exact-loop text fields (skips fields being edited).
+  syncLoopInputs();
   if (!loopEnabled || !totalDuration) {
     loopRegionEl.classList.add("hidden");
     return;
@@ -164,6 +167,70 @@ export function updateLoopRegionVisual() {
   loopRegionEl.style.left = `${startPct}%`;
   loopRegionEl.style.width = `${Math.max(0, endPct - startPct)}%`;
   loopRegionEl.classList.remove("hidden");
+}
+
+// Keep the exact-loop text fields in sync with loopStart/loopEnd after any
+// programmatic change (drag, toggle). Never overwrite a field the user is
+// actively editing, and disable both when no track is loaded.
+function syncLoopInputs() {
+  const enabled = totalDuration > 0;
+  for (const [input, value] of [
+    [loopStartInput, loopStart],
+    [loopEndInput, loopEnd],
+  ]) {
+    if (!input) continue;
+    input.disabled = !enabled;
+    if (document.activeElement !== input) input.value = fmtTimeMs(value);
+  }
+}
+
+// Commit a typed loop time. Invalid/out-of-range input reverts the field to the
+// current stored value (self-evident rejection) rather than raising an error;
+// showError lives in the import form and would surface in the wrong place.
+function commitLoopInput(which) {
+  const input = which === "start" ? loopStartInput : loopEndInput;
+  if (!input) return;
+  const revert = () => {
+    input.value = fmtTimeMs(which === "start" ? loopStart : loopEnd);
+  };
+  const parsed = parseTimecode(input.value);
+  if (parsed === null || totalDuration <= 0) {
+    revert();
+    return;
+  }
+  const v = Math.max(0, Math.min(totalDuration, parsed));
+  const start = which === "start" ? v : loopStart;
+  const end = which === "end" ? v : loopEnd;
+  if (end - start < MIN_LOOP_SEC) {
+    revert();
+    return;
+  }
+  setLoopStart(start);
+  setLoopEnd(end);
+  setLoopEnabled(true);
+  loopBtn.classList.add("active");
+  updateLoopRegionVisual();
+}
+
+function wireLoopInputs() {
+  for (const [input, which] of [
+    [loopStartInput, "start"],
+    [loopEndInput, "end"],
+  ]) {
+    if (!input) continue;
+    input.addEventListener("blur", () => commitLoopInput(which));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        input.value = fmtTimeMs(which === "start" ? loopStart : loopEnd);
+        input.blur();
+      }
+    });
+  }
+  syncLoopInputs();
 }
 
 // Standard DAW transport state machine:
@@ -420,6 +487,7 @@ export function wireTransportButtons() {
   stopBtn.addEventListener("click", stopTransport);
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
+  wireLoopInputs();
   wireZoomButtons();
   wireLaneScrollSync();
   masterFader?.addEventListener("input", () => {

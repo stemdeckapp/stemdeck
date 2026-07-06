@@ -581,6 +581,12 @@
               <span class="footer-time-sep">/</span>
               <span class="num footer-total" id="footer-time-total">0:00</span>
             </div>
+            <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)">
+              <span class="loop-times-label">LOOP</span>
+              <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" value="00:00.000">
+              <span class="loop-times-sep" aria-hidden="true">-</span>
+              <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" value="00:00.000">
+            </div>
             <div class="tempo-bar" id="t-speed-wrap" title="Playback speed (double-click to reset)">
               <span class="tempo-bar-label">TEMPO</span>
               <input type="range" id="t-speed" min="0" max="2" step="0.25" value="1" aria-label="Playback speed">

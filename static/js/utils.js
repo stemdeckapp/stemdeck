@@ -109,4 +109,27 @@ export function fmtTickLabel(s) {
   return `${m}:${sec}`;
 }
 
+// Millisecond-precise timecode "mm:ss.mmm" for the exact-loop inputs. Integer-ms
+// math avoids a rounding carry bug (e.g. 0.9999s -> "00:01.000", not "00:00.1000").
+export function fmtTimeMs(s) {
+  if (!isFinite(s) || s < 0) return "00:00.000";
+  const totalMs = Math.round(s * 1000);
+  const m = Math.floor(totalMs / 60000);
+  const sec = Math.floor((totalMs % 60000) / 1000);
+  const ms = totalMs % 1000;
+  return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}.${ms
+    .toString()
+    .padStart(3, "0")}`;
+}
+
+// Parse a user-typed loop time. Accepts "mm:ss(.mmm)" (seconds field 0-59) or a
+// plain decimal-seconds value ("12.48"). Returns seconds, or null if unparseable.
+export function parseTimecode(str) {
+  const t = String(str ?? "").trim();
+  const colon = /^(\d+):([0-5]?\d(?:\.\d{1,3})?)$/.exec(t);
+  if (colon) return parseInt(colon[1], 10) * 60 + parseFloat(colon[2]);
+  if (/^\d+(?:\.\d+)?$/.test(t)) return parseFloat(t);
+  return null;
+}
+
 export const $ = (id) => document.getElementById(id);

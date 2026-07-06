@@ -800,6 +800,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   setLoopEnd(0);
   loopBtn.classList.remove("active");
   loopRegionEl.classList.add("hidden");
+  // Refresh loop UI so the exact-loop inputs enable + reset to 00:00.000 now
+  // that the track duration is known.
+  updateLoopRegionVisual();
 
   // User-selected stems only. Backend produced all 6, but the import-
   // page toggles tell us which ones the user actually wanted to see.
