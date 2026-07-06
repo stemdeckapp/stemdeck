@@ -18,11 +18,22 @@ use tauri_plugin_store::StoreExt;
 use zip::ZipArchive;
 
 const SETUP_VERSION: u64 = 1;
+// Windows FFmpeg comes from BtbN's GitHub build (served via GitHub's CDN, far
+// faster worldwide than the old gyan.dev single mirror -- #248). Unlike gyan.dev,
+// which published a per-file `{url}.sha256` companion, BtbN publishes ONE combined
+// `checksums.sha256` listing every asset as `<hash>  <filename>` lines; we fetch it
+// and pick the line for our archive's basename. The `latest` tag is rolling (the
+// `n8.1-latest` asset is rebuilt in place), so the checksum is fetched fresh each
+// run and verified -- the same trust model as the old gyan flow. A compile-time pin
+// is not possible without self-hosting the archive.
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip";
+#[cfg(windows)]
+const DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL: &str =
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256";
 // macOS FFmpeg is pinned to a specific evermeet build and verified by SHA256
 // before it is extracted or executed (#172). evermeet publishes no .sha256
-// companion (only a GPG signature and a size), so unlike the Windows gyan.dev
+// companion (only a GPG signature and a size), so unlike the Windows BtbN
 // path we cannot fetch the hash at runtime -- instead we pin the hash of a
 // specific versioned zip, captured at build time from evermeet's TLS endpoint
 // (the download size matched evermeet's signed release info). Bump the version
@@ -317,14 +328,14 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     if let Some(path) = python.as_deref() {
         patch_pyvenv_cfg(path);
     }
-    let ffmpeg = ffmpeg_path(&data_dir);
+    let ffmpeg = resolve_existing_ffmpeg(&data_dir);
     let torch_device = read_config_str(&data_dir, "torchDevice");
     Ok(RuntimeProbe {
         app_root: root.display().to_string(),
         data_dir: data_dir.display().to_string(),
         python_ready: python.as_ref().is_some_and(|p| python_stdlib_ok(p)),
         python_path: python.map(|p| p.display().to_string()),
-        ffmpeg_ready: ffmpeg.as_ref().is_some_and(|p| p.is_file()),
+        ffmpeg_ready: ffmpeg.is_some(),
         ffmpeg_path: ffmpeg.map(|p| p.display().to_string()),
         torch_device,
     })
@@ -1806,13 +1817,29 @@ fn ffprobe_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ffmpeg").join(file)
 }
 
-fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
-    let path = ffmpeg_path(data_dir)?;
-    if path.is_file() {
-        path.parent().map(Path::to_path_buf)
-    } else {
-        None
+// Locate an FFmpeg binary that already exists on disk. Honors the STEMDECK_FFMPEG
+// override, then checks the canonical flat location, then the `bin/` subfolder so a
+// user who dropped an upstream FFmpeg build (which nests binaries under bin/) into
+// data/ffmpeg/ is detected instead of triggering a download (#248). ffprobe lives
+// alongside ffmpeg in every layout, so the returned parent dir suffices for PATH.
+fn resolve_existing_ffmpeg(data_dir: &Path) -> Option<PathBuf> {
+    if let Some(p) = env_path_override("STEMDECK_FFMPEG") {
+        return p.is_file().then_some(p);
     }
+    let file = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let ffmpeg_root = data_dir.join("ffmpeg");
+    [ffmpeg_root.join(file), ffmpeg_root.join("bin").join(file)]
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
+    let path = resolve_existing_ffmpeg(data_dir)?;
+    path.parent().map(Path::to_path_buf)
 }
 
 /// Bind to port 0 and return both the chosen port and the live listener.
@@ -1919,11 +1946,11 @@ fn health_once(port: u16) -> Result<(), String> {
 }
 
 fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
-    let portable =
-        ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-    if portable.is_file() {
-        verify_ffmpeg(&portable)?;
-        return Ok(portable);
+    // Use an already-present binary (flat, bin/, or STEMDECK_FFMPEG override) before
+    // downloading, so a manually-placed FFmpeg is honored (#248).
+    if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
+        verify_ffmpeg(&existing)?;
+        return Ok(existing);
     }
 
     #[cfg(windows)]
@@ -2160,6 +2187,18 @@ fn make_executable(path: &Path) -> Result<(), String> {
     }
 }
 
+// Parse a combined `checksums.sha256` file (lines of `<hash>  <filename>`) and
+// return the lowercased hash for `filename`, or None if it is not listed.
+#[cfg(any(windows, test))]
+fn sha256_from_checksums(contents: &str, filename: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let hash = parts.next()?;
+        let name = parts.next()?;
+        (name == filename).then(|| hash.to_ascii_lowercase())
+    })
+}
+
 #[cfg(windows)]
 fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
     let url = env_path_override("STEMDECK_FFMPEG_URL")
@@ -2171,21 +2210,21 @@ fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
 
-    // Fetch the SHA256 companion file from gyan.dev before downloading the archive (#135).
+    // Fetch BtbN's combined checksums.sha256 and pick the line for our archive (#135, #248).
     // Only verified for the default URL; custom overrides skip the check.
     let expected_sha256 = if is_default_url {
-        let sha256_url = format!("{url}.sha256");
-        let sha256_tmp = downloads.join("ffmpeg-windows.zip.sha256");
-        download_file_blocking(&sha256_url, &sha256_tmp)?;
+        let archive_name = url
+            .rsplit('/')
+            .next()
+            .ok_or_else(|| "could not derive FFmpeg archive name from URL".to_string())?;
+        let sha256_tmp = downloads.join("ffmpeg-windows.checksums.sha256");
+        download_file_blocking(DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL, &sha256_tmp)?;
         let raw = fs::read_to_string(&sha256_tmp)
-            .map_err(|e| format!("failed to read FFmpeg SHA256: {e}"))?;
+            .map_err(|e| format!("failed to read FFmpeg checksums: {e}"))?;
         let _ = fs::remove_file(&sha256_tmp);
-        Some(
-            raw.split_whitespace()
-                .next()
-                .ok_or_else(|| "FFmpeg SHA256 file was empty".to_string())?
-                .to_ascii_lowercase(),
-        )
+        Some(sha256_from_checksums(&raw, archive_name).ok_or_else(|| {
+            format!("FFmpeg checksums file did not list an entry for {archive_name}")
+        })?)
     } else {
         None
     };
@@ -2334,7 +2373,17 @@ fn verify_ffmpeg(path: &Path) -> Result<(), String> {
 }
 
 fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
-    let ffprobe = ffprobe_path(data_dir);
+    // ffprobe always sits next to the resolved ffmpeg (flat or bin/); fall back to
+    // the canonical flat location if ffmpeg has no parent.
+    let ffprobe_file = if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    };
+    let ffprobe = ffmpeg
+        .parent()
+        .map(|dir| dir.join(ffprobe_file))
+        .unwrap_or_else(|| ffprobe_path(data_dir));
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -2631,6 +2680,60 @@ mod tests {
             "STEMDECK_FFMPEG_SHA256_TEST_UNSET_172",
         );
         assert!(none.is_none());
+    }
+
+    #[test]
+    fn sha256_from_checksums_picks_matching_line() {
+        let contents = "\
+c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694  ffmpeg-master-latest-win64-gpl.zip
+3D26DD6B1AF970297D141531D2C651491C4F6043B95D8C68E2FEC3C141255FF7  ffmpeg-n8.1-latest-win64-gpl-8.1.zip
+b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+";
+        // Matching line -> lowercased hash.
+        assert_eq!(
+            super::sha256_from_checksums(contents, "ffmpeg-n8.1-latest-win64-gpl-8.1.zip")
+                .as_deref(),
+            Some("3d26dd6b1af970297d141531d2c651491c4f6043b95d8c68e2fec3c141255ff7")
+        );
+        // A different asset is not matched.
+        assert_eq!(
+            super::sha256_from_checksums(contents, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
+            Some("c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694")
+        );
+        // Absent filename -> None.
+        assert!(super::sha256_from_checksums(contents, "not-in-list.zip").is_none());
+        // Extra whitespace between hash and name is tolerated.
+        assert_eq!(
+            super::sha256_from_checksums("abc123   only-one.zip\n", "only-one.zip").as_deref(),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn resolve_existing_ffmpeg_prefers_flat_then_bin() {
+        let name = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        // Nothing present -> None.
+        let dir = make_tmp();
+        assert!(super::resolve_existing_ffmpeg(dir.path()).is_none());
+
+        // Only a bin/ binary -> found in bin/.
+        let dir = make_tmp();
+        let bin = dir.path().join("ffmpeg").join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join(name), b"x").unwrap();
+        assert_eq!(
+            super::resolve_existing_ffmpeg(dir.path()),
+            Some(bin.join(name))
+        );
+
+        // Both present -> flat wins.
+        let flat = dir.path().join("ffmpeg").join(name);
+        fs::write(&flat, b"x").unwrap();
+        assert_eq!(super::resolve_existing_ffmpeg(dir.path()), Some(flat));
     }
 
     #[cfg(not(target_os = "macos"))]
