@@ -39,16 +39,19 @@ jobs:
           # Full history + tags so git describe can derive a version on manual runs.
           fetch-depth: 0
 
-      # Derive the version fed to the Dockerfile's VERSION build-arg. On a
-      # release, use the tag; on manual runs, derive it from git (hatch-vcs
-      # style, e.g. 0.8.0a6.dev3+g<sha>). Leading "v" stripped either way.
+      # Derive the version fed to the Dockerfile's VERSION build-arg (consumed as
+      # SETUPTOOLS_SCM_PRETEND_VERSION, so it MUST be PEP 440-valid). On a
+      # release, use the tag. Otherwise derive from git: `git describe --long`
+      # yields `<tag>-<N>-g<sha>`, which is NOT PEP 440 -- rewrite the trailing
+      # `-N-gSHA` into a `+N.gSHA` local segment (e.g. 0.8.0-alpha.5+3.gce86e8a).
       - name: resolve version
         id: ver
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             v="${{ github.event.release.tag_name }}"
           else
-            v="$(git describe --tags --dirty --always)"
+            raw="$(git describe --tags --long 2>/dev/null || echo "0.0.0-0-g$(git rev-parse --short HEAD)")"
+            v="$(printf '%s' "${raw#v}" | sed -E 's/-([0-9]+)-g([0-9a-f]+)$/+\1.g\2/')"
           fi
           echo "value=${v#v}" >> "$GITHUB_OUTPUT"
 
