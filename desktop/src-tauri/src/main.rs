@@ -1857,7 +1857,7 @@ fn free_port() -> Result<(u16, TcpListener), String> {
 /// The user's preferred port (Settings -> port), read from the backend's
 /// settings.json before launch. Defaults to 8080.
 fn configured_port() -> u16 {
-    const DEFAULT_PORT: u16 = 8080;
+    const DEFAULT_PORT: u16 = 8000;
     let Ok(data_dir) = local_data_dir() else {
         return DEFAULT_PORT;
     };

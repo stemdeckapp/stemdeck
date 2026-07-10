@@ -72,7 +72,7 @@ def test_runtime_settings_round_trip_and_clamp():
 
 
 def test_port_default_and_clamp():
-    assert settings_mod.get_port() == 8080  # default
+    assert settings_mod.get_port() == 8000  # default
     with TestClient(app) as c:
         assert c.post("/api/settings", json={"port": 9000}).json()["port"] == 9000
     assert settings_mod.set_port(80) == 1024  # floor (privileged ports rejected)

@@ -30,7 +30,7 @@ _state: dict | None = None  # whole settings dict, loaded lazily
 _DURATION_MIN, _DURATION_MAX = 60, 1200  # 1 min .. 20 min
 _HEIGHT_MIN, _HEIGHT_MAX = 144, 2160
 _PORT_MIN, _PORT_MAX = 1024, 65535
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 8000
 
 
 def _default_allow_network() -> bool:
@@ -124,7 +124,7 @@ def set_video_max_height(value: int) -> int:
 
 # ── port ──
 # The preferred port the server binds on launch. The desktop launcher reads this
-# (default 8080) before spawning the backend; a self-hosted server's --port wins.
+# (default 8000) before spawning the backend; a self-hosted server's --port wins.
 # Changing it needs a restart — the socket is bound at startup.
 def get_port() -> int:
     with _LOCK:
