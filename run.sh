@@ -8,6 +8,10 @@ cd "$(dirname "$0")"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8080}"
 RELOAD="${RELOAD:-0}"
+# Treat the self-hosted server as a persistent, user-managed library (like the
+# desktop app): opt out of the 24h job TTL sweep so processed tracks are not
+# auto-deleted. Override with STEMDECK_PERSIST_LIBRARY=0 for disk-hygiene mode.
+export STEMDECK_PERSIST_LIBRARY="${STEMDECK_PERSIST_LIBRARY:-1}"
 FOREGROUND="${FOREGROUND:-0}"
 PID_FILE=".run/uvicorn.pid"
 LOG_FILE=".run/uvicorn.log"

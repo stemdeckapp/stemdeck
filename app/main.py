@@ -102,14 +102,21 @@ def _sweep_disabled() -> bool:
     with its track list persisted permanently in ~/Documents/StemDeck. The 24h
     job TTL sweep -- a sensible disk-hygiene default for the shared server/Docker
     deployment -- would wrongly purge stems the user kept, leaving orphaned
-    library entries that ask to "re-upload to restore". So skip the sweep under
-    the desktop shell (STEMDECK_DESKTOP=1); the user manages disk via Trash."""
-    return os.environ.get("STEMDECK_DESKTOP") == "1"
+    library entries that ask to "re-upload to restore".
+
+    So skip the sweep under the desktop shell (STEMDECK_DESKTOP=1), or when a
+    self-hosted deployment opts into a persistent library
+    (STEMDECK_PERSIST_LIBRARY=1 -- set by default in run.sh). The user manages
+    disk via Trash. Shared/Docker deployments that set neither keep the sweep."""
+    return (
+        os.environ.get("STEMDECK_DESKTOP") == "1"
+        or os.environ.get("STEMDECK_PERSIST_LIBRARY") == "1"
+    )
 
 
 async def _sweep_loop() -> None:
     if _sweep_disabled():
-        _log.info("desktop mode: job TTL sweep disabled (library is user-managed)")
+        _log.info("job TTL sweep disabled (persistent library; user-managed)")
         return
     while True:
         try:

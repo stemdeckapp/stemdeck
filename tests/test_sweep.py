@@ -60,9 +60,22 @@ def test_sweep_disabled_under_desktop(monkeypatch):
     user's curated library isn't purged; the server/Docker default keeps it."""
     from app.main import _sweep_disabled
 
+    monkeypatch.delenv("STEMDECK_PERSIST_LIBRARY", raising=False)
     monkeypatch.setenv("STEMDECK_DESKTOP", "1")
     assert _sweep_disabled() is True
     monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
+    assert _sweep_disabled() is False
+
+
+def test_sweep_disabled_under_persistent_library(monkeypatch):
+    """A self-hosted server (run.sh) opts into a persistent library
+    (STEMDECK_PERSIST_LIBRARY=1) so its processed tracks aren't purged."""
+    from app.main import _sweep_disabled
+
+    monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
+    monkeypatch.setenv("STEMDECK_PERSIST_LIBRARY", "1")
+    assert _sweep_disabled() is True
+    monkeypatch.delenv("STEMDECK_PERSIST_LIBRARY", raising=False)
     assert _sweep_disabled() is False
 
 
