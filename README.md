@@ -247,6 +247,27 @@ docker compose -f build/docker-compose.yml up --build
 
 Stems land in `./jobs/` on the host. Demucs weights are cached in a named volume so they don't re-download on rebuild. Note: no GPU passthrough on macOS Docker.
 
+A prebuilt image is published to GHCR on each release:
+
+```sh
+docker run -d --name stemdeck -p 8000:8000 \
+  -v /path/to/jobs:/app/jobs \
+  -v /path/to/cache:/cache \
+  -e STEMDECK_PERSIST_LIBRARY=1 \
+  ghcr.io/stemdeckapp/stemdeck:latest
+```
+
+On a Linux host with an NVIDIA GPU (driver + NVIDIA Container Toolkit installed), add `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all` and StemDeck auto-detects CUDA. The image already bundles CUDA-enabled torch, so no separate CUDA install is needed.
+
+#### Unraid
+
+StemDeck is available in Unraid Community Applications: open **Apps**, search "StemDeck", and install. Map the two volumes to persistent appdata paths:
+
+- `/app/jobs` -> `/mnt/user/appdata/stemdeck/jobs` (library + stems)
+- `/cache` -> `/mnt/user/appdata/stemdeck/cache` (model weights)
+
+The library is persistent by default (`STEMDECK_PERSIST_LIBRARY=1`), so tracks are never auto-deleted. For GPU acceleration, install the **Nvidia Driver** plugin, then set the container's Extra Parameters to `--runtime=nvidia` (the `NVIDIA_VISIBLE_DEVICES` and `NVIDIA_DRIVER_CAPABILITIES` variables are already in the template). CPU-only works with no extra configuration.
+
 #### `run.sh` control script
 
 ```sh

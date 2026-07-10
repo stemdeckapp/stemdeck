@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>StemDeck</Name>
+  <Repository>ghcr.io/stemdeckapp/stemdeck:latest</Repository>
+  <Registry>https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/stemdeckapp/stemdeck/issues</Support>
+  <Project>https://github.com/stemdeckapp/stemdeck</Project>
+  <TemplateURL>https://raw.githubusercontent.com/stemdeckapp/stemdeck/main/templates/stemdeck.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/stemdeckapp/stemdeck/main/README.md</ReadMe>
+  <Icon>https://raw.githubusercontent.com/stemdeckapp/stemdeck/main/desktop/src-tauri/icons/icon.png</Icon>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <ExtraParams></ExtraParams>
+  <PostArgs></PostArgs>
+  <Category>MediaApp:Music MediaApp:Video Tools:</Category>
+  <ExtraSearchTerms>stems demucs vocal remover karaoke isolation multitrack youtube audio separation</ExtraSearchTerms>
+  <Requires>Optional: install the Unraid "Nvidia Driver" plugin and set Extra Parameters to --runtime=nvidia for GPU acceleration. Runs on CPU without a GPU.</Requires>
+  <Overview>
+    StemDeck splits any song into isolated stems (vocals, drums, bass, guitar,
+    piano, other) and plays them back in a DAW-style multitrack player. Paste a
+    YouTube URL or upload a file, get separated tracks you can mute, solo, loop,
+    slow down, and pitch-shift for practice and transcription. Powered by Demucs.
+
+    Data: processed tracks and downloads live under /app/jobs; Demucs model
+    weights and the torch cache live under /cache. Map both to persistent
+    appdata paths so nothing re-downloads on update.
+
+    The library is persistent and user-managed on Unraid
+    (STEMDECK_PERSIST_LIBRARY=1 is set by default); tracks are never auto-deleted.
+
+    GPU (optional): install the Unraid "Nvidia Driver" plugin, then set Extra
+    Parameters to --runtime=nvidia and keep NVIDIA_VISIBLE_DEVICES /
+    NVIDIA_DRIVER_CAPABILITIES. StemDeck auto-detects CUDA and uses it,
+    processing several times faster. Without a GPU it runs on CPU with no extra
+    configuration. Note: very new Blackwell cards (RTX 50 series) may fall back
+    to CPU until a newer CUDA build ships.
+  </Overview>
+  <Description>Split songs into stems and play them in a DAW-style multitrack player. Self-hosted, GPU-accelerated with the Unraid Nvidia Driver plugin.</Description>
+
+  <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp" Description="HTTP port for the StemDeck web player." Type="Port" Display="always" Required="true" Mask="false">8000</Config>
+
+  <Config Name="Jobs / Library" Target="/app/jobs" Default="/mnt/user/appdata/stemdeck/jobs" Mode="rw" Description="Processed tracks, stems, and downloaded audio. Persistent, user-managed library." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/stemdeck/jobs</Config>
+
+  <Config Name="Cache (models)" Target="/cache" Default="/mnt/user/appdata/stemdeck/cache" Mode="rw" Description="Demucs model weights (~170 MB) and the torch cache. Persist so they survive updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/stemdeck/cache</Config>
+
+  <Config Name="Persistent library" Target="STEMDECK_PERSIST_LIBRARY" Default="1" Description="Keep 1 so processed tracks are never auto-deleted (recommended on Unraid). Set 0 to re-enable the 24h cleanup sweep." Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+
+  <Config Name="Max track length (seconds)" Target="STEMDECK_MAX_DURATION_SEC" Default="1200" Description="Reject sources longer than this. Default 1200 (20 min)." Type="Variable" Display="advanced" Required="false" Mask="false">1200</Config>
+
+  <Config Name="Max concurrent jobs" Target="STEMDECK_MAX_PENDING_JOBS" Default="3" Description="How many separations may be queued/running at once (1-50)." Type="Variable" Display="advanced" Required="false" Mask="false">3</Config>
+
+  <Config Name="NVIDIA GPUs" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Description="GPU(s) exposed to the container. Requires the Unraid Nvidia Driver plugin and Extra Parameters set to --runtime=nvidia. Use 'all' or a specific GPU UUID." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+
+  <Config Name="NVIDIA driver capabilities" Target="NVIDIA_DRIVER_CAPABILITIES" Default="all" Description="Driver features exposed to the container. Leave as 'all' for CUDA compute." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+</Container>

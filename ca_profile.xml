@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>
+    StemDeck splits any song into isolated stems (vocals, drums, bass, guitar,
+    piano, other) and plays them back in a DAW-style multitrack player, for
+    practice and transcription. This repository maintains the official StemDeck
+    self-hosted server container. For help, open an issue on GitHub.
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/stemdeckapp/stemdeck/main/desktop/src-tauri/icons/icon.png</Icon>
+  <WebPage>https://github.com/stemdeckapp/stemdeck</WebPage>
+  <Forum>https://github.com/stemdeckapp/stemdeck/issues</Forum>
+</CommunityApplications>
