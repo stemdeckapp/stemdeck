@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8080}"
+PORT="${PORT:-8000}"
 RELOAD="${RELOAD:-0}"
 # Treat the self-hosted server as a persistent, user-managed library (like the
 # desktop app): opt out of the 24h job TTL sweep so processed tracks are not
