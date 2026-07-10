@@ -1930,15 +1930,10 @@ input, textarea { font-family: inherit; }
 }
 .footer-time-sep { font-size: 13px; color: var(--muted); }
 
-/* Exact loop start/end inputs */
+/* Exact loop start/end inputs (inline, right of the loop button) */
 .footer-loop-times {
-  display: flex; align-items: center; gap: 6px;
-  justify-content: center; margin-top: 4px;
-  cursor: default; user-select: none;
-}
-.loop-times-label {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--fg-2); flex-shrink: 0;
+  display: flex; align-items: center; gap: 5px;
+  margin-left: 4px; cursor: default; user-select: none;
 }
 .loop-times-sep { font-size: 12px; color: var(--muted); flex-shrink: 0; }
 .loop-time-input {
