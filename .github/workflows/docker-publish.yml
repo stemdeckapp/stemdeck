@@ -10,14 +10,10 @@ name: Docker Publish
 on:
   release:
     types: [published]
-  # Manual build/push without cutting a release. Defaults to a dev version and
-  # only tags :edge so it never clobbers :latest.
+  # Manual build/push without cutting a release. The version is derived from git
+  # (matching the project's hatch-vcs scheme) and the image only tags :edge, so
+  # it never clobbers :latest.
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version for the build (valid PEP 440, e.g. 0.0.0)"
-        required: false
-        default: "0.0.0"
 
 permissions: {}
 
@@ -37,17 +33,20 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          # Full history + tags so git describe can derive a version on manual runs.
+          fetch-depth: 0
 
       # Derive the version fed to the Dockerfile's VERSION build-arg. On a
-      # release, use the tag with any leading "v" stripped; on manual runs, use
-      # the provided input.
+      # release, use the tag; on manual runs, derive it from git (hatch-vcs
+      # style, e.g. 0.8.0a6.dev3+g<sha>). Leading "v" stripped either way.
       - name: resolve version
         id: ver
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             v="${{ github.event.release.tag_name }}"
           else
-            v="${{ github.event.inputs.version }}"
+            v="$(git describe --tags --dirty --always)"
           fi
           echo "value=${v#v}" >> "$GITHUB_OUTPUT"
 
