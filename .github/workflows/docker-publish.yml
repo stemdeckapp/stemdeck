@@ -8,11 +8,13 @@ name: Docker Publish
 # Unraid template in templates/unraid/).
 
 on:
+  # Every merge to main publishes a rolling :edge image. The version is derived
+  # from git (hatch-vcs style); :edge never clobbers :latest.
+  push:
+    branches: [main]
   release:
     types: [published]
-  # Manual build/push without cutting a release. The version is derived from git
-  # (matching the project's hatch-vcs scheme) and the image only tags :edge, so
-  # it never clobbers :latest.
+  # Same as a main push but on demand, from any ref.
   workflow_dispatch:
 
 permissions: {}
@@ -58,7 +60,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
             type=raw,value=${{ steps.ver.outputs.value }},enable=${{ github.event_name == 'release' }}
-            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
 
