@@ -10,7 +10,12 @@ dependencies = [
     "fastapi>=0.115,!=0.136.3",
     "uvicorn[standard]>=0.30",
     "yt-dlp>=2024.12.0",
-    "demucs>=4.0.1",
+    # Pin below 4.1: demucs 4.1.0 (2026-07-11) added a dependency on `sphn`, a
+    # Rust/CMake native package with no Intel-macOS wheel, so the x64 macOS
+    # build compiles it from source and fails (CMake dropped <3.5 support).
+    # 4.0.1 is what every prior release shipped and what the torch/torchaudio
+    # pins below were written for.
+    "demucs>=4.0.1,<4.1",
     # Pin torch/torchaudio to 2.6.x where available — torchaudio 2.7+ removed its built-in
     # audio writer and now requires the separate `torchcodec` package, which
     # has ABI issues with torch 2.11. Demucs 4.0.1 calls torchaudio.save() to
