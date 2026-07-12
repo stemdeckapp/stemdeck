@@ -51,6 +51,10 @@
 
   <Config Name="Max concurrent jobs" Target="STEMDECK_MAX_PENDING_JOBS" Default="3" Description="How many separations may be queued/running at once (1-50)." Type="Variable" Display="advanced" Required="false" Mask="false">3</Config>
 
+  <Config Name="PUID" Target="PUID" Default="99" Description="User ID the app runs as. Unraid's default is 99 (nobody), so files written to appdata are owned correctly." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group ID the app runs as. Unraid's default is 100 (users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+
   <Config Name="NVIDIA GPUs" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Description="GPU(s) exposed to the container. Requires the Unraid Nvidia Driver plugin and Extra Parameters set to --runtime=nvidia. Use 'all' or a specific GPU UUID." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
 
   <Config Name="NVIDIA driver capabilities" Target="NVIDIA_DRIVER_CAPABILITIES" Default="all" Description="Driver features exposed to the container. Leave as 'all' for CUDA compute." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
