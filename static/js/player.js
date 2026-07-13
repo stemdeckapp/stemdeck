@@ -1208,67 +1208,89 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       };
       if (audioEngine) { audioEngine.destroy(); setAudioEngine(null); }
       const onEnded = () => { playBtn.classList.remove("playing"); updateStopVisual(); };
-      // Default: chunked streaming engine (fast start, low RAM). "fulldecode"
-      // opts into the legacy decode-everything engine.
-      const eng = mode === "chunked"
-        ? createChunkedAudioEngine(stems, { onTime: driveTransportUi, onEnded })
-        : createAudioEngine(stems, { onTime: driveTransportUi, onEnded });
-      setAudioEngine(eng);
-      eng.ready.then((ok) => {
-        // Bail if the user switched tracks while we were initialising.
-        if (token !== visualRenderToken || multitrack !== mt) {
-          eng.destroy();
-          if (audioEngine === eng) setAudioEngine(null);
-          return;
-        }
-        if (!ok) {
-          // No usable stems — drop the engine (null-URL multitrack stays mounted).
-          console.warn("[player] audio engine had no usable stems; playback disabled");
-          eng.destroy();
-          setAudioEngine(null);
-          return;
-        }
-        eng.setLoop(loopEnabled, loopStart, loopEnd);
-        applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
-        if (mode === "chunked") {
-          // Streaming path: the engine holds no full buffers. Overview waveforms
-          // come from peaks.json (rendered by the _peaksPromise handler above);
-          // drive lane mini-waves + the energy baseline from those same peaks,
-          // and the VU meters from the engine's live per-stem analysers.
-          _peaksPromise.then((peaks) => {
-            if (token !== visualRenderToken || multitrack !== mt) return;
-            const p = peaks || {};
+      // Engine bring-up, callable twice: the chunked path falls back to
+      // "fulldecode" when peaks.json is missing (legacy jobs), because the
+      // backend's documented degradation for missing peaks is client-side
+      // decode — which only the full-decode engine can provide.
+      const startEngine = (kind) => {
+        const eng = kind === "chunked"
+          ? createChunkedAudioEngine(stems, { onTime: driveTransportUi, onEnded })
+          : createAudioEngine(stems, { onTime: driveTransportUi, onEnded });
+        setAudioEngine(eng);
+        eng.ready.then((ok) => {
+          // Bail if the user switched tracks while we were initialising.
+          if (token !== visualRenderToken || multitrack !== mt) {
+            eng.destroy();
+            if (audioEngine === eng) setAudioEngine(null);
+            return;
+          }
+          if (!ok) {
+            // No usable stems — drop the engine (null-URL multitrack stays mounted).
+            console.warn("[player] audio engine had no usable stems; playback disabled");
+            eng.destroy();
+            setAudioEngine(null);
+            return;
+          }
+          eng.setLoop(loopEnabled, loopStart, loopEnd);
+          applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
+          if (kind === "chunked") {
+            // Streaming path: the engine holds no full buffers. Overview waveforms
+            // come from peaks.json (rendered by the _peaksPromise handler above);
+            // drive lane mini-waves + the energy baseline from those same peaks,
+            // and the VU meters from the engine's live per-stem analysers.
+            _peaksPromise.then((peaks) => {
+              if (token !== visualRenderToken || multitrack !== mt || audioEngine !== eng) return;
+              const p = peaks || {};
+              if (!Object.keys(p).length) {
+                // Legacy job with no peaks.json: no waveform source on the
+                // streaming path. Swap to the full-decode engine (unless the
+                // track is too big to decode in RAM — then keep streaming
+                // audio and accept placeholder waveforms).
+                if (estimateDecodedBytes(totalDuration, engineStemCount) <= MAX_ENGINE_DECODED_BYTES) {
+                  console.warn("[player] no peaks.json; using full-decode engine for visuals");
+                  eng.destroy();
+                  if (audioEngine === eng) setAudioEngine(null);
+                  startEngine("fulldecode");
+                } else {
+                  console.warn("[player] no peaks.json and track too large to decode; waveforms unavailable");
+                }
+                return;
+              }
+              for (const stem of stems) {
+                const pts = p[stem.name];
+                if (pts?.length) {
+                  renderRealMiniWaveFromPeaks(stem.name, pts, STEM_COLORS[stem.name] || "#a0a0a0");
+                }
+              }
+              renderStemEnergyBaselineFromPeaks(stems, p);
+            });
+            startAnalyserVuLoop(stems, eng, token);
+          } else {
+            // Full-decode path: drive the decode-dependent visuals from the
+            // engine's own buffers (the null-URL multitrack has none).
+            const decoded = eng.getBuffers();
+            if (!Object.keys(precomputedPeaks).length) {
+              clearOverviewWaveforms();
+              renderAllOverviewWaveforms(stems, decoded);
+            }
+            renderStemEnergyBaseline(stems, decoded);
+            startStemVuLoop(stems, decoded, token);
             for (const stem of stems) {
-              const pts = p[stem.name];
-              if (pts?.length) {
-                renderRealMiniWaveFromPeaks(stem.name, pts, STEM_COLORS[stem.name] || "#a0a0a0");
+              const buf = decoded.get(stem.name);
+              if (isAudioBufferLike(buf)) {
+                renderDecodedStemVisuals(stem.name, buf, STEM_COLORS[stem.name] || "#a0a0a0");
               }
             }
-            renderStemEnergyBaselineFromPeaks(stems, p);
-          });
-          startAnalyserVuLoop(stems, eng, token);
-        } else {
-          // Full-decode path: drive the decode-dependent visuals from the
-          // engine's own buffers (the null-URL multitrack has none).
-          const decoded = eng.getBuffers();
-          if (!Object.keys(precomputedPeaks).length) {
-            clearOverviewWaveforms();
-            renderAllOverviewWaveforms(stems, decoded);
           }
-          renderStemEnergyBaseline(stems, decoded);
-          startStemVuLoop(stems, decoded, token);
-          for (const stem of stems) {
-            const buf = decoded.get(stem.name);
-            if (isAudioBufferLike(buf)) {
-              renderDecodedStemVisuals(stem.name, buf, STEM_COLORS[stem.name] || "#a0a0a0");
-            }
-          }
-        }
-      }).catch((e) => {
-        console.warn("[player] audio engine init failed; playback disabled:", e);
-        eng.destroy();
-        if (audioEngine === eng) setAudioEngine(null);
-      });
+        }).catch((e) => {
+          console.warn("[player] audio engine init failed; playback disabled:", e);
+          eng.destroy();
+          if (audioEngine === eng) setAudioEngine(null);
+        });
+      };
+      // Default: chunked streaming engine (fast start, low RAM). "fulldecode"
+      // opts into the legacy decode-everything engine.
+      startEngine(mode === "chunked" ? "chunked" : "fulldecode");
     }
   });
 }

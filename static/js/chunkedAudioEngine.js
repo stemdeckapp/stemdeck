@@ -162,6 +162,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   let _audioStarted = false;
   let _filling = false; // prevents concurrent _scheduleNext() calls
   let loop = { enabled: false, start: 0, end: 0 };
+  // Chunk index that must survive cache eviction while looping (the loop-start
+  // chunk), so every pass around the loop replays from cache with no refetch.
+  const _loopPinChunk = () =>
+    (loop.enabled && loop.end > loop.start) ? Math.floor(loop.start / CHUNK_SEC) : -1;
 
   // Chunk cache: chunkIdx -> { promise: Promise<Map>, result: Map|null }
   // result is set synchronously once the promise resolves so play() can
@@ -218,9 +222,16 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       const map = new Map(pairs.filter(([, b]) => b));
       entry.result = map;
       // Keep at most the previous chunk + current in cache to bound memory.
+      // The loop-start chunk is pinned so loop passes replay from cache.
+      const pin = _loopPinChunk();
       for (const k of _cache.keys()) {
-        if (k < chunkIdx - 1) _cache.delete(k);
+        if (k < chunkIdx - 1 && k !== pin) _cache.delete(k);
       }
+      // An all-stems-empty result means every fetch failed (e.g. a transient
+      // network drop) — drop the entry so a later scheduler pass retries
+      // instead of caching permanent silence. Past-EOF chunks are never
+      // re-requested: _maybeSchedule stops at duration.
+      if (map.size === 0) _cache.delete(chunkIdx);
       return map;
     })();
 
@@ -302,9 +313,15 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   function _tick() {
     if (!playing) return;
     const t = _getCurrentTime();
-    if (loop.enabled && loop.end > loop.start && t >= loop.end) {
-      seek(loop.start); // re-arms playback + tick from the loop start
-      return;
+    if (loop.enabled && loop.end > loop.start) {
+      // Warm the loop-start chunk while approaching the end so the jump back
+      // schedules from cache instead of paying a fetch (deduped by _cache and
+      // pinned against eviction while the loop stays active).
+      if (loop.end - t < LOOKAHEAD_SEC) _fetchChunk(_loopPinChunk());
+      if (t >= loop.end) {
+        seek(loop.start); // re-arms playback + tick from the loop start
+        return;
+      }
     }
     if (t >= _duration) {
       playing = false;
@@ -330,9 +347,12 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     const chunkIdx = Math.floor(_startOffset / CHUNK_SEC);
     const offsetWithin = _startOffset - chunkIdx * CHUNK_SEC;
 
-    const startWith = (buffers) => {
+    // `lead` = scheduling safety margin. The cached (sync) path uses 10 ms —
+    // tight enough that loop jumps are near-seamless — while the async path
+    // keeps 50 ms headroom since a fetch/decode just finished.
+    const startWith = (buffers, lead) => {
       if (!playing || destroyed) return;
-      const when = ctx.currentTime + 0.05;
+      const when = ctx.currentTime + lead;
       _startCtxTime = when;
       const dur = _scheduleChunk(buffers, when, offsetWithin);
       _scheduledTo = _startOffset + dur;
@@ -344,10 +364,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     // chunk 0 is pre-decoded during ready(), so the sync path is the hot path.
     const hit = _cache.get(chunkIdx);
     if (hit?.result) {
-      startWith(hit.result);
+      startWith(hit.result, 0.01);
     } else {
       _fetchChunk(chunkIdx)
-        .then(startWith)
+        .then((buffers) => startWith(buffers, 0.05))
         .catch((e) => {
           console.warn("[chunked] play fetch failed:", e);
           playing = false;
@@ -377,10 +397,12 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     }
     _startOffset = clamped;
     _scheduledTo = clamped;
-    // Evict cache for chunks before the new position.
+    // Evict cache for chunks before the new position (except the pinned
+    // loop-start chunk — a loop jump seeks backward *to* that chunk).
     const newIdx = Math.floor(clamped / CHUNK_SEC);
+    const pin = _loopPinChunk();
     for (const k of _cache.keys()) {
-      if (k < newIdx) _cache.delete(k);
+      if (k < newIdx && k !== pin) _cache.delete(k);
     }
     onTime?.(clamped);
     if (wasPlaying) play();
