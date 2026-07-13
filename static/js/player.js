@@ -19,10 +19,11 @@ import {
   setFooterWaveDrawFn,
 } from "./state.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
+import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
 import {
   loadMixIntoState, resetMixerState, refreshMixerVisuals,
   setLaneControlsEnabled, ensureMixerStateDefaults, applyMix,
-  renderRealMiniWave, renderMixerRow,
+  renderRealMiniWave, renderRealMiniWaveFromPeaks, renderMixerRow,
 } from "./mixer.js";
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
@@ -32,32 +33,34 @@ import {
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
 
-// Feature flag for the Web Audio decode-and-mix engine (audioEngine.js).
-// Playback runs off decoded AudioBuffers on a single AudioContext clock instead
-// of N streaming <audio> elements — fixes Safari/WKWebView choppiness.
+// Playback-engine selection. All engines play decoded AudioBuffers off a single
+// AudioContext clock (no N streaming <audio> elements — that was the source of
+// Safari/WKWebView choppiness). Two Web Audio engines exist:
+//   - "chunked"    streams WAV in 5s HTTP-Range windows (chunkedAudioEngine.js):
+//                  first audio after ~1 chunk, ~28 MB RAM, no length cap. DEFAULT.
+//   - "fulldecode" decodes every stem up front (audioEngine.js): higher RAM and a
+//                  slow preload, but was the previous desktop default.
+// The multitrack stays mounted with null URLs as the visuals shell when an engine
+// owns playback, so the engine has exclusive HTTP access (the old Windows
+// connection-competition regression is avoided).
 //
-// Default ON everywhere. The prior Windows regression (waveform stuck, no audio)
-// was caused by connection competition: both the multitrack and the engine
-// fetched the same 6 stem WAVs concurrently, saturating the 6-connection
-// HTTP/1.1 limit on WebView2/WKWebView and stalling multitrack's blob fetches
-// so `canplay` never fired. Fixed by passing null URLs to the multitrack when
-// the engine is active (wireUpAudio), giving the engine exclusive HTTP access.
-// An explicit localStorage "stemdeck.audioEngine" = "0" forces the streaming
-// path; "1" forces the engine (useful for debugging).
-function audioEngineEnabled() {
+// localStorage "stemdeck.audioEngine": "0" = legacy streaming <audio> multitrack
+// (debug), "fulldecode" = full-decode engine, anything else / unset = chunked.
+function engineMode() {
   try {
     const pref = localStorage.getItem("stemdeck.audioEngine");
-    if (pref === "1") return true;
-    if (pref === "0") return false;
+    if (pref === "0") return "streaming";
+    if (pref === "fulldecode") return "fulldecode";
   } catch (e) {
     console.warn("[player] audioEngine flag read failed:", e);
   }
-  return true; // default ON — smooth audio everywhere
+  return "chunked"; // default — stream in 5s chunks, fast start, low RAM
 }
 
-// Above this estimated decoded-PCM size the engine is skipped and playback
-// falls back to streaming, so a long full-stem track can't exhaust WKWebView's
-// memory. ~1.2 GB ≈ 6 stems × ~10 min (or 4 stems × ~15 min) at 44.1 kHz/Float32.
+// Only the full-decode engine holds all PCM in RAM, so only it needs a size cap.
+// Above this estimated decoded-PCM size it falls back to streaming. The chunked
+// engine has no such cap (it never holds more than ~2 chunks). ~1.2 GB ≈ 6 stems
+// × ~10 min (or 4 stems × ~15 min) at 44.1 kHz/Float32.
 const MAX_ENGINE_DECODED_BYTES = 1.2e9;
 
 // Stem-selection filter: the import-page stem-choice toggles set
@@ -465,6 +468,39 @@ function renderStemEnergyBaseline(stems, decodedMap) {
   }
 }
 
+// Energy baseline for the streaming/chunked path, derived from peaks.json
+// instead of decoded PCM. Uses the RMS of each stem's bin peak-amplitudes as a
+// loudness proxy; all stems use the same measure and are normalized to the
+// loudest, so the relative balance ("drums dominate, piano quiet") is faithful
+// even though the absolute value differs from a true PCM RMS. Live playback
+// pulsing then comes from startAnalyserVuLoop.
+function renderStemEnergyBaselineFromPeaks(stems, peaks) {
+  const valByStem = new Map();
+  let maxV = 0;
+  for (const stem of stems) {
+    const pts = peaks[stem.name];
+    if (!pts?.length) continue;
+    let sum = 0;
+    for (const [mn, mx] of pts) {
+      const a = Math.max(Math.abs(mn), Math.abs(mx));
+      sum += a * a;
+    }
+    const v = Math.sqrt(sum / pts.length);
+    valByStem.set(stem.name, v);
+    if (v > maxV) maxV = v;
+  }
+  if (maxV <= 0) return;
+  for (const [name, v] of valByStem) {
+    const pct = Math.round((v / maxV) * 100);
+    const row = document.querySelector(`.energy-row[data-stem="${name}"]`);
+    if (!row) continue;
+    const bar = row.querySelector("b");
+    const txt = row.querySelector("em");
+    if (bar) bar.style.setProperty("--v", `${pct}%`);
+    if (txt) txt.textContent = `${pct}%`;
+  }
+}
+
 function buildStemVuEnvelope(audioBuffer) {
   if (!isAudioBufferLike(audioBuffer)) return [];
   const ch = audioBuffer.getChannelData(0);
@@ -534,6 +570,90 @@ function startStemVuLoop(stems, decodedMap, token) {
       const gain = stemVuGain(m.name);
       const input = playing && gain > 0 ? Math.min(1, m.env[idx] * gain) : 0;
       if (gain <= 0) {
+        m.peak = 0;
+        m.peakHold = 0;
+        m.holdFrames = 0;
+      }
+      const nextPeak = input > m.peak ? input : Math.max(0, m.peak - 0.018);
+      m.peak = nextPeak;
+
+      if (input > m.peakHold) {
+        m.peakHold = input;
+        m.holdFrames = 28;
+      } else if (m.holdFrames > 0) {
+        m.holdFrames -= 1;
+      } else {
+        m.peakHold = Math.max(0, m.peakHold - 0.025);
+      }
+
+      const lvlPct = Math.round(input * 100);
+      const peakPct = Math.round(nextPeak * 100);
+      const holdPct = Math.round(m.peakHold * 100);
+
+      if (m.miniMeterEl) {
+        if (peakPct !== m.lastPeakPct) {
+          m.miniMeterEl.style.setProperty("--vu-scale", nextPeak.toFixed(3));
+        }
+        if (holdPct !== m.lastHoldPct) {
+          m.miniMeterEl.style.setProperty("--vu-peak-pct", String(holdPct));
+          m.miniMeterEl.style.setProperty("--vu-peak-opacity", m.peakHold > 0.04 ? "1" : "0");
+        }
+      }
+      if (m.vuEl) {
+        if (lvlPct !== m.lastLevelPct) m.vuEl.style.setProperty("--vu-level", `${lvlPct}%`);
+        if (holdPct !== m.lastHoldPct) m.vuEl.style.setProperty("--vu-peak", `${holdPct}%`);
+      }
+      m.lastLevelPct = lvlPct;
+      m.lastPeakPct = peakPct;
+      m.lastHoldPct = holdPct;
+    }
+    stemVuRafId = requestAnimationFrame(tick);
+  };
+  stemVuRafId = requestAnimationFrame(tick);
+}
+
+// Real-time VU for the chunked/streaming path, driven by the engine's live
+// per-stem AnalyserNodes (post-gain, so volume/mute/solo are reflected in the
+// signal). Mirrors startStemVuLoop's peak-hold + CSS-var output; only the level
+// source differs (live RMS vs a precomputed envelope). stemVuGain gates to 0 for
+// an instant drop on mute/solo rather than waiting for the gain ramp.
+function startAnalyserVuLoop(stems, engine, token) {
+  stopStemVuLoop();
+  const meters = stems.map((stem) => {
+    const analyser = engine.getAnalyser?.(stem.name);
+    if (!analyser) return null;
+    return {
+      name: stem.name,
+      analyser,
+      data: new Uint8Array(analyser.fftSize),
+      miniMeterEl: document.querySelector(`.stem-list [data-stem="${stem.name}"] .mini-meter`),
+      vuEl: mixerEl.querySelector(`.lane-vu[data-stem="${stem.name}"]`),
+      peak: 0,
+      peakHold: 0,
+      holdFrames: 0,
+      lastPeakPct: -1,
+      lastHoldPct: -1,
+      lastLevelPct: -1,
+    };
+  }).filter((m) => m && (m.miniMeterEl || m.vuEl));
+
+  if (!meters.length) return;
+  const tick = () => {
+    if (token !== visualRenderToken || !multitrack) return;
+    const src = audioEngine ?? multitrack;
+    const playing = src.isPlaying?.() ?? false;
+    for (const m of meters) {
+      const gain = stemVuGain(m.name);
+      let input = 0;
+      if (playing && gain > 0) {
+        m.analyser.getByteTimeDomainData(m.data);
+        let sum = 0;
+        for (let i = 0; i < m.data.length; i++) {
+          const v = (m.data[i] - 128) / 128;
+          sum += v * v;
+        }
+        input = Math.min(1, Math.sqrt(sum / m.data.length) * 2.5);
+      } else {
         m.peak = 0;
         m.peakHold = 0;
         m.holdFrames = 0;
@@ -880,9 +1000,13 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // the 6-connection HTTP/1.1 limit and `canplay` stalls (the WebView2/WKWebView
   // freeze). Null URLs make the multitrack's <audio> elements ready instantly.
   const engineStemCount = stems.filter((s) => s.url).length;
+  const mode = engineMode();
+  // Only the full-decode engine holds all PCM in RAM, so only it is size-capped;
+  // the chunked engine streams and is never "too large".
   const engineTooLarge =
+    mode === "fulldecode" &&
     estimateDecodedBytes(totalDuration, engineStemCount) > MAX_ENGINE_DECODED_BYTES;
-  const useEngine = audioEngineEnabled() && !engineTooLarge;
+  const useEngine = mode !== "streaming" && !engineTooLarge;
   // The null-URL multitrack (engine path) has no WaveSurfer canvas, so reveal the
   // SVG overview layer as the visible waveform (CSS hides it on the streaming path).
   document.querySelector(".app")?.classList.toggle("engine-waveforms", useEngine);
@@ -1083,45 +1207,65 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
         updateStopVisual();
       };
       if (audioEngine) { audioEngine.destroy(); setAudioEngine(null); }
-      const eng = createAudioEngine(stems, {
-        onTime: driveTransportUi,
-        onEnded: () => { playBtn.classList.remove("playing"); updateStopVisual(); },
-      });
+      const onEnded = () => { playBtn.classList.remove("playing"); updateStopVisual(); };
+      // Default: chunked streaming engine (fast start, low RAM). "fulldecode"
+      // opts into the legacy decode-everything engine.
+      const eng = mode === "chunked"
+        ? createChunkedAudioEngine(stems, { onTime: driveTransportUi, onEnded })
+        : createAudioEngine(stems, { onTime: driveTransportUi, onEnded });
       setAudioEngine(eng);
       eng.ready.then((ok) => {
-        // Bail if the user switched tracks while we were decoding.
+        // Bail if the user switched tracks while we were initialising.
         if (token !== visualRenderToken || multitrack !== mt) {
           eng.destroy();
           if (audioEngine === eng) setAudioEngine(null);
           return;
         }
         if (!ok) {
-          // No decodable stems — fall back to the streaming path transparently.
-          console.warn("[player] audio engine had no decodable stems; using streaming path");
+          // No usable stems — drop the engine (null-URL multitrack stays mounted).
+          console.warn("[player] audio engine had no usable stems; playback disabled");
           eng.destroy();
           setAudioEngine(null);
           return;
         }
         eng.setLoop(loopEnabled, loopStart, loopEnd);
         applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
-        // Drive the decode-dependent visuals from the engine's own decoded
-        // buffers (the null-URL multitrack has none): overview waveforms (when
-        // no precomputed peaks), energy bars, VU envelopes, and lane mini-waves.
-        const decoded = eng.getBuffers();
-        if (!Object.keys(precomputedPeaks).length) {
-          clearOverviewWaveforms();
-          renderAllOverviewWaveforms(stems, decoded);
-        }
-        renderStemEnergyBaseline(stems, decoded);
-        startStemVuLoop(stems, decoded, token);
-        for (const stem of stems) {
-          const buf = decoded.get(stem.name);
-          if (isAudioBufferLike(buf)) {
-            renderDecodedStemVisuals(stem.name, buf, STEM_COLORS[stem.name] || "#a0a0a0");
+        if (mode === "chunked") {
+          // Streaming path: the engine holds no full buffers. Overview waveforms
+          // come from peaks.json (rendered by the _peaksPromise handler above);
+          // drive lane mini-waves + the energy baseline from those same peaks,
+          // and the VU meters from the engine's live per-stem analysers.
+          _peaksPromise.then((peaks) => {
+            if (token !== visualRenderToken || multitrack !== mt) return;
+            const p = peaks || {};
+            for (const stem of stems) {
+              const pts = p[stem.name];
+              if (pts?.length) {
+                renderRealMiniWaveFromPeaks(stem.name, pts, STEM_COLORS[stem.name] || "#a0a0a0");
+              }
+            }
+            renderStemEnergyBaselineFromPeaks(stems, p);
+          });
+          startAnalyserVuLoop(stems, eng, token);
+        } else {
+          // Full-decode path: drive the decode-dependent visuals from the
+          // engine's own buffers (the null-URL multitrack has none).
+          const decoded = eng.getBuffers();
+          if (!Object.keys(precomputedPeaks).length) {
+            clearOverviewWaveforms();
+            renderAllOverviewWaveforms(stems, decoded);
+          }
+          renderStemEnergyBaseline(stems, decoded);
+          startStemVuLoop(stems, decoded, token);
+          for (const stem of stems) {
+            const buf = decoded.get(stem.name);
+            if (isAudioBufferLike(buf)) {
+              renderDecodedStemVisuals(stem.name, buf, STEM_COLORS[stem.name] || "#a0a0a0");
+            }
           }
         }
       }).catch((e) => {
-        console.warn("[player] audio engine init failed; using streaming path:", e);
+        console.warn("[player] audio engine init failed; playback disabled:", e);
         eng.destroy();
         if (audioEngine === eng) setAudioEngine(null);
       });

@@ -132,13 +132,18 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       })
     : Promise.resolve().then(() => { master.connect(ctx.destination); }));
 
-  // Per-stem state: url, parsed WAV header, gain node, currently playing nodes
+  // Per-stem state: url, parsed WAV header, gain node, analyser (VU tap), and
+  // currently playing nodes. Graph per stem: sources -> gain -> analyser -> master.
+  // The analyser sits post-gain so VU meters reflect volume/mute/solo.
   const stemMap = new Map();
   for (const s of stems) {
     if (!s?.url) continue;
     const gain = ctx.createGain();
-    gain.connect(master);
-    stemMap.set(s.name, { url: s.url, header: null, gain, activeNodes: [] });
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    gain.connect(analyser);
+    analyser.connect(master);
+    stemMap.set(s.name, { url: s.url, header: null, gain, analyser, activeNodes: [] });
   }
 
   let _duration = 0;
@@ -156,6 +161,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // getCurrentTime() from advancing during an async chunk fetch.
   let _audioStarted = false;
   let _filling = false; // prevents concurrent _scheduleNext() calls
+  let loop = { enabled: false, start: 0, end: 0 };
 
   // Chunk cache: chunkIdx -> { promise: Promise<Map>, result: Map|null }
   // result is set synchronously once the promise resolves so play() can
@@ -283,7 +289,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   function _maybeSchedule() {
     if (_filling || !playing || destroyed) return;
-    if (_scheduledTo >= _duration) return;
+    // While looping, don't schedule past loop.end — _tick jumps back to
+    // loop.start when the playhead crosses it (bounded by one rAF frame).
+    const limit = (loop.enabled && loop.end > loop.start) ? loop.end : _duration;
+    if (_scheduledTo >= limit) return;
     if (_scheduledTo - _getCurrentTime() < LOOKAHEAD_SEC) {
       _filling = true;
       _scheduleNext().finally(() => { _filling = false; });
@@ -293,6 +302,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   function _tick() {
     if (!playing) return;
     const t = _getCurrentTime();
+    if (loop.enabled && loop.end > loop.start && t >= loop.end) {
+      seek(loop.start); // re-arms playback + tick from the loop start
+      return;
+    }
     if (t >= _duration) {
       playing = false;
       _audioStarted = false;
@@ -408,7 +421,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     isPlaying: () => playing,
     getCurrentTime: _getCurrentTime,
     getDuration: () => _duration,
-    setLoop: () => {},
+    setLoop: (enabled, start, end) => { loop = { enabled, start, end }; },
     setGain(name, v) {
       const stem = stemMap.get(name);
       if (stem) stem.gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
@@ -427,7 +440,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
         seek(t);
       }
     },
-    getAnalyser: () => null,
+    getAnalyser: (name) => stemMap.get(name)?.analyser ?? null,
     getBuffers: () => new Map(),
     destroy() {
       destroyed = true;

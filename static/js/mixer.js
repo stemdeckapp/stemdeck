@@ -241,6 +241,41 @@ export function renderRealMiniWave(stemName, audioBuffer, color) {
   }
 }
 
+// Peaks-based mini-wave for the streaming/chunked engine path, where no full
+// decoded buffer is available. `pts` is the backend peaks.json array for the
+// stem: [[min,max], ...] (1500 points). Mirrors renderRealMiniWave's bar layout.
+export function renderRealMiniWaveFromPeaks(stemName, pts, color) {
+  const svg = mixerEl.querySelector(`.lane-mini-wave[data-stem="${stemName}"]`);
+  if (!svg || !pts?.length) return;
+  const binSize = Math.max(1, Math.floor(pts.length / MINI_WAVE_BARS));
+  const peaks = new Array(MINI_WAVE_BARS);
+  let max = 0;
+  for (let i = 0; i < MINI_WAVE_BARS; i++) {
+    const start = i * binSize;
+    const end = i === MINI_WAVE_BARS - 1 ? pts.length : start + binSize;
+    let p = 0;
+    for (let j = start; j < end; j++) {
+      const v = Math.max(Math.abs(pts[j][0]), Math.abs(pts[j][1]));
+      if (v > p) p = v;
+    }
+    peaks[i] = p;
+    if (p > max) max = p;
+  }
+  const norm = max > 0 ? 1 / max : 0;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  for (let i = 0; i < MINI_WAVE_BARS; i++) {
+    const h = Math.max(1.5, peaks[i] * norm * MINI_WAVE_VIEWBOX_H);
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", `${i * 2}`);
+    rect.setAttribute("y", `${(MINI_WAVE_VIEWBOX_H - h) / 2}`);
+    rect.setAttribute("width", "1");
+    rect.setAttribute("height", `${h}`);
+    rect.setAttribute("fill", color);
+    rect.setAttribute("opacity", "0.95");
+    svg.appendChild(rect);
+  }
+}
+
 function downloadIcon() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
