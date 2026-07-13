@@ -60,6 +60,11 @@ const FRIENDS = [
     url: "https://empresseffects.com",
     logo: "/img/friends/empress-effects.png",
   },
+  {
+    name: "More Notes Less Talk",
+    role: "YouTube channel",
+    url: "https://www.youtube.com/@morenoteslesstalk",
+  },
 ];
 
 // Instagram glyph (Simple Icons), shown under tiles that link to Instagram.
