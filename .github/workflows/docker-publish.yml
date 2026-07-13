@@ -13,14 +13,22 @@ on:
   push:
     branches: [main]
   release:
-    # prereleased: a prerelease is published -> push the version tag only.
-    # released:    a stable release is published, OR a prerelease is promoted to
-    #              a full/Latest release -> push the version tag AND :latest.
-    # (Listening to these two instead of `published` avoids a double run on a
-    # stable publish, which fires both `published` and `released`.)
-    types: [prereleased, released]
-  # Same as a main push but on demand, from any ref.
+    # published: the reliable trigger -- fires whenever a release (draft or not,
+    # prerelease or not) is published. Confirmed empirically: publishing a draft
+    # prerelease fires `published` but NOT `prereleased` (the v0.8.0-alpha.7
+    # release never got its version tag pushed until this was added back).
+    # released: an already-published prerelease is promoted to a full/Latest
+    # release via the "Release label" edit -- pushes :latest for that case too.
+    types: [published, released]
+  # Same as a main push but on demand, from any ref. `version` lets a specific
+  # tag be (re)pushed by hand -- e.g. to recover from a missed release trigger
+  # without re-touching the release (which would re-run the OS build workflows).
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to push (e.g. 0.8.0-alpha.7). Leave blank for a git-derived :edge-only push."
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -54,6 +62,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             v="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            v="${{ github.event.inputs.version }}"
           else
             raw="$(git describe --tags --long 2>/dev/null || echo "0.0.0-0-g$(git rev-parse --short HEAD)")"
             v="$(printf '%s' "${raw#v}" | sed -E 's/-([0-9]+)-g([0-9a-f]+)$/+\1.g\2/')"
@@ -66,9 +76,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=edge,enable=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-            type=raw,value=${{ steps.ver.outputs.value }},enable=${{ github.event_name == 'release' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.action == 'released' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version == '') }}
+            type=raw,value=${{ steps.ver.outputs.value }},enable=${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && (github.event.action == 'released' || (github.event.action == 'published' && !github.event.release.prerelease)) }}
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
 
