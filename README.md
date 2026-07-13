@@ -49,6 +49,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding** - no
 | Thomann | Online Music Store | [@thomann.music](https://www.instagram.com/thomann.music) |
 | Analog4Lyfe | Analog music gear | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Empress Effects | Effects pedals | [empresseffects.com](https://empresseffects.com) |
+| More Notes Less Talk | YouTube channel | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
 
 
 ---
