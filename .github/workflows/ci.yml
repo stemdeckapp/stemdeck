@@ -75,6 +75,13 @@ jobs:
       # local-only, single-user app is negligible. Re-evaluate once demucs
       # supports torch 2.7+ without torchcodec.
       #
+      # torch PYSEC-2026-2286 (torch.load weights_only deserialization -> ACE,
+      # HIGH; fix 2.10.0) -- the exploit needs an attacker-controlled .pth.
+      # StemDeck never calls torch.load on untrusted input: demucs loads only its
+      # official model weights from the trusted torch-hub source, and users
+      # submit audio, not checkpoints. The same <2.7 pin blocks the 2.10.0 fix;
+      # re-evaluate with the torch upgrade noted above.
+      #
       # joblib PYSEC-2024-277 -- no fix version available as of 2026-05-21
       # (1.5.3 is latest). joblib is a transitive dep via demucs/librosa;
       # StemDeck does not directly invoke joblib serialization. Drop once
@@ -105,6 +112,7 @@ jobs:
             --ignore-vuln PYSEC-2025-209 \
             --ignore-vuln PYSEC-2025-210 \
             --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln PYSEC-2026-2286 \
             --ignore-vuln PYSEC-2024-277 \
             --ignore-vuln CVE-2025-2148 \
             --ignore-vuln CVE-2025-2149 \
