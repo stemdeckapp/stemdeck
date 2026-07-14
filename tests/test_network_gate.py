@@ -115,15 +115,15 @@ def test_demucs_device_env_seeds_default(monkeypatch, _isolated_settings):
 def test_demucs_device_force_verified_before_persist(monkeypatch, _isolated_settings):
     # Forcing a device that isn't available must be rejected loudly, not
     # persisted to silently fail later (#247 lesson applied to the server).
-    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cpu")
+    monkeypatch.setattr(settings_mod, "available_torch_devices", lambda: ["cpu"])
     with pytest.raises(ValueError):
         settings_mod.set_demucs_device("cuda")
     assert settings_mod.get_demucs_device_choice() == "auto"  # nothing persisted
     # Forcing CPU is always allowed; forcing an available GPU is allowed.
     assert settings_mod.set_demucs_device("cpu") == "cpu"
-    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cuda")
+    monkeypatch.setattr(settings_mod, "available_torch_devices", lambda: ["cuda", "cpu"])
     assert settings_mod.set_demucs_device("cuda") == "cuda"
-    assert settings_mod.get_demucs_device() == "cuda"
+    assert settings_mod.get_demucs_device() == "cuda"  # forced, no probe
 
 
 def test_demucs_device_rejects_unknown_choice(_isolated_settings):
@@ -133,10 +133,14 @@ def test_demucs_device_rejects_unknown_choice(_isolated_settings):
 
 def test_demucs_device_api_round_trip_and_422(monkeypatch, _isolated_settings):
     monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cpu")
+    monkeypatch.setattr(settings_mod, "available_torch_devices", lambda: ["cpu"])
+    monkeypatch.setattr("app.main.available_torch_devices", lambda: ["cpu"])
     with TestClient(app) as c:
         body = c.get("/api/settings").json()
         assert body["demucs_device"] == "auto"
         assert body["demucs_device_resolved"] == "cpu"
+        # UI availability: cuda/mps grayed out when only cpu is present.
+        assert body["demucs_devices_available"] == ["cpu"]
         # Valid change round-trips.
         r = c.post("/api/settings", json={"demucs_device": "cpu"})
         assert r.status_code == 200

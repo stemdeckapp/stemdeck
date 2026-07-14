@@ -17,6 +17,25 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser().resolve() if raw else default
 
 
+def available_torch_devices() -> list[str]:
+    """Compute devices this machine can actually use, best-first. CPU is always
+    present; cuda/mps depend on the hardware + installed torch build. The
+    Settings UI uses this to disable options that aren't available/detected so
+    a user can't pick an impossible device."""
+    devices: list[str] = []
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            devices.append("cuda")
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            devices.append("mps")
+    except ImportError:
+        pass
+    devices.append("cpu")
+    return devices
+
+
 def detect_torch_device() -> str:
     """Best available Torch device for Demucs by hardware probe: cuda > mps >
     cpu. Apple Silicon needs the explicit MPS check -- demucs's CLI default is
@@ -26,16 +45,7 @@ def detect_torch_device() -> str:
     User-facing device selection lives in app.core.settings (demucs_device,
     default "auto" -> this probe); the STEMDECK_DEMUCS_DEVICE env var seeds
     that setting's default so env-based deployments keep working."""
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            return "mps"
-    except ImportError:
-        pass
-    return "cpu"
+    return available_torch_devices()[0]
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent

@@ -19,7 +19,13 @@ import logging
 import os
 import threading
 
-from app.core.config import DATA_DIR, MAX_DURATION_SEC, VIDEO_MAX_HEIGHT, detect_torch_device
+from app.core.config import (
+    DATA_DIR,
+    MAX_DURATION_SEC,
+    VIDEO_MAX_HEIGHT,
+    available_torch_devices,
+    detect_torch_device,
+)
 
 _log = logging.getLogger("stemdeck.settings")
 
@@ -178,7 +184,7 @@ def set_demucs_device(value: str) -> str:
     choice = (value or "").strip().lower()
     if choice not in _DEVICE_CHOICES:
         raise ValueError("demucs_device must be one of: " + ", ".join(_DEVICE_CHOICES))
-    if choice in ("cuda", "mps") and detect_torch_device() != choice:
+    if choice in ("cuda", "mps") and choice not in available_torch_devices():
         raise ValueError(f"{choice} is not available on this machine")
     with _LOCK:
         _ensure()["demucs_device"] = choice

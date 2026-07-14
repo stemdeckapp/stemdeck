@@ -23,6 +23,7 @@ from app.core.config import (
     FFMPEG_BIN,
     JOBS_DIR,
     STATIC_DIR,
+    available_torch_devices,
     configure_portable_environment,
     ensure_runtime_dirs,
 )
@@ -238,9 +239,11 @@ def _settings_payload() -> dict[str, object]:
         "video_max_height": get_video_max_height(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
-        # select; the resolved value shows what jobs will actually run on.
+        # select; the resolved value shows what jobs will actually run on;
+        # available lets the UI gray out devices this machine can't use.
         "demucs_device": get_demucs_device_choice(),
         "demucs_device_resolved": get_demucs_device(),
+        "demucs_devices_available": available_torch_devices(),
     }
 
 

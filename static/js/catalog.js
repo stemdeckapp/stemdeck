@@ -1865,9 +1865,20 @@ async function wireGeneralSettings(overlay) {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
     if (portInput && d.port) portInput.value = String(d.port);
-    if (deviceSel && d.demucs_device) {
-      deviceSel.value = d.demucs_device;
-      lastDevice = d.demucs_device;
+    if (deviceSel) {
+      // Gray out devices this machine can't use (Auto and CPU are always
+      // available). Label disabled options so it's clear WHY they're greyed.
+      const avail = new Set(d.demucs_devices_available || []);
+      for (const opt of deviceSel.options) {
+        const base = opt.textContent.replace(/ — not available$/, "");
+        const ok = opt.value === "auto" || avail.has(opt.value);
+        opt.disabled = !ok;
+        opt.textContent = ok ? base : `${base} — not available`;
+      }
+      if (d.demucs_device) {
+        deviceSel.value = d.demucs_device;
+        lastDevice = d.demucs_device;
+      }
     }
     if (deviceResolved) {
       deviceResolved.textContent = d.demucs_device_resolved
