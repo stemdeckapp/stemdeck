@@ -779,7 +779,17 @@ input, textarea { font-family: inherit; }
 .settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 .settings-pane { display: flex; flex-direction: column; min-height: 0; }
 .settings-pane[data-pane="general"] { flex: 1; }
-.settings-pane[data-pane="advanced"] { flex: 1; overflow-y: auto; }
+.settings-pane[data-pane="advanced"] {
+  flex: 1; overflow-y: auto;
+  /* Reserve a gutter for the scrollbar so it never overlaps the right-aligned
+     controls (Port, Compute device). padding-right insets the content; the
+     equal negative margin lets that gutter sit in the card's own 12px padding,
+     so scrolling content stays aligned with the fixed header/tabs/footer.
+     Handles overlay scrollbars (macOS/WebKit, which draw over the padding box)
+     and reserves space for classic scrollbars (Windows/Linux). */
+  scrollbar-gutter: stable;
+  padding-right: 12px; margin-right: -12px;
+}
 .settings-pane.hidden { display: none; }
 .settings-pane[data-pane="advanced"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
 .settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
