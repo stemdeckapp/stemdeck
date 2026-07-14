@@ -9,9 +9,10 @@ import threading
 import time
 from pathlib import Path
 
-from app.core.config import DEMUCS_DEVICE, DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
+from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
+from app.core.settings import get_demucs_device
 
 logger = logging.getLogger("stemdeck.pipeline")
 
@@ -24,6 +25,10 @@ _PCT_RE = re.compile(r"(\d{1,3})%")
 def separate(job: Job, source: Path, job_dir: Path) -> Path:
     _set(job, status="separating", progress=0.0, stage="Separating stems...")
 
+    # Read the device fresh per job (not a frozen import) so a Settings change
+    # applies to the next separation without a restart.
+    device = get_demucs_device()
+    logger.info("[%s] separating on device=%s", job.id, device)
     cmd = [
         sys.executable,
         "-m",
@@ -31,7 +36,7 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         "-n",
         DEMUCS_MODEL,
         "-d",
-        DEMUCS_DEVICE,
+        device,
         "-o",
         str(job_dir),
         str(source),

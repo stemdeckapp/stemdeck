@@ -84,6 +84,72 @@ def test_settings_reject_non_integer():
         assert c.post("/api/settings", json={"max_duration_sec": "abc"}).status_code == 422
 
 
+# ── demucs_device (compute device) ──
+
+
+@pytest.fixture()
+def _isolated_settings(monkeypatch, tmp_path):
+    """Point the settings store at a temp file with a fresh in-memory state, so
+    device tests neither read nor pollute the developer's real settings.json."""
+    monkeypatch.setattr(settings_mod, "_SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(settings_mod, "_state", None)
+    monkeypatch.delenv("STEMDECK_DEMUCS_DEVICE", raising=False)
+
+
+def test_demucs_device_defaults_to_auto_and_resolves(monkeypatch, _isolated_settings):
+    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cpu")
+    assert settings_mod.get_demucs_device_choice() == "auto"
+    assert settings_mod.get_demucs_device() == "cpu"  # auto -> hardware probe
+    # A different probe result flows through without any persisted change.
+    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cuda")
+    assert settings_mod.get_demucs_device() == "cuda"
+
+
+def test_demucs_device_env_seeds_default(monkeypatch, _isolated_settings):
+    # Existing env-based deployments keep their forced device as the default.
+    monkeypatch.setenv("STEMDECK_DEMUCS_DEVICE", "cuda")
+    assert settings_mod.get_demucs_device_choice() == "cuda"
+    assert settings_mod.get_demucs_device() == "cuda"  # forced, no probe
+
+
+def test_demucs_device_force_verified_before_persist(monkeypatch, _isolated_settings):
+    # Forcing a device that isn't available must be rejected loudly, not
+    # persisted to silently fail later (#247 lesson applied to the server).
+    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cpu")
+    with pytest.raises(ValueError):
+        settings_mod.set_demucs_device("cuda")
+    assert settings_mod.get_demucs_device_choice() == "auto"  # nothing persisted
+    # Forcing CPU is always allowed; forcing an available GPU is allowed.
+    assert settings_mod.set_demucs_device("cpu") == "cpu"
+    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cuda")
+    assert settings_mod.set_demucs_device("cuda") == "cuda"
+    assert settings_mod.get_demucs_device() == "cuda"
+
+
+def test_demucs_device_rejects_unknown_choice(_isolated_settings):
+    with pytest.raises(ValueError):
+        settings_mod.set_demucs_device("bogus")
+
+
+def test_demucs_device_api_round_trip_and_422(monkeypatch, _isolated_settings):
+    monkeypatch.setattr(settings_mod, "detect_torch_device", lambda: "cpu")
+    with TestClient(app) as c:
+        body = c.get("/api/settings").json()
+        assert body["demucs_device"] == "auto"
+        assert body["demucs_device_resolved"] == "cpu"
+        # Valid change round-trips.
+        r = c.post("/api/settings", json={"demucs_device": "cpu"})
+        assert r.status_code == 200
+        assert r.json()["demucs_device"] == "cpu"
+        # Unavailable device -> 422 with a user-actionable detail, not persisted.
+        r = c.post("/api/settings", json={"demucs_device": "cuda"})
+        assert r.status_code == 422
+        assert "not available" in r.json()["detail"]
+        assert c.get("/api/settings").json()["demucs_device"] == "cpu"
+        # Unknown value -> 422.
+        assert c.post("/api/settings", json={"demucs_device": "bogus"}).status_code == 422
+
+
 def test_gate_blocks_non_loopback_when_off():
     settings_mod.set_allow_network(False)
     # TestClient's client host ("testclient") is treated as non-loopback.

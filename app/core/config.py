@@ -17,15 +17,15 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser().resolve() if raw else default
 
 
-def _detect_device() -> str:
-    """Pick best available Torch device for Demucs. Override via
-    STEMDECK_DEMUCS_DEVICE env var ('cuda' | 'mps' | 'cpu'). Apple Silicon
-    silently falls back to CPU otherwise -- demucs's CLI default is
-    "cuda if available else cpu" and macOS has no CUDA, leaving the
-    integrated GPU idle and processing 3-5x slower than necessary."""
-    forced = os.environ.get("STEMDECK_DEMUCS_DEVICE", "").strip().lower()
-    if forced in ("cuda", "mps", "cpu"):
-        return forced
+def detect_torch_device() -> str:
+    """Best available Torch device for Demucs by hardware probe: cuda > mps >
+    cpu. Apple Silicon needs the explicit MPS check -- demucs's CLI default is
+    "cuda if available else cpu" and macOS has no CUDA, leaving the integrated
+    GPU idle and processing 3-5x slower than necessary.
+
+    User-facing device selection lives in app.core.settings (demucs_device,
+    default "auto" -> this probe); the STEMDECK_DEMUCS_DEVICE env var seeds
+    that setting's default so env-based deployments keep working."""
     try:
         import torch
 
@@ -67,7 +67,6 @@ FFPROBE_BIN = _env_path(
     FFMPEG_DIR / ("ffprobe.exe" if sys.platform.startswith("win") else "ffprobe"),
 )
 DEMUCS_MODEL = os.environ.get("STEMDECK_DEMUCS_MODEL", "htdemucs_6s").strip() or "htdemucs_6s"
-DEMUCS_DEVICE = _detect_device()
 MAX_DURATION_SEC = max(60, _env_int("STEMDECK_MAX_DURATION_SEC", 1200))  # 20 min default
 JOB_TTL_SECONDS = max(300, _env_int("STEMDECK_JOB_TTL_SECONDS", 24 * 3600))  # 24 h default
 MAX_PENDING_JOBS = max(1, min(50, _env_int("STEMDECK_MAX_PENDING_JOBS", 3)))

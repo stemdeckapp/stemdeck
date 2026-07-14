@@ -19,7 +19,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
 from app.core.config import (
-    DEMUCS_DEVICE,
     DEMUCS_MODEL,
     FFMPEG_BIN,
     JOBS_DIR,
@@ -30,10 +29,13 @@ from app.core.config import (
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
+    get_demucs_device,
+    get_demucs_device_choice,
     get_max_duration_sec,
     get_port,
     get_video_max_height,
     set_allow_network,
+    set_demucs_device,
     set_max_duration_sec,
     set_port,
     set_video_max_height,
@@ -45,7 +47,9 @@ from app.pipeline.collect import sweep_old_jobs
 # logger.info(...) call across the app, including the analyze
 # diagnostics ("chroma:", "key candidates:").
 logging.getLogger("stemdeck").setLevel(logging.INFO)
-logging.getLogger("stemdeck").info("demucs config: model=%s device=%s", DEMUCS_MODEL, DEMUCS_DEVICE)
+logging.getLogger("stemdeck").info(
+    "demucs config: model=%s device=%s", DEMUCS_MODEL, get_demucs_device()
+)
 
 configure_portable_environment()
 
@@ -211,7 +215,7 @@ def health() -> dict[str, object]:
         "version": app_version(),
         "ffmpeg_configured": FFMPEG_BIN.is_file(),
         "demucs_model": DEMUCS_MODEL,
-        "demucs_device": DEMUCS_DEVICE,
+        "demucs_device": get_demucs_device(),
     }
 
 
@@ -233,6 +237,10 @@ def _settings_payload() -> dict[str, object]:
         "max_duration_sec": get_max_duration_sec(),
         "video_max_height": get_video_max_height(),
         "port": get_port(),
+        # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
+        # select; the resolved value shows what jobs will actually run on.
+        "demucs_device": get_demucs_device_choice(),
+        "demucs_device_resolved": get_demucs_device(),
     }
 
 
@@ -266,6 +274,13 @@ async def update_settings(request: Request) -> dict[str, object]:
                 setter(int(body[key]))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
+    if "demucs_device" in body:
+        try:
+            set_demucs_device(str(body["demucs_device"]))
+        except ValueError as e:
+            # set_demucs_device's messages are safe, user-actionable strings
+            # (invalid choice / device not available on this machine).
+            raise HTTPException(status_code=422, detail=str(e)) from None
     return _settings_payload()
 
 
