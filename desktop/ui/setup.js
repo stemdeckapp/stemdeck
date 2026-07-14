@@ -237,7 +237,18 @@ async function runSetup() {
     // refresh the install records the version and subsequent launches match.
     const versionMismatch = Boolean(expectedVersion) && installedVersion !== expectedVersion;
 
-    if (runtime.pythonReady && runtime.ffmpegReady && runtime.torchDevice && !versionMismatch) {
+    // A persisted torch device only counts as settled when it is a positive
+    // result ("cuda"/"mps") or the package itself is CPU-only. A CPU device
+    // born from a failure (no GPU found, CUDA verify failed) -- or from a build
+    // that predates reason tracking -- re-runs the GPU step on this launch, so
+    // a single bad first run can't pin the install to CPU forever (#247).
+    // Cost when nothing changed: one fast nvidia-smi probe.
+    const torchDeviceSettled =
+      runtime.torchDevice === "cuda" ||
+      runtime.torchDevice === "mps" ||
+      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cpu-only-package");
+
+    if (runtime.pythonReady && runtime.ffmpegReady && torchDeviceSettled && !versionMismatch) {
       for (const step of steps) {
         step.classList.remove("active", "error");
         if (step.dataset.step === "backend") {

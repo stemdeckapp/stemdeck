@@ -169,8 +169,10 @@ foreach ($Dir in @("cache", "downloads", "ffmpeg", "jobs", "logs", "models")) {
   New-Item -ItemType Directory -Force (Join-Path $Stage "data\$Dir") | Out-Null
 }
 if ($CpuOnly) {
+  # Root marker only: the app trusts cpu-only solely in the app root (#247).
+  # A data\cpu-only copy used to leak into the shared per-user data dir and
+  # silently forced later NVIDIA installs onto CPU.
   New-Item -ItemType File -Force (Join-Path $Stage "cpu-only") | Out-Null
-  New-Item -ItemType File -Force (Join-Path $Stage "data\cpu-only") | Out-Null
 }
 
 Copy-Tree (Join-Path $Root "app") (Join-Path $BackendDir "app")

@@ -102,6 +102,11 @@ struct RuntimeProbe {
     ffmpeg_ready: bool,
     /// Persisted from previous setup run; None means GPU step hasn't run yet.
     torch_device: Option<String>,
+    /// Why the persisted device was chosen (e.g. "verified", "no-gpu-detected",
+    /// "cuda-verify-failed", "cpu-only-package"). None on installs that predate
+    /// reason tracking -- the setup gate treats those as unsettled so a wrongly
+    /// pinned CPU heals itself on the next launch (#247).
+    torch_device_reason: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -166,6 +171,8 @@ struct GpuSetup {
     cuda_version: Option<String>,
     torch_device: String,
     cuda_verified: bool,
+    /// Why this device was chosen; mirrors the persisted torchDeviceReason.
+    reason: String,
 }
 
 fn main() {
@@ -330,6 +337,7 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     }
     let ffmpeg = resolve_existing_ffmpeg(&data_dir);
     let torch_device = read_config_str(&data_dir, "torchDevice");
+    let torch_device_reason = read_config_str(&data_dir, "torchDeviceReason");
     Ok(RuntimeProbe {
         app_root: root.display().to_string(),
         data_dir: data_dir.display().to_string(),
@@ -338,6 +346,7 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
         ffmpeg_ready: ffmpeg.is_some(),
         ffmpeg_path: ffmpeg.map(|p| p.display().to_string()),
         torch_device,
+        torch_device_reason,
     })
 }
 
@@ -504,10 +513,6 @@ fn ensure_workspace() -> Result<(), String> {
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
         fs::create_dir_all(data.join(dir))
             .map_err(|e| format!("failed to create data/{dir}: {e}"))?;
-    }
-    if is_cpu_only_package(&root, &data) {
-        fs::write(data.join("cpu-only"), "")
-            .map_err(|e| format!("failed to write data/cpu-only: {e}"))?;
     }
     let config = data.join("config.json");
     if !config.exists() {
@@ -683,15 +688,20 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
     let root = app_root()?;
     let data_dir = local_data_dir()?;
 
+    // Self-heal installs poisoned by a previous CPU-build's data-dir marker
+    // before deciding anything (#247).
+    clear_stale_cpu_marker(&root, &data_dir);
+
     // CPU-only portable build: skip GPU detection and pip entirely.
-    if is_cpu_only_package(&root, &data_dir) {
-        persist_torch_device(&data_dir, "cpu");
+    if is_cpu_only_package(&root) {
+        persist_torch_device(&data_dir, "cpu", "cpu-only-package");
         return Ok(GpuSetup {
             gpu_detected: false,
             gpu_name: None,
             cuda_version: None,
             torch_device: "cpu".to_string(),
             cuda_verified: false,
+            reason: "cpu-only-package".to_string(),
         });
     }
 
@@ -703,8 +713,12 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
     #[cfg(target_os = "macos")]
     {
         let mps_available = verify_mps_torch(&python);
-        let device = if mps_available { "mps" } else { "cpu" };
-        persist_torch_device(&data_dir, device);
+        let (device, reason) = if mps_available {
+            ("mps", "mps")
+        } else {
+            ("cpu", "mps-unavailable")
+        };
+        persist_torch_device(&data_dir, device, reason);
         Ok(GpuSetup {
             gpu_detected: mps_available,
             gpu_name: if mps_available {
@@ -715,22 +729,29 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
             cuda_version: None,
             torch_device: device.to_string(),
             cuda_verified: false,
+            reason: reason.to_string(),
         })
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let setup = match detect_nvidia_gpu() {
+        let setup = match detect_nvidia_gpu(&data_dir) {
             Some((gpu_name, cuda_version, compute_cap)) => {
                 let index_url = cuda_index_url(compute_cap.as_deref(), &cuda_version);
                 install_cuda_torch(&python, &index_url, &state)?;
                 let cuda_verified = verify_cuda_torch(&python);
+                let reason = if cuda_verified {
+                    "verified"
+                } else {
+                    "cuda-verify-failed"
+                };
                 GpuSetup {
                     gpu_detected: true,
                     gpu_name: Some(gpu_name),
                     cuda_version: Some(cuda_version),
                     torch_device: if cuda_verified { "cuda" } else { "cpu" }.to_string(),
                     cuda_verified,
+                    reason: reason.to_string(),
                 }
             }
             None => GpuSetup {
@@ -739,22 +760,64 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
                 cuda_version: None,
                 torch_device: "cpu".to_string(),
                 cuda_verified: false,
+                reason: "no-gpu-detected".to_string(),
             },
         };
-        // Persist so subsequent launches skip this step entirely.
-        persist_torch_device(&data_dir, &setup.torch_device);
+        // Persist device + reason. The setup gate only treats "cuda"/"mps" (or
+        // cpu on a cpu-only package) as settled -- a CPU result born from a
+        // failure is re-probed on the next launch instead of pinning the
+        // install to CPU forever (#247).
+        persist_torch_device(&data_dir, &setup.torch_device, &setup.reason);
+        append_to_setup_log(
+            &data_dir,
+            &format!(
+                "GPU setup decision: device={} reason={} gpu={:?}",
+                setup.torch_device, setup.reason, setup.gpu_name
+            ),
+        );
         Ok(setup)
     }
 }
 
-fn is_cpu_only_package(root: &Path, data_dir: &Path) -> bool {
-    root.join("cpu-only").is_file() || data_dir.join("cpu-only").is_file()
+/// The `cpu-only` marker is trusted ONLY in the app root: it ships inside the
+/// package, so it is always correct for the running build. The per-user data
+/// dir is shared across installs -- honoring a marker there let a previously
+/// installed CPU build permanently force the NVIDIA build onto CPU (#247).
+fn is_cpu_only_package(root: &Path) -> bool {
+    root.join("cpu-only").is_file()
 }
 
-fn persist_torch_device(data_dir: &std::path::Path, device: &str) {
+/// Deletes a stale `cpu-only` marker left in the shared data dir by an older
+/// CPU-build install (which used to write/migrate it there). Without this, the
+/// NVIDIA build would keep re-reading it forever on builds that trusted the
+/// data-dir copy. Best-effort; logs so setup.log tells the story (#247).
+fn clear_stale_cpu_marker(root: &Path, data_dir: &Path) {
+    let stale = data_dir.join("cpu-only");
+    if !is_cpu_only_package(root) && stale.is_file() {
+        match fs::remove_file(&stale) {
+            Ok(()) => append_to_setup_log(
+                data_dir,
+                "removed stale cpu-only marker left by a previous CPU-build install; \
+                 GPU detection will run",
+            ),
+            Err(e) => append_to_setup_log(
+                data_dir,
+                &format!("could not remove stale cpu-only marker: {e}"),
+            ),
+        }
+    }
+}
+
+fn persist_torch_device(data_dir: &std::path::Path, device: &str, reason: &str) {
     let _ = update_setup_config(
         data_dir,
-        [("torchDevice", serde_json::Value::String(device.to_string()))],
+        [
+            ("torchDevice", serde_json::Value::String(device.to_string())),
+            (
+                "torchDeviceReason",
+                serde_json::Value::String(reason.to_string()),
+            ),
+        ],
     );
 }
 
@@ -772,39 +835,93 @@ fn verify_mps_torch(python: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Finds nvidia-smi.exe under a DriverStore FileRepository directory. Modern
+/// NVIDIA DCH drivers sometimes ship it ONLY there (no System32 copy), e.g.
+/// `...\FileRepository\nv_dispi.inf_amd64_<hash>\nvidia-smi.exe`. Scans the
+/// `nv*`-prefixed package dirs and returns the most recently modified hit, so
+/// after a driver update the current package wins (#247).
+#[cfg(any(windows, test))]
+fn find_driver_store_nvidia_smi(file_repository: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(file_repository).ok()?;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        if !name.starts_with("nv") {
+            continue;
+        }
+        let candidate = entry.path().join("nvidia-smi.exe");
+        if !candidate.is_file() {
+            continue;
+        }
+        let modified = candidate
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        if best.as_ref().is_none_or(|(t, _)| modified > *t) {
+            best = Some((modified, candidate));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
 #[cfg(not(target_os = "macos"))]
-fn nvidia_smi_exe() -> &'static str {
+fn nvidia_smi_exe() -> String {
     // nvidia-smi.exe lives in System32 on Windows but Tauri child processes
-    // inherit a stripped PATH that may not include it.
+    // inherit a stripped PATH that may not include it. Some DCH driver installs
+    // only place it in the DriverStore, so scan there before falling back to
+    // PATH (#247).
     #[cfg(windows)]
     {
         const SYSTEM32: &str = r"C:\Windows\System32\nvidia-smi.exe";
         if std::path::Path::new(SYSTEM32).is_file() {
-            return SYSTEM32;
+            return SYSTEM32.to_string();
+        }
+        let file_repository =
+            std::path::Path::new(r"C:\Windows\System32\DriverStore\FileRepository");
+        if let Some(found) = find_driver_store_nvidia_smi(file_repository) {
+            return found.display().to_string();
         }
     }
-    "nvidia-smi"
+    "nvidia-smi".to_string()
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_nvidia_gpu() -> Option<(String, String, Option<String>)> {
+fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)> {
     let smi = nvidia_smi_exe();
-    let mut cmd = Command::new(smi);
+    append_to_setup_log(data_dir, &format!("GPU detection using: {smi}"));
+    let mut cmd = Command::new(&smi);
     cmd.args(["--query-gpu=name", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     hide_console_window(&mut cmd);
-    let name_out = command_output_with_timeout(cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    // 30s (vs 10s elsewhere): the first nvidia-smi call can be slow on Optimus
+    // laptops that have to wake a sleeping dGPU (#247).
+    let name_out = match command_output_with_timeout(cmd, Duration::from_secs(30), "nvidia-smi") {
+        Ok(out) => out,
+        Err(e) => {
+            append_to_setup_log(data_dir, &format!("nvidia-smi failed to run: {e}"));
+            return None;
+        }
+    };
     if !name_out.status.success() {
+        append_to_setup_log(
+            data_dir,
+            &format!(
+                "nvidia-smi exited with {}; treating as no GPU",
+                name_out.status
+            ),
+        );
         return None;
     }
     let gpu_name = String::from_utf8_lossy(&name_out.stdout).trim().to_string();
     if gpu_name.is_empty() {
+        append_to_setup_log(data_dir, "nvidia-smi reported no GPU name");
         return None;
     }
 
     // Read CUDA version from the standard nvidia-smi header.
-    let mut smi_cmd = Command::new(smi);
+    let mut smi_cmd = Command::new(&smi);
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     hide_console_window(&mut smi_cmd);
     let smi_out =
@@ -816,7 +933,7 @@ fn detect_nvidia_gpu() -> Option<(String, String, Option<String>)> {
     // "8.9" for Ada). Drives the wheel choice: stock torch 2.6 cu12x wheels
     // have no sm_120 kernels, so Blackwell needs a cu128 / torch 2.7 build.
     // Failure here is non-fatal — we fall back to the CUDA-version heuristic.
-    let compute_cap = detect_compute_cap(smi);
+    let compute_cap = detect_compute_cap(&smi);
 
     Some((gpu_name, cuda_version, compute_cap))
 }
@@ -1416,10 +1533,13 @@ fn migrate_legacy_data(root: &Path, data_dir: &Path) {
             let _ = fs::rename(&src, data_dir.join(name));
         }
     }
-    for name in ["config.json", "cpu-only"] {
-        let src = old.join(name);
+    // NOTE: deliberately does NOT migrate `cpu-only` -- the marker is only
+    // trusted in the app root (see is_cpu_only_package); carrying it into the
+    // shared data dir poisoned later NVIDIA installs (#247).
+    {
+        let src = old.join("config.json");
         if src.exists() {
-            let _ = fs::copy(&src, data_dir.join(name));
+            let _ = fs::copy(&src, data_dir.join("config.json"));
         }
     }
 }
@@ -2750,5 +2870,87 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // Missing / unparseable compute capability also falls back.
         assert_eq!(super::wheel_tag(None, "12.1"), "cu121");
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
+    }
+
+    // --- cpu-only marker precedence + self-heal (#247) ---
+
+    #[test]
+    fn cpu_only_marker_trusted_in_root_only() {
+        let root = make_tmp();
+        let data = make_tmp();
+        // Marker only in the data dir (a previous CPU-build install) must NOT
+        // mark this package CPU-only.
+        fs::write(data.path().join("cpu-only"), "").unwrap();
+        assert!(!super::is_cpu_only_package(root.path()));
+        // Marker in the app root (ships with the package) does.
+        fs::write(root.path().join("cpu-only"), "").unwrap();
+        assert!(super::is_cpu_only_package(root.path()));
+    }
+
+    #[test]
+    fn stale_data_dir_marker_is_removed_for_gpu_builds() {
+        let root = make_tmp();
+        let data = make_tmp();
+        let stale = data.path().join("cpu-only");
+        fs::write(&stale, "").unwrap();
+        // GPU build (no root marker): the stale data-dir marker is deleted.
+        super::clear_stale_cpu_marker(root.path(), data.path());
+        assert!(!stale.exists());
+        // And the cleanup is recorded in setup.log.
+        let log = fs::read_to_string(data.path().join("logs").join("setup.log")).unwrap();
+        assert!(log.contains("stale cpu-only marker"));
+    }
+
+    #[test]
+    fn cpu_build_keeps_its_data_dir_marker() {
+        let root = make_tmp();
+        let data = make_tmp();
+        fs::write(root.path().join("cpu-only"), "").unwrap();
+        let legacy = data.path().join("cpu-only");
+        fs::write(&legacy, "").unwrap();
+        // CPU build (root marker present): nothing to heal, no churn.
+        super::clear_stale_cpu_marker(root.path(), data.path());
+        assert!(legacy.exists());
+        assert!(!data.path().join("logs").join("setup.log").exists());
+    }
+
+    // --- nvidia-smi DriverStore discovery (#247) ---
+
+    #[test]
+    fn driver_store_scan_finds_newest_nv_package() {
+        let repo = make_tmp();
+        // Non-NVIDIA package dirs are ignored.
+        fs::create_dir_all(repo.path().join("intelgpu.inf_amd64_aaa")).unwrap();
+        fs::write(
+            repo.path()
+                .join("intelgpu.inf_amd64_aaa")
+                .join("nvidia-smi.exe"),
+            b"x",
+        )
+        .unwrap();
+        // Older NVIDIA package.
+        let old_pkg = repo.path().join("nv_dispi.inf_amd64_old");
+        fs::create_dir_all(&old_pkg).unwrap();
+        fs::write(old_pkg.join("nvidia-smi.exe"), b"x").unwrap();
+        // Newer NVIDIA package (later mtime via explicit set).
+        let new_pkg = repo.path().join("nvmdi.inf_amd64_new");
+        fs::create_dir_all(&new_pkg).unwrap();
+        let new_exe = new_pkg.join("nvidia-smi.exe");
+        fs::write(&new_exe, b"x").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        let f = fs::OpenOptions::new().write(true).open(&new_exe).unwrap();
+        f.set_modified(later).unwrap();
+
+        let found = super::find_driver_store_nvidia_smi(repo.path());
+        assert_eq!(found, Some(new_exe));
+    }
+
+    #[test]
+    fn driver_store_scan_handles_missing_dir() {
+        let repo = make_tmp();
+        let missing = repo.path().join("does-not-exist");
+        assert_eq!(super::find_driver_store_nvidia_smi(&missing), None);
+        // Present but empty: also None.
+        assert_eq!(super::find_driver_store_nvidia_smi(repo.path()), None);
     }
 }
