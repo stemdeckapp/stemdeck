@@ -1834,6 +1834,7 @@ function networkSettingsHtml() {
         <div class="settings-row-text">
           <div class="settings-row-title">Make StemDeck available on your network</div>
           <div class="settings-row-desc">Let other devices (like your phone) open StemDeck at the address below.</div>
+          <div class="settings-row-desc settings-lock-note">Read-only when StemDeck is started in server mode — network access is then set by your server configuration.</div>
         </div>
         <label class="settings-switch">
           <input type="checkbox" class="net-access-input" />
@@ -1852,10 +1853,11 @@ function networkSettingsHtml() {
 async function wireGeneralSettings(overlay) {
   const durInput = overlay.querySelector(".set-max-duration");
   const heightSel = overlay.querySelector(".set-video-height");
+  const sampleRateSel = overlay.querySelector(".set-export-samplerate");
   const portInput = overlay.querySelector(".set-port");
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceResolved = overlay.querySelector(".set-demucs-resolved");
-  if (!durInput && !heightSel && !portInput && !deviceSel) return;
+  if (!durInput && !heightSel && !sampleRateSel && !portInput && !deviceSel) return;
 
   // Last server-confirmed device choice, to revert the select when the server
   // rejects a forced device (e.g. CUDA not available on this machine).
@@ -1864,6 +1866,7 @@ async function wireGeneralSettings(overlay) {
   const apply = (d) => {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
+    if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
     if (deviceSel) {
       // Gray out devices this machine can't use (Auto and CPU are always
@@ -1918,6 +1921,9 @@ async function wireGeneralSettings(overlay) {
   heightSel?.addEventListener("change", () => {
     post({ video_max_height: parseInt(heightSel.value, 10) });
   });
+  sampleRateSel?.addEventListener("change", () => {
+    post({ export_sample_rate: parseInt(sampleRateSel.value, 10) });
+  });
   portInput?.addEventListener("change", () => {
     const port = Math.max(1024, Math.min(65535, parseInt(portInput.value, 10) || 8000));
     post({ port });
@@ -1957,6 +1963,12 @@ async function wireNetworkSetting(overlay) {
   const qrWrap = overlay.querySelector(".settings-net-qr");
   if (!input) return;
 
+  // Server mode (no Tauri shell): network availability is governed by the server
+  // deployment, not this toggle. A headless server exists to be reached over the
+  // network, so present the switch as on and read-only (the "read-only in server
+  // mode" note explains how to change it via server config).
+  const serverMode = !window.__TAURI__?.core?.invoke;
+
   let enabled = false;
   let addresses = [];
   try {
@@ -1967,6 +1979,7 @@ async function wireNetworkSetting(overlay) {
       addresses = Array.isArray(data.lan_addresses) ? data.lan_addresses : [];
     }
   } catch { /* leave defaults */ }
+  if (serverMode) enabled = true;
 
   // QR codes: one per LAN address, each encodes the /mobile/ URL so the
   // phone camera opens StemDeck directly. Cards start blurred so an open
@@ -2048,7 +2061,8 @@ function openLibraryEditor() {
       </div>
       <div class="settings-tabs" role="tablist">
         <button class="settings-tab active" type="button" data-tab="general" role="tab">General</button>
-        <button class="settings-tab" type="button" data-tab="advanced" role="tab">Advanced</button>
+        <button class="settings-tab" type="button" data-tab="network" role="tab">Network</button>
+        <button class="settings-tab" type="button" data-tab="export" role="tab">Export</button>
       </div>
       <div class="settings-pane" data-pane="general">
         <div class="settings-section">
@@ -2058,32 +2072,6 @@ function openLibraryEditor() {
               <div class="settings-row-desc">Longest track accepted for processing, in minutes (max 20).</div>
             </div>
             <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" />
-          </div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-row">
-            <div class="settings-row-text">
-              <div class="settings-row-title">MP4 video quality</div>
-              <div class="settings-row-desc">Max resolution for MP4 export and YouTube video.</div>
-            </div>
-            <select class="settings-select set-video-height">
-              <option value="360">360p</option>
-              <option value="480">480p</option>
-              <option value="720">720p</option>
-              <option value="1080">1080p</option>
-            </select>
-          </div>
-        </div>
-      </div>
-      <div class="settings-pane hidden" data-pane="advanced">
-        ${networkSettingsHtml()}
-        <div class="settings-section">
-          <div class="settings-row">
-            <div class="settings-row-text">
-              <div class="settings-row-title">Port</div>
-              <div class="settings-row-desc">Port StemDeck runs on. Restart to apply.</div>
-            </div>
-            <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" />
           </div>
         </div>
         <div class="settings-section">
@@ -2110,6 +2098,48 @@ function openLibraryEditor() {
         <div class="library-editor-foot">
           <span class="library-editor-status" aria-live="polite"></span>
           <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
+        </div>
+      </div>
+      <div class="settings-pane hidden" data-pane="network">
+        ${networkSettingsHtml()}
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Port</div>
+              <div class="settings-row-desc">Port StemDeck runs on. Restart to apply.</div>
+            </div>
+            <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" />
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane hidden" data-pane="export">
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Sample rate</div>
+              <div class="settings-row-desc">Sample rate for exported mixes and regions (WAV, FLAC, MP3). 44.1 kHz suits most DAWs and samplers; pick another if your hardware needs it.</div>
+            </div>
+            <select class="settings-select set-export-samplerate" aria-label="Export sample rate">
+              <option value="22050">22.05 kHz</option>
+              <option value="32000">32 kHz</option>
+              <option value="44100">44.1 kHz</option>
+              <option value="48000">48 kHz</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">MP4 video quality</div>
+              <div class="settings-row-desc">Max resolution for MP4 export and YouTube video.</div>
+            </div>
+            <select class="settings-select set-video-height">
+              <option value="360">360p</option>
+              <option value="480">480p</option>
+              <option value="720">720p</option>
+              <option value="1080">1080p</option>
+            </select>
+          </div>
         </div>
       </div>
       <div class="settings-foot">
@@ -2150,7 +2180,7 @@ function openLibraryEditor() {
     const note = document.createElement("p");
     note.className = "settings-server-note";
     note.textContent = "These settings are read-only in server mode. To change them, update your server configuration (e.g. docker-compose.yml) and restart.";
-    overlay.querySelector("[data-pane='advanced']")?.prepend(note);
+    overlay.querySelector("[data-pane='network']")?.prepend(note);
   }
 }
 

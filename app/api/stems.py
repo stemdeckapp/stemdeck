@@ -16,6 +16,7 @@ from starlette.background import BackgroundTask
 
 from app.core.config import JOB_ID_RE, JOBS_DIR, STEM_NAMES, TIMEOUT_FFMPEG, ffmpeg_executable
 from app.core.registry import get as registry_get
+from app.core.settings import get_export_sample_rate
 
 logger = logging.getLogger("stemdeck.api")
 
@@ -307,7 +308,20 @@ async def get_mixdown(
     else:
         out_label = "[a0]"
     codec = MIXDOWN_CODECS[ext]
-    cmd += ["-filter_complex", ";".join(filters), "-map", out_label, *post_seek, *codec, "pipe:1"]
+    # Resample to the user's chosen export rate (default 44.1 kHz = the stem rate,
+    # so a no-op unless changed). Applies to every audio container -- some hardware
+    # samplers reject anything but a specific rate.
+    rate = ["-ar", str(get_export_sample_rate())]
+    cmd += [
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        out_label,
+        *post_seek,
+        *codec,
+        *rate,
+        "pipe:1",
+    ]
 
     media_type = MIXDOWN_MEDIA_TYPES[ext]
     return StreamingResponse(

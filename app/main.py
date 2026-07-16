@@ -32,11 +32,13 @@ from app.core.settings import (
     get_allow_network,
     get_demucs_device,
     get_demucs_device_choice,
+    get_export_sample_rate,
     get_max_duration_sec,
     get_port,
     get_video_max_height,
     set_allow_network,
     set_demucs_device,
+    set_export_sample_rate,
     set_max_duration_sec,
     set_port,
     set_video_max_height,
@@ -237,6 +239,7 @@ def _settings_payload() -> dict[str, object]:
         "allow_network": get_allow_network(),
         "max_duration_sec": get_max_duration_sec(),
         "video_max_height": get_video_max_height(),
+        "export_sample_rate": get_export_sample_rate(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
         # select; the resolved value shows what jobs will actually run on;
@@ -253,7 +256,10 @@ def get_settings(request: Request) -> dict[str, object]:
     # host). The port is whatever this request came in on.
     port = request.url.port or 8000
     addresses = sorted(f"http://{ip}:{port}" for ip in _local_ips() if _is_lan_ipv4(ip))
-    return {**_settings_payload(), "lan_addresses": addresses}
+    # Show the port the server is actually running on rather than the stored
+    # preference (which only takes effect on the next restart) -- so the field
+    # reflects reality. Editing it still saves the preference via POST.
+    return {**_settings_payload(), "port": port, "lan_addresses": addresses}
 
 
 @app.post("/api/settings", tags=["settings"])
@@ -277,6 +283,12 @@ async def update_settings(request: Request) -> dict[str, object]:
                 setter(int(body[key]))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
+    if "export_sample_rate" in body:
+        try:
+            set_export_sample_rate(body["export_sample_rate"])
+        except ValueError as e:
+            # Allowlist violation / non-integer -- the message names the valid rates.
+            raise HTTPException(status_code=422, detail=str(e)) from None
     if "demucs_device" in body:
         try:
             set_demucs_device(str(body["demucs_device"]))

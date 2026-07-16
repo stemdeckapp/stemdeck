@@ -6,6 +6,7 @@ at startup), so the Settings UI can change them without a restart:
 - `allow_network`     — whether StemDeck answers requests from other devices.
 - `max_duration_sec`  — longest track accepted for processing.
 - `video_max_height`  — max video resolution for MP4 export / YouTube pulls.
+- `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
@@ -38,6 +39,12 @@ _DURATION_MIN, _DURATION_MAX = 60, 1200  # 1 min .. 20 min
 _HEIGHT_MIN, _HEIGHT_MAX = 144, 2160
 _PORT_MIN, _PORT_MAX = 1024, 65535
 DEFAULT_PORT = 8000
+
+# Sample rates offered for mix/region export. 44.1 kHz (the Demucs stem rate, so
+# the default is a pass-through) covers most samplers and DAWs; the others cover
+# hardware that demands a specific rate (e.g. an Akai MPC rejecting 48 kHz).
+EXPORT_SAMPLE_RATES = (22050, 32000, 44100, 48000)
+DEFAULT_EXPORT_SAMPLE_RATE = 44100
 
 
 def _default_allow_network() -> bool:
@@ -145,6 +152,35 @@ def set_port(value: int) -> int:
         _ensure()["port"] = clamped
         _save()
         return clamped
+
+
+# ── export_sample_rate ──
+# Sample rate (Hz) the mix/region export encodes at. Read live per request by the
+# mixdown endpoint (app/api/stems.py), so a change applies to the next export
+# without a restart. Restricted to a small allowlist rather than clamped: an
+# arbitrary rate is more likely a mistake than an intent, and hardware samplers
+# only accept specific rates.
+def get_export_sample_rate() -> int:
+    with _LOCK:
+        v = _num(_ensure().get("export_sample_rate"))
+        return v if v in EXPORT_SAMPLE_RATES else DEFAULT_EXPORT_SAMPLE_RATE
+
+
+def set_export_sample_rate(value: int) -> int:
+    """Persist an export sample rate. Rejects anything outside the allowlist with
+    ValueError (surfaced as a 422) rather than clamping to the nearest rate."""
+    try:
+        rate = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("export_sample_rate must be an integer") from None
+    if rate not in EXPORT_SAMPLE_RATES:
+        raise ValueError(
+            "export_sample_rate must be one of: " + ", ".join(map(str, EXPORT_SAMPLE_RATES))
+        )
+    with _LOCK:
+        _ensure()["export_sample_rate"] = rate
+        _save()
+        return rate
 
 
 # ── demucs_device ──

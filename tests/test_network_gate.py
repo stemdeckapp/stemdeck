@@ -84,6 +84,24 @@ def test_settings_reject_non_integer():
         assert c.post("/api/settings", json={"max_duration_sec": "abc"}).status_code == 422
 
 
+def test_export_sample_rate_round_trip_and_default(_isolated_settings):
+    assert settings_mod.get_export_sample_rate() == 44100  # default = stem rate
+    with TestClient(app) as c:
+        r = c.post("/api/settings", json={"export_sample_rate": 48000})
+        assert r.status_code == 200
+        assert r.json()["export_sample_rate"] == 48000
+        assert c.get("/api/settings").json()["export_sample_rate"] == 48000
+
+
+def test_export_sample_rate_rejects_off_allowlist(_isolated_settings):
+    # An arbitrary rate is rejected (422), not clamped to the nearest allowed one.
+    with TestClient(app) as c:
+        assert c.post("/api/settings", json={"export_sample_rate": 96000}).status_code == 422
+        assert c.post("/api/settings", json={"export_sample_rate": "abc"}).status_code == 422
+    with pytest.raises(ValueError):
+        settings_mod.set_export_sample_rate(96000)
+
+
 # ── demucs_device (compute device) ──
 
 

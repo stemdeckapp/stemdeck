@@ -366,6 +366,19 @@ def test_mixdown_flac_happy(client, tmp_path):
     assert r.content[:4] == b"fLaC"  # FLAC stream marker
 
 
+def test_mixdown_honors_export_sample_rate(client, tmp_path, monkeypatch):
+    # The exported WAV is resampled to the user's chosen export rate (issue: MPC
+    # rejecting 44.1 kHz). The rate is read live from settings per request.
+    _skip_without_ffmpeg()
+    monkeypatch.setattr("app.api.stems.get_export_sample_rate", lambda: 48000)
+    job = _done_job_with_stems(tmp_path, "abcdef000015", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1")
+    assert r.status_code == 200
+    assert r.content[:4] == b"RIFF"
+    # Canonical PCM WAV header: sample rate is the little-endian uint32 at byte 24.
+    assert int.from_bytes(r.content[24:28], "little") == 48000
+
+
 def test_mixdown_rejects_unknown_ext_still(client):
     # ogg remains unsupported even after adding flac.
     r = client.get("/api/jobs/abcdef000001/mixdown.ogg?stems=vocals&gains=1")
