@@ -13,6 +13,7 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device
+from app.pipeline.errors import SeparationError
 
 logger = logging.getLogger("stemdeck.pipeline")
 
@@ -26,8 +27,10 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
     _set(job, status="separating", progress=0.0, stage="Separating stems...")
 
     # Read the device fresh per job (not a frozen import) so a Settings change
-    # applies to the next separation without a restart.
+    # applies to the next separation without a restart. Recorded on the job for
+    # the completion summary / metadata / failure quarantine.
     device = get_demucs_device()
+    job.compute_device = device
     logger.info("[%s] separating on device=%s", job.id, device)
     cmd = [
         sys.executable,
@@ -124,9 +127,11 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         detail = "\n".join(tail[-15:]) if tail else "(no stderr captured)"
         logger.error("[%s] demucs exited %s; tail:\n%s", job.id, proc.returncode, detail)
         last = tail[-1] if tail else f"exit status {proc.returncode}"
-        raise RuntimeError(f"demucs failed: {last}")
+        # SeparationError carries the stderr tail + device so the runner's
+        # failure quarantine can preserve the evidence (#277).
+        raise SeparationError(f"demucs failed: {last}", tail=tail[-40:], device=device)
 
     stems_root = job_dir / DEMUCS_MODEL / source.stem
     if not stems_root.is_dir():
-        raise RuntimeError(f"demucs output not found at {stems_root}")
+        raise SeparationError(f"demucs output not found at {stems_root}", device=device)
     return stems_root

@@ -144,6 +144,75 @@ async def test_local_pipeline_error_cleans_up_job_dir(tmp_path: Path):
     assert not (tmp_path / job.id).exists(), "job dir should be removed on local error"
 
 
+@pytest.mark.asyncio
+async def test_pipeline_error_quarantines_evidence(tmp_path: Path):
+    """#277: a failed job's dir moves to jobs/failed/<id> with error.txt
+    (device, cause, stderr tail) and the heavy audio payloads stripped."""
+    from app.pipeline.errors import SeparationError
+
+    job = Job(id="abcdefabcde6")
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    (job_dir / "stems" / "vocals.wav").write_bytes(b"RIFF" + b"\x00" * 64)
+    (job_dir / "source.wav").write_bytes(b"RIFF" + b"\x00" * 64)
+    source = job_dir / "source.wav"
+    job.stage_timings = {"download": 1.2}
+
+    def boom(*args, **kwargs):
+        raise SeparationError(
+            "demucs failed: MPS backend out of memory",
+            tail=["progress 50%", "RuntimeError: MPS backend out of memory"],
+            device="mps",
+        )
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert job.error_detail is not None
+    assert job.error_detail.startswith("out-of-memory")
+    # Original dir gone; quarantine holds error.txt but no audio payloads.
+    assert not job_dir.exists()
+    quarantined = tmp_path / "failed" / job.id
+    report = (quarantined / "error.txt").read_text(encoding="utf-8")
+    assert "device: mps" in report
+    assert "cause: out-of-memory" in report
+    assert "MPS backend out of memory" in report
+    assert '"download": 1.2' in report
+    assert not (quarantined / "source.wav").exists()
+    assert not (quarantined / "stems").exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_success_logs_timing_summary(tmp_path: Path, caplog):
+    """#293: successful jobs emit a one-line stage-timing summary."""
+    import logging
+
+    job = Job(id="abcdefabcde5")
+
+    def fake_stages(j, url, job_dir):
+        j.stage_timings = {"download": 2.0, "analyze": 1.0, "separate": 30.0, "post": 3.5}
+        j.compute_device = "cpu"
+
+    with (
+        patch("app.pipeline.runner._run_blocking", side_effect=fake_stages),
+        caplog.at_level(logging.INFO, logger="stemdeck.pipeline"),
+    ):
+        await run_pipeline(job, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", tmp_path)
+
+    assert job.status == "done"
+    summary = next(r.message for r in caplog.records if "done device=" in r.message)
+    assert "device=cpu" in summary
+    assert "separate=30.0s" in summary
+    assert "total=36.5s" in summary
+    # Timings + device persist into metadata.json for later diagnostics.
+    import json as _json
+
+    meta = _json.loads((tmp_path / job.id / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["compute_device"] == "cpu"
+    assert meta["stage_timings"]["separate"] == 30.0
+
+
 def test_extract_video_track_from_mp4(tmp_path: Path):
     """#219: an mp4 with a video stream yields video.mp4 and sets has_video."""
     if not _ffmpeg_available():

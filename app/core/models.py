@@ -56,6 +56,16 @@ class Job:
     # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
     error: str | None = None
+    # Classified failure cause + last stderr line (e.g. "out-of-memory — ...").
+    # Shown by the UI as a secondary line under the generic error message so
+    # failures are actionable instead of uniformly opaque.
+    error_detail: str | None = None
+    # Device the separation actually ran on ("cuda" / "mps" / "cpu"), recorded
+    # per job for diagnostics -- settings may change between jobs.
+    compute_device: str | None = None
+    # Wall-clock seconds per pipeline stage ({"download": 12.3, ...}); written
+    # to metadata.json and the one-line completion summary in the log.
+    stage_timings: dict[str, float] | None = None
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
@@ -89,6 +99,9 @@ class Job:
             "source_url": self.source_url,
             "has_video": self.has_video,
             "error": self.error,
+            "error_detail": self.error_detail,
+            "compute_device": self.compute_device,
+            "stage_timings": self.stage_timings,
             "created_at": self.created_at,
         }
 

@@ -66,11 +66,19 @@ function stopJobPolling() {
   }
 }
 
-export function showError(message) {
+export function showError(message, detail) {
   errorEl.textContent = "";
   const msg = document.createElement("div");
   msg.className = "error-msg";
   msg.textContent = message;
+  if (detail) {
+    // Classified cause from the backend (e.g. "out-of-memory — ..."), shown
+    // as a muted secondary line so failures are actionable, not opaque.
+    const detailEl = document.createElement("div");
+    detailEl.className = "error-detail";
+    detailEl.textContent = detail;
+    msg.appendChild(detailEl);
+  }
   const retry = document.createElement("button");
   retry.className = "retry-btn";
   retry.type = "button";
@@ -214,7 +222,7 @@ function applyState(state) {
     stopJobPolling();
     updateTrackStatus(state.job_id, "error");
     setWaveformLoading(false);
-    showError(state.error || "Unknown error");
+    showError(state.error || "Unknown error", state.error_detail);
     setSubmitProcessing(false);
   } else if (state.status === "cancelled") {
     stopJobPolling();

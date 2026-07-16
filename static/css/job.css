@@ -103,6 +103,12 @@ progress::-moz-progress-bar {
   word-break: break-word;
   font-size: 13px;
 }
+.error-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
 .retry-btn {
   flex-shrink: 0;
   background: transparent;

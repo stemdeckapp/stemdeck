@@ -12,6 +12,7 @@ import soundfile as sf
 
 from app.core.config import (
     DEMUCS_MODEL,
+    FAILED_TTL_SECONDS,
     JOB_TTL_SECONDS,
     STEM_NAMES,
     TIMEOUT_FFMPEG,
@@ -238,6 +239,8 @@ def sweep_old_jobs(jobs_dir: Path) -> None:
     for d in jobs_dir.iterdir():
         if not d.is_dir():
             continue
+        if d.name == "failed":
+            continue  # the failure quarantine has its own TTL (sweep_failed_jobs)
         job = jobs.get(d.name)
         if job is not None:
             if job.status not in _TERMINAL:
@@ -251,3 +254,20 @@ def sweep_old_jobs(jobs_dir: Path) -> None:
         removed = True
     if removed:
         registry_persist(jobs_dir)
+
+
+def sweep_failed_jobs(jobs_dir: Path) -> None:
+    """Expire quarantined failure-evidence dirs (jobs/failed/<id>) older than
+    FAILED_TTL_SECONDS. Runs unconditionally from the hourly sweep loop --
+    unlike the job TTL sweep, which persistent-library deployments disable,
+    failure evidence must never accumulate forever (#277)."""
+    failed_root = jobs_dir / "failed"
+    if not failed_root.is_dir():
+        return
+    cutoff = time.time() - FAILED_TTL_SECONDS
+    for d in failed_root.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                _rmtree(d)
+        except OSError:
+            logger.warning("failed-quarantine sweep could not stat %s", d, exc_info=True)
