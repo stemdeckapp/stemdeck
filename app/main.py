@@ -27,6 +27,7 @@ from app.core.config import (
     configure_portable_environment,
     ensure_runtime_dirs,
 )
+from app.core.logging_setup import configure_logging
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
@@ -45,11 +46,12 @@ from app.core.settings import (
 )
 from app.pipeline.collect import sweep_old_jobs
 
-# Show our INFO-level logs through uvicorn's root handler. Without this,
-# Python's default root level (WARNING) silently drops every
-# logger.info(...) call across the app, including the analyze
-# diagnostics ("chroma:", "key candidates:").
-logging.getLogger("stemdeck").setLevel(logging.INFO)
+# Set the stemdeck logger level (Python's default root level of WARNING would
+# silently drop every logger.info(...) call) and attach the rotating file log
+# at LOGS_DIR/stemdeck.log. The analyze diagnostics ("chroma:", "key
+# candidates:") are DEBUG-level -- set STEMDECK_DEBUG=1 (or
+# STEMDECK_LOG_LEVEL=DEBUG) to see them.
+configure_logging()
 logging.getLogger("stemdeck").info(
     "demucs config: model=%s device=%s", DEMUCS_MODEL, get_demucs_device()
 )

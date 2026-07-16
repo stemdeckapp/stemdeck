@@ -325,7 +325,9 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
             stage="Analysis complete",
         )
         return bpm, key
-    except Exception as e:
+    except Exception:
+        # Full traceback goes to the log; the UI stage line stays generic --
+        # raw exception reprs (paths, library internals) must not reach it.
         logger.exception("analyze failed for job %s", job.id)
-        _set(job, stage=f"Analysis skipped ({e})")
+        _set(job, stage="Analysis skipped")
         return None, None
