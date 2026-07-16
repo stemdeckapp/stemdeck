@@ -745,7 +745,9 @@ input, textarea { font-family: inherit; }
 }
 .library-editor {
   width: min(560px, calc(100vw - 32px));
-  max-height: min(70vh, 620px);
+  /* Fixed height (not max-height) so the dialog stays one size across all tabs
+     -- each pane fills it via flex:1, so switching tabs never resizes it. */
+  height: min(70vh, 540px);
   display: flex; flex-direction: column;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -777,7 +779,9 @@ input, textarea { font-family: inherit; }
 .settings-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 5px 12px 9px; cursor: pointer; margin-bottom: -1px; }
 .settings-tab:hover { color: var(--fg-2); }
 .settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
-.settings-pane { display: flex; flex-direction: column; min-height: 0; }
+/* Every pane fills the fixed dialog body so all tabs are the same size; the
+   General pane (the tall one, with the tracks table) scrolls within it. */
+.settings-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .settings-pane[data-pane="general"] {
   flex: 1; overflow-y: auto;
   /* Reserve a gutter for the scrollbar so it never overlaps the right-aligned
