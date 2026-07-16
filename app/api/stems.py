@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import uuid
 import zipfile
+from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -82,23 +83,58 @@ def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
     return names, parsed_gains
 
 
-async def _stream_ffmpeg(cmd: list[str]):
-    """Yield ffmpeg stdout in 64 KB chunks; kill process on client disconnect."""
+async def _drain_stderr(stream: asyncio.StreamReader, sink: deque[str]) -> None:
+    """Collect ffmpeg stderr lines into a bounded deque. Draining is mandatory
+    once stderr is a pipe -- an undrained full pipe would deadlock ffmpeg."""
+    while True:
+        line = await stream.readline()
+        if not line:
+            return
+        sink.append(line.decode("utf-8", "replace").rstrip())
+
+
+async def _stream_ffmpeg(cmd: list[str], context: str = ""):
+    """Yield ffmpeg stdout in 64 KB chunks; kill process on client disconnect.
+
+    stderr is captured (bounded tail) and logged at WARNING when ffmpeg exits
+    non-zero (#280): the HTTP status is already committed mid-stream, so a
+    failed render reaches the client as a truncated file -- the log entry is
+    the only place the failure can surface. Kills we initiated (client
+    disconnect) are expected and not logged as failures."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
+    stderr_tail: deque[str] = deque(maxlen=30)
+    drain_task = asyncio.create_task(_drain_stderr(proc.stderr, stderr_tail))
+    # Whether stdout reached EOF. proc.returncode stays None until wait()
+    # reaps the child even after it exited, so EOF -- not returncode -- is
+    # what distinguishes "ffmpeg finished on its own" from "client
+    # disconnected mid-stream and we killed it".
+    finished = False
     try:
         while True:
             chunk = await proc.stdout.read(65536)
             if not chunk:
+                finished = True
                 break
             yield chunk
     finally:
-        if proc.returncode is None:
+        if not finished and proc.returncode is None:
             proc.kill()
         await proc.wait()
+        try:
+            await asyncio.wait_for(drain_task, timeout=5)
+        except (TimeoutError, asyncio.TimeoutError):
+            drain_task.cancel()
+        if finished and proc.returncode != 0:
+            logger.warning(
+                "stream ffmpeg exit %s [%s]: %s",
+                proc.returncode,
+                context,
+                " | ".join(list(stderr_tail)[-8:]) or "(no stderr)",
+            )
 
 
 async def _ensure_cached_mp3(src: Path) -> Path:
@@ -200,7 +236,7 @@ async def get_stem(
         "pipe:1",
     ]
     return StreamingResponse(
-        _stream_ffmpeg(cmd),
+        _stream_ffmpeg(cmd, context=f"stem-region job={job_id} stem={name}"),
         media_type="audio/wav",
         headers={"Content-Disposition": f'attachment; filename="{name}_region.wav"'},
     )
@@ -258,7 +294,7 @@ async def get_stem_mp3(
     ]
     filename = f"{name}_region.mp3" if start is not None else f"{name}.mp3"
     return StreamingResponse(
-        _stream_ffmpeg(cmd),
+        _stream_ffmpeg(cmd, context=f"stem-mp3 job={job_id} stem={name}"),
         media_type="audio/mpeg",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -325,7 +361,7 @@ async def get_mixdown(
 
     media_type = MIXDOWN_MEDIA_TYPES[ext]
     return StreamingResponse(
-        _stream_ffmpeg(cmd),
+        _stream_ffmpeg(cmd, context=f"mixdown job={job_id} ext={ext} stems={stems}"),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
     )
@@ -405,7 +441,7 @@ async def get_video_mixdown(
 
     filename = f"{_safe_title(job.title)}_video.mp4"
     return StreamingResponse(
-        _stream_ffmpeg(cmd),
+        _stream_ffmpeg(cmd, context=f"video-mux job={job_id} stems={stems}"),
         media_type="video/mp4",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

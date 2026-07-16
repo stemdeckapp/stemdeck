@@ -379,6 +379,46 @@ def test_mixdown_honors_export_sample_rate(client, tmp_path, monkeypatch):
     assert int.from_bytes(r.content[24:28], "little") == 48000
 
 
+@pytest.mark.asyncio
+async def test_stream_ffmpeg_logs_stderr_on_failure(caplog):
+    """#280: a mid-stream ffmpeg failure can't change the HTTP status, so the
+    stderr tail must land in the log -- previously it went to DEVNULL and a
+    corrupt download left no trace anywhere."""
+    import logging
+    import sys
+
+    from app.api.stems import _stream_ffmpeg
+
+    cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write('partial-bytes'); sys.stdout.flush();"
+        " sys.stderr.write('boom: encoder exploded\\n'); sys.exit(2)",
+    ]
+    with caplog.at_level(logging.WARNING, logger="stemdeck.api"):
+        chunks = [c async for c in _stream_ffmpeg(cmd, context="mixdown job=test ext=wav")]
+
+    assert b"".join(chunks) == b"partial-bytes"  # stream still delivered
+    warning = next(r.message for r in caplog.records if "stream ffmpeg exit" in r.message)
+    assert "mixdown job=test ext=wav" in warning
+    assert "boom: encoder exploded" in warning
+
+
+@pytest.mark.asyncio
+async def test_stream_ffmpeg_clean_exit_logs_nothing(caplog):
+    import logging
+    import sys
+
+    from app.api.stems import _stream_ffmpeg
+
+    cmd = [sys.executable, "-c", "import sys; sys.stdout.write('ok')"]
+    with caplog.at_level(logging.WARNING, logger="stemdeck.api"):
+        chunks = [c async for c in _stream_ffmpeg(cmd, context="happy")]
+
+    assert b"".join(chunks) == b"ok"
+    assert not [r for r in caplog.records if "stream ffmpeg exit" in r.message]
+
+
 def test_mixdown_rejects_unknown_ext_still(client):
     # ogg remains unsupported even after adding flac.
     r = client.get("/api/jobs/abcdef000001/mixdown.ogg?stems=vocals&gains=1")
