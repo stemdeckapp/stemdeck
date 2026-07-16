@@ -1068,13 +1068,34 @@ fn patch_pyvenv_cfg(python: &Path) {
     let _ = fs::write(&cfg_path, patched);
 }
 
+/// Rotate backend.log -> backend.log.1 -> backend.log.2, dropping the oldest.
+///
+/// The log used to be truncated on every launch (#278), which destroyed the
+/// evidence exactly when it was needed: the natural response to a crashed
+/// session is "restart and retry", and the restart wiped the previous
+/// session's log. All renames are best-effort -- a locked file on Windows
+/// must never block launch; worst case we append to the old file, which
+/// still beats truncating it.
+fn rotate_log(log_path: &Path, keep: usize) {
+    if keep < 2 {
+        return; // nothing to rotate into
+    }
+    let numbered = |i: usize| log_path.with_extension(format!("log.{i}"));
+    // Windows fs::rename fails when the destination exists, so drop the
+    // oldest generation first, then shift the rest up.
+    let _ = fs::remove_file(numbered(keep - 1));
+    for i in (1..keep - 1).rev() {
+        let _ = fs::rename(numbered(i), numbered(i + 1));
+    }
+    let _ = fs::rename(log_path, numbered(1));
+}
+
 fn prepare_backend_stdio(log_path: &Path) -> Result<(Stdio, Stdio), String> {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create backend log directory: {e}"))?;
     }
-    fs::File::create(log_path)
-        .map_err(|e| format!("failed to create backend log {}: {e}", log_path.display()))?;
+    rotate_log(log_path, 3);
     let stdout = fs::OpenOptions::new()
         .create(true)
         .append(true)
