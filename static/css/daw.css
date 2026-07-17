@@ -846,6 +846,49 @@ input, textarea { font-family: inherit; }
 }
 .settings-registry-view:focus { outline: none; }
 
+/* Settings → General → danger zone (reset app data) */
+.settings-danger-zone { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.settings-danger-zone.hidden { display: none; }
+.settings-danger-subhead { color: var(--danger); }
+.settings-reset-btn {
+  flex-shrink: 0; min-height: 30px; border-radius: 7px;
+  border: 1px solid rgba(214,90,74,0.35); background: rgba(214,90,74,0.12);
+  color: var(--danger); font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  padding: 0 12px; cursor: pointer;
+}
+.settings-reset-btn:hover { background: rgba(214,90,74,0.2); }
+
+/* Reset app data — confirm dialog (nested above the Settings dialog) */
+.reset-confirm-backdrop {
+  position: fixed; inset: 0; z-index: 150;
+  display: grid; place-items: center;
+  background: rgba(3,8,13,0.55); backdrop-filter: blur(2px);
+}
+.reset-confirm-card {
+  width: min(340px, calc(100vw - 32px));
+  border: 1px solid rgba(214,90,74,0.4);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(28,39,48,0.98), rgba(13,21,29,0.98));
+  box-shadow: var(--shadow-panel);
+  padding: 16px; color: var(--fg); font-family: var(--font-mono);
+}
+.reset-confirm-title { font-size: 13px; font-weight: 700; color: var(--danger); margin-bottom: 8px; }
+.reset-confirm-body { font-size: 11.5px; color: var(--fg-2); line-height: 1.5; margin: 0 0 10px; }
+.reset-confirm-hint { font-size: 10.5px; color: var(--muted); margin: 0 0 7px; }
+.reset-confirm-hint strong { color: var(--fg); letter-spacing: 0.04em; }
+.reset-confirm-input {
+  width: 100%; min-height: 34px; border: 1px solid var(--border-strong); border-radius: 7px;
+  background: rgba(10,17,24,0.78); color: var(--fg); font: inherit; font-size: 12px;
+  padding: 0 10px; outline: none; box-sizing: border-box;
+}
+.reset-confirm-input:focus { border-color: rgba(214,90,74,0.5); box-shadow: 0 0 0 2px rgba(214,90,74,0.14); }
+.reset-confirm-msg { color: var(--danger); font-size: 11px; margin-top: 8px; min-height: 1em; }
+.reset-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.reset-confirm-actions button { min-height: 30px; border-radius: 7px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; padding: 0 12px; }
+.reset-confirm-cancel { border: 1px solid var(--border); background: rgba(21,31,39,0.52); color: var(--muted); }
+.reset-confirm-go { border: 1px solid rgba(214,90,74,0.4); background: rgba(214,90,74,0.18); color: var(--danger); font-weight: 600; }
+.reset-confirm-go:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
 .library-editor-status { font-size: 10.5px; color: var(--muted); }
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }

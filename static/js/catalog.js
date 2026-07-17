@@ -1765,6 +1765,7 @@ function closeLibraryEditor() {
     document.removeEventListener("keydown", libraryEditorOnKey);
     libraryEditorOnKey = null;
   }
+  closeResetConfirm();
   libraryEditor?.remove();
   libraryEditor = null;
 }
@@ -2062,6 +2063,84 @@ async function loadRegistryView(overlay) {
   }
 }
 
+let resetConfirmOverlay = null;
+
+function closeResetConfirm() {
+  resetConfirmOverlay?.remove();
+  resetConfirmOverlay = null;
+}
+
+function openResetConfirm() {
+  closeResetConfirm();
+  const overlay = document.createElement("div");
+  overlay.className = "reset-confirm-backdrop";
+  overlay.innerHTML = `
+    <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Reset app data">
+      <div class="reset-confirm-title">Reset app data?</div>
+      <p class="reset-confirm-body">This permanently deletes every track, job, and library entry stored on this computer. This cannot be undone.</p>
+      <p class="reset-confirm-hint">Type <strong>RESET</strong> to confirm.</p>
+      <input class="reset-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-label="Type RESET to confirm" />
+      <div class="reset-confirm-msg" role="alert" aria-live="polite"></div>
+      <div class="reset-confirm-actions">
+        <button class="reset-confirm-cancel" type="button">Cancel</button>
+        <button class="reset-confirm-go" type="button" disabled>Reset app data</button>
+      </div>
+    </div>
+  `;
+
+  const input = overlay.querySelector(".reset-confirm-input");
+  const goBtn = overlay.querySelector(".reset-confirm-go");
+  const msg = overlay.querySelector(".reset-confirm-msg");
+
+  input.addEventListener("input", () => {
+    goBtn.disabled = input.value.trim() !== "RESET";
+  });
+  overlay.querySelector(".reset-confirm-cancel").addEventListener("click", closeResetConfirm);
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeResetConfirm(); });
+  const onKey = (e) => { if (e.code === "Escape") closeResetConfirm(); };
+  document.addEventListener("keydown", onKey, { once: true });
+
+  goBtn.addEventListener("click", async () => {
+    goBtn.disabled = true;
+    input.disabled = true;
+    msg.textContent = "Resetting…";
+    try {
+      const r = await fetch("/api/reset", { method: "POST" });
+      if (!r.ok) {
+        let detail = "Reset failed.";
+        try { detail = (await r.json()).detail || detail; } catch (err) { console.warn("reset error body parse failed:", err); }
+        msg.textContent = detail;
+        goBtn.disabled = false;
+        input.disabled = false;
+        return;
+      }
+      // Backend job/registry data is gone. The browser-side library index
+      // (folders, tracks, per-job mixer state, trash) is a separate store
+      // the API call above doesn't touch -- clear it too, then reload so
+      // every in-memory JS structure re-initializes from the now-empty state
+      // instead of trying to reconcile itself piecemeal.
+      if (window.__TAURI__?.core?.invoke) {
+        try {
+          await window.__TAURI__.core.invoke("reset_user_data");
+        } catch (err) {
+          console.warn("reset_user_data failed:", err);
+        }
+      }
+      try { localStorage.clear(); } catch (err) { console.warn("localStorage.clear failed:", err); }
+      window.location.reload();
+    } catch (err) {
+      console.warn("reset failed:", err);
+      msg.textContent = "Reset failed — check your connection.";
+      goBtn.disabled = false;
+      input.disabled = false;
+    }
+  });
+
+  document.body.appendChild(overlay);
+  resetConfirmOverlay = overlay;
+  input.focus();
+}
+
 function openLibraryEditor() {
   closeFolderEditor();
   closeLibraryEditor();
@@ -2128,6 +2207,16 @@ function openLibraryEditor() {
         <div class="library-editor-foot">
           <span class="library-editor-status" aria-live="polite"></span>
           <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
+        </div>
+        <div class="settings-section settings-danger-zone hidden">
+          <div class="settings-subhead settings-danger-subhead">Danger zone</div>
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Reset app data</div>
+              <div class="settings-row-desc">Permanently deletes every track, job, and library entry stored on this computer. Cannot be undone.</div>
+            </div>
+            <button class="settings-reset-btn" type="button">Reset app data…</button>
+          </div>
         </div>
       </div>
       <div class="settings-pane hidden" data-pane="network">
@@ -2223,6 +2312,17 @@ function openLibraryEditor() {
     note.className = "settings-server-note";
     note.textContent = "These settings are read-only in server mode. To change them, update your server configuration (e.g. docker-compose.yml) and restart.";
     overlay.querySelector("[data-pane='network']")?.prepend(note);
+  } else {
+    // Reset app data (#309 follow-up): a desktop-only troubleshooting tool
+    // for the "old session keeps coming back" report -- the real persisted
+    // state lives in ~/Documents/StemDeck, not the extracted package's own
+    // bundled data/ folder, so deleting that folder never clears it. Hidden
+    // in server mode: wiping JOBS_DIR there would delete every user's data,
+    // not just the caller's (also enforced server-side, not just here).
+    overlay.querySelector(".settings-danger-zone")?.classList.remove("hidden");
+    overlay.querySelector(".settings-reset-btn")?.addEventListener("click", () => {
+      openResetConfirm();
+    });
   }
 }
 

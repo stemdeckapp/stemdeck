@@ -225,6 +225,7 @@ fn main() {
             save_audio_file,
             store_get,
             store_set,
+            reset_user_data,
             mark_store_migration_done,
         ])
         .build(tauri::generate_context!())
@@ -286,6 +287,19 @@ fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Re
     let path = documents_store_path(&app)?;
     let store = app.store(path).map_err(|e| e.to_string())?;
     store.set(key, value);
+    store.save().map_err(|e| e.to_string())
+}
+
+/// Clear the persistent user-data store entirely (Settings -> General ->
+/// "Reset app data"). Complements the backend's own job-data wipe (POST
+/// /api/reset) -- together they fully clear a user's local StemDeck state,
+/// including the per-job mixer-state keys (stemdeck:mix:<job_id>) that have
+/// no fixed enumeration to clear individually.
+#[tauri::command]
+fn reset_user_data(app: tauri::AppHandle) -> Result<(), String> {
+    let path = documents_store_path(&app)?;
+    let store = app.store(path).map_err(|e| e.to_string())?;
+    store.clear();
     store.save().map_err(|e| e.to_string())
 }
 

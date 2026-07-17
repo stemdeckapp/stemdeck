@@ -28,7 +28,9 @@ from app.core.config import (
     ensure_runtime_dirs,
 )
 from app.core.logging_setup import configure_logging
+from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import registry_path
+from app.core.registry import reset_all as reset_registry
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
@@ -322,6 +324,30 @@ async def update_settings(request: Request) -> dict[str, object]:
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
     return _settings_payload()
+
+
+_ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")
+
+
+@app.post("/api/reset", tags=["settings"])
+def reset_app_data() -> dict[str, object]:
+    """Desktop-only factory reset (Settings -> General -> "Reset app data"):
+    delete every job directory and the registry, so no old work session can
+    resurface across package reinstalls -- the runtime state that actually
+    persists (~/Documents/StemDeck, not the extracted package's own bundled
+    data/ folder) survives a fresh install otherwise. The browser-side
+    library index is a separate store the frontend clears itself (via the
+    Tauri reset_user_data command) after this call succeeds.
+
+    Gated server-side, not just hidden in the UI: wiping JOBS_DIR on a
+    shared server would delete every user's data, not just the caller's."""
+    if os.environ.get("STEMDECK_DESKTOP") != "1":
+        raise HTTPException(status_code=403, detail="reset is only available in the desktop app")
+    active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
+    if active:
+        raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")
+    reset_registry(JOBS_DIR)
+    return {"ok": True}
 
 
 @app.get("/api/registry", tags=["settings"])

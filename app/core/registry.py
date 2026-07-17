@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import uuid
@@ -203,6 +204,27 @@ def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:
             _procs.pop(job_id, None)
         else:
             _procs[job_id] = proc
+
+
+def reset_all(jobs_dir: Path) -> None:
+    """Delete every job directory and the registry file, clearing the
+    in-memory registry too. Desktop-only factory reset (Settings -> General
+    -> "Reset app data") -- the caller is responsible for checking no job is
+    actively running first (deleting a running job's directory out from
+    under it would corrupt that job, not just reset the library)."""
+    with _lock:
+        _jobs.clear()
+        _procs.clear()
+    if not jobs_dir.is_dir():
+        return
+    for entry in jobs_dir.iterdir():
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+        except OSError:
+            logger.warning("reset: could not remove %s", entry, exc_info=True)
 
 
 def get_proc(job_id: str) -> subprocess.Popen | None:
