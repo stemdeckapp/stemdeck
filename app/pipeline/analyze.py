@@ -214,38 +214,6 @@ def _load_audio_ffmpeg(
     return y, sr
 
 
-def compute_stem_presence(stems_dir: Path, selected_stems: list[str]) -> dict[str, int]:
-    """Load each extracted stem WAV, compute mean absolute amplitude, normalize
-    to 0-100. Only the stems that were selected (and therefore extracted) are
-    measured; the rest are omitted from the returned dict."""
-    import numpy as np
-
-    result: dict[str, int] = {}
-    rms_values: dict[str, float] = {}
-
-    for name in selected_stems:
-        wav_path = stems_dir / f"{name}.wav"
-        if not wav_path.is_file():
-            continue
-        loaded = _load_audio_ffmpeg(wav_path, sr=22050, duration=180.0)
-        if loaded is None:
-            continue
-        y, _ = loaded
-        rms_values[name] = float(np.sqrt(np.mean(y**2)))
-
-    if not rms_values:
-        return result
-
-    max_rms = max(rms_values.values())
-    if max_rms < 1e-9:
-        return {name: 0 for name in rms_values}
-
-    for name, rms in rms_values.items():
-        result[name] = max(0, min(100, round(rms / max_rms * 100)))
-
-    return result
-
-
 def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
     """Best-effort BPM and key detection. On failure, returns (None, None)
     and leaves job fields untouched -- the chips stay as placeholders."""

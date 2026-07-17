@@ -7,7 +7,12 @@ import pytest
 
 from app.core.models import Job, JobCancelled
 from app.core.registry import _jobs
-from app.pipeline.runner import _extract_video_track, run_local_pipeline, run_pipeline
+from app.pipeline.runner import (
+    _extract_video_track,
+    _presence_from_rms,
+    run_local_pipeline,
+    run_pipeline,
+)
 
 
 def _ffmpeg_available() -> bool:
@@ -289,3 +294,19 @@ def test_extract_video_track_audio_only_mp4(tmp_path: Path):
 
     assert job.has_video is False
     assert not (job_dir / "video.mp4").exists()
+
+
+# ─── #287: presence normalization (moved from analyze.compute_stem_presence) ─
+
+
+def test_presence_from_rms_normalizes_to_loudest_stem():
+    result = _presence_from_rms({"vocals": 0.5, "drums": 0.25, "bass": 0.0})
+    assert result == {"vocals": 100, "drums": 50, "bass": 0}
+
+
+def test_presence_from_rms_empty_input():
+    assert _presence_from_rms({}) == {}
+
+
+def test_presence_from_rms_all_silent():
+    assert _presence_from_rms({"vocals": 0.0, "drums": 0.0}) == {"vocals": 0, "drums": 0}

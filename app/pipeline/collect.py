@@ -7,9 +7,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import numpy as np
-import soundfile as sf
-
 from app.core.config import (
     DEMUCS_MODEL,
     FAILED_TTL_SECONDS,
@@ -23,6 +20,7 @@ from app.core.registry import all_jobs as registry_all
 from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
 from app.core.registry import set_proc
+from app.pipeline.audio_stats import scan_stem
 
 logger = logging.getLogger("stemdeck.collect")
 
@@ -187,38 +185,37 @@ def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | Non
 _PEAK_POINTS = 1500  # matches OVERVIEW_WAVE_POINTS in player.js
 
 
-def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> None:
-    """Compute and cache [min, max] waveform peaks for each stem.
-    Failure is non-fatal — missing peaks.json degrades to client-side decode."""
+def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> dict[str, float]:
+    """Compute and cache [min, max] waveform peaks for each stem via a single
+    streamed pass per file (#286), and return each stem's RMS from that same
+    pass so the caller can derive stem presence without a second decode
+    (#287). Peaks failure is non-fatal — missing peaks.json degrades to
+    client-side decode; a stem missing from the returned dict is simply
+    excluded from presence."""
     peaks: dict[str, list[list[float]]] = {}
+    rms_values: dict[str, float] = {}
     for name in stem_names:
         path = stems_dir / f"{name}.wav"
         if not path.is_file():
             continue
         try:
-            data, _ = sf.read(path, dtype="float32", always_2d=True)
-            ch = data[:, 0]
-            n = len(ch)
-            if n == 0:
+            result, rms = scan_stem(path, _PEAK_POINTS)
+            if not result:
                 continue
-            chunk = max(1, n // _PEAK_POINTS)
-            result: list[list[float]] = []
-            for i in range(0, n, chunk):
-                block = ch[i : i + chunk]
-                result.append([float(np.min(block)), float(np.max(block))])
-            peaks[name] = result[:_PEAK_POINTS]
+            peaks[name] = result
+            rms_values[name] = rms
         except Exception:
             logger.warning("could not compute peaks for %s/%s", stems_dir.name, name, exc_info=True)
 
-    if not peaks:
-        return
+    if peaks:
+        try:
+            tmp = stems_dir / "peaks.json.tmp"
+            tmp.write_text(json.dumps(peaks), encoding="utf-8")
+            tmp.replace(stems_dir / "peaks.json")
+        except Exception:
+            logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
 
-    try:
-        tmp = stems_dir / "peaks.json.tmp"
-        tmp.write_text(json.dumps(peaks), encoding="utf-8")
-        tmp.replace(stems_dir / "peaks.json")
-    except Exception:
-        logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
+    return rms_values
 
 
 def sweep_old_jobs(jobs_dir: Path) -> None:

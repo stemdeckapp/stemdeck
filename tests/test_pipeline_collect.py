@@ -6,6 +6,8 @@ import wave
 from pathlib import Path
 
 import numpy as np
+import pytest
+import soundfile as sf
 
 from app.pipeline.collect import _PEAK_POINTS, compute_stem_peaks
 
@@ -99,8 +101,70 @@ def test_non_fatal_on_corrupt_wav(tmp_path):
     _write_wav(stems_dir / "drums.wav", [0.1, -0.1])
 
     # Should not raise; drums should still be computed
-    compute_stem_peaks(stems_dir, ["vocals", "drums"])
+    rms_values = compute_stem_peaks(stems_dir, ["vocals", "drums"])
 
     data = json.loads((stems_dir / "peaks.json").read_text())
     assert "drums" in data
     assert "vocals" not in data
+    assert "drums" in rms_values
+    assert "vocals" not in rms_values
+
+
+# ─── #287: RMS returned from the same streamed pass ──────────────────────────
+
+
+def test_returns_rms_matching_full_load_reference(tmp_path):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    sr = 44100
+    t = np.linspace(0, 2, sr * 2, endpoint=False)
+    samples = (np.sin(2 * np.pi * 440 * t) * 0.6).tolist()
+    _write_wav(stems_dir / "vocals.wav", samples, sr)
+
+    rms_values = compute_stem_peaks(stems_dir, ["vocals"])
+
+    reference, _ = sf.read(stems_dir / "vocals.wav", dtype="float32", always_2d=True)
+    expected_rms = float(np.sqrt(np.mean(reference[:, 0].astype(np.float64) ** 2)))
+    assert rms_values["vocals"] == pytest.approx(expected_rms, rel=1e-3)
+
+
+def test_missing_stem_excluded_from_rms(tmp_path):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    _write_wav(stems_dir / "drums.wav", [0.1, -0.1])
+
+    rms_values = compute_stem_peaks(stems_dir, ["vocals", "drums"])
+
+    assert "drums" in rms_values
+    assert "vocals" not in rms_values
+
+
+def test_peaks_match_full_load_reference(tmp_path):
+    """Golden test: the streamed implementation's peaks must match the old
+    full-load (sf.read + manual chunking) implementation within float
+    tolerance for a multi-tone signal."""
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    sr = 44100
+    t = np.linspace(0, 3, sr * 3, endpoint=False)
+    samples = (0.5 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 1760 * t)).tolist()
+    _write_wav(stems_dir / "vocals.wav", samples, sr)
+
+    compute_stem_peaks(stems_dir, ["vocals"])
+    actual = json.loads((stems_dir / "peaks.json").read_text())["vocals"]
+
+    # Reference: the old sf.read()-then-chunk implementation.
+    data, _ = sf.read(stems_dir / "vocals.wav", dtype="float32", always_2d=True)
+    ch = data[:, 0]
+    n = len(ch)
+    chunk = max(1, n // _PEAK_POINTS)
+    expected = []
+    for i in range(0, n, chunk):
+        block = ch[i : i + chunk]
+        expected.append([float(np.min(block)), float(np.max(block))])
+    expected = expected[:_PEAK_POINTS]
+
+    assert len(actual) == len(expected)
+    for (a_min, a_max), (e_min, e_max) in zip(actual, expected, strict=True):
+        assert a_min == pytest.approx(e_min, abs=1e-4)
+        assert a_max == pytest.approx(e_max, abs=1e-4)

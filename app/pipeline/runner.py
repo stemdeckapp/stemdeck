@@ -12,7 +12,7 @@ from pathlib import Path
 from app.core.config import DEMUCS_MODEL, TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import persist as persist_registry
-from app.pipeline.analyze import analyze, compute_stem_presence
+from app.pipeline.analyze import analyze
 from app.pipeline.collect import (
     cleanup_source,
     collect,
@@ -133,6 +133,19 @@ def _lap(job: Job, name: str, start: float) -> float:
     return now
 
 
+def _presence_from_rms(rms_values: dict[str, float]) -> dict[str, int]:
+    """Normalize per-stem RMS to 0-100 relative to the loudest stem -- exact
+    logic the old analyze.compute_stem_presence used, now fed by the single
+    streamed pass in compute_stem_peaks (#287) instead of a second full
+    decode of every stem."""
+    if not rms_values:
+        return {}
+    max_rms = max(rms_values.values())
+    if max_rms < 1e-9:
+        return {name: 0 for name in rms_values}
+    return {name: max(0, min(100, round(rms / max_rms * 100))) for name, rms in rms_values.items()}
+
+
 def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     """Analyze → separate → collect → mix. Shared by both YouTube and local
     upload pipelines after their respective source acquisition steps."""
@@ -145,7 +158,6 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     mark = _lap(job, "separate", mark)
     found = collect(job, stems_root, job_dir)
     stems_dir = job_dir / "stems"
-    job.stem_presence = compute_stem_presence(stems_dir, found)
     # Source (100-300 MB or the local upload) is no longer needed after
     # collect; delete it before the ffmpeg amix steps in case scratch space
     # is tight.
@@ -171,7 +183,13 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     all_stem_names = [s["name"] for s in job.stems]
     if mix_path is not None and mix_path.stem not in all_stem_names:
         all_stem_names.append(mix_path.stem)
-    compute_stem_peaks(stems_dir, all_stem_names)
+    # "original"/"mix" get peaks (all_stem_names) but are excluded from
+    # presence (found -- the demucs-produced stems only), matching the old
+    # two-pass behavior.
+    rms_values = compute_stem_peaks(stems_dir, all_stem_names)
+    job.stem_presence = _presence_from_rms(
+        {name: rms for name, rms in rms_values.items() if name in found}
+    )
     _lap(job, "post", mark)
 
 
