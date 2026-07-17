@@ -835,6 +835,17 @@ input, textarea { font-family: inherit; }
 .settings-server-note { font-size: 10.5px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
 .settings-subhead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; margin: 4px 0 7px; }
 
+/* Settings → registry (read-only viewer) */
+.settings-registry-refresh { flex-shrink: 0; min-height: 28px; border-radius: 6px; border: 1px solid var(--border-strong); background: rgba(10,17,24,0.6); color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; padding: 0 12px; cursor: pointer; }
+.settings-registry-refresh:hover { color: var(--fg); border-color: rgba(148,163,184,0.4); }
+.settings-registry-view {
+  flex: 1; min-height: 0; margin-top: 10px; resize: none;
+  background: rgba(10,17,24,0.5); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  padding: 10px 12px; white-space: pre; overflow: auto;
+}
+.settings-registry-view:focus { outline: none; }
+
 .library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
 .library-editor-status { font-size: 10.5px; color: var(--muted); }
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }

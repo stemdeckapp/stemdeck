@@ -2045,6 +2045,18 @@ async function wireNetworkSetting(overlay) {
   });
 }
 
+async function loadRegistryView(overlay) {
+  const view = overlay.querySelector(".settings-registry-view");
+  if (!view) return;
+  view.value = "Loading…";
+  try {
+    const r = await fetch("/api/registry", { cache: "no-store" });
+    view.value = r.ok ? await r.text() : `Failed to load registry (status ${r.status}).`;
+  } catch {
+    view.value = "Failed to load registry — check your connection.";
+  }
+}
+
 function openLibraryEditor() {
   closeFolderEditor();
   closeLibraryEditor();
@@ -2063,6 +2075,7 @@ function openLibraryEditor() {
         <button class="settings-tab active" type="button" data-tab="general" role="tab">General</button>
         <button class="settings-tab" type="button" data-tab="network" role="tab">Network</button>
         <button class="settings-tab" type="button" data-tab="export" role="tab">Export</button>
+        <button class="settings-tab" type="button" data-tab="registry" role="tab">Registry</button>
       </div>
       <div class="settings-pane" data-pane="general">
         <div class="settings-section">
@@ -2142,6 +2155,16 @@ function openLibraryEditor() {
           </div>
         </div>
       </div>
+      <div class="settings-pane hidden" data-pane="registry">
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <div class="settings-row-title">Job registry</div>
+            <div class="settings-row-desc">Read-only view of <code>registry.json</code> — the persisted list of completed jobs on disk.</div>
+          </div>
+          <button class="settings-registry-refresh" type="button">Refresh</button>
+        </div>
+        <textarea class="settings-registry-view" readonly spellcheck="false" aria-label="Job registry (read only)">Loading…</textarea>
+      </div>
       <div class="settings-foot">
         <button class="settings-done" type="button">Done</button>
       </div>
@@ -2155,8 +2178,10 @@ function openLibraryEditor() {
       const name = tab.dataset.tab;
       overlay.querySelectorAll(".settings-tab").forEach((t) => t.classList.toggle("active", t === tab));
       overlay.querySelectorAll(".settings-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
+      if (name === "registry") loadRegistryView(overlay);
     });
   });
+  overlay.querySelector(".settings-registry-refresh")?.addEventListener("click", () => loadRegistryView(overlay));
 
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeLibraryEditor(); });
   // (status summary is filled in after the overlay is in the DOM, below)

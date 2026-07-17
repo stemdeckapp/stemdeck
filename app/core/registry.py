@@ -70,6 +70,10 @@ def _migrate(data: dict) -> dict:
     return data
 
 
+def registry_path(jobs_dir: Path) -> Path:
+    return jobs_dir / _REGISTRY_FILE
+
+
 def persist(jobs_dir: Path) -> None:
     """Persist terminal jobs so completed library entries survive restarts.
 
@@ -84,7 +88,7 @@ def persist(jobs_dir: Path) -> None:
     except OSError:
         logger.warning("cannot create jobs dir %s; skipping persist", jobs_dir, exc_info=True)
         return
-    path = jobs_dir / _REGISTRY_FILE
+    path = registry_path(jobs_dir)
     with _lock:
         records = [
             job.to_record()
@@ -105,7 +109,7 @@ def persist(jobs_dir: Path) -> None:
 def restore(jobs_dir: Path) -> None:
     """Load persisted jobs and recover completed orphan jobs from disk."""
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    path = jobs_dir / _REGISTRY_FILE
+    path = registry_path(jobs_dir)
     if path.is_file():
         try:
             data = _migrate(json.loads(path.read_text(encoding="utf-8")))

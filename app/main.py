@@ -28,6 +28,7 @@ from app.core.config import (
     ensure_runtime_dirs,
 )
 from app.core.logging_setup import configure_logging
+from app.core.registry import registry_path
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
@@ -307,6 +308,17 @@ async def update_settings(request: Request) -> dict[str, object]:
             # (invalid choice / device not available on this machine).
             raise HTTPException(status_code=422, detail=str(e)) from None
     return _settings_payload()
+
+
+@app.get("/api/registry", tags=["settings"])
+def get_registry_raw() -> PlainTextResponse:
+    """Read-only view of the persisted job registry (Settings -> Registry)."""
+    path = registry_path(JOBS_DIR)
+    if not path.is_file():
+        return PlainTextResponse(
+            '{\n  "version": 1,\n  "jobs": []\n}\n', media_type="application/json"
+        )
+    return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="application/json")
 
 
 # Content-Security-Policy. Defense-in-depth so an injected string in the webview
