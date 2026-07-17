@@ -19,7 +19,7 @@ def _isolate_registry():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    import app.api.stems as stems_mod
+    from app.api import stems as stems_mod
 
     monkeypatch.setattr(stems_mod, "JOBS_DIR", tmp_path)
     # Isolate the mixdown render cache to a per-test dir -- these tests must
@@ -388,7 +388,7 @@ def test_mixdown_honors_export_sample_rate(client, tmp_path, monkeypatch):
 
 def test_mixdown_cache_hit_skips_second_render(client, tmp_path, monkeypatch):
     _skip_without_ffmpeg()
-    import app.api.stems as stems_mod
+    from app.api import stems as stems_mod
 
     calls = {"n": 0}
     original = stems_mod._stream_ffmpeg
@@ -448,7 +448,7 @@ def test_mixdown_failed_render_leaves_no_cache_entry(client, tmp_path):
 
 
 def test_prune_mixdown_cache_bounds_file_count(tmp_path, monkeypatch):
-    import app.api.stems as stems_mod
+    from app.api import stems as stems_mod
 
     monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 3)
     monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 10**9)
@@ -467,7 +467,7 @@ def test_prune_mixdown_cache_bounds_file_count(tmp_path, monkeypatch):
 
 
 def test_prune_mixdown_cache_bounds_total_size(tmp_path, monkeypatch):
-    import app.api.stems as stems_mod
+    from app.api import stems as stems_mod
 
     monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 100)
     monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 25)

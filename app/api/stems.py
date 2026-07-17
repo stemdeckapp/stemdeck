@@ -113,7 +113,7 @@ def _prune_mixdown_cache(cache_dir: Path) -> None:
             total -= oldest.stat().st_size
             oldest.unlink()
         except OSError:
-            pass
+            logger.debug("mixdown cache prune: could not remove %s", oldest, exc_info=True)
 
 
 def _validate_stem_path(job_id: str, name: str):
