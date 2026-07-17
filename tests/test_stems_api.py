@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,9 @@ def client(tmp_path, monkeypatch):
     import app.api.stems as stems_mod
 
     monkeypatch.setattr(stems_mod, "JOBS_DIR", tmp_path)
+    # Isolate the mixdown render cache to a per-test dir -- these tests must
+    # never read or pollute the developer's real cache.
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_DIR", tmp_path / "cache" / "mixdown")
     from app.main import app
 
     return TestClient(app)
@@ -377,6 +381,107 @@ def test_mixdown_honors_export_sample_rate(client, tmp_path, monkeypatch):
     assert r.content[:4] == b"RIFF"
     # Canonical PCM WAV header: sample rate is the little-endian uint32 at byte 24.
     assert int.from_bytes(r.content[24:28], "little") == 48000
+
+
+# ─── #290: mixdown render cache ────────────────────────────────────────────
+
+
+def test_mixdown_cache_hit_skips_second_render(client, tmp_path, monkeypatch):
+    _skip_without_ffmpeg()
+    import app.api.stems as stems_mod
+
+    calls = {"n": 0}
+    original = stems_mod._stream_ffmpeg
+
+    def counting_stream_ffmpeg(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stems_mod, "_stream_ffmpeg", counting_stream_ffmpeg)
+
+    job = _done_job_with_stems(tmp_path, "abcdef000020", ["vocals", "drums"])
+    url = f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,0.5"
+
+    r1 = client.get(url)
+    assert r1.status_code == 200
+    assert calls["n"] == 1
+    cache_files = list((tmp_path / "cache" / "mixdown").glob("*.wav"))
+    assert len(cache_files) == 1
+
+    r2 = client.get(url)
+    assert r2.status_code == 200
+    assert calls["n"] == 1  # no second render -- served from cache
+    assert r2.content == r1.content
+
+
+def test_mixdown_cache_key_varies_with_params(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000021", ["vocals", "drums"])
+    base = f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums"
+
+    urls = [
+        f"{base}&gains=1,0.5",
+        f"{base}&gains=1,0.9",  # different gains
+        f"{base}&gains=1,0.5&start=0.05&end=0.15",  # region trim
+    ]
+    for url in urls:
+        r = client.get(url)
+        assert r.status_code == 200, url
+
+    cache_files = list((tmp_path / "cache" / "mixdown").glob("*.wav"))
+    assert len(cache_files) == 3  # three distinct cache entries, no collisions
+
+
+def test_mixdown_failed_render_leaves_no_cache_entry(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000022", ["vocals"])
+    # Not a real WAV -- ffmpeg will exit non-zero trying to decode it.
+    (tmp_path / job.id / "stems" / "vocals.wav").write_bytes(b"not audio data at all")
+
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1")
+    assert r.status_code == 200  # HTTP status is already committed mid-stream (#280)
+    assert r.content == b""  # ffmpeg produced nothing before failing
+
+    cache_dir = tmp_path / "cache" / "mixdown"
+    leftover = list(cache_dir.glob("*")) if cache_dir.is_dir() else []
+    assert leftover == [], "a failed render must not leave a cache entry or a stray temp file"
+
+
+def test_prune_mixdown_cache_bounds_file_count(tmp_path, monkeypatch):
+    import app.api.stems as stems_mod
+
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 3)
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 10**9)
+    cache_dir = tmp_path / "mixdown"
+    cache_dir.mkdir()
+    for i in range(5):
+        p = cache_dir / f"entry{i}.wav"
+        p.write_bytes(b"x")
+        os.utime(p, (i, i))  # oldest first: entry0 is oldest
+
+    stems_mod._prune_mixdown_cache(cache_dir)
+
+    remaining = {p.name for p in cache_dir.iterdir()}
+    assert len(remaining) == 3
+    assert remaining == {"entry2.wav", "entry3.wav", "entry4.wav"}  # newest 3 survive
+
+
+def test_prune_mixdown_cache_bounds_total_size(tmp_path, monkeypatch):
+    import app.api.stems as stems_mod
+
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 100)
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 25)
+    cache_dir = tmp_path / "mixdown"
+    cache_dir.mkdir()
+    for i in range(5):
+        p = cache_dir / f"entry{i}.wav"
+        p.write_bytes(b"x" * 10)  # 5 * 10 = 50 bytes total, budget is 25
+        os.utime(p, (i, i))
+
+    stems_mod._prune_mixdown_cache(cache_dir)
+
+    remaining = list(cache_dir.iterdir())
+    assert sum(p.stat().st_size for p in remaining) <= 25
 
 
 @pytest.mark.asyncio

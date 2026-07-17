@@ -39,6 +39,7 @@ htmlcov/
 # Runtime job artifacts and local build scratch
 data/
 jobs/
+cache/
 settings.json
 .run/
 .build

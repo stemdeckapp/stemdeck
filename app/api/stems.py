@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -15,7 +16,14 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from app.core.config import JOB_ID_RE, JOBS_DIR, STEM_NAMES, TIMEOUT_FFMPEG, ffmpeg_executable
+from app.core.config import (
+    CACHE_DIR,
+    JOB_ID_RE,
+    JOBS_DIR,
+    STEM_NAMES,
+    TIMEOUT_FFMPEG,
+    ffmpeg_executable,
+)
 from app.core.registry import get as registry_get
 from app.core.settings import get_export_sample_rate
 
@@ -45,6 +53,65 @@ _ENCODE_ARGS = {
 }
 MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
 MIXDOWN_MEDIA_TYPES = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}
+
+# Mixdown render cache (#290): identical render params re-run the full ffmpeg
+# graph on every request today. On a shared server, repeat downloads of the
+# same mix (a common case -- re-downloading, or several listeners pulling the
+# same export) burn CPU for no reason since the output is a pure function of
+# the inputs. Bounded so a churny cache (many one-off region trims) can't
+# grow unboundedly on a long-running server.
+_MIXDOWN_CACHE_DIR = CACHE_DIR / "mixdown"
+_MIXDOWN_CACHE_MAX_FILES = 20
+_MIXDOWN_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+
+
+def _mixdown_cache_key(
+    job_id: str,
+    ext: str,
+    names: list[str],
+    gains: list[float],
+    start: float | None,
+    end: float | None,
+) -> str:
+    """Every render input is in the key, so a different mixer state, region,
+    or a Settings change (export sample rate) misses cleanly -- never a stale
+    hit. Stems are immutable once a job reaches "done", so job_id alone pins
+    the underlying audio; gains are formatted to match the %.6f precision
+    already used in the ffmpeg volume filter, so cosmetically-different but
+    ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry."""
+    raw = "|".join(
+        [
+            job_id,
+            ext,
+            ",".join(names),
+            ",".join(f"{g:.6f}" for g in gains),
+            "" if start is None else f"{start:.6f}",
+            "" if end is None else f"{end:.6f}",
+            str(get_export_sample_rate()),
+        ]
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _prune_mixdown_cache(cache_dir: Path) -> None:
+    """Evict oldest-first once either the file-count or total-size budget is
+    exceeded. Best-effort: a failed prune just means the cache grows past
+    budget until the next successful render, not a broken export."""
+    try:
+        entries = sorted(
+            (p for p in cache_dir.iterdir() if p.is_file() and not p.name.startswith(".")),
+            key=lambda p: p.stat().st_mtime,
+        )
+        total = sum(p.stat().st_size for p in entries)
+    except OSError:
+        return
+    while entries and (len(entries) > _MIXDOWN_CACHE_MAX_FILES or total > _MIXDOWN_CACHE_MAX_BYTES):
+        oldest = entries.pop(0)
+        try:
+            total -= oldest.stat().st_size
+            oldest.unlink()
+        except OSError:
+            pass
 
 
 def _validate_stem_path(job_id: str, name: str):
@@ -93,14 +160,21 @@ async def _drain_stderr(stream: asyncio.StreamReader, sink: deque[str]) -> None:
         sink.append(line.decode("utf-8", "replace").rstrip())
 
 
-async def _stream_ffmpeg(cmd: list[str], context: str = ""):
+async def _stream_ffmpeg(cmd: list[str], context: str = "", cache_path: Path | None = None):
     """Yield ffmpeg stdout in 64 KB chunks; kill process on client disconnect.
 
     stderr is captured (bounded tail) and logged at WARNING when ffmpeg exits
     non-zero (#280): the HTTP status is already committed mid-stream, so a
     failed render reaches the client as a truncated file -- the log entry is
     the only place the failure can surface. Kills we initiated (client
-    disconnect) are expected and not logged as failures."""
+    disconnect) are expected and not logged as failures.
+
+    When `cache_path` is given, every chunk is also teed to a per-request
+    temp file alongside it (#290). A clean finish atomically renames the temp
+    file into place as the cache entry and prunes the cache to its budget;
+    any failure or client disconnect removes the temp file instead -- a
+    render the client didn't get in full never becomes a cache hit for the
+    next request."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -113,14 +187,25 @@ async def _stream_ffmpeg(cmd: list[str], context: str = ""):
     # what distinguishes "ffmpeg finished on its own" from "client
     # disconnected mid-stream and we killed it".
     finished = False
+
+    tmp_path: Path | None = None
+    tmp_file = None
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp")
+        tmp_file = open(tmp_path, "wb")  # noqa: SIM115 -- closed in finally, not a context manager here
     try:
         while True:
             chunk = await proc.stdout.read(65536)
             if not chunk:
                 finished = True
                 break
+            if tmp_file is not None:
+                tmp_file.write(chunk)
             yield chunk
     finally:
+        if tmp_file is not None:
+            tmp_file.close()
         if not finished and proc.returncode is None:
             proc.kill()
         await proc.wait()
@@ -135,6 +220,12 @@ async def _stream_ffmpeg(cmd: list[str], context: str = ""):
                 context,
                 " | ".join(list(stderr_tail)[-8:]) or "(no stderr)",
             )
+        if tmp_path is not None:
+            if finished and proc.returncode == 0:
+                os.replace(tmp_path, cache_path)
+                _prune_mixdown_cache(cache_path.parent)
+            else:
+                tmp_path.unlink(missing_ok=True)
 
 
 async def _ensure_cached_mp3(src: Path) -> Path:
@@ -308,12 +399,16 @@ async def get_mixdown(
     gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
     start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
-) -> StreamingResponse:
-    """Render a fresh mixdown of the given lanes at the given gains, streamed as
-    WAV or MP3. Mirrors the studio mixer (per-stem volume, mute, solo) so the
+) -> FileResponse | StreamingResponse:
+    """Render a mixdown of the given lanes at the given gains, streamed as WAV,
+    MP3, or FLAC. Mirrors the studio mixer (per-stem volume, mute, solo) so the
     exported file matches what is heard. The master fader is intentionally not
     applied -- it is a monitoring level, not part of the mix. Optional ?start=&end=
-    trims to a loop region."""
+    trims to a loop region.
+
+    Identical params (including start/end and the current export sample rate)
+    hit a render cache instead of re-running ffmpeg (#290) -- a cheap win on a
+    shared server where the same export gets re-downloaded."""
     if ext not in ("wav", "mp3", "flac"):
         raise HTTPException(status_code=404, detail="not found")
 
@@ -324,8 +419,21 @@ async def get_mixdown(
             detail="start and end are both required and start must be less than end",
         )
 
-    # Validates job_id (404), job done (404), and path traversal (404) per stem.
+    # Validates job_id (404), job done (404), and path traversal (404) per
+    # stem -- deliberately before the cache lookup below, so a deleted or
+    # not-yet-done job 404s the same way it always has instead of serving a
+    # stale cache entry from before the job was removed.
     paths = [_validate_stem_path(job_id, name) for name in names]
+
+    media_type = MIXDOWN_MEDIA_TYPES[ext]
+    cache_key = _mixdown_cache_key(job_id, ext, names, parsed_gains, start, end)
+    cache_path = _MIXDOWN_CACHE_DIR / f"{cache_key}.{ext}"
+    if cache_path.is_file():
+        return FileResponse(
+            cache_path,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
+        )
 
     pre_seek = ["-ss", str(start)] if start is not None else []
     post_seek = ["-t", str(end - start)] if start is not None else []
@@ -359,9 +467,10 @@ async def get_mixdown(
         "pipe:1",
     ]
 
-    media_type = MIXDOWN_MEDIA_TYPES[ext]
     return StreamingResponse(
-        _stream_ffmpeg(cmd, context=f"mixdown job={job_id} ext={ext} stems={stems}"),
+        _stream_ffmpeg(
+            cmd, context=f"mixdown job={job_id} ext={ext} stems={stems}", cache_path=cache_path
+        ),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
     )
