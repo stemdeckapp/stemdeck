@@ -90,7 +90,9 @@ def _mixdown_cache_key(
             str(get_export_sample_rate()),
         ]
     )
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    # Cache key, not a security context -- usedforsecurity=False documents
+    # that for both readers and static analysis (bandit flags bare sha1()).
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _prune_mixdown_cache(cache_dir: Path) -> None:
