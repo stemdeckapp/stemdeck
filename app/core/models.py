@@ -16,12 +16,18 @@ JobStatus = Literal[
 
 
 def _set(job: Job, **fields: object) -> None:
-    """Mutate Job fields. SSE polling picks up the change automatically."""
+    """Mutate Job fields, then bump job.version so the SSE stream (#289) can
+    detect the change with a cheap int compare instead of re-serializing on
+    every tick. Incrementing after every field is written also closes #285:
+    a snapshot taken mid-call (torn read) sees a version that doesn't match
+    the version read before serializing, so the SSE loop discards it and
+    re-serializes once this call has fully landed."""
     for k, v in fields.items():
         if k == "stage":
             job.stage_message = v  # type: ignore[assignment]
         else:
             setattr(job, k, v)
+    job.version += 1
 
 
 @dataclass
@@ -73,6 +79,10 @@ class Job:
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
+    # Bumped by _set() on every field write (#289). Internal dirty-flag /
+    # tear-detection state for the SSE stream -- not surfaced via to_state()
+    # or persisted, same as cancel_requested.
+    version: int = 0
     # Wall-clock timestamps for metadata-based sweep -- more predictable
     # than directory mtime, which can be touched by unrelated FS events.
     created_at: float = field(default_factory=time.time)
@@ -126,4 +136,6 @@ class Job:
         return job
 
 
-_JOB_FIELDS = frozenset(f.name for f in dataclasses.fields(Job) if f.name != "cancel_requested")
+_JOB_FIELDS = frozenset(
+    f.name for f in dataclasses.fields(Job) if f.name not in ("cancel_requested", "version")
+)

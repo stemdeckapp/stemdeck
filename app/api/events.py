@@ -40,18 +40,30 @@ async def job_events(job_id: str) -> StreamingResponse:
     async def stream() -> AsyncIterator[str]:
         global _sse_active
         try:
-            last = None
+            last_v = -1
             keepalive_at = 0
             loop = asyncio.get_running_loop()
             deadline = loop.time() + _MAX_SSE_SECONDS
             while loop.time() < deadline:
-                snapshot = job.to_state()
-                serialized = json.dumps(snapshot)
-                if serialized != last:
-                    yield f"data: {serialized}\n\n"
-                    last = serialized
+                v = job.version
+                if v != last_v:
+                    snapshot = job.to_state()
+                    if job.version != v:
+                        # _set() ran mid-serialize (#285): this snapshot may mix
+                        # fields from before and after the write (a torn read).
+                        # Discard it and re-serialize next loop instead of
+                        # sleeping, so the client never sees an inconsistent
+                        # progress/stage pair.
+                        continue
+                    yield f"data: {json.dumps(snapshot)}\n\n"
+                    last_v = v
                     keepalive_at = 0
-                if snapshot["status"] in ("done", "error", "cancelled"):
+                    if snapshot["status"] in ("done", "error", "cancelled"):
+                        return
+                elif job.status in ("done", "error", "cancelled"):
+                    # Already-terminal with no pending change (e.g. the job was
+                    # done before this connection opened) -- close promptly
+                    # instead of idling on int-compares until the SSE cap.
                     return
                 keepalive_at += 1
                 if keepalive_at >= 75:  # ~15s
