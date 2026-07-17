@@ -202,11 +202,23 @@ if ($PackageVersion) {
 & $PythonExe -m pip install "$Root"
 
 if ($CpuOnly) {
-  # pip strips local version identifiers when resolving requirements, so it installs
-  # the CUDA wheel from PyPI even when we pre-install the CPU wheel. Force-reinstall
-  # after the fact: uninstalls CUDA torch and replaces it with the CPU-only variant.
+  # Force the CPU wheel explicitly. On Windows the default PyPI torch wheel is
+  # already CPU-only, but this also downgrades a build host that resolved a CUDA
+  # wheel (e.g. via a cu124 index in the runner's pip config), so the CPU package
+  # is deterministic regardless of the host.
   & $PythonExe -m pip install torch==2.6.0+cpu torchaudio==2.6.0+cpu `
       --index-url https://download.pytorch.org/whl/cpu `
+      --force-reinstall --no-deps
+} else {
+  # Force the CUDA wheel explicitly. Unlike Linux (whose default PyPI torch wheel
+  # bundles CUDA), the Windows PyPI torch wheel is CPU-only, so `pip install`
+  # above yields a CPU torch. Without this step the "NVIDIA" package's GPU support
+  # would depend on the build host happening to resolve a CUDA wheel -- silently
+  # regressing to CPU if that host's pip config ever changes. The Windows CUDA
+  # wheel is self-contained (bundles the CUDA DLLs; no separate nvidia-* deps like
+  # Linux), so --no-deps is correct here. (#316)
+  & $PythonExe -m pip install torch==2.6.0+cu124 torchaudio==2.6.0+cu124 `
+      --index-url https://download.pytorch.org/whl/cu124 `
       --force-reinstall --no-deps
 }
 
