@@ -144,9 +144,12 @@ async def _desktop_parent_watchdog(parent_pid: int) -> None:
     while True:
         if not _process_exists(parent_pid):
             _log.info("desktop parent process exited; stopping backend")
-            # Send SIGTERM to ourselves so uvicorn runs its shutdown sequence
-            # instead of bypassing cleanup with os._exit().
-            os.kill(os.getpid(), signal.SIGTERM)
+            # Raise SIGTERM in-process so uvicorn's handler runs its shutdown
+            # sequence. os.kill(pid, SIGTERM) would be wrong here: on Windows
+            # it is TerminateProcess -- a hard kill that bypasses cleanup
+            # (#282). raise_signal triggers the Python-level handler on both
+            # platforms.
+            signal.raise_signal(signal.SIGTERM)
             return
         await asyncio.sleep(1)
 
