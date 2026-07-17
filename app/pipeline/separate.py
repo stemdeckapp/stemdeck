@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -23,34 +24,41 @@ _PCT_RE = re.compile(r"(\d{1,3})%")
 # GPU processing can be silent for minutes; 30 min covers legitimate pauses
 # while still catching genuine hangs (GPU deadlock, OOM stall, etc.).
 
-
-def _demucs_cmd(device: str, source: Path, job_dir: Path) -> list[str]:
-    """Build the demucs CLI invocation. Module-level seam so tests can swap
-    in a stub executable without touching the process-management machinery."""
-    cmd = [
-        sys.executable,
-        "-m",
-        "demucs",
-        "-n",
-        DEMUCS_MODEL,
-        "-d",
-        device,
-    ]
-    # "best" quality (Settings -> General): demucs re-runs separation on a
-    # randomly time-shifted copy of the input and averages the two passes --
-    # measurably cleaner stems, ~2x the separation time. Applies on any
-    # device; read fresh per job like get_demucs_device() below.
-    if get_separation_quality() == "best":
-        cmd += ["--shifts", "2"]
-    cmd += ["-o", str(job_dir), str(source)]
-    return cmd
+# Persistent worker (#309): only one job ever runs at a time (_pipeline_lock
+# in runner.py), so there is exactly one worker to track, not a pool. Reused
+# across consecutive successful jobs on the same device; torn down on cancel,
+# a device change, or any job failure -- see demucs_worker.py's docstring for
+# why a failure always kills the worker rather than trying to keep serving.
+_worker: dict[str, object] = {}
 
 
-def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int, list[str]]:
-    """One demucs attempt on `device`: spawn, stream progress, watchdog stalls.
+def _spawn_worker_cmd(device: str) -> list[str]:
+    """Build the persistent-worker invocation. Module-level seam so tests can
+    swap in a stub executable without touching the process-management
+    machinery (mirrors the old _demucs_cmd seam)."""
+    return [sys.executable, "-m", "app.pipeline.demucs_worker", device]
 
-    Returns (returncode, stderr_tail). Raises JobCancelled when the exit was
-    caused by POST /cancel. The retry policy lives in separate()."""
+
+def _kill_worker() -> None:
+    proc = _worker.pop("proc", None)
+    _worker.pop("device", None)
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def _get_worker(device: str) -> subprocess.Popen:
+    """Return a live worker bound to `device`, reusing the current one if it
+    already matches and is still alive, spawning fresh otherwise (first call,
+    a device change, or the previous worker died/was torn down)."""
+    proc = _worker.get("proc")
+    if proc is not None and _worker.get("device") == device and proc.poll() is None:
+        return proc
+    _kill_worker()
+
     env = os.environ.copy()
     try:
         import certifi
@@ -60,32 +68,60 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     except ModuleNotFoundError:
         pass
 
-    spawn_at = time.monotonic()
     proc = subprocess.Popen(
-        _demucs_cmd(device, source, job_dir),
+        _spawn_worker_cmd(device),
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
-        bufsize=0,
+        bufsize=1,
         env=env,
     )
-    if proc.stderr is None:
-        raise RuntimeError("demucs subprocess has no stderr pipe")
+    _worker["proc"] = proc
+    _worker["device"] = device
+    return proc
+
+
+def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int, list[str]]:
+    """One demucs job dispatched to the persistent worker for `device`:
+    reuse-or-spawn, stream progress, watchdog stalls.
+
+    Returns (returncode, stderr_tail). Raises JobCancelled when the exit was
+    caused by POST /cancel. The retry policy lives in separate()."""
+    spawn_at = time.monotonic()
+    proc = _get_worker(device)
+    if proc.stdin is None or proc.stderr is None:
+        raise RuntimeError("demucs worker has no stdin/stderr pipe")
     set_proc(job.id, proc)
-    # Time from spawn to demucs's first progress line -- process/model-load
-    # startup cost, as opposed to actual separation work (#288). Measurement
-    # only: subprocess isolation (kill-on-cancel, crash containment) is a
-    # design feature we keep regardless of what this turns out to be.
+
+    shifts = 2 if get_separation_quality() == "best" else 1
+    req = json.dumps({"source": str(source), "job_dir": str(job_dir), "shifts": shifts}) + "\n"
+    try:
+        proc.stdin.write(req)
+        proc.stdin.flush()
+    except (BrokenPipeError, OSError):
+        # The worker died between _get_worker() and here -- e.g. a cancel on
+        # the previous job raced this dispatch. Treat as an ordinary failure;
+        # separate()'s retry policy handles it exactly like a nonzero exit.
+        set_proc(job.id, None)
+        _kill_worker()
+        return 1, ["demucs worker is not accepting input (died before dispatch)"]
+
+    # Time from dispatch to the first progress line -- near-zero for a reused
+    # warm worker, the full process/model-load cost for a freshly spawned one
+    # (#288/#309). Subprocess isolation (kill-on-cancel, crash containment)
+    # is a design feature we keep regardless of which case this run hits.
     startup_recorded = False
 
     # tqdm uses \r to redraw -- read char-by-char and split on \r or \n.
-    # Keep the last few non-progress lines so we can surface them if demucs
-    # exits non-zero (otherwise the only signal would be a bare exit code).
+    # Keep the last few non-progress lines so we can surface them if the job
+    # fails (otherwise the only signal would be a bare exit code).
     buf = ""
     tail: list[str] = []
     last_output: list[float] = [time.monotonic()]
-    # Event set by the reader loop when the process exits normally so the
-    # watchdog can wake up immediately instead of waiting out its 30 s sleep.
+    job_ok: bool | None = None  # None while streaming; True/False once decided
+    # Event set by the reader loop when the job finishes so the watchdog can
+    # wake up immediately instead of waiting out its 30 s sleep.
     _done_evt = threading.Event()
 
     def _watchdog() -> None:
@@ -94,7 +130,7 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                 return
             if time.monotonic() - last_output[0] > TIMEOUT_DEMUCS_STALL:
                 logger.warning(
-                    "demucs stalled for %ss with no output, terminating job %s",
+                    "demucs worker stalled for %ss with no output, terminating job %s",
                     TIMEOUT_DEMUCS_STALL,
                     job.id,
                 )
@@ -107,6 +143,9 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
         while True:
             ch = proc.stderr.read(1)
             if not ch:
+                # EOF -- the worker process itself exited (crash, or it
+                # already wrote @@ERROR@@ and is shutting down).
+                job_ok = False
                 break
             last_output[0] = time.monotonic()
             if ch in ("\r", "\n"):
@@ -114,6 +153,18 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                 buf = ""
                 if not line:
                     continue
+                if line == "@@DONE@@":
+                    job_ok = True
+                    break
+                if line.startswith("@@ERROR@@"):
+                    msg = line[len("@@ERROR@@") :]
+                    try:
+                        msg = json.loads(msg)
+                    except json.JSONDecodeError:
+                        pass
+                    tail.append(str(msg))
+                    job_ok = False
+                    break
                 m = _PCT_RE.search(line)
                 if m:
                     if not startup_recorded:
@@ -131,19 +182,24 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                         tail.pop(0)
             else:
                 buf += ch
-
-        proc.wait()
     finally:
         _done_evt.set()
         set_proc(job.id, None)
         wt.join(timeout=2)
 
-    # POST /cancel calls proc.terminate() directly, which causes the read loop
-    # above to hit EOF and proc.wait() to return a nonzero status. Translate
-    # that into JobCancelled before the generic "demucs failed" path.
+    # Never reuse a worker after anything but a clean success: a cancel
+    # (proc.terminate() from the API thread) already killed it; a failure's
+    # GPU/CUDA state afterward isn't something we can vouch for. Only the
+    # happy path keeps the worker warm for the next job.
+    if job_ok is not True:
+        _kill_worker()
+
+    # POST /cancel calls proc.terminate() directly, which causes the read
+    # loop above to hit EOF. Translate that into JobCancelled before the
+    # generic "demucs failed" path.
     if job.cancel_requested:
         raise JobCancelled()
-    return proc.returncode, tail
+    return (0, tail) if job_ok else (1, tail)
 
 
 def separate(job: Job, source: Path, job_dir: Path) -> Path:

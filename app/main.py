@@ -176,6 +176,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                     _background_tasks.add(wt)
                     wt.add_done_callback(_background_tasks.discard)
     yield
+    # Tear down the persistent demucs worker (#309) so a clean shutdown never
+    # leaves it as an orphaned process -- it has no parent-death watchdog of
+    # its own, unlike the desktop backend itself.
+    from app.pipeline.separate import _kill_worker
+
+    _kill_worker()
 
 
 # Phones hitting the self-hosted server URL get the mobile UI; everything
