@@ -2077,7 +2077,7 @@ function openResetConfirm() {
   overlay.innerHTML = `
     <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Reset app data">
       <div class="reset-confirm-title">Reset app data?</div>
-      <p class="reset-confirm-body">This permanently deletes every track, job, and library entry stored on this computer. This cannot be undone.</p>
+      <p class="reset-confirm-body">This permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. This cannot be undone.</p>
       <p class="reset-confirm-hint">Type <strong>RESET</strong> to confirm.</p>
       <input class="reset-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-label="Type RESET to confirm" />
       <div class="reset-confirm-msg" role="alert" aria-live="polite"></div>
@@ -2208,12 +2208,12 @@ function openLibraryEditor() {
           <span class="library-editor-status" aria-live="polite"></span>
           <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
         </div>
-        <div class="settings-section settings-danger-zone hidden">
+        <div class="settings-section settings-danger-zone">
           <div class="settings-subhead settings-danger-subhead">Danger zone</div>
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-title">Reset app data</div>
-              <div class="settings-row-desc">Permanently deletes every track, job, and library entry stored on this computer. Cannot be undone.</div>
+              <div class="settings-row-desc">Permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. Cannot be undone.</div>
             </div>
             <button class="settings-reset-btn" type="button">Reset app data…</button>
           </div>
@@ -2312,18 +2312,17 @@ function openLibraryEditor() {
     note.className = "settings-server-note";
     note.textContent = "These settings are read-only in server mode. To change them, update your server configuration (e.g. docker-compose.yml) and restart.";
     overlay.querySelector("[data-pane='network']")?.prepend(note);
-  } else {
-    // Reset app data (#309 follow-up): a desktop-only troubleshooting tool
-    // for the "old session keeps coming back" report -- the real persisted
-    // state lives in ~/Documents/StemDeck, not the extracted package's own
-    // bundled data/ folder, so deleting that folder never clears it. Hidden
-    // in server mode: wiping JOBS_DIR there would delete every user's data,
-    // not just the caller's (also enforced server-side, not just here).
-    overlay.querySelector(".settings-danger-zone")?.classList.remove("hidden");
-    overlay.querySelector(".settings-reset-btn")?.addEventListener("click", () => {
-      openResetConfirm();
-    });
   }
+  // Reset app data (#312): originally a "session keeps coming back across
+  // desktop reinstalls" fix (the real persisted state lives in
+  // ~/Documents/StemDeck, not the extracted package's own bundled data/
+  // folder), available in server mode too -- same network_gate trust
+  // boundary as every other settings-mutating endpoint, enforced
+  // server-side (not just hidden here). On a shared server this deletes
+  // every user's library, which the confirm dialog says explicitly.
+  overlay.querySelector(".settings-reset-btn")?.addEventListener("click", () => {
+    openResetConfirm();
+  });
 }
 
 // Poll a job until it reaches a terminal state, so auto-restores run one at a

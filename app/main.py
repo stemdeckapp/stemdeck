@@ -331,18 +331,22 @@ _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "pro
 
 @app.post("/api/reset", tags=["settings"])
 def reset_app_data() -> dict[str, object]:
-    """Desktop-only factory reset (Settings -> General -> "Reset app data"):
-    delete every job directory and the registry, so no old work session can
-    resurface across package reinstalls -- the runtime state that actually
+    """Factory reset (Settings -> General -> "Reset app data"): delete every
+    job directory and the registry, so no old work session can resurface
+    across package reinstalls -- on desktop, the runtime state that actually
     persists (~/Documents/StemDeck, not the extracted package's own bundled
     data/ folder) survives a fresh install otherwise. The browser-side
-    library index is a separate store the frontend clears itself (via the
-    Tauri reset_user_data command) after this call succeeds.
+    library index is a separate store the frontend clears itself (the Tauri
+    reset_user_data command on desktop, localStorage directly in server/
+    mobile mode) after this call succeeds.
 
-    Gated server-side, not just hidden in the UI: wiping JOBS_DIR on a
-    shared server would delete every user's data, not just the caller's."""
-    if os.environ.get("STEMDECK_DESKTOP") != "1":
-        raise HTTPException(status_code=403, detail="reset is only available in the desktop app")
+    Available in server mode too, same trust boundary as every other
+    settings-mutating endpoint: the network_gate middleware already allows
+    the host machine always and a LAN device only while network access is
+    on. On a shared deployment this deletes every user's library, not just
+    the caller's -- same blast radius as changing the compute device or any
+    other setting from a device with network access, not a new class of
+    risk this endpoint introduces on its own."""
     active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
     if active:
         raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")

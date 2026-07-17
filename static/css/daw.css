@@ -848,7 +848,6 @@ input, textarea { font-family: inherit; }
 
 /* Settings → General → danger zone (reset app data) */
 .settings-danger-zone { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-.settings-danger-zone.hidden { display: none; }
 .settings-danger-subhead { color: var(--danger); }
 .settings-reset-btn {
   flex-shrink: 0; min-height: 30px; border-radius: 7px;

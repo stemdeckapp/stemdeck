@@ -61,17 +61,25 @@ def test_reset_all_on_missing_dir_is_a_noop(tmp_path):
 # ─── POST /api/reset ────────────────────────────────────────────────────────
 
 
-def test_reset_endpoint_requires_desktop_mode(client, monkeypatch, tmp_path):
+def test_reset_endpoint_works_without_desktop_mode(client, monkeypatch, tmp_path):
+    """Available in server mode too -- gated by the same network_gate
+    middleware every other settings-mutating endpoint already relies on, not
+    a desktop-only restriction."""
     monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
     monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
+    job = Job(id="abcdefabcded", status="done")
+    _jobs[job.id] = job
+    (tmp_path / job.id).mkdir()
 
     r = client.post("/api/reset")
 
-    assert r.status_code == 403
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    assert _jobs == {}
+    assert not (tmp_path / job.id).exists()
 
 
 def test_reset_endpoint_rejects_active_job(client, monkeypatch, tmp_path):
-    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
     monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
     job = Job(id="abcdefabcdee", status="separating")
     _jobs[job.id] = job
@@ -82,8 +90,7 @@ def test_reset_endpoint_rejects_active_job(client, monkeypatch, tmp_path):
     assert job.id in _jobs  # nothing was touched
 
 
-def test_reset_endpoint_succeeds_in_desktop_mode(client, monkeypatch, tmp_path):
-    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
+def test_reset_endpoint_succeeds(client, monkeypatch, tmp_path):
     monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
     job = Job(id="abcdefabcdea", status="done")
     _jobs[job.id] = job
@@ -100,7 +107,6 @@ def test_reset_endpoint_succeeds_in_desktop_mode(client, monkeypatch, tmp_path):
 def test_reset_endpoint_allows_only_terminal_jobs(client, monkeypatch, tmp_path):
     """done/error/cancelled jobs never block a reset -- only genuinely active
     ones (queued through processing) do."""
-    monkeypatch.setenv("STEMDECK_DESKTOP", "1")
     monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
     for i, status in enumerate(("done", "error", "cancelled")):
         _jobs[f"abcdefabcd{i:02x}"] = Job(id=f"abcdefabcd{i:02x}", status=status)
