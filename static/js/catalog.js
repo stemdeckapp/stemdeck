@@ -1857,7 +1857,8 @@ async function wireGeneralSettings(overlay) {
   const portInput = overlay.querySelector(".set-port");
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceResolved = overlay.querySelector(".set-demucs-resolved");
-  if (!durInput && !heightSel && !sampleRateSel && !portInput && !deviceSel) return;
+  const qualitySel = overlay.querySelector(".set-separation-quality");
+  if (!durInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel) return;
 
   // Last server-confirmed device choice, to revert the select when the server
   // rejects a forced device (e.g. CUDA not available on this machine).
@@ -1868,6 +1869,7 @@ async function wireGeneralSettings(overlay) {
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
+    if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
     if (deviceSel) {
       // Gray out devices this machine can't use (Auto and CPU are always
       // available). Label disabled options so it's clear WHY they're greyed.
@@ -1927,6 +1929,9 @@ async function wireGeneralSettings(overlay) {
   portInput?.addEventListener("change", () => {
     const port = Math.max(1024, Math.min(65535, parseInt(portInput.value, 10) || 8000));
     post({ port });
+  });
+  qualitySel?.addEventListener("change", () => {
+    post({ separation_quality: qualitySel.value });
   });
   // Compute device needs its own POST path: unlike the clamped numeric
   // settings, the server can REJECT a forced device (422 with a reason, e.g.
@@ -2098,6 +2103,18 @@ function openLibraryEditor() {
               <option value="cuda">CUDA (NVIDIA)</option>
               <option value="mps">MPS (Apple Silicon)</option>
               <option value="cpu">CPU</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Separation quality</div>
+              <div class="settings-row-desc">Best runs the separator twice with randomized shifts and averages the result — cleaner stems, twice the time.</div>
+            </div>
+            <select class="settings-select set-separation-quality" aria-label="Separation quality">
+              <option value="standard">Standard</option>
+              <option value="best">Best (2× slower)</option>
             </select>
           </div>
         </div>

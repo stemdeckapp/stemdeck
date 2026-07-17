@@ -172,6 +172,36 @@ def test_demucs_device_api_round_trip_and_422(monkeypatch, _isolated_settings):
         assert c.post("/api/settings", json={"demucs_device": "bogus"}).status_code == 422
 
 
+# ── separation_quality ──
+
+
+def test_separation_quality_defaults_to_standard(_isolated_settings):
+    assert settings_mod.get_separation_quality() == "standard"
+
+
+def test_separation_quality_env_seeds_default(monkeypatch, _isolated_settings):
+    monkeypatch.setenv("STEMDECK_SEPARATION_QUALITY", "best")
+    assert settings_mod.get_separation_quality() == "best"
+
+
+def test_separation_quality_rejects_unknown_choice(_isolated_settings):
+    with pytest.raises(ValueError):
+        settings_mod.set_separation_quality("ultra")
+    assert settings_mod.get_separation_quality() == "standard"  # nothing persisted
+
+
+def test_separation_quality_api_round_trip_and_422(_isolated_settings):
+    with TestClient(app) as c:
+        assert c.get("/api/settings").json()["separation_quality"] == "standard"
+        r = c.post("/api/settings", json={"separation_quality": "best"})
+        assert r.status_code == 200
+        assert r.json()["separation_quality"] == "best"
+        assert c.get("/api/settings").json()["separation_quality"] == "best"
+        r = c.post("/api/settings", json={"separation_quality": "ultra"})
+        assert r.status_code == 422
+        assert c.get("/api/settings").json()["separation_quality"] == "best"  # unchanged
+
+
 def test_gate_blocks_non_loopback_when_off():
     settings_mod.set_allow_network(False)
     # TestClient's client host ("testclient") is treated as non-loopback.

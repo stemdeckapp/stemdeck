@@ -8,6 +8,7 @@ at startup), so the Settings UI can change them without a restart:
 - `video_max_height`  — max video resolution for MP4 export / YouTube pulls.
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
+- `separation_quality` — demucs shift-averaging: standard | best (2x slower).
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -224,5 +225,36 @@ def set_demucs_device(value: str) -> str:
         raise ValueError(f"{choice} is not available on this machine")
     with _LOCK:
         _ensure()["demucs_device"] = choice
+        _save()
+        return choice
+
+
+# ── separation_quality ──
+# "standard" (default) runs demucs once. "best" adds --shifts 2: demucs
+# re-runs separation on a randomly time-shifted copy of the input and
+# averages the two -- measurably cleaner stems, at ~2x the separation time.
+# Applies on any device; a CPU user who picks "best" is accepting the wait
+# knowingly. STEMDECK_SEPARATION_QUALITY seeds the default so existing
+# env-based deployments can force it.
+_QUALITY_CHOICES = ("standard", "best")
+
+
+def _default_separation_quality() -> str:
+    env = os.environ.get("STEMDECK_SEPARATION_QUALITY", "").strip().lower()
+    return env if env in _QUALITY_CHOICES else "standard"
+
+
+def get_separation_quality() -> str:
+    with _LOCK:
+        v = _ensure().get("separation_quality")
+        return v if isinstance(v, str) and v in _QUALITY_CHOICES else _default_separation_quality()
+
+
+def set_separation_quality(value: str) -> str:
+    choice = (value or "").strip().lower()
+    if choice not in _QUALITY_CHOICES:
+        raise ValueError("separation_quality must be one of: " + ", ".join(_QUALITY_CHOICES))
+    with _LOCK:
+        _ensure()["separation_quality"] = choice
         _save()
         return choice

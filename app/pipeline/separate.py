@@ -13,7 +13,7 @@ from pathlib import Path
 from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
-from app.core.settings import get_demucs_device
+from app.core.settings import get_demucs_device, get_separation_quality
 from app.pipeline.errors import SeparationError, classify_failure
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -27,7 +27,7 @@ _PCT_RE = re.compile(r"(\d{1,3})%")
 def _demucs_cmd(device: str, source: Path, job_dir: Path) -> list[str]:
     """Build the demucs CLI invocation. Module-level seam so tests can swap
     in a stub executable without touching the process-management machinery."""
-    return [
+    cmd = [
         sys.executable,
         "-m",
         "demucs",
@@ -35,10 +35,15 @@ def _demucs_cmd(device: str, source: Path, job_dir: Path) -> list[str]:
         DEMUCS_MODEL,
         "-d",
         device,
-        "-o",
-        str(job_dir),
-        str(source),
     ]
+    # "best" quality (Settings -> General): demucs re-runs separation on a
+    # randomly time-shifted copy of the input and averages the two passes --
+    # measurably cleaner stems, ~2x the separation time. Applies on any
+    # device; read fresh per job like get_demucs_device() below.
+    if get_separation_quality() == "best":
+        cmd += ["--shifts", "2"]
+    cmd += ["-o", str(job_dir), str(source)]
+    return cmd
 
 
 def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int, list[str]]:

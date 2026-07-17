@@ -70,6 +70,19 @@ def test_gpu_failure_falls_back_to_cpu(job, tmp_path, monkeypatch, caplog):
     assert "CUDA out of memory" in warning
 
 
+def test_demucs_cmd_omits_shifts_at_standard_quality(monkeypatch, tmp_path):
+    monkeypatch.setattr(sep_mod, "get_separation_quality", lambda: "standard")
+    cmd = sep_mod._demucs_cmd("cpu", tmp_path / "source.wav", tmp_path)
+    assert "--shifts" not in cmd
+
+
+def test_demucs_cmd_includes_shifts_2_at_best_quality(monkeypatch, tmp_path):
+    monkeypatch.setattr(sep_mod, "get_separation_quality", lambda: "best")
+    cmd = sep_mod._demucs_cmd("cpu", tmp_path / "source.wav", tmp_path)
+    i = cmd.index("--shifts")
+    assert cmd[i + 1] == "2"
+
+
 def test_records_startup_timing_on_first_progress_line(job, tmp_path, monkeypatch):
     """#288: measurement only -- time from Popen to the first progress line
     demucs emits, so the real subprocess/model-load startup cost can be
