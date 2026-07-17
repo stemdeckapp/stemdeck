@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device
-from app.pipeline.errors import SeparationError
+from app.pipeline.errors import SeparationError, classify_failure
 
 logger = logging.getLogger("stemdeck.pipeline")
 
@@ -23,16 +24,10 @@ _PCT_RE = re.compile(r"(\d{1,3})%")
 # while still catching genuine hangs (GPU deadlock, OOM stall, etc.).
 
 
-def separate(job: Job, source: Path, job_dir: Path) -> Path:
-    _set(job, status="separating", progress=0.0, stage="Separating stems...")
-
-    # Read the device fresh per job (not a frozen import) so a Settings change
-    # applies to the next separation without a restart. Recorded on the job for
-    # the completion summary / metadata / failure quarantine.
-    device = get_demucs_device()
-    job.compute_device = device
-    logger.info("[%s] separating on device=%s", job.id, device)
-    cmd = [
+def _demucs_cmd(device: str, source: Path, job_dir: Path) -> list[str]:
+    """Build the demucs CLI invocation. Module-level seam so tests can swap
+    in a stub executable without touching the process-management machinery."""
+    return [
         sys.executable,
         "-m",
         "demucs",
@@ -44,6 +39,13 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         str(job_dir),
         str(source),
     ]
+
+
+def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int, list[str]]:
+    """One demucs attempt on `device`: spawn, stream progress, watchdog stalls.
+
+    Returns (returncode, stderr_tail). Raises JobCancelled when the exit was
+    caused by POST /cancel. The retry policy lives in separate()."""
     env = os.environ.copy()
     try:
         import certifi
@@ -54,7 +56,7 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
         pass
 
     proc = subprocess.Popen(
-        cmd,
+        _demucs_cmd(device, source, job_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -123,15 +125,69 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
     # that into JobCancelled before the generic "demucs failed" path.
     if job.cancel_requested:
         raise JobCancelled()
-    if proc.returncode != 0:
+    return proc.returncode, tail
+
+
+def separate(job: Job, source: Path, job_dir: Path) -> Path:
+    """Run demucs on the configured device, falling back to CPU once when a
+    GPU attempt fails (#276).
+
+    The fallback is deliberately loud, never silent (the #247 lesson): the
+    stage line says so while it runs, the WARNING log carries the full stderr
+    tail, and gpu_fallback/compute_device persist to job state and metadata.
+    It applies even when the user forced cuda/mps in Settings -- a dead job
+    with no diagnostics is strictly worse for them than a slow one that
+    explains itself."""
+    _set(job, status="separating", progress=0.0, stage="Separating stems...")
+
+    # Read the device fresh per job (not a frozen import) so a Settings change
+    # applies to the next separation without a restart. Recorded on the job for
+    # the completion summary / metadata / failure quarantine.
+    device = get_demucs_device()
+    job.compute_device = device
+    logger.info("[%s] separating on device=%s", job.id, device)
+
+    rc, tail = _run_demucs(job, source, job_dir, device)
+
+    if rc != 0 and device != "cpu":
+        cause = classify_failure("\n".join(tail))
+        logger.warning(
+            "[%s] demucs failed on %s (exit %s, cause=%s); retrying on CPU. tail:\n%s",
+            job.id,
+            device,
+            rc,
+            cause,
+            "\n".join(tail[-15:]) or "(no stderr captured)",
+        )
+        # Partial output from the failed attempt must not be mistaken for
+        # results by collect(); CPU restarts from scratch, so does progress.
+        shutil.rmtree(job_dir / DEMUCS_MODEL, ignore_errors=True)
+        _set(job, progress=0.0, stage="GPU failed — retrying on CPU (slower)...")
+        job.gpu_fallback = True
+        job.compute_device = f"cpu (fallback from {device})"
+        first_tail = tail
+        rc, tail = _run_demucs(job, source, job_dir, "cpu")
+        if rc != 0:
+            combined = [
+                f"--- attempt on {device} ---",
+                *first_tail[-20:],
+                "--- cpu fallback attempt ---",
+                *tail[-20:],
+            ]
+            last = tail[-1] if tail else f"exit status {rc}"
+            logger.error("[%s] cpu fallback also failed (exit %s)", job.id, rc)
+            raise SeparationError(
+                f"demucs failed: {last}", tail=combined, device=f"{device}, then cpu"
+            )
+    elif rc != 0:
         detail = "\n".join(tail[-15:]) if tail else "(no stderr captured)"
-        logger.error("[%s] demucs exited %s; tail:\n%s", job.id, proc.returncode, detail)
-        last = tail[-1] if tail else f"exit status {proc.returncode}"
+        logger.error("[%s] demucs exited %s; tail:\n%s", job.id, rc, detail)
+        last = tail[-1] if tail else f"exit status {rc}"
         # SeparationError carries the stderr tail + device so the runner's
         # failure quarantine can preserve the evidence (#277).
         raise SeparationError(f"demucs failed: {last}", tail=tail[-40:], device=device)
 
     stems_root = job_dir / DEMUCS_MODEL / source.stem
     if not stems_root.is_dir():
-        raise SeparationError(f"demucs output not found at {stems_root}", device=device)
+        raise SeparationError(f"demucs output not found at {stems_root}", device=job.compute_device)
     return stems_root
