@@ -351,7 +351,10 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     }
     let ffmpeg = resolve_existing_ffmpeg(&data_dir);
     let torch_device = read_config_str(&data_dir, "torchDevice");
-    let torch_device_reason = read_config_str(&data_dir, "torchDeviceReason");
+    let torch_device_reason = effective_device_reason(
+        read_config_str(&data_dir, "torchDeviceReason"),
+        is_cpu_only_package(&root),
+    );
     Ok(RuntimeProbe {
         app_root: root.display().to_string(),
         data_dir: data_dir.display().to_string(),
@@ -799,6 +802,22 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
 /// installed CPU build permanently force the NVIDIA build onto CPU (#247).
 fn is_cpu_only_package(root: &Path) -> bool {
     root.join("cpu-only").is_file()
+}
+
+/// A persisted "cpu-only-package" device decision is only trustworthy while the
+/// *current* install is still the CPU-only build. When a user replaces the CPU
+/// package with the NVIDIA (CUDA) build in the same data dir, the leftover
+/// reason would otherwise make the setup gate treat the device as "settled" on
+/// CPU and skip GPU detection entirely -- pinning a GPU machine to CPU until the
+/// data dir is cleared by hand. Dropping the stale reason marks the device
+/// unsettled so setup re-runs `ensure_torch_device` (which clears the stale
+/// marker and re-probes the GPU). Other reasons pass through unchanged; the
+/// existing #247 "unknown reason = unsettled" path handles the rest. (#316)
+fn effective_device_reason(persisted: Option<String>, cpu_only_package: bool) -> Option<String> {
+    match persisted.as_deref() {
+        Some("cpu-only-package") if !cpu_only_package => None,
+        _ => persisted,
+    }
 }
 
 /// Deletes a stale `cpu-only` marker left in the shared data dir by an older
@@ -2763,6 +2782,44 @@ mod tests {
                                   // but migration_flag is absent so no cleanup fires. Correct behavior.
         let last = fs::read_to_string(&version_file).unwrap_or_default();
         assert_eq!(last.trim(), "0.4.0");
+    }
+
+    // --- cpu-only-package re-probe on package swap (#316) ---
+
+    #[test]
+    fn stale_cpu_only_reason_dropped_when_package_is_not_cpu_only() {
+        // CPU build -> NVIDIA build swap in the same data dir: the leftover
+        // "cpu-only-package" reason must be invalidated so the setup gate treats
+        // the device as unsettled and re-runs GPU detection.
+        let got =
+            super::effective_device_reason(Some("cpu-only-package".to_string()), /* cpu_only */ false);
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn cpu_only_reason_kept_when_package_is_still_cpu_only() {
+        // Genuine CPU-only build: the reason is accurate and must stay so setup
+        // doesn't waste a probe on a machine that can never use CUDA.
+        let got =
+            super::effective_device_reason(Some("cpu-only-package".to_string()), /* cpu_only */ true);
+        assert_eq!(got.as_deref(), Some("cpu-only-package"));
+    }
+
+    #[test]
+    fn other_device_reasons_pass_through_unchanged() {
+        for reason in ["verified", "no-gpu-detected", "cuda-verify-failed", "mps"] {
+            assert_eq!(
+                super::effective_device_reason(Some(reason.to_string()), false).as_deref(),
+                Some(reason),
+            );
+            assert_eq!(
+                super::effective_device_reason(Some(reason.to_string()), true).as_deref(),
+                Some(reason),
+            );
+        }
+        // Absent reason stays absent (already unsettled) in both package kinds.
+        assert_eq!(super::effective_device_reason(None, false), None);
+        assert_eq!(super::effective_device_reason(None, true), None);
     }
 
     #[cfg(target_os = "macos")]
