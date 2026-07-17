@@ -4,6 +4,7 @@ import json
 import logging
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 
 from app.core.config import JOB_ID_RE, STEM_NAMES
@@ -70,12 +71,20 @@ def _migrate(data: dict) -> dict:
 
 
 def persist(jobs_dir: Path) -> None:
-    """Persist terminal jobs so completed library entries survive restarts."""
+    """Persist terminal jobs so completed library entries survive restarts.
+
+    Callers run on the pipeline thread, API threads, and the sweep loop
+    concurrently, so the write+replace happens under the lock with a unique
+    temp name per call (#281) -- a shared temp path let two writers collide,
+    and on Windows os.replace over a file another writer holds open raises
+    PermissionError. Best-effort like the settings store: a failed persist
+    logs and returns rather than killing the caller."""
     try:
         jobs_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         logger.warning("cannot create jobs dir %s; skipping persist", jobs_dir, exc_info=True)
         return
+    path = jobs_dir / _REGISTRY_FILE
     with _lock:
         records = [
             job.to_record()
@@ -83,10 +92,14 @@ def persist(jobs_dir: Path) -> None:
             if job.status in _TERMINAL
         ]
         payload = json.dumps({"version": REGISTRY_VERSION, "jobs": records}, indent=2) + "\n"
-    path = jobs_dir / _REGISTRY_FILE
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    tmp.replace(path)
+        tmp = jobs_dir / f".registry.{uuid.uuid4().hex}.tmp"
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            logger.warning("could not persist registry to %s", path, exc_info=True)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def restore(jobs_dir: Path) -> None:
@@ -137,13 +150,23 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         mix_url = f"/api/jobs/{job_dir.name}/stems/mix.wav"
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
     meta_path = job_dir / "metadata.json"
-    if not meta_path.is_file():
-        return None
     meta: dict = {}
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        pass
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    else:
+        # Crash window (#284): the process died between status=done and the
+        # metadata write, leaving a complete stems dir that used to be
+        # unrecoverable. Recover with a placeholder title and write a minimal
+        # metadata.json immediately, so the NEXT restart takes the normal
+        # path -- self-healing, not a permanent special case.
+        meta = {"title": f"Recovered track {job_dir.name[:6]}"}
+        try:
+            meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            logger.warning("could not write recovery metadata for %s", job_dir.name, exc_info=True)
     return Job(
         id=job_dir.name,
         status="done",

@@ -59,14 +59,69 @@ def test_restore_recovers_orphan_done_job_from_stems(tmp_path: Path):
     assert {stem["name"] for stem in restored.stems} == {"vocals", "drums"}
 
 
-def test_restore_skips_orphan_without_metadata(tmp_path: Path):
-    stems_dir = tmp_path / "abcdefabcde0" / "stems"
+def test_restore_recovers_orphan_without_metadata(tmp_path: Path):
+    """#284: a crash between status=done and the metadata write used to leave
+    a complete stems dir permanently unrecoverable. Now it comes back with a
+    placeholder title, and a minimal metadata.json is written so the next
+    restart takes the normal recovery path (self-healing)."""
+    job_dir = tmp_path / "abcdefabcde0"
+    stems_dir = job_dir / "stems"
     stems_dir.mkdir(parents=True)
     (stems_dir / "vocals.wav").write_bytes(b"RIFF")
 
     restore_registry(tmp_path)
 
-    assert "abcdefabcde0" not in _jobs
+    restored = _jobs["abcdefabcde0"]
+    assert restored.status == "done"
+    assert restored.title == "Recovered track abcdef"
+    assert {stem["name"] for stem in restored.stems} == {"vocals"}
+    # Self-healed: metadata.json now exists with the placeholder title.
+    meta = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["title"] == "Recovered track abcdef"
+
+
+def test_restore_still_ignores_dir_without_stems(tmp_path: Path):
+    """The stems requirement stays: an empty/partial job dir is not a track."""
+    (tmp_path / "abcdefabcde1" / "stems").mkdir(parents=True)  # no WAVs
+    (tmp_path / "abcdefabcde2").mkdir(parents=True)  # no stems dir at all
+
+    restore_registry(tmp_path)
+
+    assert "abcdefabcde1" not in _jobs
+    assert "abcdefabcde2" not in _jobs
+
+
+def test_persist_concurrent_writers_no_corruption(tmp_path: Path):
+    """#281: pipeline thread, API threads, and the sweep all call persist()
+    concurrently. A shared temp path let writers collide (PermissionError on
+    Windows os.replace). Hammer it from threads: no exception, valid JSON,
+    no stray temp files."""
+    import threading
+
+    for i in range(5):
+        job = Job(id=f"abcdefabcd{i:02x}", status="done", title=f"t{i}")
+        _jobs[job.id] = job
+
+    errors: list[Exception] = []
+
+    def hammer():
+        try:
+            for _ in range(30):
+                persist_registry(tmp_path)
+        except Exception as e:  # pragma: no cover - the failure being tested
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    data = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))
+    assert len(data["jobs"]) == 5
+    assert not list(tmp_path.glob("*.tmp")), "no temp files may be left behind"
+    assert not list(tmp_path.glob(".registry.*")), "no temp files may be left behind"
 
 
 def test_restored_job_serves_stems(tmp_path: Path, monkeypatch):
