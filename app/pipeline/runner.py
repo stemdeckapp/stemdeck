@@ -208,6 +208,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "tags": job.tags,
         "has_video": job.has_video,
         "compute_device": job.compute_device,
+        "gpu_fallback": job.gpu_fallback,
         "stage_timings": job.stage_timings,
     }
     try:

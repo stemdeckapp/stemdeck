@@ -50,6 +50,42 @@ def _is_retriable(exc: Exception) -> bool:
     return any(s in msg for s in _RETRIABLE)
 
 
+# yt-dlp's default socket timeout is 20 s but only applies where it plumbs the
+# option through; set it explicitly on every YoutubeDL we build so a stalled
+# TCP connection can never hang a job indefinitely (#279).
+_SOCKET_TIMEOUT_SEC = 30
+
+
+def _with_retries(job: Job, fn, *, what: str):
+    """Run `fn` with the shared transient-network retry policy (#279).
+
+    Retries _MAX_RETRIES times with backoff on retriable errors; re-raises
+    immediately on non-retriable ones. A cancel arriving mid-attempt is
+    surfaced as JobCancelled. Shared by the metadata probe and the download
+    itself so both survive the same network blips."""
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if job.cancel_requested:
+                raise JobCancelled() from exc
+            if attempt < _MAX_RETRIES and _is_retriable(exc):
+                wait = _RETRY_BACKOFF[attempt]
+                logger.warning(
+                    "[%s] %s attempt %d/%d failed (%s), retrying in %ds",
+                    job.id,
+                    what,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    exc,
+                    wait,
+                )
+                _set(job, stage=f"Network error — retrying ({attempt + 1}/{_MAX_RETRIES})...")
+                time.sleep(wait)
+            else:
+                raise
+
+
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _YOUTUBE_HOSTS = frozenset(
     (
@@ -192,6 +228,7 @@ def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
         "noplaylist": True,
         "allowed_extractors": _ALLOWED_EXTRACTORS,
         "progress_hooks": [vhook],
+        "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
     # Point yt-dlp at the bundled ffmpeg in case a DASH stream needs remuxing;
     # in portable builds ffmpeg is not on PATH.
@@ -224,11 +261,21 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     _set(job, status="downloading", progress=0.0, stage="Processing...")
 
     # Fetch metadata first (no download) so we can reject videos that are
-    # too long before wasting bandwidth and disk.
-    with YoutubeDL(
-        {"quiet": True, "noplaylist": True, "allowed_extractors": _ALLOWED_EXTRACTORS}
-    ) as ydl:
-        meta = ydl.extract_info(url, download=False) or {}
+    # too long before wasting bandwidth and disk. Runs under the same retry
+    # policy as the download itself -- a transient blip on this first request
+    # used to fail the whole job immediately (#279).
+    def _probe() -> dict:
+        with YoutubeDL(
+            {
+                "quiet": True,
+                "noplaylist": True,
+                "allowed_extractors": _ALLOWED_EXTRACTORS,
+                "socket_timeout": _SOCKET_TIMEOUT_SEC,
+            }
+        ) as ydl:
+            return ydl.extract_info(url, download=False) or {}
+
+    meta = _with_retries(job, _probe, what="metadata probe")
     duration = meta.get("duration") or 0
     max_duration = get_max_duration_sec()
     if duration > max_duration:
@@ -263,30 +310,14 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
         "noplaylist": True,
         "allowed_extractors": _ALLOWED_EXTRACTORS,
         "progress_hooks": [hook],
+        "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
-    info: dict = {}
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True) or {}
-            break
-        except Exception as exc:
-            if job.cancel_requested:
-                raise JobCancelled() from exc
-            if attempt < _MAX_RETRIES and _is_retriable(exc):
-                wait = _RETRY_BACKOFF[attempt]
-                logger.warning(
-                    "[%s] download attempt %d/%d failed (%s), retrying in %ds",
-                    job.id,
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    exc,
-                    wait,
-                )
-                _set(job, stage=f"Network error — retrying ({attempt + 1}/{_MAX_RETRIES})...")
-                time.sleep(wait)
-            else:
-                raise
+
+    def _fetch() -> dict:
+        with YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=True) or {}
+
+    info: dict = _with_retries(job, _fetch, what="download")
 
     _set(
         job,
