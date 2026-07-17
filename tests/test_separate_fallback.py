@@ -70,6 +70,21 @@ def test_gpu_failure_falls_back_to_cpu(job, tmp_path, monkeypatch, caplog):
     assert "CUDA out of memory" in warning
 
 
+def test_records_startup_timing_on_first_progress_line(job, tmp_path, monkeypatch):
+    """#288: measurement only -- time from Popen to the first progress line
+    demucs emits, so the real subprocess/model-load startup cost can be
+    quantified before deciding whether it's worth a design change."""
+    calls: list[str] = []
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(sep_mod, "_demucs_cmd", _stub_cmds(set(), calls))
+
+    sep_mod.separate(job, tmp_path / "source.wav", tmp_path)
+
+    assert job.stage_timings is not None
+    assert "separate_startup" in job.stage_timings
+    assert job.stage_timings["separate_startup"] >= 0.0
+
+
 def test_gpu_success_needs_no_fallback(job, tmp_path, monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")

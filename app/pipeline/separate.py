@@ -55,6 +55,7 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     except ModuleNotFoundError:
         pass
 
+    spawn_at = time.monotonic()
     proc = subprocess.Popen(
         _demucs_cmd(device, source, job_dir),
         stdout=subprocess.DEVNULL,
@@ -66,6 +67,11 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     if proc.stderr is None:
         raise RuntimeError("demucs subprocess has no stderr pipe")
     set_proc(job.id, proc)
+    # Time from spawn to demucs's first progress line -- process/model-load
+    # startup cost, as opposed to actual separation work (#288). Measurement
+    # only: subprocess isolation (kill-on-cancel, crash containment) is a
+    # design feature we keep regardless of what this turns out to be.
+    startup_recorded = False
 
     # tqdm uses \r to redraw -- read char-by-char and split on \r or \n.
     # Keep the last few non-progress lines so we can surface them if demucs
@@ -105,6 +111,13 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     continue
                 m = _PCT_RE.search(line)
                 if m:
+                    if not startup_recorded:
+                        startup_recorded = True
+                        if job.stage_timings is None:
+                            job.stage_timings = {}
+                        job.stage_timings["separate_startup"] = round(
+                            time.monotonic() - spawn_at, 1
+                        )
                     pct = max(0, min(100, int(m.group(1))))
                     _set(job, progress=pct / 100.0, stage=f"Separating {pct}%")
                 else:
