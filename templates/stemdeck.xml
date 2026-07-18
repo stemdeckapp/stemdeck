@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>StemDeck</Name>
-  <Repository>ghcr.io/stemdeckapp/stemdeck:0.8.0-alpha.12</Repository>
+  <Repository>ghcr.io/stemdeckapp/stemdeck:0.8.0-alpha.13</Repository>
   <Registry>https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
