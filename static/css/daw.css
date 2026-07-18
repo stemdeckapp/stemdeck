@@ -2348,6 +2348,16 @@ input, textarea { font-family: inherit; }
 }
 .release-docker-note { margin: 0; font-size: 11px; color: var(--muted); }
 
+/* The release dialog lives outside `.daw`, so the scoped `.daw .hidden` rule
+   does not reach its inner elements and base.css's global `.hidden` is not
+   loaded on this page. Hide the mode-specific parts explicitly (same approach
+   as `.about-backdrop.hidden`) so desktop hides the docker block and server
+   hides the download button. */
+.release-docker.hidden,
+.release-card .about-link.hidden {
+  display: none !important;
+}
+
 /* The "New release available" card opens the dialog on click. */
 .daw-notif-release { cursor: pointer; }
 
