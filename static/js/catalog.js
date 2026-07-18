@@ -1724,6 +1724,8 @@ async function openReleaseDialog() {
   const version = document.getElementById("releaseVersion");
   const notes = document.getElementById("releaseNotes");
   const download = document.getElementById("releaseDownload");
+  const docker = document.getElementById("releaseDocker");
+  const dockerCmd = document.getElementById("releaseDockerCmd");
 
   if (version) version.textContent = `v${normalizeVersion(latestRelease.tag_name)}`;
   if (notes) {
@@ -1733,20 +1735,29 @@ async function openReleaseDialog() {
       : `<p>No release notes provided. See the full release on GitHub.</p>`;
   }
 
-  if (download) {
+  // Server/Docker mode has no Tauri: updating is an image pull, not a file
+  // download, and the client browser's OS/arch is irrelevant to the container.
+  // Show the docker pull command instead of a (meaningless) desktop download.
+  const serverMode = !window.__TAURI__?.core?.invoke;
+  if (serverMode) {
+    const tag = normalizeVersion(latestRelease.tag_name);
+    if (dockerCmd) dockerCmd.textContent = `docker pull ghcr.io/stemdeckapp/stemdeck:${tag}`;
+    docker?.classList.remove("hidden");
+    download?.classList.add("hidden");
+  } else if (download) {
+    docker?.classList.add("hidden");
     const target = await getBuildTarget();
     const picked = pickReleaseAsset(latestRelease, target);
     if (picked) {
       download.href = picked.url;
       download.textContent = "Download";
-      download.classList.remove("hidden");
     } else {
-      // No matching asset (e.g. web/server mode, or an arch we don't build):
-      // fall back to the release page so the user can pick manually.
+      // No matching asset (e.g. an arch we don't build): fall back to the
+      // release page so the user can pick manually.
       download.href = latestRelease.html_url || RELEASES_URL;
       download.textContent = "View download";
-      download.classList.remove("hidden");
     }
+    download.classList.remove("hidden");
   }
 
   dialog.classList.remove("hidden");

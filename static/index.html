@@ -744,6 +744,13 @@
         <h2 id="releaseTitle">New release available</h2>
         <span class="about-version-badge" id="releaseVersion">…</span>
         <div class="release-notes" id="releaseNotes"></div>
+        <!-- Server/Docker mode: updating means pulling a new image, not a file download. -->
+        <div class="release-docker hidden" id="releaseDocker">
+          <p class="release-docker-label">Update your server</p>
+          <p class="release-docker-text">Pull the new image and restart the container:</p>
+          <pre class="release-docker-cmd"><code id="releaseDockerCmd"></code></pre>
+          <p class="release-docker-note">On Unraid, update via the Community Applications template instead.</p>
+        </div>
         <div class="about-primary-links">
           <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer">Download</a>
           <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer">All releases</a>
