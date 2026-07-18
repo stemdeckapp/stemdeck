@@ -202,25 +202,20 @@ if ($PackageVersion) {
 & $PythonExe -m pip install "$Root"
 
 if ($CpuOnly) {
-  # Force the CPU wheel explicitly. On Windows the default PyPI torch wheel is
+  # Force the slim CPU-only wheel. On Windows the default PyPI torch wheel is
   # already CPU-only, but this also downgrades a build host that resolved a CUDA
-  # wheel (e.g. via a cu124 index in the runner's pip config), so the CPU package
+  # wheel (e.g. via a cuXXX index in the runner's pip config), so the CPU package
   # is deterministic regardless of the host.
   & $PythonExe -m pip install torch==2.6.0+cpu torchaudio==2.6.0+cpu `
       --index-url https://download.pytorch.org/whl/cpu `
       --force-reinstall --no-deps
-} else {
-  # Force the CUDA wheel explicitly. Unlike Linux (whose default PyPI torch wheel
-  # bundles CUDA), the Windows PyPI torch wheel is CPU-only, so `pip install`
-  # above yields a CPU torch. Without this step the "NVIDIA" package's GPU support
-  # would depend on the build host happening to resolve a CUDA wheel -- silently
-  # regressing to CPU if that host's pip config ever changes. The Windows CUDA
-  # wheel is self-contained (bundles the CUDA DLLs; no separate nvidia-* deps like
-  # Linux), so --no-deps is correct here. (#316)
-  & $PythonExe -m pip install torch==2.6.0+cu124 torchaudio==2.6.0+cu124 `
-      --index-url https://download.pytorch.org/whl/cu124 `
-      --force-reinstall --no-deps
 }
+# Do NOT bundle CUDA torch into the NVIDIA (non-CpuOnly) package. It ships base
+# torch and the desktop app installs the CUDA build on first run via
+# ensure_torch_device, which picks the cuXXX index matching the detected GPU's
+# compute capability / driver. Bundling the CUDA wheel here (~2.5 GB installed)
+# pushes the zip past GitHub's 2 GiB release-asset cap and loses that adaptive
+# versioning. (Reverts #318; the real GPU-detection fix is #317.)
 
 & $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile"
 
