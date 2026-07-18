@@ -155,6 +155,19 @@ struct BackendStarted {
     url: String,
 }
 
+/// Identifies which published release asset matches the running build, so the
+/// frontend's "new release" dialog can offer the correct download link.
+/// `gpu` only distinguishes Windows/Linux assets (NVIDIA vs CPU variant);
+/// macOS ships one build per arch, so it reports "universal" and the frontend
+/// keys the macOS asset name on `arch` alone.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildTarget {
+    os: String,
+    arch: String,
+    gpu: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AssetStatus {
@@ -221,6 +234,7 @@ fn main() {
             ensure_torch_device,
             start_backend,
             local_ip,
+            build_target,
             open_url,
             save_audio_file,
             store_get,
@@ -682,6 +696,33 @@ fn start_backend(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Reports the running build's OS/arch/GPU variant so the frontend can pick the
+/// matching release asset for the "new release" download link. GPU variant is
+/// derived from the shipped `cpu-only` marker (present only in CPU packages);
+/// on macOS there is no variant, so it reports "universal".
+#[tauri::command]
+fn build_target() -> BuildTarget {
+    let os = match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    }
+    .to_string();
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        _ => "x64",
+    }
+    .to_string();
+    let gpu = if os == "macos" {
+        "universal".to_string()
+    } else if app_root().map(|r| is_cpu_only_package(&r)).unwrap_or(true) {
+        "cpu".to_string()
+    } else {
+        "nvidia".to_string()
+    };
+    BuildTarget { os, arch, gpu }
 }
 
 /// Best-effort primary LAN IPv4, shown in Settings so the user knows the address

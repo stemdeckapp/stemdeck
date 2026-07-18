@@ -732,6 +732,25 @@
       </div>
     </div>
 
+    <!-- Release notes dialog (opened from the "New release available" card) -->
+    <div class="about-backdrop hidden" id="releaseDialog" role="dialog" aria-modal="true" aria-labelledby="releaseTitle">
+      <div class="about-card release-card">
+        <button class="about-close" id="releaseClose" type="button" aria-label="Close release dialog">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <div class="about-logo" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+        </div>
+        <h2 id="releaseTitle">New release available</h2>
+        <span class="about-version-badge" id="releaseVersion">…</span>
+        <div class="release-notes" id="releaseNotes"></div>
+        <div class="about-primary-links">
+          <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer">Download</a>
+          <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer">All releases</a>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/js/main.js"></script>
     <script type="module" src="/js/ui-chrome.js"></script>
   </body>

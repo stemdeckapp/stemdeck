@@ -1531,6 +1531,11 @@ const RELEASES_URL = "https://github.com/stemdeckapp/stemdeck/releases";
 const RELEASES_API = "https://api.github.com/repos/stemdeckapp/stemdeck/releases/latest";
 const DISMISSED_UPDATE_KEY = "stemdeck.dismissed_update";
 
+// The full GitHub release object from the last successful update check, used to
+// populate the release dialog (notes + per-arch download link) on card click.
+let latestRelease = null;
+let cachedBuildTarget = null;
+
 function normalizeVersion(value) {
   return String(value || "").trim().replace(/^v/i, "") || FALLBACK_VERSION;
 }
@@ -1566,6 +1571,201 @@ async function loadCurrentVersion() {
   } catch (e) { console.warn("[catalog] version fetch failed:", e); }
 }
 
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Inline markdown, applied AFTER escapeHtml so the markers (`* [ ] ( )`) are
+// still literal characters and never HTML. Links are restricted to http(s) to
+// block javascript:/data: URIs; label and URL are already entity-escaped.
+function renderInlineMd(text) {
+  return text
+    .replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (_, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+    );
+}
+
+// Minimal, XSS-safe markdown subset for GitHub release bodies: headings, bullet
+// lists, fenced code blocks, paragraphs, and the inline set above. Everything is
+// HTML-escaped first; only a fixed whitelist of tags is ever emitted.
+function renderReleaseNotes(markdown) {
+  const lines = escapeHtml(markdown).split(/\r?\n/);
+  const out = [];
+  let inList = false;
+  let inCode = false;
+  let inQuote = false;
+  const code = [];
+  const closeList = () => {
+    if (inList) {
+      out.push("</ul>");
+      inList = false;
+    }
+  };
+  const closeQuote = () => {
+    if (inQuote) {
+      out.push("</blockquote>");
+      inQuote = false;
+    }
+  };
+  for (const raw of lines) {
+    let line = raw.replace(/\s+$/, "");
+    // Blockquote prefix — GitHub admonitions (macOS block) use `> [!IMPORTANT]`
+    // and `> ...` lines, and can wrap a fenced code block. escapeHtml already
+    // ran, so the marker is `&gt;`. Strip it unconditionally (so a blockquoted
+    // closing fence is still recognised), but only open/close the <blockquote>
+    // wrapper when not mid-fence, to avoid toggling it inside a code block.
+    const quoted = /^&gt;\s?/.test(line);
+    if (quoted) line = line.replace(/^&gt;\s?/, "");
+    if (!inCode) {
+      if (quoted && !inQuote) {
+        closeList();
+        out.push("<blockquote>");
+        inQuote = true;
+      } else if (!quoted && inQuote) {
+        closeList();
+        closeQuote();
+      }
+    }
+
+    if (/^```/.test(line)) {
+      if (inCode) {
+        out.push(`<pre><code>${code.join("\n")}</code></pre>`);
+        code.length = 0;
+        inCode = false;
+      } else {
+        closeList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+    let m;
+    if ((m = /^\[!(\w+)\]/.exec(line))) {
+      // GitHub admonition label ([!IMPORTANT] -> "Important").
+      const label = m[1].charAt(0) + m[1].slice(1).toLowerCase();
+      out.push(`<p class="release-callout">${label}</p>`);
+    } else if ((m = /^#{1,6}\s+(.*)$/.exec(line))) {
+      closeList();
+      out.push(`<h4>${renderInlineMd(m[1])}</h4>`);
+    } else if ((m = /^\s*[-*]\s+(.*)$/.exec(line))) {
+      if (!inList) {
+        out.push("<ul>");
+        inList = true;
+      }
+      out.push(`<li>${renderInlineMd(m[1])}</li>`);
+    } else if (line.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      out.push(`<p>${renderInlineMd(line)}</p>`);
+    }
+  }
+  if (inCode) out.push(`<pre><code>${code.join("\n")}</code></pre>`);
+  closeList();
+  closeQuote();
+  return out.join("\n");
+}
+
+// Resolve the running build's OS/arch/GPU variant. On desktop this is exact
+// (Rust build_target); on web/server there is no reliable signal, so guess the
+// OS from the user agent and leave the variant as CPU.
+async function getBuildTarget() {
+  if (cachedBuildTarget) return cachedBuildTarget;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    try {
+      cachedBuildTarget = await invoke("build_target");
+      return cachedBuildTarget;
+    } catch (e) {
+      console.warn("[catalog] build_target failed:", e);
+    }
+  }
+  const ua = navigator.userAgent || "";
+  let os = "linux";
+  if (/Mac/i.test(ua)) os = "macos";
+  else if (/Win/i.test(ua)) os = "windows";
+  const arch = /arm64|aarch64/i.test(ua) ? "arm64" : "x64";
+  cachedBuildTarget = { os, arch, gpu: "cpu" };
+  return cachedBuildTarget;
+}
+
+// Expected release-asset filename for a build target. Names are deterministic
+// from the release workflows: macOS keys on arch; Windows/Linux add a .NVIDIA
+// infix for the CUDA variant.
+function assetNameFor(target) {
+  if (target.os === "macos") {
+    return `StemDeck-macOS-${target.arch === "arm64" ? "arm64" : "x64"}.dmg`;
+  }
+  const variant = target.gpu === "nvidia" ? ".NVIDIA" : "";
+  if (target.os === "windows") return `StemDeck-Windows-x64${variant}.zip`;
+  return `StemDeck-Linux-x64${variant}.tar.gz`;
+}
+
+function pickReleaseAsset(release, target) {
+  const name = assetNameFor(target);
+  const asset = (release.assets || []).find((a) => a.name === name);
+  return asset ? { url: asset.browser_download_url, name } : null;
+}
+
+async function openReleaseDialog() {
+  const dialog = document.getElementById("releaseDialog");
+  if (!dialog || !latestRelease) return;
+  const version = document.getElementById("releaseVersion");
+  const notes = document.getElementById("releaseNotes");
+  const download = document.getElementById("releaseDownload");
+
+  if (version) version.textContent = `v${normalizeVersion(latestRelease.tag_name)}`;
+  if (notes) {
+    const body = (latestRelease.body || "").trim();
+    notes.innerHTML = body
+      ? renderReleaseNotes(body)
+      : `<p>No release notes provided. See the full release on GitHub.</p>`;
+  }
+
+  if (download) {
+    const target = await getBuildTarget();
+    const picked = pickReleaseAsset(latestRelease, target);
+    if (picked) {
+      download.href = picked.url;
+      download.textContent = "Download";
+      download.classList.remove("hidden");
+    } else {
+      // No matching asset (e.g. web/server mode, or an arch we don't build):
+      // fall back to the release page so the user can pick manually.
+      download.href = latestRelease.html_url || RELEASES_URL;
+      download.textContent = "View download";
+      download.classList.remove("hidden");
+    }
+  }
+
+  dialog.classList.remove("hidden");
+}
+
+function wireReleaseDialog() {
+  const dialog = document.getElementById("releaseDialog");
+  const close = document.getElementById("releaseClose");
+  if (!dialog) return;
+  const hide = () => dialog.classList.add("hidden");
+  close?.addEventListener("click", hide);
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target === dialog) hide();
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.code === "Escape") hide();
+  });
+}
+
 async function checkForUpdate() {
   try {
     const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
@@ -1583,6 +1783,9 @@ async function checkForUpdate() {
     try { dismissed = localStorage.getItem(DISMISSED_UPDATE_KEY); } catch (e) { console.warn(e); }
     if (dismissed === latest) return;
 
+    // Keep the full release so the dialog can render notes + pick the download.
+    latestRelease = data;
+
     const card = document.getElementById("notifReleaseCard");
     const desc = document.getElementById("notifReleaseDesc");
     const badge = document.getElementById("notifBadge");
@@ -1594,7 +1797,14 @@ async function checkForUpdate() {
     badge?.classList.remove("hidden");
     empty?.classList.add("hidden");
 
-    dismissBtn?.addEventListener("click", () => {
+    // Clicking the card (anywhere but the dismiss button) opens the release dialog.
+    card?.addEventListener("click", (e) => {
+      if (e.target.closest("#notifReleaseDismiss")) return;
+      openReleaseDialog();
+    });
+
+    dismissBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
       try { localStorage.setItem(DISMISSED_UPDATE_KEY, latest); } catch (e) { console.warn(e); }
       card?.classList.add("hidden");
       badge?.classList.add("hidden");
@@ -2427,6 +2637,7 @@ export async function initCatalog() {
   wireLibraryDeleteKeys();
   wireAboutDialog();
   wireSupportersDialog();
+  wireReleaseDialog();
   wireSettingsMenu();
   setDisplayedVersion(currentVersion);
   render();

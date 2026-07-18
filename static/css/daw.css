@@ -2252,6 +2252,77 @@ input, textarea { font-family: inherit; }
 }
 .about-social-btn:hover { background: var(--accent); border-color: var(--accent); color: #000; }
 
+/* ── Release notes dialog ── */
+.release-card {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.release-notes {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  text-align: left;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.release-notes h4 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.release-notes h4:first-child { margin-top: 0; }
+.release-notes p { margin: 0 0 8px; }
+.release-notes ul { margin: 0 0 8px; padding-left: 18px; }
+.release-notes li { margin: 2px 0; }
+.release-notes a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.release-notes a:hover { text-decoration: underline; }
+.release-notes code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.release-notes pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.release-notes pre code { border: 0; background: none; padding: 0; }
+.release-notes blockquote {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: rgba(139, 92, 246, 0.08);
+}
+.release-notes blockquote > :last-child { margin-bottom: 0; }
+.release-callout {
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin: 0 0 6px !important;
+}
+/* The "New release available" card opens the dialog on click. */
+.daw-notif-release { cursor: pointer; }
+
 /* ── Library sections (Recent · Stem Collections · Tags) ── */
 .lib-section {
   display: flex;
