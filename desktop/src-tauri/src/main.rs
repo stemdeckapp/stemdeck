@@ -801,7 +801,21 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
                 let reason = if cuda_verified {
                     "verified"
                 } else {
-                    "cuda-verify-failed"
+                    // CUDA torch is installed but unusable. Falling back to the
+                    // "cpu" device is not enough — app/main.py imports torch at
+                    // module scope, so a wheel that cannot load keeps the
+                    // backend from starting at all. Put the CPU wheels back
+                    // (#324).
+                    match restore_cpu_torch(&python, &state) {
+                        Ok(()) => "cuda-verify-failed",
+                        Err(e) => {
+                            append_to_setup_log(
+                                &data_dir,
+                                &format!("CPU torch restore failed: {e}"),
+                            );
+                            "cuda-verify-failed-cpu-restore-failed"
+                        }
+                    }
                 };
                 GpuSetup {
                     gpu_detected: true,
@@ -1298,6 +1312,93 @@ fn classify_cuda_install_error(stderr: &str) -> String {
     "CUDA install failed — see logs/setup.log for details.".to_string()
 }
 
+/// Version of the CPU-only torch wheels baked into every package. Kept in sync
+/// with scripts/windows/make-portable.ps1 and scripts/linux/make-portable.sh.
+#[cfg(not(target_os = "macos"))]
+const CPU_TORCH_VERSION: &str = "2.6.0";
+
+/// Whether the CUDA torch wheel needs its `nvidia-*` runtime dependencies
+/// installed separately. Linux CUDA wheels do not bundle the CUDA runtime —
+/// they dlopen libcublas/libcudnn/... out of the `nvidia-*` PyPI packages at
+/// import time. Windows wheels ship those DLLs inside torch/lib and declare no
+/// such dependencies, so the leaner --no-deps swap stays correct there (#324).
+#[cfg(not(target_os = "macos"))]
+fn cuda_wheel_needs_runtime_deps() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Runs `python -m pip install <args>`, tracking the pip PID so stop_backend can
+/// kill it if the window is closed mid-install (#140), bounding it at 20 minutes,
+/// and logging raw stderr to setup.log before mapping it to a user-facing message.
+#[cfg(not(target_os = "macos"))]
+fn run_pip_install(
+    python: &Path,
+    args: &[&str],
+    state: &BackendState,
+    label: &str,
+) -> Result<(), String> {
+    let mut command = Command::new(python);
+    command
+        .args(["-m", "pip", "install"])
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to start {label}: {e}"))?;
+
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.pip_pid = Some(child.id());
+    }
+    let output = child_output_with_timeout(child, Duration::from_secs(20 * 60), label);
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.pip_pid = None;
+    }
+    let output = output?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Write full stderr to setup.log before mapping — eprintln! is silent in
+    // GUI mode on Windows (no console), so file logging is the only reliable
+    // diagnostic path in the deployed app.
+    if let Ok(data_dir) = local_data_dir() {
+        append_to_setup_log(
+            &data_dir,
+            &format!("{label} failed. stderr:\n{}", stderr.trim()),
+        );
+    }
+    Err(classify_cuda_install_error(&stderr))
+}
+
+/// Puts the bundled CPU wheels back after CUDA torch turns out to be unusable.
+/// The backend imports torch at module scope, so a CUDA wheel that cannot load
+/// (missing CUDA runtime, driver too old, no kernels for the device) does not
+/// merely disable the GPU — it stops the backend from starting at all, and the
+/// broken install persists across launches (#324).
+#[cfg(not(target_os = "macos"))]
+fn restore_cpu_torch(python: &Path, state: &BackendState) -> Result<(), String> {
+    let torch_spec = format!("torch=={CPU_TORCH_VERSION}+cpu");
+    let torchaudio_spec = format!("torchaudio=={CPU_TORCH_VERSION}+cpu");
+    run_pip_install(
+        python,
+        &[
+            &torch_spec,
+            &torchaudio_spec,
+            "--index-url",
+            "https://download.pytorch.org/whl/cpu",
+            "--ignore-installed",
+            "--no-deps",
+            "--quiet",
+        ],
+        state,
+        "CPU torch restore",
+    )
+}
+
 #[cfg(not(target_os = "macos"))]
 fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> Result<(), String> {
     // Skip only when CUDA torch is already active — torch.version.cuda is
@@ -1323,67 +1424,63 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
     let torch_version = if tag == "cu128" { "2.8.0" } else { "2.6.0" };
     let torch_spec = format!("torch=={torch_version}+{tag}");
     let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
-    // --ignore-installed: overwrites even a corrupted/partial install that
-    // has no RECORD file. --no-deps: only replace torch/torchaudio wheels.
-    let mut command = Command::new(python);
-    command
-        .args([
-            "-m",
-            "pip",
-            "install",
-            &torch_spec,
-            &torchaudio_spec,
+    for (label, args) in cuda_install_passes(
+        &torch_spec,
+        &torchaudio_spec,
+        index_url,
+        cuda_wheel_needs_runtime_deps(),
+    ) {
+        run_pip_install(python, &args, state, label)?;
+    }
+
+    Ok(())
+}
+
+/// Builds the pip passes that install CUDA torch, newest-to-oldest in intent:
+///
+/// 1. The wheel swap. `--ignore-installed` overwrites even a corrupted/partial
+///    install that has no RECORD file; `--no-deps` keeps it to the
+///    torch/torchaudio wheels.
+/// 2. The CUDA runtime dependencies, Linux only. Same specs, but with
+///    dependency resolution and without `--ignore-installed`: pip sees
+///    torch/torchaudio as already satisfied and installs only what is missing —
+///    the `nvidia-*` wheels pass 1 skipped and that the packaging script strips
+///    to keep the tarball under GitHub's 2 GiB asset cap. Without them
+///    `import torch` raises "libcublas.so.*[0-9] not found" and the backend
+///    never starts (#324). The cuXXX index serves those wheels, so no extra
+///    index is needed.
+#[cfg(not(target_os = "macos"))]
+fn cuda_install_passes<'a>(
+    torch_spec: &'a str,
+    torchaudio_spec: &'a str,
+    index_url: &'a str,
+    needs_runtime_deps: bool,
+) -> Vec<(&'static str, Vec<&'a str>)> {
+    let mut passes = vec![(
+        "CUDA torch install",
+        vec![
+            torch_spec,
+            torchaudio_spec,
             "--index-url",
             index_url,
             "--ignore-installed",
             "--no-deps",
             "--quiet",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start CUDA torch install: {e}"))?;
-
-    // Track the pip PID so stop_backend can kill it if the window is closed
-    // while CUDA torch is installing, preventing venv corruption (#140).
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.pip_pid = Some(child.id());
+        ],
+    )];
+    if needs_runtime_deps {
+        passes.push((
+            "CUDA runtime dependency install",
+            vec![
+                torch_spec,
+                torchaudio_spec,
+                "--index-url",
+                index_url,
+                "--quiet",
+            ],
+        ));
     }
-    let output =
-        child_output_with_timeout(child, Duration::from_secs(20 * 60), "CUDA torch install");
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.pip_pid = None;
-    }
-    let output = output?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Write full stderr to setup.log before mapping — eprintln! is silent in
-        // GUI mode on Windows (no console), so file logging is the only reliable
-        // diagnostic path in the deployed app.
-        if let Ok(data_dir) = local_data_dir() {
-            let log_path = data_dir.join("logs").join("setup.log");
-            if let Some(parent) = log_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            if let Ok(mut f) = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
-                let _ = writeln!(
-                    f,
-                    "[stemdeck] CUDA torch install failed. stderr:\n{}",
-                    stderr.trim()
-                );
-            }
-        }
-        Err(classify_cuda_install_error(&stderr))
-    }
+    passes
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2832,8 +2929,10 @@ mod tests {
         // CPU build -> NVIDIA build swap in the same data dir: the leftover
         // "cpu-only-package" reason must be invalidated so the setup gate treats
         // the device as unsettled and re-runs GPU detection.
-        let got =
-            super::effective_device_reason(Some("cpu-only-package".to_string()), /* cpu_only */ false);
+        let got = super::effective_device_reason(
+            Some("cpu-only-package".to_string()),
+            /* cpu_only */ false,
+        );
         assert_eq!(got, None);
     }
 
@@ -2841,8 +2940,10 @@ mod tests {
     fn cpu_only_reason_kept_when_package_is_still_cpu_only() {
         // Genuine CPU-only build: the reason is accurate and must stay so setup
         // doesn't waste a probe on a machine that can never use CUDA.
-        let got =
-            super::effective_device_reason(Some("cpu-only-package".to_string()), /* cpu_only */ true);
+        let got = super::effective_device_reason(
+            Some("cpu-only-package".to_string()),
+            /* cpu_only */ true,
+        );
         assert_eq!(got.as_deref(), Some("cpu-only-package"));
     }
 
@@ -3003,6 +3104,47 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // Missing / unparseable compute capability also falls back.
         assert_eq!(super::wheel_tag(None, "12.1"), "cu121");
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
+    }
+
+    // --- CUDA runtime dependency pass (#324) ---
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn cuda_install_passes_adds_dependency_pass_only_when_needed() {
+        let url = "https://download.pytorch.org/whl/cu124";
+
+        // Windows: the CUDA DLLs live inside torch/lib, so the single
+        // --no-deps swap is the whole install.
+        let passes =
+            super::cuda_install_passes("torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", url, false);
+        assert_eq!(passes.len(), 1);
+        assert!(passes[0].1.contains(&"--no-deps"));
+        assert!(passes[0].1.contains(&"--ignore-installed"));
+
+        // Linux: a second pass resolves the nvidia-* CUDA runtime wheels that
+        // the --no-deps swap skipped. It must NOT carry --no-deps (that is the
+        // whole point) nor --ignore-installed (which would rebuild every dep).
+        let passes =
+            super::cuda_install_passes("torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", url, true);
+        assert_eq!(passes.len(), 2);
+        let (label, args) = &passes[1];
+        assert_eq!(*label, "CUDA runtime dependency install");
+        assert!(!args.contains(&"--no-deps"));
+        assert!(!args.contains(&"--ignore-installed"));
+        // Same specs and index as the swap, so pip treats torch as satisfied
+        // and only fills in the missing dependencies.
+        assert!(args.contains(&"torch==2.6.0+cu124"));
+        assert!(args.contains(&"torchaudio==2.6.0+cu124"));
+        assert!(args.contains(&url));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn cuda_runtime_deps_needed_on_linux_only() {
+        assert_eq!(
+            super::cuda_wheel_needs_runtime_deps(),
+            cfg!(target_os = "linux")
+        );
     }
 
     // --- cpu-only marker precedence + self-heal (#247) ---

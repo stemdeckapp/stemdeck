@@ -61,6 +61,7 @@ body:
       options:
         - macOS DMG
         - Windows ZIP
+        - Linux tar.gz
         - From source
         - Docker / self-hosted
     validations:

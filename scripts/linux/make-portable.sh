@@ -121,6 +121,12 @@ echo "==> Baking CPU-only torch (NVIDIA variant downloads CUDA at first run)"
 # are now orphaned but still installed, bloating the tarball past GitHub's 2 GiB
 # asset limit. Remove them: CPU torch does not use them, and the NVIDIA variant
 # re-downloads CUDA at first run anyway.
+#
+# NOTE: unlike Windows, Linux CUDA torch wheels do NOT bundle the CUDA runtime --
+# they dlopen it out of these nvidia-* packages at import time. install_cuda_torch
+# in the desktop shell therefore runs a second, dependency-resolving pip pass on
+# Linux to reinstate them; without it `import torch` dies with
+# "libcublas.so.*[0-9] not found" and the backend never starts (#324).
 echo "==> Removing orphaned CUDA runtime packages"
 orphans=$("$BUNDLED_PYTHON" -m pip list --format=freeze 2>/dev/null \
   | sed -n 's/^\(nvidia-[^=]*\)==.*/\1/p')
