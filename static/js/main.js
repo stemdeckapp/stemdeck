@@ -130,6 +130,7 @@ function wireFooterControls() {
   const fmtWav   = document.getElementById("t-fmt-wav");
   const fmtMp3   = document.getElementById("t-fmt-mp3");
   const fmtFlac  = document.getElementById("t-fmt-flac");
+  const fmtOgg   = document.getElementById("t-fmt-ogg");
   const fmtMp4   = document.getElementById("t-fmt-mp4");
   const exportWrap = document.getElementById("footer-export-wrap");
   const itemMix    = document.getElementById("t-export-mix");
@@ -163,7 +164,7 @@ function wireFooterControls() {
 
   function setFormat(f) {
     format = f;
-    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"], [fmtMp4, "mp4"]]) {
+    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"], [fmtOgg, "ogg"], [fmtMp4, "mp4"]]) {
       btn?.classList.toggle("active", f === val);
       btn?.setAttribute("aria-checked", String(f === val));
     }
@@ -172,6 +173,7 @@ function wireFooterControls() {
   fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
   fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
   fmtFlac?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("flac"); });
+  fmtOgg?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("ogg"); });
   fmtMp4?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp4"); });
 
   // MP4 exports the mix muxed with the source video. Stems and region have no
@@ -304,8 +306,9 @@ function wireFileDrop() {
     if (!file) return;
     const lower = file.name.toLowerCase();
     if (!lower.endsWith(".mp3") && !lower.endsWith(".wav") && !lower.endsWith(".flac") &&
-        !lower.endsWith(".mp4") && !lower.endsWith(".m4a")) {
-      showError("Only MP3, WAV, FLAC, MP4, and M4A files are supported.");
+        !lower.endsWith(".mp4") && !lower.endsWith(".m4a") &&
+        !lower.endsWith(".ogg") && !lower.endsWith(".opus")) {
+      showError("Only MP3, WAV, FLAC, MP4, M4A, OGG, and Opus files are supported.");
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {

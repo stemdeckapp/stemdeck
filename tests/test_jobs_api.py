@@ -134,10 +134,10 @@ def test_upload_503_when_queue_full(upload_client):
 
 
 def test_upload_rejects_unsupported_extension(upload_client):
-    data = io.BytesIO(b"OGG data")
+    data = io.BytesIO(b"FORM\x00\x00\x00\x00AIFF")
     r = upload_client.post(
         "/api/jobs",
-        files={"file": ("track.ogg", data, "audio/ogg")},
+        files={"file": ("track.aiff", data, "audio/aiff")},
     )
     assert r.status_code == 422
     assert "Unsupported file type" in r.json()["detail"]
@@ -178,6 +178,26 @@ def test_upload_flac_returns_job_id(upload_client):
     r = upload_client.post(
         "/api/jobs",
         files={"file": ("my_track.flac", data, "audio/flac")},
+    )
+    assert r.status_code == 200
+    assert "job_id" in r.json()
+
+
+def test_upload_ogg_returns_job_id(upload_client):
+    data = io.BytesIO(b"OggS" + b"\x00" * 128)
+    r = upload_client.post(
+        "/api/jobs",
+        files={"file": ("my_track.ogg", data, "audio/ogg")},
+    )
+    assert r.status_code == 200
+    assert "job_id" in r.json()
+
+
+def test_upload_opus_returns_job_id(upload_client):
+    data = io.BytesIO(b"OggS" + b"\x00" * 128)
+    r = upload_client.post(
+        "/api/jobs",
+        files={"file": ("my_track.opus", data, "audio/opus")},
     )
     assert r.status_code == 200
     assert "job_id" in r.json()

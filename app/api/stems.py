@@ -45,14 +45,21 @@ _MIXDOWN_NAMES = frozenset(STEM_NAMES) | {"original"}
 _MIXDOWN_MAX_GAIN = 4.0
 
 # Output encoders by container/extension, shared by the dynamic mixdown and the
-# stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps.
+# stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps,
+# OGG is Vorbis VBR q6 (~192 kbps) — the quality tier matching the MP3 setting.
 _ENCODE_ARGS = {
     "wav": ["-c:a", "pcm_s16le"],
     "mp3": ["-q:a", "2"],
     "flac": ["-c:a", "flac"],
+    "ogg": ["-c:a", "libvorbis", "-q:a", "6"],
 }
 MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
-MIXDOWN_MEDIA_TYPES = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}
+MIXDOWN_MEDIA_TYPES = {
+    "wav": "audio/wav",
+    "mp3": "audio/mpeg",
+    "flac": "audio/flac",
+    "ogg": "audio/ogg",
+}
 
 # Mixdown render cache (#290): identical render params re-run the full ffmpeg
 # graph on every request today. On a shared server, repeat downloads of the
@@ -403,7 +410,7 @@ async def get_mixdown(
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
 ) -> FileResponse | StreamingResponse:
     """Render a mixdown of the given lanes at the given gains, streamed as WAV,
-    MP3, or FLAC. Mirrors the studio mixer (per-stem volume, mute, solo) so the
+    MP3, FLAC, or OGG. Mirrors the studio mixer (per-stem volume, mute, solo) so the
     exported file matches what is heard. The master fader is intentionally not
     applied -- it is a monitoring level, not part of the mix. Optional ?start=&end=
     trims to a loop region.
@@ -411,7 +418,7 @@ async def get_mixdown(
     Identical params (including start/end and the current export sample rate)
     hit a render cache instead of re-running ffmpeg (#290) -- a cheap win on a
     shared server where the same export gets re-downloaded."""
-    if ext not in ("wav", "mp3", "flac"):
+    if ext not in ("wav", "mp3", "flac", "ogg"):
         raise HTTPException(status_code=404, detail="not found")
 
     names, parsed_gains = _parse_lane_gains(stems, gains)
@@ -559,8 +566,8 @@ async def get_video_mixdown(
 
 
 def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> None:
-    """Blocking: write the stems into a ZIP. WAV files are stored as-is; MP3 and
-    FLAC are transcoded per stem via ffmpeg. ZIP_STORED throughout - audio doesn't
+    """Blocking: write the stems into a ZIP. WAV files are stored as-is; MP3,
+    FLAC, and OGG are transcoded per stem via ffmpeg. ZIP_STORED throughout - audio doesn't
     meaningfully compress, and STORED keeps the build fast. Runs in a thread."""
     if fmt == "wav":
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
@@ -608,8 +615,8 @@ async def get_all_stems_zip(
     every available stem is included."""
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
-    if fmt not in ("wav", "mp3", "flac"):
-        raise HTTPException(status_code=422, detail="format must be 'wav', 'mp3', or 'flac'")
+    if fmt not in ("wav", "mp3", "flac", "ogg"):
+        raise HTTPException(status_code=422, detail="format must be 'wav', 'mp3', 'flac', or 'ogg'")
     job = registry_get(job_id)
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="job not ready")

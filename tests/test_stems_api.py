@@ -177,7 +177,7 @@ def test_all_stems_zip_rejects_bad_format(client, tmp_path):
     job.status = "done"
     _jobs[job.id] = job
     _make_stem_file(tmp_path, job.id, "vocals")
-    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=ogg")
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=aiff")
     assert r.status_code == 422
 
 
@@ -236,6 +236,41 @@ def test_all_stems_zip_mp3(client, tmp_path):
     assert len(zf.read("vocals.mp3")) > 0
 
 
+def test_all_stems_zip_ogg(client, tmp_path):
+    """OGG zip transcodes via ffmpeg (libvorbis); skip if ffmpeg isn't available."""
+    import io
+    import shutil
+    import zipfile
+
+    if shutil.which("ffmpeg") is None:
+        import pytest
+
+        pytest.skip("ffmpeg not available")
+
+    import struct
+
+    sr = 8000
+    nframes = sr // 10
+    data = b"\x00\x00" * nframes
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE"
+    hdr += b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+    hdr += b"data" + struct.pack("<I", len(data))
+    wav = hdr + data
+
+    job = Job(id="abcdefabcdb0")
+    job.status = "done"
+    job.title = "Track"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "vocals", wav)
+
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=ogg")
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert zf.namelist() == ["vocals.ogg"]
+    ogg_bytes = zf.read("vocals.ogg")
+    assert ogg_bytes.startswith(b"OggS")
+
+
 # --- dynamic mixdown endpoint (#183) ---
 
 
@@ -262,7 +297,7 @@ def _done_job_with_stems(tmp_path, job_id: str, names) -> Job:
 
 
 def test_mixdown_rejects_bad_ext(client):
-    r = client.get("/api/jobs/abcdef000001/mixdown.ogg?stems=vocals&gains=1")
+    r = client.get("/api/jobs/abcdef000001/mixdown.aiff?stems=vocals&gains=1")
     assert r.status_code == 404
 
 

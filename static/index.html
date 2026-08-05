@@ -57,7 +57,7 @@
                 <path d="M12 3v12 M7 8l5-5 5 5 M5 21h14"/>
               </svg>
             </button>
-            <input id="fileInput" type="file" accept=".mp3,.wav,.flac,.mp4,.m4a,audio/mpeg,audio/wav,audio/flac,video/mp4,audio/mp4" style="display:none" aria-hidden="true" />
+            <input id="fileInput" type="file" accept=".mp3,.wav,.flac,.mp4,.m4a,.ogg,.opus,audio/mpeg,audio/wav,audio/flac,video/mp4,audio/mp4,audio/ogg,audio/opus" style="display:none" aria-hidden="true" />
           </div>
 
           <!-- Divider -->
@@ -613,6 +613,7 @@
                   <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
                   <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
                   <button class="export-fmt" id="t-fmt-flac" type="button" role="radio" aria-checked="false">FLAC</button>
+                  <button class="export-fmt" id="t-fmt-ogg" type="button" role="radio" aria-checked="false">OGG</button>
                   <button class="export-fmt export-fmt-video" id="t-fmt-mp4" type="button" role="radio" aria-checked="false">MP4</button>
                 </div>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">

@@ -549,7 +549,7 @@ function extractScreen() {
       <div class="sub">Paste a link or upload audio to split into stems.</div>
       <div class="paste">${ICON.link}<input id="ext-url" class="ext-input" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste YouTube or audio URL" value="${esc(state.extractUrl || "")}"></div>
       <button class="upload" data-action="pick-file">${ICON.upload}${fileName ? esc(fileName) : "Upload audio file"}</button>
-      <input id="ext-file" type="file" accept="audio/*,video/mp4,.mp3,.wav,.flac,.m4a,.ogg" style="display:none">
+      <input id="ext-file" type="file" accept="audio/*,video/mp4,.mp3,.wav,.flac,.m4a,.ogg,.opus" style="display:none">
       <div class="eyebrow">STEMS TO EXTRACT</div>
       <div class="chips">${EXTRACT_STEMS.map((s) => {
         const on = !!state.selected[s.id];
