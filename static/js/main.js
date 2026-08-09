@@ -194,8 +194,14 @@ function wireFooterControls() {
     busy = false;
     exportBtn?.classList.remove("is-busy");
     if (exportLabel) exportLabel.textContent = "Export Mix";
-    itemMix?.removeAttribute("aria-disabled");
-    applyFormatState(); // restores stems/region per the active format
+    // Clear every row, not just the ones flashBusy could see: it disables via
+    // actionItems(), which filters on visibility, so a row hidden at reset time
+    // would keep the attribute forever. Under Tauri the panel is still open when
+    // flashBusy runs (invoke() returns without the synthetic <a> click that
+    // closes it in a browser), so all three get disabled and only a symmetric
+    // clear brings them back.
+    for (const it of [itemMix, itemStems, itemRegion]) it?.removeAttribute("aria-disabled");
+    applyFormatState(); // re-derives the region row's genuine disabled state
   }
 
   // Single-file (mix/region) downloads give no JS-observable byte progress, so
