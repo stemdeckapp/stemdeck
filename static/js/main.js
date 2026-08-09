@@ -233,7 +233,7 @@ function wireFooterControls() {
     pending
       .catch((err) => {
         // A cancelled save dialog resolves, so anything here is a real failure.
-        showError(typeof err === "string" && err ? err : "Export failed.");
+        showError(typeof err === "string" && err ? err : "Export failed.", null, { retry: false });
       })
       .finally(() => {
         window.clearTimeout(backstop);
@@ -252,7 +252,7 @@ function wireFooterControls() {
     e.stopPropagation();
     if (busy) return;
     const ok = format === "mp4" ? downloadCurrentVideo() : downloadCurrentMix(format);
-    if (!ok) { showError("All stems are muted - nothing to export."); return; }
+    if (!ok) { showError("All stems are muted - nothing to export.", null, { retry: false }); return; }
     flashBusy(ok);
   });
 
@@ -260,7 +260,7 @@ function wireFooterControls() {
     e.stopPropagation();
     if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
     const ok = downloadRegionMix(format);
-    if (!ok) { showError("All stems are muted - nothing to export."); return; }
+    if (!ok) { showError("All stems are muted - nothing to export.", null, { retry: false }); return; }
     flashBusy(ok);
   });
 
@@ -270,7 +270,7 @@ function wireFooterControls() {
     e.stopPropagation();
     if (busy || itemStems.getAttribute("aria-disabled") === "true") return;
     const ok = downloadAllStemsZip(format);
-    if (!ok) { showError("No stems to export."); return; }
+    if (!ok) { showError("No stems to export.", null, { retry: false }); return; }
     flashBusy(ok);
   });
 

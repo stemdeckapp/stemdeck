@@ -66,7 +66,11 @@ function stopJobPolling() {
   }
 }
 
-export function showError(message, detail) {
+// `retry` controls the button: "Try again" sends the user back to the URL field
+// to start a fresh import, which is right for an import failure and wrong for
+// anything else. Export failures pass retry:false and get a plain Dismiss, since
+// the error box has no other way to be cleared.
+export function showError(message, detail, { retry = true } = {}) {
   errorEl.textContent = "";
   const msg = document.createElement("div");
   msg.className = "error-msg";
@@ -79,16 +83,18 @@ export function showError(message, detail) {
     detailEl.textContent = detail;
     msg.appendChild(detailEl);
   }
-  const retry = document.createElement("button");
-  retry.className = "retry-btn";
-  retry.type = "button";
-  retry.textContent = "Try again";
-  retry.addEventListener("click", () => {
+  const btn = document.createElement("button");
+  btn.className = "retry-btn";
+  btn.type = "button";
+  btn.textContent = retry ? "Try again" : "Dismiss";
+  btn.addEventListener("click", () => {
     errorEl.classList.add("hidden");
-    urlInput.focus();
-    urlInput.select();
+    if (retry) {
+      urlInput.focus();
+      urlInput.select();
+    }
   });
-  errorEl.append(msg, retry);
+  errorEl.append(msg, btn);
   errorEl.classList.remove("hidden");
 }
 
