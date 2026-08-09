@@ -204,15 +204,41 @@ function wireFooterControls() {
     applyFormatState(); // re-derives the region row's genuine disabled state
   }
 
-  // Single-file (mix/region) downloads give no JS-observable byte progress, so
-  // show a brief indeterminate "Exporting…" state, then reset.
-  function flashBusy() {
+  // How long to hold the indeterminate state when the host reports nothing back.
+  const EXPORT_FLASH_MS = 1200;
+  // Safety net for the promise path: a pending invoke that somehow never settles
+  // must not leave the menu disabled for the rest of the session (#335).
+  const EXPORT_BUSY_MAX_MS = 15 * 60 * 1000;
+  // Guards against a stale timer from a finished export resetting a later one.
+  let busyToken = 0;
+
+  // `pending` is whatever the download helper returned: a promise on desktop,
+  // where save_audio_file resolves once the file is written, or `true` in a
+  // browser, where an <a download> is fire-and-forget and there is nothing to
+  // wait on. Only the guess needs a fixed duration.
+  function flashBusy(pending) {
     busy = true;
+    const token = ++busyToken;
+    const finish = () => { if (token === busyToken) resetBusy(); };
     exportBtn?.classList.add("is-busy");
     if (exportLabel) exportLabel.textContent = "Exporting…";
     actionItems().forEach((it) => it?.setAttribute("aria-disabled", "true"));
     closePanel();
-    window.setTimeout(resetBusy, 1200);
+
+    if (!pending || typeof pending.then !== "function") {
+      window.setTimeout(finish, EXPORT_FLASH_MS);
+      return;
+    }
+    const backstop = window.setTimeout(finish, EXPORT_BUSY_MAX_MS);
+    pending
+      .catch((err) => {
+        // A cancelled save dialog resolves, so anything here is a real failure.
+        showError(typeof err === "string" && err ? err : "Export failed.");
+      })
+      .finally(() => {
+        window.clearTimeout(backstop);
+        finish();
+      });
   }
 
   exportBtn?.addEventListener("click", (e) => {
@@ -227,7 +253,7 @@ function wireFooterControls() {
     if (busy) return;
     const ok = format === "mp4" ? downloadCurrentVideo() : downloadCurrentMix(format);
     if (!ok) { showError("All stems are muted - nothing to export."); return; }
-    flashBusy();
+    flashBusy(ok);
   });
 
   itemRegion?.addEventListener("click", (e) => {
@@ -235,7 +261,7 @@ function wireFooterControls() {
     if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
     const ok = downloadRegionMix(format);
     if (!ok) { showError("All stems are muted - nothing to export."); return; }
-    flashBusy();
+    flashBusy(ok);
   });
 
   // All Stems = a single backend-built ZIP, named after the song. Audio-only,
@@ -243,8 +269,9 @@ function wireFooterControls() {
   itemStems?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy || itemStems.getAttribute("aria-disabled") === "true") return;
-    if (!downloadAllStemsZip(format)) { showError("No stems to export."); return; }
-    flashBusy();
+    const ok = downloadAllStemsZip(format);
+    if (!ok) { showError("No stems to export."); return; }
+    flashBusy(ok);
   });
 
   // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.

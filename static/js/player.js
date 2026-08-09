@@ -1526,18 +1526,25 @@ export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}
   }
 }
 
+// Returns a promise that settles when the file is actually on disk, or `true`
+// when the host gives no completion signal. Callers use the difference to show
+// a real "Exporting…" state instead of a fixed-length guess.
 function _triggerDownload(url, filename) {
   const fullUrl = url.startsWith("http") ? url : `${location.origin}${url}`;
   if (window.__TAURI__?.core?.invoke) {
-    window.__TAURI__.core.invoke("save_audio_file", { url: fullUrl, filename });
-    return;
+    // save_audio_file streams to a temp file and renames, resolving only once
+    // the whole body is written -- so this covers the save dialog and the copy.
+    return window.__TAURI__.core.invoke("save_audio_file", { url: fullUrl, filename });
   }
+  // A browser <a download> is fire-and-forget: the fetch is owned by the
+  // download manager and reports nothing back to the page.
   const a = document.createElement("a");
   a.href = fullUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
+  return true;
 }
 
 // Per-lane effective gain mirroring mixer.js applyMix (volume + mute + solo),
@@ -1614,8 +1621,7 @@ function _exportFilename(ext) {
 export function downloadCurrentMix(ext = "wav") {
   const url = _mixdownUrl(ext, false);
   if (!url) return false;
-  _triggerDownload(url, _exportFilename(ext));
-  return true;
+  return _triggerDownload(url, _exportFilename(ext));
 }
 
 // MP4 export: the preserved source video muxed with the current audio mix.
@@ -1636,8 +1642,7 @@ export function downloadCurrentVideo() {
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_video.mp4` : "video.mp4";
-  _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name);
-  return true;
+  return _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name);
 }
 
 export function downloadCurrentStems(format = "wav", onProgress) {
@@ -1676,8 +1681,7 @@ export function downloadAllStemsZip(format = "wav") {
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_stems.zip` : "stems.zip";
   const q = new URLSearchParams({ format, stems: names.join(",") });
-  _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name);
-  return true;
+  return _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name);
 }
 
 function _regionFilename(ext) {
@@ -1693,6 +1697,5 @@ export function downloadRegionMix(ext = "wav") {
   if (!loopEnabled || loopStart >= loopEnd) return false;
   const url = _mixdownUrl(ext, true);
   if (!url) return false;
-  _triggerDownload(url, _regionFilename(ext));
-  return true;
+  return _triggerDownload(url, _regionFilename(ext));
 }
