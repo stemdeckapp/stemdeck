@@ -538,6 +538,16 @@ async def get_stem_mp3(
     )
 
 
+def _mixdown_download_name(job_id: str, ext: str, is_region: bool) -> str:
+    """Filename offered for a mixdown, prefixed with the song like the stems
+    (#336). Mirrors the names the frontend builds, because Content-Disposition
+    overrides an <a download> attribute and the two must not disagree."""
+    job = registry_get(job_id)
+    slug = _title_slug(job.title if job else None)
+    kind = "region" if is_region else "exported_mix"
+    return f"{slug}_{kind}.{ext}" if slug else f"{kind}.{ext}"
+
+
 @router.get("/jobs/{job_id}/mixdown.{ext}", response_model=None)
 async def get_mixdown(
     job_id: str,
@@ -584,7 +594,11 @@ async def get_mixdown(
         return FileResponse(
             cache_path,
             media_type=media_type,
-            headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
+                )
+            },
         )
 
     pre_seek = ["-ss", str(start)] if start is not None else []
@@ -630,7 +644,11 @@ async def get_mixdown(
             cmd, context=f"mixdown job={job_id} ext={ext} stems={stems}", cache_path=cache_path
         ),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="mixdown.{ext}"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
+            )
+        },
     )
 
 

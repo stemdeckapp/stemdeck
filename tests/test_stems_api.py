@@ -102,6 +102,35 @@ def test_single_stem_mp3_region_download_keeps_both_song_and_region(client, tmp_
     assert 'filename="Come_As_You_Are_vocals_region.mp3"' in r.headers["content-disposition"]
 
 
+def test_mixdown_download_is_named_after_the_song(client, tmp_path):
+    """The mix had the same hardcoded name every stem did: "mixdown.wav" for
+    every song, so exporting several into one folder collided (#336)."""
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef00033d", ["vocals"])
+    job.title = "Come As You Are"
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1.0")
+    assert r.status_code == 200
+    assert 'filename="Come_As_You_Are_exported_mix.wav"' in r.headers["content-disposition"]
+
+
+def test_mixdown_region_download_is_marked_as_a_region(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef00033e", ["vocals"])
+    job.title = "Come As You Are"
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1.0&start=0&end=0.05")
+    assert r.status_code == 200
+    assert 'filename="Come_As_You_Are_region.wav"' in r.headers["content-disposition"]
+
+
+def test_mixdown_download_falls_back_without_a_title(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef00033f", ["vocals"])
+    job.title = None  # the helper presets one; an untitled job is the case here
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1.0")
+    assert r.status_code == 200
+    assert 'filename="exported_mix.wav"' in r.headers["content-disposition"]
+
+
 def test_single_stem_download_falls_back_to_the_bare_name(client, tmp_path):
     """An untitled job must not produce a leading-underscore filename."""
     job = Job(id="abcdef00033b")
