@@ -2368,7 +2368,7 @@ async function exportLogs(btn) {
     URL.revokeObjectURL(url);
   } catch (e) {
     console.warn("[settings] log export failed:", e);
-    showError("Could not export the logs.");
+    showError("Could not export the logs.", null, { retry: false });
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Export logs"; }
   }
