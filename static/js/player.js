@@ -1661,11 +1661,14 @@ export function downloadCurrentStems(format = "wav", onProgress) {
   });
 }
 
+// Returns false when there is nothing to zip, matching downloadCurrentMix and
+// downloadCurrentVideo, so the caller can skip the "Exporting…" state instead of
+// showing it for a download that never starts.
 export function downloadAllStemsZip(format = "wav") {
-  if (!currentJobId) return;
+  if (!currentJobId) return false;
   // Only the active (selected) stems loaded in the DAW — not all 6.
   const names = _currentStems.filter((s) => s.name !== "original").map((s) => s.name);
-  if (!names.length) return;
+  if (!names.length) return false;
   const safe = _currentTitle
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
@@ -1674,6 +1677,7 @@ export function downloadAllStemsZip(format = "wav") {
   const name = safe ? `${safe}_stems.zip` : "stems.zip";
   const q = new URLSearchParams({ format, stems: names.join(",") });
   _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name);
+  return true;
 }
 
 function _regionFilename(ext) {

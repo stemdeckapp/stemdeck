@@ -243,7 +243,7 @@ function wireFooterControls() {
   itemStems?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (busy || itemStems.getAttribute("aria-disabled") === "true") return;
-    downloadAllStemsZip(format);
+    if (!downloadAllStemsZip(format)) { showError("No stems to export."); return; }
     flashBusy();
   });
 
