@@ -529,7 +529,8 @@ async def get_stem_mp3(
         "mp3",
         "pipe:1",
     ]
-    filename = f"{name}_region.mp3" if start is not None else f"{name}.mp3"
+    # Only the trimmed branch reaches here; the untrimmed one returned above.
+    filename = _stem_download_name(job_id, name, "mp3", "_region")
     return StreamingResponse(
         _stream_ffmpeg(cmd, context=f"stem-mp3 job={job_id} stem={name}"),
         media_type="audio/mpeg",

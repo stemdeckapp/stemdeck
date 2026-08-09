@@ -93,6 +93,15 @@ def test_single_stem_region_download_keeps_both_song_and_region(client, tmp_path
     assert 'filename="Come_As_You_Are_vocals_region.wav"' in r.headers["content-disposition"]
 
 
+def test_single_stem_mp3_region_download_keeps_both_song_and_region(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef00033c", ["vocals"])
+    job.title = "Come As You Are"
+    r = client.get(f"/api/jobs/{job.id}/stems/vocals.mp3?start=0&end=0.05")
+    assert r.status_code == 200
+    assert 'filename="Come_As_You_Are_vocals_region.mp3"' in r.headers["content-disposition"]
+
+
 def test_single_stem_download_falls_back_to_the_bare_name(client, tmp_path):
     """An untitled job must not produce a leading-underscore filename."""
     job = Job(id="abcdef00033b")
