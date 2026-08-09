@@ -455,10 +455,19 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("click", (e) => {
   const dl = e.target.closest("a.lane-dl");
   if (dl?.href) {
-    const openUrl = window.__TAURI__?.core?.invoke;
-    if (openUrl) {
+    const invoke = window.__TAURI__?.core?.invoke;
+    // A download attribute is meaningless to the OS handler, so open_url used to
+    // hand the stem to a browser or media player instead of saving it. Save it
+    // like every other export, which also honours the song-prefixed name (#336).
+    // Placeholder rows for absent stems keep href="#" and carry no name.
+    if (invoke && dl.download && !dl.getAttribute("href").endsWith("#")) {
       e.preventDefault();
-      openUrl("open_url", { url: dl.href });
+      invoke("save_audio_file", { url: dl.href, filename: dl.download });
+      return;
+    }
+    if (invoke) {
+      e.preventDefault();
+      invoke("open_url", { url: dl.href });
     }
     return;
   }

@@ -72,6 +72,37 @@ def test_serves_done_job_stem(client, tmp_path):
     assert r.headers["content-type"] == "audio/wav"
 
 
+def test_single_stem_download_is_named_after_the_song(client, tmp_path):
+    """Content-Disposition beats an <a download> attribute for same-origin
+    requests, so the prefix (#336) has to come from the server to be honoured."""
+    job = Job(id="abcdef000339")
+    job.status = "done"
+    job.title = "Come As You Are"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "bass", b"RIFF1234")
+    r = client.get(f"/api/jobs/{job.id}/stems/bass.wav")
+    assert 'filename="Come_As_You_Are_bass.wav"' in r.headers["content-disposition"]
+
+
+def test_single_stem_region_download_keeps_both_song_and_region(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef00033a", ["vocals"])
+    job.title = "Come As You Are"
+    r = client.get(f"/api/jobs/{job.id}/stems/vocals.wav?start=0&end=0.05")
+    assert r.status_code == 200
+    assert 'filename="Come_As_You_Are_vocals_region.wav"' in r.headers["content-disposition"]
+
+
+def test_single_stem_download_falls_back_to_the_bare_name(client, tmp_path):
+    """An untitled job must not produce a leading-underscore filename."""
+    job = Job(id="abcdef00033b")
+    job.status = "done"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "bass", b"RIFF1234")
+    r = client.get(f"/api/jobs/{job.id}/stems/bass.wav")
+    assert 'filename="bass.wav"' in r.headers["content-disposition"]
+
+
 # --- peaks endpoint ---
 
 
@@ -142,8 +173,12 @@ def test_all_stems_zip_all_when_no_subset(client, tmp_path):
     assert "My_Song_Live_stems.zip" in r.headers["content-disposition"]
 
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    assert sorted(zf.namelist()) == ["bass.wav", "drums.wav", "vocals.wav"]
-    assert zf.read("vocals.wav") == b"RIFFvocals"
+    assert sorted(zf.namelist()) == [
+        "My_Song_Live_bass.wav",
+        "My_Song_Live_drums.wav",
+        "My_Song_Live_vocals.wav",
+    ]
+    assert zf.read("My_Song_Live_vocals.wav") == b"RIFFvocals"
 
 
 def test_all_stems_zip_only_active_subset(client, tmp_path):
@@ -161,6 +196,59 @@ def test_all_stems_zip_only_active_subset(client, tmp_path):
     assert r.status_code == 200
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     assert sorted(zf.namelist()) == ["bass.wav", "vocals.wav"]
+
+
+def test_all_stems_zip_prefixes_members_with_the_song(client, tmp_path):
+    """Extracted stems land in whatever folder the user is working in, next to
+    other songs' stems, so a bare "bass.wav" is ambiguous and collides (#336)."""
+    import io
+    import zipfile
+
+    job = Job(id="abcdef000336")
+    job.status = "done"
+    job.title = "Come As You Are"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "bass", b"RIFFbass")
+    _make_stem_file(tmp_path, job.id, "vocals", b"RIFFvocals")
+
+    zf = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job.id}/stems/all.zip").content))
+    assert sorted(zf.namelist()) == ["Come_As_You_Are_bass.wav", "Come_As_You_Are_vocals.wav"]
+    # The prefix must not disturb the payload.
+    assert zf.read("Come_As_You_Are_bass.wav") == b"RIFFbass"
+
+
+def test_all_stems_zip_omits_the_prefix_when_the_title_is_unusable(client, tmp_path):
+    """A title of pure punctuation sanitizes to nothing; prefixing anyway would
+    produce a leading underscore on every member."""
+    import io
+    import zipfile
+
+    job = Job(id="abcdef000337")
+    job.status = "done"
+    job.title = "!!! ???"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "vocals")
+
+    zf = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job.id}/stems/all.zip").content))
+    assert zf.namelist() == ["vocals.wav"]
+
+
+def test_all_stems_zip_member_names_cannot_escape_on_extraction(client, tmp_path):
+    """The member name is derived from a user-controlled title, and an archive
+    member is a path at extraction time. Separators must not survive."""
+    import io
+    import zipfile
+
+    job = Job(id="abcdef000338")
+    job.status = "done"
+    job.title = "../../etc/passwd"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "vocals")
+
+    zf = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job.id}/stems/all.zip").content))
+    assert zf.namelist() == ["etc_passwd_vocals.wav"]
+    for member in zf.namelist():
+        assert "/" not in member and "\\" not in member and ".." not in member
 
 
 def test_all_stems_zip_rejects_unknown_stem(client, tmp_path):
@@ -232,8 +320,8 @@ def test_all_stems_zip_mp3(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=mp3")
     assert r.status_code == 200
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    assert zf.namelist() == ["vocals.mp3"]
-    assert len(zf.read("vocals.mp3")) > 0
+    assert zf.namelist() == ["Track_vocals.mp3"]
+    assert len(zf.read("Track_vocals.mp3")) > 0
 
 
 def test_all_stems_zip_ogg(client, tmp_path):
@@ -266,8 +354,8 @@ def test_all_stems_zip_ogg(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=ogg")
     assert r.status_code == 200
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    assert zf.namelist() == ["vocals.ogg"]
-    ogg_bytes = zf.read("vocals.ogg")
+    assert zf.namelist() == ["Track_vocals.ogg"]
+    ogg_bytes = zf.read("Track_vocals.ogg")
     assert ogg_bytes.startswith(b"OggS")
 
 
@@ -575,8 +663,8 @@ def test_all_stems_zip_flac(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=flac")
     assert r.status_code == 200
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    assert zf.namelist() == ["vocals.flac"]
-    assert zf.read("vocals.flac")[:4] == b"fLaC"
+    assert zf.namelist() == ["Track_vocals.flac"]
+    assert zf.read("Track_vocals.flac")[:4] == b"fLaC"
 
 
 # --- MP4 video mux endpoint (#219) ---

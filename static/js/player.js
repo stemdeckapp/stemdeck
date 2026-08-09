@@ -1008,7 +1008,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     const dl = row.querySelector(".lane-dl");
     if (dl) {
       dl.href = stem.url;
-      dl.download = `${stem.name}.wav`;
+      dl.download = _stemFilename(stem.name);
     }
   }
 
@@ -1604,6 +1604,18 @@ function _mixdownUrl(ext, region) {
   }
   _clickParams(q);
   return `/api/jobs/${currentJobId}/mixdown.${ext}?${q}`;
+}
+
+// One stem, named after the song so it stays identifiable once dragged into a
+// project folder next to other songs' stems (#336). Falls back to the bare stem
+// name when the song has no usable title.
+function _stemFilename(name, ext = "wav") {
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  return safe ? `${safe}_${name}.${ext}` : `${name}.${ext}`;
 }
 
 function _exportFilename(ext) {

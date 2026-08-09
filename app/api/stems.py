@@ -412,6 +412,18 @@ async def get_beat_grid(job_id: str) -> Response:
     )
 
 
+def _stem_download_name(job_id: str, name: str, ext: str, suffix: str = "") -> str:
+    """Filename offered for a single stem, prefixed with the song (#336).
+
+    Content-Disposition wins over an <a download> attribute for same-origin
+    requests, so the server has to carry the name for the browser to honour it.
+    """
+    job = registry_get(job_id)
+    slug = _title_slug(job.title if job else None)
+    stem = f"{name}{suffix}"
+    return f"{slug}_{stem}.{ext}" if slug else f"{stem}.{ext}"
+
+
 @router.api_route("/jobs/{job_id}/stems/{name}.wav", methods=["GET", "HEAD"], response_model=None)
 async def get_stem(
     job_id: str,
@@ -427,7 +439,9 @@ async def get_stem(
     path = _validate_stem_path(job_id, name)
 
     if start is None and end is None:
-        return FileResponse(path, media_type="audio/wav", filename=f"{name}.wav")
+        return FileResponse(
+            path, media_type="audio/wav", filename=_stem_download_name(job_id, name, "wav")
+        )
 
     if start is None or end is None or start >= end:
         raise HTTPException(
@@ -455,7 +469,11 @@ async def get_stem(
     return StreamingResponse(
         _stream_ffmpeg(cmd, context=f"stem-region job={job_id} stem={name}"),
         media_type="audio/wav",
-        headers={"Content-Disposition": f'attachment; filename="{name}_region.wav"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{_stem_download_name(job_id, name, "wav", "_region")}"'
+            )
+        },
     )
 
 
@@ -484,7 +502,9 @@ async def get_stem_mp3(
             cached,
             media_type="audio/mpeg",
             headers={
-                "Content-Disposition": f'attachment; filename="{name}.mp3"',
+                "Content-Disposition": (
+                    f'attachment; filename="{_stem_download_name(job_id, name, "mp3")}"'
+                ),
                 # Stems are immutable once a job is done — let the phone cache
                 # them so a re-load is instant and offline-friendly.
                 "Cache-Control": "public, max-age=31536000, immutable",
@@ -613,11 +633,21 @@ async def get_mixdown(
     )
 
 
-def _safe_title(title: str | None) -> str:
-    """Sanitize a song title into a filename-safe slug (matches the frontend)."""
+def _title_slug(title: str | None) -> str:
+    """Sanitize a song title into a filename-safe slug (matches the frontend).
+
+    Returns "" for a title that survives sanitizing as empty, so callers can
+    decide whether to substitute a fallback or drop the prefix entirely. The
+    output is restricted to [A-Za-z0-9_], which also makes it safe to use as a
+    ZIP member name -- no separators, no traversal.
+    """
     safe = re.sub(r"[^a-zA-Z0-9]+", "_", title or "")
-    safe = re.sub(r"_{2,}", "_", safe).strip("_")[:80].strip("_")
-    return safe or "stems"
+    return re.sub(r"_{2,}", "_", safe).strip("_")[:80].strip("_")
+
+
+def _safe_title(title: str | None) -> str:
+    """Slug for a whole-archive filename, where an empty title still needs a name."""
+    return _title_slug(title) or "stems"
 
 
 @router.get("/jobs/{job_id}/video.mp4", response_model=None)
@@ -704,14 +734,23 @@ async def get_video_mixdown(
     )
 
 
-def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> None:
+def _arcname(prefix: str, name: str, ext: str) -> str:
+    """ZIP member name for one stem. Prefixed with the song slug so the files stay
+    identifiable once extracted into a project folder alongside other songs'
+    stems (#336); unprefixed when the song has no usable title."""
+    return f"{prefix}_{name}.{ext}" if prefix else f"{name}.{ext}"
+
+
+def _build_stems_zip(
+    sources: list[tuple[str, Path]], fmt: str, dest: Path, prefix: str = ""
+) -> None:
     """Blocking: write the stems into a ZIP. WAV files are stored as-is; MP3,
     FLAC, and OGG are transcoded per stem via ffmpeg. ZIP_STORED throughout - audio doesn't
     meaningfully compress, and STORED keeps the build fast. Runs in a thread."""
     if fmt == "wav":
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
             for name, p in sources:
-                zf.write(p, arcname=f"{name}.wav")
+                zf.write(p, arcname=_arcname(prefix, name, "wav"))
         return
     encode = _ENCODE_ARGS[fmt]
     with tempfile.TemporaryDirectory() as td, zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
@@ -739,7 +778,7 @@ def _build_stems_zip(sources: list[tuple[str, Path]], fmt: str, dest: Path) -> N
             if proc.returncode != 0:
                 tail = proc.stderr[-2000:].decode("utf-8", "replace")
                 raise RuntimeError(f"ffmpeg failed for {name}: {tail}")
-            zf.write(out, arcname=f"{name}.{fmt}")
+            zf.write(out, arcname=_arcname(prefix, name, fmt))
 
 
 @router.get("/jobs/{job_id}/stems/all.zip")
@@ -786,7 +825,7 @@ async def get_all_stems_zip(
     os.close(fd)
     tmp_path = Path(tmp)
     try:
-        await asyncio.to_thread(_build_stems_zip, sources, fmt, tmp_path)
+        await asyncio.to_thread(_build_stems_zip, sources, fmt, tmp_path, _title_slug(job.title))
     except Exception:
         tmp_path.unlink(missing_ok=True)
         logger.exception("failed to build stems zip for job %s", job_id)
