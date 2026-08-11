@@ -119,45 +119,11 @@ export function reset() {
   setCurrentJobId(null);
 }
 
-function applyState(state) {
-  if (state.job_id) {
-    addTrackToLibrary({
-      id: state.job_id,
-      title: state.title || urlInput.value || "Processing track",
-      channel: state.status === "done" ? "Extracted" : "Processing",
-      thumb: state.thumbnail,
-      stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
-      selectedStems: state.selected_stems || [...selectedStems],
-      audioStems: state.stems || [],
-      status: state.status,
-      duration: state.duration,
-      bpm: state.bpm,
-      key: state.key,
-      scale: state.scale,
-      keyConfidence: state.key_confidence,
-      lufs: state.lufs,
-      peakDb: state.peak_db,
-      stemPresence: state.stem_presence,
-      sourceUrl: jobSources.get(state.job_id) || urlInput.value,
-      createdAt: state.created_at,
-    });
-    setCurrentTrack(state.job_id);
-  }
-  if (state.title) {
-    jobTitleEl.textContent = state.title;
-    titleEl.textContent = state.title;
-  }
-  if (state.bpm) bpmChip.textContent = `${state.bpm} BPM`;
-  if (state.key) keyChip.textContent = state.key;
-  if (state.title || state.bpm || state.key || state.thumbnail) {
-    updateFooterTrack({
-      title: state.title,
-      thumbnail: state.thumbnail,
-      key: state.key,
-      bpm: state.bpm,
-      stemCount: state.stems ? state.stems.filter((s) => s.name !== "original").length : null,
-    });
-  }
+// The analysis cards under the waveform. Split out of applyState so the
+// studio-owned DOM lives behind one call: only the job the user is actually
+// looking at may write here, and that is far easier to see when it is one
+// named function than fifty inline element lookups.
+function applyStudioSummary(state) {
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
   const summaryScale = document.getElementById("summary-scale");
@@ -208,6 +174,48 @@ function applyState(state) {
   if (state.stem_presence != null) {
     applyStemPresenceCards(state.stem_presence);
   }
+}
+
+function applyState(state) {
+  if (state.job_id) {
+    addTrackToLibrary({
+      id: state.job_id,
+      title: state.title || urlInput.value || "Processing track",
+      channel: state.status === "done" ? "Extracted" : "Processing",
+      thumb: state.thumbnail,
+      stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
+      selectedStems: state.selected_stems || [...selectedStems],
+      audioStems: state.stems || [],
+      status: state.status,
+      duration: state.duration,
+      bpm: state.bpm,
+      key: state.key,
+      scale: state.scale,
+      keyConfidence: state.key_confidence,
+      lufs: state.lufs,
+      peakDb: state.peak_db,
+      stemPresence: state.stem_presence,
+      sourceUrl: jobSources.get(state.job_id) || urlInput.value,
+      createdAt: state.created_at,
+    });
+    setCurrentTrack(state.job_id);
+  }
+  if (state.title) {
+    jobTitleEl.textContent = state.title;
+    titleEl.textContent = state.title;
+  }
+  if (state.bpm) bpmChip.textContent = `${state.bpm} BPM`;
+  if (state.key) keyChip.textContent = state.key;
+  if (state.title || state.bpm || state.key || state.thumbnail) {
+    updateFooterTrack({
+      title: state.title,
+      thumbnail: state.thumbnail,
+      key: state.key,
+      bpm: state.bpm,
+      stemCount: state.stems ? state.stems.filter((s) => s.name !== "original").length : null,
+    });
+  }
+  applyStudioSummary(state);
   // Stage label is owned by the phrase-rotation timer below; we don't
   // overwrite it from each SSE tick. The truthful backend stage goes
   // to the small detail line instead.
