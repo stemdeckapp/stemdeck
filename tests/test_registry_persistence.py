@@ -320,3 +320,38 @@ def test_delete_updates_persisted_registry(tmp_path: Path, monkeypatch):
     assert not job_dir.exists()
     data = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))
     assert data["jobs"] == []
+
+
+def test_a_reordered_queue_comes_back_in_the_users_order(tmp_path: Path):
+    """Order is the main thing a user controls in a serial queue, so it has to
+    survive a restart -- not fall back to submission order."""
+    from app.pipeline import jobqueue
+
+    ids = ["abcdef00000a", "abcdef00000b", "abcdef00000c"]
+    for i, jid in enumerate(ids):
+        job = Job(id=jid, status="queued", title=jid[-1], created_at=1000.0 + i)
+        _jobs[jid] = job
+        jobqueue.enqueue(jid)
+    # The user drags the last one to the front.
+    assert jobqueue.reorder("abcdef00000c", None) is True
+    persist_registry(tmp_path)
+
+    _jobs.clear()
+    _registry._pending_resume.clear()
+    jobqueue._queue.clear()
+    restore_registry(tmp_path)
+
+    assert _registry.take_pending_resume() == ["abcdef00000c", "abcdef00000a", "abcdef00000b"]
+
+
+def test_records_without_a_position_still_restore_oldest_first(tmp_path: Path):
+    """Registries written before reordering existed default to 0, where
+    created_at decides exactly as it used to."""
+    for i, jid in enumerate(["abcdef0000e1", "abcdef0000e2"]):
+        _jobs[jid] = Job(id=jid, status="queued", title=jid, created_at=2000.0 - i)
+    persist_registry(tmp_path)
+    _jobs.clear()
+    _registry._pending_resume.clear()
+
+    restore_registry(tmp_path)
+    assert _registry.take_pending_resume() == ["abcdef0000e2", "abcdef0000e1"]

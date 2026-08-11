@@ -252,3 +252,61 @@ def test_start_endpoint_resumes_the_queue(client):
 def test_start_is_harmless_when_nothing_is_paused(client):
     assert client.post("/api/queue/start").status_code == 200
     assert jobqueue.is_paused() is False
+
+
+# ── reordering ───────────────────────────────────────────────────────────────
+
+
+def test_reorder_moves_a_job_after_another(client):
+    for jid in ("aaaaaaaaaaa1", "aaaaaaaaaaa2", "aaaaaaaaaaa3"):
+        _queued(jid)
+    body = client.post(
+        "/api/queue/reorder", json={"job_id": "aaaaaaaaaaa3", "after": "aaaaaaaaaaa1"}
+    ).json()
+    assert [j["job_id"] for j in body["queued"]] == [
+        "aaaaaaaaaaa1",
+        "aaaaaaaaaaa3",
+        "aaaaaaaaaaa2",
+    ]
+
+
+def test_reorder_to_the_front(client):
+    for jid in ("aaaaaaaaaaa1", "aaaaaaaaaaa2", "aaaaaaaaaaa3"):
+        _queued(jid)
+    body = client.post("/api/queue/reorder", json={"job_id": "aaaaaaaaaaa3"}).json()
+    assert [j["job_id"] for j in body["queued"]][0] == "aaaaaaaaaaa3"
+
+
+def test_reorder_renumbers_positions(client):
+    for jid in ("aaaaaaaaaaa1", "aaaaaaaaaaa2", "aaaaaaaaaaa3"):
+        _queued(jid)
+    body = client.post("/api/queue/reorder", json={"job_id": "aaaaaaaaaaa3"}).json()
+    assert [j["position"] for j in body["queued"]] == [0, 1, 2]
+
+
+def test_reorder_409s_for_a_job_that_is_no_longer_waiting(client):
+    """The user dragged a row that finished or started mid-drag."""
+    _queued("aaaaaaaaaaa1")
+    r = client.post("/api/queue/reorder", json={"job_id": "aaaaaaaaaaa9"})
+    assert r.status_code == 409
+
+
+def test_reorder_rejects_a_job_following_itself(client):
+    _queued("aaaaaaaaaaa1")
+    r = client.post("/api/queue/reorder", json={"job_id": "aaaaaaaaaaa1", "after": "aaaaaaaaaaa1"})
+    assert r.status_code == 422
+
+
+def test_reorder_404s_on_a_malformed_id(client):
+    r = client.post("/api/queue/reorder", json={"job_id": "../../etc/passwd"})
+    assert r.status_code == 404
+
+
+def test_a_lost_anchor_puts_the_job_last_rather_than_failing(client):
+    """The anchor finished while the row was being dragged onto it."""
+    for jid in ("aaaaaaaaaaa1", "aaaaaaaaaaa2"):
+        _queued(jid)
+    body = client.post(
+        "/api/queue/reorder", json={"job_id": "aaaaaaaaaaa1", "after": "aaaaaaaaaaa8"}
+    ).json()
+    assert [j["job_id"] for j in body["queued"]] == ["aaaaaaaaaaa2", "aaaaaaaaaaa1"]

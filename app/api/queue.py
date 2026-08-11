@@ -18,13 +18,15 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.api.events import _MAX_SSE_SECONDS, claim_sse_slot, release_sse_slot
-from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
+from app.core.config import JOB_ID_RE, JOBS_DIR, MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
 from app.core.registry import get as registry_get
 from app.core.registry import pending_count as registry_pending_count
+from app.core.registry import persist as registry_persist
 from app.pipeline import jobqueue
 
 router = APIRouter(tags=["queue"])
@@ -85,6 +87,31 @@ def _fingerprint() -> tuple:
 def start_queue() -> dict[str, Any]:
     """Begin working through a queue restored from a previous session."""
     jobqueue.resume()
+    return _snapshot()
+
+
+class ReorderRequest(BaseModel):
+    job_id: str
+    # The job it should sit directly after. None means "move to the front",
+    # which is also what a Move to top control sends.
+    after: str | None = None
+
+
+@router.post("/reorder")
+def reorder_queue(payload: ReorderRequest) -> dict[str, Any]:
+    """Move a waiting job. Returns the resulting queue, so a client whose drag
+    raced a job finishing re-syncs from the answer instead of guessing."""
+    if not JOB_ID_RE.match(payload.job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    if payload.after is not None and not JOB_ID_RE.match(payload.after):
+        raise HTTPException(status_code=404, detail="job not found")
+    if payload.job_id == payload.after:
+        raise HTTPException(status_code=422, detail="a job cannot follow itself")
+    if not jobqueue.reorder(payload.job_id, payload.after):
+        # Already started or finished. Not an error the user can act on -- the
+        # snapshot below tells the client what is true now.
+        raise HTTPException(status_code=409, detail="that job is no longer waiting")
+    registry_persist(JOBS_DIR)
     return _snapshot()
 
 

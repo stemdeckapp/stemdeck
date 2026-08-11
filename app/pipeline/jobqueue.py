@@ -73,9 +73,54 @@ def enqueue(job_id: str, *, autostart: bool = True) -> None:
     with _lock:
         if job_id not in _queue and job_id != _running_id:
             _queue.append(job_id)
+            _renumber_locked()
         if autostart:
             _paused = False
     _notify()
+
+
+def _renumber_locked() -> None:
+    """Stamp each waiting job with its place in line, for persistence only.
+
+    Written directly rather than through _set(): the position the UI shows is
+    derived from the live deque, so bumping every job's version here would wake
+    every SSE stream to report something they already know.
+
+    Caller holds _lock.
+    """
+    for index, job_id in enumerate(_queue):
+        job = registry_get(job_id)
+        if job is not None:
+            job.queue_position = index
+
+
+def reorder(job_id: str, after_id: str | None) -> bool:
+    """Move a waiting job to sit directly after `after_id`, or to the front when
+    that is None.
+
+    Expressed as "after this job" rather than "at index N" on purpose: the queue
+    moves under the user as jobs finish, so an index captured when the drag
+    started can easily mean somewhere else by the time it lands.
+
+    Returns False if the job is not waiting -- it finished or started while the
+    user was dragging it.
+    """
+    with _lock:
+        if job_id not in _queue:
+            return False
+        _queue.remove(job_id)
+        if after_id is None:
+            _queue.appendleft(job_id)
+        else:
+            try:
+                _queue.insert(_queue.index(after_id) + 1, job_id)
+            except ValueError:
+                # The anchor left the queue mid-drag. Falling back to the end is
+                # the honest answer; the response carries the resulting order so
+                # the client re-syncs rather than guessing.
+                _queue.append(job_id)
+        _renumber_locked()
+    return True
 
 
 def discard(job_id: str) -> bool:

@@ -6,7 +6,8 @@ import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, ti
 import { showError, importFromUrl, detachForegroundJob } from "./job.js";
 import {
   cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange, ordinal,
-  queueCount, queueRowStates, runningLabel, startQueue, startQueueStream,
+  queueCount, queueRowStates, reorderQueuedJob, runningLabel, startQueue,
+  startQueueStream,
 } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
@@ -1557,18 +1558,36 @@ function queueEntries(snap) {
   return entries;
 }
 
-function queueRowHtml({ job, running }, place) {
+function queueRowHtml({ job, running }, place, { paused = false } = {}) {
   const track = tracks[job.job_id];
-  const label = running ? runningLabel(job) : `Queued - ${ordinal(place)} in line`;
+  const label = running ? runningLabel(job) : paused ? "Paused" : `Queued - ${ordinal(place)} in line`;
   const thumb = track ? thumbHtml(track) : thumbHtml({ thumb: job.thumbnail });
+  // The running job cannot be reordered -- it is already running. Only waiting
+  // rows drag, and only they offer "play next".
+  const handle = running
+    ? ""
+    : `<span class="queue-grip" title="Drag to reorder" aria-hidden="true">
+         <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
+           <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+           <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+           <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+         </svg>
+       </span>`;
   return `
-    <div class="cat-item queue-row ${running ? "queue-running" : "queue-waiting"}" data-id="${esc(job.job_id)}">
+    <div class="cat-item queue-row ${running ? "queue-running" : "queue-waiting"}" data-id="${esc(job.job_id)}"${running ? "" : ' draggable="true"'}>
+      ${handle}
       <div class="cat-thumb">${thumb}</div>
       <div class="cat-meta">
         <div class="cat-title">${esc(displayTitle(job.title || track?.title || job.source_url))}</div>
         <div class="cat-sub"><span class="cat-queue-label">${esc(label)}</span></div>
         ${running ? '<div class="cat-progress"><div class="cat-progress-fill"></div></div>' : ""}
       </div>
+      ${running || place <= 2 ? "" : `<button class="queue-top" type="button" title="Extract this one next"
+              aria-label="Move ${esc(displayTitle(job.title || job.source_url))} to the front of the queue">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M12 19V5 M5 12l7-7 7 7"></path>
+        </svg>
+      </button>`}
       <button class="queue-cancel" type="button" title="Cancel this import"
               aria-label="Cancel import of ${esc(displayTitle(job.title || job.source_url))}">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
@@ -1578,12 +1597,79 @@ function queueRowHtml({ job, running }, place) {
     </div>`;
 }
 
-function wireQueueRow(el) {
+// True while the user is dragging a queue row. Incoming queue frames arrive
+// several times a second; re-rendering the list mid-drag would pull the row out
+// from under the cursor and cancel the drag.
+let _queueDragId = null;
+
+export function isQueueDragging() {
+  return _queueDragId !== null;
+}
+
+/** The id the dragged row should sit after, given where it was dropped.
+ *  Null means the front of the queue. */
+function dropAnchorId(listEl, draggedId, clientY) {
+  const rows = [...listEl.querySelectorAll(".queue-row")].filter(
+    (r) => r.dataset.id !== draggedId,
+  );
+  let anchor = null;
+  for (const row of rows) {
+    const box = row.getBoundingClientRect();
+    if (clientY > box.top + box.height / 2) anchor = row.dataset.id;
+  }
+  return anchor;
+}
+
+function wireQueueRow(el, listEl) {
   el.querySelector(".queue-cancel")?.addEventListener("click", async (e) => {
     e.stopPropagation();
     const btn = e.currentTarget;
     btn.disabled = true;
     await cancelQueuedJob(el.dataset.id);
+  });
+
+  el.querySelector(".queue-top")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    e.currentTarget.disabled = true;
+    await reorderQueuedJob(el.dataset.id, null);
+  });
+
+  if (el.getAttribute("draggable") !== "true") return;
+
+  el.addEventListener("dragstart", (e) => {
+    _queueDragId = el.dataset.id;
+    el.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to start a drag without payload.
+    e.dataTransfer.setData("text/plain", el.dataset.id);
+  });
+
+  el.addEventListener("dragend", () => {
+    _queueDragId = null;
+    el.classList.remove("dragging");
+    for (const r of listEl.querySelectorAll(".queue-row")) r.classList.remove("drop-below");
+  });
+}
+
+function wireQueueListDrop(listEl) {
+  listEl.addEventListener("dragover", (e) => {
+    if (!_queueDragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const anchor = dropAnchorId(listEl, _queueDragId, e.clientY);
+    for (const r of listEl.querySelectorAll(".queue-row")) {
+      r.classList.toggle("drop-below", !!anchor && r.dataset.id === anchor);
+    }
+  });
+
+  listEl.addEventListener("drop", async (e) => {
+    if (!_queueDragId) return;
+    e.preventDefault();
+    const dragged = _queueDragId;
+    const anchor = dropAnchorId(listEl, dragged, e.clientY);
+    _queueDragId = null;
+    for (const r of listEl.querySelectorAll(".queue-row")) r.classList.remove("drop-below");
+    if (anchor !== dragged) await reorderQueuedJob(dragged, anchor);
   });
 }
 
@@ -1624,12 +1710,14 @@ function renderQueueList(listEl, snap = getQueueSnapshot()) {
     return;
   }
 
+  const paused = isPaused(snap);
   section.insertAdjacentHTML(
     "beforeend",
-    entries.map((entry, i) => queueRowHtml(entry, i + 1)).join(""),
+    entries.map((entry, i) => queueRowHtml(entry, i + 1, { paused })).join(""),
   );
   listEl.appendChild(section);
-  for (const el of section.querySelectorAll(".queue-row")) wireQueueRow(el);
+  for (const el of section.querySelectorAll(".queue-row")) wireQueueRow(el, listEl);
+  wireQueueListDrop(listEl);
   updateQueueRows(snap);
 }
 
@@ -1639,6 +1727,9 @@ function renderQueueList(listEl, snap = getQueueSnapshot()) {
 function updateQueueRows(snap = getQueueSnapshot()) {
   const listEl = document.getElementById("catalogList");
   if (!listEl || catalogView !== "queue") return;
+  // A frame landing mid-drag would rebuild the list and yank the row out
+  // from under the cursor.
+  if (isQueueDragging()) return;
 
   const entries = queueEntries(snap);
   const shown = [...listEl.querySelectorAll(".queue-row")].map((el) => el.dataset.id);

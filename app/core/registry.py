@@ -167,8 +167,14 @@ def restore(jobs_dir: Path) -> None:
                             resume.append(recovered)
             with _lock:
                 _jobs.update(to_add)
-            # Oldest first, so a queue picks up where it left off.
-            _pending_resume.extend(j.id for j in sorted(resume, key=lambda j: j.created_at))
+            # The user's order first, then oldest first. queue_position is
+            # rewritten whenever the queue changes, so a queue the user
+            # reordered comes back in that order rather than submission order.
+            # Records written before that field existed all default to 0, where
+            # created_at decides exactly as it used to.
+            _pending_resume.extend(
+                j.id for j in sorted(resume, key=lambda j: (j.queue_position, j.created_at))
+            )
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             logger.warning("failed to load registry from %s", path, exc_info=True)
 

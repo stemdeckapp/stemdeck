@@ -139,6 +139,34 @@ export async function refreshQueue() {
   }
 }
 
+/** Move a waiting job so it runs directly after `afterId`, or first when that
+ *  is null. Returns true if the server accepted it.
+ *
+ *  "After this job" rather than "at index N": the queue moves while the user
+ *  drags, so an index captured at drag start can mean somewhere else by the
+ *  time it lands. A 409 means the job started or finished mid-drag, which is
+ *  not an error worth showing -- the snapshot that follows corrects the view.
+ */
+export async function reorderQueuedJob(jobId, afterId) {
+  try {
+    const r = await fetch("/api/queue/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId, after: afterId ?? null }),
+    });
+    if (r.ok) {
+      publish(await r.json());
+      return true;
+    }
+    await refreshQueue();
+    return false;
+  } catch (e) {
+    console.warn("[queue] reorder failed:", e);
+    await refreshQueue();
+    return false;
+  }
+}
+
 export async function cancelQueuedJob(jobId) {
   try {
     await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });

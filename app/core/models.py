@@ -83,6 +83,11 @@ class Job:
     # tear-detection state for the SSE stream -- not surfaced via to_state()
     # or persisted, same as cancel_requested.
     version: int = 0
+    # Place in the waiting queue, rewritten whenever the queue changes. Only
+    # exists so a reordered queue comes back in the user's order rather than
+    # submission order after a restart; the position the UI shows is derived
+    # from the live deque. Old records default to 0, where created_at decides.
+    queue_position: int = 0
     # How many times a restart has put this job back in the queue. Persisted,
     # so a job that reliably kills the process is failed rather than retried on
     # every start. Old records without the field default to 0 via from_record.
