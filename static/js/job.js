@@ -121,6 +121,11 @@ export function showError(message, detail, { retry = true } = {}) {
   errorEl.classList.remove("hidden");
 }
 
+function clearImportError() {
+  errorEl.classList.add("hidden");
+  errorEl.textContent = "";
+}
+
 // Clear the import chrome (progress box, error, phrase rotation, foreground
 // SSE) without touching the studio. Split out of reset() so a submit that goes
 // to the back of the queue does not tear down audio the user is playing.
@@ -132,8 +137,7 @@ function resetImportUi() {
   stopJobPolling();
   stopPhraseRotation();
   lastStatus = null;
-  errorEl.classList.add("hidden");
-  errorEl.textContent = "";
+  clearImportError();
   jobBox.classList.add("hidden");
   jobCancelBtn.classList.add("hidden");
   jobTitleEl.textContent = "";
@@ -517,11 +521,21 @@ export function wireJobForm() {
     // An import must never take a loaded studio away from the user. With a
     // track playing, the new job goes straight to the background: no player
     // teardown, no loading overlay, no takeover when it finishes. It reports
-    // progress on its library row instead. Only an empty studio gets the
-    // classic foreground import.
-    const background = studioHasTrack();
-    if (background) resetImportUi();
-    else reset();
+    // progress on its library row instead.
+    //
+    // An import already holding the foreground keeps it, too. Otherwise
+    // queueing a second track would point the studio overlay at a job that has
+    // not started, and the first import -- the one about to finish -- would no
+    // longer be the one that loads.
+    const background = studioHasTrack() || !!foregroundJobId;
+    if (background) {
+      // Deliberately NOT resetImportUi(): that closes the running import's
+      // event stream and drops its foreground claim, which would leave the job
+      // about to finish with nothing listening for its completion.
+      clearImportError();
+    } else {
+      reset();
+    }
     setSubmitProcessing(true);
 
     const fileInput = document.getElementById("fileInput");

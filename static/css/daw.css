@@ -430,6 +430,20 @@ input, textarea { font-family: inherit; }
 .rail-btn.active { color: var(--accent); background: var(--panel); }
 .rail-btn svg { flex-shrink: 0; }
 .rail-btn span { white-space: nowrap; }
+
+/* Queue rail button. Only present while something is importing, so the rail
+   stays as it is today for anyone not using the queue. */
+.rail-queue { position: relative; }
+.rail-badge {
+  position: absolute; top: 2px; right: 2px;
+  min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent); color: #1a1a1a;
+  font-size: 9px; font-weight: 700; line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 /* "We Recommend" is wider than the other one-word rail labels, so it stacks onto
    two centered lines; let the button grow so the second line + icon aren't clipped. */
 .rail-btn.rail-recommend { height: auto; min-height: 40px; padding: 3px 0; }
@@ -666,6 +680,23 @@ input, textarea { font-family: inherit; }
   background: var(--accent);
   transition: width 260ms linear;
 }
+
+/* Queue view rows. Unlike a library row these are not loadable -- there is
+   nothing to load yet -- so they get no hover affordance, just a cancel. */
+.queue-row { cursor: default; }
+.queue-row:hover { background: var(--panel); }
+.queue-row .cat-meta { gap: 3px; }
+.queue-cancel {
+  width: 22px; height: 22px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; flex-shrink: 0; opacity: 0.65;
+  transition: opacity var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+.queue-row:hover .queue-cancel { opacity: 1; }
+.queue-cancel:hover { background: rgba(217, 83, 79, 0.16); color: #e06c68; }
+.queue-cancel:disabled { opacity: 0.3; cursor: default; }
+.queue-section .lib-section-head { margin-bottom: 6px; }
 .cat-del {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); cursor: pointer;

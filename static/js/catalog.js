@@ -4,7 +4,10 @@ import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { showError, importFromUrl, detachForegroundJob } from "./job.js";
-import { getQueueSnapshot, onJobSettled, onQueueChange, queueRowStates, startQueueStream } from "./queue.js";
+import {
+  cancelQueuedJob, getQueueSnapshot, onJobSettled, onQueueChange, ordinal,
+  queueCount, queueRowStates, runningLabel, startQueueStream,
+} from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -495,9 +498,9 @@ function moveTrackToTrash(trackId) {
 }
 
 function setCatalogView(view) {
-  catalogView = ["trash", "favorites"].includes(view) ? view : "library";
+  catalogView = ["trash", "favorites", "queue"].includes(view) ? view : "library";
   const app = document.querySelector(".app");
-  if (catalogView === "trash" || catalogView === "favorites") {
+  if (catalogView !== "library") {
     app?.classList.remove("cat-collapsed");
     localStorage.setItem("stemdeck.catalog.collapsed", "0");
   }
@@ -1276,10 +1279,12 @@ function render() {
   const trashIds = new Set(trash?.items || []);
   const isTrashView = catalogView === "trash";
   const isFavoritesView = catalogView === "favorites";
-  const isLibraryView = !isTrashView && !isFavoritesView;
+  const isQueueView = catalogView === "queue";
+  const isLibraryView = !isTrashView && !isFavoritesView && !isQueueView;
 
   catalog?.classList.toggle("trash-view", isTrashView);
   catalog?.classList.toggle("favorites-view", isFavoritesView);
+  catalog?.classList.toggle("queue-view", isQueueView);
 
   document.querySelector(".rail-library")?.classList.toggle("active", isLibraryView);
   document.querySelector(".rail-library")?.setAttribute("aria-pressed", String(isLibraryView));
@@ -1287,9 +1292,21 @@ function render() {
   document.querySelector(".rail-favorites")?.setAttribute("aria-pressed", String(isFavoritesView));
   document.querySelector(".rail-trash")?.classList.toggle("active", isTrashView);
   document.querySelector(".rail-trash")?.setAttribute("aria-pressed", String(isTrashView));
+  document.querySelector(".rail-queue")?.classList.toggle("active", isQueueView);
+  document.querySelector(".rail-queue")?.setAttribute("aria-pressed", String(isQueueView));
 
   if (searchInput) {
     searchInput.placeholder = isTrashView ? "Search trash…" : isFavoritesView ? "Search favorites…" : "Search library…";
+  }
+
+  // ── Queue view ──
+  // Rendered from the queue snapshot, not the library: it shows what the
+  // backend is actually working on, in the order it will work on it.
+  if (isQueueView) {
+    renderQueueList(list);
+    renderStrip(strip, folders.filter((f) => f.id !== TRASH_ID && !f.parentId));
+    updateQueueBadge();
+    return;
   }
 
   const nonTrash = folders.filter((f) => f.id !== TRASH_ID && !f.parentId);
@@ -1401,6 +1418,7 @@ function render() {
   }
 
   renderStrip(strip, nonTrash);
+  updateQueueBadge();
   applyQueueDecorations();
 }
 
@@ -1489,6 +1507,127 @@ async function completeSettledJob(jobId) {
   }
 }
 
+// ─── Queue view ───
+
+function queueEntries(snap) {
+  const entries = [];
+  if (snap.running) entries.push({ job: snap.running, running: true });
+  for (const job of snap.queued ?? []) entries.push({ job, running: false });
+  return entries;
+}
+
+function queueRowHtml({ job, running }, place) {
+  const track = tracks[job.job_id];
+  const label = running ? runningLabel(job) : `Queued - ${ordinal(place)} in line`;
+  const thumb = track ? thumbHtml(track) : thumbHtml({ thumb: job.thumbnail });
+  return `
+    <div class="cat-item queue-row ${running ? "queue-running" : "queue-waiting"}" data-id="${esc(job.job_id)}">
+      <div class="cat-thumb">${thumb}</div>
+      <div class="cat-meta">
+        <div class="cat-title">${esc(displayTitle(job.title || track?.title || job.source_url))}</div>
+        <div class="cat-sub"><span class="cat-queue-label">${esc(label)}</span></div>
+        ${running ? '<div class="cat-progress"><div class="cat-progress-fill"></div></div>' : ""}
+      </div>
+      <button class="queue-cancel" type="button" title="Cancel this import"
+              aria-label="Cancel import of ${esc(displayTitle(job.title || job.source_url))}">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M18 6 6 18 M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>`;
+}
+
+function wireQueueRow(el) {
+  el.querySelector(".queue-cancel")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    await cancelQueuedJob(el.dataset.id);
+  });
+}
+
+function renderQueueList(listEl, snap = getQueueSnapshot()) {
+  const entries = queueEntries(snap);
+  listEl.innerHTML = "";
+
+  const section = document.createElement("div");
+  section.className = "lib-section queue-section";
+  section.innerHTML = `<div class="lib-section-head"><span>IMPORT QUEUE</span></div>`;
+
+  if (!entries.length) {
+    section.insertAdjacentHTML(
+      "beforeend",
+      '<span class="folder-empty trash-empty">Nothing importing. Queued tracks appear here.</span>',
+    );
+    listEl.appendChild(section);
+    return;
+  }
+
+  section.insertAdjacentHTML(
+    "beforeend",
+    entries.map((entry, i) => queueRowHtml(entry, i + 1)).join(""),
+  );
+  listEl.appendChild(section);
+  for (const el of section.querySelectorAll(".queue-row")) wireQueueRow(el);
+  updateQueueRows(snap);
+}
+
+/** Patch the open queue view in place. Only a change to which jobs are present
+ *  (or their order) costs a rebuild; progress and stage text are written
+ *  straight to the existing nodes, because this runs several times a second. */
+function updateQueueRows(snap = getQueueSnapshot()) {
+  const listEl = document.getElementById("catalogList");
+  if (!listEl || catalogView !== "queue") return;
+
+  const entries = queueEntries(snap);
+  const shown = [...listEl.querySelectorAll(".queue-row")].map((el) => el.dataset.id);
+  const wanted = entries.map((e) => e.job.job_id);
+  if (shown.length !== wanted.length || shown.some((id, i) => id !== wanted[i])) {
+    renderQueueList(listEl, snap);
+    return;
+  }
+
+  entries.forEach((entry, i) => {
+    const el = listEl.querySelector(`.queue-row[data-id="${entry.job.job_id}"]`);
+    if (!el) return;
+    const label = entry.running ? runningLabel(entry.job) : `Queued - ${ordinal(i + 1)} in line`;
+    const labelEl = el.querySelector(".cat-queue-label");
+    if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
+    const fill = el.querySelector(".cat-progress-fill");
+    if (fill) fill.style.width = `${Math.round((entry.job.progress || 0) * 100)}%`;
+  });
+}
+
+/** The rail button only exists while there is something to look at, and carries
+ *  the count so the queue is legible without opening it. */
+function updateQueueBadge(snap = getQueueSnapshot()) {
+  const btn = document.querySelector(".rail-queue");
+  const badge = document.getElementById("queueBadge");
+  if (!btn) return;
+  const count = queueCount(snap);
+  btn.classList.toggle("hidden", count === 0 && catalogView !== "queue");
+  if (badge) {
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.classList.toggle("hidden", count === 0);
+  }
+}
+
+function onQueueFrame(snap) {
+  updateQueueBadge(snap);
+  if (catalogView !== "queue") {
+    applyQueueDecorations(snap);
+    return;
+  }
+  if (queueCount(snap) === 0) {
+    // Nothing left to manage. Fall back to the library rather than leaving the
+    // user in a view that can only ever be empty from here. Deliberately not
+    // done inside updateQueueBadge, which render() calls -- that would recurse.
+    setCatalogView("library");
+    return;
+  }
+  updateQueueRows(snap);
+}
+
 function applyQueueDecorations(snap = getQueueSnapshot()) {
   const states = queueRowStates(snap);
   for (const el of document.querySelectorAll(".cat-item[data-id]")) {
@@ -1540,6 +1679,7 @@ function wireCatalogRailViews() {
   document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
   document.querySelector(".rail-favorites")?.addEventListener("click", () => setCatalogView("favorites"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
+  document.querySelector(".rail-queue")?.addEventListener("click", () => setCatalogView("queue"));
   document.getElementById("clearBinBtn")?.addEventListener("click", () => {
     const trash = getTrashFolder();
     const toDelete = [...(trash?.items || [])];
@@ -2930,7 +3070,7 @@ export async function initCatalog() {
 
   // Patch rows in place on every queue frame. A full render() here would
   // rebuild the sidebar several times a second.
-  onQueueChange(applyQueueDecorations);
+  onQueueChange(onQueueFrame);
   onJobSettled(completeSettledJob);
   startQueueStream();
 
