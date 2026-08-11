@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import functools
 import io
 import logging
@@ -33,6 +32,7 @@ from app.core.config import (
     ensure_runtime_dirs,
 )
 from app.core.logging_setup import configure_logging
+from app.core.process import process_exists as _process_exists
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import registry_path, take_pending_resume
 from app.core.registry import reset_all as reset_registry
@@ -80,26 +80,6 @@ except ImportError:
     pass
 
 _log = logging.getLogger("stemdeck")
-
-
-def _process_exists(pid: int) -> bool:
-    if os.name != "nt":
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    ERROR_INVALID_PARAMETER = 87
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if handle:
-        kernel32.CloseHandle(handle)
-        return True
-    return ctypes.get_last_error() != ERROR_INVALID_PARAMETER
 
 
 def app_version() -> str:

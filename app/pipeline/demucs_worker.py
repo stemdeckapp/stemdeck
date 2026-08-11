@@ -27,15 +27,22 @@ Protocol:
     failure already meant "process is dead, next attempt spawns fresh" --
     the reuse win only applies to the happy path.
   - EOF on stdin (parent closed the pipe) ends the worker's loop cleanly.
+  - STEMDECK_PARENT_PID, if set, arms a watchdog that exits the worker when
+    that process disappears. See _watch_parent for why the pipe alone is not
+    enough.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from app.core.config import DEMUCS_MODEL
+from app.core.process import process_exists
 
 
 def _run_one_job(model, device: str, req: dict) -> None:
@@ -82,8 +89,47 @@ def _run_one_job(model, device: str, req: dict) -> None:
         )
 
 
+_PARENT_POLL_SECONDS = 1.0
+
+
+def _watch_parent(parent_pid: int) -> None:
+    """Exit as soon as the process that spawned us is gone.
+
+    The stdin EOF in the loop below only covers a parent that exits between
+    jobs. Mid-separation the worker is inside torch and reads nothing, and the
+    parent may have been killed in a way that ran no cleanup at all (SIGKILL,
+    Force Quit, Task Manager, a crash). Without this, the worker would keep a
+    GPU busy with nobody left to collect the result.
+
+    os._exit rather than sys.exit: this runs on a daemon thread, and raising
+    SystemExit there would not interrupt inference running in C code. Nothing
+    here needs flushing -- a half-written model directory is cleared before the
+    job is retried.
+    """
+    while True:
+        if not process_exists(parent_pid):
+            sys.stderr.write("@@ERROR@@parent process exited\n")
+            sys.stderr.flush()
+            os._exit(1)
+        time.sleep(_PARENT_POLL_SECONDS)
+
+
+def _arm_parent_watchdog() -> None:
+    raw = os.environ.get("STEMDECK_PARENT_PID", "").strip()
+    if not raw:
+        return
+    try:
+        parent_pid = int(raw)
+    except ValueError:
+        return
+    if parent_pid <= 0 or parent_pid == os.getpid():
+        return
+    threading.Thread(target=_watch_parent, args=(parent_pid,), daemon=True).start()
+
+
 def main() -> None:
     device = sys.argv[1] if len(sys.argv) > 1 else "cpu"
+    _arm_parent_watchdog()
 
     from demucs.pretrained import get_model
 

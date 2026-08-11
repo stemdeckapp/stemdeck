@@ -60,6 +60,10 @@ def _get_worker(device: str) -> subprocess.Popen:
     _kill_worker()
 
     env = os.environ.copy()
+    # Our pid, not whatever the backend inherited: the worker watches this and
+    # exits when we are gone, so it cannot be left holding a GPU after a kill
+    # that ran no cleanup (SIGKILL, Force Quit, Task Manager, a crash).
+    env["STEMDECK_PARENT_PID"] = str(os.getpid())
     try:
         import certifi
 
