@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from app.core import settings as _settings
@@ -7,14 +9,43 @@ from app.pipeline import jobqueue as _jobqueue
 
 
 @pytest.fixture(autouse=True)
+def _isolate_jobs_dir(tmp_path, monkeypatch):
+    """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
+
+    Several modules do `from app.core.config import JOBS_DIR`, which binds the
+    value at import time, so patching config alone is not enough. Individual
+    fixtures used to patch it one module at a time and any test that forgot ran
+    against the developer's real jobs/ directory. That is not a hypothetical:
+    the suite writes the registry and starts the TTL sweep through TestClient's
+    lifespan, and together those wiped a local library.
+    """
+    jobs = tmp_path / "_jobs_root"
+    jobs.mkdir(parents=True, exist_ok=True)
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg, "JOBS_DIR", jobs)
+    for name, module in list(sys.modules.items()):
+        if name.startswith("app.") and getattr(module, "JOBS_DIR", None) is not None:
+            monkeypatch.setattr(module, "JOBS_DIR", jobs, raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_job_queue():
     """The queue is module-global, so a job left waiting by one test would be
     picked up by the next test's worker."""
+    from app.core import registry as _registry
+
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
+    # restore() populates this at import time from whatever registry is on disk;
+    # the app lifespan drains it into the queue, which would otherwise leak a
+    # real job into a test's queue.
+    _registry._pending_resume.clear()
     yield
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
+    _registry._pending_resume.clear()
 
 
 @pytest.fixture(autouse=True)
