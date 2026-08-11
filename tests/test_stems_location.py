@@ -207,6 +207,7 @@ def test_reports_the_current_location_and_size(client, tmp_path):
     assert body["bytes"] == 200
     assert body["is_default"] is True
     assert body["busy"] is False
+    assert body["editable"] is True
 
 
 def test_moving_writes_the_setting_and_asks_for_a_restart(client, tmp_path):
@@ -287,8 +288,12 @@ def server_client(tmp_path, monkeypatch):
 
 def test_not_offered_outside_the_desktop_app(server_client):
     """Docker and Unraid mount their storage; the location is the operator's
-    decision, and it is still the mount on the next start."""
-    assert server_client.get("/api/settings/stems-location").status_code == 403
+    decision, and it is still the mount on the next start.
+
+    The read still answers -- that flag is how the UI knows to hide the control.
+    Refusing it would log a failed request every time Settings is opened."""
+    body = server_client.get("/api/settings/stems-location").json()
+    assert body["editable"] is False
 
 
 def test_cannot_be_moved_outside_the_desktop_app(server_client, tmp_path):

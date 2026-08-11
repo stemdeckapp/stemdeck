@@ -2525,15 +2525,8 @@ async function wireStemsLocation(overlay) {
   const msg = overlay.querySelector(".stems-location-msg");
   if (!pathEl || !btn) return;
 
-  // Desktop only. A server, Docker or Unraid deployment gets its storage from a
-  // mounted volume decided by whoever runs it -- moving files from inside the
-  // app would fight the mount, and the browser cannot pick a folder on a
-  // machine it is not running on. The backend refuses there too.
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  const hideRow = () =>
     overlay.querySelector(".stems-location")?.closest(".settings-row")?.remove();
-    return;
-  }
 
   let current = null;
 
@@ -2550,21 +2543,46 @@ async function wireStemsLocation(overlay) {
     if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
   };
 
+  // The backend decides whether this setting exists at all -- it is false on a
+  // server, Docker or Unraid deployment, where storage comes from a mounted
+  // volume the operator chose and moving it from inside the app would fight the
+  // mount. Asking it, rather than sniffing for Tauri, keeps that judgement in
+  // one place and means the row is testable in a browser against a desktop
+  // backend.
   try {
     const r = await fetch("/api/settings/stems-location", { cache: "no-store" });
-    if (r.ok) apply(await r.json());
+    if (!r.ok) {
+      hideRow();
+      return;
+    }
+    const data = await r.json();
+    if (!data.editable) {
+      hideRow();
+      return;
+    }
+    apply(data);
   } catch (e) {
     console.warn("[settings] could not read the stems location:", e);
+    hideRow();
+    return;
   }
 
   btn.addEventListener("click", async () => {
     let picked = null;
-    try {
-      picked = await invoke("pick_stems_folder");
-    } catch (e) {
-      console.warn("[settings] folder picker failed:", e);
-      setMessage("Could not open the folder picker.", "error");
-      return;
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (invoke) {
+      try {
+        picked = await invoke("pick_stems_folder");
+      } catch (e) {
+        console.warn("[settings] folder picker failed:", e);
+        setMessage("Could not open the folder picker.", "error");
+        return;
+      }
+    } else {
+      // No native picker outside the desktop shell. Only reachable when a
+      // desktop-mode backend is being driven from a browser, which is a
+      // development setup -- in the shipped app invoke is always there.
+      picked = window.prompt("Full path to the folder for extracted stems:", current || "");
     }
     if (!picked) return; // cancelled
 
@@ -3033,11 +3051,7 @@ function openLibraryEditor() {
           </div>
           <div class="settings-row settings-row-stack">
             <div class="settings-row-text">
-              <div class="settings-row-title">Where stems are stored</div>
-              <div class="settings-row-desc">
-                Extracted stems are large. Keep them out of a folder that syncs to iCloud or OneDrive
-                unless you want them backed up. Moving takes effect after a restart.
-              </div>
+              <div class="settings-row-title">StemData location</div>
             </div>
             <div class="stems-location">
               <code class="stems-location-path" title=""></code>

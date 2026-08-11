@@ -353,7 +353,7 @@ async def update_settings(request: Request) -> dict[str, object]:
 _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")
 
 
-def _require_desktop_shell() -> None:
+def _stems_location_editable() -> bool:
     """Relocating the stem library is a desktop-app feature only (#354).
 
     A server, Docker or Unraid deployment gets its storage from a mounted volume
@@ -362,7 +362,11 @@ def _require_desktop_shell() -> None:
     be the mount on the next start, and the library would be somewhere the
     container no longer looks.
     """
-    if os.environ.get("STEMDECK_DESKTOP") != "1":
+    return os.environ.get("STEMDECK_DESKTOP") == "1"
+
+
+def _require_desktop_shell() -> None:
+    if not _stems_location_editable():
         raise HTTPException(
             status_code=403,
             detail=(
@@ -377,11 +381,15 @@ def get_stems_location() -> dict[str, object]:
     """Where stems are stored now, and how much is there.
 
     The size is what makes the setting actionable -- "2.5 GB in your Documents
-    folder" is the thing the user is trying to fix (#354)."""
-    _require_desktop_shell()
+    folder" is the thing the user is trying to fix (#354).
+
+    Answers everywhere, including deployments that cannot change it: `editable`
+    is how the UI knows whether to offer the control at all. Probing a 403
+    instead would log a failed request every time Settings is opened."""
     return {
         "path": str(JOBS_DIR),
         "bytes": directory_size(JOBS_DIR) if JOBS_DIR.exists() else 0,
+        "editable": _stems_location_editable(),
         "is_default": get_jobs_dir() is None,
         "busy": bool([j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]),
     }
