@@ -192,9 +192,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main_mod, "JOBS_DIR", jobs)
     monkeypatch.setattr(settings_mod, "_SETTINGS_PATH", tmp_path / "settings.json")
     settings_mod._state = None
-    from app.main import app
 
-    with TestClient(app) as c:
+    with TestClient(main_mod.app) as c:
         c.jobs_dir = jobs
         yield c
     settings_mod._state = None
@@ -221,9 +220,9 @@ def test_moving_writes_the_setting_and_asks_for_a_restart(client, tmp_path):
     assert body["restart_required"] is True
     assert (target / "aaaaaaaaaaaa").is_dir()
 
-    from app.core.settings import get_jobs_dir
+    import app.core.settings as settings_mod
 
-    assert get_jobs_dir() == str(target.resolve())
+    assert settings_mod.get_jobs_dir() == str(target.resolve())
 
 
 def test_refuses_while_a_job_is_running(client, tmp_path):
@@ -250,7 +249,7 @@ def test_refuses_while_a_job_is_merely_queued(client, tmp_path):
 def test_a_rejected_target_leaves_the_setting_alone(client, tmp_path):
     """The preference is only written after the move succeeds, so a failure
     leaves the app reading the folder the files are actually in."""
-    from app.core.settings import get_jobs_dir
+    import app.core.settings as settings_mod
 
     occupied = tmp_path / "someone-elses"
     occupied.mkdir()
@@ -259,7 +258,7 @@ def test_a_rejected_target_leaves_the_setting_alone(client, tmp_path):
     r = client.post("/api/settings/stems-location", json={"path": str(occupied)})
 
     assert r.status_code == 422
-    assert get_jobs_dir() is None
+    assert settings_mod.get_jobs_dir() is None
 
 
 def test_missing_path_is_a_422(client):
@@ -279,9 +278,8 @@ def server_client(tmp_path, monkeypatch):
     import app.main as main_mod
 
     monkeypatch.setattr(main_mod, "JOBS_DIR", jobs)
-    from app.main import app
 
-    with TestClient(app) as c:
+    with TestClient(main_mod.app) as c:
         c.jobs_dir = jobs
         yield c
 
