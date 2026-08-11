@@ -34,7 +34,7 @@ from app.core.config import (
 )
 from app.core.logging_setup import configure_logging
 from app.core.registry import all_jobs as registry_all_jobs
-from app.core.registry import registry_path
+from app.core.registry import registry_path, take_pending_resume
 from app.core.registry import reset_all as reset_registry
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
@@ -177,6 +177,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     qt = jobqueue.start_worker()
     _background_tasks.add(qt)
     qt.add_done_callback(_background_tasks.discard)
+    # Jobs that were queued or in flight when the process last died. restore()
+    # already put them back to "queued"; this is what actually runs them again.
+    resumed = take_pending_resume()
+    for job_id in resumed:
+        jobqueue.enqueue(job_id)
+    if resumed:
+        _log.info("resumed %d interrupted job(s) from the previous session", len(resumed))
     if os.environ.get("STEMDECK_DESKTOP") == "1":
         parent_pid = os.environ.get("STEMDECK_PARENT_PID")
         if parent_pid:
