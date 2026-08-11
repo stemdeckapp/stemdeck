@@ -103,6 +103,30 @@ def test_partial_demucs_output_is_cleared_before_a_resume(tmp_path: Path):
     assert not (tmp_path / job.id / DEMUCS_MODEL).exists()
 
 
+def test_a_crash_loop_ends_without_the_job_ever_completing(tmp_path: Path):
+    """The counter has to reach disk during restore, not only when the job
+    finally finishes. A job that takes the process down never gets that far, so
+    if restore did not persist, every start would read resume_attempts back as 0
+    and retry it forever."""
+    job = Job(id="abcdef000006", status="separating", title="Poison")
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+
+    # Crash 1: nothing ran, nothing else persisted -- just restart.
+    _jobs.clear()
+    _registry._pending_resume.clear()
+    restore_registry(tmp_path)
+    assert _jobs[job.id].status == "queued"
+
+    # Crash 2: the retry took the process down again, still with no persist of
+    # its own. The restart must read the bumped count off disk and stop.
+    _jobs.clear()
+    _registry._pending_resume.clear()
+    restore_registry(tmp_path)
+    assert _jobs[job.id].status == "error"
+    assert _registry.take_pending_resume() == []
+
+
 def test_a_job_interrupted_twice_fails_instead_of_looping(tmp_path: Path):
     """A job that reliably takes the process down would otherwise be re-queued
     on every start, wedging the queue forever."""

@@ -125,6 +125,7 @@ def restore(jobs_dir: Path) -> None:
     """Load persisted jobs and recover completed orphan jobs from disk."""
     jobs_dir.mkdir(parents=True, exist_ok=True)
     path = registry_path(jobs_dir)
+    changed = False
     if path.is_file():
         try:
             data = _migrate(json.loads(path.read_text(encoding="utf-8")))
@@ -140,6 +141,12 @@ def restore(jobs_dir: Path) -> None:
                     recovered = _resume_or_recover(job, jobs_dir / job.id)
                     if recovered is not None:
                         to_add[recovered.id] = recovered
+                        # The bumped resume_attempts has to reach disk here. The
+                        # next persist is whenever the job finishes, so without
+                        # this a job that kills the process every time is read
+                        # back with the same count on every start and retried
+                        # forever -- the exact loop the cap exists to stop.
+                        changed = True
                         if recovered.status in _RESUMABLE:
                             resume.append(recovered)
             with _lock:
@@ -151,7 +158,6 @@ def restore(jobs_dir: Path) -> None:
 
     with _lock:
         known = set(_jobs)
-    changed = False
     for job_dir in jobs_dir.iterdir():
         if not job_dir.is_dir() or not JOB_ID_RE.match(job_dir.name) or job_dir.name in known:
             continue
