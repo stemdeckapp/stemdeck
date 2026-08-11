@@ -443,6 +443,41 @@ async function cancelCurrentJob() {
   }
 }
 
+async function postFileJob(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("stems", JSON.stringify([...selectedStems]));
+  const res = await fetch("/api/jobs", { method: "POST", body: fd });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data.job_id;
+}
+
+/** Give an accepted upload its library row straight away, so a batch appears as
+ *  rows the moment each file lands rather than only once every upload is done. */
+function registerUploadRow(jobId, file) {
+  const title = sanitizeFilename(file.name);
+  const sourceUrl = `local:${title}`;
+  jobSources.set(jobId, sourceUrl);
+  addTrackToLibrary({
+    id: jobId,
+    title,
+    channel: "Processing",
+    thumb: "",
+    stems: [...selectedStems],
+    selectedStems: [...selectedStems],
+    audioStems: [],
+    status: "queued",
+    bpm: null,
+    key: null,
+    scale: null,
+    keyConfidence: null,
+    lufs: null,
+    peakDb: null,
+    sourceUrl,
+  });
+}
+
 function sanitizeFilename(name) {
   // Strip extension, collapse whitespace, cap at 120 chars — mirrors the
   // backend _sanitize_title() so title and sourceUrl match on both sides.
@@ -553,6 +588,52 @@ export function wireJobForm() {
       if (queued) urlInput.value = "";
       return;
     }
+    // Several files dropped at once: upload them one after another. Parallel
+    // uploads of several 400 MB bodies would thrash memory on both ends, and
+    // the endpoint takes exactly one file per request anyway. The first one
+    // takes the studio if it is free, exactly as a single import would; the
+    // rest queue behind it.
+    const batch = fileInput?._files ?? null;
+    if (batch && batch.length > 1) {
+      if (!background) setWaveformLoading(true, "Uploading…");
+      let queued = 0;
+      let failure = null;
+      for (const item of batch) {
+        try {
+          const id = await postFileJob(item);
+          registerUploadRow(id, item);
+          queued += 1;
+          if (queued === 1 && !background) {
+            setCurrentJobId(id);
+            setForegroundJobId(id);
+            setCurrentTrack(id);
+            jobBox.classList.add("hidden");
+            jobCancelBtn.classList.add("hidden");
+            startPhraseRotation("queued");
+            lastStatus = "queued";
+            connectEvents(id);
+          }
+        } catch (err) {
+          failure = err;
+          break; // a full queue will reject the rest too; stop asking
+        }
+      }
+      setSubmitProcessing(false);
+      fileInput._clear?.();
+      if (failure) {
+        if (!queued && !background) {
+          setWaveformLoading(false);
+          setForegroundJobId(null);
+        }
+        showError(
+          `Queued ${queued} of ${batch.length} files: ${failure.message}`,
+          null,
+          { retry: false },
+        );
+      }
+      return;
+    }
+
     const sanitized = file ? sanitizeFilename(file.name) : null;
     const sourceUrl = file ? `local:${sanitized}` : urlInput.value;
     const displayTitle = sanitized ?? (urlInput.value || "Processing track");

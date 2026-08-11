@@ -337,38 +337,64 @@ function wireFileDrop() {
 
   const MAX_UPLOAD_BYTES = 400 * 1024 * 1024; // must match server _MAX_UPLOAD_BYTES
 
-  function applyFile(file) {
-    if (!file) return;
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".mp3") && !lower.endsWith(".wav") && !lower.endsWith(".flac") &&
-        !lower.endsWith(".mp4") && !lower.endsWith(".m4a") &&
-        !lower.endsWith(".ogg") && !lower.endsWith(".opus")) {
+  const AUDIO_EXTS = [".mp3", ".wav", ".flac", ".mp4", ".m4a", ".ogg", ".opus"];
+  const isAudioFile = (file) => AUDIO_EXTS.some((ext) => file.name.toLowerCase().endsWith(ext));
+
+  function applyFiles(fileList) {
+    const all = [...(fileList || [])];
+    if (!all.length) return;
+
+    // Filter here rather than letting the server reject each one: dropping a
+    // folder, or a folder of mixed content, would otherwise mean one 422 per
+    // stray file. Only complain if nothing usable came through.
+    const audio = all.filter(isAudioFile);
+    if (!audio.length) {
       showError("Only MP3, WAV, FLAC, MP4, M4A, OGG, and Opus files are supported.");
       return;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      showError(`File is too large (${formatBytes(file.size)}). Maximum is 400 MB.`);
+    const files = audio.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    const oversized = audio.length - files.length;
+    if (!files.length) {
+      showError(`File is too large (${formatBytes(audio[0].size)}). Maximum is 400 MB.`);
       return;
     }
-    if (fileName) fileName.textContent = file.name;
-    if (fileSize) fileSize.textContent = formatBytes(file.size);
+
+    const skipped = all.length - files.length;
+    if (fileName) {
+      fileName.textContent =
+        files.length === 1 ? files[0].name : `${files.length} files`;
+    }
+    if (fileSize) {
+      const bytes = files.reduce((sum, f) => sum + f.size, 0);
+      fileSize.textContent = formatBytes(bytes);
+    }
     filePill.classList.remove("hidden");
     urlWrap.classList.add("has-file");
-    // Cache the File object directly on the element so job.js can always
-    // retrieve it even after the browser clears fileInput.files following
-    // a fetch() submission (known WKWebView / Chromium behaviour).
-    fileInput._file = file;
+    // Cache the File objects directly on the element so job.js can always
+    // retrieve them even after the browser clears fileInput.files following
+    // a fetch() submission (known WKWebView / Chromium behaviour). _file stays
+    // as the first one so any older single-file reader keeps working.
+    fileInput._files = files;
+    fileInput._file = files[0];
     const dt = new DataTransfer();
-    dt.items.add(file);
+    for (const f of files) dt.items.add(f);
     fileInput.files = dt.files;
     urlInput.value = "";
     urlInput.removeAttribute("required");
+
+    if (skipped > 0) {
+      const reason = oversized > 0 ? "too large or not audio" : "not audio";
+      showError(`Skipped ${skipped} file${skipped === 1 ? "" : "s"} (${reason}).`, null, {
+        retry: false,
+      });
+    }
   }
 
   function clearFile() {
     filePill.classList.add("hidden");
     urlWrap.classList.remove("has-file");
     fileInput._file = null;
+    fileInput._files = null;
     fileInput.value = "";
     urlInput.setAttribute("required", "");
   }
@@ -392,12 +418,11 @@ function wireFileDrop() {
   urlWrap.addEventListener("drop", (e) => {
     e.preventDefault();
     urlWrap.classList.remove("drag-over");
-    const file = e.dataTransfer.files[0];
-    if (file) applyFile(file);
+    applyFiles(e.dataTransfer.files);
   });
 
   fileInput.addEventListener("change", () => {
-    if (fileInput.files[0]) applyFile(fileInput.files[0]);
+    applyFiles(fileInput.files);
   });
 }
 
