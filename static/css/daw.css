@@ -641,6 +641,31 @@ input, textarea { font-family: inherit; }
 .cat-item.unavailable { cursor: not-allowed; }
 .cat-item.unavailable .cat-meta { opacity: 0.45; }
 @keyframes cat-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+/* Import queue: a waiting row and a running row must be told apart at a
+   glance, so they differ in three ways -- wording, the presence of a progress
+   bar, and a hollow versus filled status dot. */
+.cat-queue-label { color: var(--accent); font-variant-numeric: tabular-nums; }
+.cat-item.queue-waiting .cat-queue-label { color: var(--muted); }
+/* Waiting rows are not loadable yet, so they read as pending rather than
+   inviting a click. */
+.cat-item.queue-waiting { cursor: default; }
+.cat-item.queue-waiting .cat-thumb { opacity: 0.55; }
+.cat-item.queue-waiting .cat-title { color: var(--muted); }
+.cat-item.queue-waiting .cat-status {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--muted);
+  animation: none;
+}
+.cat-progress {
+  height: 3px; border-radius: 2px; margin-top: 4px;
+  background: rgba(255, 255, 255, 0.09); overflow: hidden;
+}
+.cat-progress-fill {
+  height: 100%; width: 0; border-radius: 2px;
+  background: var(--accent);
+  transition: width 260ms linear;
+}
 .cat-del {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); cursor: pointer;

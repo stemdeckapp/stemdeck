@@ -4,6 +4,7 @@ import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { showError, importFromUrl, detachForegroundJob } from "./job.js";
+import { getQueueSnapshot, onQueueChange, queueRowStates, startQueueStream } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -974,7 +975,7 @@ function renderRecentItem(trackId) {
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
-      <div class="cat-title">${esc(track.title ?? "Unknown track")}</div>
+      <div class="cat-title">${esc(displayTitle(track.title))}</div>
       <div class="cat-sub"><span>${esc(sub)}</span></div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
@@ -984,6 +985,26 @@ function renderRecentItem(trackId) {
 }
 
 // ─── Rendering ───
+
+// A queued URL import has no title yet -- nothing has been downloaded, so the
+// only thing to show is the URL the user pasted, which renders as a truncated
+// unreadable string. Name the source instead until the real title arrives.
+const _SOURCE_LABELS = [
+  [/(^|\.)youtube\.com$|(^|\.)youtu\.be$|(^|\.)youtube-nocookie\.com$/, "YouTube"],
+  [/(^|\.)soundcloud\.com$/, "SoundCloud"],
+];
+
+export function displayTitle(title) {
+  const text = String(title ?? "").trim();
+  if (!/^https?:\/\//i.test(text)) return text || "Unknown track";
+  try {
+    const host = new URL(text).hostname.replace(/^www\./, "");
+    const match = _SOURCE_LABELS.find(([re]) => re.test(host));
+    return `${match ? match[1] : host} link`;
+  } catch {
+    return text;
+  }
+}
 
 function thumbHtml(track) {
   if (track.thumb) return `<img src="${esc(track.thumb)}" alt="" loading="lazy" />`;
@@ -1021,7 +1042,7 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
-      <div class="cat-title">${esc(track.title ?? "Unknown track")}</div>
+      <div class="cat-title">${esc(displayTitle(track.title))}</div>
       <div class="cat-sub">
         <span>${esc(track.channel ?? "")}</span>
         <span class="dot">·</span>
@@ -1380,6 +1401,69 @@ function render() {
   }
 
   renderStrip(strip, nonTrash);
+  applyQueueDecorations();
+}
+
+// ─── Import queue decoration ───
+//
+// Rows are patched in place rather than re-rendered. The queue stream delivers
+// a frame several times a second, and a full render() rebuilds the whole
+// sidebar and re-runs every drag/click wiring -- at that rate it would fight
+// the user for the DOM. render() calls this once at the end so a genuine
+// rebuild picks the decoration back up.
+
+function progressBarHtml() {
+  return '<div class="cat-progress"><div class="cat-progress-fill"></div></div>';
+}
+
+function decorateRow(el, rowState) {
+  const sub = el.querySelector(".cat-sub");
+  if (!sub) return;
+
+  if (!rowState) {
+    // Left the queue (finished, failed or cancelled). render() will have
+    // rebuilt the row from the library entry, so just drop the decoration.
+    el.classList.remove("in-queue", "queue-waiting", "queue-running");
+    el.querySelector(".cat-progress")?.remove();
+    if (el.dataset.subRestore) {
+      sub.innerHTML = el.dataset.subRestore;
+      delete el.dataset.subRestore;
+    }
+    return;
+  }
+
+  const waiting = rowState.state === "waiting";
+  el.classList.add("in-queue");
+  el.classList.toggle("queue-waiting", waiting);
+  el.classList.toggle("queue-running", !waiting);
+
+  // Keep the original sub line so it can come back if this row is still on
+  // screen when the job leaves the queue.
+  if (!el.dataset.subRestore) el.dataset.subRestore = sub.innerHTML;
+  const label = `<span class="cat-queue-label">${esc(rowState.label)}</span>`;
+  if (sub.innerHTML !== label) sub.innerHTML = label;
+
+  let bar = el.querySelector(".cat-progress");
+  if (waiting) {
+    bar?.remove();
+    return;
+  }
+  if (!bar) {
+    sub.insertAdjacentHTML("afterend", progressBarHtml());
+    bar = el.querySelector(".cat-progress");
+  }
+  const fill = bar?.querySelector(".cat-progress-fill");
+  if (fill) fill.style.width = `${Math.round(rowState.progress * 100)}%`;
+}
+
+function applyQueueDecorations(snap = getQueueSnapshot()) {
+  const states = queueRowStates(snap);
+  for (const el of document.querySelectorAll(".cat-item[data-id]")) {
+    const state = states.get(el.dataset.id);
+    // Only touch rows that are, or just were, in the queue.
+    if (!state && !el.classList.contains("in-queue")) continue;
+    decorateRow(el, state);
+  }
 }
 
 // ─── Catalog panel collapse ───
@@ -2811,6 +2895,10 @@ export async function initCatalog() {
   setDisplayedVersion(currentVersion);
   render();
 
+  // Patch rows in place on every queue frame. A full render() here would
+  // rebuild the sidebar several times a second.
+  onQueueChange(applyQueueDecorations);
+  startQueueStream();
 
   loadCurrentVersion().finally(checkForUpdate);
   syncWithServer();
