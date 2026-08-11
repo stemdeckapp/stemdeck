@@ -10,6 +10,7 @@ import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } fro
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
+import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -542,6 +543,16 @@ export function wireJobForm() {
     // Prefer _file cache: browsers (WKWebView, Chromium) silently clear
     // fileInput.files after a fetch() submission, breaking re-submits.
     const file = fileInput?._file ?? fileInput?.files?.[0] ?? null;
+
+    // A playlist is its own flow: expand, confirm the count, then queue every
+    // track into a folder named after it. Nothing takes the studio.
+    if (!file && looksLikePlaylist(urlInput.value)) {
+      const url = urlInput.value;
+      const queued = await importPlaylist(url, [...selectedStems]);
+      setSubmitProcessing(false);
+      if (queued) urlInput.value = "";
+      return;
+    }
     const sanitized = file ? sanitizeFilename(file.name) : null;
     const sourceUrl = file ? `local:${sanitized}` : urlInput.value;
     const displayTitle = sanitized ?? (urlInput.value || "Processing track");

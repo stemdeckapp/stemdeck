@@ -108,8 +108,31 @@ _ALLOWED_HOSTS = _YOUTUBE_HOSTS | _SOUNDCLOUD_HOSTS
 _ALLOWED_EXTRACTORS = ["youtube", "soundcloud"]
 
 
+# Expanding a playlist needs the tab/playlist extractors, which the single-video
+# allowlist above deliberately excludes. Entries are regexes matched with
+# re.fullmatch against IE_NAME.lower(), so "youtube" alone never resolves to
+# "youtube:tab" -- hence a second, separate list rather than widening the first.
+# "generic" stays out of both: that exclusion is the whole point of #173.
+_ALLOWED_PLAYLIST_EXTRACTORS = [
+    "youtube:tab",
+    "youtube:playlist",
+    "youtube",
+    "soundcloud:set",
+    "soundcloud",
+]
+
+# YouTube list ids. RD-prefixed ones are algorithmic radio: effectively endless
+# and different for every viewer, so there is no meaningful set to import.
+_PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{2,64}$")
+_SOUNDCLOUD_SET_RE = re.compile(r"^/[^/]+/sets/[^/]+/?$")
+
+
 class InvalidYouTubeURL(ValueError):
     """Raised at the API boundary for URLs we won't hand to yt-dlp."""
+
+
+class InvalidPlaylistURL(ValueError):
+    """Raised for URLs that are not a playlist we are willing to expand."""
 
 
 def validate_youtube_url(url: str) -> str:
@@ -189,6 +212,103 @@ def normalize_youtube_url(url: str) -> str:
             return f"https://www.youtube.com/watch?v={vid}"
 
     return url
+
+
+def validate_playlist_url(url: str) -> str:
+    """Accept only a playlist we are willing to expand.
+
+    The SSRF boundary is unchanged: the host must still be one of the same
+    allowlisted hosts as a single track. This adds the playlist-shaped checks on
+    top, so a bare watch URL or a user's profile page is rejected before yt-dlp
+    ever sees it.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise InvalidPlaylistURL("URL is required")
+    url = url.strip()
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception as e:
+        raise InvalidPlaylistURL(f"could not parse URL: {e}") from e
+    if parsed.scheme not in ("http", "https"):
+        raise InvalidPlaylistURL("URL must use http or https")
+    host = (parsed.hostname or "").lower()
+    if host not in _ALLOWED_HOSTS:
+        raise InvalidPlaylistURL(f"unsupported host: {host or '(empty)'}")
+
+    if host in _SOUNDCLOUD_HOSTS:
+        if not _SOUNDCLOUD_SET_RE.match(parsed.path or ""):
+            raise InvalidPlaylistURL("not a SoundCloud playlist URL")
+        return url
+
+    list_id = urllib.parse.parse_qs(parsed.query or "").get("list", [""])[0]
+    if not list_id:
+        raise InvalidPlaylistURL("URL has no playlist id")
+    if not _PLAYLIST_ID_RE.match(list_id):
+        raise InvalidPlaylistURL("invalid playlist id")
+    if list_id.upper().startswith("RD"):
+        raise InvalidPlaylistURL("radio playlists cannot be imported")
+    return f"https://www.youtube.com/playlist?list={list_id}"
+
+
+def is_playlist_url(url: str) -> bool:
+    """Cheap check for the UI: would validate_playlist_url accept this?"""
+    try:
+        validate_playlist_url(url)
+    except InvalidPlaylistURL:
+        return False
+    return True
+
+
+def expand_playlist(url: str, limit: int) -> dict:
+    """List a playlist's entries without downloading anything.
+
+    Flat extraction, so this is one request rather than one per video. Every
+    entry URL is put back through validate_youtube_url before it is returned:
+    entries are attacker-influenced data as far as this process is concerned,
+    and nothing that failed that check may ever reach the pipeline.
+    """
+    playlist_url = validate_playlist_url(url)
+    ydl_opts = {
+        "quiet": True,
+        "noprogress": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "noplaylist": False,
+        "playlistend": max(1, limit),
+        "allowed_extractors": _ALLOWED_PLAYLIST_EXTRACTORS,
+        "socket_timeout": _SOCKET_TIMEOUT_SEC,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(playlist_url, download=False) or {}
+
+    entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+    items: list[dict] = []
+    unavailable = 0
+    for entry in entries:
+        raw = entry.get("url") or entry.get("webpage_url") or ""
+        try:
+            normalized = validate_youtube_url(raw)
+        except InvalidYouTubeURL:
+            # Deleted, private or region-blocked entries come back as
+            # placeholders with no usable URL. Count them so the dialog can say
+            # so, and drop them.
+            unavailable += 1
+            continue
+        items.append(
+            {
+                "url": normalized,
+                "title": entry.get("title") or "",
+                "duration": entry.get("duration"),
+                "thumbnail": entry.get("thumbnail"),
+            }
+        )
+
+    return {
+        "playlist_title": (info.get("title") or "Playlist").strip() or "Playlist",
+        "playlist_url": playlist_url,
+        "items": items,
+        "unavailable": unavailable,
+    }
 
 
 def _download_video_track(job: Job, url: str, job_dir: Path) -> None:

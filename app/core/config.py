@@ -88,6 +88,11 @@ FAILED_TTL_SECONDS = max(3600, _env_int("STEMDECK_FAILED_TTL_SECONDS", 7 * 24 * 
 # holds its source file on disk for the whole wait, so the honest worst case at
 # the default is 20 x 400 MB = 8 GB.
 MAX_PENDING_JOBS = max(1, min(200, _env_int("STEMDECK_MAX_PENDING_JOBS", 20)))
+# Ceiling on how much of a playlist one import may expand to. Enforced twice:
+# as yt-dlp's playlistend so nothing beyond it is ever fetched, and again after
+# normalization. Unrelated to MAX_PENDING_JOBS, which bounds the queue itself --
+# a playlist larger than the queue has room for fills what it can and says so.
+PLAYLIST_MAX_ITEMS = max(1, min(200, _env_int("STEMDECK_PLAYLIST_MAX_ITEMS", 50)))
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)

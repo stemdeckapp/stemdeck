@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.config import router as config_router
 from app.api.events import router as events_router
 from app.api.jobs import router as jobs_router
+from app.api.playlist import router as playlist_router
 from app.api.qr import router as qr_router
 from app.api.queue import router as queue_router
 from app.api.stems import router as stems_router
@@ -16,3 +17,4 @@ router.include_router(events_router, tags=["events"])
 router.include_router(stems_router, tags=["stems"])
 router.include_router(qr_router, tags=["qr"])
 router.include_router(queue_router, prefix="/queue", tags=["queue"])
+router.include_router(playlist_router, prefix="/playlist", tags=["playlist"])

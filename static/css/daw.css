@@ -943,6 +943,18 @@ input, textarea { font-family: inherit; }
 .reset-confirm-cancel { border: 1px solid var(--border); background: rgba(21,31,39,0.52); color: var(--muted); }
 .reset-confirm-go { border: 1px solid rgba(214,90,74,0.4); background: rgba(214,90,74,0.18); color: var(--danger); font-weight: 600; }
 .reset-confirm-go:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Playlist import reuses the confirm shell, but it is a normal action rather
+   than a destructive one, so it drops the danger colouring. */
+.playlist-confirm-title { color: var(--fg); }
+.playlist-confirm .playlist-name { color: var(--accent); }
+.playlist-confirm-go {
+  min-height: 30px; border-radius: 7px; padding: 0 12px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  border: 1px solid rgba(232, 168, 56, 0.45);
+  background: rgba(232, 168, 56, 0.16);
+  color: var(--accent);
+}
+.playlist-confirm-go:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
 .library-editor-status { font-size: 10.5px; color: var(--muted); }

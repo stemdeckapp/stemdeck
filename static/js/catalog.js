@@ -601,6 +601,47 @@ function createFolder() {
   openFolderEditor(folder.id);
 }
 
+/** Put a whole playlist import in a folder of its own.
+ *
+ *  Placement happens before addTrackToLibrary, which only assigns a folder to a
+ *  track that is not in one yet -- so claiming the ids first is what keeps these
+ *  tracks out of Unsorted. Reuses an existing folder of the same name so
+ *  re-importing a playlist tops it up instead of creating a duplicate.
+ */
+export function addPlaylistToLibrary(playlistTitle, jobs) {
+  const name = String(playlistTitle || "Playlist").trim().slice(0, 80) || "Playlist";
+  let folder = folders.find((f) => f.id !== TRASH_ID && !f.parentId && f.name === name);
+  if (!folder) {
+    folder = makeFolder({ name });
+    folders.unshift(folder);
+  }
+
+  for (const job of jobs) {
+    if (!folder.items.includes(job.job_id)) folder.items.push(job.job_id);
+    addTrackToLibrary({
+      id: job.job_id,
+      title: job.title || job.source_url || "Queued track",
+      channel: "Processing",
+      thumb: "",
+      stems: [...selectedStems],
+      selectedStems: [...selectedStems],
+      audioStems: [],
+      status: "queued",
+      bpm: null,
+      key: null,
+      scale: null,
+      keyConfidence: null,
+      lufs: null,
+      peakDb: null,
+      sourceUrl: job.source_url,
+    });
+  }
+  folder.collapsed = false;
+  saveState();
+  render();
+  return folder.id;
+}
+
 function deleteFolder(folderId) {
   if (folderId === TRASH_ID || folderId === UNSORTED_ID) return;
   // Cascade: delete children first.
