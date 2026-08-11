@@ -16,6 +16,11 @@ let source = null;
 let pollTimerId = null;
 let attempt = 0;
 const subscribers = new Set();
+const settledSubscribers = new Set();
+// Ids seen in the previous frame. A job that disappears has reached a terminal
+// state -- done, error or cancelled -- since the snapshot only ever carries the
+// running job plus those still waiting.
+let lastSeenIds = new Set();
 
 // ─── pure helpers (no DOM, no network -- the testable part) ───────────────────
 
@@ -76,10 +81,35 @@ export function onQueueChange(fn) {
   return () => subscribers.delete(fn);
 }
 
+/** Called with a job id once it leaves the queue. A background import has no
+ *  per-job SSE stream of its own -- opening one per queued job would exhaust
+ *  the browser's ~6 connections per origin -- so this is how the library learns
+ *  that a job it is not watching has finished. */
+export function onJobSettled(fn) {
+  settledSubscribers.add(fn);
+  return () => settledSubscribers.delete(fn);
+}
+
+export function currentIds(snap = snapshot) {
+  const ids = new Set();
+  if (snap.running) ids.add(snap.running.job_id);
+  for (const job of snap.queued ?? []) ids.add(job.job_id);
+  return ids;
+}
+
 function publish(next) {
   snapshot = next;
+  const ids = currentIds(next);
+  const settled = [...lastSeenIds].filter((id) => !ids.has(id));
+  lastSeenIds = ids;
+
   for (const fn of subscribers) {
     try { fn(snapshot); } catch (e) { console.warn("[queue] subscriber failed:", e); }
+  }
+  for (const id of settled) {
+    for (const fn of settledSubscribers) {
+      try { fn(id); } catch (e) { console.warn("[queue] settled subscriber failed:", e); }
+    }
   }
 }
 

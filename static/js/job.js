@@ -3,6 +3,7 @@ import {
   jobDetailEl, jobCancelBtn, progressEl, titleEl, bpmChip, keyChip,
   eventSource, setEventSource, setCurrentJobId,
   foregroundJobId, setForegroundJobId,
+  audioEngine, multitrack,
   selectedStems,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
@@ -42,6 +43,13 @@ function setSubmitProcessing(processing) {
   document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
   if (label) label.textContent = processing ? "Processing" : "Process";
+}
+
+/** True when audio is loaded in the studio. Either engine counts: the Web Audio
+ *  path sets audioEngine, the streaming path sets multitrack, and destroyPlayer
+ *  clears both. Read at call time so the live bindings are current. */
+function studioHasTrack() {
+  return !!(audioEngine || multitrack);
 }
 
 function pickPhrase(status) {
@@ -505,7 +513,15 @@ export function wireJobForm() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    reset();
+
+    // An import must never take a loaded studio away from the user. With a
+    // track playing, the new job goes straight to the background: no player
+    // teardown, no loading overlay, no takeover when it finishes. It reports
+    // progress on its library row instead. Only an empty studio gets the
+    // classic foreground import.
+    const background = studioHasTrack();
+    if (background) resetImportUi();
+    else reset();
     setSubmitProcessing(true);
 
     const fileInput = document.getElementById("fileInput");
@@ -521,9 +537,13 @@ export function wireJobForm() {
 
     // Show overlay immediately for both paths. File uploads show "Uploading…"
     // in the overlay phrase until the fetch completes and SSE takes over.
-    setWaveformLoading(true, file ? "Uploading…" : "");
-    if (file) {
-      lastStatus = "queued";
+    // Skipped entirely for a background import -- the overlay covers the
+    // studio, which is exactly what must not happen here.
+    if (!background) {
+      setWaveformLoading(true, file ? "Uploading…" : "");
+      if (file) {
+        lastStatus = "queued";
+      }
     }
 
     let fetchInit;
@@ -561,8 +581,6 @@ export function wireJobForm() {
     // Released here, not when the job finishes: the queue is what the button
     // hands off to now, so the form is free again the moment the job exists.
     setSubmitProcessing(false);
-    setCurrentJobId(jobId);
-    setForegroundJobId(jobId);
     jobSources.set(jobId, sourceUrl);
     addTrackToLibrary({
       id: jobId,
@@ -581,10 +599,22 @@ export function wireJobForm() {
       peakDb: null,
       sourceUrl,
     });
+
+    if (background) {
+      // No per-job stream: opening one per queued import would burn through
+      // the browser's ~6 connections per origin and starve stem loading. The
+      // shared queue stream drives the row, and catalog.js completes the
+      // library entry when the job leaves the queue.
+      if (postUrlText) postUrlText.textContent = "";
+      return;
+    }
+
+    setCurrentJobId(jobId);
+    setForegroundJobId(jobId);
     setCurrentTrack(jobId);
 
-    // Both paths: keep job box hidden, overlay drives the UI.
-    // Start phrase rotation now that the job exists on the server.
+    // Keep job box hidden, overlay drives the UI. Start phrase rotation now
+    // that the job exists on the server.
     jobBox.classList.add("hidden");
     jobCancelBtn.classList.add("hidden");
     startPhraseRotation("queued");

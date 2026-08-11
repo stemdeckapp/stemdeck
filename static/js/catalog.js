@@ -4,7 +4,7 @@ import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { showError, importFromUrl, detachForegroundJob } from "./job.js";
-import { getQueueSnapshot, onQueueChange, queueRowStates, startQueueStream } from "./queue.js";
+import { getQueueSnapshot, onJobSettled, onQueueChange, queueRowStates, startQueueStream } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -1456,6 +1456,39 @@ function decorateRow(el, rowState) {
   if (fill) fill.style.width = `${Math.round(rowState.progress * 100)}%`;
 }
 
+/** A background import has finished (or failed, or was cancelled). It has no
+ *  per-job stream, so fetch its final state once and complete its library entry
+ *  -- stems, duration and analysis all land here, which is what makes the track
+ *  playable from the sidebar without a page reload. */
+async function completeSettledJob(jobId) {
+  const existing = tracks[jobId];
+  if (!existing) return; // not ours (or already deleted)
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+    if (!res.ok) {
+      // 404 means the job is gone from the backend entirely.
+      if (res.status === 404) updateTrackStatus(jobId, "unavailable");
+      return;
+    }
+    const state = await res.json();
+    if (state.status === "cancelled") {
+      // Nothing was produced; drop the placeholder row rather than leaving a
+      // track that can never be loaded.
+      delete tracks[jobId];
+      removeTrackFromFolders(jobId);
+      saveState();
+      render();
+      return;
+    }
+    const track = stateMetadataToTrack(state, { ...existing, id: jobId });
+    track.id = jobId;
+    track.channel = state.status === "done" ? "Extracted" : existing.channel;
+    addTrackToLibrary(track);
+  } catch (e) {
+    console.warn("[catalog] could not finish background job", jobId, e);
+  }
+}
+
 function applyQueueDecorations(snap = getQueueSnapshot()) {
   const states = queueRowStates(snap);
   for (const el of document.querySelectorAll(".cat-item[data-id]")) {
@@ -2898,6 +2931,7 @@ export async function initCatalog() {
   // Patch rows in place on every queue frame. A full render() here would
   // rebuild the sidebar several times a second.
   onQueueChange(applyQueueDecorations);
+  onJobSettled(completeSettledJob);
   startQueueStream();
 
   loadCurrentVersion().finally(checkForUpdate);
