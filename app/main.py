@@ -170,6 +170,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     t = asyncio.create_task(_sweep_loop())
     _background_tasks.add(t)
     t.add_done_callback(_background_tasks.discard)
+    # The single queue consumer. Started here rather than at import time because
+    # restore_registry() runs at module scope, where there is no running loop.
+    from app.pipeline import jobqueue
+
+    qt = jobqueue.start_worker()
+    _background_tasks.add(qt)
+    qt.add_done_callback(_background_tasks.discard)
     if os.environ.get("STEMDECK_DESKTOP") == "1":
         parent_pid = os.environ.get("STEMDECK_PARENT_PID")
         if parent_pid:
@@ -183,6 +190,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                     _background_tasks.add(wt)
                     wt.add_done_callback(_background_tasks.discard)
     yield
+    # Stop taking new work. Deliberately not cancelling the in-flight job: it is
+    # blocked in asyncio.to_thread, which cannot be cancelled, so it dies with
+    # the process exactly as it did before the queue existed.
+    jobqueue.request_stop()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
     # its own, unlike the desktop backend itself.
@@ -355,6 +366,11 @@ def reset_app_data() -> dict[str, object]:
     active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
     if active:
         raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")
+    # Clear the queue alongside the registry, or the worker would keep popping
+    # ids that no longer resolve and the queue view would report ghosts.
+    from app.pipeline import jobqueue
+
+    jobqueue.clear()
     reset_registry(JOBS_DIR)
     return {"ok": True}
 

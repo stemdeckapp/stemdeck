@@ -22,10 +22,11 @@ def _isolate_registry():
 
 @pytest.fixture
 def client():
-    async def _noop_pipeline(job, url, jobs_dir):
-        return None
-
-    with patch("app.api.jobs.run_pipeline", _noop_pipeline):
+    # Stub the enqueue rather than the pipeline: these tests cover the submit
+    # API, and letting the real worker drain the queue would free capacity
+    # mid-test and break the 503 cases. Execution is covered by
+    # tests/test_queue_worker.py.
+    with patch("app.api.jobs.jobqueue.enqueue", lambda job_id: None):
         from app.main import app
 
         with TestClient(app) as c:
@@ -38,15 +39,8 @@ def upload_client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cfg, "JOBS_DIR", tmp_path)
 
-    async def _noop_local(job, source_path, jobs_dir):
-        return None
-
-    async def _noop_youtube(job, url, jobs_dir):
-        return None
-
     with (
-        patch("app.api.jobs.run_local_pipeline", _noop_local),
-        patch("app.api.jobs.run_pipeline", _noop_youtube),
+        patch("app.api.jobs.jobqueue.enqueue", lambda job_id: None),
         patch("app.api.jobs._probe_duration", return_value=60.0),
     ):
         from app.main import app
@@ -105,6 +99,54 @@ def test_cancel_after_done_is_idempotent(client):
     r = client.post(f"/api/jobs/{job_id}/cancel")
     assert r.status_code == 200
     assert _jobs[job_id].cancel_requested is False
+
+
+# ─── Cancelling before a job starts ──────────────────────────────────────────
+
+
+def test_cancel_while_waiting_finalises_without_running(client, tmp_path, monkeypatch):
+    """A queued job used to honour cancel only when its turn arrived: it kept a
+    capacity slot until then, and a queued upload held its source file the whole
+    time."""
+    from app.pipeline import jobqueue
+
+    monkeypatch.setattr(jobqueue, "JOBS_DIR", tmp_path)
+    job = Job(id="aaaaaaaaaaaa")
+    _jobs[job.id] = job
+    (tmp_path / job.id).mkdir()
+    (tmp_path / job.id / "source.mp3").write_bytes(b"ID3")
+    # Straight into the deque: the client fixture stubs enqueue(), so calling it
+    # here would be a no-op.
+    jobqueue._queue.append(job.id)
+
+    r = client.post(f"/api/jobs/{job.id}/cancel")
+    assert r.status_code == 200
+    assert r.json()["status"] == "cancelled"
+    assert jobqueue.depth() == 0
+    assert not (tmp_path / job.id).exists(), "a queued upload must not keep its source"
+
+
+def test_cancel_while_waiting_frees_a_capacity_slot(client):
+    from app.pipeline import jobqueue
+
+    job = Job(id="aaaaaaaaaaaa")
+    _jobs[job.id] = job
+    jobqueue._queue.append(job.id)  # enqueue() is stubbed by the client fixture
+    client.post(f"/api/jobs/{job.id}/cancel")
+    assert sum(1 for j in _jobs.values() if j.status == "queued") == 0
+
+
+def test_a_running_job_does_not_consume_a_queue_slot(client):
+    """Capacity counts waiting jobs only, so the running one never blocks a
+    submit. This is what makes MAX_PENDING_JOBS mean "queue depth"."""
+    running = Job(id="aaaaaaaaaaaa")
+    running.status = "processing"
+    _jobs[running.id] = running
+    for _ in range(MAX_PENDING_JOBS):
+        assert (
+            client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).status_code
+            == 200
+        )
 
 
 # ─── Capacity (503) ───────────────────────────────────────────────────────────

@@ -3,6 +3,18 @@ from __future__ import annotations
 import pytest
 
 from app.core import settings as _settings
+from app.pipeline import jobqueue as _jobqueue
+
+
+@pytest.fixture(autouse=True)
+def _isolate_job_queue():
+    """The queue is module-global, so a job left waiting by one test would be
+    picked up by the next test's worker."""
+    _jobqueue._queue.clear()
+    _jobqueue._running_id = None
+    yield
+    _jobqueue._queue.clear()
+    _jobqueue._running_id = None
 
 
 @pytest.fixture(autouse=True)
