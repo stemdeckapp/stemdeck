@@ -2373,17 +2373,19 @@ function networkSettingsHtml() {
   `;
 }
 
-// General settings: max track length (minutes) + MP4 video quality. Read live
+// General settings: max track length (minutes), playlist import limit, and
+// MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
 async function wireGeneralSettings(overlay) {
   const durInput = overlay.querySelector(".set-max-duration");
+  const playlistInput = overlay.querySelector(".set-playlist-max");
   const heightSel = overlay.querySelector(".set-video-height");
   const sampleRateSel = overlay.querySelector(".set-export-samplerate");
   const portInput = overlay.querySelector(".set-port");
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceResolved = overlay.querySelector(".set-demucs-resolved");
   const qualitySel = overlay.querySelector(".set-separation-quality");
-  if (!durInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel) return;
+  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel) return;
 
   // Last server-confirmed device choice, to revert the select when the server
   // rejects a forced device (e.g. CUDA not available on this machine).
@@ -2391,6 +2393,7 @@ async function wireGeneralSettings(overlay) {
 
   const apply = (d) => {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
+    if (playlistInput && d.playlist_max_items) playlistInput.value = String(d.playlist_max_items);
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
@@ -2423,6 +2426,7 @@ async function wireGeneralSettings(overlay) {
     if (cleaned !== input.value) input.value = cleaned;
   });
   digitsOnly(durInput);
+  digitsOnly(playlistInput);
   digitsOnly(portInput);
 
   try {
@@ -2444,6 +2448,10 @@ async function wireGeneralSettings(overlay) {
   durInput?.addEventListener("change", () => {
     const mins = Math.max(1, Math.min(20, parseInt(durInput.value, 10) || 20));
     post({ max_duration_sec: mins * 60 });
+  });
+  playlistInput?.addEventListener("change", () => {
+    const items = Math.max(1, Math.min(200, parseInt(playlistInput.value, 10) || 50));
+    post({ playlist_max_items: items });
   });
   heightSel?.addEventListener("change", () => {
     post({ video_max_height: parseInt(heightSel.value, 10) });
@@ -2784,6 +2792,13 @@ function openLibraryEditor() {
               <div class="settings-row-desc">Longest track accepted for processing, in minutes (max 20).</div>
             </div>
             <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" />
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Playlist import limit</div>
+              <div class="settings-row-desc">Most tracks one playlist import will queue (max 200).</div>
+            </div>
+            <input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" />
           </div>
         </div>
         <div class="settings-section">

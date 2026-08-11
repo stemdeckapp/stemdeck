@@ -165,6 +165,42 @@ def test_playlist_title_falls_back(fake_ydl):
     )
 
 
+# ── the cap is a live setting ────────────────────────────────────────────────
+
+
+def test_cap_round_trips_through_the_settings_api(client):
+    r = client.post("/api/settings", json={"playlist_max_items": 120})
+    assert r.status_code == 200
+    assert r.json()["playlist_max_items"] == 120
+    assert client.get("/api/settings").json()["playlist_max_items"] == 120
+
+
+def test_cap_is_clamped_not_rejected():
+    from app.core import settings as settings_mod
+
+    assert settings_mod.set_playlist_max_items(0) == 1
+    assert settings_mod.set_playlist_max_items(99999) == 200
+
+
+def test_changing_the_cap_applies_without_a_restart(client, fake_ydl):
+    """Read per request, so an import right after the change honours it."""
+    fake_ydl.info = {"title": "Big", "entries": _entries(10)}
+    client.post("/api/settings", json={"playlist_max_items": 4})
+    body = client.post(
+        "/api/playlist/preview", json={"url": "https://www.youtube.com/playlist?list=PLabc"}
+    ).json()
+    assert body["cap"] == 4
+    assert len(body["items"]) == 4
+    assert body["truncated"] is True
+
+    client.post("/api/settings", json={"playlist_max_items": 50})
+    body = client.post(
+        "/api/playlist/preview", json={"url": "https://www.youtube.com/playlist?list=PLabc"}
+    ).json()
+    assert len(body["items"]) == 10
+    assert body["truncated"] is False
+
+
 # ── preview ──────────────────────────────────────────────────────────────────
 
 

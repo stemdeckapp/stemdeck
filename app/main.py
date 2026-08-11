@@ -43,6 +43,7 @@ from app.core.settings import (
     get_demucs_device_choice,
     get_export_sample_rate,
     get_max_duration_sec,
+    get_playlist_max_items,
     get_port,
     get_separation_quality,
     get_video_max_height,
@@ -50,6 +51,7 @@ from app.core.settings import (
     set_demucs_device,
     set_export_sample_rate,
     set_max_duration_sec,
+    set_playlist_max_items,
     set_port,
     set_separation_quality,
     set_video_max_height,
@@ -282,6 +284,7 @@ def _settings_payload() -> dict[str, object]:
     return {
         "allow_network": get_allow_network(),
         "max_duration_sec": get_max_duration_sec(),
+        "playlist_max_items": get_playlist_max_items(),
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),
         "separation_quality": get_separation_quality(),
@@ -320,6 +323,7 @@ async def update_settings(request: Request) -> dict[str, object]:
         set_allow_network(bool(body["allow_network"]))
     for key, setter in (
         ("max_duration_sec", set_max_duration_sec),
+        ("playlist_max_items", set_playlist_max_items),
         ("video_max_height", set_video_max_height),
         ("port", set_port),
     ):

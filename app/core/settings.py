@@ -5,6 +5,7 @@ at startup), so the Settings UI can change them without a restart:
 
 - `allow_network`     — whether StemDeck answers requests from other devices.
 - `max_duration_sec`  — longest track accepted for processing.
+- `playlist_max_items` — how many tracks one playlist import may queue.
 - `video_max_height`  — max video resolution for MP4 export / YouTube pulls.
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
@@ -24,6 +25,7 @@ import threading
 from app.core.config import (
     DATA_DIR,
     MAX_DURATION_SEC,
+    PLAYLIST_MAX_ITEMS,
     VIDEO_MAX_HEIGHT,
     available_torch_devices,
     detect_torch_device,
@@ -38,6 +40,7 @@ _state: dict | None = None  # whole settings dict, loaded lazily
 # Clamp bounds. Max track length is capped at 20 min (the product ceiling).
 _DURATION_MIN, _DURATION_MAX = 60, 1200  # 1 min .. 20 min
 _HEIGHT_MIN, _HEIGHT_MAX = 144, 2160
+_PLAYLIST_MIN, _PLAYLIST_MAX = 1, 200
 _PORT_MIN, _PORT_MAX = 1024, 65535
 DEFAULT_PORT = 8000
 
@@ -118,6 +121,25 @@ def set_max_duration_sec(value: int) -> int:
     with _LOCK:
         clamped = max(_DURATION_MIN, min(_DURATION_MAX, int(value)))
         _ensure()["max_duration_sec"] = clamped
+        _save()
+        return clamped
+
+
+# ── playlist_max_items ──
+# How many tracks one playlist import may queue. A waiting link costs a registry
+# record, so the ceiling is generous; the real reason to keep this adjustable is
+# that "import 200 tracks" is a decision about the user's evening, not about
+# resources.
+def get_playlist_max_items() -> int:
+    with _LOCK:
+        v = _num(_ensure().get("playlist_max_items"))
+        return max(_PLAYLIST_MIN, min(_PLAYLIST_MAX, v)) if v is not None else PLAYLIST_MAX_ITEMS
+
+
+def set_playlist_max_items(value: int) -> int:
+    with _LOCK:
+        clamped = max(_PLAYLIST_MIN, min(_PLAYLIST_MAX, int(value)))
+        _ensure()["playlist_max_items"] = clamped
         _save()
         return clamped
 

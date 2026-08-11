@@ -18,12 +18,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.config import JOBS_DIR, MAX_PENDING_URL_JOBS, PLAYLIST_MAX_ITEMS, STEM_NAMES
+from app.core.config import JOBS_DIR, MAX_PENDING_URL_JOBS, STEM_NAMES
 from app.core.models import Job
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
-from app.core.settings import get_max_duration_sec
+from app.core.settings import get_max_duration_sec, get_playlist_max_items
 from app.pipeline import jobqueue
 from app.pipeline.download import InvalidPlaylistURL, expand_playlist
 
@@ -49,7 +49,7 @@ async def _expand(url: str) -> dict[str, Any]:
     it goes, or every SSE stream (including the running job's progress) stalls
     for the duration."""
     try:
-        return await asyncio.to_thread(expand_playlist, url, PLAYLIST_MAX_ITEMS)
+        return await asyncio.to_thread(expand_playlist, url, get_playlist_max_items())
     except InvalidPlaylistURL as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
@@ -62,6 +62,7 @@ def _partition(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     accepted here and then fail one by one in the pipeline, so the dialog is a
     better place to say so."""
     max_duration = get_max_duration_sec()
+    cap = get_playlist_max_items()
     keep, too_long = [], 0
     for item in items:
         duration = item.get("duration")
@@ -69,7 +70,7 @@ def _partition(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
             too_long += 1
             continue
         keep.append(item)
-    return keep[:PLAYLIST_MAX_ITEMS], too_long
+    return keep[:cap], too_long
 
 
 @router.post("/preview")
@@ -95,7 +96,7 @@ async def preview_playlist(request: Request) -> dict[str, Any]:
         "skipped_unavailable": result["unavailable"],
         "skipped_too_long": too_long,
         "capacity_left": capacity,
-        "cap": PLAYLIST_MAX_ITEMS,
+        "cap": get_playlist_max_items(),
         # The playlist has more tracks than the cap allows us to look at, so
         # total_found is a floor, not the real total.
         "truncated": result["truncated"],
