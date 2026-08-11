@@ -82,6 +82,12 @@ export let multitrack = null;
 // Web Audio decode-and-mix engine (Safari-safe playback). Null = legacy streaming path.
 export let audioEngine = null;
 export let currentJobId = null;
+// The import whose progress owns the #job box and the studio view. Distinct
+// from currentJobId, which is the track loaded in the studio: with a queue the
+// two come apart the moment a background import runs while the user browses
+// something else. A background job must not repaint the studio, and opening
+// another track must not break the running import's Cancel button.
+export let foregroundJobId = null;
 
 // `mixerState` is mutated in place (never reassigned). renderMixerRow's
 // closures capture each entry by reference, so on a new job we merge
@@ -154,6 +160,7 @@ export function setEventSource(v) { eventSource = v; }
 export function setMultitrack(v) { multitrack = v; }
 export function setAudioEngine(v) { audioEngine = v; }
 export function setCurrentJobId(v) { currentJobId = v; }
+export function setForegroundJobId(v) { foregroundJobId = v; }
 export function setTrackIndex(v) { trackIndex = v; }
 export function setTotalDuration(v) { totalDuration = v; }
 export function setLoopEnabled(v) { loopEnabled = v; }

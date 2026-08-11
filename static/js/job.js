@@ -1,7 +1,8 @@
 import {
   form, urlInput, submitBtn, errorEl, jobBox, jobTitleEl, jobStageEl,
   jobDetailEl, jobCancelBtn, progressEl, titleEl, bpmChip, keyChip,
-  eventSource, setEventSource, setCurrentJobId, currentJobId,
+  eventSource, setEventSource, setCurrentJobId,
+  foregroundJobId, setForegroundJobId,
   selectedStems,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
@@ -21,6 +22,20 @@ const jobSources = new Map();
 
 const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
 
+// Last library-visible values written per job, so a 4 Hz progress stream does
+// not re-run addTrackToLibrary (a full localStorage write plus a whole-sidebar
+// render) for frames that change nothing the sidebar shows. Every frame carries
+// the complete job state, so skipping redundant ones loses nothing: the next
+// frame that does change status carries the analysis fields too.
+const libraryRowKeys = new Map();
+
+function libraryRowKey(state) {
+  return [state.status, state.title || "", state.thumbnail || ""].join("\u0000");
+}
+
+// `processing` here means "a submit is in flight", not "a job is running".
+// With a queue the form has to come back the instant the job is accepted, so
+// the user can queue the next one.
 function setSubmitProcessing(processing) {
   submitBtn.disabled = processing;
   submitBtn.classList.toggle("loading", processing);
@@ -98,7 +113,10 @@ export function showError(message, detail, { retry = true } = {}) {
   errorEl.classList.remove("hidden");
 }
 
-export function reset() {
+// Clear the import chrome (progress box, error, phrase rotation, foreground
+// SSE) without touching the studio. Split out of reset() so a submit that goes
+// to the back of the queue does not tear down audio the user is playing.
+function resetImportUi() {
   if (eventSource) {
     eventSource.close();
     setEventSource(null);
@@ -106,7 +124,6 @@ export function reset() {
   stopJobPolling();
   stopPhraseRotation();
   lastStatus = null;
-  destroyPlayer();
   errorEl.classList.add("hidden");
   errorEl.textContent = "";
   jobBox.classList.add("hidden");
@@ -116,7 +133,26 @@ export function reset() {
   jobDetailEl.textContent = "";
   progressEl.value = 0;
   setSubmitProcessing(false);
+  setForegroundJobId(null);
+}
+
+export function reset() {
+  resetImportUi();
+  destroyPlayer();
   setCurrentJobId(null);
+}
+
+// The running import no longer owns the studio: the user opened another track.
+// The job keeps running and its SSE stays connected -- it still updates the
+// library row -- it just stops repainting a view that is now showing something
+// else. Cancel moves to the queue view, which is why the button goes away.
+export function detachForegroundJob() {
+  if (!foregroundJobId) return;
+  setForegroundJobId(null);
+  stopPhraseRotation();
+  setWaveformLoading(false);
+  jobBox.classList.add("hidden");
+  jobCancelBtn.classList.add("hidden");
 }
 
 // The analysis cards under the waveform. Split out of applyState so the
@@ -177,10 +213,19 @@ function applyStudioSummary(state) {
 }
 
 function applyState(state) {
-  if (state.job_id) {
+  // Everything below the library update writes to DOM the studio owns, and
+  // only the import the user is actually watching may touch it. A background
+  // job still gets its library row updated -- that is the point of the queue.
+  const isForeground = !!state.job_id && state.job_id === foregroundJobId;
+
+  if (state.job_id && libraryRowKeys.get(state.job_id) !== libraryRowKey(state)) {
+    libraryRowKeys.set(state.job_id, libraryRowKey(state));
     addTrackToLibrary({
       id: state.job_id,
-      title: state.title || urlInput.value || "Processing track",
+      // urlInput only speaks for the foreground job. While a background import
+      // runs the user may already be typing the next URL in there, and it must
+      // not end up as some other track's title or source.
+      title: state.title || (isForeground ? urlInput.value : "") || "Processing track",
       channel: state.status === "done" ? "Extracted" : "Processing",
       thumb: state.thumbnail,
       stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
@@ -195,11 +240,17 @@ function applyState(state) {
       lufs: state.lufs,
       peakDb: state.peak_db,
       stemPresence: state.stem_presence,
-      sourceUrl: jobSources.get(state.job_id) || urlInput.value,
+      sourceUrl: jobSources.get(state.job_id) || (isForeground ? urlInput.value : ""),
       createdAt: state.created_at,
     });
-    setCurrentTrack(state.job_id);
   }
+
+  if (state.job_id && TERMINAL_STATUSES.has(state.status)) libraryRowKeys.delete(state.job_id);
+
+  // Everything from here down is studio DOM.
+  if (!isForeground) return;
+
+  setCurrentTrack(state.job_id);
   if (state.title) {
     jobTitleEl.textContent = state.title;
     titleEl.textContent = state.title;
@@ -232,22 +283,26 @@ function applyState(state) {
     lastStatus = state.status;
   }
 
+  // The three terminal branches no longer clear the submit button: it is
+  // released as soon as the POST returns, so the next import can be queued
+  // while this one is still running.
   if (state.status === "error") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "error");
     setWaveformLoading(false);
     showError(state.error || "Unknown error", state.error_detail);
-    setSubmitProcessing(false);
+    setForegroundJobId(null);
   } else if (state.status === "cancelled") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "cancelled");
     setWaveformLoading(false);
     jobBox.classList.add("hidden");
-    setSubmitProcessing(false);
+    setForegroundJobId(null);
   } else if (state.status === "done") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "done");
     jobBox.classList.add("hidden");
+    setForegroundJobId(null);
     if (!renderedJobs.has(state.job_id)) {
       renderedJobs.add(state.job_id);
       wireUpAudio(
@@ -262,7 +317,6 @@ function applyState(state) {
       );
       initSections(state.job_id, state.sections, state.duration || 0);
     }
-    setSubmitProcessing(false);
   }
 }
 
@@ -358,7 +412,9 @@ function connectEvents(jobId) {
 }
 
 async function cancelCurrentJob() {
-  const id = currentJobId;
+  // The import, not the track in the studio. Reading currentJobId here meant
+  // that opening another track mid-import pointed Cancel at the wrong job.
+  const id = foregroundJobId;
   if (!id) return;
   jobCancelBtn.disabled = true;
   jobCancelBtn.textContent = "Cancelling…";
@@ -411,7 +467,9 @@ export async function importFromUrl(url, { title, stems } = {}) {
     return null;
   }
 
+  setSubmitProcessing(false);
   setCurrentJobId(jobId);
+  setForegroundJobId(jobId);
   jobSources.set(jobId, url);
   // Merges into the existing library entry by sourceUrl (replaceTrackId),
   // preserving its folder placement; status updates as SSE frames arrive.
@@ -500,7 +558,11 @@ export function wireJobForm() {
       return;
     }
 
+    // Released here, not when the job finishes: the queue is what the button
+    // hands off to now, so the form is free again the moment the job exists.
+    setSubmitProcessing(false);
     setCurrentJobId(jobId);
+    setForegroundJobId(jobId);
     jobSources.set(jobId, sourceUrl);
     addTrackToLibrary({
       id: jobId,

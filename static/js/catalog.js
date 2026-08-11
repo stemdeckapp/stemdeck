@@ -2,8 +2,8 @@
 import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
-import { bpmChip, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
-import { showError, importFromUrl } from "./job.js";
+import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
+import { showError, importFromUrl, detachForegroundJob } from "./job.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -522,6 +522,11 @@ async function loadTrackIntoStudio(trackId) {
     showError("This track's audio is no longer available. Re-upload to restore it.");
     return;
   }
+  // The user has chosen to look at something else, so the running import gives
+  // up the studio. It keeps running and keeps updating its own row; it just
+  // stops repainting this view (and, at completion, replacing the audio that
+  // is about to load here).
+  if (trackId !== foregroundJobId) detachForegroundJob();
   const hadStoredAudio = Boolean(track.audioStems?.length);
   const token = ++_loadTrackToken;
 
