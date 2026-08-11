@@ -237,6 +237,7 @@ fn main() {
             build_target,
             open_url,
             save_audio_file,
+            pick_stems_folder,
             store_get,
             store_set,
             reset_user_data,
@@ -272,8 +273,13 @@ fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(documents_stemdeck_dir(app)?.join("user-data.json"))
 }
 
-/// Returns ~/Documents/StemDeck/jobs/ (stem audio files).
-/// Falls back to data_dir/jobs if document_dir is unavailable.
+/// The DEFAULT stems folder: ~/Documents/StemDeck/jobs/. Falls back to
+/// data_dir/jobs if document_dir is unavailable.
+///
+/// Handed to the backend as STEMDECK_DEFAULT_JOBS_DIR, not STEMDECK_JOBS_DIR:
+/// the latter means "this deployment pins the location" and would override the
+/// folder the user picked in Settings (#354). The backend owns that choice; it
+/// is the one that has to move the library when it changes.
 fn documents_dir_for_jobs(app: &tauri::AppHandle) -> PathBuf {
     match documents_stemdeck_dir(app) {
         Ok(dir) => {
@@ -285,6 +291,23 @@ fn documents_dir_for_jobs(app: &tauri::AppHandle) -> PathBuf {
             .map(|d| d.join("jobs"))
             .unwrap_or_else(|_| PathBuf::from("jobs")),
     }
+}
+
+/// Native folder picker for the stems location. Returns None when the user
+/// cancels, which the UI treats as "leave it where it is".
+#[tauri::command]
+async fn pick_stems_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose where StemDeck stores extracted stems")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = rx.recv().map_err(|e| e.to_string())?;
+    Ok(picked.map(|p| p.to_string()))
 }
 
 /// Get a value from the persistent user-data store.
@@ -653,7 +676,7 @@ fn start_backend(
 
         cmd.current_dir(&backend_dir)
             .env("STEMDECK_DATA_DIR", &data_dir)
-            .env("STEMDECK_JOBS_DIR", &jobs_dir)
+            .env("STEMDECK_DEFAULT_JOBS_DIR", &jobs_dir)
             .env("STEMDECK_DESKTOP", "1")
             .env("STEMDECK_PARENT_PID", std::process::id().to_string())
             .env("PYTHONUNBUFFERED", "1")

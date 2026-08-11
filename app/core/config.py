@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sys
@@ -59,9 +60,46 @@ JOB_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 # folder.
 PORTABLE_DATA_DIR_ENABLED = bool(os.environ.get("STEMDECK_DATA_DIR", "").strip())
 DATA_DIR = _env_path("STEMDECK_DATA_DIR", ROOT)
+
+
+def _stored_jobs_dir() -> Path | None:
+    """The stems location the user picked in Settings, if any.
+
+    Read straight out of settings.json rather than through app.core.settings,
+    which imports this module -- and it has to happen here because JOBS_DIR is
+    bound at import time across the app. Any problem reading it falls through to
+    the default: a library that quietly moves is far worse than one that ignores
+    a corrupt preference.
+    """
+    try:
+        raw = json.loads((DATA_DIR / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = raw.get("jobs_dir") if isinstance(raw, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value).expanduser()
+
+
+# Where extracted stems live. Precedence, most explicit first:
+#   1. STEMDECK_JOBS_DIR         -- a deployment that pinned it (Docker, Unraid,
+#                                   CI, tests). Wins over everything: a mounted
+#                                   volume is not the user's to relocate.
+#   2. settings.json             -- what the user chose in Settings (#354).
+#                                   Desktop only; the endpoint that writes it
+#                                   refuses to run anywhere else.
+#   3. STEMDECK_DEFAULT_JOBS_DIR -- the desktop shell's default
+#                                   (~/Documents/StemDeck/jobs). Passed as a
+#                                   default rather than a pin, so 2 can win.
+#   4. DATA_DIR/jobs             -- portable default
+#   5. <repo>/jobs               -- plain dev checkout
 JOBS_DIR = _env_path(
     "STEMDECK_JOBS_DIR",
-    (DATA_DIR / "jobs") if PORTABLE_DATA_DIR_ENABLED else (ROOT / "jobs"),
+    _stored_jobs_dir()
+    or _env_path(
+        "STEMDECK_DEFAULT_JOBS_DIR",
+        (DATA_DIR / "jobs") if PORTABLE_DATA_DIR_ENABLED else (ROOT / "jobs"),
+    ),
 )
 CACHE_DIR = _env_path("STEMDECK_CACHE_DIR", DATA_DIR / "cache")
 DOWNLOADS_DIR = _env_path("STEMDECK_DOWNLOADS_DIR", DATA_DIR / "downloads")

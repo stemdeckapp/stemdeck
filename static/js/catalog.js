@@ -2493,6 +2493,117 @@ function networkSettingsHtml() {
   `;
 }
 
+/** Long paths are truncated from the LEFT: the folder name is what the user
+ *  needs to see, and the leading /Users/... is the part they already know.
+ *  Done here rather than with CSS -- the direction:rtl trick that gives a
+ *  leading ellipsis also moves the path's leading slash to the far end, so
+ *  /private/tmp/x renders as tmp/x/ and reads like a different path. */
+export function shortenPath(path, max = 52) {
+  const text = String(path ?? "");
+  if (text.length <= max) return text;
+  return "…" + text.slice(text.length - (max - 1));
+}
+
+function formatSize(bytes) {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
+
+// Where extracted stems live (#354). Documents is a fine default until you
+// notice it is syncing tens of gigabytes to iCloud.
+async function wireStemsLocation(overlay) {
+  const pathEl = overlay.querySelector(".stems-location-path");
+  const sizeEl = overlay.querySelector(".stems-location-size");
+  const btn = overlay.querySelector(".set-stems-location");
+  const msg = overlay.querySelector(".stems-location-msg");
+  if (!pathEl || !btn) return;
+
+  // Desktop only. A server, Docker or Unraid deployment gets its storage from a
+  // mounted volume decided by whoever runs it -- moving files from inside the
+  // app would fight the mount, and the browser cannot pick a folder on a
+  // machine it is not running on. The backend refuses there too.
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) {
+    overlay.querySelector(".stems-location")?.closest(".settings-row")?.remove();
+    return;
+  }
+
+  let current = null;
+
+  const setMessage = (text, kind = "") => {
+    if (!msg) return;
+    msg.textContent = text || "";
+    msg.className = `stems-location-msg${kind ? " " + kind : ""}`;
+  };
+
+  const apply = (d) => {
+    current = d.path;
+    pathEl.textContent = shortenPath(d.path);
+    pathEl.title = d.path;
+    if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
+  };
+
+  try {
+    const r = await fetch("/api/settings/stems-location", { cache: "no-store" });
+    if (r.ok) apply(await r.json());
+  } catch (e) {
+    console.warn("[settings] could not read the stems location:", e);
+  }
+
+  btn.addEventListener("click", async () => {
+    let picked = null;
+    try {
+      picked = await invoke("pick_stems_folder");
+    } catch (e) {
+      console.warn("[settings] folder picker failed:", e);
+      setMessage("Could not open the folder picker.", "error");
+      return;
+    }
+    if (!picked) return; // cancelled
+
+    btn.disabled = true;
+    setMessage("Moving stems… this can take a while for a large library.");
+    try {
+      const r = await fetch("/api/settings/stems-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: picked }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        setMessage(data.detail || "Could not move the stems folder.", "error");
+        return;
+      }
+      apply({ path: data.path, bytes: 0 });
+      setMessage(
+        `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}. ` +
+          "Restart StemDeck to finish switching over.",
+        "ok",
+      );
+      // The size we had is meaningless now; re-read it from the new location.
+      try {
+        const again = await fetch("/api/settings/stems-location", { cache: "no-store" });
+        if (again.ok) {
+          const d = await again.json();
+          if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
+        }
+      } catch (e) { console.warn("[settings] size refresh failed:", e); }
+    } catch (e) {
+      console.warn("[settings] move failed:", e);
+      setMessage("Could not reach the server.", "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 // General settings: max track length (minutes), playlist import limit, and
 // MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
@@ -2920,6 +3031,21 @@ function openLibraryEditor() {
             </div>
             <input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" />
           </div>
+          <div class="settings-row settings-row-stack">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Where stems are stored</div>
+              <div class="settings-row-desc">
+                Extracted stems are large. Keep them out of a folder that syncs to iCloud or OneDrive
+                unless you want them backed up. Moving takes effect after a restart.
+              </div>
+            </div>
+            <div class="stems-location">
+              <code class="stems-location-path" title=""></code>
+              <span class="stems-location-size"></span>
+              <button class="settings-btn set-stems-location" type="button">Change…</button>
+            </div>
+            <div class="stems-location-msg" role="status" aria-live="polite"></div>
+          </div>
         </div>
         <div class="settings-section">
           <div class="settings-row">
@@ -3115,6 +3241,7 @@ function openLibraryEditor() {
   refreshLibrarySyncSummary();
   const isDesktop = Boolean(window.__TAURI__?.core?.invoke);
   wireGeneralSettings(overlay);
+  wireStemsLocation(overlay);
   wireNetworkSetting(overlay);
   if (!isDesktop) {
     overlay.querySelector(".net-access-input")?.setAttribute("disabled", "");

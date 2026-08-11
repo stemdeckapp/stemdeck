@@ -2921,6 +2921,38 @@ input, textarea { font-family: inherit; }
 .settings-export-logs:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
 .settings-export-logs:disabled { opacity: 0.5; cursor: default; }
 
+/* Stems location (#354). The path is long, so this row stacks instead of
+   sitting on one line with the label. */
+.settings-row-stack { display: block; }
+.settings-btn {
+  padding: 6px 12px;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  border-radius: 7px; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.settings-btn:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
+.settings-btn:disabled { opacity: 0.5; cursor: default; }
+.stems-location {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.stems-location-path {
+  flex: 1; min-width: 0;
+  padding: 6px 8px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--border);
+  color: var(--fg-2); font-family: var(--font-mono); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stems-location-size {
+  flex-shrink: 0; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stems-location-msg {
+  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--muted);
+}
+.stems-location-msg.error { color: var(--danger); }
+.stems-location-msg.ok { color: var(--accent); }
+
 /* Logs sub-navigation: Location / Application / Setup. */
 .settings-subtabs {
   display: flex; gap: 2px; margin: 0 0 10px;

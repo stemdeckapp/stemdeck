@@ -5,6 +5,7 @@ at startup), so the Settings UI can change them without a restart:
 
 - `allow_network`     — whether StemDeck answers requests from other devices.
 - `max_duration_sec`  — longest track accepted for processing.
+- `jobs_dir`          — where extracted stems are written (needs a restart).
 - `playlist_max_items` — how many tracks one playlist import may queue.
 - `video_max_height`  — max video resolution for MP4 export / YouTube pulls.
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
@@ -21,6 +22,7 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 
 from app.core.config import (
     DATA_DIR,
@@ -123,6 +125,29 @@ def set_max_duration_sec(value: int) -> int:
         _ensure()["max_duration_sec"] = clamped
         _save()
         return clamped
+
+
+# ── jobs_dir ──
+# Where extracted stems are written. Read by config.py at import time (straight
+# from settings.json, to avoid importing this module from there), so a change
+# only takes effect on the next start -- which is also when the move that goes
+# with it has finished. Absent means "wherever the default puts it".
+def get_jobs_dir() -> str | None:
+    with _LOCK:
+        value = _ensure().get("jobs_dir")
+        return value if isinstance(value, str) and value.strip() else None
+
+
+def set_jobs_dir(value: str | None) -> str | None:
+    with _LOCK:
+        if value is None or not str(value).strip():
+            _ensure().pop("jobs_dir", None)
+            _save()
+            return None
+        resolved = str(Path(str(value)).expanduser().resolve())
+        _ensure()["jobs_dir"] = resolved
+        _save()
+        return resolved
 
 
 # ── playlist_max_items ──

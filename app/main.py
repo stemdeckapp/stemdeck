@@ -42,6 +42,7 @@ from app.core.settings import (
     get_demucs_device,
     get_demucs_device_choice,
     get_export_sample_rate,
+    get_jobs_dir,
     get_max_duration_sec,
     get_playlist_max_items,
     get_port,
@@ -50,11 +51,18 @@ from app.core.settings import (
     set_allow_network,
     set_demucs_device,
     set_export_sample_rate,
+    set_jobs_dir,
     set_max_duration_sec,
     set_playlist_max_items,
     set_port,
     set_separation_quality,
     set_video_max_height,
+)
+from app.core.stems_location import (
+    StemsLocationError,
+    directory_size,
+    move_library,
+    validate_target,
 )
 from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
 
@@ -343,6 +351,97 @@ async def update_settings(request: Request) -> dict[str, object]:
 
 
 _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")
+
+
+def _require_desktop_shell() -> None:
+    """Relocating the stem library is a desktop-app feature only (#354).
+
+    A server, Docker or Unraid deployment gets its storage from a mounted volume
+    or an explicit STEMDECK_JOBS_DIR, decided by whoever runs it. Moving files
+    from inside the app there would fight the deployment: the mount would still
+    be the mount on the next start, and the library would be somewhere the
+    container no longer looks.
+    """
+    if os.environ.get("STEMDECK_DESKTOP") != "1":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "The stems folder is set by this deployment. "
+                "Change the mounted volume or STEMDECK_JOBS_DIR instead."
+            ),
+        )
+
+
+@app.get("/api/settings/stems-location", tags=["settings"])
+def get_stems_location() -> dict[str, object]:
+    """Where stems are stored now, and how much is there.
+
+    The size is what makes the setting actionable -- "2.5 GB in your Documents
+    folder" is the thing the user is trying to fix (#354)."""
+    _require_desktop_shell()
+    return {
+        "path": str(JOBS_DIR),
+        "bytes": directory_size(JOBS_DIR) if JOBS_DIR.exists() else 0,
+        "is_default": get_jobs_dir() is None,
+        "busy": bool([j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]),
+    }
+
+
+@app.post("/api/settings/stems-location", tags=["settings"])
+async def set_stems_location(request: Request) -> dict[str, object]:
+    """Move the stem library somewhere else and remember the choice.
+
+    The move is the point: the registry lives inside this folder, so changing
+    the setting alone would strand the library and show an empty app. The
+    preference is written only after the move succeeds, so a failure leaves the
+    app still reading the folder the files are actually in.
+
+    Takes effect fully on the next start -- JOBS_DIR is bound at import time
+    across the app -- which is why the response says so.
+    """
+    _require_desktop_shell()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = body.get("path")
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=422, detail="path is required")
+
+    active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
+    if active:
+        # Moving files out from under a running separation would corrupt it.
+        raise HTTPException(
+            status_code=409,
+            detail="Finish or cancel the imports in the queue before moving the stems folder",
+        )
+
+    try:
+        target = validate_target(Path(raw), JOBS_DIR)
+    except StemsLocationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        result = await asyncio.to_thread(move_library, JOBS_DIR, target)
+    except StemsLocationError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
+    except Exception:
+        _log.exception("moving the stems library failed")
+        raise HTTPException(status_code=500, detail="Could not move the stems folder") from None
+
+    set_jobs_dir(str(target))
+    _log.info(
+        "stems library moved to %s (%d entries, %d bytes)",
+        target,
+        result.moved_entries,
+        result.bytes_moved,
+    )
+    return {
+        "path": str(target),
+        "moved_entries": result.moved_entries,
+        "bytes_moved": result.bytes_moved,
+        "restart_required": True,
+    }
 
 
 @app.post("/api/reset", tags=["settings"])
