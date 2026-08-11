@@ -23,22 +23,33 @@ _MAX_SSE_CONNECTIONS = 200
 _sse_active = 0
 
 
+def claim_sse_slot() -> None:
+    """Reserve one of the shared connection slots, or 503. Split out so the
+    queue stream in app/api/queue.py shares one budget with this one rather
+    than each getting its own."""
+    global _sse_active
+    if _sse_active >= _MAX_SSE_CONNECTIONS:
+        raise HTTPException(status_code=503, detail="too many concurrent streams")
+    _sse_active += 1
+
+
+def release_sse_slot() -> None:
+    global _sse_active
+    _sse_active -= 1
+
+
 @router.get("/jobs/{job_id}/events")
 async def job_events(job_id: str) -> StreamingResponse:
     """Server-Sent Events stream of job state updates. Closes when the job
     reaches a terminal status (done, error, cancelled) or after 4 hours."""
-    global _sse_active
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if _sse_active >= _MAX_SSE_CONNECTIONS:
-        raise HTTPException(status_code=503, detail="too many concurrent streams")
-    _sse_active += 1
+    claim_sse_slot()
 
     async def stream() -> AsyncIterator[str]:
-        global _sse_active
         try:
             last_v = -1
             keepalive_at = 0
@@ -71,7 +82,7 @@ async def job_events(job_id: str) -> StreamingResponse:
                     keepalive_at = 0
                 await asyncio.sleep(0.2)
         finally:
-            _sse_active -= 1
+            release_sse_slot()
 
     return StreamingResponse(
         stream(),

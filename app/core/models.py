@@ -124,6 +124,21 @@ class Job:
             "created_at": self.created_at,
         }
 
+    def to_queue_state(self) -> dict[str, Any]:
+        """The compact record the queue view needs. Deliberately not to_state():
+        the queue stream carries every waiting job several times a second, and
+        stems/sections/analysis are only meaningful once a job is done."""
+        return {
+            "job_id": self.id,
+            "status": self.status,
+            "progress": self.progress,
+            "stage": self.stage_message,
+            "title": self.title,
+            "thumbnail": self.thumbnail,
+            "source_url": self.source_url,
+            "error": self.error,
+        }
+
     def to_record(self) -> dict[str, Any]:
         return {field: getattr(self, field) for field in _JOB_FIELDS}
 
