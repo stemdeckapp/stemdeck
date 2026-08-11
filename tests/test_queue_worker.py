@@ -203,12 +203,16 @@ async def test_request_stop_drains_nothing_further(worker, monkeypatch):
 
 def test_discard_removes_a_waiting_job():
     jobqueue.enqueue("aaaaaaaaaaa1")
-    assert jobqueue.discard("aaaaaaaaaaa1") is True
+    # Not inside the assert: discard() mutates the queue, and an assert can
+    # be stripped (python -O), which would silently skip the thing under test.
+    removed = jobqueue.discard("aaaaaaaaaaa1")
+    assert removed is True
     assert jobqueue.depth() == 0
 
 
 def test_discard_reports_false_for_an_unknown_job():
-    assert jobqueue.discard("aaaaaaaaaaa9") is False
+    removed = jobqueue.discard("aaaaaaaaaaa9")
+    assert removed is False
 
 
 def test_enqueue_is_idempotent():

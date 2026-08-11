@@ -23,7 +23,7 @@ def _isolate_registry():
 def client(monkeypatch):
     # No worker: these tests assert what the endpoint reports for a given queue
     # state, and a live worker would drain it mid-assertion.
-    monkeypatch.setattr(jobqueue, "start_worker", lambda: _NoopTask())
+    monkeypatch.setattr(jobqueue, "start_worker", _NoopTask)
     from app.main import app
 
     with TestClient(app) as c:
