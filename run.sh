@@ -64,8 +64,11 @@ start() {
 stop() {
     if ! is_running; then
         echo "not running"
-        # also sweep any stray uvicorn for this app
-        pkill -f "uvicorn app.main:app" 2>/dev/null || true
+        # Sweep a stray server for THIS port only. A bare
+        # "uvicorn app.main:app" pattern also matches the backend that
+        # StemDeck.app spawns, so it would kill the desktop app out from
+        # under the user (#352).
+        pkill -f "uvicorn app.main:app.*--port $PORT" 2>/dev/null || true
         rm -f "$PID_FILE"
         return 0
     fi
@@ -81,8 +84,11 @@ stop() {
         echo "force-killing pid $pid"
         kill -9 "$pid" 2>/dev/null || true
     fi
-    # kill any in-flight demucs children spawned by the app
-    pkill -f "python -m demucs" 2>/dev/null || true
+    # No demucs sweep here. The separation worker is a child of the backend
+    # and exits on its own when the backend dies -- its stdin and stderr
+    # pipes close with the parent, which ends its read loop. The pattern
+    # that used to be here ("python -m demucs") never matched it anyway:
+    # the worker runs as "python -m app.pipeline.demucs_worker".
     rm -f "$PID_FILE"
     echo "stopped"
 }
