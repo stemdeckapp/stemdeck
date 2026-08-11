@@ -35,10 +35,13 @@ function countLine(preview) {
   const parts = [];
   if (preview.skipped_unavailable) parts.push(`${preview.skipped_unavailable} unavailable`);
   if (preview.skipped_too_long) parts.push(`${preview.skipped_too_long} too long`);
-  if (preview.will_queue < preview.total_found - preview.skipped_unavailable - preview.skipped_too_long) {
-    parts.push("the rest will not fit in the queue");
-  }
-  return parts.length ? `Skipping ${parts.join(", ")}.` : "";
+  const overflow =
+    preview.total_found - preview.skipped_unavailable - preview.skipped_too_long - preview.will_queue;
+  if (overflow > 0) parts.push(`${overflow} that will not fit in the queue right now`);
+  if (!parts.length) return "";
+  const list =
+    parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+  return `Skipping ${list}.`;
 }
 
 let openDialog = null;
