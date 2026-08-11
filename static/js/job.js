@@ -581,6 +581,9 @@ export function wireJobForm() {
     // Released here, not when the job finishes: the queue is what the button
     // hands off to now, so the form is free again the moment the job exists.
     setSubmitProcessing(false);
+    // The server has the upload; disarm the picker so the next click cannot
+    // silently import the same file a second time.
+    if (file) fileInput._clear?.();
     jobSources.set(jobId, sourceUrl);
     addTrackToLibrary({
       id: jobId,

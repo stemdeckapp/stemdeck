@@ -374,6 +374,11 @@ function wireFileDrop() {
   }
 
   fileClear?.addEventListener("click", clearFile);
+  // Exposed on the element, same convention as _file above, so job.js can drop
+  // the selection once the upload has been handed to the server. Without it the
+  // chip stays armed and the (now immediately re-enabled) Process button will
+  // happily import the same file twice.
+  fileInput._clear = clearFile;
 
   urlWrap.addEventListener("dragover", (e) => {
     if (!e.dataTransfer.types.includes("Files")) return;
