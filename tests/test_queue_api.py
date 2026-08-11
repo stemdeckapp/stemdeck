@@ -223,3 +223,32 @@ async def test_events_releases_its_slot_on_close():
     await stream.next_data()
     await stream.aclose()
     assert events_mod._sse_active == before
+
+
+# ── pausing ──────────────────────────────────────────────────────────────────
+
+
+def test_snapshot_reports_the_paused_flag(client):
+    _queued("aaaaaaaaaaa1")
+    assert client.get("/api/queue").json()["paused"] is False
+    jobqueue.pause()
+    try:
+        assert client.get("/api/queue").json()["paused"] is True
+    finally:
+        jobqueue.resume()
+
+
+def test_start_endpoint_resumes_the_queue(client):
+    _queued("aaaaaaaaaaa1")
+    jobqueue.pause()
+    try:
+        body = client.post("/api/queue/start").json()
+        assert body["paused"] is False
+        assert jobqueue.is_paused() is False
+    finally:
+        jobqueue.resume()
+
+
+def test_start_is_harmless_when_nothing_is_paused(client):
+    assert client.post("/api/queue/start").status_code == 200
+    assert jobqueue.is_paused() is False

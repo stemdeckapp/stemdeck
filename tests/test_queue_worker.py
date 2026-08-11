@@ -229,3 +229,88 @@ def test_clear_empties_the_queue():
     jobqueue.enqueue("aaaaaaaaaaa1")
     jobqueue.clear()
     assert jobqueue.depth() == 0
+
+
+# ── pausing ──────────────────────────────────────────────────────────────────
+
+
+async def test_a_paused_queue_does_not_start_anything(worker, monkeypatch):
+    """Opening the app must not put the machine to work on its own."""
+    ran = []
+
+    async def _fake(job, url, jobs_dir):
+        ran.append(job.id)
+
+    monkeypatch.setattr("app.pipeline.runner.run_pipeline", _fake)
+    jobqueue.pause()
+    _job("aaaaaaaaaaaa")
+    jobqueue.enqueue("aaaaaaaaaaaa", autostart=False)
+
+    await asyncio.sleep(0.3)
+    assert ran == []
+    assert jobqueue.depth() == 1, "the job is still queued, just not started"
+    assert jobqueue.is_paused() is True
+
+
+async def test_resume_starts_the_queue(worker, monkeypatch):
+    ran = []
+
+    async def _fake(job, url, jobs_dir):
+        ran.append(job.id)
+
+    monkeypatch.setattr("app.pipeline.runner.run_pipeline", _fake)
+    jobqueue.pause()
+    _job("aaaaaaaaaaaa")
+    jobqueue.enqueue("aaaaaaaaaaaa", autostart=False)
+    await asyncio.sleep(0.2)
+    assert ran == []
+
+    jobqueue.resume()
+    await _drain(lambda: ran == ["aaaaaaaaaaaa"])
+    assert jobqueue.is_paused() is False
+
+
+async def test_a_new_import_lifts_the_pause(worker, monkeypatch):
+    """Pressing Process and having nothing happen would be its own bug, so an
+    explicit submit starts the queue -- and drains the restored jobs first."""
+    ran = []
+
+    async def _fake(job, url, jobs_dir):
+        ran.append(job.id)
+
+    monkeypatch.setattr("app.pipeline.runner.run_pipeline", _fake)
+    jobqueue.pause()
+    _job("aaaaaaaaaaaa")  # restored from the last session
+    jobqueue.enqueue("aaaaaaaaaaaa", autostart=False)
+    await asyncio.sleep(0.2)
+    assert ran == []
+
+    _job("bbbbbbbbbbbb")  # the user imports something new
+    jobqueue.enqueue("bbbbbbbbbbbb")
+
+    await _drain(lambda: ran == ["aaaaaaaaaaaa", "bbbbbbbbbbbb"])
+    assert jobqueue.is_paused() is False
+
+
+async def test_pausing_does_not_touch_a_running_job(worker, monkeypatch):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = []
+
+    async def _fake(job, url, jobs_dir):
+        started.set()
+        await release.wait()
+        finished.append(job.id)
+
+    monkeypatch.setattr("app.pipeline.runner.run_pipeline", _fake)
+    _job("aaaaaaaaaaaa")
+    jobqueue.enqueue("aaaaaaaaaaaa")
+    await asyncio.wait_for(started.wait(), timeout=3)
+
+    jobqueue.pause()
+    release.set()
+    await _drain(lambda: finished == ["aaaaaaaaaaaa"])
+
+
+async def test_start_worker_begins_unpaused(worker):
+    assert jobqueue.is_paused() is False

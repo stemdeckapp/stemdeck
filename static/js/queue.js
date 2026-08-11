@@ -47,6 +47,19 @@ export function runningLabel(job) {
 
 /** Per-job view state, keyed by job id, for whoever is drawing rows.
  *  Position counts the running job, so the first waiting job is 2nd in line. */
+export function isPaused(snap = snapshot) {
+  return !!snap.paused && queueCount(snap) > 0;
+}
+
+export async function startQueue() {
+  try {
+    const r = await fetch("/api/queue/start", { method: "POST" });
+    if (r.ok) publish(await r.json());
+  } catch (e) {
+    console.warn("[queue] start failed:", e);
+  }
+}
+
 export function queueRowStates(snap = snapshot) {
   const rows = new Map();
   if (snap.running) {
@@ -58,11 +71,14 @@ export function queueRowStates(snap = snapshot) {
     });
   }
   const offset = snap.running ? 2 : 1;
+  const paused = isPaused(snap);
   (snap.queued ?? []).forEach((job, i) => {
     const place = i + offset;
     rows.set(job.job_id, {
       state: "waiting",
-      label: `Queued - ${ordinal(place)} in line`,
+      // A paused queue is not "2nd in line" for anything -- nothing is moving.
+      // Say so, or the row looks stuck.
+      label: paused ? "Paused" : `Queued - ${ordinal(place)} in line`,
       progress: 0,
       position: place,
     });

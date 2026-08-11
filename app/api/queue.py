@@ -59,6 +59,9 @@ def _snapshot() -> dict[str, Any]:
     return {
         "running": running,
         "queued": queued,
+        # True when jobs were restored from a previous session and are waiting
+        # for the user to start them.
+        "paused": jobqueue.is_paused(),
         "max_pending_uploads": MAX_PENDING_UPLOAD_JOBS,
         "max_pending_urls": MAX_PENDING_URL_JOBS,
         "capacity_left_uploads": max(0, MAX_PENDING_UPLOAD_JOBS - uploads_pending),
@@ -71,11 +74,18 @@ def _fingerprint() -> tuple:
     which _set() already bumps on every field write."""
     running_id, waiting = jobqueue.snapshot()
     ids = ([running_id] if running_id else []) + waiting
-    out = []
+    out: list[object] = [jobqueue.is_paused()]
     for job_id in ids:
         job = registry_get(job_id)
         out.append((job_id, job.version if job is not None else -1))
     return tuple(out)
+
+
+@router.post("/start")
+def start_queue() -> dict[str, Any]:
+    """Begin working through a queue restored from a previous session."""
+    jobqueue.resume()
+    return _snapshot()
 
 
 @router.get("")

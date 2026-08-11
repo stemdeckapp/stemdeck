@@ -5,8 +5,8 @@ import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { showError, importFromUrl, detachForegroundJob } from "./job.js";
 import {
-  cancelQueuedJob, getQueueSnapshot, onJobSettled, onQueueChange, ordinal,
-  queueCount, queueRowStates, runningLabel, startQueueStream,
+  cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange, ordinal,
+  queueCount, queueRowStates, runningLabel, startQueue, startQueueStream,
 } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 
@@ -1587,6 +1587,17 @@ function wireQueueRow(el) {
   });
 }
 
+function queuePausedBannerHtml(count) {
+  const noun = count === 1 ? "track" : "tracks";
+  return `
+    <div class="queue-paused-banner">
+      <div class="queue-paused-text">
+        Paused - ${count} ${noun} from your last session.
+      </div>
+      <button class="queue-start-btn" type="button">Start</button>
+    </div>`;
+}
+
 function renderQueueList(listEl, snap = getQueueSnapshot()) {
   const entries = queueEntries(snap);
   listEl.innerHTML = "";
@@ -1594,6 +1605,15 @@ function renderQueueList(listEl, snap = getQueueSnapshot()) {
   const section = document.createElement("div");
   section.className = "lib-section queue-section";
   section.innerHTML = `<div class="lib-section-head"><span>IMPORT QUEUE</span></div>`;
+
+  if (isPaused(snap)) {
+    section.insertAdjacentHTML("beforeend", queuePausedBannerHtml(entries.length));
+    section.querySelector(".queue-start-btn")?.addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      e.currentTarget.textContent = "Starting…";
+      await startQueue();
+    });
+  }
 
   if (!entries.length) {
     section.insertAdjacentHTML(
@@ -1623,7 +1643,12 @@ function updateQueueRows(snap = getQueueSnapshot()) {
   const entries = queueEntries(snap);
   const shown = [...listEl.querySelectorAll(".queue-row")].map((el) => el.dataset.id);
   const wanted = entries.map((e) => e.job.job_id);
-  if (shown.length !== wanted.length || shown.some((id, i) => id !== wanted[i])) {
+  const bannerShown = !!listEl.querySelector(".queue-paused-banner");
+  if (
+    shown.length !== wanted.length ||
+    shown.some((id, i) => id !== wanted[i]) ||
+    bannerShown !== isPaused(snap)
+  ) {
     renderQueueList(listEl, snap);
     return;
   }
@@ -1631,7 +1656,11 @@ function updateQueueRows(snap = getQueueSnapshot()) {
   entries.forEach((entry, i) => {
     const el = listEl.querySelector(`.queue-row[data-id="${entry.job.job_id}"]`);
     if (!el) return;
-    const label = entry.running ? runningLabel(entry.job) : `Queued - ${ordinal(i + 1)} in line`;
+    const label = entry.running
+      ? runningLabel(entry.job)
+      : isPaused(snap)
+        ? "Paused"
+        : `Queued - ${ordinal(i + 1)} in line`;
     const labelEl = el.querySelector(".cat-queue-label");
     if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
     const fill = el.querySelector(".cat-progress-fill");

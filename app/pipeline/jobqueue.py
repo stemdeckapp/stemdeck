@@ -42,6 +42,10 @@ _wake: asyncio.Event | None = None
 _loop: asyncio.AbstractEventLoop | None = None
 _worker_task: asyncio.Task | None = None
 _stopping = False
+# Set at startup when jobs are restored from a previous session, so opening the
+# app never puts the machine to work on its own. Only picking up NEW work is
+# paused; a job already running is unaffected.
+_paused = False
 
 
 def _notify() -> None:
@@ -57,10 +61,20 @@ def _notify() -> None:
         pass
 
 
-def enqueue(job_id: str) -> None:
+def enqueue(job_id: str, *, autostart: bool = True) -> None:
+    """Add a job to the back of the queue.
+
+    autostart=False is for jobs restored from a previous session: they are put
+    back in the queue but must not start on their own. Everything else is a
+    thing the user just asked for, so it also lifts a pause -- pressing Process
+    and having nothing happen would be its own bug.
+    """
+    global _paused
     with _lock:
         if job_id not in _queue and job_id != _running_id:
             _queue.append(job_id)
+        if autostart:
+            _paused = False
     _notify()
 
 
@@ -144,6 +158,13 @@ async def _dispatch(job: Job) -> None:
 async def _worker_loop() -> None:
     assert _wake is not None
     while not _stopping:
+        if _paused:
+            # Idle without draining. A job already in flight is not touched --
+            # pausing only stops the queue picking up the next one.
+            _wake.clear()
+            await _wake.wait()
+            continue
+
         job_id = _pop_next()
         if job_id is None:
             _wake.clear()
@@ -175,13 +196,30 @@ def start_worker() -> asyncio.Task:
     """Start the single consumer. Called from the app lifespan, where there is a
     running loop -- registry.restore() runs at import time and must not touch
     asyncio."""
-    global _wake, _loop, _worker_task, _stopping
+    global _wake, _loop, _worker_task, _stopping, _paused
     _stopping = False
+    _paused = False
     _loop = asyncio.get_running_loop()
     _wake = asyncio.Event()
     _wake.set()  # do one pass immediately, in case resume already enqueued work
     _worker_task = asyncio.create_task(_worker_loop())
     return _worker_task
+
+
+def pause() -> None:
+    """Stop picking up new work until someone asks for it."""
+    global _paused
+    _paused = True
+
+
+def resume() -> None:
+    global _paused
+    _paused = False
+    _notify()
+
+
+def is_paused() -> bool:
+    return _paused
 
 
 def request_stop() -> None:

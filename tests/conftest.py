@@ -38,6 +38,7 @@ def _isolate_job_queue():
 
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
+    _jobqueue._paused = False
     # restore() populates this at import time from whatever registry is on disk;
     # the app lifespan drains it into the queue, which would otherwise leak a
     # real job into a test's queue.
@@ -45,6 +46,7 @@ def _isolate_job_queue():
     yield
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
+    _jobqueue._paused = False
     _registry._pending_resume.clear()
 
 

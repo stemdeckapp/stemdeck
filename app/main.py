@@ -160,12 +160,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _background_tasks.add(qt)
     qt.add_done_callback(_background_tasks.discard)
     # Jobs that were queued or in flight when the process last died. restore()
-    # already put them back to "queued"; this is what actually runs them again.
+    # already put them back to "queued"; this puts them back in the queue.
+    #
+    # Deliberately paused: opening the app must not start separating on its own.
+    # A restored queue can be dozens of tracks and hours of GPU, and the user
+    # may well have opened StemDeck to do something else entirely. They press
+    # Start (or simply import something new, which lifts the pause).
     resumed = take_pending_resume()
-    for job_id in resumed:
-        jobqueue.enqueue(job_id)
     if resumed:
-        _log.info("resumed %d interrupted job(s) from the previous session", len(resumed))
+        jobqueue.pause()
+        for job_id in resumed:
+            jobqueue.enqueue(job_id, autostart=False)
+        _log.info(
+            "restored %d interrupted job(s) from the previous session; queue is paused",
+            len(resumed),
+        )
     if os.environ.get("STEMDECK_DESKTOP") == "1":
         parent_pid = os.environ.get("STEMDECK_PARENT_PID")
         if parent_pid:

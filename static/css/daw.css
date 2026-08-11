@@ -697,6 +697,27 @@ input, textarea { font-family: inherit; }
 .queue-cancel:hover { background: rgba(217, 83, 79, 0.16); color: #e06c68; }
 .queue-cancel:disabled { opacity: 0.3; cursor: default; }
 .queue-section .lib-section-head { margin-bottom: 6px; }
+
+/* Restored-from-last-session banner. Opening the app never starts separating
+   on its own, so this is the only way that queue moves. */
+.queue-paused-banner {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 8px; padding: 8px 10px;
+  border: 1px solid rgba(232, 168, 56, 0.28);
+  border-radius: 8px;
+  background: rgba(232, 168, 56, 0.08);
+}
+.queue-paused-text { flex: 1; font-size: 11px; color: var(--fg-2); line-height: 1.4; }
+.queue-start-btn {
+  flex-shrink: 0; min-height: 26px; padding: 0 12px;
+  border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(232, 168, 56, 0.45);
+  background: rgba(232, 168, 56, 0.18);
+  color: var(--accent);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+}
+.queue-start-btn:hover { background: rgba(232, 168, 56, 0.28); }
+.queue-start-btn:disabled { opacity: 0.5; cursor: default; }
 .cat-del {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); cursor: pointer;
