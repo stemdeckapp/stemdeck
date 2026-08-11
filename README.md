@@ -215,7 +215,7 @@ Install prerequisites:
 ```powershell
 git clone https://github.com/stemdeckapp/stemdeck stemdeck; cd stemdeck
 uv sync
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
 ```
 
 Open <http://localhost:8000>.
@@ -227,7 +227,7 @@ Open <http://localhost:8000>.
 ```powershell
 uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 $env:STEMDECK_DEMUCS_DEVICE = "cuda"
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
 ```
 
 ---
@@ -237,8 +237,13 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```sh
 git clone https://github.com/stemdeckapp/stemdeck stemdeck && cd stemdeck
 uv sync
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --timeout-graceful-shutdown 5
 ```
+
+> `--timeout-graceful-shutdown` bounds how long uvicorn waits for open
+> connections when you stop it. StemDeck keeps a long-lived SSE stream open
+> for the import queue while a browser tab is on the app, so without it
+> Ctrl-C waits for that stream instead of exiting.
 
 #### Docker
 

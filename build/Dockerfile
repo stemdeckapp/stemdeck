@@ -109,4 +109,8 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-graceful-shutdown bounds the wait for open connections. The queue
+# SSE stream stays open while a browser tab is on the app, and without this
+# `docker stop` would sit through its full 10s timeout and then SIGKILL --
+# which would skip the lifespan teardown that reaps the demucs worker.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "5"]

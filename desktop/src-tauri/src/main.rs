@@ -632,6 +632,15 @@ fn start_backend(
             bind_host,
             "--port",
             &port.to_string(),
+            // Bound how long uvicorn waits for open connections on shutdown.
+            // The import queue's SSE stream stays open for as long as the app
+            // window is on screen, and uvicorn drains connections before it
+            // runs the lifespan teardown -- so without this the backend never
+            // finishes draining, we escalate to SIGKILL below, and the teardown
+            // that reaps the demucs worker never runs. Kept under the 3 s
+            // SIGKILL deadline so the clean path wins.
+            "--timeout-graceful-shutdown",
+            "2",
         ]);
         #[cfg(windows)]
         if let Some(ref pythonhome) = pythonhome {

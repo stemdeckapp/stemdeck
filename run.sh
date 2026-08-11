@@ -33,7 +33,12 @@ start() {
         exit 1
     fi
     echo "starting on http://$HOST:$PORT"
-    local args=(app.main:app --host "$HOST" --port "$PORT")
+    # A long-lived SSE stream (the import queue view) keeps a connection open
+    # for as long as a browser tab is open, and uvicorn waits for open
+    # connections before it exits. Without a bound, Ctrl-C appears to hang.
+    # Kept below stop()'s own 5 s deadline so the clean path finishes first and
+    # the lifespan teardown (which reaps the demucs worker) actually runs.
+    local args=(app.main:app --host "$HOST" --port "$PORT" --timeout-graceful-shutdown 2)
     if [[ "$RELOAD" == "1" ]]; then
         args+=(--reload)
     fi
