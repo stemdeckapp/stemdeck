@@ -22,9 +22,9 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from app.api.events import _MAX_SSE_SECONDS, claim_sse_slot, release_sse_slot
-from app.core.config import MAX_PENDING_JOBS
-from app.core.registry import all_jobs as registry_all_jobs
+from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
 from app.core.registry import get as registry_get
+from app.core.registry import pending_count as registry_pending_count
 from app.pipeline import jobqueue
 
 router = APIRouter(tags=["queue"])
@@ -52,12 +52,17 @@ def _snapshot() -> dict[str, Any]:
         rec["position"] = position
         queued.append(rec)
 
-    pending = sum(1 for j in registry_all_jobs().values() if j.status == "queued")
+    # Capacity is per kind: a waiting upload holds its source file on disk, a
+    # waiting link holds nothing, so they are bounded separately.
+    uploads_pending = registry_pending_count(uploads=True)
+    urls_pending = registry_pending_count(uploads=False)
     return {
         "running": running,
         "queued": queued,
-        "max_pending": MAX_PENDING_JOBS,
-        "capacity_left": max(0, MAX_PENDING_JOBS - pending),
+        "max_pending_uploads": MAX_PENDING_UPLOAD_JOBS,
+        "max_pending_urls": MAX_PENDING_URL_JOBS,
+        "capacity_left_uploads": max(0, MAX_PENDING_UPLOAD_JOBS - uploads_pending),
+        "capacity_left_urls": max(0, MAX_PENDING_URL_JOBS - urls_pending),
     }
 
 

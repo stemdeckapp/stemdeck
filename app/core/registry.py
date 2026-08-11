@@ -45,11 +45,27 @@ def register(job: Job) -> Job:
     return job
 
 
+def is_upload(job: Job) -> bool:
+    """Uploads are the jobs that occupy disk while they wait."""
+    return (job.source_url or "").startswith("local:")
+
+
+def pending_count(*, uploads: bool) -> int:
+    """How many jobs of one kind are waiting for their turn."""
+    with _lock:
+        return sum(1 for j in _jobs.values() if j.status == "queued" and is_upload(j) == uploads)
+
+
 def register_if_capacity(job: Job, max_pending: int) -> bool:
     """Atomically check pending count and register if under capacity.
-    Returns True if registered, False if the queue is full."""
+    Returns True if registered, False if the queue is full.
+
+    Capacity is counted per kind: a waiting upload holds its source file on
+    disk, a waiting URL holds nothing, so a backlog of one must not block the
+    other."""
+    uploads = is_upload(job)
     with _lock:
-        pending = sum(1 for j in _jobs.values() if j.status == "queued")
+        pending = sum(1 for j in _jobs.values() if j.status == "queued" and is_upload(j) == uploads)
         if pending >= max_pending:
             return False
         _jobs[job.id] = job

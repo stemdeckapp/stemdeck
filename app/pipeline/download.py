@@ -274,7 +274,9 @@ def expand_playlist(url: str, limit: int) -> dict:
         "skip_download": True,
         "extract_flat": "in_playlist",
         "noplaylist": False,
-        "playlistend": max(1, limit),
+        # One past the cap, so a playlist longer than the cap can be reported as
+        # truncated rather than silently looking like it ends there.
+        "playlistend": max(1, limit) + 1,
         "allowed_extractors": _ALLOWED_PLAYLIST_EXTRACTORS,
         "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
@@ -282,6 +284,8 @@ def expand_playlist(url: str, limit: int) -> dict:
         info = ydl.extract_info(playlist_url, download=False) or {}
 
     entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+    truncated = len(entries) > limit
+    entries = entries[:limit]
     items: list[dict] = []
     unavailable = 0
     for entry in entries:
@@ -308,6 +312,7 @@ def expand_playlist(url: str, limit: int) -> dict:
         "playlist_url": playlist_url,
         "items": items,
         "unavailable": unavailable,
+        "truncated": truncated,
     }
 
 

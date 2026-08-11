@@ -6,7 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import MAX_PENDING_JOBS
+from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
 from app.core.models import Job, _set
 from app.core.registry import _jobs
 from app.pipeline import jobqueue
@@ -54,8 +54,10 @@ def test_empty_queue(client):
     body = client.get("/api/queue").json()
     assert body["running"] is None
     assert body["queued"] == []
-    assert body["max_pending"] == MAX_PENDING_JOBS
-    assert body["capacity_left"] == MAX_PENDING_JOBS
+    assert body["max_pending_urls"] == MAX_PENDING_URL_JOBS
+    assert body["max_pending_uploads"] == MAX_PENDING_UPLOAD_JOBS
+    assert body["capacity_left_urls"] == MAX_PENDING_URL_JOBS
+    assert body["capacity_left_uploads"] == MAX_PENDING_UPLOAD_JOBS
 
 
 def test_reports_waiting_jobs_in_order_with_positions(client):
@@ -85,7 +87,9 @@ def test_capacity_reflects_waiting_jobs_only(client):
     _jobs[running.id] = running
 
     body = client.get("/api/queue").json()
-    assert body["capacity_left"] == MAX_PENDING_JOBS - 1, "the running job must not take a slot"
+    assert body["capacity_left_urls"] == MAX_PENDING_URL_JOBS - 1, (
+        "the running job must not take a slot"
+    )
 
 
 def test_skips_a_queued_id_with_no_registry_entry(client):

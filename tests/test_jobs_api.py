@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import MAX_PENDING_JOBS
+from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
 from app.core.models import Job
 from app.core.registry import _jobs
 
@@ -138,11 +138,11 @@ def test_cancel_while_waiting_frees_a_capacity_slot(client):
 
 def test_a_running_job_does_not_consume_a_queue_slot(client):
     """Capacity counts waiting jobs only, so the running one never blocks a
-    submit. This is what makes MAX_PENDING_JOBS mean "queue depth"."""
+    submit. This is what makes the limit mean "queue depth"."""
     running = Job(id="aaaaaaaaaaaa")
     running.status = "processing"
     _jobs[running.id] = running
-    for _ in range(MAX_PENDING_JOBS):
+    for _ in range(MAX_PENDING_URL_JOBS):
         assert (
             client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).status_code
             == 200
@@ -153,23 +153,53 @@ def test_a_running_job_does_not_consume_a_queue_slot(client):
 
 
 def test_youtube_503_when_queue_full(client):
-    for _ in range(MAX_PENDING_JOBS):
+    for _ in range(MAX_PENDING_URL_JOBS):
         r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
         assert r.status_code == 200
     r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
     assert r.status_code == 503
 
 
-def test_upload_503_when_queue_full(upload_client):
-    for _ in range(MAX_PENDING_JOBS):
-        r = upload_client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+def test_upload_503_when_upload_queue_full(upload_client):
+    for i in range(MAX_PENDING_UPLOAD_JOBS):
+        data = io.BytesIO(b"ID3" + b"\x00" * 128)
+        r = upload_client.post("/api/jobs", files={"file": (f"track{i}.mp3", data, "audio/mpeg")})
         assert r.status_code == 200
     data = io.BytesIO(b"ID3" + b"\x00" * 128)
     r = upload_client.post(
         "/api/jobs",
-        files={"file": ("track.mp3", data, "audio/mpeg")},
+        files={"file": ("one-too-many.mp3", data, "audio/mpeg")},
     )
     assert r.status_code == 503
+
+
+def test_a_full_link_queue_does_not_block_an_upload(upload_client):
+    """The two are bounded separately: a waiting upload holds its source file
+    on disk, a waiting link holds nothing, so a big playlist must not lock the
+    user out of importing a file."""
+    for _ in range(MAX_PENDING_URL_JOBS):
+        assert (
+            upload_client.post(
+                "/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}
+            ).status_code
+            == 200
+        )
+    data = io.BytesIO(b"ID3" + b"\x00" * 128)
+    r = upload_client.post("/api/jobs", files={"file": ("still-fine.mp3", data, "audio/mpeg")})
+    assert r.status_code == 200
+
+
+def test_a_full_upload_queue_does_not_block_a_link(upload_client):
+    for i in range(MAX_PENDING_UPLOAD_JOBS):
+        data = io.BytesIO(b"ID3" + b"\x00" * 128)
+        assert (
+            upload_client.post(
+                "/api/jobs", files={"file": (f"t{i}.mp3", data, "audio/mpeg")}
+            ).status_code
+            == 200
+        )
+    r = upload_client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    assert r.status_code == 200
 
 
 # ─── File upload ─────────────────────────────────────────────────────────────

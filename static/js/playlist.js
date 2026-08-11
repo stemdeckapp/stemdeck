@@ -38,6 +38,7 @@ function countLine(preview) {
   const overflow =
     preview.total_found - preview.skipped_unavailable - preview.skipped_too_long - preview.will_queue;
   if (overflow > 0) parts.push(`${overflow} that will not fit in the queue right now`);
+  if (preview.truncated) parts.push(`anything past the first ${preview.cap}`);
   if (!parts.length) return "";
   const list =
     parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];

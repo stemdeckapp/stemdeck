@@ -126,9 +126,20 @@ def test_expansion_never_allows_the_generic_extractor(fake_ydl):
     assert "generic" not in fake_ydl.last_opts["allowed_extractors"]
 
 
-def test_expansion_caps_what_it_asks_for(fake_ydl):
-    expand_playlist("https://www.youtube.com/playlist?list=PLabc", 7)
-    assert fake_ydl.last_opts["playlistend"] == 7
+def test_expansion_asks_for_one_past_the_cap(fake_ydl):
+    """One extra entry is what makes a longer playlist distinguishable from one
+    that happens to end exactly at the cap."""
+    fake_ydl.info = {"title": "P", "entries": _entries(3)}
+    out = expand_playlist("https://www.youtube.com/playlist?list=PLabc", 7)
+    assert fake_ydl.last_opts["playlistend"] == 8
+    assert out["truncated"] is False
+
+
+def test_expansion_reports_a_playlist_longer_than_the_cap(fake_ydl):
+    fake_ydl.info = {"title": "Huge", "entries": _entries(8)}
+    out = expand_playlist("https://www.youtube.com/playlist?list=PLabc", 7)
+    assert out["truncated"] is True
+    assert len(out["items"]) == 7, "the probe entry must not be imported"
 
 
 def test_entries_are_revalidated(fake_ydl):
@@ -221,7 +232,7 @@ def test_partially_fills_when_the_queue_is_nearly_full(client, fake_ydl, monkeyp
     than queueing what fits and saying how many did not."""
     import app.api.playlist as playlist_mod
 
-    monkeypatch.setattr(playlist_mod, "MAX_PENDING_JOBS", 2)
+    monkeypatch.setattr(playlist_mod, "MAX_PENDING_URL_JOBS", 2)
     fake_ydl.info = {"title": "Big", "entries": _entries(5)}
     body = client.post(
         "/api/playlist", json={"url": "https://www.youtube.com/playlist?list=PLabc"}

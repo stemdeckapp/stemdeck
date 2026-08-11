@@ -18,9 +18,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.config import JOBS_DIR, MAX_PENDING_JOBS, PLAYLIST_MAX_ITEMS, STEM_NAMES
+from app.core.config import JOBS_DIR, MAX_PENDING_URL_JOBS, PLAYLIST_MAX_ITEMS, STEM_NAMES
 from app.core.models import Job
-from app.core.registry import all_jobs as registry_all_jobs
+from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.settings import get_max_duration_sec
@@ -38,8 +38,10 @@ class PlaylistRequest(BaseModel):
 
 
 def _capacity_left() -> int:
-    pending = sum(1 for j in registry_all_jobs().values() if j.status == "queued")
-    return max(0, MAX_PENDING_JOBS - pending)
+    # Playlist tracks are links, so only other waiting links count against
+    # them -- a backlog of file uploads is bounded separately and holds disk
+    # rather than a registry record.
+    return max(0, MAX_PENDING_URL_JOBS - registry_pending_count(uploads=False))
 
 
 async def _expand(url: str) -> dict[str, Any]:
@@ -94,6 +96,9 @@ async def preview_playlist(request: Request) -> dict[str, Any]:
         "skipped_too_long": too_long,
         "capacity_left": capacity,
         "cap": PLAYLIST_MAX_ITEMS,
+        # The playlist has more tracks than the cap allows us to look at, so
+        # total_found is a floor, not the real total.
+        "truncated": result["truncated"],
         "items": [{"title": i["title"], "duration": i["duration"]} for i in items],
     }
 
@@ -137,7 +142,7 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
             title=item["title"] or None,
             thumbnail=item.get("thumbnail"),
         )
-        if not registry_register_if_capacity(job, MAX_PENDING_JOBS):
+        if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
             break  # queue filled up mid-loop; report what did land
         jobqueue.enqueue(job.id)
         created.append({"job_id": job.id, "title": job.title or "", "source_url": item["url"]})

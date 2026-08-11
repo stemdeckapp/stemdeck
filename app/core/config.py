@@ -84,10 +84,13 @@ JOB_TTL_SECONDS = max(300, _env_int("STEMDECK_JOB_TTL_SECONDS", 24 * 3600))  # 2
 # accumulate failure evidence forever.
 FAILED_TTL_SECONDS = max(3600, _env_int("STEMDECK_FAILED_TTL_SECONDS", 7 * 24 * 3600))  # 7 d
 # Depth of the import queue: jobs waiting for their turn, not counting the one
-# running. A queued YouTube job costs a few hundred bytes, but a queued upload
-# holds its source file on disk for the whole wait, so the honest worst case at
-# the default is 20 x 400 MB = 8 GB.
-MAX_PENDING_JOBS = max(1, min(200, _env_int("STEMDECK_MAX_PENDING_JOBS", 20)))
+# running. Counted separately by kind, because the two cost wildly different
+# things. A queued upload holds its source file on disk for the whole wait, so
+# 20 of them is already an 8 GB worst case. A queued URL holds nothing at all --
+# it downloads when its turn comes -- so the only real cost is a registry
+# record, and a 50-track playlist should not have to be imported in batches.
+MAX_PENDING_UPLOAD_JOBS = max(1, min(200, _env_int("STEMDECK_MAX_PENDING_JOBS", 20)))
+MAX_PENDING_URL_JOBS = max(1, min(500, _env_int("STEMDECK_MAX_PENDING_URL_JOBS", 200)))
 # Ceiling on how much of a playlist one import may expand to. Enforced twice:
 # as yt-dlp's playlistend so nothing beyond it is ever fetched, and again after
 # normalization. Unrelated to MAX_PENDING_JOBS, which bounds the queue itself --

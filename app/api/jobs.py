@@ -14,11 +14,19 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.config import JOB_ID_RE, JOBS_DIR, MAX_PENDING_JOBS, STEM_NAMES, ffprobe_executable
+from app.core.config import (
+    JOB_ID_RE,
+    JOBS_DIR,
+    MAX_PENDING_UPLOAD_JOBS,
+    MAX_PENDING_URL_JOBS,
+    STEM_NAMES,
+    ffprobe_executable,
+)
 from app.core.models import Job, _set
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
+from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
@@ -35,7 +43,12 @@ _WS_RE = re.compile(r"\s+")
 
 # Now that imports queue instead of running immediately, a full queue is a
 # capacity statement the user can act on, not a transient "try again".
-_QUEUE_FULL_DETAIL = f"Queue is full ({MAX_PENDING_JOBS} waiting) - cancel a job or wait"
+_URL_QUEUE_FULL_DETAIL = (
+    f"Queue is full ({MAX_PENDING_URL_JOBS} links waiting) - cancel a job or wait"
+)
+_UPLOAD_QUEUE_FULL_DETAIL = (
+    f"Upload queue is full ({MAX_PENDING_UPLOAD_JOBS} waiting) - cancel a job or wait"
+)
 
 
 def _sanitize_title(filename: str) -> str:
@@ -134,8 +147,8 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
         selected = list(STEM_NAMES)
 
     job = Job(id=uuid.uuid4().hex[:12], selected_stems=selected, source_url=url)
-    if not registry_register_if_capacity(job, MAX_PENDING_JOBS):
-        raise HTTPException(status_code=503, detail=_QUEUE_FULL_DETAIL)
+    if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
+        raise HTTPException(status_code=503, detail=_URL_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
     registry_persist(JOBS_DIR)
     return {"job_id": job.id}
@@ -144,8 +157,10 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
 async def _create_local_job(request: Request) -> dict[str, str]:
     # Fast pre-check: if already at capacity, reject before touching disk.
     # The real atomic check happens in register_if_capacity after the upload.
-    if sum(1 for j in registry_all_jobs().values() if j.status == "queued") >= MAX_PENDING_JOBS:
-        raise HTTPException(status_code=503, detail=_QUEUE_FULL_DETAIL)
+    # Only other uploads count here: a queue full of links costs no disk and
+    # must not block a file import.
+    if registry_pending_count(uploads=True) >= MAX_PENDING_UPLOAD_JOBS:
+        raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
 
     # Quick pre-check on Content-Length to fail fast for obviously oversized
     # uploads without buffering the whole body first.
@@ -224,9 +239,9 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         duration_sec=duration,
         source_url=local_source_url,
     )
-    if not registry_register_if_capacity(job, MAX_PENDING_JOBS):
+    if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(status_code=503, detail=_QUEUE_FULL_DETAIL)
+        raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
     registry_persist(JOBS_DIR)
     return {"job_id": job.id}
