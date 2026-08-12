@@ -50,6 +50,18 @@ jobs:
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
+  # The Linux installer only ever runs on a user's machine, so nothing else
+  # would catch a regression in it. Runs on a real Linux image rather than the
+  # macOS bash used during development.
+  linux-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: bash -n packaging/linux/install.sh
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils
+      - run: shellcheck -S warning packaging/linux/install.sh
+      - run: bash tests/linux/test_install_sh.sh
+
   sast-bandit:
     runs-on: ubuntu-latest
     container:

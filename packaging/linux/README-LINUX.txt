@@ -18,6 +18,33 @@ Run
      ./StemDeck
 4. Let first-run setup prepare local runtime assets.
 
+Nothing needs installing: this folder can be moved or deleted at will.
+
+Optional: add a desktop launcher
+--------------------------------
+
+If you would rather launch StemDeck from your applications menu than from a
+terminal, run the installer that ships in this folder:
+
+    ./install.sh
+
+It copies this folder to a fixed location and adds an icon and a menu entry.
+It never downloads anything; the version and the CPU/NVIDIA variant come from
+the package you already extracted.
+
+    ./install.sh --local        just me     (~/.local/opt/stemdeck)
+    ./install.sh --global       all users   (/opt/stemdeck, needs sudo)
+    ./install.sh --prefix DIR   somewhere else
+    ./install.sh --uninstall    remove it again
+    ./install.sh --help         all options
+
+To upgrade, extract the new tarball and run ./install.sh from it. It reuses the
+location you chose and replaces the old copy only once the new one is verified,
+so a failed upgrade leaves the working version alone.
+
+Uninstalling removes the application only. Your stem library and settings live
+outside the install directory and are never touched.
+
 Prerequisites
 -------------
 
@@ -57,8 +84,9 @@ the CUDA download entirely.
 Notes
 -----
 
-- This is a portable folder, not a system package. No .desktop entry, service,
-  or package-manager integration is created.
+- This is a portable folder, not a system package. Running it in place creates
+  no .desktop entry, service, or package-manager integration; ./install.sh adds
+  a launcher and icon if you want them.
 - User data lives under $XDG_DATA_HOME/stemdeck (or ~/.local/share/stemdeck).
 - Your stem library is written to ~/Documents/StemDeck/.
 - Demucs model weights download from the backend on first use into the data

@@ -65,7 +65,27 @@ def test_the_icon_the_packaging_script_copies_exists():
     assert ICON.is_file()
 
 
-def test_make_portable_stages_both_assets():
+def test_make_portable_stages_the_desktop_assets():
     script = MAKE_PORTABLE.read_text(encoding="utf-8")
     assert "packaging/stemdeck.png" in script
     assert "packaging/stemdeck.desktop.in" in script
+
+
+def test_make_portable_stages_the_installer():
+    """Without this the installer is not in the tarball, and the README tells
+    users to run a file that is not there."""
+    script = MAKE_PORTABLE.read_text(encoding="utf-8")
+    assert "packaging/linux/install.sh" in script
+    assert 'chmod +x "$STAGE/install.sh"' in script
+
+
+def test_the_installer_exists_and_is_executable():
+    installer = ROOT / "packaging" / "linux" / "install.sh"
+    assert installer.is_file()
+    assert installer.stat().st_mode & 0o111, "install.sh must be executable in the repo"
+
+
+def test_readme_documents_the_installer():
+    readme = (ROOT / "packaging" / "linux" / "README-LINUX.txt").read_text(encoding="utf-8")
+    assert "./install.sh" in readme
+    assert "--uninstall" in readme

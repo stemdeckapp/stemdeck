@@ -157,6 +157,13 @@ mkdir -p "$STAGE/packaging"
 cp "$REPO_ROOT/desktop/src-tauri/icons/icon.png" "$STAGE/packaging/stemdeck.png"
 cp "$REPO_ROOT/packaging/linux/stemdeck.desktop.in" "$STAGE/packaging/stemdeck.desktop.in"
 
+# The optional installer (#361). It installs the package it sits in, so it needs
+# no network access and cannot disagree with the build about which version it is
+# installing: it reads that from backend/static/version.json above, and the
+# variant from the cpu-only marker below.
+cp "$REPO_ROOT/packaging/linux/install.sh" "$STAGE/install.sh"
+chmod +x "$STAGE/install.sh"
+
 # CPU-only marker: read by is_cpu_only_package so the shell skips GPU detection.
 # Omitted for the NVIDIA variant so the shell detects the GPU and uses CUDA.
 if [[ "$CPU_ONLY" == "1" ]]; then
