@@ -50,6 +50,32 @@ jobs:
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
+  # Browser tests for static/js (#339). node --check above is a syntax parse;
+  # this drives the real UI against the real backend, including the Tauri code
+  # path, which is where #335 hid because it was invisible in a browser.
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "20"
+          cache: npm
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: uv sync --frozen --all-extras
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   # The Linux installer only ever runs on a user's machine, so nothing else
   # would catch a regression in it. Runs on a real Linux image rather than the
   # macOS bash used during development.

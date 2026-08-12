@@ -24,6 +24,12 @@ static/version.json
 
 # Desktop dependencies and build outputs
 desktop/node_modules/
+node_modules/
+
+# Playwright browser-test output (tests/e2e)
+test-results/
+playwright-report/
+blob-report/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 

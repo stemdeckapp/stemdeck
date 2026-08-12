@@ -1,0 +1,14 @@
+{
+  "name": "stemdeck-frontend-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for static/js. The app itself has no build step and no runtime dependencies; this exists only so CI can drive a real browser (#339).",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:js": "for f in tests/js/*.test.mjs; do node \"$f\"; done"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
