@@ -150,6 +150,8 @@ function wireFooterControls() {
 
   let format = "wav";
   let busy = false;
+  // True from the click until the transfer starts or the dialog is cancelled.
+  let picking = false;
 
   const panelOpen = () => exportPanel && !exportPanel.classList.contains("hidden");
   function openPanel() {
@@ -194,12 +196,11 @@ function wireFooterControls() {
     busy = false;
     exportBtn?.classList.remove("is-busy");
     if (exportLabel) exportLabel.textContent = "Export Mix";
-    // Clear every row, not just the ones flashBusy could see: it disables via
-    // actionItems(), which filters on visibility, so a row hidden at reset time
-    // would keep the attribute forever. Under Tauri the panel is still open when
-    // flashBusy runs (invoke() returns without the synthetic <a> click that
-    // closes it in a browser), so all three get disabled and only a symmetric
-    // clear brings them back.
+    // Clear every row, not just the ones enterBusy could see: it disables via
+    // actionItems(), which filters on visibility, and it closes the panel, so
+    // by the time this runs every row is hidden and a visibility-filtered clear
+    // would clear nothing at all -- leaving the menu dead for the rest of the
+    // session (#335).
     for (const it of [itemMix, itemStems, itemRegion]) it?.removeAttribute("aria-disabled");
     applyFormatState(); // re-derives the region row's genuine disabled state
   }
@@ -212,18 +213,32 @@ function wireFooterControls() {
   // Guards against a stale timer from a finished export resetting a later one.
   let busyToken = 0;
 
-  // `pending` is whatever the download helper returned: a promise on desktop,
-  // where save_audio_file resolves once the file is written, or `true` in a
-  // browser, where an <a download> is fire-and-forget and there is nothing to
-  // wait on. Only the guess needs a fixed duration.
-  function flashBusy(pending) {
+  // Show the busy state. Called when bytes actually start moving, which on
+  // desktop is after the user has picked a destination -- not on click, or the
+  // label would claim to be exporting for as long as the save dialog sat open
+  // (#338).
+  function enterBusy() {
     busy = true;
-    const token = ++busyToken;
-    const finish = () => { if (token === busyToken) resetBusy(); };
     exportBtn?.classList.add("is-busy");
     if (exportLabel) exportLabel.textContent = "Exporting…";
     actionItems().forEach((it) => it?.setAttribute("aria-disabled", "true"));
     closePanel();
+  }
+
+  // `pending` is whatever the download helper returned: a promise on desktop,
+  // resolving once the file is written, or `true` in a browser, where an
+  // <a download> is fire-and-forget and there is nothing to wait on. Only the
+  // guess needs a fixed duration.
+  //
+  // `picking` covers the gap between the click and the transfer: the dialog is
+  // app-modal so the menu is unreachable anyway, but the flag keeps a second
+  // export from being queued behind it without lying about the label.
+  function settleBusy(pending) {
+    const token = ++busyToken;
+    const finish = () => {
+      picking = false;
+      if (token === busyToken) resetBusy();
+    };
 
     if (!pending || typeof pending.then !== "function") {
       window.setTimeout(finish, EXPORT_FLASH_MS);
@@ -232,7 +247,8 @@ function wireFooterControls() {
     const backstop = window.setTimeout(finish, EXPORT_BUSY_MAX_MS);
     pending
       .catch((err) => {
-        // A cancelled save dialog resolves, so anything here is a real failure.
+        // A cancelled dialog resolves false without ever entering the busy
+        // state, so anything here is a real failure.
         showError(typeof err === "string" && err ? err : "Export failed.", null, { retry: false });
       })
       .finally(() => {
@@ -241,37 +257,47 @@ function wireFooterControls() {
       });
   }
 
+  // Kick off an export: hand the helper a callback that flips the UI into its
+  // busy state, then wait on the result.
+  function runExport(start, emptyMessage) {
+    if (busy || picking) return;
+    picking = true;
+    const pending = start(enterBusy);
+    if (!pending) {
+      picking = false;
+      showError(emptyMessage, null, { retry: false });
+      return;
+    }
+    settleBusy(pending);
+  }
+
   exportBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (busy) return;
+    if (busy || picking) return;
     panelOpen() ? closePanel() : openPanel();
   });
 
   // Export Mix: MP4 produces the video; any other format an audio mix.
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (busy) return;
-    const ok = format === "mp4" ? downloadCurrentVideo() : downloadCurrentMix(format);
-    if (!ok) { showError("All stems are muted - nothing to export.", null, { retry: false }); return; }
-    flashBusy(ok);
+    runExport(
+      (onStart) => (format === "mp4" ? downloadCurrentVideo(onStart) : downloadCurrentMix(format, onStart)),
+      "All stems are muted - nothing to export.",
+    );
   });
 
   itemRegion?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (busy || itemRegion.getAttribute("aria-disabled") === "true") return;
-    const ok = downloadRegionMix(format);
-    if (!ok) { showError("All stems are muted - nothing to export.", null, { retry: false }); return; }
-    flashBusy(ok);
+    if (itemRegion.getAttribute("aria-disabled") === "true") return;
+    runExport((onStart) => downloadRegionMix(format, onStart), "All stems are muted - nothing to export.");
   });
 
   // All Stems = a single backend-built ZIP, named after the song. Audio-only,
   // so it's disabled (and inert) while MP4 is the selected format.
   itemStems?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (busy || itemStems.getAttribute("aria-disabled") === "true") return;
-    const ok = downloadAllStemsZip(format);
-    if (!ok) { showError("No stems to export.", null, { retry: false }); return; }
-    flashBusy(ok);
+    if (itemStems.getAttribute("aria-disabled") === "true") return;
+    runExport((onStart) => downloadAllStemsZip(format, onStart), "No stems to export.");
   });
 
   // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.

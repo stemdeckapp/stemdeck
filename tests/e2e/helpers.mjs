@@ -47,19 +47,37 @@ export async function seedLibrary(page) {
 /**
  * Install a fake Tauri bridge so the app takes its desktop code path.
  *
- * `save_audio_file` is left pending until the test resolves or rejects it,
- * which is the whole point: the export busy state is a promise state machine,
- * and #335 was a stuck one. Tests drive it through window.__e2e.
+ * The export is two commands, and the test controls each independently:
+ *
+ *   pick_export_destination  the native save dialog
+ *   download_to_path         the transfer
+ *
+ * Holding the dialog open is what makes #338 testable -- the label must still
+ * read "Export Mix" while the user is choosing a folder, because nothing is
+ * being exported yet. Holding the transfer open is what makes #335 testable.
+ * Tests drive both through window.__e2e.
  */
 export async function stubTauri(page) {
   await page.addInitScript(() => {
     const calls = [];
     let pendingResolve = null;
     let pendingReject = null;
+    let pickResolve = null;
+
+    const settle = (fn) => (v) => {
+      pendingResolve = null;
+      pendingReject = null;
+      fn(v);
+    };
 
     window.__e2e = {
       calls,
-      // Settle the export that is currently in flight.
+      // Choose a destination, as if the user hit Save in the dialog.
+      choosePath: () => pickResolve && (pickResolve("token-1"), (pickResolve = null)),
+      // Dismiss the dialog. No transfer follows.
+      cancelPick: () => pickResolve && (pickResolve(null), (pickResolve = null)),
+      pickPending: () => Boolean(pickResolve),
+      // Settle the transfer that is currently in flight.
       finishSave: (value) => pendingResolve && pendingResolve(value ?? null),
       failSave: (message) => pendingReject && pendingReject(message ?? "save failed"),
       savePending: () => Boolean(pendingResolve),
@@ -71,10 +89,13 @@ export async function stubTauri(page) {
         invoke: (cmd, args) => {
           calls.push({ cmd, args });
           switch (cmd) {
+            case "pick_export_destination":
+              return new Promise((resolve) => { pickResolve = resolve; });
+            case "download_to_path":
             case "save_audio_file":
               return new Promise((resolve, reject) => {
-                pendingResolve = (v) => { pendingResolve = null; pendingReject = null; resolve(v); };
-                pendingReject = (e) => { pendingResolve = null; pendingReject = null; reject(e); };
+                pendingResolve = settle(resolve);
+                pendingReject = settle(reject);
               });
             // The library store lives in the Tauri store on desktop. Back it
             // with localStorage so seedLibrary works in this mode too.

@@ -2,6 +2,7 @@ use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     env, fs,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -67,7 +68,24 @@ struct BackendStateInner {
     starting: bool,
     /// PID of an in-progress pip subprocess; killed by stop_backend on window close (#140).
     pip_pid: Option<u32>,
+    /// Save destinations the user has picked but not yet downloaded to (#338).
+    ///
+    /// The export is two commands so the UI can tell "choosing a folder" apart
+    /// from "writing the file", but the second half must not take a path from
+    /// JS: that would hand a compromised WebView the ability to write any URL
+    /// to any location on disk. The path stays here and JS only ever holds an
+    /// opaque token.
+    pending_saves: HashMap<String, PathBuf>,
+    /// Source of those tokens. A counter is enough -- the token is not a
+    /// secret. Every live token maps to a path the user chose in a native
+    /// dialog, so guessing one only ever yields another approved destination.
+    next_save_token: u64,
 }
+
+/// Cap on unconsumed destinations. A pick whose download never runs (the user
+/// closes the window mid-export) would otherwise sit here for the life of the
+/// process.
+const MAX_PENDING_SAVES: usize = 16;
 
 impl Default for BackendStateInner {
     fn default() -> Self {
@@ -75,6 +93,8 @@ impl Default for BackendStateInner {
             handles: None,
             starting: false,
             pip_pid: None,
+            pending_saves: HashMap::new(),
+            next_save_token: 0,
         }
     }
 }
@@ -269,6 +289,8 @@ fn main() {
             build_target,
             open_url,
             save_audio_file,
+            pick_export_destination,
+            download_to_path,
             pick_stems_folder,
             store_get,
             store_set,
@@ -1641,23 +1663,71 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Prompts the user for a save path, then streams a localhost audio URL to disk.
-#[tauri::command]
-async fn save_audio_file(
-    app: tauri::AppHandle,
-    url: String,
-    filename: String,
-) -> Result<(), String> {
+/// Only localhost URLs, and only http(s). Guards against a compromised WebView
+/// using the desktop shell as an SSRF proxy (#138).
+fn validate_download_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("only http/https URLs are permitted".to_string());
     }
-    // Restrict to localhost to prevent SSRF from a compromised WebView (#138).
-    let parsed_url = reqwest::Url::parse(&url).map_err(|_| "invalid URL".to_string())?;
+    let parsed_url = reqwest::Url::parse(url).map_err(|_| "invalid URL".to_string())?;
     let host = parsed_url.host_str().unwrap_or("");
     if host != "127.0.0.1" && host != "localhost" {
         return Err("only localhost URLs are permitted".to_string());
     }
+    Ok(())
+}
 
+/// Records a picked destination and returns the token JS will hand back.
+fn store_pending_save(state: &BackendState, dest: PathBuf) -> Result<String, String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
+    if guard.pending_saves.len() >= MAX_PENDING_SAVES {
+        // Drop the oldest by token order; tokens are monotonic, so the smallest
+        // numeric key is the stalest pick.
+        if let Some(oldest) = guard
+            .pending_saves
+            .keys()
+            .min_by_key(|k| k.parse::<u64>().unwrap_or(u64::MAX))
+            .cloned()
+        {
+            guard.pending_saves.remove(&oldest);
+        }
+    }
+    guard.next_save_token += 1;
+    let token = guard.next_save_token.to_string();
+    guard.pending_saves.insert(token.clone(), dest);
+    Ok(token)
+}
+
+/// Consumes a token. Single use: a failed transfer needs a fresh destination
+/// rather than silently reusing one the user picked for an earlier attempt.
+fn take_pending_save(state: &BackendState, token: &str) -> Result<PathBuf, String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
+    guard
+        .pending_saves
+        .remove(token)
+        .ok_or_else(|| "no destination is pending for this export".to_string())
+}
+
+/// Shows the native save dialog and remembers where the user pointed it.
+///
+/// Split from the transfer (#338) so the UI can show "Exporting..." for the
+/// writing only. Awaiting one combined command meant the button claimed to be
+/// exporting for however long the picker sat open, when nothing was happening.
+///
+/// Returns None when the user cancels, which the caller treats as "do nothing"
+/// -- no busy state is ever entered, so there is none to unwind.
+#[tauri::command]
+async fn pick_export_destination(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BackendState>,
+    filename: String,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let dest = app
         .dialog()
@@ -1665,9 +1735,25 @@ async fn save_audio_file(
         .set_file_name(&filename)
         .blocking_save_file();
     let Some(file_path) = dest else {
-        return Ok(()); // user cancelled
+        return Ok(None); // user cancelled
     };
     let dest = file_path.into_path().map_err(|e| e.to_string())?;
+    store_pending_save(&state, dest).map(Some)
+}
+
+/// Streams a localhost URL to the destination a previous pick recorded.
+///
+/// Takes a token rather than a path on purpose: a path parameter would let
+/// anything running in the WebView write an arbitrary URL to an arbitrary
+/// location. The destination never leaves Rust.
+#[tauri::command]
+async fn download_to_path(
+    state: tauri::State<'_, BackendState>,
+    token: String,
+    url: String,
+) -> Result<(), String> {
+    validate_download_url(&url)?;
+    let dest = take_pending_save(&state, &token)?;
 
     // Stream response to disk to avoid buffering a large audio file in memory (#139).
     // 5-minute timeout covers large WAV exports over a slow loopback.
@@ -1698,6 +1784,25 @@ async fn save_audio_file(
     drop(file);
     std::fs::rename(&tmp, &dest).map_err(|e| format!("rename failed: {e}"))?;
     Ok(())
+}
+
+/// Pick-then-transfer in one call, for the lane download links.
+///
+/// Those have no busy state to mislabel, so they want the convenience. The
+/// export menu drives the two halves separately.
+#[tauri::command]
+async fn save_audio_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BackendState>,
+    url: String,
+    filename: String,
+) -> Result<(), String> {
+    // Validate before showing a dialog the request could never satisfy.
+    validate_download_url(&url)?;
+    let Some(token) = pick_export_destination(app, state.clone(), filename).await? else {
+        return Ok(()); // user cancelled
+    };
+    download_to_path(state, token, url).await
 }
 
 fn stop_backend(state: &BackendState) {
@@ -3031,6 +3136,7 @@ fn hide_console_window(_command: &mut Command) {}
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn make_tmp() -> TempDir {
@@ -3560,5 +3666,75 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert_eq!(super::find_driver_store_nvidia_smi(&missing), None);
         // Present but empty: also None.
         assert_eq!(super::find_driver_store_nvidia_smi(repo.path()), None);
+    }
+
+    // ── export destinations (#338) ───────────────────────────────────────────
+
+    #[test]
+    fn a_token_yields_the_path_that_was_picked() {
+        let state = super::BackendState::default();
+        let token = super::store_pending_save(&state, PathBuf::from("/tmp/song.wav")).unwrap();
+        assert_eq!(
+            super::take_pending_save(&state, &token).unwrap(),
+            PathBuf::from("/tmp/song.wav")
+        );
+    }
+
+    #[test]
+    fn a_token_works_only_once() {
+        // A failed transfer has to go back through the dialog rather than
+        // quietly reusing a destination the user chose for an earlier attempt.
+        let state = super::BackendState::default();
+        let token = super::store_pending_save(&state, PathBuf::from("/tmp/song.wav")).unwrap();
+        assert!(super::take_pending_save(&state, &token).is_ok());
+        assert!(super::take_pending_save(&state, &token).is_err());
+    }
+
+    #[test]
+    fn an_unknown_token_is_refused() {
+        // This is the security property: without a matching pick there is no
+        // destination, so the WebView cannot name one of its own.
+        let state = super::BackendState::default();
+        assert!(super::take_pending_save(&state, "nope").is_err());
+        assert!(super::take_pending_save(&state, "1").is_err());
+    }
+
+    #[test]
+    fn tokens_are_distinct_per_pick() {
+        let state = super::BackendState::default();
+        let a = super::store_pending_save(&state, PathBuf::from("/tmp/a.wav")).unwrap();
+        let b = super::store_pending_save(&state, PathBuf::from("/tmp/b.wav")).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(
+            super::take_pending_save(&state, &b).unwrap(),
+            PathBuf::from("/tmp/b.wav")
+        );
+        assert_eq!(
+            super::take_pending_save(&state, &a).unwrap(),
+            PathBuf::from("/tmp/a.wav")
+        );
+    }
+
+    #[test]
+    fn unconsumed_picks_do_not_accumulate_forever() {
+        let state = super::BackendState::default();
+        let first = super::store_pending_save(&state, PathBuf::from("/tmp/first.wav")).unwrap();
+        for i in 0..super::MAX_PENDING_SAVES {
+            super::store_pending_save(&state, PathBuf::from(format!("/tmp/{i}.wav"))).unwrap();
+        }
+        let held = state.inner.lock().unwrap().pending_saves.len();
+        assert!(held <= super::MAX_PENDING_SAVES, "held {held}");
+        // The stalest pick is the one dropped.
+        assert!(super::take_pending_save(&state, &first).is_err());
+    }
+
+    #[test]
+    fn only_localhost_urls_are_downloadable() {
+        assert!(super::validate_download_url("http://127.0.0.1:8000/api/x.wav").is_ok());
+        assert!(super::validate_download_url("http://localhost:8000/api/x.wav").is_ok());
+        // The SSRF boundary from #138, still enforced after the split.
+        assert!(super::validate_download_url("http://example.com/x.wav").is_err());
+        assert!(super::validate_download_url("file:///etc/passwd").is_err());
+        assert!(super::validate_download_url("not a url").is_err());
     }
 }

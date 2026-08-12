@@ -12,6 +12,11 @@
 import { test, expect } from "@playwright/test";
 import { openStudio, exportUi } from "./helpers.mjs";
 
+// Desktop exports go through a save dialog first. Picking a destination is what
+// starts the transfer, so most tests have to answer the dialog before there is
+// any busy state to assert on (#338).
+const choosePath = (page) => page.evaluate(() => window.__e2e.choosePath());
+
 test.describe("export menu, desktop (Tauri) mode", () => {
   test("every row is usable again after an export completes", async ({ page }) => {
     await openStudio(page, { tauri: true });
@@ -19,6 +24,7 @@ test.describe("export menu, desktop (Tauri) mode", () => {
 
     await ui.open();
     await ui.stems.click();
+    await choosePath(page);
 
     // Mid-export: the menu is busy and says so.
     await expect(ui.label).toHaveText(/Exporting/);
@@ -40,12 +46,13 @@ test.describe("export menu, desktop (Tauri) mode", () => {
     for (const pass of [1, 2]) {
       await ui.open();
       await ui.stems.click();
+      await choosePath(page);
       await expect(ui.label).toHaveText(/Exporting/, { timeout: 5000 });
       await page.evaluate(() => window.__e2e.finishSave());
       await expect(ui.label).toHaveText("Export Mix");
       expect(
-        await page.evaluate(() => window.__e2e.callsFor("save_audio_file").length),
-        `save_audio_file should have fired on pass ${pass}`,
+        await page.evaluate(() => window.__e2e.callsFor("download_to_path").length),
+        `the transfer should have fired on pass ${pass}`,
       ).toBe(pass);
     }
   });
@@ -58,6 +65,7 @@ test.describe("export menu, desktop (Tauri) mode", () => {
 
     await ui.open();
     await ui.mix.click();
+    await choosePath(page);
     await expect(ui.label).toHaveText(/Exporting/);
 
     await page.waitForTimeout(3000); // comfortably past the 1200 ms guess
@@ -74,6 +82,7 @@ test.describe("export menu, desktop (Tauri) mode", () => {
 
     await ui.open();
     await ui.mix.click();
+    await choosePath(page);
     await expect(ui.label).toHaveText(/Exporting/);
 
     await page.evaluate(() => window.__e2e.failSave("disk full"));
@@ -94,11 +103,94 @@ test.describe("export menu, desktop (Tauri) mode", () => {
 
     await ui.open();
     await ui.mix.click();
+    await choosePath(page);
     await page.evaluate(() => window.__e2e.failSave("nope"));
 
     await expect(ui.error).toBeVisible();
     await expect(ui.error).toContainText("Dismiss");
     await expect(ui.error).not.toContainText("Try again");
+  });
+});
+
+test.describe("the save dialog phase (#338)", () => {
+  test("the label does not claim to be exporting while the picker is open", async ({ page }) => {
+    // The whole point of splitting the command. Awaiting one combined
+    // save_audio_file meant the button read "Exporting..." from the moment it
+    // was clicked, including however long the user spent choosing a folder,
+    // when nothing was being exported yet.
+    await openStudio(page, { tauri: true });
+    const ui = exportUi(page);
+
+    await ui.open();
+    await ui.mix.click();
+
+    await expect.poll(() => page.evaluate(() => window.__e2e.pickPending())).toBe(true);
+    await expect(ui.label).toHaveText("Export Mix");
+    await expect(ui.button).not.toHaveClass(/is-busy/);
+    // Nothing has been transferred, so no transfer command has been issued.
+    expect(await page.evaluate(() => window.__e2e.callsFor("download_to_path").length)).toBe(0);
+
+    await choosePath(page);
+    await expect(ui.label).toHaveText(/Exporting/);
+    expect(await page.evaluate(() => window.__e2e.callsFor("download_to_path").length)).toBe(1);
+
+    await page.evaluate(() => window.__e2e.finishSave());
+    await expect(ui.label).toHaveText("Export Mix");
+  });
+
+  test("cancelling the dialog leaves the menu exactly as it was", async ({ page }) => {
+    // No busy state is ever entered, so there is none to unwind.
+    await openStudio(page, { tauri: true });
+    const ui = exportUi(page);
+
+    await ui.open();
+    await ui.mix.click();
+    await expect.poll(() => page.evaluate(() => window.__e2e.pickPending())).toBe(true);
+
+    await page.evaluate(() => window.__e2e.cancelPick());
+
+    await expect(ui.label).toHaveText("Export Mix");
+    await expect(ui.button).not.toHaveClass(/is-busy/);
+    expect(await page.evaluate(() => window.__e2e.callsFor("download_to_path").length)).toBe(0);
+    await expect(ui.error).toHaveCount(0);
+
+    // The panel was never closed: only entering the busy state does that, and
+    // a cancelled pick never gets there. So the menu is still open and usable.
+    await expect(ui.panel).not.toHaveClass(/hidden/);
+    await ui.mix.click();
+    await choosePath(page);
+    await expect(ui.label).toHaveText(/Exporting/);
+  });
+
+  test("a second export cannot be queued while the picker is open", async ({ page }) => {
+    // The dialog is app-modal on a real desktop, but the guard must not depend
+    // on that: `busy` is deliberately still false during this phase.
+    await openStudio(page, { tauri: true });
+    const ui = exportUi(page);
+
+    await ui.open();
+    await ui.mix.click();
+    await expect.poll(() => page.evaluate(() => window.__e2e.pickPending())).toBe(true);
+
+    await ui.mix.click();
+    await ui.button.click();
+    expect(await page.evaluate(() => window.__e2e.callsFor("pick_export_destination").length)).toBe(1);
+    expect(await page.evaluate(() => window.__e2e.callsFor("download_to_path").length)).toBe(0);
+  });
+
+  test("the transfer is told where to write by token, never by path", async ({ page }) => {
+    // The destination stays in Rust. A path argument here would be an arbitrary
+    // write primitive for anything running in the WebView.
+    await openStudio(page, { tauri: true });
+    const ui = exportUi(page);
+
+    await ui.open();
+    await ui.mix.click();
+    await choosePath(page);
+
+    const args = await page.evaluate(() => window.__e2e.callsFor("download_to_path")[0].args);
+    expect(Object.keys(args).sort()).toEqual(["token", "url"]);
+    expect(args.token).toBeTruthy();
   });
 });
 
@@ -156,6 +248,7 @@ test.describe("busy state", () => {
 
     await ui.open();
     await ui.mix.click();
+    await choosePath(page);
     await expect(ui.label).toHaveText(/Exporting/);
     await expect(ui.panel).toHaveClass(/hidden/);
 

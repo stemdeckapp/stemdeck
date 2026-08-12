@@ -1558,15 +1558,29 @@ export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}
 // Returns a promise that settles when the file is actually on disk, or `true`
 // when the host gives no completion signal. Callers use the difference to show
 // a real "Exporting…" state instead of a fixed-length guess.
-function _triggerDownload(url, filename) {
+//
+// `onTransferStart` fires when bytes actually begin moving, which on desktop is
+// after the user has chosen a destination. Awaiting one combined command made
+// the button read "Exporting…" for however long the save dialog sat open, when
+// nothing was being exported yet (#338). Callers enter their busy state here
+// rather than on click.
+function _triggerDownload(url, filename, onTransferStart) {
   const fullUrl = url.startsWith("http") ? url : `${location.origin}${url}`;
-  if (window.__TAURI__?.core?.invoke) {
-    // save_audio_file streams to a temp file and renames, resolving only once
-    // the whole body is written -- so this covers the save dialog and the copy.
-    return window.__TAURI__.core.invoke("save_audio_file", { url: fullUrl, filename });
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    // Two commands: the dialog, then the transfer. A cancelled dialog resolves
+    // to null and never starts a transfer, so no busy state is entered and
+    // there is none to unwind.
+    return invoke("pick_export_destination", { filename }).then((token) => {
+      if (!token) return false;
+      onTransferStart?.();
+      return invoke("download_to_path", { token, url: fullUrl });
+    });
   }
   // A browser <a download> is fire-and-forget: the fetch is owned by the
-  // download manager and reports nothing back to the page.
+  // download manager and reports nothing back to the page. There is no dialog
+  // to wait on, so the transfer is under way as soon as the click lands.
+  onTransferStart?.();
   const a = document.createElement("a");
   a.href = fullUrl;
   a.download = filename;
@@ -1659,16 +1673,16 @@ function _exportFilename(ext) {
 // The download functions return true when a download was triggered and false
 // when there is nothing audible to export (every lane muted), so the caller can
 // surface a message.
-export function downloadCurrentMix(ext = "wav") {
+export function downloadCurrentMix(ext = "wav", onTransferStart) {
   const url = _mixdownUrl(ext, false);
   if (!url) return false;
-  return _triggerDownload(url, _exportFilename(ext));
+  return _triggerDownload(url, _exportFilename(ext), onTransferStart);
 }
 
 // MP4 export: the preserved source video muxed with the current audio mix.
 // Only meaningful for mp4-sourced jobs (currentJobHasVideo()); returns false when
 // there's no video track or every lane is muted.
-export function downloadCurrentVideo() {
+export function downloadCurrentVideo(onTransferStart) {
   if (!currentJobId || !_currentHasVideo) return false;
   const { names, gains } = _effectiveMixGains();
   if (!names.length) return false;
@@ -1683,34 +1697,14 @@ export function downloadCurrentVideo() {
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_video.mp4` : "video.mp4";
-  return _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name);
+  return _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name, onTransferStart);
 }
 
-export function downloadCurrentStems(format = "wav", onProgress) {
-  const stems = _currentStems.filter((s) => s.name !== "original");
-  const total = stems.length;
-  if (!total) { onProgress?.(0, 0); return; }
-  // Name each file "<song title>_<instrument>.<ext>" using the same title
-  // sanitization as the mix/region exports.
-  const safe = _currentTitle
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/_{2,}/g, "_")
-    .slice(0, 80)
-    .replace(/^_+|_+$/g, "");
-  stems.forEach((s, i) => {
-    window.setTimeout(() => {
-      const url = format === "mp3" ? s.url.replace(/\.wav(\?|$)/, ".mp3$1") : s.url;
-      const fname = safe ? `${safe}_${s.name}.${format}` : `${s.name}.${format}`;
-      _triggerDownload(url, fname);
-      onProgress?.(i + 1, total);
-    }, i * 150);
-  });
-}
 
 // Returns false when there is nothing to zip, matching downloadCurrentMix and
 // downloadCurrentVideo, so the caller can skip the "Exporting…" state instead of
 // showing it for a download that never starts.
-export function downloadAllStemsZip(format = "wav") {
+export function downloadAllStemsZip(format = "wav", onTransferStart) {
   if (!currentJobId) return false;
   // Only the active (selected) stems loaded in the DAW — not all 6.
   const names = _currentStems.filter((s) => s.name !== "original").map((s) => s.name);
@@ -1722,7 +1716,7 @@ export function downloadAllStemsZip(format = "wav") {
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_stems.zip` : "stems.zip";
   const q = new URLSearchParams({ format, stems: names.join(",") });
-  return _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name);
+  return _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name, onTransferStart);
 }
 
 function _regionFilename(ext) {
@@ -1734,9 +1728,9 @@ function _regionFilename(ext) {
   return `${safe || "region"}_region.${ext}`;
 }
 
-export function downloadRegionMix(ext = "wav") {
+export function downloadRegionMix(ext = "wav", onTransferStart) {
   if (!loopEnabled || loopStart >= loopEnd) return false;
   const url = _mixdownUrl(ext, true);
   if (!url) return false;
-  return _triggerDownload(url, _regionFilename(ext));
+  return _triggerDownload(url, _regionFilename(ext), onTransferStart);
 }
