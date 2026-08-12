@@ -2541,6 +2541,8 @@ async function wireStemsLocation(overlay) {
     pathEl.textContent = shortenPath(d.path);
     pathEl.title = d.path;
     if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
+    // Reopening Settings after a move, before the restart, should still say so.
+    if (d.restart_required) setMessage("Restart StemDeck to finish switching over.", "ok");
   };
 
   // The backend decides whether this setting exists at all -- it is false on a
@@ -2599,20 +2601,21 @@ async function wireStemsLocation(overlay) {
         setMessage(data.detail || "Could not move the stems folder.", "error");
         return;
       }
-      apply({ path: data.path, bytes: 0 });
+      // Re-read rather than trust the POST: the GET reports where the stems
+      // actually are now, including the size at the new location.
+      try {
+        const again = await fetch("/api/settings/stems-location", { cache: "no-store" });
+        if (again.ok) apply(await again.json());
+        else apply({ path: data.path, bytes: 0 });
+      } catch (e) {
+        console.warn("[settings] refresh failed:", e);
+        apply({ path: data.path, bytes: 0 });
+      }
       setMessage(
         `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}. ` +
           "Restart StemDeck to finish switching over.",
         "ok",
       );
-      // The size we had is meaningless now; re-read it from the new location.
-      try {
-        const again = await fetch("/api/settings/stems-location", { cache: "no-store" });
-        if (again.ok) {
-          const d = await again.json();
-          if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
-        }
-      } catch (e) { console.warn("[settings] size refresh failed:", e); }
     } catch (e) {
       console.warn("[settings] move failed:", e);
       setMessage("Could not reach the server.", "error");

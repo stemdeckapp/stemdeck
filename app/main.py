@@ -387,12 +387,21 @@ def get_stems_location() -> dict[str, object]:
 
     Answers everywhere, including deployments that cannot change it: `editable`
     is how the UI knows whether to offer the control at all. Probing a 403
-    instead would log a failed request every time Settings is opened."""
+    instead would log a failed request every time Settings is opened.
+
+    After a move the stored choice and this process disagree until the restart:
+    the files are at the new path, JOBS_DIR still points at the old one. Report
+    where the stems actually are, or reopening Settings would show the folder
+    the user just moved away from."""
+    configured = get_jobs_dir()
+    pending = bool(configured and configured != str(JOBS_DIR))
+    path = Path(configured) if configured else JOBS_DIR
     return {
-        "path": str(JOBS_DIR),
-        "bytes": directory_size(JOBS_DIR) if JOBS_DIR.exists() else 0,
+        "path": str(path),
+        "bytes": directory_size(path) if path.exists() else 0,
         "editable": _stems_location_editable(),
-        "is_default": get_jobs_dir() is None,
+        "is_default": configured is None,
+        "restart_required": pending,
         "busy": bool([j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]),
     }
 
@@ -418,23 +427,26 @@ async def set_stems_location(request: Request) -> dict[str, object]:
     if not isinstance(raw, str):
         raise HTTPException(status_code=422, detail="path is required")
 
-    active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
-    if active:
-        # Moving files out from under a running separation would corrupt it.
-        raise HTTPException(
-            status_code=409,
-            detail="Finish or cancel the imports in the queue before moving the stems folder",
-        )
-
+    # Close the door first. Validation touches the disk (it creates the target
+    # and lists it), and an import accepted during that would have its directory
+    # moved out from under it moments later. Every early exit below reopens it.
+    begin_relocation()
     try:
+        active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
+        if active:
+            # Moving files out from under a running separation would corrupt it.
+            raise HTTPException(
+                status_code=409,
+                detail="Finish or cancel the imports in the queue before moving the stems folder",
+            )
         target = validate_target(Path(raw), JOBS_DIR)
     except StemsLocationError as e:
+        abandon_relocation()
         raise HTTPException(status_code=422, detail=str(e)) from None
+    except Exception:
+        abandon_relocation()
+        raise
 
-    # Stop accepting imports before a single file moves. An import arriving
-    # mid-move, or after it while this process still points at the old folder,
-    # would write stems somewhere the next start does not look.
-    begin_relocation()
     try:
         result = await asyncio.to_thread(move_library, JOBS_DIR, target)
     except StemsLocationError as e:

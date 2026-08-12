@@ -455,3 +455,39 @@ def test_a_failed_move_leaves_the_app_usable(client, tmp_path):
 
     assert stems_location.is_relocating() is False
     assert client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).status_code == 200
+
+
+def test_the_panel_shows_the_new_folder_before_the_restart(client, tmp_path):
+    """After a move the stored choice and this process disagree until the
+    restart. Reporting JOBS_DIR would show the folder the user just moved away
+    from, which reads as the move having failed."""
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa", size=500)
+    target = tmp_path / "elsewhere"
+    client.post("/api/settings/stems-location", json={"path": str(target)})
+
+    body = client.get("/api/settings/stems-location").json()
+
+    assert body["path"] == str(target.resolve())
+    assert body["restart_required"] is True
+    assert body["bytes"] == 500, "size should come from where the files now are"
+    assert body["is_default"] is False
+
+
+def test_no_restart_is_advertised_when_nothing_moved(client):
+    body = client.get("/api/settings/stems-location").json()
+    assert body["restart_required"] is False
+
+
+def test_a_refused_move_reopens_the_door(client, tmp_path):
+    """A busy queue stops the move, and the app has to stay usable afterwards --
+    the guard is closed before the busy check, so it must be reopened."""
+    from app.core import stems_location
+
+    job = Job(id="aaaaaaaaaaaa")
+    job.status = "separating"
+    _jobs[job.id] = job
+
+    r = client.post("/api/settings/stems-location", json={"path": str(tmp_path / "elsewhere")})
+
+    assert r.status_code == 409
+    assert stems_location.is_relocating() is False, "imports would be blocked forever"
