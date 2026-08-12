@@ -48,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: for f in static/js/*.js; do node --check "$f"; done
+      - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
   sast-bandit:
     runs-on: ubuntu-latest

@@ -18,43 +18,100 @@
 const CHUNK_SEC = 5;      // seconds of audio per chunk
 const LOOKAHEAD_SEC = 12; // schedule next chunk this far ahead of playhead
 
+// First probe covers the common case: a 44-byte canonical header, or one with a
+// modest LIST/INFO block. Anything larger costs a second round trip rather than
+// silently failing.
+const HEADER_PROBE_BYTES = 1024;
+// Chase the chunk table this far before declaring the file unreadable. Writers
+// pad with JUNK for sector alignment (commonly 4 KB) or embed cover art, but a
+// file that has not declared `data` within 1 MB is not one we can stream.
+const HEADER_MAX_BYTES = 1 << 20;
+const HEADER_MAX_ATTEMPTS = 5;
+
 // ---------------------------------------------------------------------------
 // WAV parsing
 // ---------------------------------------------------------------------------
 
-function _parseWavHeader(buf) {
+/**
+ * Walk the RIFF chunk table looking for `fmt ` and `data`.
+ *
+ * The table is a linked list, so `data` can sit behind any amount of metadata:
+ * a LIST/INFO block, or a JUNK chunk written for sector alignment. Parsing a
+ * fixed prefix and giving up is what disabled playback outright on files whose
+ * writer emitted more than the usual 44 bytes (#358), so running off the end of
+ * the buffer is reported as "need more bytes" and not as a parse failure. Only
+ * the caller knows whether more bytes can be had.
+ *
+ * @param {ArrayBuffer} buf   A prefix of the file, starting at byte 0.
+ * @param {number} fileSize   Total file length if known, else 0.
+ * @returns {{header:object}|{needBytes:number}|{invalid:true}}
+ */
+function _parseWavHeader(buf, fileSize = 0) {
   const view = new DataView(buf);
   const tag = (off) => String.fromCharCode(...new Uint8Array(buf, off, 4));
 
-  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return null;
+  if (buf.byteLength < 12) return { needBytes: 12 };
+  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return { invalid: true };
 
   let audioFormat = 1, channels = 2, sampleRate = 44100, bitsPerSample = 16;
   let dataOffset = -1, dataSize = 0;
+  let sawFmt = false;
 
   let off = 12;
-  while (off + 8 <= buf.byteLength) {
+  for (;;) {
+    if (off + 8 > buf.byteLength) return { needBytes: off + 8 };
     const id = tag(off);
     const size = view.getUint32(off + 4, true);
+
+    if (id === "data") {
+      dataOffset = off + 8;
+      dataSize = size;
+      break;
+    }
+
     if (id === "fmt ") {
+      if (off + 24 > buf.byteLength) return { needBytes: off + 24 };
       audioFormat   = view.getUint16(off + 8,  true);
       channels      = view.getUint16(off + 10, true);
       sampleRate    = view.getUint32(off + 12, true);
       bitsPerSample = view.getUint16(off + 22, true);
-    } else if (id === "data") {
-      dataOffset = off + 8;
-      dataSize   = size;
-      break;
+      // WAVE_FORMAT_EXTENSIBLE keeps the real format code in the first field of
+      // the SubFormat GUID. Without reading it, a float32 extensible file parses
+      // cleanly and then decodes to silence, because _pcmToAudioBuffer only
+      // recognises 1 (PCM) and 3 (float).
+      if (audioFormat === 0xfffe && size >= 40) {
+        if (off + 34 > buf.byteLength) return { needBytes: off + 34 };
+        audioFormat = view.getUint16(off + 32, true);
+      }
+      sawFmt = true;
     }
-    off += 8 + size + (size & 1); // chunks are word-aligned
+
+    const next = off + 8 + size + (size & 1); // chunks are word-aligned
+    // A chunk that fails to advance, or that claims to run past the end of the
+    // file, means the table is corrupt. Without this the caller's widening loop
+    // would keep asking for bytes that will never resolve anything.
+    if (next <= off) return { invalid: true };
+    if (fileSize && next > fileSize) return { invalid: true };
+    off = next;
   }
 
-  if (dataOffset < 0) return null;
-
+  if (!sawFmt || !channels || !sampleRate || !bitsPerSample) return { invalid: true };
   const bytesPerFrame = channels * (bitsPerSample >> 3);
+  if (!bytesPerFrame) return { invalid: true };
+
+  // `data` may declare a size the file does not actually have: 0 and 0xffffffff
+  // are both used by writers that stream to a non-seekable target and never go
+  // back to patch the length. Either would yield a nonsense duration, and a
+  // duration of 0 reads downstream as "no usable audio". Trust the file length.
+  const available = fileSize ? Math.max(0, fileSize - dataOffset) : 0;
+  if (available && (dataSize === 0 || dataSize > available)) dataSize = available;
+
   return {
-    audioFormat, channels, sampleRate, bitsPerSample,
-    dataOffset, dataSize, bytesPerFrame,
-    duration: dataSize / (bytesPerFrame * sampleRate),
+    header: {
+      audioFormat, channels, sampleRate, bitsPerSample,
+      dataOffset, dataSize, bytesPerFrame,
+      duration: dataSize / (bytesPerFrame * sampleRate),
+    },
   };
 }
 
@@ -150,6 +207,9 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   let playing = false;
   let destroyed = false;
   let rafId = null;
+  // Why ready() resolved false, in words fit to show a user. Read via
+  // getLoadError() by the caller that decides what to put on screen.
+  let _loadError = null;
 
   // Playback clock: getCurrentTime = ctx.currentTime - _startCtxTime + _startOffset
   let _startCtxTime = 0;
@@ -199,10 +259,42 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   // --- fetch helpers ---
 
+  // Read enough of the file to locate the `data` chunk, widening the request
+  // when the chunk table runs past what we asked for. Returns null when the file
+  // is not readable as a WAV, which the caller reports rather than swallows.
   async function _fetchHeader(url) {
-    const res = await fetch(url, { headers: { Range: "bytes=0-1023" } });
-    const buf = await res.arrayBuffer();
-    return _parseWavHeader(buf);
+    let want = HEADER_PROBE_BYTES;
+    let fileSize = 0;
+
+    for (let attempt = 0; attempt < HEADER_MAX_ATTEMPTS; attempt++) {
+      const res = await fetch(url, { headers: { Range: `bytes=0-${want - 1}` } });
+      if (!res.ok && res.status !== 206) throw new Error(`header fetch ${res.status}`);
+
+      // "bytes 0-1023/5242880" gives us the real length without a second request.
+      const total = Number(/\/(\d+)\s*$/.exec(res.headers.get("Content-Range") || "")?.[1]);
+      if (Number.isFinite(total) && total > 0) fileSize = total;
+
+      const buf = await res.arrayBuffer();
+      const out = _parseWavHeader(buf, fileSize);
+      if (out.header) return out.header;
+      if (out.invalid) return null;
+
+      // A 200 means the server ignored Range and already sent the whole file, so
+      // asking for a wider window cannot produce anything new.
+      if (res.status === 200 || (fileSize && buf.byteLength >= fileSize)) return null;
+
+      // Grow past what the table says it needs, geometrically, so a file with
+      // several metadata chunks converges in a couple of round trips instead of
+      // one per chunk.
+      const next = Math.min(
+        Math.max(out.needBytes, buf.byteLength * 4),
+        HEADER_MAX_BYTES,
+        fileSize || HEADER_MAX_BYTES,
+      );
+      if (next <= buf.byteLength) return null; // cannot grow; give up
+      want = next;
+    }
+    return null;
   }
 
   async function _fetchPcm(stem, chunkIdx) {
@@ -436,20 +528,44 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // only, ~6 x 1 KB) instead of blocking on the full first-chunk download (~5 MB).
   // play() handles the case where chunk 0 is not yet cached.
   const ready = (async () => {
-    if (!stemMap.size) return false;
+    if (!stemMap.size) {
+      _loadError = "This track has no stem files to play.";
+      return false;
+    }
+
+    // Counted so the failure can name a cause. "Could not download" and "could
+    // not read" send the user somewhere completely different, and until #359
+    // both arrived as the same silent console warning.
+    let unreachable = 0;
+    let unreadable = 0;
 
     await Promise.all([
       _workletReady,
-      ...[...stemMap.values()].map(async (stem) => {
-        try { stem.header = await _fetchHeader(stem.url); }
-        catch (e) { console.warn("[chunked] header fetch failed:", e); }
+      ...[...stemMap.entries()].map(async ([name, stem]) => {
+        try {
+          stem.header = await _fetchHeader(stem.url);
+          if (!stem.header) {
+            unreadable++;
+            console.warn(`[chunked] unreadable WAV header for stem "${name}"`);
+          }
+        } catch (e) {
+          unreachable++;
+          console.warn(`[chunked] header fetch failed for stem "${name}":`, e);
+        }
       }),
     ]);
 
     for (const stem of stemMap.values()) {
       if (stem.header) _duration = Math.max(_duration, stem.header.duration);
     }
-    if (!_duration) return false;
+    if (!_duration) {
+      _loadError = unreadable
+        ? "This track's audio files are in a format StemDeck could not read."
+        : unreachable
+          ? "Could not load this track's audio files."
+          : "This track's audio files contain no audio.";
+      return false;
+    }
 
     // Kick off chunk 0 and 1 in the background; play() picks up the cached result.
     _fetchChunk(0);
@@ -459,6 +575,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   return {
     ready,
+    getLoadError: () => _loadError,
     play,
     pause,
     seek,
