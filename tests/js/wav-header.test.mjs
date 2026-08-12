@@ -143,7 +143,18 @@ const cases = [
   // Sizes a writer left unpatched: both used to yield a nonsense duration.
   ["data size 0 (streamed)",          buildWav({ dataSizeOverride: 0 }),                true],
   ["data size 0xffffffff",            buildWav({ dataSizeOverride: 0xffffffff }),       true],
+  // Sample formats. float32 decodes; the EXTENSIBLE variant only does so
+  // because the real format code is read out of the SubFormat GUID -- without
+  // that it reads as 0xfffe and is rejected here.
+  ["float32",                         buildWav({ fmt: fmtPlain(3, 32), bits: 32 }),     true],
+  ["EXTENSIBLE float32",              buildWav({ fmt: fmtExtensible(3, 32), bits: 32 }), true],
   // Rejections.
+  // Neither depth can be turned into samples, and accepting them was worse than
+  // rejecting: the header measured fine, so every chunk came back empty and the
+  // scheduler re-fetched the same range on every frame. Rejected, they fall
+  // through to the full-decode engine, whose decoder handles both.
+  ["24-bit PCM",                      buildWav({ fmt: fmtPlain(1, 24), bits: 24 }),     false],
+  ["32-bit integer PCM",              buildWav({ fmt: fmtPlain(1, 32), bits: 32 }),     false],
   ["not a RIFF file",                 Buffer.alloc(4096, 0x41),                         false],
   ["chunk size runs past EOF",        (() => { const w = buildWav({ pre: [junk(64)] });
                                                w.writeUInt32LE(0x7fffffff, 16); return w; })(), false],

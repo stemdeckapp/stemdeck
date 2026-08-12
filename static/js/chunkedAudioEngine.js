@@ -99,6 +99,17 @@ function _parseWavHeader(buf, fileSize = 0) {
   const bytesPerFrame = channels * (bitsPerSample >> 3);
   if (!bytesPerFrame) return { invalid: true };
 
+  // Reject sample formats _pcmToAudioBuffer cannot turn into samples, rather
+  // than accepting the file on the strength of a readable header. Measuring a
+  // file we cannot decode is worse than rejecting it: every chunk comes back
+  // empty, _scheduledTo never advances, and because an empty result is treated
+  // as a transient failure and evicted from the cache, the scheduler re-fetches
+  // the same range on every animation frame. Rejecting hands the file to the
+  // full-decode fallback, whose decoder handles 24-bit and integer formats.
+  if (!(bitsPerSample === 16 || (audioFormat === 3 && bitsPerSample === 32))) {
+    return { invalid: true };
+  }
+
   // `data` may declare a size the file does not actually have: 0 and 0xffffffff
   // are both used by writers that stream to a non-seekable target and never go
   // back to patch the length. Either would yield a nonsense duration, and a
