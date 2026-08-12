@@ -55,18 +55,35 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
   let _epoch = 0;
+  // Why ready() resolved false, in words fit to show a user. Mirrors the same
+  // accessor on the chunked engine so callers need not know which one they hold.
+  let _loadError = null;
 
   // Decode all stems up front AND load the SoundTouch worklet in parallel.
   // Resolves true once at least one stem is ready (worklet load is best-effort).
   const ready = (async () => {
+    // Counted so the failure can name a cause rather than arriving as a silent
+    // console warning (#359). A fetch that never landed and a file the decoder
+    // rejected are different problems for the user.
+    let unreachable = 0;
+    let undecodable = 0;
+
     await Promise.all([
       _workletReady,
       ...stems.map(async (s) => {
         if (!s?.url) return;
+        let bytes;
         try {
           const res = await fetch(s.url);
           if (!res.ok) throw new Error(`fetch ${res.status}`);
-          const buffer = await ctx.decodeAudioData(await res.arrayBuffer());
+          bytes = await res.arrayBuffer();
+        } catch (e) {
+          unreachable++;
+          console.warn(`[audioEngine] fetch failed for ${s.name}:`, e);
+          return;
+        }
+        try {
+          const buffer = await ctx.decodeAudioData(bytes);
           if (destroyed) return;
           const gain = ctx.createGain();
           const analyser = ctx.createAnalyser();
@@ -76,10 +93,19 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
           tracks.set(s.name, { buffer, gain, analyser, source: null });
           duration = Math.max(duration, buffer.duration);
         } catch (e) {
+          undecodable++;
           console.warn(`[audioEngine] decode failed for ${s.name}:`, e);
         }
       }),
     ]);
+
+    if (tracks.size === 0) {
+      _loadError = undecodable
+        ? "This track's audio files are in a format StemDeck could not read."
+        : unreachable
+          ? "Could not load this track's audio files."
+          : "This track has no stem files to play.";
+    }
     return tracks.size > 0;
   })();
 
@@ -201,6 +227,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
 
   return {
     ready,
+    getLoadError: () => _loadError,
     play,
     pause,
     seek,

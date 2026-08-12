@@ -1,5 +1,10 @@
 import Multitrack from "/vendor/multitrack.js";
 import { fmtTime } from "./utils.js";
+// job.js imports this module in turn. The cycle is pre-existing (catalog.js does
+// the same) and safe: these are only ever called from a callback, long after both
+// module bodies have run, and they close over DOM handles from dom.js rather than
+// job.js state.
+import { showPlaybackError, clearPlaybackError } from "./job.js";
 import {
   STEM_NAMES, TRACK_NAMES, STEM_COLORS, PROGRESS_COLOR,
   LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC, LANE_VOLUME_MAX,
@@ -1250,6 +1255,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       // backend's documented degradation for missing peaks is client-side
       // decode — which only the full-decode engine can provide.
       const startEngine = (kind) => {
+        // Retract a previous track's playback failure. Without this the box
+        // stays up over a track that plays fine, since nothing else clears it.
+        clearPlaybackError();
         const eng = kind === "chunked"
           ? createChunkedAudioEngine(stems, { onTime: driveTransportUi, onEnded })
           : createAudioEngine(stems, { onTime: driveTransportUi, onEnded });
@@ -1264,11 +1272,28 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
           }
           if (!ok) {
             // No usable stems — drop the engine (null-URL multitrack stays mounted).
-            console.warn("[player] audio engine had no usable stems; playback disabled");
+            const reason = eng.getLoadError?.();
             teardownMetronome();
-            updateMetronomeAvailability(null, "Playback unavailable for this track");
             eng.destroy();
-            setAudioEngine(null);
+            if (audioEngine === eng) setAudioEngine(null);
+
+            // The chunked engine parses WAV containers itself, so a layout it
+            // cannot read disables playback on a file the browser's own decoder
+            // would have handled (#343). Try that decoder before giving up,
+            // under the same RAM ceiling the missing-peaks swap below uses.
+            if (kind === "chunked"
+                && estimateDecodedBytes(totalDuration, engineStemCount) <= MAX_ENGINE_DECODED_BYTES) {
+              console.warn("[player] chunked engine could not read these stems; trying full decode:", reason);
+              startEngine("fulldecode");
+              return;
+            }
+
+            console.warn("[player] audio engine had no usable stems; playback disabled:", reason);
+            updateMetronomeAvailability(null, "Playback unavailable for this track");
+            showPlaybackError(
+              reason || "This track's audio could not be loaded.",
+              "Playback is disabled for this track. Other tracks are not affected.",
+            );
             return;
           }
           eng.setLoop(loopEnabled, loopStart, loopEnd);
@@ -1371,6 +1396,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
           updateMetronomeAvailability(null, "Playback unavailable for this track");
           eng.destroy();
           if (audioEngine === eng) setAudioEngine(null);
+          showPlaybackError(
+            "This track's audio could not be loaded.",
+            "Playback is disabled for this track. Other tracks are not affected.",
+          );
         });
       };
       // Default: chunked streaming engine (fast start, low RAM). "fulldecode"

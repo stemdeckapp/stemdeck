@@ -95,6 +95,7 @@ function stopJobPolling() {
 // anything else. Export failures pass retry:false and get a plain Dismiss, since
 // the error box has no other way to be cleared.
 export function showError(message, detail, { retry = true } = {}) {
+  delete errorEl.dataset.kind; // see showPlaybackError
   errorEl.textContent = "";
   const msg = document.createElement("div");
   msg.className = "error-msg";
@@ -123,8 +124,23 @@ export function showError(message, detail, { retry = true } = {}) {
 }
 
 function clearImportError() {
+  delete errorEl.dataset.kind;
   errorEl.classList.add("hidden");
   errorEl.textContent = "";
+}
+
+// Playback failures reuse the import error box, which is the only alert surface
+// the studio has. They are tagged so the player can retract its own message when
+// the user loads a different track, without wiping an import failure the user
+// has not read yet. Always retry:false -- "Try again" sends the user to the URL
+// field, which is not what a broken stem file calls for.
+export function showPlaybackError(message, detail) {
+  showError(message, detail, { retry: false });
+  errorEl.dataset.kind = "playback";
+}
+
+export function clearPlaybackError() {
+  if (errorEl.dataset.kind === "playback") clearImportError();
 }
 
 // Clear the import chrome (progress box, error, phrase rotation, foreground
