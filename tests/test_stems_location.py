@@ -299,3 +299,97 @@ def test_cannot_be_moved_outside_the_desktop_app(server_client, tmp_path):
     r = server_client.post("/api/settings/stems-location", json={"path": str(tmp_path / "new")})
     assert r.status_code == 403
     assert (server_client.jobs_dir / "aaaaaaaaaaaa").is_dir(), "nothing may move"
+
+
+# ── where JOBS_DIR comes from ────────────────────────────────────────────────
+#
+# Resolved at import time across the app, so these run in a subprocess. Worth
+# the awkwardness: get this wrong and every existing desktop user opens the app
+# to an empty library after an update, with their stems still on disk.
+
+
+def _resolve_jobs_dir(tmp_path: Path, env_extra: dict, settings: dict | None) -> str:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    settings_file = data / "settings.json"
+    if settings is None:
+        settings_file.unlink(missing_ok=True)
+    else:
+        settings_file.write_text(json.dumps(settings), encoding="utf-8")
+
+    env = {**os.environ, "STEMDECK_DATA_DIR": str(data)}
+    env.pop("STEMDECK_JOBS_DIR", None)
+    env.pop("STEMDECK_DEFAULT_JOBS_DIR", None)
+    env.update(env_extra)
+    out = subprocess.run(
+        [sys.executable, "-c", "from app.core.config import JOBS_DIR; print(JOBS_DIR)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def test_the_desktop_default_is_used_until_the_user_chooses(tmp_path):
+    """The upgrade path. The launcher passes its Documents folder as a DEFAULT,
+    and with no stored choice that is exactly where the library must stay."""
+    default = tmp_path / "documents-jobs"
+    got = _resolve_jobs_dir(tmp_path, {"STEMDECK_DEFAULT_JOBS_DIR": str(default)}, None)
+    assert got == str(default)
+
+
+def test_a_stored_choice_beats_the_desktop_default(tmp_path):
+    chosen = tmp_path / "chosen"
+    got = _resolve_jobs_dir(
+        tmp_path,
+        {"STEMDECK_DEFAULT_JOBS_DIR": str(tmp_path / "documents-jobs")},
+        {"jobs_dir": str(chosen)},
+    )
+    assert got == str(chosen)
+
+
+def test_an_explicit_pin_beats_everything(tmp_path):
+    """Docker and Unraid mount their storage. A stray setting in the image must
+    not send the library somewhere the container no longer looks."""
+    mount = tmp_path / "mount"
+    got = _resolve_jobs_dir(
+        tmp_path,
+        {
+            "STEMDECK_JOBS_DIR": str(mount),
+            "STEMDECK_DEFAULT_JOBS_DIR": str(tmp_path / "documents-jobs"),
+        },
+        {"jobs_dir": str(tmp_path / "chosen")},
+    )
+    assert got == str(mount)
+
+
+def test_a_corrupt_setting_falls_back_rather_than_moving_the_library(tmp_path):
+    """A library that quietly relocates because a JSON file got mangled is far
+    worse than one that ignores the preference."""
+    default = tmp_path / "documents-jobs"
+    (tmp_path / "data").mkdir(exist_ok=True)
+    (tmp_path / "data" / "settings.json").write_text("{not json", encoding="utf-8")
+
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "STEMDECK_DATA_DIR": str(tmp_path / "data")}
+    env.pop("STEMDECK_JOBS_DIR", None)
+    env["STEMDECK_DEFAULT_JOBS_DIR"] = str(default)
+    out = subprocess.run(
+        [sys.executable, "-c", "from app.core.config import JOBS_DIR; print(JOBS_DIR)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        check=True,
+    )
+    assert out.stdout.strip() == str(default)
