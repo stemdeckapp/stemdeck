@@ -26,6 +26,33 @@ class StemsLocationError(ValueError):
     """Rejected before anything on disk was touched."""
 
 
+# JOBS_DIR is bound at import time across the app, so a move leaves this process
+# still writing to the folder the files just left. An import accepted in that
+# window lands in the old folder and disappears from the library on the next
+# start -- the stems are on disk, in a directory nothing looks at any more.
+#
+# Set before the move begins (which also closes the race against an import
+# arriving mid-move) and never cleared on success: the restart is what clears
+# it, and the restart is the point.
+_relocating = False
+
+
+def is_relocating() -> bool:
+    return _relocating
+
+
+def begin_relocation() -> None:
+    global _relocating
+    _relocating = True
+
+
+def abandon_relocation() -> None:
+    """The move failed, so the library is still where this process thinks it is
+    and the app stays usable."""
+    global _relocating
+    _relocating = False
+
+
 @dataclass(frozen=True)
 class MoveResult:
     source: str

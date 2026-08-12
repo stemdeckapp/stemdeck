@@ -23,9 +23,13 @@ from app.core.stems_location import (
 
 @pytest.fixture(autouse=True)
 def _isolate_registry():
+    from app.core import stems_location
+
     _jobs.clear()
+    stems_location.abandon_relocation()
     yield
     _jobs.clear()
+    stems_location.abandon_relocation()
 
 
 def _job_dir(root: Path, job_id: str, *, size: int = 32) -> Path:
@@ -188,6 +192,11 @@ def client(tmp_path, monkeypatch):
     jobs.mkdir()
     import app.core.settings as settings_mod
     import app.main as main_mod
+    from app.pipeline import jobqueue
+
+    # Accepting a submit is the whole assertion here; letting the worker pick it
+    # up would send the suite to YouTube.
+    monkeypatch.setattr(jobqueue, "enqueue", lambda job_id, **kw: None)
 
     monkeypatch.setattr(main_mod, "JOBS_DIR", jobs)
     monkeypatch.setattr(settings_mod, "_SETTINGS_PATH", tmp_path / "settings.json")
@@ -347,6 +356,7 @@ def test_the_desktop_default_is_used_until_the_user_chooses(tmp_path):
 
 def test_a_stored_choice_beats_the_desktop_default(tmp_path):
     chosen = tmp_path / "chosen"
+    chosen.mkdir()  # it exists in reality: the move creates it before the setting is written
     got = _resolve_jobs_dir(
         tmp_path,
         {"STEMDECK_DEFAULT_JOBS_DIR": str(tmp_path / "documents-jobs")},
@@ -393,3 +403,55 @@ def test_a_corrupt_setting_falls_back_rather_than_moving_the_library(tmp_path):
         check=True,
     )
     assert out.stdout.strip() == str(default)
+
+
+def test_a_configured_folder_that_is_gone_falls_back(tmp_path):
+    """An external disk that is not mounted. Creating the folder instead would
+    put a phantom directory at the mount point on the boot disk, and the user's
+    library would look empty with no hint why."""
+    default = tmp_path / "documents-jobs"
+    got = _resolve_jobs_dir(
+        tmp_path,
+        {"STEMDECK_DEFAULT_JOBS_DIR": str(default)},
+        {"jobs_dir": str(tmp_path / "unplugged-drive" / "StemDeck")},
+    )
+    assert got == str(default)
+    assert not (tmp_path / "unplugged-drive").exists(), "must not create the missing path"
+
+
+# ── the window between the move and the restart ──────────────────────────────
+
+
+def test_importing_is_refused_until_the_restart(client, tmp_path):
+    """JOBS_DIR is bound at import time, so this process still writes to the old
+    folder after a move. A track accepted here would be orphaned by the restart:
+    on disk, in a directory nothing looks at any more."""
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    client.post("/api/settings/stems-location", json={"path": str(tmp_path / "elsewhere")})
+
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+
+    assert r.status_code == 409
+    assert "Restart" in r.json()["detail"]
+    assert not list(client.jobs_dir.glob("*/")), "nothing new may appear in the old folder"
+
+
+def test_a_playlist_import_is_refused_too(client, tmp_path):
+    client.post("/api/settings/stems-location", json={"path": str(tmp_path / "elsewhere")})
+    r = client.post("/api/playlist", json={"url": "https://www.youtube.com/playlist?list=PLabc"})
+    assert r.status_code == 409
+
+
+def test_a_failed_move_leaves_the_app_usable(client, tmp_path):
+    """Nothing moved, so this process is still right about where the library is
+    and there is no reason to make the user restart."""
+    from app.core import stems_location
+
+    occupied = tmp_path / "someone-elses"
+    occupied.mkdir()
+    (occupied / "holiday.jpg").write_bytes(b"\xff\xd8")
+
+    client.post("/api/settings/stems-location", json={"path": str(occupied)})
+
+    assert stems_location.is_relocating() is False
+    assert client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).status_code == 200

@@ -31,6 +31,7 @@ from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
 from app.core.settings import get_max_duration_sec
+from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
 from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
 
@@ -121,6 +122,13 @@ class JobRequest(BaseModel):
 async def create_job(request: Request) -> dict[str, str]:
     """Submit a YouTube URL (JSON body) or upload an audio file (multipart/form-data)
     to start a stem-separation job. Returns the new job ID."""
+    if is_relocating():
+        # The stems folder just moved. This process still writes to the old one,
+        # so anything accepted now would be orphaned by the restart.
+        raise HTTPException(
+            status_code=409,
+            detail="Restart StemDeck to finish moving your stems folder before importing",
+        )
     ct = request.headers.get("content-type", "")
     if "multipart/form-data" in ct:
         return await _create_local_job(request)

@@ -60,6 +60,8 @@ from app.core.settings import (
 )
 from app.core.stems_location import (
     StemsLocationError,
+    abandon_relocation,
+    begin_relocation,
     directory_size,
     move_library,
     validate_target,
@@ -429,11 +431,17 @@ async def set_stems_location(request: Request) -> dict[str, object]:
     except StemsLocationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
 
+    # Stop accepting imports before a single file moves. An import arriving
+    # mid-move, or after it while this process still points at the old folder,
+    # would write stems somewhere the next start does not look.
+    begin_relocation()
     try:
         result = await asyncio.to_thread(move_library, JOBS_DIR, target)
     except StemsLocationError as e:
+        abandon_relocation()
         raise HTTPException(status_code=500, detail=str(e)) from None
     except Exception:
+        abandon_relocation()
         _log.exception("moving the stems library failed")
         raise HTTPException(status_code=500, detail="Could not move the stems folder") from None
 

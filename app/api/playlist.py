@@ -24,6 +24,7 @@ from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.settings import get_max_duration_sec, get_playlist_max_items
+from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
 from app.pipeline.download import InvalidPlaylistURL, expand_playlist
 
@@ -120,6 +121,12 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
         payload = PlaylistRequest(**body)
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+    if is_relocating():
+        raise HTTPException(
+            status_code=409,
+            detail="Restart StemDeck to finish moving your stems folder before importing",
+        )
 
     selected = [s for s in payload.stems if s in STEM_NAMES] if payload.stems else list(STEM_NAMES)
     if not selected:

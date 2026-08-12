@@ -78,7 +78,14 @@ def _stored_jobs_dir() -> Path | None:
     value = raw.get("jobs_dir") if isinstance(raw, dict) else None
     if not isinstance(value, str) or not value.strip():
         return None
-    return Path(value).expanduser()
+    path = Path(value).expanduser()
+    # Only honour a folder that is actually there. It existed when the user
+    # picked it, so a missing one means the disk holding it is not mounted --
+    # and ensure_runtime_dirs would otherwise happily mkdir it, which on macOS
+    # creates a real directory at the mount point on the boot disk and can stop
+    # the drive mounting under its own name later. Falling back to the default
+    # leaves the library findable again as soon as the disk is plugged in.
+    return path if path.is_dir() else None
 
 
 # Where extracted stems live. Precedence, most explicit first:
