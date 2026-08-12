@@ -51,7 +51,7 @@ body:
     attributes:
       label: StemDeck version
       description: Shown in the About dialog (Help icon).
-      placeholder: e.g. v0.7.0-alpha.12
+      placeholder: e.g. v0.9.0
     validations:
       required: true
   - type: dropdown
