@@ -212,6 +212,38 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     clear_webkit_data();
                 }
+                // A new version is the moment to throw away what the old one
+                // left behind (#356): archives for runtimes that are no longer
+                // the expected one, and any half-finished runtime swap. The
+                // archive this build wants is spared, so an update that already
+                // downloaded it does not fetch it twice.
+                //
+                // Deliberately narrow. settings.json in this directory holds
+                // the stems location (#354); removing it would send a user who
+                // moved their library to another disk back to the default
+                // folder, to an empty app with their stems stranded.
+                prune_runtime_leftovers(&data_dir);
+                let manifest = app_root()
+                    .ok()
+                    .and_then(|root| load_runtime_manifest(&root).ok());
+                // Spare the expected archive only while it is still needed. If
+                // the installed runtime already matches, the pack it came from
+                // is dead weight -- and its filename carries no version, so it
+                // would otherwise sit there forever looking current.
+                let keep = manifest.as_ref().and_then(|m| {
+                    if runtime_is_current(&data_dir, m) {
+                        None
+                    } else {
+                        Some(runtime_archive_path(&data_dir, m))
+                    }
+                });
+                let freed = prune_downloads(&data_dir, keep.as_deref());
+                if freed > 0 {
+                    eprintln!(
+                        "[stemdeck] freed {} MB of stale downloads",
+                        freed / 1_048_576
+                    );
+                }
                 // Only update the version file if write succeeds. If it fails, skip
                 // cleanup — a missing version file would otherwise cause every launch
                 // to wipe WebKit data.
@@ -538,6 +570,20 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
         if let Ok(d) = local_data_dir() {
             append_to_setup_log(&d, &format!("cleanup warning: {}: {e}", old.display()));
         }
+    }
+
+    // The archive has done its job (#356). Keeping it meant every pack a user
+    // ever installed stayed on disk at full size; a retry can download it again,
+    // which costs bandwidth once rather than hundreds of megabytes forever.
+    let freed = prune_downloads(&data_dir, None);
+    if freed > 0 {
+        append_to_setup_log(
+            &data_dir,
+            &format!(
+                "removed {} MB of installed runtime archives",
+                freed / 1_048_576
+            ),
+        );
     }
 
     let python = runtime.join("python").join("bin").join("python");
@@ -1828,6 +1874,80 @@ fn validate_runtime_manifest(manifest: &RuntimeManifest) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove downloaded runtime/ffmpeg archives from data/downloads, except `keep`.
+///
+/// Every runtime pack ever installed used to stay here at full size: the
+/// extractor deletes its temp directory and the runtime it displaced, but never
+/// the archive it extracted from (#356). Measured 207 MB of packs from two
+/// months earlier on one machine.
+///
+/// `keep` is the archive this build expects. It is spared so that a download
+/// already on disk is not thrown away only to be fetched again -- and, during
+/// setup, so a partially downloaded file is not deleted underneath the download
+/// that is writing it.
+///
+/// Best-effort by design: a file that will not delete (locked on Windows, gone
+/// already) is worth a log line, never a failed launch.
+fn prune_downloads(data_dir: &Path, keep: Option<&Path>) -> u64 {
+    let downloads = data_dir.join("downloads");
+    let entries = match fs::read_dir(&downloads) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+    let mut freed = 0u64;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if keep.is_some_and(|k| k == path) {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let removed = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        match removed {
+            Ok(()) => freed += size,
+            Err(e) => eprintln!("[stemdeck] could not remove {}: {e}", path.display()),
+        }
+    }
+    freed
+}
+
+/// Remove a runtime swap that did not finish.
+///
+/// extract_runtime_pack renames the live runtime to runtime.old and extracts
+/// into runtime.tmp, deleting both when it succeeds. That cleanup is
+/// best-effort, so an interrupted or failed swap can leave a second full
+/// runtime (~900 MB) behind until the next attempt happens to reuse the name.
+/// Whether the installed runtime already is the one this build expects.
+///
+/// When it is, nothing needs the downloaded archive any more and it can go --
+/// which matters because the archive filename carries no version, so a stale
+/// pack and the current one are the same name on disk. (Installing a stale one
+/// is not a risk: the SHA256 in the manifest is verified before extraction.)
+fn runtime_is_current(data_dir: &Path, manifest: &RuntimeManifest) -> bool {
+    let runtime = runtime_dir(data_dir);
+    let ready =
+        runtime.join("backend").join("app").is_dir() && runtime_python_path(data_dir).is_file();
+    let installed = read_runtime_install_manifest(&runtime)
+        .and_then(|value| value.get("version")?.as_str().map(str::to_string));
+    ready && installed.as_deref() == Some(manifest.version.as_str())
+}
+
+fn prune_runtime_leftovers(data_dir: &Path) {
+    for name in ["runtime.tmp", "runtime.old"] {
+        let path = data_dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => eprintln!("[stemdeck] removed leftover {}", path.display()),
+            Err(e) => eprintln!("[stemdeck] could not remove {}: {e}", path.display()),
+        }
+    }
+}
+
 fn runtime_archive_path(data_dir: &Path, manifest: &RuntimeManifest) -> PathBuf {
     let name = manifest
         .archive_name
@@ -2915,6 +3035,177 @@ mod tests {
 
     fn make_tmp() -> TempDir {
         tempfile::tempdir().expect("failed to create temp dir")
+    }
+
+    // ── stale app-data cleanup (#356) ────────────────────────────────────────
+
+    fn seed_downloads(dir: &std::path::Path, names: &[(&str, usize)]) {
+        let downloads = dir.join("downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        for (name, size) in names {
+            fs::write(downloads.join(name), vec![0u8; *size]).unwrap();
+        }
+    }
+
+    #[test]
+    fn prune_downloads_removes_archives_that_are_not_expected() {
+        let dir = make_tmp();
+        seed_downloads(
+            dir.path(),
+            &[
+                ("StemDeck-runtime-macOS-arm64-old.tar.zst", 2048),
+                ("ffmpeg-macos.zip", 1024),
+                ("StemDeck-runtime-macOS-arm64.tar.zst", 512),
+            ],
+        );
+        let keep = dir
+            .path()
+            .join("downloads")
+            .join("StemDeck-runtime-macOS-arm64.tar.zst");
+
+        let freed = super::prune_downloads(dir.path(), Some(&keep));
+
+        assert_eq!(freed, 3072, "should report what it actually removed");
+        assert!(
+            keep.is_file(),
+            "the archive this build expects must survive"
+        );
+        assert!(!dir
+            .path()
+            .join("downloads")
+            .join("ffmpeg-macos.zip")
+            .exists());
+    }
+
+    #[test]
+    fn prune_downloads_with_nothing_to_keep_empties_the_folder() {
+        let dir = make_tmp();
+        seed_downloads(dir.path(), &[("a.tar.zst", 16), ("b.zip", 32)]);
+
+        let freed = super::prune_downloads(dir.path(), None);
+
+        assert_eq!(freed, 48);
+        assert_eq!(
+            fs::read_dir(dir.path().join("downloads")).unwrap().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn prune_downloads_never_touches_anything_else() {
+        // settings.json holds the stems location (#354). Losing it would send a
+        // user who moved their library elsewhere back to the default folder,
+        // to an empty app with their stems stranded.
+        let dir = make_tmp();
+        seed_downloads(dir.path(), &[("old.tar.zst", 8)]);
+        fs::write(
+            dir.path().join("settings.json"),
+            br#"{"jobs_dir":"/Volumes/Audio"}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("config.json"), b"{}").unwrap();
+        fs::create_dir_all(dir.path().join("runtime")).unwrap();
+        fs::create_dir_all(dir.path().join("models")).unwrap();
+        fs::create_dir_all(dir.path().join("ffmpeg")).unwrap();
+
+        super::prune_downloads(dir.path(), None);
+
+        assert!(dir.path().join("settings.json").is_file());
+        assert!(dir.path().join("config.json").is_file());
+        assert!(dir.path().join("runtime").is_dir());
+        assert!(dir.path().join("models").is_dir());
+        assert!(dir.path().join("ffmpeg").is_dir());
+    }
+
+    #[test]
+    fn prune_downloads_tolerates_a_missing_folder() {
+        let dir = make_tmp();
+        assert_eq!(super::prune_downloads(dir.path(), None), 0);
+    }
+
+    #[test]
+    fn prune_runtime_leftovers_removes_an_unfinished_swap() {
+        let dir = make_tmp();
+        fs::create_dir_all(dir.path().join("runtime.tmp").join("runtime")).unwrap();
+        fs::create_dir_all(dir.path().join("runtime.old").join("python")).unwrap();
+        fs::create_dir_all(dir.path().join("runtime").join("python")).unwrap();
+
+        super::prune_runtime_leftovers(dir.path());
+
+        assert!(!dir.path().join("runtime.tmp").exists());
+        assert!(!dir.path().join("runtime.old").exists());
+        assert!(
+            dir.path().join("runtime").is_dir(),
+            "the live runtime must stay"
+        );
+    }
+
+    #[test]
+    fn prune_runtime_leftovers_is_a_no_op_when_clean() {
+        let dir = make_tmp();
+        fs::create_dir_all(dir.path().join("runtime")).unwrap();
+        super::prune_runtime_leftovers(dir.path());
+        assert!(dir.path().join("runtime").is_dir());
+    }
+
+    fn seed_installed_runtime(dir: &std::path::Path, version: &str) {
+        let runtime = dir.join("runtime");
+        fs::create_dir_all(runtime.join("backend").join("app")).unwrap();
+        fs::create_dir_all(runtime.join("python").join("bin")).unwrap();
+        fs::write(
+            runtime.join("python").join("bin").join("python"),
+            b"#!/bin/sh\n",
+        )
+        .unwrap();
+        fs::write(
+            runtime.join("runtime-manifest.json"),
+            format!(r#"{{"version":"{version}"}}"#),
+        )
+        .unwrap();
+    }
+
+    fn manifest_for(version: &str) -> super::RuntimeManifest {
+        super::RuntimeManifest {
+            version: version.to_string(),
+            arch: "arm64".to_string(),
+            runtime_url: "https://example.invalid/StemDeck-runtime-macOS-arm64.tar.zst".to_string(),
+            runtime_sha256: "0".repeat(64),
+            runtime_size: None,
+            archive_name: Some("StemDeck-runtime-macOS-arm64.tar.zst".to_string()),
+        }
+    }
+
+    #[test]
+    fn an_installed_matching_runtime_makes_its_archive_disposable() {
+        // The real case behind #356: the pack is installed, so the 165 MB it
+        // came from is dead weight. Its filename carries no version, so nothing
+        // else would ever mark it stale.
+        let dir = make_tmp();
+        seed_installed_runtime(dir.path(), "1.2.3");
+        assert!(super::runtime_is_current(
+            dir.path(),
+            &manifest_for("1.2.3")
+        ));
+    }
+
+    #[test]
+    fn an_older_installed_runtime_still_needs_the_archive() {
+        let dir = make_tmp();
+        seed_installed_runtime(dir.path(), "1.2.3");
+        assert!(!super::runtime_is_current(
+            dir.path(),
+            &manifest_for("1.3.0")
+        ));
+    }
+
+    #[test]
+    fn a_half_installed_runtime_still_needs_the_archive() {
+        let dir = make_tmp();
+        fs::create_dir_all(dir.path().join("runtime").join("backend").join("app")).unwrap();
+        assert!(!super::runtime_is_current(
+            dir.path(),
+            &manifest_for("1.2.3")
+        ));
     }
 
     #[test]
