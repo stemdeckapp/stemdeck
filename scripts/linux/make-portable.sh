@@ -148,6 +148,15 @@ printf '{ "version": "%s" }\n' "$RESOLVED_VERSION" > "$BACKEND_DIR/static/versio
 cp "$REPO_ROOT/packaging/linux/README-LINUX.txt" "$STAGE/README-LINUX.txt"
 cp "$REPO_ROOT/packaging/linux/THIRD_PARTY_NOTICES.txt" "$STAGE/THIRD_PARTY_NOTICES.txt"
 
+# Desktop-entry assets for the optional installer (#360). Carried inside the
+# package so the installer needs no second download and no asset URL that could
+# drift from the release it is installing. The Tauri icon is already square, so
+# it doubles as the desktop icon with no separate artwork to keep in sync.
+echo "==> Staging desktop-entry assets"
+mkdir -p "$STAGE/packaging"
+cp "$REPO_ROOT/desktop/src-tauri/icons/icon.png" "$STAGE/packaging/stemdeck.png"
+cp "$REPO_ROOT/packaging/linux/stemdeck.desktop.in" "$STAGE/packaging/stemdeck.desktop.in"
+
 # CPU-only marker: read by is_cpu_only_package so the shell skips GPU detection.
 # Omitted for the NVIDIA variant so the shell detects the GPU and uses CUDA.
 if [[ "$CPU_ONLY" == "1" ]]; then
