@@ -17,6 +17,10 @@
 
 const CHUNK_SEC = 5;      // seconds of audio per chunk
 const LOOKAHEAD_SEC = 12; // schedule next chunk this far ahead of playhead
+// Extra headroom folded into a count-in's lead so every count click lands
+// safely in the future even after the small gap between scheduling the first
+// chunk and handing the clicks to the audio clock. Mirrors audioEngine.js.
+const COUNT_IN_MARGIN = 0.06;
 
 // First probe covers the common case: a 44-byte canonical header, or one with a
 // modest LIST/INFO block. Anything larger costs a second round trip rather than
@@ -249,7 +253,13 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   function _getCurrentTime() {
     if (!playing || !_audioStarted) return _startOffset;
-    return Math.min((ctx.currentTime - _startCtxTime) * _playbackRate + _startOffset, _duration);
+    // Clamped to >= _startOffset: during a count-in the first chunk is
+    // scheduled at a future ctx time (_startCtxTime > ctx.currentTime), which
+    // would otherwise read as negative before the audio actually starts.
+    return Math.max(
+      _startOffset,
+      Math.min((ctx.currentTime - _startCtxTime) * _playbackRate + _startOffset, _duration),
+    );
   }
 
   // Rate at which source nodes consume their buffers -- 1.0 whenever SoundTouch
@@ -462,20 +472,28 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   // --- public API ---
 
-  function play() {
+  // `leadIn` (source seconds, default 0) delays the moment the stems begin so
+  // a count-in can sound in the gap first -- see audioEngine.js's play() for
+  // the full contract. Only takes effect on the common cached-chunk-0 path
+  // (see the sync/async branch below); by the time count-in can even be
+  // armed the track has been loaded long enough that chunk 0 is virtually
+  // always already cached.
+  function play(leadIn = 0) {
     if (playing || destroyed) return;
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     playing = true;
 
     const chunkIdx = Math.floor(_startOffset / CHUNK_SEC);
     const offsetWithin = _startOffset - chunkIdx * CHUNK_SEC;
+    const countInLead = leadIn > 0 ? leadIn / _srcRate() + COUNT_IN_MARGIN : 0;
 
     // `lead` = scheduling safety margin. The cached (sync) path uses 10 ms —
     // tight enough that loop jumps are near-seamless — while the async path
-    // keeps 50 ms headroom since a fetch/decode just finished.
+    // keeps 50 ms headroom since a fetch/decode just finished. A count-in's
+    // lead overrides either when it asks for more room than that.
     const startWith = (buffers, lead) => {
       if (!playing || destroyed) return;
-      const when = ctx.currentTime + lead;
+      const when = ctx.currentTime + Math.max(lead, countInLead);
       _startCtxTime = when;
       const dur = _scheduleChunk(buffers, when, offsetWithin);
       _scheduledTo = _startOffset + dur;
@@ -592,6 +610,9 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     seek,
     setTime: seek,
     isPlaying: () => playing,
+    // This engine honours play(leadIn) for a count-in (see play() above); the
+    // transport checks this before scheduling one.
+    supportsCountIn: true,
     getCurrentTime: _getCurrentTime,
     getDuration: () => _duration,
     setLoop: (enabled, start, end) => { loop = { enabled, start, end }; },
