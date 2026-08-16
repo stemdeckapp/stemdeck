@@ -1921,9 +1921,8 @@ input, textarea { font-family: inherit; }
 /* ── Transport footer ── */
 
 .daw-footer {
-  /* min-height, not height: the click-track panel between the transport
-     controls and Export Mix (#269 follow-up) can wrap onto more than one
-     line in that narrow gap, and a rigid height would clip it. */
+  /* min-height, not height: the click-track cluster can wrap onto more than
+     one line in a narrow window, and a rigid height would clip it. */
   min-height: 200px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
@@ -2012,45 +2011,72 @@ input, textarea { font-family: inherit; }
 
 /* ── Footer redesign ── */
 
-/* ── Footer layout ── */
-/* Two stacked rows: track info + actions, then the four labelled control
-   groups. Previously one wide row (#269 follow-up rebuild -- everything used
-   to compete for width in a single line; stacking gives each row its own
-   full-width budget instead). */
-.footer-content {
-  display: flex; flex-direction: column;
-  padding: 10px 20px 6px; flex: 1; min-height: 0;
-  gap: 10px;
-}
+/* ── Footer layout: three tiers (design 1b) ── */
+/* Tier 1 -- what is loaded and what leaves the app (track identity, favourite,
+   Export Mix). Tier 2 -- every playback and click control, in labelled clusters
+   separated by hairline dividers. Tier 3 -- the timeline those clusters act on.
+   Each tier owns its own full-width budget instead of everything competing for
+   room in one line. */
 
 .footer-row-top {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
 }
 .footer-row-actions {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
 }
+/* Boxed like the Export button beside it: both are actions on the track, and
+   a bare icon next to a filled button reads as decoration. */
+.footer-row-actions .daw-fav-btn {
+  width: 32px; height: 32px; padding: 0;
+  justify-content: center;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.footer-row-actions .daw-fav-btn:hover { background: var(--panel-3); }
+.footer-row-actions .footer-chip { height: 32px; }
+
+/* Hairline cluster separator: fades out at both ends so it reads as a seam
+   between groups rather than a hard rule across the footer. */
+.footer-divider {
+  width: 1px; flex: none;
+  background: linear-gradient(
+    180deg, transparent, var(--border-strong) 22%, var(--border-strong) 78%, transparent
+  );
+}
+.footer-row-top .footer-divider { height: 24px; }
+.footer-row-controls .footer-divider { height: 44px; }
+/* Stranded at the end of a wrapped line, separating nothing (marked by
+   syncFooterDividers). Hidden rather than removed: taking its box out would
+   change the very wrap that was measured. */
+.footer-divider.is-orphan { visibility: hidden; }
 
 .footer-row-controls {
-  display: flex; align-items: flex-start; flex-wrap: wrap;
-  gap: 8px 28px;
+  display: flex; align-items: flex-end; flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 18px 14px;
 }
 .footer-group {
   display: flex; flex-direction: column; gap: 6px;
   min-width: 0;
 }
 .footer-group-label {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase;
   color: var(--muted);
 }
+/* One control height across every cluster, so the row reads as a single band
+   of controls rather than a ragged stack. */
 .footer-group-body {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  min-height: 34px;
 }
-/* Click track carries the most controls -- give it more room to lay them out
-   in fewer wrapped lines than a group sized like its neighbours would. */
-.footer-group-click { flex: 1 1 320px; max-width: 640px; }
-.footer-group-click .footer-group-body { gap: 6px 10px; }
+/* Click track carries the most controls -- a wide basis so it either shares
+   the line with the other three clusters or takes a line of its own, rather
+   than squeezing into a leftover gap and wrapping into a ragged block. */
+.footer-group-click { flex: 1 1 520px; }
 
 .alpha-badge {
   padding: 1px 5px; border-radius: 4px;
@@ -2059,18 +2085,35 @@ input, textarea { font-family: inherit; }
   text-transform: uppercase;
 }
 
-.footer-chips {
-  /* Shrink-to-content rather than splitting the remaining row equally with
-     .footer-track -- the track info needs the space more. flex-shrink stays
-     on (with a floor) rather than 0: if the row is ever genuinely too narrow
-     for everything, this should compress a little before Export Mix is
-     pushed past the visible edge. */
-  flex: 0 1 auto; min-width: 110px;
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+/* Tier 3: the timeline, inset in its own panel rather than bleeding to the
+   footer edges, with a ruler strip of time labels above the waveform. */
+.footer-wave-region {
+  padding: 0 18px 14px; flex-shrink: 0;
 }
-/* Wave bar at the bottom of the footer */
+.footer-wave-panel {
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.footer-wave-ticks {
+  height: 18px; display: flex; align-items: flex-end;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* No track, no timeline to label -- an empty ruler strip above the placeholder
+   waveform would be measuring nothing. */
+.footer-wave-ticks:empty { display: none; }
+/* Each label marks the start of its own slice of the timeline, so the tick
+   line sits to its left rather than under the middle of the text. */
+.footer-wave-ticks > span {
+  flex: 1; min-width: 0;
+  padding: 0 0 2px 4px;
+  border-left: 1px solid var(--border-strong);
+  font-family: var(--font-mono); font-size: 9px; line-height: 1;
+  color: var(--muted-2);
+}
 .footer-wave-bar {
-  height: 40px; flex-shrink: 0;
+  height: 52px; flex-shrink: 0;
   position: relative; overflow: hidden;
 }
 #footer-waveform {
@@ -2084,31 +2127,30 @@ input, textarea { font-family: inherit; }
 }
 .footer-scrub-fill { display: none; }
 
-/* Track info (art + title + meta) */
+/* Track identity: art, then title over one compact meta line beside it. */
 .footer-track {
   flex: 1; min-width: 200px; overflow: hidden;
-  display: flex; flex-direction: column; justify-content: center;
-  gap: 6px;
+  display: flex; align-items: center; gap: 12px;
 }
-.footer-track-title-row {
-  display: flex; align-items: center; gap: 8px; min-width: 0;
+.footer-track-info {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px;
 }
 .footer-track-title {
-  min-width: 0; flex-shrink: 1;
-  font-size: 14px; font-weight: 600;
+  min-width: 0;
+  font-size: 13px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--fg);
 }
-.footer-track-body {
-  display: flex; align-items: flex-start; gap: 10px; min-width: 0;
-}
 .footer-cover {
-  /* Smaller than the old 56px: the info block next to it is one title line
-     plus one compact meta line now, not a title plus four rows of detail. */
-  width: 40px !important; height: 40px !important;
+  /* Small: the block beside it is one title line plus one meta line, and the
+     tier has to stay shallow enough to leave room for two more below it. */
+  width: 36px !important; height: 36px !important;
+  border-radius: 7px;
   flex-shrink: 0;
 }
-.footer-track-body .daw-track-meta { flex: 1; min-width: 0; gap: 4px; justify-content: center; }
+/* One line, clipped -- the meta never pushes the tier taller. */
+.footer-track-info .daw-track-meta-line { flex-wrap: nowrap; white-space: nowrap; }
 .footer-art {
   width: 44px; height: 44px; border-radius: 6px;
   background: var(--panel-3); flex-shrink: 0; overflow: hidden;
@@ -2133,15 +2175,16 @@ input, textarea { font-family: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Position group: elapsed / total time */
-.footer-group-position .footer-group-body { align-items: baseline; gap: 4px; }
+/* Position group: elapsed / total time, then the loop controls that act on
+   that position (design 1b groups them together, not with the transport). */
+.footer-group-position .footer-group-body { gap: 4px; }
 .footer-elapsed {
-  font-size: 17px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg);
+  font-size: 18px; font-weight: 500; letter-spacing: -0.02em; color: var(--fg);
 }
 .footer-total {
-  font-size: 13px; font-weight: 400; color: var(--muted);
+  font-size: 12px; font-weight: 400; color: var(--muted-2);
 }
-.footer-time-sep { font-size: 13px; color: var(--muted); }
+.footer-time-sep { font-size: 12px; color: var(--muted-2); }
 
 /* Exact loop start/end inputs (inline, right of the loop button) */
 .footer-loop-times {
@@ -2160,8 +2203,10 @@ input, textarea { font-family: inherit; }
 .loop-time-input:focus { border-color: var(--accent); }
 .loop-time-input:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* Transport group */
+/* Transport group: stop square + a play key wide enough to be the obvious
+   primary, both on the shared 34px control height. */
 .footer-group-transport .daw-iconbtn.btn-transport {
+  width: 34px; height: 34px; border-radius: 8px;
   background: var(--panel-2);
   border-color: var(--border-strong);
   color: var(--fg-2);
@@ -2171,6 +2216,16 @@ input, textarea { font-family: inherit; }
   background: var(--panel-3);
   color: var(--fg);
 }
+.footer-group-transport .daw-play-btn {
+  width: 44px; height: 34px; border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+}
+.footer-group-transport .daw-play-btn:hover {
+  box-shadow: 0 2px 12px rgba(244,183,64,0.35), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+.footer-group-transport .daw-play-btn.playing:hover {
+  box-shadow: 0 2px 12px rgba(76,175,125,0.45), inset 0 1px 0 rgba(255,255,255,0.24);
+}
 /* Active transport states: stop = red while stopped, loop = blue while looping. */
 .footer-group-transport .btn-transport.stopped,
 .footer-group-transport .btn-transport.stopped:hover {
@@ -2178,42 +2233,61 @@ input, textarea { font-family: inherit; }
   border-color: rgba(214,90,74,0.55);
   color: var(--danger);
 }
-/* The loop button carries a text label now ("Loop position"), not just an
-   icon -- widen it from the fixed 30px square every other transport icon
-   button uses. */
-.footer-group-transport .btn-transport.loop {
-  width: auto; height: 30px; padding: 0 10px; gap: 6px;
+/* Loop sits in the Position group and reads as a modifier on the readout next
+   to it, so it is a short labelled pill rather than a full-height control. */
+.footer-group-position .daw-iconbtn.btn-transport.loop {
+  width: auto; height: 26px; padding: 0 9px; gap: 6px; margin-left: 6px;
+  border-radius: 7px;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  color: var(--fg-2);
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
-.loop-btn-label { font-size: 11px; font-weight: 600; white-space: nowrap; }
-.footer-group-transport .btn-transport.loop.active,
-.footer-group-transport .btn-transport.loop.active:hover {
+.footer-group-position .btn-transport.loop:hover {
+  background: var(--panel-3); color: var(--fg);
+}
+.loop-btn-label { font-size: 11px; font-weight: 500; white-space: nowrap; }
+.footer-group-position .btn-transport.loop.active,
+.footer-group-position .btn-transport.loop.active:hover {
   background: rgba(74,140,255,0.16);
   border-color: rgba(74,140,255,0.55);
   color: #4a8cff;
 }
 
-/* Speed group: fixed practice-speed presets, not a continuous dial (#269
-   follow-up). */
-.speed-group { display: flex; gap: 4px; }
-.speed-btn {
-  padding: 4px 8px;
+/* ── Segmented controls (Speed, click rate) ── */
+/* One joined track rather than separate pills: the options are exclusive, and
+   butting them together says so (design 1b). */
+.footer-seg {
+  display: flex; height: 34px; overflow: hidden;
   background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 6px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 11px; font-weight: 700;
-  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+  border-radius: 8px;
 }
-.speed-btn:hover { background: var(--panel-3); color: var(--fg); }
-.speed-btn.active {
-  background: rgba(232,200,64,0.16); border-color: rgba(232,200,64,0.5); color: var(--accent);
+.footer-seg > button {
+  border: 0; background: transparent;
+  padding: 0 11px; cursor: pointer;
+  color: var(--muted);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500; line-height: 1;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.footer-seg > button:hover { background: var(--panel-3); color: var(--fg); }
+.footer-seg > button + button { border-left: 1px solid var(--border); }
+.speed-btn.active,
+.speed-btn.active:hover {
+  background: rgba(232,200,64,0.16); color: var(--accent);
+}
+.metro-mult-btn.active,
+.metro-mult-btn.active:hover {
+  background: rgba(74,140,255,0.16); color: #4a8cff;
 }
 
 /* Click track on/off toggle. Lit gold while the click is running, so its
    state is visible without any other affordance. */
 .click-toggle-btn {
-  padding: 4px 12px;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 10px;
   background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 6px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  border-radius: 8px; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .click-toggle-btn:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
@@ -2222,46 +2296,7 @@ input, textarea { font-family: inherit; }
 .click-toggle-btn.active:hover {
   background: rgba(232,200,64,0.18); border-color: rgba(232,200,64,0.55); color: var(--accent);
 }
-
-/* Count-in toggle switch (replaces a plain checkbox -- this one and the
-   click on/off above are the two states a player checks at a glance). */
-.metro-switch {
-  display: flex; align-items: center; gap: 6px;
-  cursor: pointer; user-select: none; white-space: nowrap;
-  font-size: 10.5px; font-weight: 600; color: var(--fg-2);
-}
-.metro-switch input[type="checkbox"] {
-  position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
-}
-.metro-switch-track {
-  position: relative; flex-shrink: 0;
-  width: 28px; height: 16px; border-radius: 999px;
-  background: var(--panel); border: 1px solid var(--border-strong);
-  transition: background var(--t-fast), border-color var(--t-fast);
-}
-.metro-switch-track::after {
-  content: ""; position: absolute; top: 1px; left: 1px;
-  width: 12px; height: 12px; border-radius: 50%;
-  background: var(--fg-2);
-  transition: transform var(--t-fast), background var(--t-fast);
-}
-.metro-switch input:checked + .metro-switch-track {
-  background: rgba(232,200,64,0.22); border-color: var(--accent);
-}
-.metro-switch input:checked + .metro-switch-track::after {
-  transform: translateX(12px);
-  background: var(--accent);
-}
-.metro-switch input:focus-visible + .metro-switch-track {
-  outline: 2px solid var(--accent); outline-offset: 2px;
-}
-
-/* Screen-reader-only: content still reaches assistive tech and the native
-   tooltip chain without taking visible space (the volume % readout). */
-.sr-only {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
-}
+.click-metro-icon { flex-shrink: 0; }
 
 /* Beat grid editor: canvas overlay + toolbar */
 .beatgrid-canvas {
@@ -2311,16 +2346,15 @@ input, textarea { font-family: inherit; }
 .bg-spacer { flex: 1; min-width: 8px; }
 .bg-hint { font-size: 10.5px; color: var(--muted); flex-basis: 100%; }
 
-/* Click track options: inline, always visible in the gap between the
-   transport controls and Export Mix once a track has a beat grid (#269
-   follow-up -- no popover, no click to reveal them). Everything is sized to
-   fit that narrow gap and wraps onto more than one line there; .daw-footer
-   is min-height (not a fixed height) so wrapping never clips. */
+/* Click track options: inline in the Click track cluster, always visible once
+   a track has a beat grid (#269 follow-up -- no popover, no click to reveal
+   them). Everything shares the 34px control height of the clusters beside it;
+   .daw-footer is min-height (not a fixed height) so a wrap never clips. */
 .footer-metro-panel {
   /* display:contents removes this element's own box and promotes its
-     children (the volume row, accent select, rate group, count-in, grid
-     button, note) to be direct flex items of .footer-experimental, as peers
-     of the pill -- one flat wrap group the browser can line-break wherever
+     children (the count-in switch, accent select, grid button, rate segment,
+     volume) to be direct flex items of .footer-group-body, as peers of the
+     on/off pill -- one flat wrap group the browser can line-break wherever
      the available width actually allows, instead of the pill being forced
      alone onto its own row and everything else confined to a second,
      artificially narrow one (#269 follow-up). .hidden below still works: it
@@ -2329,55 +2363,55 @@ input, textarea { font-family: inherit; }
   display: contents;
 }
 .footer-metro-panel.hidden { display: none; }
-.metro-row { display: flex; align-items: center; gap: 5px; }
+.metro-row { display: flex; align-items: center; gap: 9px; }
+.metro-vol-row { width: 140px; }
 .metro-vol-icon { color: var(--muted); flex-shrink: 0; }
 .metro-label {
   font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--muted); flex-shrink: 0;
 }
-.metro-row input[type="range"] { width: 48px; accent-color: var(--accent); }
+.metro-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .metro-val {
-  font-size: 10px; color: var(--fg-2); width: 3ch; text-align: right;
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  width: 4ch; text-align: right;
   font-variant-numeric: tabular-nums; flex-shrink: 0;
 }
+/* Native select, restyled to the same pill as the buttons around it: the
+   caret is drawn by the wrapper so no appearance-dependent arrow shows. */
+.metro-select-wrap { position: relative; display: inline-flex; }
+.metro-select-wrap::after {
+  content: ""; position: absolute; right: 10px; top: 50%;
+  margin-top: -2px; pointer-events: none;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--muted);
+}
 .metro-select {
-  /* Wide enough for "Auto (none found)", the longest option text -- it was
-     clipping mid-word at 108px. */
-  padding: 2px 4px; max-width: 132px;
+  appearance: none; -webkit-appearance: none;
+  height: 34px; padding: 0 26px 0 10px; max-width: 168px;
   background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 5px; color: var(--fg);
-  font-family: inherit; font-size: 10px; font-weight: 600; outline: none;
+  border-radius: 8px; color: var(--fg); cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 500; outline: none;
 }
+.metro-select:hover { background: var(--panel-3); }
 .metro-select:focus { border-color: var(--accent); }
-.metro-mult { display: flex; gap: 3px; }
-.metro-mult-btn {
-  padding: 2px 5px;
-  background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 5px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 9.5px; font-weight: 700;
-  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
-}
-.metro-mult-btn:hover { background: var(--panel-3); color: var(--fg); }
-.metro-mult-btn.active {
-  background: rgba(74,140,255,0.16); border-color: rgba(74,140,255,0.55); color: #4a8cff;
-}
 
 .metro-edit-btn {
-  padding: 2px 7px;
+  height: 34px; padding: 0 10px;
   background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 5px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 9.5px; font-weight: 600;
+  border-radius: 8px; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 500;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .metro-edit-btn:hover { background: var(--panel-3); color: var(--fg); }
 .metro-edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Detection confidence / unavailability note: its own full-width row at the
-   bottom of the footer (a direct child of .footer-content, below the control
-   groups -- #269 follow-up), hidden until it has text, clipped to one line
-   with the full text as a native tooltip. */
+/* Detection confidence / unavailability note: its own line under the
+   waveform, where it reads as a caption on the timeline it describes (design
+   1b). Hidden until it has text, clipped to one line with the full text as a
+   native tooltip. */
 .metro-note {
-  font-size: 10px; line-height: 1.3; color: var(--muted);
+  margin-top: 8px;
+  font-size: 11px; line-height: 1.3; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .metro-note:empty { display: none; }

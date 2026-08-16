@@ -42,6 +42,7 @@ export const presenceRulerEl = $("presence-ruler");
 export const presencePlayheadEl = $("presence-playhead");
 export const footerTimeElapsed = $("footer-time-elapsed");
 export const footerTimeTotal = $("footer-time-total");
+export const footerWaveTicks = $("footer-wave-ticks");
 export const loopStartInput = $("t-loop-start");
 export const loopEndInput = $("t-loop-end");
 export const metroBtn = $("t-metro");

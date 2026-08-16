@@ -6,7 +6,7 @@ import {
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
-  footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
+  footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
   loopStartInput, loopEndInput,
   metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
@@ -117,6 +117,23 @@ export function updateFooterTimes(currentSec) {
   const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
   if (npScrubFill) npScrubFill.style.width = `${pct}%`;
   footerWaveDrawFn?.(pct / 100);
+}
+
+// Time labels above the footer waveform. Each label opens the slice of the
+// timeline it sits on (its tick line is drawn on its left edge by CSS), so the
+// last slice starts at 7/8 of the track rather than at its very end -- a label
+// hard against the right edge would have nothing to the right of it to mark.
+const FOOTER_WAVE_TICKS = 8;
+
+export function buildFooterWaveTicks(durationSec) {
+  if (!footerWaveTicks) return;
+  footerWaveTicks.innerHTML = "";
+  if (!durationSec || durationSec <= 0) return;
+  for (let i = 0; i < FOOTER_WAVE_TICKS; i++) {
+    const label = document.createElement("span");
+    label.textContent = fmtTickLabel((i / FOOTER_WAVE_TICKS) * durationSec);
+    footerWaveTicks.appendChild(label);
+  }
 }
 
 // Build the presence-panel ruler labels from the actual track duration.
@@ -525,6 +542,31 @@ function wireLaneScrollSync() {
   link(waveScroll, mixer);
 }
 
+// The control clusters wrap when the window is too narrow to hold them side
+// by side, which can leave a divider stranded at the end of a line with
+// nothing after it to separate. Mark those so CSS can hide them.
+//
+// Compares bottom edges, not tops: the row is bottom-aligned, so a divider
+// and the cluster beside it share a baseline but start at different heights.
+function syncFooterDividers() {
+  const row = document.querySelector(".footer-row-controls");
+  if (!row) return;
+  const bottom = (el) => Math.round(el.getBoundingClientRect().bottom);
+  for (const divider of row.querySelectorAll(".footer-divider")) {
+    const next = divider.nextElementSibling;
+    divider.classList.toggle("is-orphan", !next || bottom(next) !== bottom(divider));
+  }
+}
+
+function wireFooterDividers() {
+  const row = document.querySelector(".footer-row-controls");
+  if (!row) return;
+  // Observing the row catches both window resizes and the controls changing
+  // width (a track with a click track has more of them than one without).
+  new ResizeObserver(syncFooterDividers).observe(row);
+  syncFooterDividers();
+}
+
 // ─── Wire transport buttons ───
 
 export function wireTransportButtons() {
@@ -534,6 +576,7 @@ export function wireTransportButtons() {
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
   wireLoopInputs();
+  wireFooterDividers();
   wireZoomButtons();
   wireLaneScrollSync();
   masterFader?.addEventListener("input", () => {
@@ -619,10 +662,18 @@ export function applyMetronomeAccent() {
 function _renderMetroVolume() {
   const pct = `${Math.round(metronomeVolume * 100)}%`;
   if (metroVolEl) { metroVolEl.value = String(metronomeVolume); metroVolEl.title = `Click volume: ${pct}`; }
-  // No visible % readout next to the slider (icon + slider only); the value
-  // still reaches assistive tech via this element and sighted users via the
-  // slider's own tooltip above.
+  // Readout sits next to the slider (design 1b): a click level you can only
+  // learn by hovering is one you cannot match between sessions.
   if (metroVolLabel) metroVolLabel.textContent = pct;
+}
+
+// Count-in is a press-to-arm toggle like the click on/off beside it, not a
+// switch: both are "is this on for the next play?", and two different widgets
+// for the same question read as two different kinds of setting.
+function _renderCountIn() {
+  if (!metroCountInEl) return;
+  metroCountInEl.classList.toggle("active", metronomeCountIn);
+  metroCountInEl.setAttribute("aria-pressed", metronomeCountIn ? "true" : "false");
 }
 
 export function toggleMetronome(force) {
@@ -733,7 +784,7 @@ function wireMetronomeControl() {
     }
     _renderMetroVolume();
     if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
-    if (metroCountInEl) metroCountInEl.checked = metronomeCountIn;
+    _renderCountIn();
     if (metronomeEnabled && !metroBtn.disabled) {
       metroBtn.classList.add("active");
       metroBtn.setAttribute("aria-pressed", "true");
@@ -761,8 +812,9 @@ function wireMetronomeControl() {
     });
   }
 
-  metroCountInEl?.addEventListener("change", () => {
-    setMetronomeCountIn(!!metroCountInEl.checked);
+  metroCountInEl?.addEventListener("click", () => {
+    setMetronomeCountIn(!metronomeCountIn);
+    _renderCountIn();
     _saveMetroPrefs();
   });
 

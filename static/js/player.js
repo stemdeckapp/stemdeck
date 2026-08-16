@@ -38,7 +38,7 @@ import {
 } from "./mixer.js";
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
-  applyWaveZoom, buildPresenceRuler, updateFooterTimes,
+  applyWaveZoom, buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
   updatePresencePlayhead, resetSpeed, updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
@@ -787,6 +787,7 @@ export function destroyPlayer() {
   setTrackIndex({});
   applyWaveZoom();
   buildPresenceRuler(0);
+  buildFooterWaveTicks(0);
   updateFooterTimes(0);
   updatePresencePlayhead(0);
   if (waveScroll) waveScroll.scrollLeft = 0;
@@ -1152,6 +1153,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     timeEl.textContent = `00:00 / ${fmtTime(totalDuration)}`;
     buildRuler(totalDuration);
     buildPresenceRuler(totalDuration);
+    buildFooterWaveTicks(totalDuration);
     updateFooterTimes(0);
     updatePresencePlayhead(0);
     setMasterVolume(masterFader ? parseFloat(masterFader.value) : masterVolume);
