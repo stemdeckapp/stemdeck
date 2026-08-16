@@ -5,7 +5,7 @@
 
 import {
   bgToolbar, bgUndoBtn, bgRedoBtn, bgResetBtn, bgDoneBtn,
-  bgRippleEl, bgSnapEl, bgBarLenEl, bgHintEl, metronome, metroEditBtn, metroPanel,
+  bgRippleEl, bgSnapEl, bgBarLenEl, bgHintEl, metronome, metroEditBtn,
 } from "./state.js";
 import {
   setBeatGridEditing, isBeatGridEditing, setBeatGridTool, getBeatGridTool,
@@ -93,10 +93,7 @@ export function wireBeatGridUi() {
     }
   });
 
-  metroEditBtn?.addEventListener("click", () => {
-    metroPanel?.classList.add("hidden");
-    toggleBeatGridEditor(true);
-  });
+  metroEditBtn?.addEventListener("click", () => toggleBeatGridEditor(true));
 
   bgUndoBtn?.addEventListener("click", () => { undoBeatGrid(); syncBeatGridButtons(); });
   bgRedoBtn?.addEventListener("click", () => { redoBeatGrid(); syncBeatGridButtons(); });

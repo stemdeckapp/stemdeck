@@ -33,6 +33,83 @@ const ACCENT_FREQ = 1500;
 const CLICK_DECAY = 0.035;
 const CLICK_ATTACK = 0.001;
 
+// ─── Count-in (issue #269) ───────────────────────────────────────────────
+//
+// A count-in is one bar of click *before* playback, leading into the start
+// position. The maths below is a literal mirror of count_in_beats() in
+// app/pipeline/click_render.py so the live count-in and the exported one agree
+// beat-for-beat -- the same parity discipline that pins the click voice across
+// the two files. Kept pure and module-level so it can be unit-tested and reused
+// by the export URL builder without a live AudioContext.
+
+function _rescaleForCount(beats, mult) {
+  if (mult === 2) {
+    const out = [];
+    for (let i = 0; i < beats.length - 1; i++) out.push(beats[i], (beats[i] + beats[i + 1]) / 2);
+    if (beats.length) out.push(beats[beats.length - 1]);
+    return out;
+  }
+  if (mult === 0.5) return beats.filter((_, i) => i % 2 === 0);
+  return beats.slice();
+}
+
+function _countInBeatsPerBar(bars, accentMode, startIndex) {
+  if (accentMode > 0) return accentMode;
+  // Auto / off: the detected meter in force at the start beat, else 4. A
+  // count-in always needs a bar length, even with accents switched off.
+  let mark = null;
+  for (const b of bars) {
+    if (Number.isInteger(b.beat) && b.beat <= startIndex) mark = b;
+    else break;
+  }
+  if (mark && Number.isInteger(mark.beats_per_bar) && mark.beats_per_bar >= 1) {
+    return mark.beats_per_bar;
+  }
+  return 4;
+}
+
+function _intervalNear(grid, start, span) {
+  if (grid.length < 2) return null;
+  let i = 0;
+  while (i < grid.length && grid[i] < start) i++;
+  i = Math.min(i, grid.length - 2);
+  const diffs = [];
+  for (let k = i; k < Math.min(i + Math.max(1, span), grid.length - 1); k++) {
+    const d = grid[k + 1] - grid[k];
+    if (d > 0) diffs.push(d);
+  }
+  if (!diffs.length) return null;
+  diffs.sort((a, b) => a - b);
+  return diffs[diffs.length >> 1];
+}
+
+/**
+ * The count-in that leads into playback at `start`.
+ * @returns {{leadIn:number, clicks:{offset:number, accent:boolean}[]}}
+ *   `leadIn` seconds of pre-roll, and clicks at offsets in `[0, leadIn)`.
+ */
+export function computeCountIn(
+  beats,
+  bars,
+  { countBars = 1, multiplier = 1, accentMode = -1, start = 0 } = {},
+) {
+  if (countBars < 1) return { leadIn: 0, clicks: [] };
+  const clean = Array.isArray(beats) ? beats.filter((b) => Number.isFinite(b)) : [];
+  const grid = _rescaleForCount(clean, multiplier);
+  let startIndex = 0;
+  for (let k = 0; k < clean.length; k++) {
+    if (clean[k] <= start) startIndex = k;
+    else break;
+  }
+  const bpb = _countInBeatsPerBar(Array.isArray(bars) ? bars : [], accentMode, startIndex);
+  const interval = _intervalNear(grid, start, bpb);
+  if (interval === null) return { leadIn: 0, clicks: [] };
+  const n = countBars * bpb;
+  const clicks = [];
+  for (let j = 0; j < n; j++) clicks.push({ offset: j * interval, accent: j % bpb === 0 });
+  return { leadIn: n * interval, clicks };
+}
+
 /**
  * @param {object} engine        Audio engine exposing sourceTimeToCtxTime,
  *                               ctxTimeToSourceTime, getScheduleEpoch,
@@ -110,6 +187,12 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
   let epoch = -1;
   /** @type {{osc:OscillatorNode, env:GainNode}[]} */
   let queued = [];
+  // Count-in one-shots are tracked separately from the running click's `queued`:
+  // they are scheduled outside the _tick loop (which may not even be running when
+  // the click track is off) and must survive until they sound or the transport
+  // cancels them. See playCountIn / cancelCountIn.
+  /** @type {{osc:OscillatorNode, env:GainNode}[]} */
+  let countInQueued = [];
 
   // First beat at or after `t`. Binary search rather than a scan: tracks run to
   // thousands of beats and this runs on every seek.
@@ -132,8 +215,18 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
     queued = [];
   }
 
-  // Schedule one click to sound at AudioContext time `when`.
-  function _scheduleClick(when, accent) {
+  function _cancelCountIn() {
+    for (const { osc, env } of countInQueued) {
+      try { osc.stop(); } catch { /* already stopped */ }
+      try { env.disconnect(); } catch { /* noop */ }
+    }
+    countInQueued = [];
+  }
+
+  // Schedule one click to sound at AudioContext time `when`. `sink` is the list
+  // it registers itself in so the right batch can be torn down independently
+  // (the running click's `queued`, or the count-in's `countInQueued`).
+  function _scheduleClick(when, accent, sink = queued) {
     const osc = ctx.createOscillator();
     const env = ctx.createGain();
     osc.type = "sine";
@@ -152,11 +245,11 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
     osc.stop(when + CLICK_DECAY + 0.01);
 
     const entry = { osc, env };
-    queued.push(entry);
+    sink.push(entry);
     osc.onended = () => {
       try { env.disconnect(); } catch { /* noop */ }
-      const i = queued.indexOf(entry);
-      if (i >= 0) queued.splice(i, 1);
+      const i = sink.indexOf(entry);
+      if (i >= 0) sink.splice(i, 1);
     };
   }
 
@@ -233,6 +326,27 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
       if (destroyed) return;
       gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
     },
+    /**
+     * Play a one-shot count-in: clicks at the given *source* times (typically
+     * negative -- before the audio), routed through the same voice and bus as
+     * the running click so they inherit its volume and the SoundTouch path.
+     * Independent of `enabled`, so a count-in can precede a clean (click-off)
+     * playback. The engine must already have been told to start late (see
+     * audioEngine.play(leadIn)) so these map into the silent lead-in gap.
+     * @param {{time:number, accent:boolean}[]} clicks
+     */
+    playCountIn(clicks) {
+      if (destroyed || !Array.isArray(clicks) || !clicks.length) return;
+      _cancelCountIn();
+      for (const c of clicks) {
+        const when = engine.sourceTimeToCtxTime(c.time);
+        if (when > ctx.currentTime) _scheduleClick(when, !!c.accent, countInQueued);
+      }
+    },
+    /** Tear down a count-in already handed to the audio clock (pause/stop). */
+    cancelCountIn() {
+      if (!destroyed) _cancelCountIn();
+    },
     /** 0 disables accents; otherwise accent every Nth beat from the grid start. */
     setBeatsPerBar(n) {
       _beatsPerBar = Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
@@ -284,6 +398,7 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
     destroy() {
       destroyed = true;
       _stop();
+      _cancelCountIn();
       try { gain.disconnect(); } catch { /* noop */ }
     },
   };

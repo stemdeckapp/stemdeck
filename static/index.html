@@ -529,7 +529,6 @@
 
           </div><!-- /.daw-content -->
 
-          <!-- Transport footer -->
         </div><!-- /#lanes -->
 
       <!-- ══ FOOTER — sibling of #lanes inside .daw-main-col, not clipped ══ -->
@@ -538,135 +537,50 @@
         <!-- Top row: track info | transport + time | chips -->
         <div class="footer-content">
 
-          <div class="footer-track">
-            <div class="footer-track-title-row">
-              <div class="daw-track-title footer-track-title" id="title">—</div>
+          <div class="footer-row-top">
+            <div class="footer-track">
+              <div class="footer-track-title-row">
+                <div class="daw-track-title footer-track-title" id="title">—</div>
+              </div>
+              <div class="footer-track-body">
+              <div class="daw-cover footer-cover" id="np-art">
+                <div class="np-art-placeholder" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                  </svg>
+                </div>
+                <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+              </div>
+              <div class="daw-track-meta">
+                <div class="daw-track-meta-line">
+                  <span class="num" id="t-meta-duration">—</span>
+                  <span class="daw-track-sep" aria-hidden="true">·</span>
+                  <span id="t-stems-chip">— stems</span>
+                  <span class="daw-track-sep" aria-hidden="true">·</span>
+                  <span id="track-source">—</span>
+                  <span class="daw-track-sep" aria-hidden="true">·</span>
+                  <span id="track-quality">—</span>
+                  <span class="daw-track-sep" aria-hidden="true">·</span>
+                  <span>Extracted <span id="track-extracted">—</span></span>
+                </div>
+              </div>
+              </div><!-- /.footer-track-body -->
+              <!-- Hidden spans for JS compat: not shown, but still written to
+                   (t-time is superseded here by the Position group in the
+                   controls row below -- keeping it live would just duplicate
+                   that readout next to the title). -->
+              <div style="display:none" aria-hidden="true">
+                <span id="t-time"></span><span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
+              </div>
+            </div>
+
+            <div class="footer-row-actions">
               <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" aria-pressed="false">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                 </svg>
               </button>
-            </div>
-            <div class="footer-track-body">
-            <div class="daw-cover footer-cover" id="np-art">
-              <div class="np-art-placeholder" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                </svg>
-              </div>
-              <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
-            </div>
-            <div class="daw-track-meta">
-              <div class="daw-track-time-row">
-                <span class="num daw-track-sub" id="t-time">—</span>
-                <span class="daw-track-sep" aria-hidden="true">|</span>
-                <span class="daw-track-stems-label" id="t-stems-chip">— Stems</span>
-              </div>
-              <div class="daw-track-details">
-                <div class="daw-detail-row">
-                  <span class="daw-detail-label">Extracted</span>
-                  <span class="daw-detail-val" id="track-extracted">—</span>
-                </div>
-                <div class="daw-detail-row">
-                  <span class="daw-detail-label">Source</span>
-                  <span class="daw-detail-val" id="track-source">—</span>
-                </div>
-                <div class="daw-detail-row">
-                  <span class="daw-detail-label">Quality</span>
-                  <span class="daw-detail-val" id="track-quality">—</span>
-                </div>
-              </div>
-            </div>
-            </div><!-- /.footer-track-body -->
-            <!-- Hidden spans for JS compat -->
-            <div style="display:none" aria-hidden="true">
-              <span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
-            </div>
-          </div>
-
-          <div class="footer-center">
-            <div class="footer-experimental" id="t-metro-wrap">
-              <button class="exp-pill btn-transport metro" id="t-metro" type="button"
-                      title="Click track (K) -- right-click for volume, accent and rate"
-                      aria-label="Click track" aria-pressed="false" disabled>
-                <svg class="exp-flask" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-                  <path d="M9 3h6M10 3v6.5L4.6 18a2 2 0 0 0 1.7 3h11.4a2 2 0 0 0 1.7-3L14 9.5V3"/>
-                  <path d="M7.5 14h9"/>
-                </svg>
-                <span class="exp-pill-label">Experimental</span>
-              </button>
-                <div class="footer-metro-panel hidden" id="t-metro-panel" role="group" aria-label="Click track options">
-                  <div class="metro-row">
-                    <span class="metro-label">VOLUME</span>
-                    <input type="range" id="t-metro-vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume">
-                    <span class="metro-val num" id="t-metro-vol-label">60%</span>
-                  </div>
-                  <div class="metro-row">
-                    <span class="metro-label">ACCENT</span>
-                    <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats">
-                      <option value="-1" selected>Auto (detected)</option>
-                      <option value="0">Off</option>
-                      <option value="2">2/4</option>
-                      <option value="3">3/4</option>
-                      <option value="4">4/4</option>
-                      <option value="6">6/8</option>
-                    </select>
-                  </div>
-                  <div class="metro-row">
-                    <span class="metro-label">RATE</span>
-                    <div class="metro-mult" role="radiogroup" aria-label="Click rate">
-                      <button class="metro-mult-btn" id="t-metro-half" type="button" role="radio" aria-checked="false" title="Half time">/2</button>
-                      <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo">1x</button>
-                      <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time">x2</button>
-                    </div>
-                  </div>
-                  <button class="metro-edit-btn" id="t-metro-edit" type="button">Edit beat grid (G)</button>
-                  <div class="metro-note" id="t-metro-note"></div>
-                </div>
-            </div>
-            <div class="footer-transport">
-              <div class="footer-transport-spacer" aria-hidden="true"></div>
-              <div class="footer-transport-main">
-              <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <rect x="6" y="6" width="12" height="12"/>
-                </svg>
-              </button>
-              <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="margin-left:2px">
-                  <path d="M6 4l14 8L6 20z"/>
-                </svg>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
-                  <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
-                </svg>
-              </button>
-              <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop (L)" aria-label="Loop">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
-                </svg>
-              </button>
-              </div>
-              <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)">
-                <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" value="00:00.000">
-                <span class="loop-times-sep" aria-hidden="true">-</span>
-                <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" value="00:00.000">
-              </div>
-            </div>
-            <div class="footer-time-row">
-              <span class="num footer-elapsed" id="footer-time-elapsed">0:00</span>
-              <span class="footer-time-sep">/</span>
-              <span class="num footer-total" id="footer-time-total">0:00</span>
-            </div>
-            <div class="tempo-bar" id="t-speed-wrap" title="Playback speed (double-click to reset)">
-              <span class="tempo-bar-label">TEMPO</span>
-              <input type="range" id="t-speed" min="0" max="2" step="0.25" value="1" aria-label="Playback speed">
-              <span class="tempo-bar-divider" aria-hidden="true"></span>
-              <span class="tempo-bar-val" id="t-speed-label">1.0x</span>
-            </div>
-          </div>
-
-          <div class="footer-chips">
-            <div class="footer-chip-wrap" id="footer-export-wrap">
+              <div class="footer-chip-wrap" id="footer-export-wrap">
               <button class="footer-chip footer-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
                 <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
@@ -690,6 +604,10 @@
                 <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file">
                   <input type="checkbox" id="t-export-click">
                   <span>Include click track</span>
+                </label>
+                <label class="export-click-opt" id="t-export-count-in-wrap" title="Prepend one bar of count-in click before the audio">
+                  <input type="checkbox" id="t-export-count-in">
+                  <span>Add count-in (1 bar)</span>
                 </label>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
                   <span class="chip-item-icon" aria-hidden="true">
@@ -722,6 +640,94 @@
               </div>
             </div>
           </div>
+          </div><!-- /.footer-row-top -->
+
+          <div class="footer-row-controls">
+            <div class="footer-group footer-group-transport">
+              <span class="footer-group-label">Transport</span>
+              <div class="footer-group-body">
+                <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="6" width="12" height="12"/>
+                  </svg>
+                </button>
+                <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="margin-left:2px">
+                    <path d="M6 4l14 8L6 20z"/>
+                  </svg>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
+                    <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
+                  </svg>
+                </button>
+                <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop (L)" aria-label="Loop">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
+                  </svg>
+                  <span class="loop-btn-label">Loop position</span>
+                </button>
+                <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)">
+                  <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" value="00:00.000">
+                  <span class="loop-times-sep" aria-hidden="true">-</span>
+                  <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" value="00:00.000">
+                </div>
+              </div>
+            </div>
+
+            <div class="footer-group footer-group-position">
+              <span class="footer-group-label">Position</span>
+              <div class="footer-group-body">
+                <span class="num footer-elapsed" id="footer-time-elapsed">0:00</span>
+                <span class="footer-time-sep">/</span>
+                <span class="num footer-total" id="footer-time-total">0:00</span>
+              </div>
+            </div>
+
+            <div class="footer-group footer-group-speed">
+              <span class="footer-group-label">Speed</span>
+              <div class="footer-group-body speed-group" id="t-speed-wrap" role="radiogroup" aria-label="Playback speed">
+                <button class="speed-btn" id="t-speed-025" type="button" role="radio" aria-checked="false" data-speed="0.25">0.25x</button>
+                <button class="speed-btn" id="t-speed-05" type="button" role="radio" aria-checked="false" data-speed="0.5">0.5x</button>
+                <button class="speed-btn active" id="t-speed-1" type="button" role="radio" aria-checked="true" data-speed="1">1x</button>
+              </div>
+            </div>
+
+            <div class="footer-group footer-group-click" id="t-metro-wrap">
+              <span class="footer-group-label">Click track <span class="alpha-badge">Alpha</span></span>
+              <div class="footer-group-body">
+                <button class="click-toggle-btn" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" aria-pressed="false" disabled>ON</button>
+                <div class="footer-metro-panel" id="t-metro-panel" role="group" aria-label="Click track options">
+                  <label class="metro-switch" title="Count one bar of click before the song starts when you press play">
+                    <input type="checkbox" id="t-metro-countin">
+                    <span class="metro-switch-track" aria-hidden="true"></span>
+                    <span class="metro-switch-label">Count-in</span>
+                  </label>
+                  <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats">
+                    <option value="-1" selected>Auto (detected)</option>
+                    <option value="0">Off</option>
+                    <option value="2">2/4</option>
+                    <option value="3">3/4</option>
+                    <option value="4">4/4</option>
+                    <option value="6">6/8</option>
+                  </select>
+                  <button class="metro-edit-btn" id="t-metro-edit" type="button" title="Open the beat-grid editor">Grid (G)</button>
+                  <div class="metro-mult" role="radiogroup" aria-label="Click rate">
+                    <button class="metro-mult-btn" id="t-metro-half" type="button" role="radio" aria-checked="false" title="Half time">/2</button>
+                    <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo">1x</button>
+                    <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time">x2</button>
+                  </div>
+                  <div class="metro-row metro-vol-row">
+                    <svg class="metro-vol-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>
+                    </svg>
+                    <input type="range" id="t-metro-vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume">
+                    <span class="metro-val num sr-only" id="t-metro-vol-label">60%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div><!-- /.footer-row-controls -->
+
+          <div class="metro-note" id="t-metro-note"></div>
 
         </div><!-- /.footer-content -->
 

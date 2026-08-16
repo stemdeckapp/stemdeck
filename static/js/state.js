@@ -17,8 +17,7 @@ export const keyChip = $("t-key");
 export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
 export const masterFader = $("t-master");
-export const speedEl = $("t-speed");
-export const speedLabelEl = $("t-speed-label");
+export const speedBtns = ["t-speed-025", "t-speed-05", "t-speed-1"].map($);
 export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 
@@ -47,7 +46,6 @@ export const loopStartInput = $("t-loop-start");
 export const loopEndInput = $("t-loop-end");
 export const metroBtn = $("t-metro");
 export const metroPanel = $("t-metro-panel");
-export const metroWrap = $("t-metro-wrap");
 export const metroVolEl = $("t-metro-vol");
 export const metroVolLabel = $("t-metro-vol-label");
 export const metroBarEl = $("t-metro-bar");
@@ -55,9 +53,12 @@ export const metroNoteEl = $("t-metro-note");
 export const metroHalfBtn = $("t-metro-half");
 export const metroOneBtn = $("t-metro-one");
 export const metroDoubleBtn = $("t-metro-double");
+export const metroCountInEl = $("t-metro-countin");
 export const metroEditBtn = $("t-metro-edit");
 export const exportClickEl = $("t-export-click");
 export const exportClickWrap = $("t-export-click-wrap");
+export const exportCountInEl = $("t-export-count-in");
+export const exportCountInWrap = $("t-export-count-in-wrap");
 export const bgToolbar = $("beatgrid-toolbar");
 export const bgCanvas = $("beatgrid-canvas");
 export const bgUndoBtn = $("bg-undo");
@@ -195,3 +196,7 @@ export function setMetronomeBeatsPerBar(v) { metronomeBeatsPerBar = v; }
 // them "Auto" has nothing to follow and behaves as no accent.
 export let metronomeHasBars = false;
 export function setMetronomeHasBars(v) { metronomeHasBars = !!v; }
+// Count me in on play: one bar of click before the audio (issue #269).
+// Independent of the running click track above.
+export let metronomeCountIn = false;
+export function setMetronomeCountIn(v) { metronomeCountIn = !!v; }

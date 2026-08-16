@@ -12,6 +12,7 @@ import uuid
 import zipfile
 from collections import deque
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -28,7 +29,7 @@ from app.core.config import (
 from app.core.registry import get as registry_get
 from app.core.settings import get_export_sample_rate
 from app.pipeline.click_render import cache_key as click_cache_key
-from app.pipeline.click_render import render_click_wav
+from app.pipeline.click_render import count_in_beats, render_click_wav, render_count_in_wav
 
 logger = logging.getLogger("stemdeck.api")
 
@@ -146,22 +147,41 @@ def _validate_stem_path(job_id: str, name: str):
     return path
 
 
+class _ClickLane(NamedTuple):
+    """The extra click/count-in audio input handed to the ffmpeg graph.
+
+    `lead_in` is the seconds of count-in baked into the front of the WAV (0 for
+    a plain click). `count_in` marks the file as living in *output* coordinates
+    -- already region-trimmed and lead-in-prefixed -- so the graph must not
+    `-ss` it and must delay the stems by `lead_in` to match.
+    """
+
+    path: Path
+    gain: float
+    lead_in: float
+    count_in: bool
+
+
 def _click_lane(
     job_id: str,
     enabled: bool,
     multiplier: float,
     accent_mode: int,
     gain: float,
-) -> tuple[Path, float] | None:
-    """Render (or reuse) the click track for this job and return it as an extra
-    ffmpeg input, or None when it is off or the job has no beat grid.
+    count_in_bars: int = 0,
+    start: float | None = None,
+    end: float | None = None,
+) -> _ClickLane | None:
+    """Render (or reuse) the click / count-in track for this job as an extra
+    ffmpeg input, or None when both are off or the job has no beat grid.
 
     The click is synthesised in the browser during playback and never reaches
-    the server, so an export can only include it by rendering an equivalent
-    WAV here. It spans the whole track, which means the region trim (`-ss`
-    before every input) lines it up with the stems with no special-casing.
+    the server, so an export can only include it by rendering an equivalent WAV
+    here. A plain click spans the whole track and is lined up by the region trim
+    (`-ss` before every input); a count-in is baked in output coordinates
+    instead (see render_count_in_wav) and the caller delays the stems to match.
     """
-    if not enabled:
+    if not enabled and count_in_bars <= 0:
         return None
     grid = _read_beat_grid(job_id)
     if grid is None:
@@ -169,25 +189,62 @@ def _click_lane(
     beats = grid.get("beats") or []
     if not beats:
         return None
-
+    bars = grid.get("bars") or []
+    duration = float(grid.get("duration") or 0.0)
     sample_rate = get_export_sample_rate()
+    g = max(0.0, min(4.0, gain))
+
     key = click_cache_key(
         job_id,
         beats,
-        grid.get("bars") or [],
-        float(grid.get("duration") or 0.0),
+        bars,
+        duration,
         sample_rate,
         multiplier,
         accent_mode,
+        count_in_bars=count_in_bars,
+        include_click=enabled,
+        start=start,
+        end=end,
     )
     path = _CLICK_CACHE_DIR / f"{key}.wav"
+
+    if count_in_bars > 0:
+        # lead_in is a pure function of the grid; recompute it even on a cache
+        # hit so the caller can delay the stems without re-reading the WAV.
+        lead_in, _ = count_in_beats(
+            beats, bars, count_in_bars, multiplier, accent_mode, start=start or 0.0
+        )
+        if not path.is_file():
+            try:
+                rendered = render_count_in_wav(
+                    path,
+                    beats,
+                    bars,
+                    duration,
+                    sample_rate=sample_rate,
+                    multiplier=multiplier,
+                    accent_mode=accent_mode,
+                    count_in_bars=count_in_bars,
+                    include_click=enabled,
+                    start=start or 0.0,
+                    end=end,
+                )
+            except Exception:
+                logger.exception("count-in render failed for %s", job_id)
+                return None
+            if rendered is None:
+                return None
+        _prune_mixdown_cache(_CLICK_CACHE_DIR)
+        return _ClickLane(path, g, lead_in, True)
+
     if not path.is_file():
         try:
             rendered = render_click_wav(
                 path,
                 beats,
-                grid.get("bars") or [],
-                float(grid.get("duration") or 0.0),
+                bars,
+                duration,
                 sample_rate=sample_rate,
                 multiplier=multiplier,
                 accent_mode=accent_mode,
@@ -198,7 +255,7 @@ def _click_lane(
         if rendered is None:
             return None
     _prune_mixdown_cache(_CLICK_CACHE_DIR)
-    return path, max(0.0, min(4.0, gain))
+    return _ClickLane(path, g, 0.0, False)
 
 
 def _read_beat_grid(job_id: str) -> dict | None:
@@ -560,12 +617,20 @@ async def get_mixdown(
     click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
     click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
     click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
+    count_in: int = Query(
+        default=0, ge=0, le=2, description="Count-in bars before the audio (0 off)"
+    ),
 ) -> FileResponse | StreamingResponse:
     """Render a mixdown of the given lanes at the given gains, streamed as WAV,
     MP3, FLAC, or OGG. Mirrors the studio mixer (per-stem volume, mute, solo) so the
     exported file matches what is heard. The master fader is intentionally not
     applied -- it is a monitoring level, not part of the mix. Optional ?start=&end=
     trims to a loop region.
+
+    `count_in` prepends N bars of click before the audio (issue #269): the stems
+    are delayed and the count-in is baked into the click WAV, so the exported
+    file leads in like a drummer's count. It works with or without the running
+    click track (`click`), so a clean backing track can still carry a count-in.
 
     Identical params (including start/end and the current export sample rate)
     hit a render cache instead of re-running ffmpeg (#290) -- a cheap win on a
@@ -587,7 +652,16 @@ async def get_mixdown(
     paths = [_validate_stem_path(job_id, name) for name in names]
 
     media_type = MIXDOWN_MEDIA_TYPES[ext]
-    click_lane = _click_lane(job_id, click, click_mult, click_accent, click_gain)
+    click_lane = _click_lane(
+        job_id,
+        click,
+        click_mult,
+        click_accent,
+        click_gain,
+        count_in_bars=count_in,
+        start=start,
+        end=end,
+    )
     cache_key = _mixdown_cache_key(job_id, ext, names, parsed_gains, start, end, click_lane)
     cache_path = _MIXDOWN_CACHE_DIR / f"{cache_key}.{ext}"
     if cache_path.is_file():
@@ -602,21 +676,38 @@ async def get_mixdown(
         )
 
     pre_seek = ["-ss", str(start)] if start is not None else []
-    post_seek = ["-t", str(end - start)] if start is not None else []
 
-    # The click is one more input; the filter graph below is generic over the
-    # list, so it needs no special case beyond its own gain.
-    if click_lane is not None:
-        paths = [*paths, click_lane[0]]
-        parsed_gains = [*parsed_gains, click_lane[1]]
+    # A count-in shifts the whole timeline: the stems are delayed by the lead-in
+    # and the click WAV already carries it, in output coordinates, so it is not
+    # `-ss`-trimmed like a plain click. Everything else is generic over the input
+    # list. lead_in is 0 for a plain click, collapsing this to the old graph.
+    lead_in = click_lane.lead_in if click_lane else 0.0
+    count_in_mode = bool(click_lane and click_lane.count_in)
+    delay_ms = int(round(lead_in * 1000))
+    # Output length is the region plus the lead-in prepended in front of it.
+    post_seek = ["-t", str(lead_in + (end - start))] if start is not None else []
 
+    stem_count = len(paths)
     cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
     for p in paths:
         cmd += [*pre_seek, "-i", str(p)]
-    # Apply each lane's gain, then sum with amix (normalize=0 keeps levels faithful,
-    # matching collect.py). A single audible lane skips amix (a 1-input amix is a no-op).
-    filters = [f"[{i}:a]volume={g:.6f}[a{i}]" for i, g in enumerate(parsed_gains)]
-    n = len(paths)
+    if click_lane is not None:
+        # The count-in WAV is already in output coordinates; a plain click is
+        # full-length and lines up under the same -ss as the stems.
+        click_pre = [] if count_in_mode else pre_seek
+        cmd += [*click_pre, "-i", str(click_lane.path)]
+
+    # Delay each stem by the lead-in (silent front-padding), apply its gain, then
+    # sum with amix (normalize=0 keeps levels faithful, matching collect.py). The
+    # click lane is never delayed -- its lead-in is baked in. A single audible
+    # lane skips amix (a 1-input amix is a no-op).
+    filters = []
+    for i, g in enumerate(parsed_gains):
+        delay = f"adelay={delay_ms}:all=1," if delay_ms > 0 else ""
+        filters.append(f"[{i}:a]{delay}volume={g:.6f}[a{i}]")
+    if click_lane is not None:
+        filters.append(f"[{stem_count}:a]volume={click_lane.gain:.6f}[a{stem_count}]")
+    n = stem_count + (1 if click_lane is not None else 0)
     if n > 1:
         labels = "".join(f"[a{i}]" for i in range(n))
         filters.append(f"{labels}amix=inputs={n}:normalize=0[mix]")

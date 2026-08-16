@@ -23,7 +23,7 @@ import {
   footerTitle, footerMeta, footerThumb,
   setFooterWaveDrawFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
-  exportClickEl, exportClickWrap,
+  exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
   setMetronomeHasBars,
 } from "./state.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
@@ -1623,12 +1623,31 @@ function _clickParams(q) {
   q.set("click_gain", metronomeVolume.toFixed(3));
 }
 
-/** Whether this track can export a click at all (needs a beat grid). */
+// Count-in export param (issue #269). Independent of the running click track:
+// a clean backing track can still be counted in. One bar of the detected meter,
+// prepended ahead of the audio by the backend. Audio exports only -- the MP4
+// video path leaves it off, since prepending it would desync the picture.
+function _countInParam(q) {
+  if (!exportCountInEl?.checked || exportCountInEl.disabled) return;
+  q.set("count_in", "1");
+  // The count-in's tempo/meter follow the same rate and accent the click uses,
+  // so pass them even when the click itself is not being baked in.
+  q.set("click_mult", String(metronome?.getMultiplier?.() ?? 1));
+  q.set("click_accent", String(metronomeBeatsPerBar));
+  q.set("click_gain", metronomeVolume.toFixed(3));
+}
+
+/** Whether this track can export a click / count-in at all (needs a beat grid). */
 export function setExportClickAvailable(on) {
-  if (!exportClickEl) return;
-  exportClickEl.disabled = !on;
-  if (!on) exportClickEl.checked = false;
-  exportClickWrap?.classList.toggle("disabled", !on);
+  for (const [el, wrap] of [
+    [exportClickEl, exportClickWrap],
+    [exportCountInEl, exportCountInWrap],
+  ]) {
+    if (!el) continue;
+    el.disabled = !on;
+    if (!on) el.checked = false;
+    wrap?.classList.toggle("disabled", !on);
+  }
 }
 
 // Dynamic mixdown URL for the current mixer state. Returns null (no download)
@@ -1646,6 +1665,7 @@ function _mixdownUrl(ext, region) {
     q.set("end", loopEnd.toFixed(3));
   }
   _clickParams(q);
+  _countInParam(q);
   return `/api/jobs/${currentJobId}/mixdown.${ext}?${q}`;
 }
 

@@ -1177,21 +1177,22 @@ input, textarea { font-family: inherit; }
 
 .daw-track-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .daw-track-title { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.daw-track-sub { font-size: 11px; color: var(--muted); }
-.daw-track-time-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* One compact line -- duration · stems · source · quality · extracted date --
+   instead of a duration/stems row plus three further label:value rows below
+   it. The four-line version was still the pre-redesign layout; this row was
+   the one part of the footer rebuild (#269 follow-up) I'd described matching
+   the reference but never actually rebuilt. */
+.daw-track-meta-line {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted);
+  min-width: 0; overflow: hidden;
 }
-.daw-track-sep { color: var(--border); font-size: 12px; }
-.daw-track-stems-label {
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.daw-track-meta-line .num { color: var(--fg-2); }
+.daw-track-sep { color: var(--border); font-size: 12px; flex-shrink: 0; }
+#t-stems-chip {
+  display: inline-flex; align-items: center; gap: 4px;
 }
-.daw-track-stems-label::before {
+#t-stems-chip::before {
   content: '';
   display: inline-block;
   width: 7px; height: 7px;
@@ -1200,7 +1201,6 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 .daw-fav-btn {
-  margin-left: auto;
   background: none;
   border: none;
   cursor: pointer;
@@ -1213,10 +1213,6 @@ input, textarea { font-family: inherit; }
 .daw-fav-btn:hover { color: var(--fg); }
 .daw-fav-btn.active { color: #e54e4e; }
 .daw-fav-btn.active svg { fill: #e54e4e; stroke: #e54e4e; }
-.daw-track-details { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
-.daw-detail-row { display: flex; gap: 8px; align-items: baseline; }
-.daw-detail-label { font-size: 11px; color: var(--muted); width: 64px; flex-shrink: 0; }
-.daw-detail-val { font-size: 11px; color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daw-chip {
   display: inline-flex; align-items: center;
   padding: 2px 8px;
@@ -1925,7 +1921,10 @@ input, textarea { font-family: inherit; }
 /* ── Transport footer ── */
 
 .daw-footer {
-  height: 200px;
+  /* min-height, not height: the click-track panel between the transport
+     controls and Export Mix (#269 follow-up) can wrap onto more than one
+     line in that narrow gap, and a rigid height would clip it. */
+  min-height: 200px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -2014,26 +2013,60 @@ input, textarea { font-family: inherit; }
 /* ── Footer redesign ── */
 
 /* ── Footer layout ── */
+/* Two stacked rows: track info + actions, then the four labelled control
+   groups. Previously one wide row (#269 follow-up rebuild -- everything used
+   to compete for width in a single line; stacking gives each row its own
+   full-width budget instead). */
 .footer-content {
-  display: flex; flex-direction: row; align-items: center;
-  padding: 0 20px; flex: 1; min-height: 0;
-  justify-content: space-between;
+  display: flex; flex-direction: column;
+  padding: 10px 20px 6px; flex: 1; min-height: 0;
+  gap: 10px;
 }
-.footer-center {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 0 24px;
-  /* Wide enough that the transport grid below can give its two side tracks
-     equal width. Without a definite width the column shrink-wraps its content,
-     the empty spacer track collapses to zero, and the buttons end up offset by
-     the width of the loop-time fields (measured 109 px left of the tempo bar's
-     centre). */
-  min-width: min(30rem, 100%);
+
+.footer-row-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px;
 }
-.footer-chips {
-  flex: 1;
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+.footer-row-actions {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+
+.footer-row-controls {
+  display: flex; align-items: flex-start; flex-wrap: wrap;
+  gap: 8px 28px;
+}
+.footer-group {
+  display: flex; flex-direction: column; gap: 6px;
   min-width: 0;
+}
+.footer-group-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.footer-group-body {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+/* Click track carries the most controls -- give it more room to lay them out
+   in fewer wrapped lines than a group sized like its neighbours would. */
+.footer-group-click { flex: 1 1 320px; max-width: 640px; }
+.footer-group-click .footer-group-body { gap: 6px 10px; }
+
+.alpha-badge {
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(74,140,255,0.16); border: 1px solid rgba(74,140,255,0.4);
+  color: #4a8cff; font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.footer-chips {
+  /* Shrink-to-content rather than splitting the remaining row equally with
+     .footer-track -- the track info needs the space more. flex-shrink stays
+     on (with a floor) rather than 0: if the row is ever genuinely too narrow
+     for everything, this should compress a little before Export Mix is
+     pushed past the visible edge. */
+  flex: 0 1 auto; min-width: 110px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
 }
 /* Wave bar at the bottom of the footer */
 .footer-wave-bar {
@@ -2053,14 +2086,13 @@ input, textarea { font-family: inherit; }
 
 /* Track info (art + title + meta) */
 .footer-track {
-  flex: 1; min-width: 0; overflow: hidden;
+  flex: 1; min-width: 200px; overflow: hidden;
   display: flex; flex-direction: column; justify-content: center;
   gap: 6px;
 }
 .footer-track-title-row {
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
-.footer-track-title-row .daw-fav-btn { margin-left: 0; }
 .footer-track-title {
   min-width: 0; flex-shrink: 1;
   font-size: 14px; font-weight: 600;
@@ -2071,13 +2103,12 @@ input, textarea { font-family: inherit; }
   display: flex; align-items: flex-start; gap: 10px; min-width: 0;
 }
 .footer-cover {
-  width: 56px !important; height: 56px !important;
+  /* Smaller than the old 56px: the info block next to it is one title line
+     plus one compact meta line now, not a title plus four rows of detail. */
+  width: 40px !important; height: 40px !important;
   flex-shrink: 0;
 }
-.footer-track-body .daw-track-meta { flex: 1; min-width: 0; gap: 4px; }
-.footer-track .daw-track-details   { gap: 2px; }
-.footer-track .daw-detail-label    { font-size: 10px; width: 58px; }
-.footer-track .daw-detail-val      { font-size: 10px; }
+.footer-track-body .daw-track-meta { flex: 1; min-width: 0; gap: 4px; justify-content: center; }
 .footer-art {
   width: 44px; height: 44px; border-radius: 6px;
   background: var(--panel-3); flex-shrink: 0; overflow: hidden;
@@ -2102,11 +2133,8 @@ input, textarea { font-family: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Time display below transport buttons */
-.footer-time-row {
-  display: flex; align-items: baseline; gap: 4px;
-  justify-content: center;
-}
+/* Position group: elapsed / total time */
+.footer-group-position .footer-group-body { align-items: baseline; gap: 4px; }
 .footer-elapsed {
   font-size: 17px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg);
 }
@@ -2132,78 +2160,107 @@ input, textarea { font-family: inherit; }
 .loop-time-input:focus { border-color: var(--accent); }
 .loop-time-input:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* Transport buttons */
-/* Three tracks: an empty spacer, the buttons, and the loop-time fields. The
-   two 1fr tracks take equal shares of the free space, so the middle track --
-   and therefore the play button -- lands exactly on the column's centre line,
-   in line with the tempo slider below it. */
-.footer-transport {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-.footer-transport-spacer { min-width: 0; }
-.footer-transport-main {
-  display: flex; align-items: center; gap: 8px;
-  justify-self: center;
-}
-.footer-transport .footer-loop-times { justify-self: end; min-width: 0; }
-.footer-transport .daw-iconbtn.btn-transport {
+/* Transport group */
+.footer-group-transport .daw-iconbtn.btn-transport {
   background: var(--panel-2);
   border-color: var(--border-strong);
   color: var(--fg-2);
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
-.footer-transport .daw-iconbtn.btn-transport:hover {
+.footer-group-transport .daw-iconbtn.btn-transport:hover {
   background: var(--panel-3);
   color: var(--fg);
 }
 /* Active transport states: stop = red while stopped, loop = blue while looping. */
-.footer-transport .btn-transport.stopped,
-.footer-transport .btn-transport.stopped:hover {
+.footer-group-transport .btn-transport.stopped,
+.footer-group-transport .btn-transport.stopped:hover {
   background: rgba(214,90,74,0.16);
   border-color: rgba(214,90,74,0.55);
   color: var(--danger);
 }
-.footer-transport .btn-transport.loop.active,
-.footer-transport .btn-transport.loop.active:hover {
+/* The loop button carries a text label now ("Loop position"), not just an
+   icon -- widen it from the fixed 30px square every other transport icon
+   button uses. */
+.footer-group-transport .btn-transport.loop {
+  width: auto; height: 30px; padding: 0 10px; gap: 6px;
+}
+.loop-btn-label { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.footer-group-transport .btn-transport.loop.active,
+.footer-group-transport .btn-transport.loop.active:hover {
   background: rgba(74,140,255,0.16);
   border-color: rgba(74,140,255,0.55);
   color: #4a8cff;
 }
 
-/* Experimental features pill, centred above the transport. Deliberately set
-   apart from the transport buttons so it does not read as core playback. */
-.footer-experimental {
-  position: relative;
-  display: flex; justify-content: center;
-  margin-bottom: 2px;
-}
-.exp-pill {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 5px 12px 5px 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 10.5px; font-weight: 700;
-  letter-spacing: 0.09em; text-transform: uppercase;
-  white-space: nowrap; user-select: none;
+/* Speed group: fixed practice-speed presets, not a continuous dial (#269
+   follow-up). */
+.speed-group { display: flex; gap: 4px; }
+.speed-btn {
+  padding: 4px 8px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 6px; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 11px; font-weight: 700;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
-.exp-pill:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
-.exp-pill:disabled { opacity: 0.4; cursor: not-allowed; }
-.exp-flask { flex-shrink: 0; color: #4a8cff; }
-.exp-pill:disabled .exp-flask { color: currentColor; }
-/* Lit while the click is running, so its state is visible without opening
-   the panel. */
-.exp-pill.active,
-.exp-pill.active:hover {
-  background: rgba(74,140,255,0.16);
-  border-color: rgba(74,140,255,0.55);
-  color: #4a8cff;
+.speed-btn:hover { background: var(--panel-3); color: var(--fg); }
+.speed-btn.active {
+  background: rgba(232,200,64,0.16); border-color: rgba(232,200,64,0.5); color: var(--accent);
+}
+
+/* Click track on/off toggle. Lit gold while the click is running, so its
+   state is visible without any other affordance. */
+.click-toggle-btn {
+  padding: 4px 12px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 6px; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.click-toggle-btn:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
+.click-toggle-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.click-toggle-btn.active,
+.click-toggle-btn.active:hover {
+  background: rgba(232,200,64,0.18); border-color: rgba(232,200,64,0.55); color: var(--accent);
+}
+
+/* Count-in toggle switch (replaces a plain checkbox -- this one and the
+   click on/off above are the two states a player checks at a glance). */
+.metro-switch {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  font-size: 10.5px; font-weight: 600; color: var(--fg-2);
+}
+.metro-switch input[type="checkbox"] {
+  position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+}
+.metro-switch-track {
+  position: relative; flex-shrink: 0;
+  width: 28px; height: 16px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.metro-switch-track::after {
+  content: ""; position: absolute; top: 1px; left: 1px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--fg-2);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+.metro-switch input:checked + .metro-switch-track {
+  background: rgba(232,200,64,0.22); border-color: var(--accent);
+}
+.metro-switch input:checked + .metro-switch-track::after {
+  transform: translateX(12px);
+  background: var(--accent);
+}
+.metro-switch input:focus-visible + .metro-switch-track {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* Screen-reader-only: content still reaches assistive tech and the native
+   tooltip chain without taking visible space (the volume % readout). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
 
 /* Beat grid editor: canvas overlay + toolbar */
@@ -2254,40 +2311,50 @@ input, textarea { font-family: inherit; }
 .bg-spacer { flex: 1; min-width: 8px; }
 .bg-hint { font-size: 10.5px; color: var(--muted); flex-basis: 100%; }
 
-/* Click track: toggle button + its options popover */
-.footer-metro-wrap { position: relative; display: flex; align-items: center; }
+/* Click track options: inline, always visible in the gap between the
+   transport controls and Export Mix once a track has a beat grid (#269
+   follow-up -- no popover, no click to reveal them). Everything is sized to
+   fit that narrow gap and wraps onto more than one line there; .daw-footer
+   is min-height (not a fixed height) so wrapping never clips. */
 .footer-metro-panel {
-  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
-  z-index: 60; min-width: 210px;
-  display: flex; flex-direction: column; gap: 9px;
-  padding: 11px 12px;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.38);
+  /* display:contents removes this element's own box and promotes its
+     children (the volume row, accent select, rate group, count-in, grid
+     button, note) to be direct flex items of .footer-experimental, as peers
+     of the pill -- one flat wrap group the browser can line-break wherever
+     the available width actually allows, instead of the pill being forced
+     alone onto its own row and everything else confined to a second,
+     artificially narrow one (#269 follow-up). .hidden below still works: it
+     carries !important, which overrides this when the panel has no grid to
+     show options for. */
+  display: contents;
 }
 .footer-metro-panel.hidden { display: none; }
-.metro-row { display: flex; align-items: center; gap: 9px; }
+.metro-row { display: flex; align-items: center; gap: 5px; }
+.metro-vol-icon { color: var(--muted); flex-shrink: 0; }
 .metro-label {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-  color: var(--muted); flex-shrink: 0; width: 52px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--muted); flex-shrink: 0;
 }
-.metro-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.metro-row input[type="range"] { width: 48px; accent-color: var(--accent); }
 .metro-val {
-  font-size: 11px; color: var(--fg-2); width: 4ch; text-align: right;
+  font-size: 10px; color: var(--fg-2); width: 3ch; text-align: right;
   font-variant-numeric: tabular-nums; flex-shrink: 0;
 }
 .metro-select {
-  flex: 1; padding: 3px 6px;
+  /* Wide enough for "Auto (none found)", the longest option text -- it was
+     clipping mid-word at 108px. */
+  padding: 2px 4px; max-width: 132px;
   background: var(--panel); border: 1px solid var(--border-strong);
   border-radius: 5px; color: var(--fg);
-  font-family: inherit; font-size: 12px; font-weight: 600; outline: none;
+  font-family: inherit; font-size: 10px; font-weight: 600; outline: none;
 }
 .metro-select:focus { border-color: var(--accent); }
-.metro-mult { display: flex; flex: 1; gap: 4px; }
+.metro-mult { display: flex; gap: 3px; }
 .metro-mult-btn {
-  flex: 1; padding: 3px 0;
+  padding: 2px 5px;
   background: var(--panel); border: 1px solid var(--border-strong);
   border-radius: 5px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 11px; font-weight: 700;
+  font-family: inherit; font-size: 9.5px; font-weight: 700;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .metro-mult-btn:hover { background: var(--panel-3); color: var(--fg); }
@@ -2296,61 +2363,27 @@ input, textarea { font-family: inherit; }
 }
 
 .metro-edit-btn {
-  padding: 4px 8px;
+  padding: 2px 7px;
   background: var(--panel); border: 1px solid var(--border-strong);
   border-radius: 5px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 11px; font-weight: 600;
+  font-family: inherit; font-size: 9.5px; font-weight: 600;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .metro-edit-btn:hover { background: var(--panel-3); color: var(--fg); }
 .metro-edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Detection confidence / unavailability note. Hidden until it has text so the
-   panel does not carry an empty row in the normal case. */
-.metro-note { font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+/* Detection confidence / unavailability note: its own full-width row at the
+   bottom of the footer (a direct child of .footer-content, below the control
+   groups -- #269 follow-up), hidden until it has text, clipped to one line
+   with the full text as a native tooltip. */
+.metro-note {
+  font-size: 10px; line-height: 1.3; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .metro-note:empty { display: none; }
 .metro-note.warn { color: var(--danger); }
 
-/* Tempo bar */
-.tempo-bar {
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; padding: 8px 4px 0;
-  border-top: 1px solid var(--border-strong);
-  margin-top: 6px; cursor: default; user-select: none;
-}
-.tempo-bar-label {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--fg-2); flex-shrink: 0;
-  white-space: nowrap;
-}
-.tempo-bar-divider {
-  width: 1px; height: 16px; background: var(--border-strong); flex-shrink: 0;
-}
-.tempo-bar-val {
-  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
-  color: var(--fg-2); white-space: nowrap; flex-shrink: 0; min-width: 34px;
-  text-align: right;
-}
-#t-speed {
-  -webkit-appearance: none; appearance: none; flex: 1;
-  height: 4px; border-radius: 999px; outline: none; cursor: pointer;
-  background: linear-gradient(
-    90deg,
-    var(--gold) 0 var(--speed-pct, 50%),
-    rgba(148,163,184,0.18) var(--speed-pct, 50%) 100%
-  );
-}
-#t-speed::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--gold-bright); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(216,168,74,0.35);
-}
-#t-speed::-moz-range-thumb {
-  width: 16px; height: 16px; border-radius: 50%; border: none;
-  background: var(--gold-bright); cursor: pointer;
-}
-
-/* Speed + export chip buttons */
+/* Export chip button */
 .footer-chip-wrap {
   position: relative; flex-shrink: 0;
   display: flex; align-items: center;

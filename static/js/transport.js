@@ -1,22 +1,24 @@
 import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } from "./utils.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
-  speedEl, speedLabelEl,
+  speedBtns,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, npScrubFill, footerWaveDrawFn,
   loopStartInput, loopEndInput,
-  metroBtn, metroPanel, metroWrap, metroVolEl, metroVolLabel, metroBarEl, metroNoteEl,
-  metroHalfBtn, metroOneBtn, metroDoubleBtn,
+  metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroNoteEl,
+  metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
   metronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar, metronomeHasBars,
+  metronomeCountIn, setMetronomeCountIn,
   setMetronomeHasBars,
   setMetronomeEnabled, setMetronomeVolume, setMetronomeBeatsPerBar,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
 } from "./state.js";
 import { applyMix } from "./mixer.js";
-import { isDownbeatIndex } from "./beatgrid.js";
+import { isDownbeatIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
+import { computeCountIn } from "./metronome.js";
 
 const MIN_LOOP_SEC = 0.2;
 // Below this visible width the waveform stops compressing to fit and instead
@@ -280,12 +282,45 @@ function _playWhenReady() {
   window.setTimeout(fire, 1500);
 }
 
+// The live beat grid to count against: the editor's copy when it holds one
+// (reflects unsaved drags), else the grid last handed to the metronome UI.
+function _currentGrid() {
+  const edited = getGridBeats?.() ?? [];
+  if (edited.length) return { beats: edited, bars: getGridBars?.() ?? [] };
+  if (_lastGrid?.beats?.length) return { beats: _lastGrid.beats, bars: _lastGrid.bars ?? [] };
+  return null;
+}
+
+// Arm a count-in when it is enabled and the engine + grid can support one.
+// Starts the audio late (engine.play(leadIn)) and schedules the count clicks in
+// the gap, whether or not the running click is on. Returns true when it took
+// over starting playback, so the caller does not also start it immediately.
+function _armCountIn(eng, startPos) {
+  if (!metronomeCountIn || !eng?.supportsCountIn || !metronome) return false;
+  const grid = _currentGrid();
+  if (!grid) return false;
+  const { leadIn, clicks } = computeCountIn(grid.beats, grid.bars, {
+    countBars: 1,
+    multiplier: metronome.getMultiplier?.() ?? 1,
+    accentMode: metronomeBeatsPerBar,
+    start: startPos,
+  });
+  if (leadIn <= 0 || !clicks.length) return false;
+  // Clicks sit in source time, leading into the start position: the last lands
+  // one beat before the audio, so the song enters on the next downbeat.
+  const sourceClicks = clicks.map((c) => ({ time: startPos - leadIn + c.offset, accent: c.accent }));
+  eng.play(leadIn); // sets the (future) clock the clicks are scheduled against
+  metronome.playCountIn(sourceClicks);
+  return true;
+}
+
 export function togglePlayPause() {
   const eng = audioEngine;
   const tx = eng ?? multitrack;
   if (!tx) return;
   if (tx.isPlaying()) {
     tx.pause();
+    metronome?.cancelCountIn?.(); // drop a count-in if paused before the audio enters
     // The engine emits no play/pause events (the multitrack stays silent), so
     // the play-button visual that the ws "pause" handler normally toggles must
     // be driven here directly.
@@ -304,7 +339,11 @@ export function togglePlayPause() {
     tx.setTime(loopStart);
   }
   if (eng) {
-    eng.play();
+    // Match the engine's own end-of-track reset so the count-in leads into the
+    // same position playback will actually start from.
+    let startPos = eng.getCurrentTime?.() ?? 0;
+    if (totalDuration > 0 && startPos >= totalDuration) startPos = 0;
+    if (!_armCountIn(eng, startPos)) eng.play();
     playBtn.classList.add("playing");
     stopBtn.classList.remove("stopped");
   } else {
@@ -317,6 +356,7 @@ export function stopTransport() {
   const tx = eng ?? multitrack;
   if (!tx) return;
   tx.pause();
+  metronome?.cancelCountIn?.(); // a count-in in progress must not outlive Stop
   tx.setTime(loopEnabled ? loopStart : 0); // engine: setTime → onTime → stop visual
   if (eng) playBtn.classList.remove("playing");
 }
@@ -509,16 +549,24 @@ export function wireTransportButtons() {
   wireMetronomeControl();
 }
 
+// Fixed presets, not a continuous dial -- practice speeds for slowing a part
+// down, not a general-purpose tempo control (issue #269 follow-up).
+const SPEED_PRESETS = [0.25, 0.5, 1];
+
 function applySpeed(rate) {
-  const clamped = Math.max(0.25, Math.min(2, rate));
+  // Snap to the nearest preset rather than clamping continuously: every
+  // caller (button click, resetSpeed on track load) already passes one of
+  // SPEED_PRESETS, but snapping keeps this correct even if that changes.
+  const clamped = SPEED_PRESETS.reduce((best, p) =>
+    Math.abs(p - rate) < Math.abs(best - rate) ? p : best
+  );
   setPlaybackSpeed(clamped);
-  if (speedEl) {
-    speedEl.value = String(clamped);
-    // range is 0-2; 1.0 sits at exactly 50%
-    const pct = (clamped / 2) * 100;
-    speedEl.style.setProperty("--speed-pct", `${pct.toFixed(1)}%`);
+  for (const btn of speedBtns) {
+    if (!btn) continue;
+    const on = parseFloat(btn.dataset.speed) === clamped;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
   }
-  if (speedLabelEl) speedLabelEl.textContent = `${clamped % 1 === 0 ? clamped.toFixed(1) : clamped}x`;
   audioEngine?.setPlaybackRate?.(clamped);
   if (multitrack) {
     for (const a of (multitrack.audios ?? [])) {
@@ -532,14 +580,9 @@ export function resetSpeed() {
 }
 
 function wireSpeedControl() {
-  if (!speedEl) return;
-  speedEl.addEventListener("input", () => applySpeed(parseFloat(speedEl.value)));
-  speedEl.addEventListener("dblclick", () => applySpeed(1.0));
-  speedEl.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    applySpeed(parseFloat(speedEl.value) + delta);
-  }, { passive: false });
+  for (const btn of speedBtns) {
+    btn?.addEventListener("click", () => applySpeed(parseFloat(btn.dataset.speed)));
+  }
 }
 
 // ─── Click track ────────────────────────────────────────────
@@ -551,6 +594,7 @@ function _saveMetroPrefs() {
     enabled: metronomeEnabled,
     volume: metronomeVolume,
     beatsPerBar: metronomeBeatsPerBar,
+    countIn: metronomeCountIn,
   }).catch((e) => console.warn("[transport] failed to save metronome prefs:", e));
 }
 
@@ -573,8 +617,12 @@ export function applyMetronomeAccent() {
 }
 
 function _renderMetroVolume() {
-  if (metroVolEl) metroVolEl.value = String(metronomeVolume);
-  if (metroVolLabel) metroVolLabel.textContent = `${Math.round(metronomeVolume * 100)}%`;
+  const pct = `${Math.round(metronomeVolume * 100)}%`;
+  if (metroVolEl) { metroVolEl.value = String(metronomeVolume); metroVolEl.title = `Click volume: ${pct}`; }
+  // No visible % readout next to the slider (icon + slider only); the value
+  // still reaches assistive tech via this element and sighted users via the
+  // slider's own tooltip above.
+  if (metroVolLabel) metroVolLabel.textContent = pct;
 }
 
 export function toggleMetronome(force) {
@@ -632,9 +680,11 @@ function _renderMetroNote(grid) {
   } else if (metronomeBeatsPerBar > 0) {
     parts.push(`accenting every ${metronomeBeatsPerBar} beats`);
   }
-  metroNoteEl.textContent = parts.length
+  const text = parts.length
     ? `${parts.join(" -- ")}. Use /2 or x2 if the click feels half or double speed.`
     : "";
+  metroNoteEl.textContent = text;
+  metroNoteEl.title = text; // clipped to one line; the full text is a hover away
   metroNoteEl.className = Number.isFinite(conf) && conf < 60 ? "metro-note warn" : "metro-note";
 }
 
@@ -643,9 +693,7 @@ export function updateMetronomeAvailability(grid, reason = "") {
   _lastGrid = grid || null;
   const available = !!(grid && Array.isArray(grid.beats) && grid.beats.length);
   metroBtn.disabled = !available;
-  metroBtn.title = available
-    ? "Click track (K) -- right-click for volume, accent and rate"
-    : (reason || "Click track unavailable");
+  metroBtn.title = available ? "Click track (K)" : (reason || "Click track unavailable");
 
   if (!available) {
     // Keep the stored preference so the click returns on the next track that
@@ -659,6 +707,7 @@ export function updateMetronomeAvailability(grid, reason = "") {
 
   metroBtn.classList.toggle("active", metronomeEnabled);
   metroBtn.setAttribute("aria-pressed", metronomeEnabled ? "true" : "false");
+  metroPanel?.classList.remove("hidden"); // undo a previous track's "unavailable" hide
   setMetronomeHasBars(Array.isArray(grid.bars) && grid.bars.length > 0);
   const autoOpt = metroBarEl?.querySelector('option[value="-1"]');
   if (autoOpt) {
@@ -680,26 +729,21 @@ function wireMetronomeControl() {
       if (typeof prefs.volume === "number") setMetronomeVolume(Math.max(0, Math.min(1, prefs.volume)));
       if (typeof prefs.beatsPerBar === "number") setMetronomeBeatsPerBar(prefs.beatsPerBar);
       if (typeof prefs.enabled === "boolean") setMetronomeEnabled(prefs.enabled);
+      if (typeof prefs.countIn === "boolean") setMetronomeCountIn(prefs.countIn);
     }
     _renderMetroVolume();
     if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
+    if (metroCountInEl) metroCountInEl.checked = metronomeCountIn;
     if (metronomeEnabled && !metroBtn.disabled) {
       metroBtn.classList.add("active");
       metroBtn.setAttribute("aria-pressed", "true");
     }
   }).catch((e) => console.warn("[transport] failed to load metronome prefs:", e));
 
-  // Click toggles; right-click / long-press opens the options panel.
+  // Toggles the click on/off; also bound to the K key elsewhere. Volume,
+  // accent, rate and count-in sit inline next to it, always visible once a
+  // track has a beat grid -- no click needed to reveal them (#269 follow-up).
   metroBtn.addEventListener("click", () => toggleMetronome());
-  metroBtn.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    if (!metroBtn.disabled) metroPanel?.classList.toggle("hidden");
-  });
-
-  document.addEventListener("click", (e) => {
-    if (!metroPanel || metroPanel.classList.contains("hidden")) return;
-    if (!metroWrap?.contains(e.target)) metroPanel.classList.add("hidden");
-  });
 
   metroVolEl?.addEventListener("input", () => {
     const v = Math.max(0, Math.min(1, parseFloat(metroVolEl.value)));
@@ -716,6 +760,11 @@ function wireMetronomeControl() {
       _renderMetroNote(_lastGrid);
     });
   }
+
+  metroCountInEl?.addEventListener("change", () => {
+    setMetronomeCountIn(!!metroCountInEl.checked);
+    _saveMetroPrefs();
+  });
 
   metroBarEl?.addEventListener("change", () => {
     const raw = parseInt(metroBarEl.value, 10);

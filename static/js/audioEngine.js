@@ -109,7 +109,18 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     return tracks.size > 0;
   })();
 
-  const now = () => (playing ? (ctx.currentTime - startCtxTime) * _playbackRate + startOffset : startOffset);
+  // Clamped so the reported playhead never reads before the start position.
+  // During a count-in the sources are scheduled to begin in the future
+  // (startCtxTime > ctx.currentTime), which would otherwise make this go
+  // negative -- the playhead must sit still at the start until the audio enters.
+  // A no-op for a normal start, where startCtxTime == the moment play() ran.
+  const now = () =>
+    playing ? Math.max(startOffset, (ctx.currentTime - startCtxTime) * _playbackRate + startOffset) : startOffset;
+
+  // Extra headroom folded into a count-in's lead so every count click lands
+  // safely in the future even after the small gap between scheduling the
+  // sources and handing the clicks to the audio clock.
+  const COUNT_IN_MARGIN = 0.06;
 
   function stopSources() {
     for (const t of tracks.values()) {
@@ -121,8 +132,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     }
   }
 
-  function startSources(offset) {
-    const when = ctx.currentTime;
+  function startSources(offset, when = ctx.currentTime) {
     for (const t of tracks.values()) {
       const src = ctx.createBufferSource();
       src.buffer = t.buffer;
@@ -174,13 +184,20 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     rafId = requestAnimationFrame(tick);
   }
 
-  function play() {
+  // `leadIn` (source seconds, default 0) delays the moment the stems begin so a
+  // count-in can sound in the gap first. The sources are scheduled at a future
+  // ctx time; the count-in clicks (negative source time) map into `[now, when]`
+  // through the same sourceTimeToCtxTime the metronome uses, so they stay locked
+  // to the audio. See transport.togglePlayPause + metronome.playCountIn.
+  function play(leadIn = 0) {
     if (playing || destroyed || !tracks.size) return;
     // Safari: resume the context fire-and-forget within the user-gesture tick.
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     let off = startOffset;
     if (off >= duration) off = 0;
-    startSources(off);
+    const lead = Math.max(0, leadIn);
+    const when = ctx.currentTime + (lead > 0 ? (lead + COUNT_IN_MARGIN) / srcRate() : 0);
+    startSources(off, when);
     playing = true;
     rafId = requestAnimationFrame(tick);
   }
@@ -233,6 +250,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     seek,
     setTime: seek, // alias to match the multitrack interface used by transport.js
     isPlaying: () => playing,
+    // This engine honours play(leadIn) for a count-in; the streaming/chunked
+    // paths do not, so the transport checks this before scheduling one.
+    supportsCountIn: true,
     getCurrentTime: now,
     getDuration: () => duration,
     setLoop: (enabled, start, end) => { loop = { enabled, start, end }; },

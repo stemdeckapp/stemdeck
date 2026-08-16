@@ -350,8 +350,11 @@ function stateMetadataToTrack(state, fallbackTrack) {
 
 function fmtExtracted(ts) {
   if (!ts) return "—";
+  // Short form ("Aug 14, 11:43 AM") -- this now lives in the footer's single
+  // compact meta line (#269 follow-up rebuild), which has no room for the
+  // long month name and year the summary panel's date affords.
   return new Date(ts * 1000).toLocaleString("en-US", {
-    month: "long", day: "numeric", year: "numeric",
+    month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
 }
@@ -442,6 +445,11 @@ function applyTrackInfoToPanel(track) {
   const trackSource = document.getElementById("track-source");
   const trackQuality = document.getElementById("track-quality");
   const favBtn = document.getElementById("fav-btn");
+  // Static duration for the footer's compact meta line -- deliberately not
+  // #t-time, which live-updates during playback and would duplicate the
+  // Position group in the transport row below it.
+  const metaDuration = document.getElementById("t-meta-duration");
+  if (metaDuration) metaDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
   if (trackExtracted) trackExtracted.textContent = fmtExtracted(track.createdAt);
   if (trackSource) trackSource.textContent = deriveSource(track.sourceUrl);
   if (trackQuality) trackQuality.textContent = deriveQuality(track.sourceUrl);
