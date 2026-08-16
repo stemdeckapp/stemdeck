@@ -384,6 +384,13 @@ export async function initNotifications({ diagnostics } = {}) {
   if (typeof diagnostics === "function") getDiagnostics = diagnostics;
   wireFailureDialog();
   const stored = await storeGet(FAILURES_KEY, []);
-  failures = Array.isArray(stored) ? stored.slice(0, MAX_FAILURES) : [];
+  // Merge rather than assign: reading the store is async, and a failure
+  // recorded while it was in flight would otherwise be overwritten by the
+  // older list -- losing the one notification the user is about to look for.
+  const restored = Array.isArray(stored) ? stored : [];
+  const live = new Set(failures.map((f) => f.id));
+  failures = [...failures, ...restored.filter((f) => !live.has(f.id))]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, MAX_FAILURES);
   render();
 }
