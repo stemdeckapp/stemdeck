@@ -1295,6 +1295,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             showPlaybackError(
               reason || "This track's audio could not be loaded.",
               "Playback is disabled for this track. Other tracks are not affected.",
+              { jobId, engine: kind, stage: "Loading stems" },
             );
             return;
           }
@@ -1400,7 +1401,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
           if (audioEngine === eng) setAudioEngine(null);
           showPlaybackError(
             "This track's audio could not be loaded.",
-            "Playback is disabled for this track. Other tracks are not affected.",
+            String(e?.message || e) || "Playback is disabled for this track.",
+            { jobId, engine: kind, stage: "Starting the audio engine" },
           );
         });
       };

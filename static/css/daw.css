@@ -331,6 +331,15 @@ input, textarea { font-family: inherit; }
   border-radius: 5px;
 }
 .daw-notif-close:hover { background: var(--panel-3); color: var(--fg); }
+/* Sits between the label and the close button; the header is space-between, so
+   push it right and leave a gap before the X. */
+.daw-notif-clear {
+  margin-left: auto; margin-right: 8px;
+  background: none; border: none; padding: 0;
+  color: var(--muted); cursor: pointer;
+  font-family: inherit; font-size: 11px;
+}
+.daw-notif-clear:hover { color: var(--fg); text-decoration: underline; }
 .daw-notif-list { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .daw-notif-card {
   display: flex;
@@ -349,6 +358,15 @@ input, textarea { font-family: inherit; }
   border-radius: 6px;
   color: var(--accent);
 }
+/* A failure, not an announcement. The amber tint lives in the base icon rule
+   rather than in .daw-notif-release, so both properties need overriding. */
+.daw-notif-error { border-color: rgba(214,90,74,0.35); cursor: pointer; }
+.daw-notif-error:hover { background: var(--panel-2); }
+.daw-notif-error .daw-notif-card-icon {
+  background: rgba(214,90,74,0.14);
+  color: var(--danger);
+}
+.daw-notif-error:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .daw-notif-card-body { flex: 1; min-width: 0; }
 .daw-notif-card-title { font-size: 12px; font-weight: 600; color: var(--fg); }
 .daw-notif-card-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -2739,6 +2757,50 @@ input, textarea { font-family: inherit; }
 
 /* The "New release available" card opens the dialog on click. */
 .daw-notif-release { cursor: pointer; }
+
+/* ── Failure dialog ── */
+/* Same shell as the release dialog, in the danger colour, with the technical
+   block the report will carry shown verbatim -- nothing is sent that the user
+   has not been able to read first. */
+.failure-card {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.failure-logo { color: var(--danger); }
+.failure-when { color: var(--muted); }
+.failure-message {
+  margin: 12px 0 0;
+  font-size: 13px; line-height: 1.5; color: var(--fg-2);
+  white-space: pre-line; text-align: center;
+}
+.failure-hint {
+  margin: 10px 0 0;
+  font-size: 11px; line-height: 1.5; color: var(--muted);
+  text-align: center;
+}
+.failure-tech {
+  width: 100%; flex: 1 1 auto; min-height: 0;
+  margin: 12px 0 0; padding: 10px 12px;
+  overflow: auto; text-align: left;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+.failure-tech code {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.55;
+  color: var(--fg-2); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Reporting is the reason this dialog exists, so it gets the app's primary
+   button treatment (as Export Mix does) rather than the muted link style the
+   About/release dialogs use for their several equal-weight links. */
+.failure-card .about-link-primary {
+  background: var(--accent); border-color: transparent; color: #1a1206;
+}
+.failure-card .about-link-primary:hover {
+  background: color-mix(in srgb, var(--accent) 85%, white);
+  color: #1a1206;
+}
 
 /* ── Library sections (Recent · Stem Collections · Tags) ── */
 .lib-section {

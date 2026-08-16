@@ -109,6 +109,7 @@
           <div class="daw-notif-panel" role="menu" aria-label="Notifications">
             <div class="daw-notif-header">
               <span class="uplabel">Notifications</span>
+              <button class="daw-notif-clear" id="notifClearAll" type="button">Clear all</button>
               <button class="daw-notif-close" type="button" aria-label="Close notifications">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
               </button>
@@ -865,6 +866,30 @@
         <div class="about-primary-links">
           <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer">Download</a>
           <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer">All releases</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Failure detail dialog (opened from a notification card). The report
+         link is a plain external anchor: the global handler in main.js routes
+         it through Tauri's open_url on desktop and a new tab in a browser. -->
+    <div class="about-backdrop hidden" id="failureDialog" role="dialog" aria-modal="true" aria-labelledby="failureTitle">
+      <div class="about-card failure-card">
+        <button class="about-close" id="failureClose" type="button" aria-label="Close failure dialog">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <div class="about-logo failure-logo" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M12 9v4 M12 17h.01 M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+          </svg>
+        </div>
+        <h2 id="failureTitle">Something failed</h2>
+        <span class="about-version-badge failure-when" id="failureWhen"></span>
+        <p class="failure-message" id="failureMessage"></p>
+        <p class="failure-hint">These details go in the report. Your track title and source link are not included — add them yourself if they help.</p>
+        <pre class="failure-tech"><code id="failureTech"></code></pre>
+        <div class="about-primary-links">
+          <a class="about-link about-link-primary" id="failureReport" target="_blank" rel="noopener noreferrer">Report on GitHub</a>
         </div>
       </div>
     </div>

@@ -9,7 +9,8 @@ import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
-import { initCatalog } from "./catalog.js";
+import { initCatalog, collectDiagnostics } from "./catalog.js";
+import { initNotifications, notifyFailure } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
 
 // ─── Stem choice toggles on the import page ───
@@ -115,6 +116,10 @@ wireAppShellControls();
   await runStoreMigrationIfNeeded();
   await stemSelectionReady;
   refreshStemChoiceVisuals();
+  // Before initCatalog: it runs the update check, which can itself notify.
+  // collectDiagnostics is injected rather than imported by notifications.js,
+  // which would make the two modules import each other.
+  await initNotifications({ diagnostics: collectDiagnostics });
   await initCatalog();
 })().catch(console.error);
 
@@ -249,7 +254,14 @@ function wireFooterControls() {
       .catch((err) => {
         // A cancelled dialog resolves false without ever entering the busy
         // state, so anything here is a real failure.
-        showError(typeof err === "string" && err ? err : "Export failed.", null, { retry: false });
+        const message = typeof err === "string" && err ? err : "Export failed.";
+        showError(message, null, { retry: false });
+        notifyFailure({
+          kind: "export",
+          message,
+          detail: err instanceof Error ? String(err.message) : null,
+          context: { stage: `Exporting ${format}` },
+        });
       })
       .finally(() => {
         window.clearTimeout(backstop);

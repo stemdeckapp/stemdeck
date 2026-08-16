@@ -7,6 +7,7 @@ import {
   selectedStems,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
+import { notifyFailure } from "./notifications.js";
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
@@ -134,9 +135,12 @@ function clearImportError() {
 // the user loads a different track, without wiping an import failure the user
 // has not read yet. Always retry:false -- "Try again" sends the user to the URL
 // field, which is not what a broken stem file calls for.
-export function showPlaybackError(message, detail) {
+export function showPlaybackError(message, detail, context = {}) {
   showError(message, detail, { retry: false });
   errorEl.dataset.kind = "playback";
+  // The class of failure #359 was written about: a track that loads and then
+  // does nothing. Recording it is what makes it reportable.
+  notifyFailure({ kind: "playback", message, detail, context });
 }
 
 export function clearPlaybackError() {
@@ -320,6 +324,20 @@ function applyState(state) {
     updateTrackStatus(state.job_id, "error");
     setWaveformLoading(false);
     showError(state.error || "Unknown error", state.error_detail);
+    // Also record it: the banner above is transient and the user may well
+    // dismiss it before deciding to report anything.
+    notifyFailure({
+      kind: "import",
+      message: state.error || "Unknown error",
+      detail: state.error_detail || null,
+      context: {
+        jobId: state.job_id,
+        stage: state.stage,
+        device: state.compute_device,
+        gpuFallback: state.gpu_fallback,
+        timings: state.stage_timings ? JSON.stringify(state.stage_timings) : null,
+      },
+    });
     setForegroundJobId(null);
   } else if (state.status === "cancelled") {
     stopJobPolling();

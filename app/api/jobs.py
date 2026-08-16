@@ -424,6 +424,61 @@ def _beats_paths(job_id: str) -> tuple[Path, Path]:
     return stems / "beats.json", stems / "beats.user.json"
 
 
+# Keys of error.txt that may be handed to the client. `title` and `source` are
+# deliberately absent: this feeds a "report it on GitHub" flow whose issues are
+# public, and the user adds what they were working on if they want to. The
+# server is the right place to enforce that -- not the client that builds the
+# report body.
+_FAILURE_PUBLIC_KEYS = frozenset(
+    ("time", "stage", "device", "model", "cause", "timings", "exception")
+)
+
+
+@router.get("/{job_id}/failure")
+def get_failure(job_id: str) -> dict:
+    """Return the quarantined failure evidence for a job that errored.
+
+    _quarantine_failed_job writes jobs/failed/<id>/error.txt on every pipeline
+    failure (#277) and until now nothing ever read it back: the UI had only the
+    one-line `error_detail`, so a bug report could not carry the stderr tail
+    that says *why* demucs died. Read-only, and never serves the whole file --
+    only the technical keys above, plus the tail.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+
+    # JOB_ID_RE rejects "failed", so the quarantine dir can never be addressed
+    # as a job id; join it explicitly and re-verify the result stays inside.
+    failed_dir = (JOBS_DIR / "failed" / job_id).resolve()
+    if not failed_dir.is_relative_to((JOBS_DIR / "failed").resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    path = failed_dir / "error.txt"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no failure evidence for this job")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.exception("unreadable failure evidence for %s", job_id)
+        raise HTTPException(status_code=404, detail="no failure evidence for this job") from exc
+
+    fields: dict[str, str] = {}
+    tail: list[str] = []
+    in_tail = False
+    for line in text.splitlines():
+        if line.strip() == "--- stderr tail ---":
+            in_tail = True
+            continue
+        if in_tail:
+            tail.append(line)
+            continue
+        key, sep, value = line.partition(":")
+        if sep and key in _FAILURE_PUBLIC_KEYS:
+            fields[key] = value.strip()
+
+    return {"job_id": job_id, **fields, "tail": tail}
+
+
 @router.get("/{job_id}/beats")
 def get_beats(job_id: str) -> Response:
     """Return the beat grid, preferring the user's edits over the detected one.

@@ -10,6 +10,7 @@ import {
   startQueueStream,
 } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
+import { notifyFailure, setReleasePending } from "./notifications.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
 function esc(s) {
@@ -1548,6 +1549,26 @@ async function completeSettledJob(jobId) {
       render();
       return;
     }
+    // A background job that failed used to say nothing at all: no banner (that
+    // belongs to the foreground import), no queue UI, just a console warning
+    // and a library row indistinguishable from a healthy one. Queue three
+    // tracks, lose one, never find out. It gets a notification like any other
+    // failure now.
+    if (state.status === "error") {
+      notifyFailure({
+        kind: "import",
+        message: state.error || "Audio processing failed.",
+        detail: state.error_detail || null,
+        context: {
+          jobId,
+          stage: state.stage,
+          device: state.compute_device,
+          gpuFallback: state.gpu_fallback,
+          timings: state.stage_timings ? JSON.stringify(state.stage_timings) : null,
+        },
+      });
+    }
+
     const track = stateMetadataToTrack(state, { ...existing, id: jobId });
     track.id = jobId;
     track.channel = state.status === "done" ? "Extracted" : existing.channel;
@@ -1993,13 +2014,29 @@ function setDisplayedVersion(version) {
   if (about) about.textContent = `v${currentVersion}`;
 }
 
+// Kept from the health check so a bug report can state the running version,
+// model and ffmpeg status without a second round trip.
+let healthInfo = {};
+
 async function loadCurrentVersion() {
   try {
     const res = await fetch("/api/health", { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
+    healthInfo = data;
     setDisplayedVersion(data.version);
   } catch (e) { console.warn("[catalog] version fetch failed:", e); }
+}
+
+/** Everything a bug report needs about this install. */
+export async function collectDiagnostics() {
+  return {
+    version: currentVersion,
+    model: healthInfo.demucs_model,
+    ffmpegConfigured: healthInfo.ffmpeg_configured,
+    buildTarget: await getBuildTarget(),
+    isDesktop: Boolean(window.__TAURI__?.core?.invoke),
+  };
 }
 
 function escapeHtml(value) {
@@ -2111,7 +2148,7 @@ function renderReleaseNotes(markdown) {
 // Resolve the running build's OS/arch/GPU variant. On desktop this is exact
 // (Rust build_target); on web/server there is no reliable signal, so guess the
 // OS from the user agent and leave the variant as CPU.
-async function getBuildTarget() {
+export async function getBuildTarget() {
   if (cachedBuildTarget) return cachedBuildTarget;
   const invoke = window.__TAURI__?.core?.invoke;
   if (invoke) {
@@ -2230,14 +2267,13 @@ async function checkForUpdate() {
 
     const card = document.getElementById("notifReleaseCard");
     const desc = document.getElementById("notifReleaseDesc");
-    const badge = document.getElementById("notifBadge");
-    const empty = document.getElementById("notifEmpty");
     const dismissBtn = document.getElementById("notifReleaseDismiss");
 
     if (desc) desc.textContent = `v${latest}`;
     card?.classList.remove("hidden");
-    badge?.classList.remove("hidden");
-    empty?.classList.add("hidden");
+    // The badge and empty state are shared with failure cards now, so they are
+    // decided in one place from the full set rather than toggled from here.
+    setReleasePending(true);
 
     // Clicking the card (anywhere but the dismiss button) opens the release dialog.
     card?.addEventListener("click", (e) => {
@@ -2249,10 +2285,20 @@ async function checkForUpdate() {
       e.stopPropagation();
       try { localStorage.setItem(DISMISSED_UPDATE_KEY, latest); } catch (e) { console.warn(e); }
       card?.classList.add("hidden");
-      badge?.classList.add("hidden");
-      empty?.classList.remove("hidden");
+      setReleasePending(false);
     }, { once: true });
-  } catch (e) { console.warn("[catalog] update check failed:", e); }
+  } catch (e) {
+    console.warn("[catalog] update check failed:", e);
+    // Only report a genuine failure, not "we are offline": an update check that
+    // cannot reach GitHub is not a StemDeck bug and must not file one.
+    if (!(e instanceof TypeError)) {
+      notifyFailure({
+        kind: "update",
+        message: "Could not check for updates.",
+        detail: String(e?.message || e),
+      });
+    }
+  }
 }
 
 function wireAboutDialog() {
@@ -2940,6 +2986,12 @@ async function exportLogs(btn) {
   } catch (e) {
     console.warn("[settings] log export failed:", e);
     showError("Could not export the logs.", null, { retry: false });
+    notifyFailure({
+      kind: "export",
+      message: "Could not export the logs.",
+      detail: String(e?.message || e),
+      context: { stage: "Exporting logs" },
+    });
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Export logs"; }
   }
