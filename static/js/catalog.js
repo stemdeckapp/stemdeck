@@ -2890,7 +2890,12 @@ async function wireNetworkSetting(overlay) {
 }
 
 async function loadRegistryView(overlay) {
-  const view = overlay.querySelector(".settings-registry-view");
+  // Scoped to the registry pane: the log viewers reuse .settings-registry-view
+  // for its read-only-textarea styling and sit earlier in the markup, so a bare
+  // class lookup returned the *application log* box. The registry JSON was
+  // being written into a hidden textarea while the registry pane sat on its
+  // literal "Loading…" placeholder for ever.
+  const view = overlay.querySelector('[data-pane="registry"] .settings-registry-view');
   if (!view) return;
   view.value = "Loading…";
   try {
@@ -3227,6 +3232,7 @@ function openLibraryEditor() {
         <div class="settings-subtabs" role="tablist">
           <button class="settings-subtab active" type="button" data-sub="location" role="tab">Location</button>
           <button class="settings-subtab" type="button" data-sub="application" role="tab">Application log</button>
+          <button class="settings-subtab" type="button" data-sub="backend" role="tab">Backend log</button>
           <button class="settings-subtab" type="button" data-sub="setup" role="tab">Setup log</button>
         </div>
         <div class="settings-subpane" data-subpane="location">
@@ -3249,6 +3255,16 @@ function openLibraryEditor() {
             <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="application">Refresh</button>
           </div>
           <textarea class="settings-registry-view settings-logtail-view" data-view="application" readonly spellcheck="false" aria-label="Application log (read only)">Loading…</textarea>
+        </div>
+        <div class="settings-subpane hidden" data-subpane="backend">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title">Backend log</div>
+              <div class="settings-row-desc">The last hour from <code>backend.log</code> — raw output of the bundled Python process, including anything that crashed it before the application log could record it. Desktop app only. Read-only.</div>
+            </div>
+            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="backend">Refresh</button>
+          </div>
+          <textarea class="settings-registry-view settings-logtail-view" data-view="backend" readonly spellcheck="false" aria-label="Backend log (read only)">Loading…</textarea>
         </div>
         <div class="settings-subpane hidden" data-subpane="setup">
           <div class="settings-row">

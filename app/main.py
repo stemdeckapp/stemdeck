@@ -571,6 +571,12 @@ def get_logs_info() -> dict[str, object]:
 # otherwise make a busy log look empty.
 _LOG_VIEWS: dict[str, tuple[str, ...]] = {
     "application": ("stemdeck.log", "stemdeck.log.1"),
+    # The backend's raw stdout/stderr. Worth a view of its own because it holds
+    # what the application log cannot: anything the process printed before
+    # logging was configured, and anything that killed it before a handler ran.
+    # A backend that dies at startup leaves stemdeck.log empty and the answer
+    # here.
+    "backend": ("backend.log", "backend.log.1", "backend.log.2"),
     "setup": ("setup.log",),
 }
 # Bounds on what a single view returns. The application log rotates at 5 MB, so

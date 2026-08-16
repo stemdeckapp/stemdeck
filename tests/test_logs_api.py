@@ -207,6 +207,40 @@ def test_tail_parses_the_setup_log_epoch_format(client, logs_dir):
     assert "old entry" not in body
 
 
+def test_tail_serves_the_backend_log(client, logs_dir):
+    """backend.log was listed in Settings and shipped in the zip, but had no
+    view -- the one log holding what killed a backend before its own logging
+    was up was the one log you could not read in the app."""
+    (logs_dir / "backend.log").write_text(
+        f"{_stamp(120)} I stemdeck ancient\n{_stamp(3)} I stemdeck recent crash\n",
+        encoding="utf-8",
+    )
+    body = client.get("/api/logs/backend?minutes=60").text
+    assert "recent crash" in body
+    assert "ancient" not in body
+
+
+def test_tail_reads_the_backend_rotations_in_order(client, logs_dir):
+    (logs_dir / "backend.log.2").write_text(f"{_stamp(30)} I stemdeck oldest\n", encoding="utf-8")
+    (logs_dir / "backend.log.1").write_text(f"{_stamp(20)} I stemdeck middle\n", encoding="utf-8")
+    (logs_dir / "backend.log").write_text(f"{_stamp(5)} I stemdeck newest\n", encoding="utf-8")
+    body = client.get("/api/logs/backend?minutes=60").text
+    assert body.index("oldest") < body.index("middle") < body.index("newest")
+
+
+def test_every_listed_log_file_is_reachable_through_some_view(client, logs_dir):
+    """The Settings pane lists files and offers views; a file in the first list
+    with no view is a dead end for the user, which is how backend.log ended up
+    invisible."""
+    from app.main import _LOG_FILES, _LOG_VIEWS
+
+    viewable = {name for names in _LOG_VIEWS.values() for name in names}
+    listed = {name for name, _ in _LOG_FILES}
+    # Rotations beyond the first are covered by the zip, not by a live view.
+    unreachable = {n for n in listed - viewable if not n.endswith((".2", ".3"))}
+    assert not unreachable, f"listed but not viewable: {sorted(unreachable)}"
+
+
 def test_tail_says_so_when_the_window_is_empty(client, logs_dir):
     (logs_dir / "stemdeck.log").write_text(f"{_stamp(500)} I stemdeck ancient\n", encoding="utf-8")
     assert "No entries in the last 60 minutes" in client.get("/api/logs/application").text
