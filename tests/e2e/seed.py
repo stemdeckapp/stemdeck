@@ -9,6 +9,12 @@ audio engine parses WAV containers itself, so a file that is not really a WAV
 loads with no duration and the studio comes up without playback -- which is the
 #358 failure mode, and it would make every test here fail for the wrong reason.
 
+Each artifact has to live where the real pipeline puts it -- both peaks.json and
+beats.json under stems/ -- or the endpoint that serves it 404s and the feature
+it drives is quietly untestable. Both were in the job root once: the studio fell
+back to decoding every stem for its waveforms, and the click track never
+appeared at all.
+
 Usage:  python tests/e2e/seed.py <jobs-dir>
 """
 
@@ -67,15 +73,35 @@ def seed(jobs_dir: Path) -> str:
     for index, name in enumerate(STEMS):
         (stems_dir / f"{name}.wav").write_bytes(_wav_bytes(220.0 * (index + 1)))
 
-    (job_dir / "peaks.json").write_text(
+    (stems_dir / "peaks.json").write_text(
         json.dumps({name: _peaks() for name in STEMS}), encoding="utf-8"
     )
-    (job_dir / "beats.json").write_text(
+    # stems/beats.json, not <job>/beats.json: that is where the pipeline writes
+    # it and the only place GET /api/jobs/{id}/beats looks (_beats_paths). Put
+    # it in the job root and the endpoint 404s, the studio reports "No beat grid
+    # for this track", and every click-track control stays disabled -- so the
+    # click track, the count-in and the grid editor were untestable in a browser
+    # while looking, from the fixture, as though they were covered.
+    #
+    # Shape matches what beatgrid.py emits, `bars` included: with no bar marks
+    # the accent mode falls back to "Auto (none found)" and the detected-meter
+    # path never runs.
+    beats = [round(i * 0.5, 3) for i in range(DURATION_SEC * 2)]
+    (stems_dir / "beats.json").write_text(
         json.dumps(
             {
+                "version": 1,
+                "source": "drums",
+                "detector": "e2e-fixture",
+                # One 4/4 region from the first beat: 120 BPM, a downbeat every
+                # 2 s. Enough for "Auto (detected)" and a one-bar count-in.
+                "bars": [{"beat": 0, "beats_per_bar": 4}],
                 "bpm": 120.0,
-                "beats": [round(i * 0.5, 3) for i in range(DURATION_SEC * 2)],
-                "downbeats": [round(i * 2.0, 3) for i in range(DURATION_SEC // 2)],
+                "duration": float(DURATION_SEC),
+                "confidence": 95,
+                # The grid editor snaps dragged beats onto these.
+                "onsets": beats,
+                "beats": beats,
             }
         ),
         encoding="utf-8",

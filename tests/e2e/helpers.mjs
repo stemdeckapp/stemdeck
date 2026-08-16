@@ -199,6 +199,22 @@ export async function openStudio(page, { tauri = false, updateAvailable = false 
   );
 }
 
+/**
+ * Wait until the click track is live.
+ *
+ * openStudio returns once the transport reports a duration, but the metronome
+ * is built later still -- after the audio engine is up and the beat grid has
+ * been fetched. Acting before then hits a null metronome, where the rate and
+ * accent controls silently no-op: the click looks present and does nothing.
+ */
+export async function waitForClickTrack(page) {
+  await page.waitForFunction(
+    () => document.querySelector("#t-metro") && !document.querySelector("#t-metro").disabled,
+    null,
+    { timeout: 20000 },
+  );
+}
+
 export const exportUi = (page) => ({
   button: page.locator("#t-export-btn"),
   panel: page.locator("#t-export-panel"),
