@@ -2121,6 +2121,11 @@ input, textarea { font-family: inherit; }
 .footer-wave-panel {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+  /* Closes the strip's open left edge and lands on the same x as the mixer
+     panel's right border, so that seam runs on down the page. Drawn as an
+     outset shadow rather than a border: a border would sit inside the box and
+     push the canvas a pixel off the lane waveforms it has to line up with. */
+  box-shadow: -1px 0 0 var(--border);
   background: var(--panel);
   overflow: hidden;
 }
