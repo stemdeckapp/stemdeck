@@ -335,6 +335,12 @@ function wireFooterControls() {
   }
 
   // ── Close panels on outside click ──
+  // Inside the menu is not "away": ticking an option must not dismiss it. The
+  // export panel carries two checkboxes (click track, count-in) that a user
+  // may well want both of, and without this the first tick closed the menu and
+  // the second needed it reopened. Rows that *should* close the menu do it
+  // themselves -- the export actions via enterBusy() -> closePanel().
+  exportPanel?.addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", closeAllChipPanels);
 }
 
