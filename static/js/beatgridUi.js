@@ -58,6 +58,13 @@ export function toggleBeatGridEditor(force) {
   if (next && !_available) return;
   setBeatGridEditing(next);
   bgToolbar.classList.toggle("hidden", !next);
+  // The Grid button is a press-to-open toggle like the click and count-in
+  // buttons beside it, so its lit state is synced here -- the one place every
+  // open and close runs through, including Done, Escape and losing the grid.
+  if (metroEditBtn) {
+    metroEditBtn.classList.toggle("active", next);
+    metroEditBtn.setAttribute("aria-pressed", next ? "true" : "false");
+  }
   if (next) {
     _syncTools();
     _syncBarLen();
@@ -93,7 +100,7 @@ export function wireBeatGridUi() {
     }
   });
 
-  metroEditBtn?.addEventListener("click", () => toggleBeatGridEditor(true));
+  metroEditBtn?.addEventListener("click", () => toggleBeatGridEditor());
 
   bgUndoBtn?.addEventListener("click", () => { undoBeatGrid(); syncBeatGridButtons(); });
   bgRedoBtn?.addEventListener("click", () => { redoBeatGrid(); syncBeatGridButtons(); });

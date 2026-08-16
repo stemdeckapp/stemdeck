@@ -49,6 +49,10 @@
 
   /* Layout */
   --header-w: 300px;
+  /* Width of the studio's left column: the stems/mixer panel, the label cell
+     above it, and the footer's blank gutter. One value, so the footer's
+     waveform strip stays aligned with the lane waveforms above it. */
+  --daw-col-w: 300px;
   --lane-h:   86px;
   --radius:   10px;
   --radius-sm: 8px;

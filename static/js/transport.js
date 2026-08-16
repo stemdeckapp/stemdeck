@@ -64,6 +64,13 @@ function setPlayheadTime(sec) {
   updatePresencePlayhead(next);
 }
 
+// Spacing of the timeline's labelled ticks. Shared by the ruler above the
+// lanes and the one on the footer waveform: the two strips are the same width
+// and start at the same x, so a time has to land at the same place in both.
+function tickStep(durationSec) {
+  return durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
+}
+
 export function buildRuler(durationSec) {
   rulerTime.innerHTML = "";
   wavesGrid.innerHTML = "";
@@ -75,7 +82,7 @@ export function buildRuler(durationSec) {
   rulerTime.appendChild(marker);
 
   if (!durationSec || durationSec <= 0) return;
-  const step = durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
+  const step = tickStep(durationSec);
   for (let t = 0; t <= durationSec; t += step) {
     const leftPct = (t / durationSec) * 100;
     const tick = document.createElement("div");
@@ -119,20 +126,20 @@ export function updateFooterTimes(currentSec) {
   footerWaveDrawFn?.(pct / 100);
 }
 
-// Time labels above the footer waveform. Each label opens the slice of the
-// timeline it sits on (its tick line is drawn on its left edge by CSS), so the
-// last slice starts at 7/8 of the track rather than at its very end -- a label
-// hard against the right edge would have nothing to the right of it to mark.
-const FOOTER_WAVE_TICKS = 8;
-
+// Time labels above the footer waveform. Same ticks as the ruler over the
+// lanes, positioned the same way (percent of duration), because the footer
+// strip is now indented to share that ruler's left edge and width.
 export function buildFooterWaveTicks(durationSec) {
   if (!footerWaveTicks) return;
   footerWaveTicks.innerHTML = "";
   if (!durationSec || durationSec <= 0) return;
-  for (let i = 0; i < FOOTER_WAVE_TICKS; i++) {
-    const label = document.createElement("span");
-    label.textContent = fmtTickLabel((i / FOOTER_WAVE_TICKS) * durationSec);
-    footerWaveTicks.appendChild(label);
+  const step = tickStep(durationSec);
+  for (let t = 0; t <= durationSec; t += step) {
+    const tick = document.createElement("div");
+    tick.className = "tick";
+    tick.style.left = `${(t / durationSec) * 100}%`;
+    tick.innerHTML = `<span class="tick-label">${fmtTickLabel(t)}</span>`;
+    footerWaveTicks.appendChild(tick);
   }
 }
 
