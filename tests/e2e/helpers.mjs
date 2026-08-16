@@ -134,11 +134,59 @@ export async function stubExportEndpoints(page) {
     route.fulfill({ status: 200, contentType: "audio/wav", body: Buffer.from("RIFF") }));
 }
 
+/**
+ * Answer the update check locally instead of letting it reach GitHub.
+ *
+ * Two reasons. It puts an external service in the path of every run, and more
+ * subtly it makes the notification centre non-deterministic: when the release
+ * on GitHub is newer than the version under test, an update card appears and
+ * lights the same badge failure notifications use. That is real behaviour --
+ * one badge for the centre -- but a test asserting on the badge has to control
+ * it. A non-ok response is the check's own "nothing to see" path.
+ *
+ * This is why the notification tests passed locally and failed in CI: a dev
+ * build reports a version containing "dev", which checkForUpdate skips, so the
+ * card never appeared on a developer machine.
+ */
+export async function stubUpdateCheck(page, { available = false } = {}) {
+  if (available) {
+    // Force the "an update exists" state: the check skips dev builds, so the
+    // version has to look like a release for the card to appear at all.
+    await page.route("**/api/health**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          name: "StemDeck",
+          status: "ok",
+          version: "0.5.0",
+          ffmpeg_configured: true,
+          demucs_model: "htdemucs_6s",
+          demucs_device: "cpu",
+        }),
+      }));
+    await page.route("https://api.github.com/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tag_name: "v9.9.9", body: "notes", html_url: "https://example.invalid", assets: [] }),
+      }));
+    return;
+  }
+  await page.route("https://api.github.com/**", (route) =>
+    route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "stubbed by tests" }),
+    }));
+}
+
 /** Open the fixture track in the studio and wait until the transport is live. */
-export async function openStudio(page, { tauri = false } = {}) {
+export async function openStudio(page, { tauri = false, updateAvailable = false } = {}) {
   await seedLibrary(page);
   if (tauri) await stubTauri(page);
   await stubExportEndpoints(page);
+  await stubUpdateCheck(page, { available: updateAvailable });
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator(`.cat-item[data-id="${JOB_ID}"]`).first().click();

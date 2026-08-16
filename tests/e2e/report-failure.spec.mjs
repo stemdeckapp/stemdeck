@@ -89,6 +89,27 @@ test.describe("failure notifications", () => {
     expect(page.url()).not.toContain("github.com");
   });
 
+  test("the update card shares the badge, so dismissing a failure need not clear it", async ({ page }) => {
+    // One badge serves the whole centre. This is the interaction that broke the
+    // two tests above in CI, where an update genuinely was available and the
+    // badge stayed lit after the only failure card was dismissed -- correctly.
+    // Pinned here so the shared-badge rule is a decision, not an accident.
+    await openStudio(page, { tauri: true, updateAvailable: true });
+    await expect(page.locator("#notifReleaseCard")).not.toHaveClass(/hidden/);
+    await expect(page.locator("#notifBadge")).not.toHaveClass(/hidden/);
+
+    await failAnExport(page);
+    await openBell(page);
+    await expect(page.locator(".daw-notif-error")).toHaveCount(1);
+
+    await page.locator(".daw-notif-error .daw-notif-dismiss").first().click();
+    await expect(page.locator(".daw-notif-error")).toHaveCount(0);
+    // The update is still pending, so the badge stays and the empty state does
+    // not come back.
+    await expect(page.locator("#notifBadge")).not.toHaveClass(/hidden/);
+    await expect(page.locator("#notifEmpty")).toHaveClass(/hidden/);
+  });
+
   test("a failure survives a reload, and dismissal clears the badge", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await failAnExport(page);
