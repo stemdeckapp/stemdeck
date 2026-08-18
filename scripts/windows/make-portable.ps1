@@ -4,6 +4,7 @@ param(
   [string]$PackageName   = "StemDeck-Windows-x64",
   [string]$PackageVersion,
   [switch]$SkipTauriBuild,
+  [string]$PrebuiltExe,
   [switch]$CpuOnly,
   [switch]$StripVenv
 )
@@ -26,6 +27,19 @@ $BackendDir = Join-Path $Stage "backend"
 $DesktopDir = Join-Path $Root "desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"
 $TargetExe = Join-Path $TauriDir "target\$Configuration\stemdeck.exe"
+
+# -PrebuiltExe packages an executable produced (and signed) by an earlier job instead of
+# building one here. The release pipeline uses it so both the CPU and NVIDIA packages ship the
+# one SignPath-signed binary rather than rebuilding Rust twice.
+if ($PrebuiltExe) {
+  if ($SkipTauriBuild) {
+    throw "-PrebuiltExe and -SkipTauriBuild are mutually exclusive."
+  }
+  if (-not (Test-Path -LiteralPath $PrebuiltExe)) {
+    throw "Prebuilt executable not found: $PrebuiltExe"
+  }
+  $TargetExe = (Resolve-Path -LiteralPath $PrebuiltExe).Path
+}
 
 function Require-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -144,9 +158,11 @@ Remove -SkipTauriBuild or run the NVIDIA package build first so the CPU package 
   }
 }
 
-Require-Command "node"
-Require-Command "npm"
-Require-Command "cargo"
+if (-not $PrebuiltExe) {
+  Require-Command "node"
+  Require-Command "npm"
+  Require-Command "cargo"
+}
 
 if (-not (Get-Command "py" -ErrorAction SilentlyContinue) -and -not (Get-Command "python" -ErrorAction SilentlyContinue)) {
   throw "Python launcher not found. Install Python 3.12 on the Windows build agent."
@@ -237,27 +253,45 @@ if ($StripVenv) {
     Remove-Item -Force
 }
 
-Push-Location $DesktopDir
-try {
-  if (Test-Path "package-lock.json") {
-    npm ci --include=dev
-  } else {
-    npm install --include=dev
-  }
+if (-not $PrebuiltExe) {
+  Push-Location $DesktopDir
+  try {
+    if (Test-Path "package-lock.json") {
+      npm ci --include=dev
+    } else {
+      npm install --include=dev
+    }
 
-  if (-not $SkipTauriBuild) {
-    $env:CI = "true"  # Woodpecker sets CI=woodpecker; Tauri only accepts true/false
-    rustup default stable
-    Invoke-TauriBuild
-  } else {
-    Assert-Fresh-TauriBuild
+    if (-not $SkipTauriBuild) {
+      $env:CI = "true"  # Woodpecker sets CI=woodpecker; Tauri only accepts true/false
+      rustup default stable
+      Invoke-TauriBuild
+    } else {
+      Assert-Fresh-TauriBuild
+    }
+  } finally {
+    Pop-Location
   }
-} finally {
-  Pop-Location
 }
 
 if (-not (Test-Path $TargetExe)) {
   throw "Tauri executable not found at $TargetExe"
+}
+
+if ($PrebuiltExe) {
+  # Fail loudly if the signing job handed back an unsigned binary. A test-signing policy uses a
+  # self-signed certificate, so anything other than NotSigned is accepted here and only warned
+  # about; the release certificate yields Valid.
+  $Signature = Get-AuthenticodeSignature -LiteralPath $TargetExe
+  if ($Signature.Status -eq "NotSigned") {
+    throw "Prebuilt executable carries no Authenticode signature: $TargetExe"
+  }
+  if ($Signature.Status -ne "Valid") {
+    Write-Warning "Authenticode status is $($Signature.Status) (expected for a test-signing certificate)."
+  }
+  if ($Signature.SignerCertificate) {
+    Write-Host "Signed by   : $($Signature.SignerCertificate.Subject)"
+  }
 }
 
 Copy-Item -Force $TargetExe (Join-Path $Stage "StemDeck.exe")

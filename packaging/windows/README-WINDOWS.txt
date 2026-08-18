@@ -8,6 +8,13 @@ Run
 2. Double-click StemDeck.exe.
 3. Let first-run setup prepare local runtime assets.
 
+Code signing
+------------
+
+StemDeck.exe is Authenticode-signed. Free code signing provided by SignPath.io,
+certificate by SignPath Foundation. The zip itself is not signed; verify it with
+the .sha256 file published next to it on the release page.
+
 Notes
 -----
 

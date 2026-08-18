@@ -1,0 +1,9 @@
+# Build policy enforced by SignPath on every signing request submitted against the
+# "release-signing" policy of the "stemdeck" project.
+# Reference: https://docs.signpath.io/trusted-build-systems/github
+github-policies:
+  build:
+    # A failed build must not be re-run just to obtain a signature.
+    disallow_reruns: true
+  # Branch rulesets are intentionally left out until the repository has matching rulesets
+  # configured; SignPath rejects requests whose repository does not satisfy them.

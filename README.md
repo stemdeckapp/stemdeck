@@ -391,6 +391,39 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 
 ---
 
+## Code signing policy
+
+Windows releases of StemDeck are Authenticode-signed. Free code signing is provided by
+[SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+The signed binary is `StemDeck.exe` inside `StemDeck-Windows-x64.zip` and
+`StemDeck-Windows-x64.NVIDIA.zip`. The zip archives themselves are not signed; verify them with
+the `.sha256` file published alongside each release asset. macOS and Linux builds are not
+currently signed.
+
+**Team roles**
+
+| Role | Members |
+|---|---|
+| Committers | Thales Pereira ([@thcp](https://github.com/thcp)) |
+| Reviewers | Thales Pereira ([@thcp](https://github.com/thcp)) |
+| Approvers | Thales Pereira ([@thcp](https://github.com/thcp)) |
+
+**How signing works**
+
+The executable is built from this repository by the
+[Windows Release workflow](.github/workflows/windows-release.yml) on a GitHub-hosted runner,
+uploaded as a workflow artifact, and submitted to SignPath for signing. SignPath verifies the
+build's origin (repository, branch, commit, and build job) before the certificate is applied.
+Every release signing request is approved manually by an approver listed above.
+
+**Privacy**
+
+StemDeck does not transmit any personal data. All audio processing happens on the user's own
+machine. See the [Disclaimer](#disclaimer) for details.
+
+---
+
 ## Community
 
 | Platform | Link |

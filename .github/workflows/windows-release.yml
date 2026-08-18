@@ -3,6 +3,14 @@ name: Windows Release
 on:
   release:
     types: [published]
+  # Dry-run entry point: builds and signs without publishing anything, so the SignPath
+  # integration can be exercised against the test-signing policy before a real tag is cut.
+  workflow_dispatch:
+    inputs:
+      signing_policy:
+        description: SignPath signing policy slug to submit against
+        required: false
+        default: test-signing
 
 permissions: {}
 
@@ -10,33 +18,111 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Source the tag from the github context (evaluated by Actions) rather than
+  # $env:GITHUB_REF_NAME, which is only injected by runner >= 2.290. Keeps the
+  # build working on older self-hosted runners. (#212 follow-up)
+  # workflow_dispatch runs off a branch, so there is no vX.Y.Z tag to derive a version from.
+  PACKAGE_VERSION: ${{ github.event_name == 'release' && github.ref_name || '0.0.0-dev' }}
+
 jobs:
+  # SignPath's OSS tier requires every job leading up to a signing request to run on a
+  # GitHub-hosted agent, so the executable is built here rather than on the self-hosted runner
+  # that packages it. This job builds nothing but StemDeck.exe; the heavy Python/torch bundling
+  # stays downstream.
+  sign-exe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read  # the SignPath action reads job details and downloads the artifact
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Must run before the build: SignPath restricts Foundation projects on PE metadata, and
+      # Tauri stamps ProductName/FileVersion into the executable from these files.
+      - name: write version files
+        run: |
+          $version = $env:PACKAGE_VERSION -replace '^v', ''
+          if (-not $version) { throw "PACKAGE_VERSION is not set" }
+          (Get-Content "desktop/src-tauri/Cargo.toml") -replace '^version = ".*"', "version = `"$version`"" |
+            Set-Content "desktop/src-tauri/Cargo.toml"
+          (Get-Content "desktop/src-tauri/tauri.conf.json") -replace '"version": "[^"]*"', "`"version`": `"$version`"" |
+            Set-Content "desktop/src-tauri/tauri.conf.json"
+          Write-Host "Building StemDeck.exe version $version"
+
+      - name: build executable
+        working-directory: desktop
+        env:
+          CI: "true"  # Tauri only accepts true/false here
+        run: |
+          rustup default stable
+          npm ci --include=dev
+          node node_modules/@tauri-apps/cli/tauri.js build
+
+      # The SignPath connector only accepts artifacts stored on the GitHub server.
+      - name: stage unsigned executable
+        run: |
+          New-Item -ItemType Directory -Force unsigned | Out-Null
+          Copy-Item -Force desktop/src-tauri/target/release/stemdeck.exe unsigned/
+
+      - name: upload unsigned executable
+        id: upload-unsigned
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: stemdeck-exe-unsigned
+          path: unsigned/stemdeck.exe
+
+      - name: submit signing request
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627  # v2.3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: stemdeck
+          signing-policy-slug: ${{ github.event_name == 'release' && 'release-signing' || inputs.signing_policy }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # Release signing needs a human approval in the SignPath console; the 600s default
+          # expires long before an approver is likely to see the mail.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - name: upload signed executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: stemdeck-exe-signed
+          path: signed/stemdeck.exe
+
   build-and-upload:
+    needs: sign-exe
     # Runner must be windows/x64 with PowerShell, Docker, and rustup.
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 90
     permissions:
       contents: write
-    # Source the tag from the github context (evaluated by Actions) rather than
-    # $env:GITHUB_REF_NAME, which is only injected by runner >= 2.290. Keeps the
-    # build working on older self-hosted runners. (#212 follow-up)
-    env:
-      REF_NAME: ${{ github.ref_name }}
     defaults:
       run:
         shell: powershell
     steps:
       - name: clean workspace
         run: |
-          Remove-Item -Recurse -Force .build, dist -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force .build, dist, signed -ErrorAction SilentlyContinue
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      - name: download signed executable
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: stemdeck-exe-signed
+          path: signed
+
       - name: write version files
         run: |
-          $tag = $env:REF_NAME
-          if (-not $tag) { throw "REF_NAME is not set" }
-          $version = $tag -replace '^v', ''
+          $version = $env:PACKAGE_VERSION -replace '^v', ''
+          if (-not $version) { throw "PACKAGE_VERSION is not set" }
           $json = "{`"version`": `"$version`"}"
           Set-Content -Path "static/version.json" -Value $json -Encoding UTF8
           (Get-Content "desktop/src-tauri/Cargo.toml") -replace '^version = ".*"', "version = `"$version`"" |
@@ -49,18 +135,22 @@ jobs:
             Set-Content "desktop/package.json"
           Write-Host "Wrote version $version to all version files"
 
+      # Both variants package the one signed executable from sign-exe, so the Rust build is not
+      # repeated here.
       - name: build Windows NVIDIA
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64.NVIDIA `
-            -PackageVersion "$env:REF_NAME" `
+            -PackageVersion "$env:PACKAGE_VERSION" `
+            -PrebuiltExe "$PWD\signed\stemdeck.exe" `
             -StripVenv
 
       - name: build Windows CPU
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64 `
-            -PackageVersion "$env:REF_NAME" `
+            -PackageVersion "$env:PACKAGE_VERSION" `
+            -PrebuiltExe "$PWD\signed\stemdeck.exe" `
             -CpuOnly `
             -StripVenv
 
@@ -82,6 +172,13 @@ jobs:
               Write-Host "  $($hash.Hash)  $($_.Name)"
             }
 
+          Write-Host "Authenticode signatures on the packaged executables:"
+          Get-ChildItem -Path "dist" -Filter "StemDeck.exe" -Recurse -File |
+            ForEach-Object {
+              $sig = Get-AuthenticodeSignature -LiteralPath $_.FullName
+              Write-Host "  $($_.FullName): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            }
+
           Write-Host "Pulling latest ClamAV scanner image..."
           docker pull clamav/clamav:latest
 
@@ -94,6 +191,7 @@ jobs:
           Write-Host "ClamAV scan completed successfully. No infected files reported."
 
       - name: upload artifacts
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
           files: |
