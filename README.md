@@ -139,7 +139,7 @@ macOS may show a Gatekeeper prompt on first open — right-click the app and cho
 | `StemDeck-Windows-x64.zip` | CPU only | ~700 MB |
 | `StemDeck-Windows-x64.NVIDIA.zip` | NVIDIA CUDA | ~1.6 GB |
 
-Extract the zip anywhere, run `StemDeck.exe`. On first launch the app verifies the bundled Python runtime and downloads FFmpeg and the Demucs model (~170 MB). Subsequent launches skip this and start in seconds. Everything is self-contained; no Python or system dependencies required.
+Extract the zip anywhere, run `StemDeck.exe`. FFmpeg, the Demucs model, config, and logs live in a `data/` folder next to `StemDeck.exe`, not in AppData; move or copy the whole extracted folder anywhere and it keeps working. On first launch the app verifies the bundled Python runtime and downloads FFmpeg and the Demucs model (~170 MB) into that folder. Subsequent launches skip this and start in seconds. Everything is self-contained; no Python or system dependencies required. Your job/library data stays in its usual location (`~/Documents/StemDeck` by default) and is relocatable anytime from Settings → StemData location.
 
 ---
 

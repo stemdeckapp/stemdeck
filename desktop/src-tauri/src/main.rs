@@ -986,6 +986,15 @@ fn is_cpu_only_package(root: &Path) -> bool {
     root.join("cpu-only").is_file()
 }
 
+/// The `portable.txt` marker is trusted ONLY in the app root: it ships next to
+/// StemDeck.exe inside the Windows portable zip (scripts/windows/make-portable.ps1),
+/// mirroring the `cpu-only` marker's root-only-trust pattern above. Shipped
+/// unconditionally in both the CPU and NVIDIA Windows builds, so a fresh
+/// extract is portable with zero user action. Never present on macOS/Linux.
+fn is_portable_package(root: &Path) -> bool {
+    root.join("portable.txt").is_file()
+}
+
 /// A persisted "cpu-only-package" device decision is only trustworthy while the
 /// *current* install is still the CPU-only build. When a user replaces the CPU
 /// package with the NVIDIA (CUDA) build in the same data dir, the leftover
@@ -1879,6 +1888,13 @@ fn stop_backend(state: &BackendState) {
 fn local_data_dir() -> Result<PathBuf, String> {
     if let Ok(path) = env::var("STEMDECK_DATA_DIR") {
         return Ok(PathBuf::from(path));
+    }
+    // Windows portable zip: redirect into data/ next to StemDeck.exe instead of
+    // %LocalAppData% (#399). No-ops on macOS/Linux, where the marker never ships.
+    if let Ok(root) = app_root() {
+        if is_portable_package(&root) {
+            return Ok(root.join("data"));
+        }
     }
     #[cfg(windows)]
     {
@@ -3750,6 +3766,18 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // Marker in the app root (ships with the package) does.
         fs::write(root.path().join("cpu-only"), "").unwrap();
         assert!(super::is_cpu_only_package(root.path()));
+    }
+
+    #[test]
+    fn portable_marker_trusted_in_root_only() {
+        let root = make_tmp();
+        let data = make_tmp();
+        // Marker only in the data dir must NOT mark this package portable.
+        fs::write(data.path().join("portable.txt"), "").unwrap();
+        assert!(!super::is_portable_package(root.path()));
+        // Marker in the app root (ships with the package) does.
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        assert!(super::is_portable_package(root.path()));
     }
 
     #[test]

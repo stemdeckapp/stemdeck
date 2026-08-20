@@ -168,6 +168,10 @@ New-Item -ItemType Directory -Force (Join-Path $Stage "data") | Out-Null
 foreach ($Dir in @("cache", "downloads", "ffmpeg", "jobs", "logs", "models")) {
   New-Item -ItemType Directory -Force (Join-Path $Stage "data\$Dir") | Out-Null
 }
+# Portable marker: present in every zip (CPU and NVIDIA alike) so double-
+# clicking StemDeck.exe uses .\data next to the exe for ffmpeg/models/config/
+# logs instead of AppData (#399). Root-only trust, mirroring cpu-only below.
+New-Item -ItemType File -Force (Join-Path $Stage "portable.txt") | Out-Null
 if ($CpuOnly) {
   # Root marker only: the app trusts cpu-only solely in the app root (#247).
   # A data\cpu-only copy used to leak into the shared per-user data dir and
