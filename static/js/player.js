@@ -4,7 +4,7 @@ import { fmtTime } from "./utils.js";
 // the same) and safe: these are only ever called from a callback, long after both
 // module bodies have run, and they close over DOM handles from dom.js rather than
 // job.js state.
-import { showPlaybackError, clearPlaybackError } from "./job.js";
+import { showPlaybackError, clearPlaybackError, resolvePlaybackSuccess } from "./job.js";
 import {
   STEM_NAMES, TRACK_NAMES, STEM_COLORS, PROGRESS_COLOR,
   LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC, LANE_VOLUME_MAX,
@@ -1299,6 +1299,9 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             );
             return;
           }
+          // Playback actually came up for this track — clear a stale
+          // "playback failed" notification if one was sitting there (#401).
+          resolvePlaybackSuccess(jobId);
           eng.setLoop(loopEnabled, loopStart, loopEnd);
           applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
 

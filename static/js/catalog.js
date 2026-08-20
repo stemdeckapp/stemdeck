@@ -10,7 +10,7 @@ import {
   startQueueStream,
 } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
-import { notifyFailure, setReleasePending } from "./notifications.js";
+import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailuresByKind } from "./notifications.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
 function esc(s) {
@@ -193,6 +193,10 @@ function purgeTrash() {
     folder.items = folder.items.filter((id) => !trashIds.has(id));
   }
   trash.items = [];
+  // Catches a job that errored after its track was trashed but before this
+  // permanent delete — moveTrackToTrash's own dismiss already fired earlier
+  // and can't have caught a failure that didn't exist yet (#401).
+  for (const id of trashIds) dismissFailuresByJobId(id);
   return true;
 }
 
@@ -272,6 +276,9 @@ export function addTrackToLibrary(track) {
     } else {
       replaceTrackId(existingId, track.id);
     }
+    // The old track is gone either way (deleted or replaced) — any failure
+    // notification tied to it, whichever kind, is moot now (#401).
+    dismissFailuresByJobId(existingId);
   }
   const existing = tracks[track.id] || {};
   tracks[track.id] = {
@@ -503,6 +510,10 @@ function moveTrackToTrash(trackId) {
   const trash = getTrashFolder();
   if (trash && !trash.items.includes(trackId)) trash.items.unshift(trackId);
   if (_currentTrackId === trackId) _currentTrackId = null;
+  // The user is done with this track — clear any failure tied to it (#401).
+  // purgeTrash() does the same on permanent delete, for a job that errors
+  // after being trashed but before it's purged.
+  dismissFailuresByJobId(trackId);
   saveState();
   render();
 }
@@ -2283,6 +2294,9 @@ async function checkForUpdate() {
   try {
     const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
     if (!res.ok) return;
+    // The check itself succeeded, regardless of what it finds below — clear
+    // any stale "update check failed" card (#401).
+    dismissFailuresByKind("update");
     const data = await res.json();
     const latest = normalizeVersion(data.tag_name);
     // Compare canonically so a PEP440 current version (0.7.0a9) matches the
@@ -3042,6 +3056,9 @@ async function exportLogs(btn) {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    // Log export isn't tied to a track/job, so a plain by-kind dismiss is the
+    // right granularity — it never touches a per-track export failure (#401).
+    dismissFailuresByKind("export");
   } catch (e) {
     console.warn("[settings] log export failed:", e);
     showError("Could not export the logs.", null, { retry: false });

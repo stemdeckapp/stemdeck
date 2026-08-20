@@ -7,7 +7,7 @@ import {
   selectedStems,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
-import { notifyFailure } from "./notifications.js";
+import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { stagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
@@ -145,6 +145,14 @@ export function showPlaybackError(message, detail, context = {}) {
 
 export function clearPlaybackError() {
   if (errorEl.dataset.kind === "playback") clearImportError();
+}
+
+// Playback actually succeeded for this track — clear any stale "playback
+// failed" notification for it (#401). Only the playback kind: a successful
+// play doesn't mean an unrelated import/export failure for the same track
+// is resolved too.
+export function resolvePlaybackSuccess(jobId) {
+  if (jobId) dismissFailuresByJobId(jobId, "playback");
 }
 
 // Clear the import chrome (progress box, error, phrase rotation, foreground

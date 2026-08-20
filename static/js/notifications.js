@@ -268,10 +268,44 @@ export function dismissFailure(id) {
   render();
 }
 
+/** Clear failures tied to a specific job/track id, because whatever the
+ * failure was about reached a resolved state -- retried successfully, or
+ * ceased to exist. kind=null clears every kind for that id (the id itself
+ * is gone, so any failure tagged with it is moot); a specific kind clears
+ * only that action's record, so e.g. a resolved playback failure can't
+ * silently swallow an unresolved import failure for the same track. */
+export function dismissFailuresByJobId(jobId, kind = null) {
+  if (!jobId) return;
+  const before = failures.length;
+  failures = failures.filter((f) => !(f.context?.jobId === jobId && (kind === null || f.kind === kind)));
+  if (failures.length === before) return; // nothing changed -- skip the write/render
+  persist();
+  render();
+}
+
+/** Clear id-less failures of one kind (update checks, log exports -- neither
+ * is ever tied to a job). Never touches a failure that carries a jobId, even
+ * if it shares this kind -- a per-track export failure can only be cleared
+ * via dismissFailuresByJobId for that track. */
+export function dismissFailuresByKind(kind) {
+  const before = failures.length;
+  failures = failures.filter((f) => !(f.kind === kind && !f.context?.jobId));
+  if (failures.length === before) return;
+  persist();
+  render();
+}
+
 export function clearFailures() {
   failures = [];
   persist();
   render();
+}
+
+/** Test-only accessor: `failures` is module-private and render() writes to a
+ * DOM that doesn't exist under plain Node, so this is the only way a test can
+ * assert on notification state. */
+export function getFailures() {
+  return failures;
 }
 
 /** catalog.js tells us whether an update card is showing, for badge/empty. */

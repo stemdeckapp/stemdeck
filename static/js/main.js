@@ -1,6 +1,7 @@
 import {
   playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
+  currentJobId,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
@@ -10,7 +11,7 @@ import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
-import { initNotifications, notifyFailure } from "./notifications.js";
+import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
 
 // ─── Stem choice toggles on the import page ───
@@ -238,7 +239,11 @@ function wireFooterControls() {
   // `picking` covers the gap between the click and the transfer: the dialog is
   // app-modal so the menu is unreachable anyway, but the flag keeps a second
   // export from being queued behind it without lying about the label.
-  function settleBusy(pending) {
+  // jobId is snapshotted by the caller at click time, not read live here:
+  // settlement can take up to EXPORT_BUSY_MAX_MS, by which point the user may
+  // have opened a different track, and currentJobId would then point at the
+  // wrong one (#401).
+  function settleBusy(pending, jobId) {
     const token = ++busyToken;
     const finish = () => {
       picking = false;
@@ -251,6 +256,12 @@ function wireFooterControls() {
     }
     const backstop = window.setTimeout(finish, EXPORT_BUSY_MAX_MS);
     pending
+      .then((ok) => {
+        // ok === false means the save dialog was cancelled, not a real
+        // export — nothing was resolved, so leave any failure notification
+        // in place rather than clearing it on a no-op.
+        if (jobId && ok !== false) dismissFailuresByJobId(jobId, "export");
+      })
       .catch((err) => {
         // A cancelled dialog resolves false without ever entering the busy
         // state, so anything here is a real failure.
@@ -260,7 +271,7 @@ function wireFooterControls() {
           kind: "export",
           message,
           detail: err instanceof Error ? String(err.message) : null,
-          context: { stage: `Exporting ${format}` },
+          context: { stage: `Exporting ${format}`, jobId },
         });
       })
       .finally(() => {
@@ -274,13 +285,14 @@ function wireFooterControls() {
   function runExport(start, emptyMessage) {
     if (busy || picking) return;
     picking = true;
+    const jobId = currentJobId; // snapshot now -- see settleBusy's comment
     const pending = start(enterBusy);
     if (!pending) {
       picking = false;
       showError(emptyMessage, null, { retry: false });
       return;
     }
-    settleBusy(pending);
+    settleBusy(pending, jobId);
   }
 
   exportBtn?.addEventListener("click", (e) => {
