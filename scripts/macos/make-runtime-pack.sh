@@ -129,7 +129,7 @@ SETUPTOOLS_SCM_PRETEND_VERSION="${VERSION#v}" \
   uv pip install --system --python "$PYTHON_DIR/bin/python" "$REPO_ROOT"
 
 echo "==> Verifying stdlib and imports"
-PYTHON_DIR="$PYTHON_DIR" PYTHONHOME="$PYTHON_DIR" "$PYTHON_DIR/bin/python" - <<'PY'
+PYTHON_DIR="$PYTHON_DIR" PYTHONHOME="$PYTHON_DIR" ARCH="$ARCH" "$PYTHON_DIR/bin/python" - <<'PY'
 import importlib, os, pathlib, sys
 
 ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
@@ -143,6 +143,11 @@ packages = [
     "fastapi", "uvicorn", "yt_dlp", "demucs", "torch", "torchaudio",
     "librosa", "pyloudnorm", "soundfile",
 ]
+# audio_separator/onnxruntime (vocal split, #275) are excluded on Intel macOS
+# (x64) -- the feature gates itself off there, matching pyproject.toml's
+# platform marker. Missing here would have caught #407 before release.
+if os.environ.get("ARCH") != "x64":
+    packages += ["audio_separator", "onnxruntime"]
 for package in packages:
     importlib.import_module(package)
     print(f"  OK {package}")

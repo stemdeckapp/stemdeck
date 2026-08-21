@@ -221,7 +221,10 @@ if ($CpuOnly) {
 # pushes the zip past GitHub's 2 GiB release-asset cap and loses that adaptive
 # versioning. (Reverts #318; the real GPU-detection fix is #317.)
 
-& $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile"
+# audio_separator/onnxruntime: vocal split (#275). Missing here would have
+# caught #407 (librosa 1.0.0 dropping audioread, which audio-separator still
+# needs) before release instead of after.
+& $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime"
 
 Bundle-PythonRuntime $PythonDir $PythonExe
 & $PythonExe -c "import sys, fastapi, uvicorn; print('Portable Python:', sys.executable)"

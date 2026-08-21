@@ -2251,6 +2251,7 @@ name = "stemdeck"
 source = { editable = "." }
 dependencies = [
     { name = "audio-separator", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "audioread", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "beat-this" },
     { name = "demucs" },
     { name = "fastapi" },
@@ -2283,11 +2284,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "audio-separator", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=0.24" },
+    { name = "audioread", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=3.0" },
     { name = "beat-this", specifier = ">=1.1" },
     { name = "demucs", specifier = ">=4.0.1,<4.1" },
     { name = "fastapi", specifier = ">=0.115,!=0.136.3" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
-    { name = "librosa", specifier = ">=0.10" },
+    { name = "librosa", specifier = ">=0.10,<1" },
     { name = "numba", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=0.61,<0.62" },
     { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "<2" },
     { name = "onnxruntime", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=1.19" },

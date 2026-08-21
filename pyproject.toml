@@ -33,7 +33,11 @@ dependencies = [
     # backend to handle uri ... drums.wav".
     "soundfile>=0.12",
     # BPM + key analysis on the downloaded source. Pulls numpy/scipy/numba.
-    "librosa>=0.10",
+    # librosa 1.0.0 dropped its audioread dependency; audio-separator (below)
+    # still imports audioread directly, so an unpinned upper bound lets a
+    # librosa upgrade silently break the vocal-split feature (#407). Pin
+    # <1 to match what audio-separator expects and what uv.lock resolves.
+    "librosa>=0.10,<1",
     # Beat/downbeat tracker for the click track. MIT for both code and the
     # published weights. librosa's tracker resolves fast music to half tempo
     # (180 BPM punk -> 90) because of its 120 BPM lognormal prior, which is not
@@ -74,6 +78,10 @@ dependencies = [
     # blocker, since the main separation already gets full GPU accel via torch.
     "audio-separator>=0.24; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "onnxruntime>=1.19; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # audio-separator imports this directly; librosa<1 pulls it in transitively
+    # today, but pin it explicitly so this survives an eventual librosa 1.x move
+    # (#407) -- same platform gate as audio-separator itself.
+    "audioread>=3.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 ]
 
 [project.optional-dependencies]

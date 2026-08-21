@@ -135,7 +135,10 @@ echo "    removing:$orphans"
 "$BUNDLED_PYTHON" -m pip uninstall -y $orphans 2>/dev/null || true
 
 echo "==> Verifying imports"
-"$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+# audio_separator/onnxruntime: vocal split (#275). Missing here would have
+# caught #407 (librosa 1.0.0 dropping audioread, which audio-separator still
+# needs) before release instead of after.
+"$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 echo "==> Staging backend"
 cp -R "$REPO_ROOT/app" "$BACKEND_DIR/app"
