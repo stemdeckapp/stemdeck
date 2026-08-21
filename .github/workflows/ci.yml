@@ -26,6 +26,13 @@ jobs:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
       - uses: actions/checkout@v7.0.1
+      # diffq (a mandatory transitive dependency of audio-separator, #275) has
+      # no prebuilt wheel for Python 3.11+ on Linux -- its last release only
+      # ever shipped cp310 wheels -- so uv sync must compile it from source.
+      # Docker and the Linux desktop release build already install
+      # build-essential for the same reason; this container didn't need it
+      # before audio-separator existed.
+      - run: apt-get update && apt-get install -y --no-install-recommends build-essential
       - run: uv sync --frozen --all-extras
       - run: uv run ruff check app/ tests/
       - run: uv run ruff format --check app/ tests/
@@ -37,7 +44,8 @@ jobs:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
       - uses: actions/checkout@v7.0.1
-      - run: apt-get update && apt-get install -y --no-install-recommends ffmpeg
+      # build-essential: see the matching comment in the lint job above.
+      - run: apt-get update && apt-get install -y --no-install-recommends ffmpeg build-essential
       - run: uv sync --frozen --all-extras
       - run: uv run pytest tests/ -q
 
