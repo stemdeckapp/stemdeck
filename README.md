@@ -53,15 +53,16 @@ StemDeck is free and **does not accept any money, sponsorship, or funding** - no
 
 | Name | What they do | Link |
 |---|---|---|
-| Analog4Lyfe | Analog music gear | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
-| Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
-| Empress Effects | Effects pedals | [empresseffects.com](https://empresseffects.com) |
-| Joao Gaspar | Producer/Film Scorer, Touring/Session Musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
-| Kris Luthier | Luthier and Musical Instrument Repair, Lisboa | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
+| Analog4Lyfe | All-analog music gear, no digital shortcuts | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
+| Beltr | Turns the songs you already own into karaoke gold, right on your own machine, no subscription, no cloud, just you and the mic | [beltr.app](https://beltr.app/) |
+| Dlima Guitars | Custom guitars and basses, built one at a time | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
+| Empress Effects | Boutique effects pedals for tone chasers who don't settle | [empresseffects.com](https://empresseffects.com) |
+| Joao Gaspar | Producer and film scorer, also plays as a touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
+| Kris Luthier | Hand-repairs and restores instruments in Lisbon, one careful fix at a time | [@krisluthier](https://www.instagram.com/krisluthier) |
+| Lisbon Guitar Works | Guitars built by hand in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | More Notes Less Talk | Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping. | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
 | Seratone | Turns any TV into a studio-grade karaoke stage | [seratone.audio](https://seratone.audio/) |
-| Thomann | Online Music Store | [@thomann.music](https://www.instagram.com/thomann.music) |
+| Thomann | One of Europe's largest music gear retailers, practically everything a musician could need | [@thomann.music](https://www.instagram.com/thomann.music) |
 
 
 ---

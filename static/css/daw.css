@@ -1164,7 +1164,7 @@ input, textarea { font-family: inherit; }
   display: flex;
   gap: 14px;
   align-items: flex-start;
-  padding: 14px 16px;
+  padding: 4px 16px;
   flex-shrink: 0;
   width: 340px;
   border-right: 1px solid var(--border);
@@ -1173,10 +1173,11 @@ input, textarea { font-family: inherit; }
 /* Metadata cards */
 .daw-meta-card {
   flex: 1;
-  padding: 14px 16px;
+  padding: 4px 16px;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 5px;
   min-width: 0;
 }
@@ -1816,9 +1817,14 @@ input, textarea { font-family: inherit; }
 .lane-icon-toggle.mx-btn:hover,
 .ms-btn.mx-btn:hover { color: var(--fg); border-color: #3a4550; }
 
-/* Mute button: "active" = NOT muted (lit up) */
+/* Mute button: "active" = NOT muted (normal). Engaged (muted) lights up blue,
+   mirroring the solo button's own lit-up treatment below. */
 .lane-icon-toggle.mx-btn.mute.active { color: var(--fg-2); border-color: var(--border-strong); }
-.lane-icon-toggle.mx-btn.mute:not(.active) { opacity: 0.35; }
+.lane-icon-toggle.mx-btn.mute:not(.active) {
+  background: rgba(59,130,246,0.18);
+  color: #60a5fa;
+  border-color: rgba(59,130,246,0.4);
+}
 
 /* Solo button: "active" = soloed */
 .ms-btn.mx-btn.active { background: rgba(244,183,64,0.18); color: var(--accent); border-color: rgba(244,183,64,0.4); }
@@ -2196,7 +2202,7 @@ input, textarea { font-family: inherit; }
   font-variant-numeric: tabular-nums;
 }
 .footer-wave-bar {
-  height: 52px; flex-shrink: 0;
+  height: 31px; flex-shrink: 0;
   position: relative; overflow: hidden;
 }
 #footer-waveform {

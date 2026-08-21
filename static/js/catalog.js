@@ -32,36 +32,52 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 const FRIENDS = [
   {
     name: "Analog4Lyfe",
-    role: "Analog music gear",
+    role: "All-analog music gear, no digital shortcuts",
     url: "https://www.instagram.com/analog4lyfe",
     logo: "/img/friends/analog4lyfe.jpg",
     avatar: true,
   },
-  { name: "Dlima Guitars", url: "https://www.instagram.com/dlimaguitars", logo: "/img/friends/dlima-guitars-ig.jpg", avatar: true },
+  {
+    name: "Beltr",
+    role: "Turns the songs you already own into karaoke gold, right on your own machine, no subscription, no cloud, just you and the mic",
+    url: "https://beltr.app/",
+  },
+  {
+    name: "Dlima Guitars",
+    role: "Custom guitars and basses, built one at a time",
+    url: "https://www.instagram.com/dlimaguitars",
+    logo: "/img/friends/dlima-guitars-ig.jpg",
+    avatar: true,
+  },
   {
     name: "Empress Effects",
-    role: "Effects pedals",
+    role: "Boutique effects pedals for tone chasers who don't settle",
     url: "https://empresseffects.com",
     logo: "/img/friends/empress-effects.png",
   },
   {
     name: "Joao Gaspar",
-    role: "Producer/Film Scorer, Touring/Session Musician",
+    role: "Producer and film scorer, also plays as a touring/session musician",
     url: "https://www.instagram.com/jay_glaspar",
     logo: "/img/friends/joao-gaspar.jpg",
     avatar: true,
   },
   {
     name: "Kris Luthier",
-    role: "Luthier and Musical Instrument Repair, Lisboa",
+    role: "Hand-repairs and restores instruments in Lisbon, one careful fix at a time",
     url: "https://www.instagram.com/krisluthier",
     logo: "/img/friends/kris-luthier.jpg",
     avatar: true,
   },
-  { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
+  {
+    name: "Lisbon Guitar Works",
+    role: "Guitars built by hand in Lisbon",
+    url: "https://dlimaguitars.com",
+    logo: "/img/friends/lisbon-guitar-works.webp",
+  },
   {
     name: "More Notes Less Talk",
-    role: "YouTube channel",
+    role: "Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping.",
     url: "https://www.youtube.com/@morenoteslesstalk",
   },
   {
@@ -71,7 +87,7 @@ const FRIENDS = [
   },
   {
     name: "Thomann",
-    role: "Online Music Store",
+    role: "One of Europe's largest music gear retailers, practically everything a musician could need",
     url: "https://www.instagram.com/thomann.music",
     logo: "/img/friends/thomann.jpg",
     avatar: true,
