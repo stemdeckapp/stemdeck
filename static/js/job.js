@@ -4,7 +4,7 @@ import {
   eventSource, setEventSource, setCurrentJobId,
   foregroundJobId, setForegroundJobId,
   audioEngine, multitrack,
-  selectedStems,
+  selectedStems, vocalSplitMode,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -22,6 +22,66 @@ let lastStatus = null;
 let jobPollTimerId = null;
 const renderedJobs = new Set();
 const jobSources = new Map();
+// On-demand lead/backing vocal split (#275): which jobs asked for it at
+// submit time (via the Extract bar's Vocals "All / Lead + Backing" toggle).
+// Exported so catalog.js's completeSettledJob (the background-job path --
+// there is no per-job SSE stream for those) can trigger it too, via
+// runVocalSplitIfWanted below. Only covers the primary single-file/single-URL
+// and batch-upload submit paths -- "Sync again" restores and playlist
+// imports don't carry this choice.
+export const jobVocalSplitModes = new Map();
+// Guards against double-firing the split POST if a job's "done" state is
+// somehow observed twice (e.g. a late SSE frame after the queue already
+// settled it) -- the split is expensive, so this must stay a hard one-shot.
+const splitAutoTriggered = new Set();
+
+// Fires the on-demand vocal split (#275) for a job that finished with the
+// Extract bar's "Lead + Backing" toggle on, then refreshes the library cache
+// (catalog.js's openTrack reads a locally cached stem list, which otherwise
+// stays stale after a job's stems change post-completion). Returns the job's
+// state after the split (or the original state, unchanged, if the split
+// wasn't requested/needed/possible) -- callers use the return value rather
+// than assuming their own `state` is still current.
+export async function runVocalSplitIfWanted(state) {
+  if (state.status !== "done" || splitAutoTriggered.has(state.job_id)) return state;
+  const wantsSplit = jobVocalSplitModes.get(state.job_id) === "split";
+  const hasVocals = (state.stems || []).some((s) => s.name === "vocals");
+  const alreadySplit = state.vocal_split === "done";
+  if (!wantsSplit || !hasVocals || alreadySplit) return state;
+  splitAutoTriggered.add(state.job_id);
+  if (state.job_id === foregroundJobId) setWaveformLoading(true, "Splitting lead/backing vocals…");
+  try {
+    const res = await fetch(`/api/jobs/${state.job_id}/vocal-split`, { method: "POST" });
+    if (!(res.ok || res.status === 202)) return state;
+    const r2 = await fetch(`/api/jobs/${state.job_id}`);
+    if (!r2.ok) return state;
+    const finalState = await r2.json();
+    addTrackToLibrary({
+      id: finalState.job_id,
+      title: finalState.title || "",
+      channel: "Extracted",
+      thumb: finalState.thumbnail,
+      stems: finalState.selected_stems || [...selectedStems],
+      selectedStems: finalState.selected_stems || [...selectedStems],
+      audioStems: finalState.stems || [],
+      status: "done",
+      duration: finalState.duration,
+      bpm: finalState.bpm,
+      key: finalState.key,
+      scale: finalState.scale,
+      keyConfidence: finalState.key_confidence,
+      lufs: finalState.lufs,
+      peakDb: finalState.peak_db,
+      stemPresence: finalState.stem_presence,
+      sourceUrl: jobSources.get(finalState.job_id) || "",
+      createdAt: finalState.created_at,
+    });
+    return finalState;
+  } catch (e) {
+    console.warn("[job] vocal split failed:", e);
+    return state;
+  }
+}
 
 const TERMINAL_STATUSES = new Set(["done", "error", "cancelled"]);
 
@@ -253,6 +313,26 @@ function applyStudioSummary(state) {
   }
 }
 
+// Chains the on-demand vocal split onto a foreground job's completion (see
+// runVocalSplitIfWanted above) -- from the user's perspective it's one
+// action, even though the backend keeps it a separate, best-effort pass over
+// the already-done job. Best-effort: any failure just proceeds with the base
+// stems (the vocals lane), same as if the user had never asked for a split.
+async function finishDoneJob(state) {
+  const finalState = await runVocalSplitIfWanted(state);
+  wireUpAudio(
+    finalState.job_id,
+    finalState.stems || [],
+    finalState.duration || 0,
+    finalState.thumbnail,
+    finalState.mix_url ?? null,
+    finalState.title || "",
+    null,
+    finalState.has_video ?? false,
+  );
+  initSections(finalState.job_id, finalState.sections, finalState.duration || 0);
+}
+
 function applyState(state) {
   // Everything below the library update writes to DOM the studio owns, and
   // only the import the user is actually watching may touch it. A background
@@ -359,18 +439,11 @@ function applyState(state) {
     jobBox.classList.add("hidden");
     setForegroundJobId(null);
     if (!renderedJobs.has(state.job_id)) {
+      // Claimed before the (possibly async) finish below starts, so a second
+      // SSE/poll tick for the same job arriving mid-split can't re-enter this
+      // branch and fire the vocal-split call twice.
       renderedJobs.add(state.job_id);
-      wireUpAudio(
-        state.job_id,
-        state.stems || [],
-        state.duration || 0,
-        state.thumbnail,
-        state.mix_url ?? null,
-        state.title || "",
-        null,
-        state.has_video ?? false,
-      );
-      initSections(state.job_id, state.sections, state.duration || 0);
+      finishDoneJob(state);
     }
   }
 }
@@ -501,6 +574,7 @@ function registerUploadRow(jobId, file) {
   const title = sanitizeFilename(file.name);
   const sourceUrl = `local:${title}`;
   jobSources.set(jobId, sourceUrl);
+  jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? vocalSplitMode : "all");
   addTrackToLibrary({
     id: jobId,
     title,
@@ -733,6 +807,7 @@ export function wireJobForm() {
     // silently import the same file a second time.
     if (file) fileInput._clear?.();
     jobSources.set(jobId, sourceUrl);
+    jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? vocalSplitMode : "all");
     addTrackToLibrary({
       id: jobId,
       title: displayTitle,

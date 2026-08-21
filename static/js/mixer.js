@@ -1,6 +1,17 @@
 import {
-  STEM_NAMES, TRACK_NAMES, STEM_COLORS, STEM_DISPLAY, LANE_VOLUME_MAX,
+  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, STEM_COLORS, STEM_DISPLAY, LANE_VOLUME_MAX,
 } from "./constants.js";
+
+// Every lane name this session might ever need mixer state for, including
+// the on-demand lead/backing vocal split (#275). Safe to iterate broadly:
+// callers below all guard on the row/trackIndex entry actually existing, so
+// touching state for a lane a given job doesn't have is a no-op. A function
+// (not a snapshot) because STEM_NAMES/EXTRA_STEM_NAMES are reassigned once
+// syncStemNamesFromAPI() resolves -- a const array here would freeze the
+// fallback values from before that happens.
+function allTrackNames() {
+  return [...TRACK_NAMES, ...EXTRA_STEM_NAMES];
+}
 import {
   mixerState, mixerEl, stemListEl, currentJobId, multitrack, trackIndex,
   masterVolume, audioEngine,
@@ -12,7 +23,7 @@ function defaultMixerEntry() {
 }
 
 export function ensureMixerStateDefaults() {
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     if (!mixerState[name]) mixerState[name] = defaultMixerEntry();
   }
 }
@@ -23,7 +34,7 @@ export async function loadMixIntoState(jobId, loadedStemNames = STEM_NAMES) {
     const data = await storeGet(`stemdeck:mix:${jobId}`, {});
     if (data && typeof data === "object") stored = data;
   } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     Object.assign(mixerState[name], defaultMixerEntry(), stored[name] || {});
   }
   // If all loaded stems are muted the session is unplayable -- unmute as recovery.
@@ -34,7 +45,7 @@ export async function loadMixIntoState(jobId, loadedStemNames = STEM_NAMES) {
 }
 
 export function resetMixerState() {
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     Object.assign(mixerState[name], defaultMixerEntry());
   }
 }
@@ -46,8 +57,8 @@ function saveMix() {
 
 export function applyMix() {
   if (!multitrack) return;
-  const anySolo = TRACK_NAMES.some((name) => trackIndex[name] !== undefined && mixerState[name]?.soloed);
-  for (const name of TRACK_NAMES) {
+  const anySolo = allTrackNames().some((name) => trackIndex[name] !== undefined && mixerState[name]?.soloed);
+  for (const name of allTrackNames()) {
     const s = mixerState[name];
     if (!s) continue;
     let effective = s.volume;
@@ -108,7 +119,7 @@ export function setLaneVolume(name, v) {
 }
 
 export function refreshMixerVisuals() {
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     const state = mixerState[name];
     if (!state) continue;
     // Mixer-column lane header
@@ -143,7 +154,7 @@ export function refreshMixerVisuals() {
         }
         if (mon) {
           // Active when this stem is THE lone solo (the "monitor" target).
-          const others = TRACK_NAMES.filter((n) => n !== name);
+          const others = allTrackNames().filter((n) => n !== name);
           const lone = state.soloed
             && others.every((n) => !mixerState[n]?.soloed);
           mon.classList.toggle("active", lone);
@@ -450,12 +461,12 @@ export function toggleStemSolo(name) {
 export function soloOnlyStem(name) {
   const state = mixerState[name];
   if (!state) return;
-  const others = TRACK_NAMES.filter((n) => n !== name);
+  const others = allTrackNames().filter((n) => n !== name);
   const isAlreadyAlone = state.soloed && others.every((n) => !mixerState[n]?.soloed);
   if (isAlreadyAlone) {
     state.soloed = false;
   } else {
-    for (const n of TRACK_NAMES) {
+    for (const n of allTrackNames()) {
       if (!mixerState[n]) continue;
       mixerState[n].soloed = (n === name);
     }
@@ -467,7 +478,7 @@ export function soloOnlyStem(name) {
 }
 
 export function resetMixer() {
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     const s = mixerState[name];
     if (!s) continue;
     s.volume = 1;
@@ -480,9 +491,13 @@ export function resetMixer() {
 }
 
 export function muteAll() {
-  // Toggle: if every stem is muted, un-mute all; otherwise mute all.
-  const allMuted = STEM_NAMES.every((n) => mixerState[n]?.muted);
-  for (const name of TRACK_NAMES) {
+  // Toggle direction reflects the lanes actually loaded for this job (base 6,
+  // or drums/bass/lead_vocals/backing_vocals/guitar/piano/other when the
+  // on-demand split, #275, is active) rather than always the fixed 6 --
+  // trackIndex is the live "what's actually mounted" source of truth.
+  const loadedNames = Object.keys(trackIndex).filter((n) => n !== "original");
+  const allMuted = loadedNames.length > 0 && loadedNames.every((n) => mixerState[n]?.muted);
+  for (const name of allTrackNames()) {
     const s = mixerState[name];
     if (!s) continue;
     s.muted = !allMuted;
@@ -493,7 +508,7 @@ export function muteAll() {
 }
 
 export function clearAllSolos() {
-  for (const name of TRACK_NAMES) {
+  for (const name of allTrackNames()) {
     const s = mixerState[name];
     if (!s) continue;
     s.soloed = false;

@@ -94,6 +94,18 @@ def test_accepts_a_folder_stemdeck_already_uses(tmp_path):
     assert validate_target(target, current) == target.resolve()
 
 
+def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
+    """user-data.json (#403) now lives inside the jobs folder like
+    registry.json -- re-selecting a folder from a previous move must not be
+    rejected just because that file is already there."""
+    current = tmp_path / "old"
+    current.mkdir()
+    target = tmp_path / "new"
+    _job_dir(target, "abcdefabcdef")
+    (target / "user-data.json").write_text("{}", encoding="utf-8")
+    assert validate_target(target, current) == target.resolve()
+
+
 def test_rejects_a_file(tmp_path):
     current = tmp_path / "old"
     current.mkdir()
@@ -227,11 +239,35 @@ def test_moving_writes_the_setting_and_asks_for_a_restart(client, tmp_path):
     assert body["path"] == str(target.resolve())
     assert body["moved_entries"] == 1
     assert body["restart_required"] is True
+    assert body["persisted"] is True
     assert (target / "aaaaaaaaaaaa").is_dir()
 
     import app.core.settings as settings_mod
 
     assert settings_mod.get_jobs_dir() == str(target.resolve())
+
+
+def test_persist_failure_is_reported_not_swallowed(client, tmp_path, monkeypatch):
+    """#403: a settings.json write failure used to be silently swallowed, so
+    the endpoint reported success even though a restart would revert to the
+    old (now-empty) folder. The physical move still succeeds either way --
+    only the persisted flag (and the message the UI shows) should change."""
+    import app.core.settings as settings_mod
+
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    target = tmp_path / "elsewhere"
+    monkeypatch.setattr(settings_mod, "_save", lambda: False)
+
+    body = client.post("/api/settings/stems-location", json={"path": str(target)}).json()
+
+    assert body["moved_entries"] == 1
+    assert (target / "aaaaaaaaaaaa").is_dir(), "the move itself must still happen"
+    assert body["persisted"] is False
+
+    # A restart re-reads settings.json from disk; the mocked failure means
+    # the write never actually landed, so the stored choice is gone too.
+    settings_mod._state = None
+    assert settings_mod.get_jobs_dir() is None
 
 
 def test_refuses_while_a_job_is_running(client, tmp_path):

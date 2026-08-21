@@ -72,6 +72,28 @@ def test_serves_done_job_stem(client, tmp_path):
     assert r.headers["content-type"] == "audio/wav"
 
 
+def test_serves_lead_and_backing_vocals_when_split_has_run(client, tmp_path):
+    """lead_vocals/backing_vocals (#275) are servable like any other stem once
+    the on-demand split has actually produced them."""
+    job = Job(id="abcdefabc275")
+    job.status = "done"
+    _jobs[job.id] = job
+    for name in ("lead_vocals", "backing_vocals"):
+        _make_stem_file(tmp_path, job.id, name, b"RIFF1234")
+        r = client.get(f"/api/jobs/{job.id}/stems/{name}.wav")
+        assert r.status_code == 200
+        assert r.content == b"RIFF1234"
+
+
+def test_lead_vocals_404_before_split_has_run(client, tmp_path):
+    job = Job(id="abcdefabc276")
+    job.status = "done"
+    _jobs[job.id] = job
+    _make_stem_file(tmp_path, job.id, "vocals")  # split never ran
+    r = client.get(f"/api/jobs/{job.id}/stems/lead_vocals.wav")
+    assert r.status_code == 404
+
+
 def test_single_stem_download_is_named_after_the_song(client, tmp_path):
     """Content-Disposition beats an <a download> attribute for same-origin
     requests, so the prefix (#336) has to come from the server to be honoured."""
@@ -234,6 +256,24 @@ def test_all_stems_zip_only_active_subset(client, tmp_path):
     assert r.status_code == 200
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     assert sorted(zf.namelist()) == ["bass.wav", "vocals.wav"]
+
+
+def test_all_stems_zip_includes_lead_backing_when_present(client, tmp_path):
+    """Default "download all" naturally picks up lead_vocals/backing_vocals
+    (#275) once a job has split them -- no separate opt-in query param."""
+    import io
+    import zipfile
+
+    job = Job(id="abcdefabc277")
+    job.status = "done"
+    _jobs[job.id] = job
+    for name in ("vocals", "lead_vocals", "backing_vocals"):
+        _make_stem_file(tmp_path, job.id, name, f"RIFF{name}".encode())
+
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip")
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert sorted(zf.namelist()) == ["backing_vocals.wav", "lead_vocals.wav", "vocals.wav"]
 
 
 def test_all_stems_zip_prefixes_members_with_the_song(client, tmp_path):
@@ -448,6 +488,21 @@ def test_mixdown_rejects_unknown_stem(client):
     for stem in ("banjo", "mix"):
         r = client.get(f"/api/jobs/abcdef000001/mixdown.wav?stems={stem}&gains=1")
         assert r.status_code == 422, f"stem={stem!r} should 422"
+
+
+def test_mixdown_rejects_vocals_with_lead_or_backing_vocals(client):
+    # lead_vocals/backing_vocals (#275) are a decomposition of vocals, not an
+    # independent signal -- combining either with vocals would double-count it.
+    for extra in ("lead_vocals", "backing_vocals"):
+        r = client.get(f"/api/jobs/abcdef000001/mixdown.wav?stems=vocals,{extra}&gains=1,1")
+        assert r.status_code == 422, f"vocals+{extra} should 422"
+
+
+def test_mixdown_allows_lead_vocals_alone(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000011", ["lead_vocals"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=lead_vocals&gains=1")
+    assert r.status_code == 200
 
 
 def test_mixdown_rejects_bad_region(client):

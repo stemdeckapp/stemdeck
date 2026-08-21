@@ -354,6 +354,31 @@ button {
   background: #26262c;
   color: #fff;
 }
+.segmented.sm {
+  margin-top: 0;
+  padding: 3px;
+}
+.segmented.sm button {
+  padding: 7px 0;
+  font-size: 12px;
+}
+
+/* ── vocal split mode (#275) ── */
+.vocal-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.vocal-mode-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-3);
+  flex-shrink: 0;
+}
+.vocal-mode-row .segmented {
+  flex: 1;
+}
 
 /* ── stems grid ── */
 .stems-grid {

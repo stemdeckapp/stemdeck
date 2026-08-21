@@ -3,7 +3,7 @@ import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
-import { showError, importFromUrl, detachForegroundJob } from "./job.js";
+import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
   cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange, ordinal,
   queueCount, queueRowStates, reorderQueuedJob, runningLabel, startQueue,
@@ -30,8 +30,20 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 // static/img/friends/ so they render offline. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url).
 const FRIENDS = [
+  {
+    name: "Analog4Lyfe",
+    role: "Analog music gear",
+    url: "https://www.instagram.com/analog4lyfe",
+    logo: "/img/friends/analog4lyfe.jpg",
+    avatar: true,
+  },
   { name: "Dlima Guitars", url: "https://www.instagram.com/dlimaguitars", logo: "/img/friends/dlima-guitars-ig.jpg", avatar: true },
-  { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
+  {
+    name: "Empress Effects",
+    role: "Effects pedals",
+    url: "https://empresseffects.com",
+    logo: "/img/friends/empress-effects.png",
+  },
   {
     name: "Joao Gaspar",
     role: "Producer/Film Scorer, Touring/Session Musician",
@@ -46,30 +58,23 @@ const FRIENDS = [
     logo: "/img/friends/kris-luthier.jpg",
     avatar: true,
   },
+  { name: "Lisbon Guitar Works", url: "https://dlimaguitars.com", logo: "/img/friends/lisbon-guitar-works.webp" },
+  {
+    name: "More Notes Less Talk",
+    role: "YouTube channel",
+    url: "https://www.youtube.com/@morenoteslesstalk",
+  },
+  {
+    name: "Seratone",
+    role: "Turns any TV into a studio-grade karaoke stage",
+    url: "https://seratone.audio/",
+  },
   {
     name: "Thomann",
     role: "Online Music Store",
     url: "https://www.instagram.com/thomann.music",
     logo: "/img/friends/thomann.jpg",
     avatar: true,
-  },
-  {
-    name: "Analog4Lyfe",
-    role: "Analog music gear",
-    url: "https://www.instagram.com/analog4lyfe",
-    logo: "/img/friends/analog4lyfe.jpg",
-    avatar: true,
-  },
-  {
-    name: "Empress Effects",
-    role: "Effects pedals",
-    url: "https://empresseffects.com",
-    logo: "/img/friends/empress-effects.png",
-  },
-  {
-    name: "More Notes Less Talk",
-    role: "YouTube channel",
-    url: "https://www.youtube.com/@morenoteslesstalk",
   },
 ];
 
@@ -1614,9 +1619,13 @@ async function completeSettledJob(jobId) {
       });
     }
 
-    const track = stateMetadataToTrack(state, { ...existing, id: jobId });
+    // Background jobs have no per-job stream (see the comment above), so this
+    // is the only place a background import's on-demand vocal split (#275)
+    // can be triggered -- runVocalSplitIfWanted no-ops if it wasn't requested.
+    const finalState = state.status === "done" ? await runVocalSplitIfWanted(state) : state;
+    const track = stateMetadataToTrack(finalState, { ...existing, id: jobId });
     track.id = jobId;
-    track.channel = state.status === "done" ? "Extracted" : existing.channel;
+    track.channel = finalState.status === "done" ? "Extracted" : existing.channel;
     addTrackToLibrary(track);
   } catch (e) {
     console.warn("[catalog] could not finish background job", jobId, e);
@@ -2733,11 +2742,24 @@ async function wireStemsLocation(overlay) {
         console.warn("[settings] refresh failed:", e);
         apply({ path: data.path, bytes: 0 });
       }
-      setMessage(
-        `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}. ` +
-          "Restart StemDeck to finish switching over.",
-        "ok",
-      );
+      if (data.persisted === false) {
+        // The physical move genuinely succeeded (moved_entries is real) --
+        // but settings.json didn't take the new path, so a restart right now
+        // would read the OLD default back while the library sits at the new
+        // folder (#403). Say so plainly rather than the usual "ok" message.
+        setMessage(
+          `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}, but StemDeck ` +
+            "could not save this as your new location (check that the folder is writable). " +
+            "Restarting now would revert to the old location. Try setting it again.",
+          "error",
+        );
+      } else {
+        setMessage(
+          `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}. ` +
+            "Restart StemDeck to finish switching over.",
+          "ok",
+        );
+      }
     } catch (e) {
       console.warn("[settings] move failed:", e);
       setMessage("Could not reach the server.", "error");

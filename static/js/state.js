@@ -144,6 +144,25 @@ export function setStemSelected(name, selected) {
   saveSelectedStems();
 }
 
+// On-demand lead/backing vocal split (#275): "all" (default, plain Vocals
+// lane) or "split" (auto-run the split once the next import finishes).
+// A page-level setting like selectedStems, applied at whatever moment the
+// user submits -- not stored per-job.
+const _VOCAL_SPLIT_MODE_KEY = "stemdeck:vocal-split-mode";
+export let vocalSplitMode = "all";
+export const vocalSplitModeReady = (async () => {
+  try {
+    const v = await storeGet(_VOCAL_SPLIT_MODE_KEY, null);
+    if (v === "split") vocalSplitMode = v;
+  } catch (e) { console.warn("[state] failed to load vocal split mode:", e); }
+})();
+export function setVocalSplitMode(mode) {
+  vocalSplitMode = mode === "split" ? "split" : "all";
+  storeSet(_VOCAL_SPLIT_MODE_KEY, vocalSplitMode).catch((e) =>
+    console.warn("[state] failed to save vocal split mode:", e)
+  );
+}
+
 // Web Audio analysers for live VU meters.
 export let audioContext = null;
 export let masterVolume = 0.5; // mirrored from masterFader.value

@@ -61,6 +61,19 @@ dependencies = [
     # Pure-Python QR code generator used by the /api/qr endpoint (server
     # access QR codes in the desktop settings panel).
     "segno>=1.6",
+    # On-demand lead/backing vocal split (#275). Ships with UVR-MDX-NET
+    # Karaoke 2 (ONNX) as the default model -- see docs/models.md for why the
+    # torch-native alternative (a community roformer checkpoint) was rejected
+    # on licensing grounds. Excludes Intel macOS: requires numpy>=2/torch>=2.3,
+    # which conflicts with the numpy<2/torch<2.3 pins that platform is stuck on
+    # above; the feature gates itself off there rather than fighting the pins.
+    # CPU-only onnxruntime for now -- onnxruntime-gpu is a separate, mutually
+    # exclusive package requiring the same kind of CPU/GPU build-time split
+    # torch already gets via make-portable.{sh,ps1} (see versioning.md); wiring
+    # that up for this occasional, best-effort action is a follow-up, not a
+    # blocker, since the main separation already gets full GPU accel via torch.
+    "audio-separator>=0.24; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "onnxruntime>=1.19; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 ]
 
 [project.optional-dependencies]

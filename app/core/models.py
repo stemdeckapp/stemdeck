@@ -76,6 +76,12 @@ class Job:
     # Wall-clock seconds per pipeline stage ({"download": 12.3, ...}); written
     # to metadata.json and the one-line completion summary in the log.
     stage_timings: dict[str, float] | None = None
+    # On-demand lead/backing vocal split (#275) -- a post-hoc action on an
+    # already-"done" job, not part of the main pipeline. "none" until the user
+    # asks for it; "error" leaves the job's base stems untouched (see
+    # app/pipeline/vocal_split.py) and is recorded in stems/vocal_split_error.txt,
+    # not job.error_detail, since the job itself did not fail.
+    vocal_split: Literal["none", "running", "done", "error"] = "none"
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
@@ -126,6 +132,7 @@ class Job:
             "compute_device": self.compute_device,
             "gpu_fallback": self.gpu_fallback,
             "stage_timings": self.stage_timings,
+            "vocal_split": self.vocal_split,
             "created_at": self.created_at,
         }
 

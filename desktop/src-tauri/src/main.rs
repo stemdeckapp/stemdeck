@@ -93,8 +93,9 @@ struct BackendStateInner {
     handles: Option<BackendHandles>,
     /// True while start_backend is executing; prevents concurrent starts (#145).
     starting: bool,
-    /// PID of an in-progress pip subprocess; killed by stop_backend on window close (#140).
-    pip_pid: Option<u32>,
+    /// PID of an in-progress setup-time subprocess (pip install, or the model
+    /// warmup download, #275); killed by stop_backend on window close (#140).
+    setup_child_pid: Option<u32>,
     /// Save destinations the user has picked but not yet downloaded to (#338).
     ///
     /// The export is two commands so the UI can tell "choosing a folder" apart
@@ -119,7 +120,7 @@ impl Default for BackendStateInner {
         BackendStateInner {
             handles: None,
             starting: false,
-            pip_pid: None,
+            setup_child_pid: None,
             pending_saves: HashMap::new(),
             next_save_token: 0,
         }
@@ -311,6 +312,7 @@ fn main() {
             extract_runtime_pack,
             ensure_external_assets,
             ensure_torch_device,
+            warmup_models,
             start_backend,
             local_ip,
             build_target,
@@ -339,9 +341,12 @@ fn main() {
         });
 }
 
-/// Returns ~/Documents/StemDeck/, creating it if needed.
-/// All user-facing content (library metadata + stem audio) lives here so it is
-/// visible in Finder, eligible for iCloud backup, and survives app reinstalls.
+/// Returns ~/Documents/StemDeck/, creating it if needed. The Documents
+/// *default* for the jobs folder (documents_dir_for_jobs below) and the
+/// source of a pre-#403 user-data.json for one-time migration
+/// (documents_store_path) -- chosen so the library is visible in
+/// Finder/Explorer, eligible for iCloud/OneDrive backup, and survives app
+/// reinstalls, before the user ever relocates it via Settings.
 fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let documents = app.path().document_dir().map_err(|e| e.to_string())?;
     let dir = documents.join("StemDeck");
@@ -349,9 +354,55 @@ fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Returns ~/Documents/StemDeck/user-data.json (library metadata store).
+/// The stems/jobs folder as it exists right now: the backend's own
+/// settings.json `jobs_dir` override if the user relocated it (#354) and that
+/// folder still exists, otherwise the Documents default. Mirrors
+/// app/core/config.py's `_stored_jobs_dir()` precedence exactly, read
+/// directly from disk (not over IPC/HTTP) so this works even before the
+/// backend process is up.
+fn current_jobs_dir(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(data_dir) = local_data_dir() {
+        let settings_path = data_dir.join("settings.json");
+        if let Ok(text) = fs::read_to_string(&settings_path) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(configured) = json.get("jobs_dir").and_then(|v| v.as_str()) {
+                    let candidate = PathBuf::from(configured);
+                    if candidate.is_dir() {
+                        return candidate;
+                    }
+                }
+            }
+        }
+    }
+    documents_dir_for_jobs(app)
+}
+
+/// Returns <current jobs folder>/user-data.json (library metadata store).
+///
+/// Lives *inside* the jobs folder (not its parent) so relocating stems via
+/// Settings (#354) carries this along automatically -- move_library()
+/// (app/core/stems_location.py) already moves every entry it finds inside
+/// the jobs folder one by one, so a plain file sitting there (same as
+/// registry.json) needs no special-casing on that side. Before #403 this
+/// lived at the jobs folder's *parent* (~/Documents/StemDeck/user-data.json),
+/// which relocation never touched -- a stems move would "forget" favorites,
+/// folder layout, and per-job mixer state even though the audio moved fine.
+///
+/// One-time migration: if the new location has nothing yet, copy (not move)
+/// any pre-#403 file found at the old parent-folder path. Copy rather than
+/// delete so a problem here can never lose the only copy of that data.
 fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(documents_stemdeck_dir(app)?.join("user-data.json"))
+    let jobs_dir = current_jobs_dir(app);
+    fs::create_dir_all(&jobs_dir).map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
+    let new_path = jobs_dir.join("user-data.json");
+    if !new_path.is_file() {
+        if let Ok(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
+            if old_path.is_file() && old_path != new_path {
+                let _ = fs::copy(&old_path, &new_path);
+            }
+        }
+    }
+    Ok(new_path)
 }
 
 /// The DEFAULT stems folder: ~/Documents/StemDeck/jobs/. Falls back to
@@ -686,6 +737,87 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
         ffmpeg_path: Some(ffmpeg.display().to_string()),
         model_ready: false,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelWarmupStatus {
+    demucs_ready: bool,
+    beat_this_ready: bool,
+    vocal_split_ready: bool,
+}
+
+/// Eagerly downloads/caches the ML models StemDeck uses (Demucs, beat-this,
+/// and the on-demand lead/backing vocal-split karaoke model, #275) via
+/// `app/pipeline/warmup.py`, so a user's first real job doesn't pay for any
+/// of them mid-pipeline. Best-effort per model: a single model failing to
+/// download (e.g. no network) does not fail this command — the setup wizard
+/// still proceeds, and that one feature falls back to its existing
+/// lazy-download-on-first-use behavior, same as before this step existed.
+#[tauri::command]
+fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus, String> {
+    let root = app_root()?;
+    let data_dir = local_data_dir()?;
+    let backend_dir = backend_dir(&root)?;
+    let python = python_path(&root)
+        .filter(|p| p.is_file())
+        .ok_or_else(|| "Python not found".to_string())?;
+    patch_pyvenv_cfg(&python);
+
+    let mut command = Command::new(&python);
+    command
+        .args(["-m", "app.pipeline.warmup"])
+        .current_dir(&backend_dir)
+        .env("STEMDECK_DATA_DIR", &data_dir)
+        .env("PYTHONUNBUFFERED", "1")
+        // Same cache locations start_backend uses, so a model downloaded here
+        // is found (not re-downloaded) by the real backend later.
+        .env("XDG_CACHE_HOME", data_dir.join("cache"))
+        .env("TORCH_HOME", data_dir.join("models").join("torch"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to start model warmup: {e}"))?;
+
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = Some(child.id());
+    }
+    let output = child_output_with_timeout(child, Duration::from_secs(30 * 60), "model warmup");
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = None;
+    }
+    let output = output?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut status = ModelWarmupStatus {
+        demucs_ready: false,
+        beat_this_ready: false,
+        vocal_split_ready: false,
+    };
+    for line in stdout.lines() {
+        match line {
+            "WARMUP_OK demucs" => status.demucs_ready = true,
+            "WARMUP_OK beat_this" => status.beat_this_ready = true,
+            "WARMUP_OK vocal_split" => status.vocal_split_ready = true,
+            _ if line.starts_with("WARMUP_FAILED") => {
+                append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
+            }
+            _ => {}
+        }
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        append_to_setup_log(
+            &data_dir,
+            &format!(
+                "model warmup process exited non-zero. stderr:\n{}",
+                stderr.trim()
+            ),
+        );
+    }
+    Ok(status)
 }
 
 /// Spawns the Python/uvicorn backend, waits for it to become healthy, and returns its URL.
@@ -1485,11 +1617,11 @@ fn run_pip_install(
         .map_err(|e| format!("failed to start {label}: {e}"))?;
 
     if let Ok(mut inner) = state.inner.lock() {
-        inner.pip_pid = Some(child.id());
+        inner.setup_child_pid = Some(child.id());
     }
     let output = child_output_with_timeout(child, Duration::from_secs(20 * 60), label);
     if let Ok(mut inner) = state.inner.lock() {
-        inner.pip_pid = None;
+        inner.setup_child_pid = None;
     }
     let output = output?;
 
@@ -1842,15 +1974,15 @@ async fn save_audio_file(
 }
 
 fn stop_backend(state: &BackendState) {
-    let (handles, pip_pid) = match state.inner.lock() {
-        Ok(mut guard) => (guard.handles.take(), guard.pip_pid.take()),
+    let (handles, setup_child_pid) = match state.inner.lock() {
+        Ok(mut guard) => (guard.handles.take(), guard.setup_child_pid.take()),
         Err(_) => return,
     };
 
-    // Kill any in-progress pip subprocess so it doesn't corrupt the venv
-    // if the window is closed during CUDA torch installation (#140).
+    // Kill any in-progress setup-time subprocess (pip install, model warmup)
+    // so it doesn't corrupt the venv/cache if the window is closed mid-setup (#140).
     #[cfg(unix)]
-    if let Some(pid) = pip_pid {
+    if let Some(pid) = setup_child_pid {
         // SAFETY: pid was stored immediately after spawn; we send SIGTERM best-effort.
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     }

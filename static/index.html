@@ -71,6 +71,13 @@
               <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
                 <span class="stem-dot"></span>Vocals
               </button>
+              <!-- On-demand lead/backing vocal split (#275). Shown only while
+                   Vocals is selected above; toggling "Lead + Backing" auto-runs
+                   the split once the import finishes (see main.js/job.js). -->
+              <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode">
+                <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true">All</button>
+                <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false">Lead + Backing</button>
+              </div>
               <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
                 <span class="stem-dot"></span>Drums
               </button>
@@ -416,6 +423,31 @@
                   <b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals"  aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals"   aria-pressed="false">S</b>
                   <button class="stem-monitor" type="button" data-stem="vocals" aria-label="Solo only Vocals"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <!-- On-demand lead/backing vocal split (#275): hidden by default
+                     (no split has run yet); shown in place of the row above via
+                     applyStemSelectionFilter in player.js once a job has one. -->
+                <span class="lead_vocals hidden" data-stem="lead_vocals">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+                    Lead Vocals
+                  </em>
+                  <b class="stem-mute" data-stem="lead_vocals" role="button" tabindex="0" aria-label="Mute Lead Vocals"  aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="lead_vocals" role="button" tabindex="0" aria-label="Solo Lead Vocals"   aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="lead_vocals" aria-label="Solo only Lead Vocals"></button>
+                  <i class="mini-meter"></i>
+                </span>
+                <span class="backing_vocals hidden" data-stem="backing_vocals">
+                  <i class="drag-handle"></i>
+                  <em>
+                    <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z"/><path d="M16 6a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3"/><path d="M5 12v1a6 6 0 0 0 6 6h1"/><path d="M11 19v2"/></svg>
+                    Backing Vocals
+                  </em>
+                  <b class="stem-mute" data-stem="backing_vocals" role="button" tabindex="0" aria-label="Mute Backing Vocals"  aria-pressed="false">M</b>
+                  <b class="stem-solo" data-stem="backing_vocals" role="button" tabindex="0" aria-label="Solo Backing Vocals"   aria-pressed="false">S</b>
+                  <button class="stem-monitor" type="button" data-stem="backing_vocals" aria-label="Solo only Backing Vocals"></button>
                   <i class="mini-meter"></i>
                 </span>
                 <span class="drums" data-stem="drums">

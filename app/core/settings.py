@@ -84,14 +84,20 @@ def _ensure() -> dict:
     return _state
 
 
-def _save() -> None:
+def _save() -> bool:
+    """Write settings.json. Best-effort for most settings (read-only FS,
+    permissions: the in-memory value still applies for this session, so a
+    caller here does not fail its request over it) -- but the write outcome
+    is still reported back, because one caller (set_jobs_dir) is coupled to
+    something irreversible enough that silently swallowing a failure there
+    would be actively misleading rather than merely inconvenient (#403)."""
     try:
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         _SETTINGS_PATH.write_text(json.dumps(_ensure()), encoding="utf-8")
+        return True
     except Exception:
-        # Persistence is best-effort (read-only FS, permissions): the in-memory
-        # value still applies for this session, so don't fail the request.
         _log.warning("could not persist settings to %s", _SETTINGS_PATH, exc_info=True)
+        return False
 
 
 def _num(v: object) -> int | None:
@@ -138,16 +144,24 @@ def get_jobs_dir() -> str | None:
         return value if isinstance(value, str) and value.strip() else None
 
 
-def set_jobs_dir(value: str | None) -> str | None:
+def set_jobs_dir(value: str | None) -> tuple[str | None, bool]:
+    """Persist the jobs folder choice. Returns (resolved_value, persisted).
+
+    Unlike every other setting in this module, a failed persist here is not a
+    minor inconvenience: this is called only after move_library() has already
+    physically relocated the user's library (POST /api/settings/stems-location
+    in app/main.py), so quietly keeping the in-memory value "for this session"
+    and reporting success would mean the app comes back to the OLD (now-empty)
+    folder on the very next restart, with the real data sitting at a location
+    nothing points at any more (#403). The caller must check `persisted` and
+    tell the user the truth rather than assume a 200 means the choice stuck."""
     with _LOCK:
         if value is None or not str(value).strip():
             _ensure().pop("jobs_dir", None)
-            _save()
-            return None
+            return None, _save()
         resolved = str(Path(str(value)).expanduser().resolve())
         _ensure()["jobs_dir"] = resolved
-        _save()
-        return resolved
+        return resolved, _save()
 
 
 # ── playlist_max_items ──

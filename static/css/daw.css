@@ -244,6 +244,33 @@ input, textarea { font-family: inherit; }
   color: var(--accent);
 }
 
+/* Vocals: All / Lead + Backing (on-demand split, #275) */
+.vocal-mode-toggle {
+  display: inline-flex;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.vocal-mode-toggle.hidden { display: none; }
+.vocal-mode-btn {
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  background: none;
+  color: var(--muted-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.vocal-mode-btn + .vocal-mode-btn { border-left: 1px solid var(--border); }
+.vocal-mode-btn[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--vocals) 16%, transparent);
+  color: var(--vocals);
+}
+
 /* Process button */
 .daw-process-btn {
   height: auto;

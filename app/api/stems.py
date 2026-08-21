@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 
 from app.core.config import (
     CACHE_DIR,
+    EXTRA_STEM_NAMES,
     JOB_ID_RE,
     JOBS_DIR,
     STEM_NAMES,
@@ -36,17 +37,23 @@ logger = logging.getLogger("stemdeck.api")
 router = APIRouter(tags=["stems"])
 
 # Stem files served by this endpoint: the 6 demucs stems + two
-# pipeline-produced extras. "original" is the re-encoded source song
-# (added when the user picked a strict subset), "mix" is the ffmpeg
-# amix of the user's selected stems.
-_ALLOWED_NAMES = frozenset(STEM_NAMES) | {"original", "mix"}
+# pipeline-produced extras, plus the on-demand lead/backing vocal split
+# (#275, EXTRA_STEM_NAMES) when a job has requested it. "original" is the
+# re-encoded source song (added when the user picked a strict subset), "mix"
+# is the ffmpeg amix of the user's selected stems.
+_ALLOWED_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"original", "mix"}
 
 # Lanes the dynamic mixdown may sum: the 6 stems plus "original" (the complement
-# track shown when the user picked a subset). "mix" is excluded -- it is the
-# static pre-render this endpoint replaces. Gains are linear; the studio caps a
-# lane at 2.0, so this generous bound just rejects abusive values.
-_MIXDOWN_NAMES = frozenset(STEM_NAMES) | {"original"}
+# track shown when the user picked a subset) plus lead/backing vocals when a
+# job has split them. "mix" is excluded -- it is the static pre-render this
+# endpoint replaces. Gains are linear; the studio caps a lane at 2.0, so this
+# generous bound just rejects abusive values.
+_MIXDOWN_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"original"}
 _MIXDOWN_MAX_GAIN = 4.0
+# lead_vocals/backing_vocals are a decomposition of vocals, not an independent
+# signal -- summing vocals alongside either would double-count the vocal
+# energy in the mix (#275).
+_VOCAL_DECOMPOSITION_NAMES = frozenset(EXTRA_STEM_NAMES)
 
 # Output encoders by container/extension, shared by the dynamic mixdown and the
 # stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps,
@@ -304,6 +311,11 @@ def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
         raise HTTPException(status_code=422, detail="gain out of range")
     if not set(names) <= _MIXDOWN_NAMES:
         raise HTTPException(status_code=422, detail="unknown stem requested")
+    if "vocals" in names and _VOCAL_DECOMPOSITION_NAMES & set(names):
+        raise HTTPException(
+            status_code=422,
+            detail="vocals cannot be combined with lead_vocals/backing_vocals (same signal)",
+        )
     return names, parsed_gains
 
 
@@ -910,13 +922,19 @@ async def get_all_stems_zip(
         raise HTTPException(status_code=404, detail="job not ready")
 
     # Resolve the requested subset (whitelisted) or fall back to all stems.
+    all_names = (*STEM_NAMES, *EXTRA_STEM_NAMES)
     if stems:
         requested = {s for s in stems.split(",") if s}
-        if not requested <= set(STEM_NAMES):
+        if not requested <= set(all_names):
             raise HTTPException(status_code=422, detail="unknown stem requested")
-        wanted = [name for name in STEM_NAMES if name in requested]
+        if "vocals" in requested and _VOCAL_DECOMPOSITION_NAMES & requested:
+            raise HTTPException(
+                status_code=422,
+                detail="vocals cannot be combined with lead_vocals/backing_vocals (same signal)",
+            )
+        wanted = [name for name in all_names if name in requested]
     else:
-        wanted = list(STEM_NAMES)
+        wanted = list(all_names)
 
     jobs_root = JOBS_DIR.resolve()
     stems_dir = (JOBS_DIR / job_id / "stems").resolve()

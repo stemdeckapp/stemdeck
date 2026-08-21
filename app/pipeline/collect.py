@@ -218,6 +218,38 @@ def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> dict[str, floa
     return rms_values
 
 
+def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> None:
+    """Add peaks/RMS for newly-produced stems (e.g. the on-demand lead/backing
+    vocal split, #275) into the existing peaks.json instead of recomputing
+    every stem. Best-effort, same as compute_stem_peaks: a failure here only
+    costs client-side waveform decode for the new stems, never the job."""
+    path = stems_dir / "peaks.json"
+    peaks: dict[str, list[list[float]]] = {}
+    if path.is_file():
+        try:
+            peaks = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("could not read existing peaks.json in %s", stems_dir, exc_info=True)
+
+    for name in new_names:
+        wav = stems_dir / f"{name}.wav"
+        if not wav.is_file():
+            continue
+        try:
+            result, _rms = scan_stem(wav, _PEAK_POINTS)
+            if result:
+                peaks[name] = result
+        except Exception:
+            logger.warning("could not compute peaks for %s/%s", stems_dir.name, name, exc_info=True)
+
+    try:
+        tmp = stems_dir / "peaks.json.tmp"
+        tmp.write_text(json.dumps(peaks), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
+
+
 def sweep_old_jobs(jobs_dir: Path) -> None:
     """Delete job directories older than JOB_TTL_SECONDS and remove them from
     the in-memory registry. Called hourly from the background sweep loop

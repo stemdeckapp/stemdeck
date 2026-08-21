@@ -53,14 +53,15 @@ StemDeck is free and **does not accept any money, sponsorship, or funding** - no
 
 | Name | What they do | Link |
 |---|---|---|
+| Analog4Lyfe | Analog music gear | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
-| Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
+| Empress Effects | Effects pedals | [empresseffects.com](https://empresseffects.com) |
 | Joao Gaspar | Producer/Film Scorer, Touring/Session Musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
 | Kris Luthier | Luthier and Musical Instrument Repair, Lisboa | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Thomann | Online Music Store | [@thomann.music](https://www.instagram.com/thomann.music) |
-| Analog4Lyfe | Analog music gear | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
-| Empress Effects | Effects pedals | [empresseffects.com](https://empresseffects.com) |
+| Lisbon Guitar Works | Guitar building | [dlimaguitars.com](https://dlimaguitars.com) |
 | More Notes Less Talk | Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping. | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
+| Seratone | Turns any TV into a studio-grade karaoke stage | [seratone.audio](https://seratone.audio/) |
+| Thomann | Online Music Store | [@thomann.music](https://www.instagram.com/thomann.music) |
 
 
 ---
@@ -153,7 +154,7 @@ Extract the zip anywhere, run `StemDeck.exe`. FFmpeg, the Demucs model, config, 
 
 <br>
 
-StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](https://github.com/astral-sh/uv)**, with a **[FastAPI](https://fastapi.tiangolo.com)** backend serving REST and Server-Sent Events. Stem separation uses **[Demucs](https://github.com/facebookresearch/demucs)** (`htdemucs_6s`), Meta AI's open-source 6-stem neural network. YouTube audio is fetched via **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**; transcoding and mixing use **[FFmpeg](https://ffmpeg.org)**. BPM detection and key analysis run on **[librosa](https://librosa.org)**; loudness measurement uses **[pyloudnorm](https://github.com/csteinmetz1/pyloudnorm)** (ITU-R BS.1770). The macOS and Windows desktop shells are **[Tauri v2](https://tauri.app)** (Rust/WKWebView on macOS, Rust/WebView2 on Windows). The frontend is vanilla JS with the Web Audio API, no framework and no build step; waveforms are rendered on `<canvas>` using min/max sample rendering.
+StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](https://github.com/astral-sh/uv)**, with a **[FastAPI](https://fastapi.tiangolo.com)** backend serving REST and Server-Sent Events. Stem separation uses **[Demucs](https://github.com/facebookresearch/demucs)** (`htdemucs_6s`), Meta AI's open-source 6-stem neural network. The optional on-demand lead/backing vocal split runs the UVR-MDX-NET Karaoke 2 model via **[audio-separator](https://github.com/nomadkaraoke/python-audio-separator)**, trained as part of the **[Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui)** project by Anjok07. YouTube audio is fetched via **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**; transcoding and mixing use **[FFmpeg](https://ffmpeg.org)**. BPM detection and key analysis run on **[librosa](https://librosa.org)**; loudness measurement uses **[pyloudnorm](https://github.com/csteinmetz1/pyloudnorm)** (ITU-R BS.1770). The macOS and Windows desktop shells are **[Tauri v2](https://tauri.app)** (Rust/WKWebView on macOS, Rust/WebView2 on Windows). The frontend is vanilla JS with the Web Audio API, no framework and no build step; waveforms are rendered on `<canvas>` using min/max sample rendering.
 
 *Thanks to the creators and maintainers of all the open-source libraries that make StemDeck possible.*
 

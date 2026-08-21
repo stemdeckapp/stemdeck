@@ -226,6 +226,40 @@ def test_restore_recovers_orphan_without_metadata(tmp_path: Path):
     assert meta["title"] == "Recovered track abcdef"
 
 
+def test_restore_recovers_lead_backing_vocals_and_marks_split_done(tmp_path: Path):
+    """#275: a job whose on-demand vocal split finished must not regress to
+    "never split" just because the process restarted before its next
+    registry persist -- both are derived straight from disk, same as the
+    base stems above."""
+    job_dir = tmp_path / "abcdefabc275"
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    for name in ("vocals", "lead_vocals", "backing_vocals"):
+        (stems_dir / f"{name}.wav").write_bytes(b"RIFF")
+    (job_dir / "metadata.json").write_text(json.dumps({"title": "Split Song"}), encoding="utf-8")
+
+    restore_registry(tmp_path)
+
+    restored = _jobs["abcdefabc275"]
+    assert restored.vocal_split == "done"
+    assert {"lead_vocals", "backing_vocals"} <= {stem["name"] for stem in restored.stems}
+    # selected_stems (the mix-complement math) stays scoped to the base 6 --
+    # lead/backing are a further decomposition of vocals, not independent.
+    assert "lead_vocals" not in restored.selected_stems
+
+
+def test_restore_recovers_orphan_job_without_vocal_split(tmp_path: Path):
+    job_dir = tmp_path / "abcdefabc278"
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "vocals.wav").write_bytes(b"RIFF")
+    (job_dir / "metadata.json").write_text(json.dumps({"title": "Unsplit Song"}), encoding="utf-8")
+
+    restore_registry(tmp_path)
+
+    assert _jobs["abcdefabc278"].vocal_split == "none"
+
+
 def test_restore_still_ignores_dir_without_stems(tmp_path: Path):
     """The stems requirement stays: an empty/partial job dir is not a track."""
     (tmp_path / "abcdefabcde1" / "stems").mkdir(parents=True)  # no WAVs

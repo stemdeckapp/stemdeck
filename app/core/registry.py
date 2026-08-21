@@ -8,7 +8,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from app.core.config import DEMUCS_MODEL, JOB_ID_RE, STEM_NAMES
+from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, STEM_NAMES
 from app.core.models import Job
 
 logger = logging.getLogger("stemdeck.registry")
@@ -237,7 +237,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         return None
     stems = [
         {"name": name, "url": f"/api/jobs/{job_dir.name}/stems/{name}.wav"}
-        for name in ("original", *STEM_NAMES)
+        for name in ("original", *STEM_NAMES, *EXTRA_STEM_NAMES)
         if (stems_dir / f"{name}.wav").is_file()
     ]
     if not stems:
@@ -246,6 +246,12 @@ def _recover_done_job(job_dir: Path) -> Job | None:
     if (stems_dir / "mix.wav").is_file():
         mix_url = f"/api/jobs/{job_dir.name}/stems/mix.wav"
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
+    # A restart between the split finishing and its next registry persist
+    # would otherwise report the job as never split -- derive from disk the
+    # same way `stems` above does, so the recovered library entry doesn't
+    # regress (#275).
+    has_split = all((stems_dir / f"{name}.wav").is_file() for name in EXTRA_STEM_NAMES)
+    vocal_split = "done" if has_split else "none"
     meta_path = job_dir / "metadata.json"
     meta: dict = {}
     if meta_path.is_file():
@@ -287,6 +293,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
         tags=meta.get("tags"),
+        vocal_split=vocal_split,
     )
 
 

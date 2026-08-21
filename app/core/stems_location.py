@@ -104,7 +104,11 @@ def validate_target(target: Path, current: Path) -> Path:
         # An existing folder is fine only if it is empty or already ours: merging
         # a stem library into someone's Desktop is not a recoverable mistake.
         entries = list(target.iterdir())
-        ours = {"registry.json", "failed"}
+        # user-data.json (#403): the library metadata store now lives inside
+        # the jobs folder too (see desktop/src-tauri/src/main.rs's
+        # documents_store_path), so re-selecting a folder StemDeck already
+        # used must recognize it as "ours", same as registry.json.
+        ours = {"registry.json", "failed", "user-data.json"}
         if entries and not all(e.name in ours or _looks_like_job_dir(e) for e in entries):
             raise StemsLocationError("Pick an empty folder, or one StemDeck already uses.")
     else:
@@ -125,11 +129,13 @@ def _looks_like_job_dir(entry: Path) -> bool:
 
 
 def move_library(current: Path, target: Path) -> MoveResult:
-    """Move every stem directory from `current` into `target`.
+    """Move every stem directory (and top-level file, e.g. registry.json and
+    the desktop shell's user-data.json, #403) from `current` into `target`.
 
     Entry by entry rather than moving the folder itself: the folder may be one
-    the user picked in a native dialog and expects to keep, and on desktop the
-    parent (~/Documents/StemDeck) also holds the library index, which stays put.
+    the user picked in a native dialog and expects to keep. This also means
+    nothing here needs to know about user-data.json specifically -- it lives
+    inside the jobs folder like any other entry, so it comes along for free.
 
     On a failure partway, whatever has already moved stays moved and the error
     names the entry that stopped it. Rolling back a half-finished multi-gigabyte

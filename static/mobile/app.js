@@ -14,14 +14,21 @@ const STEM_META = {
   guitar: { label: "Guitar", color: "#3fcf6e" },
   piano: { label: "Piano", color: "#9b6cf0" },
   other: { label: "Other", color: "#4a9bf5" },
+  // On-demand lead/backing vocal split (#275) -- not one of the Extract chips
+  // (see vocalSplitMode below), just lane metadata for once a job has one.
+  lead_vocals: { label: "Lead Vocals", color: "#f0506e" },
+  backing_vocals: { label: "Backing Vocals", color: "#c44ad0" },
 };
 const FALLBACK_COLORS = ["#f0506e", "#f5862b", "#f5c518", "#3fcf6e", "#9b6cf0", "#4a9bf5", "#2bd4c4", "#c44ad0"];
 function stemMeta(name, idx) {
   return STEM_META[name] || { label: name.charAt(0).toUpperCase() + name.slice(1), color: FALLBACK_COLORS[idx % FALLBACK_COLORS.length] };
 }
 
-// Stem chips shown on the (still-mock) Extract screen.
-const EXTRACT_STEMS = Object.entries(STEM_META).map(([id, m]) => ({ id, name: m.label, color: m.color }));
+// Stem chips shown on the Extract screen. lead_vocals/backing_vocals aren't
+// separately selectable here -- they're an on-demand refinement of the
+// Vocals chip (see the vocalSplitMode segmented control in extractScreen()).
+const EXTRACT_BASE_STEMS = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+const EXTRACT_STEMS = EXTRACT_BASE_STEMS.map((id) => ({ id, name: STEM_META[id].label, color: STEM_META[id].color }));
 
 const DEFAULT_GRADIENT = "linear-gradient(150deg,#3a3a42,#202026)";
 const FILTERS = ["All", "Favorites"];
@@ -84,7 +91,10 @@ const state = {
   // Extract screen.
   extractUrl: "",
   extractFile: null, // File chosen for upload
-  extractJob: null, // { id, title, status, progress, stage } while a job runs
+  extractJob: null, // { id, title, status, progress, stage, vocalSplitMode } while a job runs
+  // "all" = plain Vocals lane (default); "split" = also run the on-demand
+  // lead/backing split (#275) once the base separation finishes.
+  vocalSplitMode: "all",
 };
 
 let extractES = null; // EventSource for the active extraction
@@ -235,8 +245,14 @@ async function openTrack(card, { autoplay = false } = {}) {
   // Use WAV stems with range-request chunking (chunkedAudioEngine.js): fetches
   // 10-second windows at a time, so the first audio starts after ~7 MB instead
   // of the full file, and peak RAM stays around 28 MB regardless of track length.
+  // Once the on-demand lead/backing split (#275) has run, show those two
+  // lanes in place of the plain Vocals lane rather than all three -- they're
+  // a decomposition of the same signal (mirrors the backend's mixdown guard
+  // in app/api/stems.py), not three independent tracks.
+  const stemNames = new Set((detail.stems || []).map((s) => s && s.name));
+  const vocalSplitDone = stemNames.has("lead_vocals") && stemNames.has("backing_vocals");
   const laneList = (detail.stems || [])
-    .filter((s) => s && s.name !== "original" && s.url)
+    .filter((s) => s && s.url && s.name !== "original" && !(vocalSplitDone && s.name === "vocals"))
     .map((s, i) => ({ name: s.name, url: s.url, ...stemMeta(s.name, i) }));
 
   state.vols = {};
@@ -565,6 +581,14 @@ function extractScreen() {
         const onStyle = on ? `border-color:${s.color};background:${s.color}1c;` : "";
         return `<button class="chip-btn ${on ? "on" : ""}" style="${onStyle}" data-action="chip" data-id="${s.id}"><div class="dot" style="background:${s.color}"></div><span class="nm">${s.name}</span>${on ? ICON.check : ""}</button>`;
       }).join("")}</div>
+      ${state.selected.vocals ? `
+      <div class="vocal-mode-row">
+        <span class="vocal-mode-label">Vocals</span>
+        <div class="segmented sm">
+          <button class="${state.vocalSplitMode !== "split" ? "on" : ""}" data-action="vocalmode" data-mode="all">All</button>
+          <button class="${state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
+        </div>
+      </div>` : ""}
       <button class="cta" style="margin-top:22px" data-action="split">${ICON.scissors}Split stems</button>
       ${extractProgressCard()}
     </div>
@@ -591,7 +615,8 @@ async function startExtraction() {
     title = url;
   }
 
-  state.extractJob = { id: null, title, status: "queued", progress: 0, stage: "Queued" };
+  const vocalSplitMode = state.selected.vocals ? state.vocalSplitMode : "all";
+  state.extractJob = { id: null, title, status: "queued", progress: 0, stage: "Queued", vocalSplitMode };
   render();
 
   let jobId;
@@ -611,8 +636,40 @@ async function startExtraction() {
   state.extractJob.id = jobId;
   state.extractFile = null;
   state.extractUrl = "";
+  state.vocalSplitMode = "all";
   followExtraction(jobId);
   render();
+}
+
+function _finishExtractJob(jobId) {
+  const finishedId = jobId;
+  setTimeout(() => {
+    if (state.extractJob && state.extractJob.id === finishedId) {
+      state.extractJob = null;
+      if (state.tab === "extract") render();
+    }
+  }, 4000);
+}
+
+// Chains the on-demand lead/backing vocal split (#275) onto the base job's
+// completion when the user picked "Lead + Backing" on the Extract screen --
+// from their perspective this is one action, even though the backend keeps
+// it a separate, best-effort pass over the already-done job.
+async function _runVocalSplitThenFinish(jobId) {
+  state.extractJob.stage = "Splitting lead/backing vocals…";
+  if (state.tab === "extract") render();
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/vocal-split`, { method: "POST" });
+    if (!res.ok && res.status !== 202) throw new Error(String(res.status));
+    toast("Stems ready!");
+  } catch (e) {
+    console.warn("[mobile] vocal split failed:", e);
+    // The base separation still succeeded -- the split is a best-effort
+    // extra, so this is a lesser notice, not a failure of the whole import.
+    toast("Stems ready (lead/backing split didn't work this time).");
+  }
+  loadLibrary();
+  _finishExtractJob(jobId);
 }
 
 function _onExtractState(jobId, s) {
@@ -622,16 +679,14 @@ function _onExtractState(jobId, s) {
   state.extractJob.stage = s.stage || s.status;
   if (state.tab === "extract") render();
   if (s.status === "done" || s.status === "error" || s.status === "cancelled") {
-    if (s.status === "done") { toast("Stems ready!"); loadLibrary(); }
-    else if (s.status === "error") toast("Extraction failed.");
-    const finishedId = jobId;
-    setTimeout(() => {
-      if (state.extractJob && state.extractJob.id === finishedId) {
-        state.extractJob = null;
-        if (state.tab === "extract") render();
-      }
-    }, 4000);
-    return true; // terminal
+    if (s.status === "done" && state.extractJob.vocalSplitMode === "split") {
+      _runVocalSplitThenFinish(jobId);
+    } else {
+      if (s.status === "done") { toast("Stems ready!"); loadLibrary(); }
+      else if (s.status === "error") toast("Extraction failed.");
+      _finishExtractJob(jobId);
+    }
+    return true; // terminal for the base-job follow (SSE/poll can stop)
   }
   return false;
 }
@@ -886,6 +941,9 @@ app.addEventListener("click", (e) => {
       break;
     case "chip":
       state.selected[t.dataset.id] = !state.selected[t.dataset.id];
+      break;
+    case "vocalmode":
+      state.vocalSplitMode = t.dataset.mode;
       break;
     case "qual":
       state.quality = t.dataset.q;

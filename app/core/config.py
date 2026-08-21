@@ -52,6 +52,12 @@ def detect_torch_device() -> str:
 ROOT = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = ROOT / "static"
 STEM_NAMES: tuple[str, ...] = ("vocals", "drums", "bass", "guitar", "piano", "other")
+# Produced only when a job opts into the lead/backing vocal split (best-effort,
+# additive -- see app/pipeline/vocal_split.py). Kept out of STEM_NAMES itself:
+# selected_stems defaults, the "Original" complement-track math, and the
+# GET /api/config contract all assume "the 6 Demucs stems" and must not change
+# just because a job happened to request this extra pass.
+EXTRA_STEM_NAMES: tuple[str, ...] = ("lead_vocals", "backing_vocals")
 JOB_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 
 # Runtime knobs -- env-backed so Docker / desktop packaging / local dev can
@@ -144,6 +150,15 @@ PLAYLIST_MAX_ITEMS = max(1, min(200, _env_int("STEMDECK_PLAYLIST_MAX_ITEMS", 50)
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
+# On-demand lead/backing vocal split (#275). UVR-MDX-NET Karaoke 2 is an
+# officially-distributed UVR-project model (MIT + credit-to-UVR per the
+# audio-separator README) -- the default. STEMDECK_KARAOKE_MODEL lets a
+# deployment swap the checkpoint (e.g. to a roformer model) without a code
+# change; see docs/models.md for the license audit behind this default.
+VOCAL_SPLIT_MODEL = os.environ.get("STEMDECK_KARAOKE_MODEL", "").strip() or "UVR_MDXNET_KARA_2.onnx"
+# A first run downloads the checkpoint (hundreds of MB); generous default so a
+# slow connection isn't mistaken for a stall.
+TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
 # Beat-grid stage decodes the whole drums stem (not the 180 s analyze window),
 # so it gets its own, larger budget.
 TIMEOUT_BEATGRID = _env_int("STEMDECK_TIMEOUT_BEATGRID", 300)

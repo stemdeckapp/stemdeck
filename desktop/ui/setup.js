@@ -388,8 +388,34 @@ async function runSetup() {
       }
     });
 
-    setStep("model", "done");
-    setStatus("AI separation model will download on first use (~340 MB).");
+    await runStep("model", async () => {
+      const stopProgress = startProgressStatus([
+        {
+          afterSeconds: 0,
+          text: "Downloading AI models... this can take a few minutes on first run.",
+        },
+        {
+          afterSeconds: 60,
+          text: "Still downloading AI models... slow networks can delay this.",
+        },
+        {
+          afterSeconds: 300,
+          text: "Still working... large models can take a while on a slow connection.",
+        },
+      ]);
+      try {
+        // Best-effort, per model: any model that doesn't download here just
+        // falls back to its existing lazy-download-on-first-use behavior --
+        // never fails setup over this (warmup_models itself never throws for
+        // an individual model failure; this catch is only for the whole
+        // subprocess failing to run at all, e.g. a missing Python).
+        await invoke("warmup_models");
+      } catch (err) {
+        console.warn("model warmup failed (will download lazily on first use):", err);
+      } finally {
+        stopProgress();
+      }
+    });
 
     await runStep("backend", async () => {
       setStatus(gpuSummary ? `${gpuSummary} - starting backend...` : "Starting StemDeck backend...");

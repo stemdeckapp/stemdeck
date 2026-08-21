@@ -1,7 +1,7 @@
 import {
   playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
-  currentJobId,
+  currentJobId, vocalSplitMode, vocalSplitModeReady, setVocalSplitMode,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
@@ -42,6 +42,28 @@ function refreshStemChoiceVisuals() {
   }
 }
 
+// ─── Vocals: All / Lead + Backing toggle (on-demand split, #275) ───
+//
+// Only meaningful while Vocals is actually selected above -- hidden
+// otherwise so it can't imply a choice that has nothing to act on.
+
+function refreshVocalModeToggleVisibility() {
+  document.getElementById("vocalModeToggle")?.classList.toggle("hidden", !selectedStems.has("vocals"));
+}
+
+function wireVocalModeToggle() {
+  const wrap = document.getElementById("vocalModeToggle");
+  if (!wrap) return;
+  for (const btn of wrap.querySelectorAll(".vocal-mode-btn")) {
+    btn.addEventListener("click", () => {
+      setVocalSplitMode(btn.dataset.mode);
+      for (const b of wrap.querySelectorAll(".vocal-mode-btn")) {
+        b.setAttribute("aria-pressed", String(b.dataset.mode === btn.dataset.mode));
+      }
+    });
+  }
+}
+
 function handleStemChoiceClick(stem) {
   const allSelected = selectedStems.size === STEM_NAMES.length;
   if (allSelected) {
@@ -59,11 +81,13 @@ function handleStemChoiceClick(stem) {
   }
   saveSelectedStems();
   refreshStemChoiceVisuals();
+  refreshVocalModeToggleVisibility();
   buildStripStems();
 }
 
 function wireStemChoiceButtons() {
   refreshStemChoiceVisuals();
+  refreshVocalModeToggleVisibility();
   for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
     btn.addEventListener("click", () => handleStemChoiceClick(btn.dataset.stem));
   }
@@ -86,6 +110,7 @@ function wireAllButton() {
     }
     saveSelectedStems();
     refreshStemChoiceVisuals();
+    refreshVocalModeToggleVisibility();
     buildStripStems();
     syncAllBtn();
   });
@@ -110,6 +135,7 @@ wireStemListControls();
 wireMixerToolbar();
 wireStemChoiceButtons();
 wireAllButton();
+wireVocalModeToggle();
 wireFileDrop();
 wireAppShellControls();
 
@@ -117,6 +143,11 @@ wireAppShellControls();
   await runStoreMigrationIfNeeded();
   await stemSelectionReady;
   refreshStemChoiceVisuals();
+  refreshVocalModeToggleVisibility();
+  await vocalSplitModeReady;
+  for (const b of document.querySelectorAll(".vocal-mode-btn")) {
+    b.setAttribute("aria-pressed", String(b.dataset.mode === vocalSplitMode));
+  }
   // Before initCatalog: it runs the update check, which can itself notify.
   // collectDiagnostics is injected rather than imported by notifications.js,
   // which would make the two modules import each other.

@@ -492,3 +492,99 @@ def test_get_failure_traceback_is_empty_list_when_absent(client, tmp_path, monke
     r = client.get("/api/jobs/abcdefabcdef/failure")
     assert r.status_code == 200
     assert r.json()["traceback"] == []
+
+
+# ─── POST /jobs/{id}/vocal-split (#275) ──────────────────────────────────────
+
+
+def _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc275"):
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "JOBS_DIR", tmp_path)
+    job = Job(id=job_id, status="done", title="Test track")
+    _jobs[job.id] = job
+    stems_dir = tmp_path / job.id / "stems"
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "vocals.wav").write_bytes(b"RIFF1234")
+    return job, stems_dir
+
+
+def test_vocal_split_404_unknown_job(client):
+    r = client.post("/api/jobs/000000000000/vocal-split")
+    assert r.status_code == 404
+
+
+def test_vocal_split_404_job_not_done(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "JOBS_DIR", tmp_path)
+    job = Job(id="abcdefabc275", status="separating", title="In progress")
+    _jobs[job.id] = job
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+    assert r.status_code == 404
+
+
+def test_vocal_split_success(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    job, stems_dir = _make_done_job_with_vocals(tmp_path, monkeypatch)
+
+    def fake_split(job_arg, stems_dir_arg):
+        (stems_dir_arg / "lead_vocals.wav").write_bytes(b"RIFF")
+        (stems_dir_arg / "backing_vocals.wav").write_bytes(b"RIFF")
+        return ["lead_vocals", "backing_vocals"]
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_split)
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["vocal_split"] == "done"
+    names = {s["name"] for s in body["stems"]}
+    assert {"lead_vocals", "backing_vocals"} <= names
+    assert job.vocal_split == "done"
+
+
+def test_vocal_split_409_when_already_running(client, tmp_path, monkeypatch):
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch)
+    job.vocal_split = "running"
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+    assert r.status_code == 409
+
+
+def test_vocal_split_202_idempotent_when_already_done(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch)
+    job.vocal_split = "done"
+    called = False
+
+    def fake_split(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return ["lead_vocals", "backing_vocals"]
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_split)
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+    assert r.status_code == 202
+    assert called is False  # idempotent: never re-runs the model
+
+
+def test_vocal_split_failure_keeps_job_done_with_base_stems(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    job, stems_dir = _make_done_job_with_vocals(tmp_path, monkeypatch)
+
+    def fake_split(job_arg, stems_dir_arg):
+        raise RuntimeError("model download failed")
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_split)
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+    assert r.status_code == 500
+    assert job.status == "done"  # the job itself is untouched
+    assert job.vocal_split == "error"
+    assert (stems_dir / "vocal_split_error.txt").is_file()

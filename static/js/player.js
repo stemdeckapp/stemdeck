@@ -6,8 +6,9 @@ import { fmtTime } from "./utils.js";
 // job.js state.
 import { showPlaybackError, clearPlaybackError, resolvePlaybackSuccess } from "./job.js";
 import {
-  STEM_NAMES, TRACK_NAMES, STEM_COLORS, PROGRESS_COLOR,
+  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, STEM_COLORS, PROGRESS_COLOR,
   LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC, LANE_VOLUME_MAX,
+  effectiveStemOrder,
 } from "./constants.js";
 import {
   mixerEl, multitrackContainer, bpmChip, keyChip, stemsChip, timeEl,
@@ -85,19 +86,32 @@ const _STEM_ROW_SELECTORS = [
 ];
 
 function applyStemSelectionFilter(presentNames) {
-  // Waveform rows: original hides if absent; STEM_NAMES rows always show, grayed if absent
+  // The order for THIS job: STEM_NAMES, with "vocals" swapped for
+  // lead_vocals + backing_vocals when the on-demand split (#275) produced
+  // both. Rows for a name outside `order` (the vocals-family row not in
+  // play for this job) are hidden outright, not just grayed "unavailable" --
+  // unlike the base 6, lead_vocals/backing_vocals aren't part of every job's
+  // contract, so there's no "not selected this time" state for them to be in.
+  const order = effectiveStemOrder(presentNames);
+  const isVocalFamily = (s) => s === "vocals" || s === "lead_vocals" || s === "backing_vocals";
+
+  // Waveform rows: original hides if absent; order rows always show, grayed if absent
   for (const el of document.querySelectorAll(".stem-waveform-row[data-stem]")) {
     const stem = el.dataset.stem;
     if (stem === "original") {
       el.classList.toggle("hidden", !presentNames.has(stem));
       el.classList.remove("unavailable");
+    } else if (isVocalFamily(stem)) {
+      const inOrder = order.includes(stem);
+      el.classList.toggle("hidden", !inOrder);
+      if (inOrder) el.classList.toggle("unavailable", !presentNames.has(stem));
     } else {
       el.classList.remove("hidden");
       el.classList.toggle("unavailable", !presentNames.has(stem));
     }
   }
   const originalRow = presentNames.has("original") ? 1 : 0;
-  const visibleTrackCount = originalRow + STEM_NAMES.length;
+  const visibleTrackCount = originalRow + order.length;
   const app = document.querySelector(".app");
   app?.style.setProperty("--visible-track-count", String(visibleTrackCount));
   app?.style.setProperty(
@@ -108,16 +122,21 @@ function applyStemSelectionFilter(presentNames) {
     for (const el of document.querySelectorAll(sel)) {
       const stem = el.dataset.stem
         || el.classList[0];  // .presence-labels span has no data-stem, use class
-      el.classList.toggle("hidden", !presentNames.has(stem));
+      // vocals/lead_vocals/backing_vocals are mutually exclusive rows for a
+      // given job (#275) -- whichever the split state doesn't call for stays
+      // hidden even if presentNames still has it (vocals.wav is never
+      // deleted by the split, so "present" alone can't decide this one).
+      const hidden = isVocalFamily(stem) ? !order.includes(stem) : !presentNames.has(stem);
+      el.classList.toggle("hidden", hidden);
     }
   }
   const visibleMixerNames = [];
   if (presentNames.has("original")) visibleMixerNames.push("original");
-  for (const name of STEM_NAMES) {
+  for (const name of order) {
     if (presentNames.has(name)) visibleMixerNames.push(name);
   }
-  const mixerCap = STEM_NAMES.length + (presentNames.has("original") ? 1 : 0);
-  for (const name of STEM_NAMES) {
+  const mixerCap = order.length + (presentNames.has("original") ? 1 : 0);
+  for (const name of order) {
     if (visibleMixerNames.length >= mixerCap) break;
     if (!visibleMixerNames.includes(name)) visibleMixerNames.push(name);
   }
@@ -125,8 +144,15 @@ function applyStemSelectionFilter(presentNames) {
 
   for (const row of document.querySelectorAll(".mixer-column .lane-header[data-stem]")) {
     const stem = row.dataset.stem;
+    const inOrder = stem === "original" ? presentNames.has("original") : order.includes(stem);
     const available = presentNames.has(stem);
-    row.classList.toggle("hidden", !visibleMixerSet.has(stem));
+    // Mixer rows are built once in renderEmptyShell (original, the base 6,
+    // then lead_vocals/backing_vocals tacked on at the end) and reused across
+    // every job load -- DOM order alone would always put lead_vocals/
+    // backing_vocals last. CSS order (.mixer-column is a column flexbox)
+    // repositions them to match `order` (right after "original") per job.
+    row.style.order = stem === "original" ? "-1" : String(order.indexOf(stem));
+    row.classList.toggle("hidden", !inOrder || !visibleMixerSet.has(stem));
     row.classList.toggle("unavailable", !available);
     row.setAttribute("aria-disabled", String(!available));
     for (const el of row.querySelectorAll("button, .lane-knob, .lane-dl")) {
@@ -143,9 +169,10 @@ function applyStemSelectionFilter(presentNames) {
     }
   }
   for (const row of document.querySelectorAll(".energy-row[data-stem]")) {
-    const available = presentNames.has(row.dataset.stem);
+    const stem = row.dataset.stem;
+    const available = presentNames.has(stem);
     row.classList.toggle("unavailable", !available);
-    row.classList.remove("hidden");
+    row.classList.toggle("hidden", isVocalFamily(stem) ? !order.includes(stem) : false);
   }
 }
 
@@ -353,7 +380,7 @@ function waveformPath(peaks) {
   return `${top.join(" ")} ${bottom.join(" ")} Z`;
 }
 
-function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
+function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount, orderIndex) {
   const layer = ensureOverviewWaveformLayer();
   let row = layer.querySelector(`[data-stem="${stemName}"]`);
   if (!row) {
@@ -363,7 +390,7 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
     layer.appendChild(row);
   }
   row.style.setProperty("--stem-color", color);
-  row.style.order = String(TRACK_NAMES.indexOf(stemName));
+  row.style.order = String(orderIndex);
   // A row is created for every mixer lane, including stems with no audio (e.g.
   // a subset extraction). The rows are flex-distributed across the lane stack,
   // so they only stay 1:1 with the mixer lanes when their count matches; an
@@ -385,9 +412,12 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount) {
 // The lane set must mirror the mixer/multitrack lanes (orderedNames in
 // wireUpAudio): "original" plus the stems when an original lane is present,
 // otherwise just the stems. Rendering a row for every lane keeps the overlay
-// aligned even when only a subset of stems was extracted.
+// aligned even when only a subset of stems was extracted. Swaps "vocals" for
+// lead_vocals + backing_vocals when this job's on-demand split (#275) ran.
 function overviewLaneNames(stems) {
-  return stems.some((s) => s.name === "original") ? TRACK_NAMES : STEM_NAMES;
+  const present = new Set(stems.map((s) => s.name));
+  const order = effectiveStemOrder(present);
+  return present.has("original") ? ["original", ...order] : order;
 }
 
 function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
@@ -409,10 +439,10 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
   }
   const norm = globalMax > 0 ? 1 / globalMax : 0;
   const bars = overviewBarCount();
-  for (const name of laneNames) {
+  laneNames.forEach((name, i) => {
     const pts = present.has(name) ? peaksData[name] : null;
-    renderOverviewWaveformPath(name, pts, norm, STEM_COLORS[name] || "#a0a0a0", bars);
-  }
+    renderOverviewWaveformPath(name, pts, norm, STEM_COLORS[name] || "#a0a0a0", bars, i);
+  });
 }
 
 // Normalize all stems to a single shared max so the overview waveforms
@@ -435,9 +465,9 @@ function renderAllOverviewWaveforms(stems, decodedMap) {
   }
   const norm = globalMax > 0 ? 1 / globalMax : 0;
   const bars = overviewBarCount();
-  for (const name of laneNames) {
-    renderOverviewWaveformPath(name, peaksByStem.get(name), norm, STEM_COLORS[name] || "#a0a0a0", bars);
-  }
+  laneNames.forEach((name, i) => {
+    renderOverviewWaveformPath(name, peaksByStem.get(name), norm, STEM_COLORS[name] || "#a0a0a0", bars, i);
+  });
 }
 
 function renderDecodedStemVisuals(stemName, audioBuffer, color) {
@@ -548,7 +578,10 @@ function buildStemVuEnvelope(audioBuffer) {
 function stemVuGain(stemName) {
   const state = mixerState[stemName];
   if (!state) return 0;
-  const anySolo = TRACK_NAMES.some((name) => trackIndex[name] !== undefined && mixerState[name]?.soloed);
+  // Derived from trackIndex (the lanes actually mounted for THIS job) rather
+  // than the fixed TRACK_NAMES, so a solo on a lead_vocals/backing_vocals
+  // lane (#275) is honored the same as any of the base 6.
+  const anySolo = Object.keys(trackIndex).some((name) => mixerState[name]?.soloed);
   if (state.muted || (anySolo && !state.soloed)) return 0;
   return Math.max(0, state.volume);
 }
@@ -812,7 +845,10 @@ export function renderEmptyShell() {
   stopStemVuLoop();
   ensureMixerStateDefaults();
   mixerEl.innerHTML = "";
-  for (const name of ["original", ...STEM_NAMES]) {
+  // lead_vocals/backing_vocals (#275) get rows too, built once here like the
+  // base 6 -- applyStemSelectionFilter (below) hides them by default since no
+  // job is loaded yet, and shows them in place of "vocals" once one is.
+  for (const name of ["original", ...STEM_NAMES, ...EXTRA_STEM_NAMES]) {
     const { row } = renderMixerRow({ name, url: "#" });
     mixerEl.appendChild(row);
   }
@@ -961,7 +997,20 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // the user selected all 6 stems, the backend doesn't produce
   // original.wav, so it's simply not in `stems` and the mixer/sidebar
   // rows for it stay hidden.)
-  stems = stems.filter((s) => s.name === "original" || selectedStems.has(s.name));
+  //
+  // vocals/lead_vocals/backing_vocals are mutually exclusive (#275): once a
+  // job's on-demand split has produced both, show those two in place of the
+  // plain Vocals lane rather than all three -- vocals.wav is never deleted by
+  // the split, so it would otherwise still show up here too.
+  const rawPresent = new Set(stems.map((s) => s.name));
+  const splitDone = rawPresent.has("lead_vocals") && rawPresent.has("backing_vocals");
+  const wantsVocals = selectedStems.has("vocals");
+  stems = stems.filter((s) => {
+    if (s.name === "original") return true;
+    if (s.name === "vocals") return wantsVocals && !splitDone;
+    if (s.name === "lead_vocals" || s.name === "backing_vocals") return wantsVocals && splitDone;
+    return selectedStems.has(s.name);
+  });
   _currentStems = stems;
   _mixUrl = mixUrl || null;
   _currentTitle = title || "";
@@ -1030,9 +1079,12 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
 
   // "original" is prepended at row 0 only when it actually has a URL so it
   // appears at the top. Omitting it when absent avoids a phantom 70px gap.
-  // STEM_NAMES follow at the next consecutive rows so mixer lanes stay aligned.
+  // The (already-filtered) stem order follows at the next consecutive rows so
+  // mixer lanes stay aligned -- lead_vocals/backing_vocals in place of vocals
+  // when this job's on-demand split (#275) produced them.
   const stemsByName = Object.fromEntries(stems.map((s) => [s.name, s]));
-  const orderedNames = [...(stemsByName["original"] ? ["original"] : []), ...STEM_NAMES];
+  const order = effectiveStemOrder(new Set(stems.map((s) => s.name)));
+  const orderedNames = [...(stemsByName["original"] ? ["original"] : []), ...order];
   setTrackIndex(Object.fromEntries(orderedNames.map((name, i) => [name, i])));
   multitrackContainer.innerHTML = "";
 

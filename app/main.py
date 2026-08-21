@@ -458,18 +458,31 @@ async def set_stems_location(request: Request) -> dict[str, object]:
         _log.exception("moving the stems library failed")
         raise HTTPException(status_code=500, detail="Could not move the stems folder") from None
 
-    set_jobs_dir(str(target))
+    _, persisted = set_jobs_dir(str(target))
     _log.info(
-        "stems library moved to %s (%d entries, %d bytes)",
+        "stems library moved to %s (%d entries, %d bytes, persisted=%s)",
         target,
         result.moved_entries,
         result.bytes_moved,
+        persisted,
     )
+    if not persisted:
+        # The move itself genuinely succeeded (result is real) -- but
+        # settings.json didn't take the new path, so a restart would read
+        # JOBS_DIR back from the old default while the library sits at
+        # `target`. Loud, not a silent false-success (#403): the response
+        # still reports what physically happened, plus why it isn't safe yet.
+        _log.warning(
+            "stems library moved to %s but the jobs_dir setting did not persist "
+            "-- a restart right now would lose track of it",
+            target,
+        )
     return {
         "path": str(target),
         "moved_entries": result.moved_entries,
         "bytes_moved": result.bytes_moved,
         "restart_required": True,
+        "persisted": persisted,
     }
 
 
