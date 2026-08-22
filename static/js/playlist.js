@@ -34,11 +34,11 @@ export function looksLikePlaylist(url) {
 
 function countLine(preview) {
   const parts = [];
-  if (preview.skipped_unavailable) parts.push(t("playlist.skip.unavailable", { count: preview.skipped_unavailable }));
-  if (preview.skipped_too_long) parts.push(t("playlist.skip.tooLong", { count: preview.skipped_too_long }));
+  if (preview.skipped_unavailable) parts.push(plural("playlist.skip.unavailable", preview.skipped_unavailable));
+  if (preview.skipped_too_long) parts.push(plural("playlist.skip.tooLong", preview.skipped_too_long));
   const overflow =
     preview.total_found - preview.skipped_unavailable - preview.skipped_too_long - preview.will_queue;
-  if (overflow > 0) parts.push(t("playlist.skip.overflow", { count: overflow }));
+  if (overflow > 0) parts.push(plural("playlist.skip.overflow", overflow));
   if (preview.truncated) parts.push(t("playlist.skip.truncated", { cap: preview.cap }));
   if (!parts.length) return "";
   return t("playlist.skippingPrefix", { list: parts.join(t("playlist.listSep")) });
