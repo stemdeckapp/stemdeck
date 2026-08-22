@@ -13,6 +13,7 @@ import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
+import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -125,6 +126,12 @@ function wireAllButton() {
 
 // ─── Wire everything up ───
 
+// Applied as early as possible in module execution, ahead of every other
+// top-level call below, to minimize the flash of English before the DOM
+// gets its real language (unavoidable without server-side rendering, since
+// static/index.html always ships pre-rendered in English).
+const i18nReady = initI18n().then(() => applyTranslations(document));
+
 syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
 wireTransportButtons();
@@ -140,6 +147,12 @@ wireFileDrop();
 wireAppShellControls();
 
 (async () => {
+  await i18nReady;
+  // Waits for the language to be resolved: the empty shell's stem labels
+  // (STEM_DISPLAY) are a one-time textContent snapshot, not a live binding,
+  // so rendering it before i18n is ready would freeze it in English
+  // regardless of the stored language preference.
+  renderEmptyShell();
   await runStoreMigrationIfNeeded();
   await stemSelectionReady;
   refreshStemChoiceVisuals();
@@ -224,15 +237,20 @@ function wireFooterControls() {
     const video = format === "mp4";
     exportPanel?.classList.toggle("fmt-mp4", video);
     if (mixDescEl) {
-      mixDescEl.textContent = video ? "Export mix with the original video" : "Export the mixed audio";
+      mixDescEl.textContent = video ? t("export.mixDescVideo") : t("export.mixDesc");
     }
     if (!video) updateLoopRegionVisual(); // restores the region item's disabled state
   }
+  // mixDescEl's text depends on `format`, not just the current language, so a
+  // language switch needs to re-derive it rather than rely solely on the
+  // generic data-i18n pass (which would otherwise reset it to the non-video
+  // wording even while MP4 is selected).
+  onLanguageChange(applyFormatState);
 
   function resetBusy() {
     busy = false;
     exportBtn?.classList.remove("is-busy");
-    if (exportLabel) exportLabel.textContent = "Export Mix";
+    if (exportLabel) exportLabel.textContent = t("export.mix");
     // Clear every row, not just the ones enterBusy could see: it disables via
     // actionItems(), which filters on visibility, and it closes the panel, so
     // by the time this runs every row is hidden and a visibility-filtered clear
@@ -257,10 +275,16 @@ function wireFooterControls() {
   function enterBusy() {
     busy = true;
     exportBtn?.classList.add("is-busy");
-    if (exportLabel) exportLabel.textContent = "Exporting…";
+    if (exportLabel) exportLabel.textContent = t("export.mixing");
     actionItems().forEach((it) => it?.setAttribute("aria-disabled", "true"));
     closePanel();
   }
+  // Same reasoning as applyFormatState's listener above: exportLabel's text
+  // depends on `busy`, so re-derive it after a language switch instead of
+  // leaving it on whatever the generic data-i18n pass reset it to.
+  onLanguageChange(() => {
+    if (exportLabel) exportLabel.textContent = t(busy ? "export.mixing" : "export.mix");
+  });
 
   // `pending` is whatever the download helper returned: a promise on desktop,
   // resolving once the file is written, or `true` in a browser, where an
@@ -296,7 +320,7 @@ function wireFooterControls() {
       .catch((err) => {
         // A cancelled dialog resolves false without ever entering the busy
         // state, so anything here is a real failure.
-        const message = typeof err === "string" && err ? err : "Export failed.";
+        const message = typeof err === "string" && err ? err : t("export.failed");
         showError(message, null, { retry: false });
         notifyFailure({
           kind: "export",
@@ -337,14 +361,14 @@ function wireFooterControls() {
     e.stopPropagation();
     runExport(
       (onStart) => (format === "mp4" ? downloadCurrentVideo(onStart) : downloadCurrentMix(format, onStart)),
-      "All stems are muted - nothing to export.",
+      t("export.allMuted"),
     );
   });
 
   itemRegion?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (itemRegion.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => downloadRegionMix(format, onStart), "All stems are muted - nothing to export.");
+    runExport((onStart) => downloadRegionMix(format, onStart), t("export.allMuted"));
   });
 
   // All Stems = a single backend-built ZIP, named after the song. Audio-only,
@@ -352,7 +376,7 @@ function wireFooterControls() {
   itemStems?.addEventListener("click", (e) => {
     e.stopPropagation();
     if (itemStems.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => downloadAllStemsZip(format, onStart), "No stems to export.");
+    runExport((onStart) => downloadAllStemsZip(format, onStart), t("export.noStems"));
   });
 
   // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.
@@ -436,13 +460,13 @@ function wireFileDrop() {
     // stray file. Only complain if nothing usable came through.
     const audio = all.filter(isAudioFile);
     if (!audio.length) {
-      showError("Only MP3, WAV, FLAC, MP4, M4A, OGG, and Opus files are supported.");
+      showError(t("upload.unsupportedFormat"));
       return;
     }
     const files = audio.filter((f) => f.size <= MAX_UPLOAD_BYTES);
     const oversized = audio.length - files.length;
     if (!files.length) {
-      showError(`File is too large (${formatBytes(audio[0].size)}). Maximum is 400 MB.`);
+      showError(t("upload.fileTooLarge", { size: formatBytes(audio[0].size), max: formatBytes(MAX_UPLOAD_BYTES) }));
       return;
     }
 
@@ -470,8 +494,8 @@ function wireFileDrop() {
     urlInput.removeAttribute("required");
 
     if (skipped > 0) {
-      const reason = oversized > 0 ? "too large or not audio" : "not audio";
-      showError(`Skipped ${skipped} file${skipped === 1 ? "" : "s"} (${reason}).`, null, {
+      const reason = t(oversized > 0 ? "upload.reasonTooLarge" : "upload.reasonNotAudio");
+      showError(plural("upload.skippedFiles", skipped, { reason }), null, {
         retry: false,
       });
     }
@@ -607,4 +631,3 @@ window.addEventListener("unhandledrejection", (e) => {
 // ─── Bootstrap ───
 
 buildStripStems();
-renderEmptyShell();

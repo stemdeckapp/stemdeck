@@ -474,7 +474,11 @@ input, textarea { font-family: inherit; }
 .rail-btn:hover { background: var(--panel); color: var(--fg-2); }
 .rail-btn.active { color: var(--accent); background: var(--panel); }
 .rail-btn svg { flex-shrink: 0; }
-.rail-btn span { white-space: nowrap; }
+/* max-width + ellipsis: a translated label (e.g. Polish "Ustawienia") can run
+   longer than English at this 9px size inside the fixed 40px button. The
+   full text is still reachable via the button's title/aria-label; this just
+   guarantees the label itself can never visually overflow the rail column. */
+.rail-btn > span { white-space: nowrap; max-width: 56px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Queue rail button. Only present while something is importing, so the rail
    stays as it is today for anyone not using the queue. */
@@ -949,6 +953,9 @@ input, textarea { font-family: inherit; }
 .settings-num-input, .settings-select { flex-shrink: 0; width: 84px; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 9px; }
 .settings-num-input { text-align: right; }
 .settings-select { cursor: pointer; }
+/* Wider variant for options whose text doesn't fit the shared 84px column --
+   currently just the language picker (flag + native name, up to "Bahasa Indonesia"). */
+.settings-select-wide { width: 190px; }
 .settings-num-input:focus, .settings-select:focus { outline: none; border-color: rgba(244,183,64,0.5); }
 
 /* Settings → network access section */

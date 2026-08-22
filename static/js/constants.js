@@ -1,3 +1,5 @@
+import { t, TRANSLATIONS } from "./i18n.js";
+
 // Fallback list used before /api/config responds. Kept in sync with
 // STEM_NAMES in app/core/config.py — the API is the canonical source.
 export let STEM_NAMES = ["vocals", "drums", "bass", "guitar", "piano", "other"];
@@ -36,17 +38,20 @@ export function effectiveStemOrder(presentNames) {
   return STEM_NAMES.flatMap((n) => (n === "vocals" && splitDone ? EXTRA_STEM_NAMES : [n]));
 }
 
-export const STEM_DISPLAY = {
-  vocals: "Vocals",
-  drums: "Drums",
-  bass: "Bass",
-  guitar: "Guitar",
-  piano: "Piano",
-  other: "Other",
-  original: "Original",
-  lead_vocals: "Lead Vocals",
-  backing_vocals: "Backing Vocals",
-};
+// A Proxy, not a plain object, so every lookup resolves through the CURRENT
+// language live -- a plain object would freeze these labels in whatever
+// language was active the moment this module first loaded. Callers keep their
+// existing `STEM_DISPLAY[name] || name` fallback pattern unchanged: an
+// unrecognized name (not one of ours) still yields undefined, same as a plain
+// object would, rather than the i18n engine's own missing-key fallback
+// (which returns the raw dictionary key string -- wrong here).
+export const STEM_DISPLAY = new Proxy({}, {
+  get(_target, prop) {
+    if (typeof prop !== "string") return undefined;
+    const key = `stem.${prop}`;
+    return key in TRANSLATIONS.en ? t(key) : undefined;
+  },
+});
 
 // FL Studio-style channel palette: saturated but slightly dusty, designed
 // to read well on a dark background.

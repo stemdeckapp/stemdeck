@@ -8,6 +8,8 @@
 // This module owns no DOM. It holds the latest snapshot and tells subscribers
 // when it changes; catalog.js decides what that looks like.
 
+import { t } from "./i18n.js";
+
 const POLL_MS = 2000;
 const MAX_SSE_ATTEMPTS = 6;
 
@@ -39,7 +41,7 @@ export function ordinal(n) {
  *  percentage during separation ("Separating 42%"), so only append one when it
  *  does not, rather than rendering "Separating 42% 42%". */
 export function runningLabel(job) {
-  const stage = (job?.stage || "Working...").replace(/\.\.\.$/, "");
+  const stage = (job?.stage || t("job.working")).replace(/\.\.\.$/, "");
   if (/\d\s*%/.test(stage)) return stage;
   const pct = Math.round((job?.progress || 0) * 100);
   return pct > 0 ? `${stage} ${pct}%` : stage;

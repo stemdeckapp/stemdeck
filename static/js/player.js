@@ -44,6 +44,7 @@ import {
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
+import { t, plural, onLanguageChange } from "./i18n.js";
 
 // Playback-engine selection. All engines play decoded AudioBuffers off a single
 // AudioContext clock (no N streaming <audio> elements — that was the source of
@@ -762,7 +763,7 @@ export function destroyPlayer() {
   stopStemVuLoop();
   resetSpeed();
   teardownMetronome();
-  updateMetronomeAvailability(null, "Load a track to use the click");
+  updateMetronomeAvailability(null, t("click.reason.loadTrack"));
   setExportClickAvailable(false);
   if (audioEngine) {
     audioEngine.destroy();
@@ -801,7 +802,7 @@ export function destroyPlayer() {
   titleEl.textContent = "";
   bpmChip.textContent = "\u2014 BPM";
   keyChip.textContent = "\u2014 \u2014";
-  stemsChip.textContent = "\u2014 Stems";
+  stemsChip.textContent = t("footer.stemsPlaceholder");
   timeEl.textContent = "00:00 / 00:00";
   resetAnalysisCards();
 
@@ -854,16 +855,24 @@ export function renderEmptyShell() {
   }
   requestAnimationFrame(() => _applyLaneHeight(1 + STEM_NAMES.length));
   applyStemSelectionFilter(new Set(STEM_NAMES));
-  titleEl.textContent = "Ready to import a track";
+  titleEl.textContent = t("player.readyToImport");
   bpmChip.textContent = "\u2014 BPM";
   keyChip.textContent = "\u2014 \u2014";
-  stemsChip.textContent = "\u2014 Stems";
+  stemsChip.textContent = t("footer.stemsPlaceholder");
   timeEl.textContent = "00:00 / 00:00";
   resetAnalysisCards();
   renderPlaceholderTracks();
   clearOverviewWaveforms();
   setLaneControlsEnabled(false);
 }
+
+// Same reasoning as the bootstrap ordering above: STEM_DISPLAY-derived text is
+// a one-time snapshot, not a live binding, so a language switch while no track
+// is loaded needs an explicit re-render. Guarded on "no-track" so this never
+// clobbers a real, already-loaded track's mixer with the empty shell.
+onLanguageChange(() => {
+  if (document.querySelector(".app")?.classList.contains("no-track")) renderEmptyShell();
+});
 
 function renderAllMiniWaves(mt, stems) {
   const wsArr = mt.wavesurfers || mt._wavesurfers;
@@ -902,7 +911,7 @@ export function setWaveformLoading(loading, phrase) {
     _loadingShownAt = performance.now();
     const phraseEl = document.getElementById("waveLoadingPhrase");
     if (phraseEl && phrase !== undefined) phraseEl.textContent = phrase;
-    else if (phraseEl && !phraseEl.textContent) phraseEl.textContent = "Still loading waveform…";
+    else if (phraseEl && !phraseEl.textContent) phraseEl.textContent = t("player.stillLoadingWaveform");
     el.classList.remove("hidden");
   } else {
     const elapsed = performance.now() - _loadingShownAt;
@@ -1067,7 +1076,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     }
   }
 
-  stemsChip.textContent = `${stems.length} Stems`;
+  stemsChip.textContent = plural("footer.stemsCount", stems.length);
 
   if (thumbnail) {
     npThumb.onload = () => npThumb.classList.add("loaded");
@@ -1343,10 +1352,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             }
 
             console.warn("[player] audio engine had no usable stems; playback disabled:", reason);
-            updateMetronomeAvailability(null, "Playback unavailable for this track");
+            updateMetronomeAvailability(null, t("click.reason.playbackUnavailable"));
             showPlaybackError(
-              reason || "This track's audio could not be loaded.",
-              "Playback is disabled for this track. Other tracks are not affected.",
+              reason || t("player.audioCouldNotLoad"),
+              t("player.playbackDisabledFull"),
               { jobId, engine: kind, stage: "Loading stems" },
             );
             return;
@@ -1365,7 +1374,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             teardownMetronome();
             const beats = Array.isArray(grid?.beats) ? grid.beats : null;
             if (!beats?.length) {
-              updateMetronomeAvailability(null, "No beat grid for this track");
+              updateMetronomeAvailability(null, t("click.reason.noBeatGrid"));
               setExportClickAvailable(false);
               return;
             }
@@ -1375,7 +1384,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             });
             setMetronome(m);
             updateMetronomeAvailability(m ? grid : null,
-              m ? "" : "Click track unavailable on this playback path");
+              m ? "" : t("click.reason.unavailableOnPath"));
             if (m && metronomeEnabled) m.setEnabled(true);
 
             // Grid editor over the same data. Every edit pushes straight into
@@ -1451,12 +1460,12 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
         }).catch((e) => {
           console.warn("[player] audio engine init failed; playback disabled:", e);
           teardownMetronome();
-          updateMetronomeAvailability(null, "Playback unavailable for this track");
+          updateMetronomeAvailability(null, t("click.reason.playbackUnavailable"));
           eng.destroy();
           if (audioEngine === eng) setAudioEngine(null);
           showPlaybackError(
-            "This track's audio could not be loaded.",
-            String(e?.message || e) || "Playback is disabled for this track.",
+            t("player.audioCouldNotLoad"),
+            String(e?.message || e) || t("player.playbackDisabled"),
             { jobId, engine: kind, stage: "Starting the audio engine" },
           );
         });
@@ -1470,7 +1479,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       // Offering an approximate one would drift against the music, which is
       // worse than not offering it.
       teardownMetronome();
-      updateMetronomeAvailability(null, "Click track needs the Web Audio engine");
+      updateMetronomeAvailability(null, t("click.reason.needsWebAudio"));
     }
   });
 }

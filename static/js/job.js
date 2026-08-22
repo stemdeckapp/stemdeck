@@ -8,10 +8,11 @@ import {
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
-import { stagePhrases } from "./phrases.js";
+import { getStagePhrases } from "./phrases.js";
 import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
+import { t, plural } from "./i18n.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -59,7 +60,7 @@ export async function runVocalSplitIfWanted(state) {
     addTrackToLibrary({
       id: finalState.job_id,
       title: finalState.title || "",
-      channel: "Extracted",
+      channel: t("footer.extractedLabel"),
       thumb: finalState.thumbnail,
       stems: finalState.selected_stems || [...selectedStems],
       selectedStems: finalState.selected_stems || [...selectedStems],
@@ -104,7 +105,7 @@ function setSubmitProcessing(processing) {
   submitBtn.classList.toggle("loading", processing);
   document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
-  if (label) label.textContent = processing ? "Processing" : "Process";
+  if (label) label.textContent = processing ? t("job.processing") : t("job.process");
 }
 
 /** True when audio is loaded in the studio. Either engine counts: the Web Audio
@@ -115,6 +116,7 @@ function studioHasTrack() {
 }
 
 function pickPhrase(status) {
+  const stagePhrases = getStagePhrases();
   const pool = stagePhrases[status] || stagePhrases.default;
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -172,7 +174,7 @@ export function showError(message, detail, { retry = true } = {}) {
   const btn = document.createElement("button");
   btn.className = "retry-btn";
   btn.type = "button";
-  btn.textContent = retry ? "Try again" : "Dismiss";
+  btn.textContent = retry ? t("job.tryAgain") : t("job.dismiss");
   btn.addEventListener("click", () => {
     errorEl.classList.add("hidden");
     if (retry) {
@@ -275,7 +277,7 @@ function applyStudioSummary(state) {
   if (summaryScale && state.scale) summaryScale.textContent = state.scale;
   if (summaryScaleName && state.scale) summaryScaleName.textContent = state.scale;
   if (summaryLufs && state.lufs != null) summaryLufs.textContent = state.lufs.toFixed(1);
-  if (summaryPeak && state.peak_db != null) summaryPeak.textContent = `Peak ${state.peak_db.toFixed(1)} dB`;
+  if (summaryPeak && state.peak_db != null) summaryPeak.textContent = t("job.peakDb", { value: state.peak_db.toFixed(1) });
   if (summaryDuration && state.duration) {
     const m = Math.floor(state.duration / 60);
     const s = Math.floor(state.duration % 60).toString().padStart(2, "0");
@@ -298,7 +300,7 @@ function applyStudioSummary(state) {
   if (summaryDr && state.dynamic_range != null) summaryDr.textContent = String(state.dynamic_range);
   if (summaryDrLabel && state.dynamic_range != null) {
     const dr = state.dynamic_range;
-    summaryDrLabel.textContent = dr < 7 ? "Compressed" : dr < 10 ? "Moderate" : dr < 14 ? "High" : "Wide";
+    summaryDrLabel.textContent = dr < 7 ? t("job.dr.compressed") : dr < 10 ? t("job.dr.moderate") : dr < 14 ? t("job.dr.high") : t("job.dr.wide");
   }
   if (summaryStability && state.tempo_stability != null) {
     summaryStability.textContent = `${state.tempo_stability}%`;
@@ -306,7 +308,7 @@ function applyStudioSummary(state) {
   }
   if (summaryStabilityLabel && state.tempo_stability != null) {
     const s = state.tempo_stability;
-    summaryStabilityLabel.textContent = s >= 90 ? "Very Stable" : s >= 70 ? "Stable" : s >= 50 ? "Moderate" : "Variable";
+    summaryStabilityLabel.textContent = s >= 90 ? t("job.stability.veryStable") : s >= 70 ? t("job.stability.stable") : s >= 50 ? t("job.stability.moderate") : t("job.stability.variable");
   }
   if (state.stem_presence != null) {
     applyStemPresenceCards(state.stem_presence);
@@ -346,8 +348,8 @@ function applyState(state) {
       // urlInput only speaks for the foreground job. While a background import
       // runs the user may already be typing the next URL in there, and it must
       // not end up as some other track's title or source.
-      title: state.title || (isForeground ? urlInput.value : "") || "Processing track",
-      channel: state.status === "done" ? "Extracted" : "Processing",
+      title: state.title || (isForeground ? urlInput.value : "") || t("job.processingTrackTitle"),
+      channel: state.status === "done" ? t("footer.extractedLabel") : t("job.processing"),
       thumb: state.thumbnail,
       stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
       selectedStems: state.selected_stems || [...selectedStems],
@@ -376,7 +378,7 @@ function applyState(state) {
     jobTitleEl.textContent = state.title;
     titleEl.textContent = state.title;
   }
-  if (state.bpm) bpmChip.textContent = `${state.bpm} BPM`;
+  if (state.bpm) bpmChip.textContent = t("job.bpmValue", { bpm: state.bpm });
   if (state.key) keyChip.textContent = state.key;
   if (state.title || state.bpm || state.key || state.thumbnail) {
     updateFooterTrack({
@@ -411,12 +413,12 @@ function applyState(state) {
     stopJobPolling();
     updateTrackStatus(state.job_id, "error");
     setWaveformLoading(false);
-    showError(state.error || "Unknown error", state.error_detail);
+    showError(state.error || t("job.unknownError"), state.error_detail);
     // Also record it: the banner above is transient and the user may well
     // dismiss it before deciding to report anything.
     notifyFailure({
       kind: "import",
-      message: state.error || "Unknown error",
+      message: state.error || t("job.unknownError"),
       detail: state.error_detail || null,
       context: {
         jobId: state.job_id,
@@ -451,7 +453,7 @@ function applyState(state) {
 async function probeJob(jobId) {
   const r = await fetch(`/api/jobs/${jobId}`);
   if (!r.ok) {
-    if (r.status === 404) throw new Error("Job no longer exists on the server");
+    if (r.status === 404) throw new Error(t("job.noLongerExists"));
     throw new Error(`Job probe failed: ${r.status}`);
   }
   const s = await r.json();
@@ -515,7 +517,7 @@ function connectEvents(jobId) {
           return;
         }
       } catch (err) {
-        if (err.message === "Job no longer exists on the server") {
+        if (err.message === t("job.noLongerExists")) {
           stopped = true;
           showError(err.message);
           setSubmitProcessing(false);
@@ -545,7 +547,7 @@ async function cancelCurrentJob() {
   const id = foregroundJobId;
   if (!id) return;
   jobCancelBtn.disabled = true;
-  jobCancelBtn.textContent = "Cancelling…";
+  jobCancelBtn.textContent = t("job.cancelling");
   try {
     await fetch(`/api/jobs/${id}/cancel`, { method: "POST" });
     // The next SSE frame (or the REST probe in connectEvents) will
@@ -554,7 +556,7 @@ async function cancelCurrentJob() {
     /* SSE will reflect the result regardless */
   } finally {
     jobCancelBtn.disabled = false;
-    jobCancelBtn.textContent = "Cancel";
+    jobCancelBtn.textContent = t("job.cancel");
   }
 }
 
@@ -626,7 +628,7 @@ export async function importFromUrl(url, { title, stems } = {}) {
     if (!res.ok) throw new Error(data.detail || res.statusText);
     jobId = data.job_id;
   } catch (err) {
-    showError(`Failed to restore track: ${err.message}`);
+    showError(t("job.restoreFailed", { message: err.message }));
     setSubmitProcessing(false);
     return null;
   }
@@ -639,7 +641,7 @@ export async function importFromUrl(url, { title, stems } = {}) {
   // preserving its folder placement; status updates as SSE frames arrive.
   addTrackToLibrary({
     id: jobId,
-    title: title || url || "Processing track",
+    title: title || url || t("job.processingTrackTitle"),
     channel: "Processing",
     thumb: "",
     stems: stemSel,
@@ -752,7 +754,7 @@ export function wireJobForm() {
 
     const sanitized = file ? sanitizeFilename(file.name) : null;
     const sourceUrl = file ? `local:${sanitized}` : urlInput.value;
-    const displayTitle = sanitized ?? (urlInput.value || "Processing track");
+    const displayTitle = sanitized ?? (urlInput.value || t("job.processingTrackTitle"));
 
     const postUrlText = document.getElementById("post-url-text");
     if (postUrlText) postUrlText.textContent = displayTitle;
@@ -795,7 +797,7 @@ export function wireJobForm() {
       jobId = data.job_id;
     } catch (err) {
       if (file) jobBox.classList.add("hidden");
-      showError(`Failed to start job: ${err.message}`);
+      showError(t("job.startFailed", { message: err.message }));
       setSubmitProcessing(false);
       return;
     }
@@ -811,7 +813,7 @@ export function wireJobForm() {
     addTrackToLibrary({
       id: jobId,
       title: displayTitle,
-      channel: "Processing",
+      channel: t("job.processing"),
       thumb: "",
       stems: [...selectedStems],
       selectedStems: [...selectedStems],

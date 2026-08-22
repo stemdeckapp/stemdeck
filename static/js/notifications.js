@@ -12,6 +12,7 @@
 // a cause instead. A failure the user scrolled past is still reportable here.
 
 import { storeGet, storeSet } from "./utils.js";
+import { t, plural } from "./i18n.js";
 
 const FAILURES_KEY = "stemdeck:failures";
 // Enough to cover a bad session without letting a crash loop fill the store.
@@ -26,13 +27,19 @@ const DISCORD_URL = "https://discord.gg/JGk7FdZb9N";
 // fetch every time the dialog opens.
 const LOG_VIEWS = ["backend", "application", "setup"];
 
-// What each failure class is called in the report and on the card.
-const KIND_LABELS = {
-  import: "Import failed",
-  playback: "Playback failed",
-  export: "Export failed",
-  update: "Update check failed",
+// What each failure class is called in the report and on the card. A
+// function, not a static object -- the labels must reflect whatever language
+// is active *now*, at render time, not whatever was active when this module
+// first loaded.
+const KIND_KEYS = {
+  import: "notifKind.importFailed",
+  playback: "notifKind.playbackFailed",
+  export: "notifKind.exportFailed",
+  update: "notifKind.updateCheckFailed",
 };
+function kindLabel(kind) {
+  return kind in KIND_KEYS ? t(KIND_KEYS[kind]) : t("notifKind.default");
+}
 
 let failures = [];
 // Set by catalog.js when an update is pending; owned here so the badge and the
@@ -131,7 +138,7 @@ export const SAFE_URL_CHARS = 1800;
  * GitHub without complaint, which is the kind of bug only a test catches.
  */
 export function buildReportUrl(record, diag = {}) {
-  const label = KIND_LABELS[record.kind] || "Something failed";
+  const label = kindLabel(record.kind);
   const title = `[Bug]: ${label}${record.cause ? ` - ${record.cause}` : ""}`;
 
   const what = [
@@ -223,8 +230,8 @@ export function notifyFailure({ kind, message, detail = null, cause = null, cont
   const record = {
     id: nowId(),
     at: Date.now(),
-    kind: kind in KIND_LABELS ? kind : "import",
-    message: String(message || "Something went wrong."),
+    kind: kind in KIND_KEYS ? kind : "import",
+    message: String(message || t("notif.somethingWentWrong")),
     detail: cleanCause(detail) ? String(detail) : null,
     // The backend's classified cause (out-of-memory / disk-full / bad-input /
     // unsupported-device) when error_detail carries one -- it leads the issue
@@ -318,11 +325,11 @@ export function setReleasePending(pending) {
 
 function relativeTime(ts) {
   const secs = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (secs < 60) return "just now";
+  if (secs < 60) return t("time.justNow");
   const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins} min ago`;
+  if (mins < 60) return plural("time.minAgo", mins);
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours} h ago`;
+  if (hours < 24) return plural("time.hoursAgo", hours);
   return new Date(ts).toLocaleDateString();
 }
 
@@ -357,7 +364,7 @@ function buildCard(record) {
   body.className = "daw-notif-card-body";
   const title = document.createElement("div");
   title.className = "daw-notif-card-title";
-  title.textContent = KIND_LABELS[record.kind] || "Something failed";
+  title.textContent = kindLabel(record.kind);
   const desc = document.createElement("div");
   desc.className = "daw-notif-card-desc";
   desc.textContent = `${record.cause || record.message} · ${relativeTime(record.at)}`;
@@ -366,7 +373,7 @@ function buildCard(record) {
   const dismiss = document.createElement("button");
   dismiss.className = "daw-notif-dismiss";
   dismiss.type = "button";
-  dismiss.setAttribute("aria-label", "Dismiss notification");
+  dismiss.setAttribute("aria-label", t("notif.dismiss"));
   dismiss.textContent = "×";
   dismiss.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -412,16 +419,16 @@ async function openFailureDialog(record) {
   const discordEl = document.getElementById("failureReportDiscord");
   const logsBtn = document.getElementById("failureIncludeLogs");
 
-  if (titleEl) titleEl.textContent = KIND_LABELS[record.kind] || "Something failed";
+  if (titleEl) titleEl.textContent = kindLabel(record.kind);
   if (whenEl) whenEl.textContent = new Date(record.at).toLocaleString();
   if (msgEl) msgEl.textContent = record.detail ? `${record.message}\n${record.detail}` : record.message;
-  if (techEl) techEl.textContent = "Collecting details…";
+  if (techEl) techEl.textContent = t("failure.collecting");
   if (reportEl) reportEl.removeAttribute("href");
   if (discordEl) discordEl.href = DISCORD_URL;
   if (logsBtn) {
     delete record.logs;
     logsBtn.disabled = false;
-    logsBtn.textContent = "Include recent logs";
+    logsBtn.textContent = t("failure.includeLogs");
   }
 
   dialog.classList.remove("hidden");
@@ -528,12 +535,12 @@ function wireFailureDialog() {
     const payload = btn._reportPayload;
     if (!payload || btn.disabled) return;
     btn.disabled = true;
-    btn.textContent = "Fetching logs…";
+    btn.textContent = t("failure.fetchingLogs");
     payload.record.logs = await fetchRecentLogs(payload.record);
     persist();
     const techEl = document.getElementById("failureTech");
     if (techEl) techEl.textContent = buildReportText(payload.record, payload.diag);
-    btn.textContent = "Logs included";
+    btn.textContent = t("failure.logsIncluded");
   });
 }
 

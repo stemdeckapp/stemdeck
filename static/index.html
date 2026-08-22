@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-i18n-doctitle="doc.title">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -40,6 +40,7 @@
               id="url"
               type="url"
               placeholder="Paste a YouTube or SoundCloud link, or drop an audio file…"
+              data-i18n-placeholder="topbar.urlPlaceholder"
               spellcheck="false"
               autocomplete="off"
             />
@@ -50,9 +51,9 @@
               </svg>
               <span class="file-name" id="fileName"></span>
               <span class="file-size" id="fileSize"></span>
-              <button class="file-clear" id="fileClear" type="button" aria-label="Remove file">×</button>
+              <button class="file-clear" id="fileClear" type="button" aria-label="Remove file" data-i18n-aria-label="topbar.removeFile">×</button>
             </div>
-            <button class="daw-upload-btn" type="button" title="Upload audio file" id="uploadFileBtn" aria-label="Upload audio file">
+            <button class="daw-upload-btn" type="button" title="Upload audio file" id="uploadFileBtn" aria-label="Upload audio file" data-i18n-title="topbar.uploadFile" data-i18n-aria-label="topbar.uploadFile">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M12 3v12 M7 8l5-5 5 5 M5 21h14"/>
               </svg>
@@ -65,33 +66,33 @@
 
           <!-- Stem selection -->
           <div class="daw-stem-section">
-            <span class="daw-extract-label">Extract</span>
+            <span class="daw-extract-label" data-i18n="extract.label">Extract</span>
             <div class="daw-stem-chips">
-              <button class="stem-choice stem-choice-all" type="button" id="stemAllBtn" aria-pressed="true">All</button>
+              <button class="stem-choice stem-choice-all" type="button" id="stemAllBtn" aria-pressed="true" data-i18n="extract.all">All</button>
               <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
-                <span class="stem-dot"></span>Vocals
+                <span class="stem-dot"></span><span data-i18n="stem.vocals">Vocals</span>
               </button>
               <!-- On-demand lead/backing vocal split (#275). Shown only while
                    Vocals is selected above; toggling "Lead + Backing" auto-runs
                    the split once the import finishes (see main.js/job.js). -->
-              <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode">
-                <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true">All</button>
-                <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false">Lead + Backing</button>
+              <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
+                <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true" data-i18n="vocalMode.all">All</button>
+                <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
               </div>
               <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
-                <span class="stem-dot"></span>Drums
+                <span class="stem-dot"></span><span data-i18n="stem.drums">Drums</span>
               </button>
               <button class="stem-choice" type="button" data-stem="bass" aria-pressed="true" style="--color:var(--bass)">
-                <span class="stem-dot"></span>Bass
+                <span class="stem-dot"></span><span data-i18n="stem.bass">Bass</span>
               </button>
               <button class="stem-choice" type="button" data-stem="guitar" aria-pressed="true" style="--color:var(--guitar)">
-                <span class="stem-dot"></span>Guitar
+                <span class="stem-dot"></span><span data-i18n="stem.guitar">Guitar</span>
               </button>
               <button class="stem-choice" type="button" data-stem="piano" aria-pressed="true" style="--color:var(--piano)">
-                <span class="stem-dot"></span>Piano
+                <span class="stem-dot"></span><span data-i18n="stem.piano">Piano</span>
               </button>
               <button class="stem-choice" type="button" data-stem="other" aria-pressed="false" style="--color:var(--other)">
-                <span class="stem-dot"></span>Other
+                <span class="stem-dot"></span><span data-i18n="stem.other">Other</span>
               </button>
             </div>
           </div>
@@ -101,23 +102,23 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M13 2 3 14h7l-1 8 10-12h-7z"/>
             </svg>
-            Split stems
+            <span data-i18n="process.splitStems">Split stems</span>
           </button>
         </form>
 
         <!-- Notification bell -->
         <div class="daw-notif-wrap" style="position:relative;flex-shrink:0;">
-          <button class="daw-iconbtn daw-notif-btn" id="notifBtn" title="Notifications" type="button" aria-label="Notifications" aria-expanded="false">
+          <button class="daw-iconbtn daw-notif-btn" id="notifBtn" title="Notifications" type="button" aria-label="Notifications" aria-expanded="false" data-i18n-title="notif.bell" data-i18n-aria-label="notif.bell">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
               <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0"/>
             </svg>
             <span class="daw-notif-badge hidden" id="notifBadge" aria-hidden="true"></span>
           </button>
-          <div class="daw-notif-panel" role="menu" aria-label="Notifications">
+          <div class="daw-notif-panel" role="menu" aria-label="Notifications" data-i18n-aria-label="notif.title">
             <div class="daw-notif-header">
-              <span class="uplabel">Notifications</span>
-              <button class="daw-notif-clear" id="notifClearAll" type="button">Clear all</button>
-              <button class="daw-notif-close" type="button" aria-label="Close notifications">
+              <span class="uplabel" data-i18n="notif.title">Notifications</span>
+              <button class="daw-notif-clear" id="notifClearAll" type="button" data-i18n="notif.clearAll">Clear all</button>
+              <button class="daw-notif-close" type="button" aria-label="Close notifications" data-i18n-aria-label="notif.close">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
               </button>
             </div>
@@ -127,14 +128,14 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
                 </div>
                 <div class="daw-notif-card-body">
-                  <div class="daw-notif-card-title">New release available</div>
+                  <div class="daw-notif-card-title" data-i18n="notif.newRelease">New release available</div>
                   <div class="daw-notif-card-desc" id="notifReleaseDesc"></div>
                 </div>
-                <button class="daw-notif-dismiss" id="notifReleaseDismiss" type="button" aria-label="Dismiss notification">
+                <button class="daw-notif-dismiss" id="notifReleaseDismiss" type="button" aria-label="Dismiss notification" data-i18n-aria-label="notif.dismiss">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
               </div>
-              <p class="daw-notif-empty" id="notifEmpty">No new notifications</p>
+              <p class="daw-notif-empty" id="notifEmpty" data-i18n="notif.empty">No new notifications</p>
             </div>
           </div>
         </div>
@@ -151,70 +152,70 @@
         <!-- ── Sidebar / Catalog ── -->
         <aside class="sidebar" id="catalogPanel">
           <!-- Rail -->
-          <nav class="sidebar-rail" aria-label="Library navigation">
-            <button class="rail-btn rail-collapse" id="sidebarCollapseBtn" type="button" title="Toggle library" aria-label="Toggle library" aria-expanded="true">
+          <nav class="sidebar-rail" aria-label="Library navigation" data-i18n-aria-label="nav.libraryNav">
+            <button class="rail-btn rail-collapse" id="sidebarCollapseBtn" type="button" title="Toggle library" aria-label="Toggle library" aria-expanded="true" data-i18n-title="nav.toggleLibrary" data-i18n-aria-label="nav.toggleLibrary">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
             </button>
-            <button class="rail-btn rail-library active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true">
+            <button class="rail-btn rail-library active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true" data-i18n-title="nav.library" data-i18n-aria-label="nav.library">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M4 4h16v16H4z M4 9h16"/>
               </svg>
-              <span>Library</span>
+              <span data-i18n="nav.library">Library</span>
             </button>
-            <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false">
+            <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false" data-i18n-title="nav.favorites" data-i18n-aria-label="nav.favorites">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
-              <span>Favorites</span>
+              <span data-i18n="nav.favorites">Favorites</span>
             </button>
-            <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false">
+            <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false" data-i18n-title="nav.trash" data-i18n-aria-label="nav.trash">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
               </svg>
-              <span>Trash</span>
+              <span data-i18n="nav.trash">Trash</span>
             </button>
-            <button class="rail-btn rail-queue hidden" type="button" title="Import queue" aria-label="Import queue" aria-pressed="false">
+            <button class="rail-btn rail-queue hidden" type="button" title="Import queue" aria-label="Import queue" aria-pressed="false" data-i18n-title="nav.importQueue" data-i18n-aria-label="nav.importQueue">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M4 6h10 M4 12h10 M4 18h6"/>
                 <path d="M16 15l3 3 3-3 M19 18V9"/>
               </svg>
-              <span>Queue</span>
+              <span data-i18n="nav.queue">Queue</span>
               <span class="rail-badge hidden" id="queueBadge" aria-hidden="true"></span>
             </button>
             <div style="flex:1"></div>
-            <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog">
+            <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog" data-i18n-aria-label="nav.settings">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M12 2v2 M12 20v2 M4 12H2 M22 12h-2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5"/>
               </svg>
-              <span>Settings</span>
+              <span data-i18n="nav.settings">Settings</span>
             </button>
-            <button class="rail-btn rail-recommend" id="friendsBtn" type="button" title="We Recommend" aria-label="We Recommend" aria-haspopup="dialog">
+            <button class="rail-btn rail-recommend" id="friendsBtn" type="button" title="We Recommend" aria-label="We Recommend" aria-haspopup="dialog" data-i18n-title="nav.weRecommend" data-i18n-aria-label="nav.weRecommend">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
               </svg>
-              <span>We<br>Recommend</span>
+              <span><span data-i18n="nav.weRecommendLine1">We</span><br><span data-i18n="nav.weRecommendLine2">Recommend</span></span>
             </button>
-            <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help">
+            <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help" data-i18n-title="nav.help" data-i18n-aria-label="nav.help">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/>
                 <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .8-1 1.7 M12 17h.01"/>
               </svg>
-              <span>Help</span>
+              <span data-i18n="nav.help">Help</span>
             </button>
           </nav>
 
           <!-- Sidebar body -->
           <div class="sidebar-body">
             <!-- Search -->
-            <div class="daw-search" id="catalogToggle" role="button" tabindex="0" aria-label="Search library">
+            <div class="daw-search" id="catalogToggle" role="button" tabindex="0" aria-label="Search library" data-i18n-aria-label="search.ariaLabel">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
               </svg>
-              <input id="catalogSearch" type="search" placeholder="Search or #tag…" autocomplete="off" spellcheck="false" />
-              <ul class="tag-suggest" id="tagSuggest" role="listbox" aria-label="Tag suggestions"></ul>
+              <input id="catalogSearch" type="search" placeholder="Search or #tag…" data-i18n-placeholder="search.placeholder" autocomplete="off" spellcheck="false" />
+              <ul class="tag-suggest" id="tagSuggest" role="listbox" aria-label="Tag suggestions" data-i18n-aria-label="search.tagSuggestions"></ul>
               <span class="search-kbd" aria-hidden="true">⌘K</span>
             </div>
 
@@ -225,7 +226,7 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
                 </svg>
-                Empty trash
+                <span data-i18n="trash.empty">Empty trash</span>
               </button>
             </div>
 
@@ -251,7 +252,7 @@
             <div class="daw-info-row">
 
               <div class="daw-meta-card" data-meta="key">
-                <span class="meta-card-label">KEY</span>
+                <span class="meta-card-label" data-i18n="meta.key">KEY</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-key">—</span>
                   <div class="daw-camelot-ring hidden" id="summary-confidence"></div>
@@ -261,14 +262,14 @@
               </div>
 
               <div class="daw-meta-card" data-meta="bpm">
-                <span class="meta-card-label">BPM</span>
+                <span class="meta-card-label" data-i18n="meta.bpm">BPM</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value accent" id="summary-bpm">—</span>
                 </div>
               </div>
 
               <div class="daw-meta-card" data-meta="lufs">
-                <span class="meta-card-label">LUFS</span>
+                <span class="meta-card-label" data-i18n="meta.lufs">LUFS</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-lufs">—</span>
                 </div>
@@ -276,21 +277,21 @@
               </div>
 
               <div class="daw-meta-card" data-meta="duration">
-                <span class="meta-card-label">DURATION</span>
+                <span class="meta-card-label" data-i18n="meta.duration">DURATION</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value num" id="summary-duration">—</span>
                 </div>
               </div>
 
               <div class="daw-meta-card" data-meta="scale">
-                <span class="meta-card-label">SCALE</span>
+                <span class="meta-card-label" data-i18n="meta.scale">SCALE</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-scale-name">—</span>
                 </div>
               </div>
 
               <div class="daw-meta-card" data-meta="dr">
-                <span class="meta-card-label">DYNAMIC RANGE</span>
+                <span class="meta-card-label" data-i18n="meta.dynamicRange">DYNAMIC RANGE</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-dr">—</span>
                 </div>
@@ -298,7 +299,7 @@
               </div>
 
               <div class="daw-meta-card" data-meta="stability">
-                <span class="meta-card-label">TEMPO STABILITY</span>
+                <span class="meta-card-label" data-i18n="meta.tempoStability">TEMPO STABILITY</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-stability">—</span>
                 </div>
@@ -309,27 +310,27 @@
             <!-- Row 2: stem presence cards -->
             <div class="stem-presence-panel">
               <div class="stem-card inactive" data-stem="vocals">
-                <span class="stem-card-label">VOCAL PRESENCE</span>
+                <span class="stem-card-label" data-i18n="presence.vocal">VOCAL PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="drums">
-                <span class="stem-card-label">DRUM INTENSITY</span>
+                <span class="stem-card-label" data-i18n="presence.drum">DRUM INTENSITY</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="bass">
-                <span class="stem-card-label">BASS DEPTH</span>
+                <span class="stem-card-label" data-i18n="presence.bass">BASS DEPTH</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="guitar">
-                <span class="stem-card-label">GUITAR PRESENCE</span>
+                <span class="stem-card-label" data-i18n="presence.guitar">GUITAR PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="piano">
-                <span class="stem-card-label">PIANO PRESENCE</span>
+                <span class="stem-card-label" data-i18n="presence.piano">PIANO PRESENCE</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="other">
-                <span class="stem-card-label">OTHER</span>
+                <span class="stem-card-label" data-i18n="presence.other">OTHER</span>
                 <span class="stem-card-pct">—</span>
               </div>
             </div>
@@ -341,11 +342,11 @@
           <!-- Sections bar -->
           <div class="daw-section-ribbon">
             <div class="daw-mixer-label daw-sections-header">
-              <span class="daw-label-title">Sections</span>
-              <span class="sections-save-indicator hidden" id="sectionsSaveIndicator" aria-live="polite" aria-label="Saving sections"></span>
-              <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section">
+              <span class="daw-label-title" data-i18n="sections.title">Sections</span>
+              <span class="sections-save-indicator hidden" id="sectionsSaveIndicator" aria-live="polite" aria-label="Saving sections" data-i18n-aria-label="sections.savingAria"></span>
+              <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-title="sections.addAria" data-i18n-aria-label="sections.addAria">
                 <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                Add
+                <span data-i18n="sections.add">Add</span>
               </button>
             </div>
             <div class="daw-sections-area" id="daw-sections"></div>
@@ -354,8 +355,8 @@
           <!-- Waveform header / ruler -->
           <div class="daw-wave-header">
             <div class="daw-wave-label">
-              <span class="daw-label-title">Mixer</span>
-              <span class="uplabel daw-label-sub">Drag fader · M/S</span>
+              <span class="daw-label-title" data-i18n="mixer.title">Mixer</span>
+              <span class="uplabel daw-label-sub" data-i18n="mixer.hint">Drag fader · M/S</span>
             </div>
             <div class="daw-ruler-area">
               <div class="lanes-ruler" data-position="top">
@@ -374,7 +375,7 @@
           <div class="daw-content">
 
             <!-- Stems panel (left — M/S controls per stem) -->
-            <div class="daw-stems-panel" aria-label="Stems">
+            <div class="daw-stems-panel" aria-label="Stems" data-i18n-aria-label="stemsPanel.ariaLabel">
 
               <!-- Presence panel hidden but in DOM for JS -->
               <div style="display:none" aria-hidden="true">
@@ -384,9 +385,9 @@
                   </div>
                   <div class="presence-grid">
                     <div class="presence-labels">
-                      <span class="vocals">Vocals</span><span class="drums">Drums</span>
-                      <span class="bass">Bass</span><span class="guitar">Guitar</span>
-                      <span class="piano">Piano</span><span class="other">Others</span>
+                      <span class="vocals" data-i18n="stem.vocals">Vocals</span><span class="drums" data-i18n="stem.drums">Drums</span>
+                      <span class="bass" data-i18n="stem.bass">Bass</span><span class="guitar" data-i18n="stem.guitar">Guitar</span>
+                      <span class="piano" data-i18n="stem.piano">Piano</span><span class="other" data-i18n="stem.others">Others</span>
                     </div>
                     <div class="presence-bars">
                       <i class="vocals" data-stem="vocals"></i>
@@ -407,7 +408,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-                    Original
+                    <span data-i18n="stem.original">Original</span>
                   </em>
                   <b class="stem-mute" data-stem="original" role="button" tabindex="0" aria-label="Mute Original" aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="original" role="button" tabindex="0" aria-label="Solo Original"  aria-pressed="false">S</b>
@@ -418,7 +419,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
-                    Vocals
+                    <span data-i18n="stem.vocals">Vocals</span>
                   </em>
                   <b class="stem-mute" data-stem="vocals" role="button" tabindex="0" aria-label="Mute Vocals"  aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="vocals" role="button" tabindex="0" aria-label="Solo Vocals"   aria-pressed="false">S</b>
@@ -432,7 +433,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
-                    Lead Vocals
+                    <span data-i18n="stem.lead_vocals">Lead Vocals</span>
                   </em>
                   <b class="stem-mute" data-stem="lead_vocals" role="button" tabindex="0" aria-label="Mute Lead Vocals"  aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="lead_vocals" role="button" tabindex="0" aria-label="Solo Lead Vocals"   aria-pressed="false">S</b>
@@ -443,7 +444,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z"/><path d="M16 6a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3"/><path d="M5 12v1a6 6 0 0 0 6 6h1"/><path d="M11 19v2"/></svg>
-                    Backing Vocals
+                    <span data-i18n="stem.backing_vocals">Backing Vocals</span>
                   </em>
                   <b class="stem-mute" data-stem="backing_vocals" role="button" tabindex="0" aria-label="Mute Backing Vocals"  aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="backing_vocals" role="button" tabindex="0" aria-label="Solo Backing Vocals"   aria-pressed="false">S</b>
@@ -454,7 +455,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M7 13.5a5 5 0 0 0 10 0"/><path d="M7 13.5h10"/><circle cx="9" cy="10" r="2.5"/><circle cx="15" cy="10" r="2.5"/></svg>
-                    Drums
+                    <span data-i18n="stem.drums">Drums</span>
                   </em>
                   <b class="stem-mute" data-stem="drums" role="button" tabindex="0" aria-label="Mute Drums"   aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="drums" role="button" tabindex="0" aria-label="Solo Drums"    aria-pressed="false">S</b>
@@ -465,7 +466,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16.5 3h4v5h-3"/><path d="M17.5 5.5 9.8 13.2"/><path d="M10 13c1.6 2.2 1.1 5.1-1.2 6.5-2.1 1.3-5 .5-6-1.6-.9-1.9-.1-4.1 1.8-5 .9-.4 1.8-.4 2.8-.1.1-1.1.6-2.1 1.6-2.6 1.2-.6 2.6-.1 3.2 1.1"/></svg>
-                    Bass
+                    <span data-i18n="stem.bass">Bass</span>
                   </em>
                   <b class="stem-mute" data-stem="bass" role="button" tabindex="0" aria-label="Mute Bass"    aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="bass" role="button" tabindex="0" aria-label="Solo Bass"     aria-pressed="false">S</b>
@@ -476,7 +477,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M16 4.5 20 2l2 2-2.5 4"/><path d="M18.2 5.8 10.2 13.8"/><circle cx="7" cy="16.4" r="1.4"/></svg>
-                    Guitar
+                    <span data-i18n="stem.guitar">Guitar</span>
                   </em>
                   <b class="stem-mute" data-stem="guitar" role="button" tabindex="0" aria-label="Mute Guitar"  aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="guitar" role="button" tabindex="0" aria-label="Solo Guitar"   aria-pressed="false">S</b>
@@ -487,7 +488,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/></svg>
-                    Piano
+                    <span data-i18n="stem.piano">Piano</span>
                   </em>
                   <b class="stem-mute" data-stem="piano" role="button" tabindex="0" aria-label="Mute Piano"   aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="piano" role="button" tabindex="0" aria-label="Solo Piano"    aria-pressed="false">S</b>
@@ -498,7 +499,7 @@
                   <i class="drag-handle"></i>
                   <em>
                     <svg class="stem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 13v-2"/><path d="M8 17V7"/><path d="M12 21V3"/><path d="M16 17V7"/><path d="M20 13v-2"/></svg>
-                    Others
+                    <span data-i18n="stem.others">Others</span>
                   </em>
                   <b class="stem-mute" data-stem="other" role="button" tabindex="0" aria-label="Mute Other"   aria-pressed="false">M</b>
                   <b class="stem-solo" data-stem="other" role="button" tabindex="0" aria-label="Solo Other"    aria-pressed="false">S</b>
@@ -517,30 +518,30 @@
                 <div class="job-header">
                   <div id="job-title" class="title"></div>
                   <div id="job-stage" class="stage"></div>
-                  <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job">Cancel</button>
+                  <button id="job-cancel" class="cancel-btn hidden" type="button" aria-label="Cancel job" data-i18n-aria-label="job.cancelAria" data-i18n="job.cancel">Cancel</button>
                 </div>
                 <progress id="progress" max="100" value="0"></progress>
                 <div id="job-detail" class="job-detail" aria-live="polite"></div>
               </div>
-              <div class="beatgrid-toolbar hidden" id="beatgrid-toolbar" role="toolbar" aria-label="Beat grid editor">
-                <span class="bg-tool-label">GRID</span>
-                <div class="bg-tools" role="radiogroup" aria-label="Tool">
-                  <button class="bg-btn active" id="bg-tool-move" type="button" role="radio" aria-checked="true" title="Drag beats">Move</button>
-                  <button class="bg-btn" id="bg-tool-insert" type="button" role="radio" aria-checked="false" title="Click to add a beat">Add</button>
-                  <button class="bg-btn" id="bg-tool-delete" type="button" role="radio" aria-checked="false" title="Click a beat to remove it">Delete</button>
-                  <button class="bg-btn" id="bg-tool-bar" type="button" role="radio" aria-checked="false" title="Click a beat to mark it as a downbeat">Bar line</button>
+              <div class="beatgrid-toolbar hidden" id="beatgrid-toolbar" role="toolbar" aria-label="Beat grid editor" data-i18n-aria-label="beatgrid.toolbarAria">
+                <span class="bg-tool-label" data-i18n="beatgrid.gridLabel">GRID</span>
+                <div class="bg-tools" role="radiogroup" aria-label="Tool" data-i18n-aria-label="beatgrid.toolAria">
+                  <button class="bg-btn active" id="bg-tool-move" type="button" role="radio" aria-checked="true" title="Drag beats" data-i18n-title="beatgrid.moveTitle" data-i18n="beatgrid.move">Move</button>
+                  <button class="bg-btn" id="bg-tool-insert" type="button" role="radio" aria-checked="false" title="Click to add a beat" data-i18n-title="beatgrid.addTitle" data-i18n="beatgrid.add">Add</button>
+                  <button class="bg-btn" id="bg-tool-delete" type="button" role="radio" aria-checked="false" title="Click a beat to remove it" data-i18n-title="beatgrid.deleteTitle" data-i18n="beatgrid.delete">Delete</button>
+                  <button class="bg-btn" id="bg-tool-bar" type="button" role="radio" aria-checked="false" title="Click a beat to mark it as a downbeat" data-i18n-title="beatgrid.barLineTitle" data-i18n="beatgrid.barLine">Bar line</button>
                 </div>
-                <label class="bg-check"><input type="checkbox" id="bg-ripple" checked> Ripple</label>
-                <label class="bg-check"><input type="checkbox" id="bg-snap" checked> Snap</label>
-                <label class="bg-check bg-meter">Bar
-                  <input type="number" id="bg-barlen" min="1" max="32" step="1" value="4" aria-label="Beats per bar in this region">
+                <label class="bg-check"><input type="checkbox" id="bg-ripple" checked> <span data-i18n="beatgrid.ripple">Ripple</span></label>
+                <label class="bg-check"><input type="checkbox" id="bg-snap" checked> <span data-i18n="beatgrid.snap">Snap</span></label>
+                <label class="bg-check bg-meter"><span data-i18n="beatgrid.bar">Bar</span>
+                  <input type="number" id="bg-barlen" min="1" max="32" step="1" value="4" aria-label="Beats per bar in this region" data-i18n-aria-label="beatgrid.barAria">
                 </label>
                 <div class="bg-spacer"></div>
-                <button class="bg-btn" id="bg-undo" type="button" title="Undo (Cmd/Ctrl+Z)" disabled>Undo</button>
-                <button class="bg-btn" id="bg-redo" type="button" title="Redo (Cmd/Ctrl+Shift+Z)" disabled>Redo</button>
-                <button class="bg-btn bg-danger" id="bg-reset" type="button" title="Discard all edits and restore the detected grid">Reset</button>
-                <button class="bg-btn bg-primary" id="bg-done" type="button">Done</button>
-                <span class="bg-hint" id="bg-hint">Drag a beat to retime the region. Alt-drag moves one beat.</span>
+                <button class="bg-btn" id="bg-undo" type="button" title="Undo (Cmd/Ctrl+Z)" disabled data-i18n-title="beatgrid.undoTitle" data-i18n="beatgrid.undo">Undo</button>
+                <button class="bg-btn" id="bg-redo" type="button" title="Redo (Cmd/Ctrl+Shift+Z)" disabled data-i18n-title="beatgrid.redoTitle" data-i18n="beatgrid.redo">Redo</button>
+                <button class="bg-btn bg-danger" id="bg-reset" type="button" title="Discard all edits and restore the detected grid" data-i18n-title="beatgrid.resetTitle" data-i18n="beatgrid.reset">Reset</button>
+                <button class="bg-btn bg-primary" id="bg-done" type="button" data-i18n="beatgrid.done">Done</button>
+                <span class="bg-hint" id="bg-hint" data-i18n="beatgrid.hint">Drag a beat to retime the region. Alt-drag moves one beat.</span>
               </div>
               <div class="wave-scroll" id="wave-scroll">
                 <div class="wave-canvas" id="wave-canvas">
@@ -550,7 +551,7 @@
                     <div id="loop-region" class="loop-region hidden" aria-hidden="true"></div>
                     <canvas id="beatgrid-canvas" class="beatgrid-canvas hidden" aria-hidden="true"></canvas>
                   </div>
-                  <div class="wave-loading-overlay hidden" id="waveLoadingOverlay" aria-label="Loading waveform" aria-live="polite">
+                  <div class="wave-loading-overlay hidden" id="waveLoadingOverlay" aria-label="Loading waveform" data-i18n-aria-label="wave.loadingAria" aria-live="polite">
                     <div class="wave-loading-lines" aria-hidden="true">
                       <i></i><i></i><i></i><i></i><i></i><i></i>
                     </div>
@@ -594,7 +595,7 @@
             <span class="daw-track-sep" aria-hidden="true">·</span>
             <span id="track-quality">—</span>
             <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span>Extracted <span id="track-extracted">—</span></span>
+            <span><span data-i18n="footer.extractedLabel">Extracted</span> <span id="track-extracted">—</span></span>
           </div>
 
           <!-- Hidden spans for JS compat: not shown, but still written to
@@ -606,7 +607,7 @@
           </div>
 
           <div class="footer-row-actions">
-            <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" aria-pressed="false">
+            <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
@@ -619,34 +620,34 @@
                 <svg class="export-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/>
                 </svg>
-                <span class="export-btn-label" id="t-export-label">Export Mix</span>
+                <span class="export-btn-label" id="t-export-label" data-i18n="export.mix">Export Mix</span>
                 <svg class="export-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
               </button>
-              <div class="footer-chip-panel chip-panel-export hidden" id="t-export-panel" role="menu" aria-label="Export options">
-                <div class="export-format-toggle" role="radiogroup" aria-label="Export format">
+              <div class="footer-chip-panel chip-panel-export hidden" id="t-export-panel" role="menu" aria-label="Export options" data-i18n-aria-label="export.optionsAria">
+                <div class="export-format-toggle" role="radiogroup" aria-label="Export format" data-i18n-aria-label="export.formatAria">
                   <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
                   <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
                   <button class="export-fmt" id="t-fmt-flac" type="button" role="radio" aria-checked="false">FLAC</button>
                   <button class="export-fmt" id="t-fmt-ogg" type="button" role="radio" aria-checked="false">OGG</button>
                   <button class="export-fmt export-fmt-video" id="t-fmt-mp4" type="button" role="radio" aria-checked="false">MP4</button>
                 </div>
-                <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file">
+                <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file" data-i18n-title="export.includeClickTitle">
                   <input type="checkbox" id="t-export-click">
-                  <span>Include click track</span>
+                  <span data-i18n="export.includeClick">Include click track</span>
                 </label>
-                <label class="export-click-opt" id="t-export-count-in-wrap" title="Prepend one bar of count-in click before the audio">
+                <label class="export-click-opt" id="t-export-count-in-wrap" title="Prepend one bar of count-in click before the audio" data-i18n-title="export.addCountInTitle">
                   <input type="checkbox" id="t-export-count-in">
-                  <span>Add count-in (1 bar)</span>
+                  <span data-i18n="export.addCountIn">Add count-in (1 bar)</span>
                 </label>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
                   <span class="chip-item-icon" aria-hidden="true">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
                   </span>
                   <span class="chip-item-text">
-                    <span class="chip-item-title">Export Mix</span>
-                    <span class="chip-item-desc">Export the mixed audio</span>
+                    <span class="chip-item-title" data-i18n="export.mix">Export Mix</span>
+                    <span class="chip-item-desc" data-i18n="export.mixDesc">Export the mixed audio</span>
                   </span>
                   <svg class="chip-item-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
                 </button>
@@ -655,8 +656,8 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
                   </span>
                   <span class="chip-item-text">
-                    <span class="chip-item-title">Export All Stems</span>
-                    <span class="chip-item-desc">All stems as a .zip</span>
+                    <span class="chip-item-title" data-i18n="export.allStems">Export All Stems</span>
+                    <span class="chip-item-desc" data-i18n="export.allStemsDesc">All stems as a .zip</span>
                   </span>
                 </button>
                 <button class="chip-panel-item export-item" id="t-export-region" type="button" role="menuitem" aria-disabled="true">
@@ -664,8 +665,8 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
                   </span>
                   <span class="chip-item-text">
-                    <span class="chip-item-title">Export Current Region</span>
-                    <span class="chip-item-desc">Export selected region</span>
+                    <span class="chip-item-title" data-i18n="export.currentRegion">Export Current Region</span>
+                    <span class="chip-item-desc" data-i18n="export.currentRegionDesc">Export selected region</span>
                   </span>
                 </button>
               </div>
@@ -679,14 +680,14 @@
         <!-- Every playback and click control, in labelled clusters -->
         <div class="footer-row-controls">
           <div class="footer-group footer-group-transport">
-            <span class="footer-group-label">Transport</span>
+            <span class="footer-group-label" data-i18n="transport.group">Transport</span>
             <div class="footer-group-body">
-              <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop">
+              <button class="daw-iconbtn btn-transport" id="t-stop" type="button" title="Stop" aria-label="Stop" data-i18n-title="transport.stop" data-i18n-aria-label="transport.stop">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12"/>
                 </svg>
               </button>
-              <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause">
+              <button class="daw-play-btn btn-transport" id="t-play" type="button" aria-label="Play / Pause" data-i18n-aria-label="transport.playPause">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="margin-left:2px">
                   <path d="M6 4l14 8L6 20z"/>
                 </svg>
@@ -702,21 +703,21 @@
           <!-- Loop lives with the readout it acts on: the loop is a position,
                not a transport mode (design 1b). -->
           <div class="footer-group footer-group-position">
-            <span class="footer-group-label">Position</span>
+            <span class="footer-group-label" data-i18n="position.group">Position</span>
             <div class="footer-group-body">
               <span class="num footer-elapsed" id="footer-time-elapsed">0:00</span>
               <span class="footer-time-sep">/</span>
               <span class="num footer-total" id="footer-time-total">0:00</span>
-              <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop the selected position (L)" aria-label="Loop">
+              <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop the selected position (L)" aria-label="Loop" data-i18n-title="position.loopTitle">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
                 </svg>
-                <span class="loop-btn-label">Loop position</span>
+                <span class="loop-btn-label" data-i18n="position.loopLabel">Loop position</span>
               </button>
-              <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)">
-                <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" value="00:00.000">
+              <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)" data-i18n-title="position.loopExactTitle">
+                <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" data-i18n-aria-label="position.loopStartAria" value="00:00.000">
                 <span class="loop-times-sep" aria-hidden="true">-</span>
-                <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" value="00:00.000">
+                <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" data-i18n-aria-label="position.loopEndAria" value="00:00.000">
               </div>
             </div>
           </div>
@@ -724,9 +725,9 @@
           <span class="footer-divider" aria-hidden="true"></span>
 
           <div class="footer-group footer-group-speed">
-            <span class="footer-group-label">Speed</span>
+            <span class="footer-group-label" data-i18n="speed.group">Speed</span>
             <div class="footer-group-body">
-              <div class="footer-seg speed-group" id="t-speed-wrap" role="radiogroup" aria-label="Playback speed">
+              <div class="footer-seg speed-group" id="t-speed-wrap" role="radiogroup" aria-label="Playback speed" data-i18n-aria-label="speed.ariaLabel">
                 <button class="speed-btn" id="t-speed-025" type="button" role="radio" aria-checked="false" data-speed="0.25">0.25x</button>
                 <button class="speed-btn" id="t-speed-05" type="button" role="radio" aria-checked="false" data-speed="0.5">0.5x</button>
                 <button class="speed-btn active" id="t-speed-1" type="button" role="radio" aria-checked="true" data-speed="1">1x</button>
@@ -737,47 +738,47 @@
           <span class="footer-divider" aria-hidden="true"></span>
 
           <div class="footer-group footer-group-click" id="t-metro-wrap">
-            <span class="footer-group-label">Click track <span class="alpha-badge">Alpha</span></span>
+            <span class="footer-group-label"><span data-i18n="click.group">Click track</span> <span class="alpha-badge" data-i18n="click.alpha">Alpha</span></span>
             <div class="footer-group-body">
-              <button class="click-toggle-btn" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" aria-pressed="false" disabled>
+              <button class="click-toggle-btn" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" data-i18n-title="click.toggleTitle" data-i18n-aria-label="click.toggleAria" aria-pressed="false" disabled>
                 <svg class="click-metro-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                   <path d="M9 3h6l4 18H5z"/><path d="M15.5 9 8 15"/>
                 </svg>
-                <span>ON</span>
+                <span data-i18n="click.on">ON</span>
               </button>
-              <div class="footer-metro-panel hidden" id="t-metro-panel" role="group" aria-label="Click track options">
-                <button class="click-toggle-btn" id="t-metro-countin" type="button" title="Count one bar of click before the song starts when you press play" aria-pressed="false">
+              <div class="footer-metro-panel hidden" id="t-metro-panel" role="group" aria-label="Click track options" data-i18n-aria-label="click.optionsAria">
+                <button class="click-toggle-btn" id="t-metro-countin" type="button" title="Count one bar of click before the song starts when you press play" data-i18n-title="click.countInTitle" aria-pressed="false">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                     <path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/>
                   </svg>
-                  <span>Count-in</span>
+                  <span data-i18n="click.countIn">Count-in</span>
                 </button>
                 <span class="metro-select-wrap">
-                  <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats">
-                    <option value="-1" selected>Auto (detected)</option>
-                    <option value="0">Off</option>
+                  <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats" data-i18n-aria-label="click.barAccentAria">
+                    <option value="-1" selected data-i18n="click.auto">Auto (detected)</option>
+                    <option value="0" data-i18n="click.off">Off</option>
                     <option value="2">2/4</option>
                     <option value="3">3/4</option>
                     <option value="4">4/4</option>
                     <option value="6">6/8</option>
                   </select>
                 </span>
-                <button class="click-toggle-btn" id="t-metro-edit" type="button" title="Edit the beat grid" aria-pressed="false">
+                <button class="click-toggle-btn" id="t-metro-edit" type="button" title="Edit the beat grid" data-i18n-title="click.editTitle" aria-pressed="false">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                     <path d="M4 4v16" stroke-width="2.6"/><path d="M10 6v12"/><path d="M15 6v12"/><path d="M20 6v12"/>
                   </svg>
-                  <span>Grid</span>
+                  <span data-i18n="click.grid">Grid</span>
                 </button>
-                <div class="footer-seg metro-mult" role="radiogroup" aria-label="Click rate" title="Halve or double the click rate">
-                  <button class="metro-mult-btn" id="t-metro-half" type="button" role="radio" aria-checked="false" title="Half time">/2</button>
-                  <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo">1x</button>
-                  <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time">x2</button>
+                <div class="footer-seg metro-mult" role="radiogroup" aria-label="Click rate" data-i18n-aria-label="click.rateAria" title="Halve or double the click rate" data-i18n-title="click.rateTitle">
+                  <button class="metro-mult-btn" id="t-metro-half" type="button" role="radio" aria-checked="false" title="Half time" data-i18n-title="click.half">/2</button>
+                  <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo" data-i18n-title="click.detected">1x</button>
+                  <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time" data-i18n-title="click.double">x2</button>
                 </div>
                 <div class="metro-row metro-vol-row">
                   <svg class="metro-vol-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                     <path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>
                   </svg>
-                  <input type="range" id="t-metro-vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume">
+                  <input type="range" id="t-metro-vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume" data-i18n-aria-label="click.volumeAria">
                   <span class="metro-val num" id="t-metro-vol-label">60%</span>
                 </div>
               </div>
@@ -791,7 +792,7 @@
             <div class="footer-wave-ticks" id="footer-wave-ticks" aria-hidden="true"></div>
             <div class="footer-wave-bar">
               <canvas id="footer-waveform" aria-hidden="true"></canvas>
-              <div class="footer-scrub" id="footer-scrub" role="slider" aria-label="Seek" tabindex="0">
+              <div class="footer-scrub" id="footer-scrub" role="slider" aria-label="Seek" data-i18n-aria-label="footer.seekAria" tabindex="0">
                 <div class="footer-scrub-fill" id="footer-scrub-fill"></div>
               </div>
             </div>
@@ -811,7 +812,7 @@
     <!-- About dialog -->
     <div class="about-backdrop hidden" id="aboutDialog" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
       <div class="about-card">
-        <button class="about-close" id="aboutClose" type="button" aria-label="Close about dialog">
+        <button class="about-close" id="aboutClose" type="button" aria-label="Close about dialog" data-i18n-aria-label="about.closeAria">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
 
@@ -825,14 +826,14 @@
           </svg>
         </div>
 
-        <h2 id="aboutTitle">StemDeck</h2>
-        <p class="about-tagline">Open source. No subscriptions. Built by musicians, for musicians.</p>
+        <h2 id="aboutTitle" data-i18n="about.title">StemDeck</h2>
+        <p class="about-tagline" data-i18n="about.tagline">Open source. No subscriptions. Built by musicians, for musicians.</p>
         <span class="about-version-badge" id="aboutVersion">…</span>
 
         <div class="about-primary-links">
           <a class="about-link about-link-primary" href="https://stemdeck.app" target="_blank" rel="noopener noreferrer">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            Website
+            <span data-i18n="about.website">Website</span>
           </a>
           <a class="about-link about-link-secondary" href="https://github.com/stemdeckapp/stemdeck" target="_blank" rel="noopener noreferrer">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
@@ -862,7 +863,7 @@
     <!-- Our Friends dialog -->
     <div class="about-backdrop hidden" id="friendsDialog" role="dialog" aria-modal="true" aria-labelledby="friendsTitle">
       <div class="about-card friends-card">
-        <button class="about-close" id="friendsClose" type="button" aria-label="Close friends dialog">
+        <button class="about-close" id="friendsClose" type="button" aria-label="Close friends dialog" data-i18n-aria-label="friends.closeAria">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
         <div class="about-logo" aria-hidden="true">
@@ -870,8 +871,8 @@
             <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
           </svg>
         </div>
-        <h2 id="friendsTitle">We Recommend</h2>
-        <p class="about-tagline">Wonderful people doing beautiful work. Go meet them ❤️</p>
+        <h2 id="friendsTitle" data-i18n="friends.title">We Recommend</h2>
+        <p class="about-tagline" data-i18n="friends.tagline">Wonderful people doing beautiful work. Go meet them ❤️</p>
         <div class="lib-friends-grid" id="friendsDialogGrid"></div>
       </div>
     </div>
@@ -879,25 +880,25 @@
     <!-- Release notes dialog (opened from the "New release available" card) -->
     <div class="about-backdrop hidden" id="releaseDialog" role="dialog" aria-modal="true" aria-labelledby="releaseTitle">
       <div class="about-card release-card">
-        <button class="about-close" id="releaseClose" type="button" aria-label="Close release dialog">
+        <button class="about-close" id="releaseClose" type="button" aria-label="Close release dialog" data-i18n-aria-label="release.closeAria">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
         <div class="about-logo" aria-hidden="true">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
         </div>
-        <h2 id="releaseTitle">New release available</h2>
+        <h2 id="releaseTitle" data-i18n="release.title">New release available</h2>
         <span class="about-version-badge" id="releaseVersion">…</span>
         <div class="release-notes" id="releaseNotes"></div>
         <!-- Server/Docker mode: updating means pulling a new image, not a file download. -->
         <div class="release-docker hidden" id="releaseDocker">
-          <p class="release-docker-label">Update your server</p>
-          <p class="release-docker-text">Pull the new image and restart the container:</p>
+          <p class="release-docker-label" data-i18n="release.updateServer">Update your server</p>
+          <p class="release-docker-text" data-i18n="release.pullImage">Pull the new image and restart the container:</p>
           <pre class="release-docker-cmd"><code id="releaseDockerCmd"></code></pre>
-          <p class="release-docker-note">On Unraid, update via the Community Applications template instead.</p>
+          <p class="release-docker-note" data-i18n="release.unraidNote">On Unraid, update via the Community Applications template instead.</p>
         </div>
         <div class="about-primary-links">
-          <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer">Download</a>
-          <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer">All releases</a>
+          <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer" data-i18n="release.download">Download</a>
+          <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer" data-i18n="release.allReleases">All releases</a>
         </div>
       </div>
     </div>
@@ -907,7 +908,7 @@
          it through Tauri's open_url on desktop and a new tab in a browser. -->
     <div class="about-backdrop hidden" id="failureDialog" role="dialog" aria-modal="true" aria-labelledby="failureTitle">
       <div class="about-card failure-card">
-        <button class="about-close" id="failureClose" type="button" aria-label="Close failure dialog">
+        <button class="about-close" id="failureClose" type="button" aria-label="Close failure dialog" data-i18n-aria-label="failure.closeAria">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
         <div class="about-logo failure-logo" aria-hidden="true">
@@ -915,15 +916,15 @@
             <path d="M12 9v4 M12 17h.01 M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
           </svg>
         </div>
-        <h2 id="failureTitle">Something failed</h2>
+        <h2 id="failureTitle" data-i18n="failure.title">Something failed</h2>
         <span class="about-version-badge failure-when" id="failureWhen"></span>
         <p class="failure-message" id="failureMessage"></p>
-        <p class="failure-hint">These details go in the report. Your track title and source link are not included - add them yourself if they help. Clicking a button below copies this to your clipboard.</p>
+        <p class="failure-hint" data-i18n="failure.hint">These details go in the report. Your track title and source link are not included - add them yourself if they help. Clicking a button below copies this to your clipboard.</p>
         <pre class="failure-tech"><code id="failureTech"></code></pre>
-        <button class="failure-logs-btn" id="failureIncludeLogs" type="button">Include recent logs</button>
+        <button class="failure-logs-btn" id="failureIncludeLogs" type="button" data-i18n="failure.includeLogs">Include recent logs</button>
         <div class="about-primary-links">
-          <a class="about-link about-link-primary" id="failureReport" target="_blank" rel="noopener noreferrer">Report on GitHub</a>
-          <a class="about-link about-link-secondary" id="failureReportDiscord" target="_blank" rel="noopener noreferrer">Report on Discord</a>
+          <a class="about-link about-link-primary" id="failureReport" target="_blank" rel="noopener noreferrer" data-i18n="failure.reportGithub">Report on GitHub</a>
+          <a class="about-link about-link-secondary" id="failureReportDiscord" target="_blank" rel="noopener noreferrer" data-i18n="failure.reportDiscord">Report on Discord</a>
         </div>
       </div>
     </div>

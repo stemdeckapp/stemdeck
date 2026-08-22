@@ -5,12 +5,15 @@ import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
-  cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange, ordinal,
+  cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, reorderQueuedJob, runningLabel, startQueue,
   startQueueStream,
 } from "./queue.js";
 import { fmtTime, storeGet, storeSet } from "./utils.js";
 import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailuresByKind } from "./notifications.js";
+// Aliased (not the bare "t") -- this file already uses "t"/"tr" as local
+// variable names for track objects and table rows in several scopes.
+import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
 function esc(s) {
@@ -132,7 +135,7 @@ function normalizeFolderColor(color) {
   return FOLDER_COLORS.includes(color) ? color : DEFAULT_FOLDER_COLOR;
 }
 
-function makeFolder({ id = `f-${Date.now()}`, name = "New folder", collapsed = false, items = [], parentId = null } = {}) {
+function makeFolder({ id = `f-${Date.now()}`, name = i18nT("library.newFolder"), collapsed = false, items = [], parentId = null } = {}) {
   return { id, name, collapsed, items, color: DEFAULT_FOLDER_COLOR, parentId: parentId ?? null };
 }
 
@@ -313,7 +316,7 @@ export function addTrackToLibrary(track) {
     // Put into first non-trash folder or create an "Unsorted" folder.
     let target = folders.find((folder) => folder.id !== TRASH_ID);
     if (!target) {
-      target = makeFolder({ id: "f-unsorted", name: "Unsorted" });
+      target = makeFolder({ id: "f-unsorted", name: i18nT("folder.unsorted") });
       folders.unshift(target);
     }
     target.items.unshift(track.id);
@@ -390,37 +393,40 @@ function fmtExtracted(ts) {
 
 function deriveSource(sourceUrl) {
   if (!sourceUrl) return "—";
-  if (sourceUrl.startsWith("local:")) return "Local file";
+  if (sourceUrl.startsWith("local:")) return i18nT("track.localFile");
   if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "YouTube";
   if (sourceUrl.includes("soundcloud.com")) return "SoundCloud";
-  return "Web";
+  return i18nT("track.web");
 }
 
 function deriveQuality(sourceUrl) {
   if (!sourceUrl) return "—";
   if (sourceUrl.startsWith("local:")) {
     const ext = sourceUrl.split(".").pop()?.toLowerCase();
-    if (ext === "wav") return "Lossless (WAV)";
-    if (ext === "mp3") return "Compressed (MP3)";
-    return "Local file";
+    if (ext === "wav") return i18nT("track.losslessWav");
+    if (ext === "mp3") return i18nT("track.compressedMp3");
+    return i18nT("track.localFile");
   }
-  if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return "High";
-  if (sourceUrl.includes("soundcloud.com")) return "Compressed (MP3)";
+  if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return i18nT("track.qualityHigh");
+  if (sourceUrl.includes("soundcloud.com")) return i18nT("track.compressedMp3");
   return "—";
 }
 
+// Same buckets as job.js's dr.*/stability.* labels (duplicated here rather
+// than imported: this file renders a saved track's stats after reload, job.js
+// renders a job actively in progress -- same thresholds, different data path).
 function drLabel(dr) {
-  if (dr < 7) return "Compressed";
-  if (dr < 10) return "Moderate";
-  if (dr < 14) return "High";
-  return "Wide";
+  if (dr < 7) return i18nT("job.dr.compressed");
+  if (dr < 10) return i18nT("job.dr.moderate");
+  if (dr < 14) return i18nT("job.dr.high");
+  return i18nT("job.dr.wide");
 }
 
 function stabilityLabel(pct) {
-  if (pct >= 90) return "Very Stable";
-  if (pct >= 70) return "Stable";
-  if (pct >= 50) return "Moderate";
-  return "Variable";
+  if (pct >= 90) return i18nT("job.stability.veryStable");
+  if (pct >= 70) return i18nT("job.stability.stable");
+  if (pct >= 50) return i18nT("job.stability.moderate");
+  return i18nT("job.stability.variable");
 }
 
 export function applyStemPresenceCards(stemPresence) {
@@ -440,7 +446,7 @@ export function applyStemPresenceCards(stemPresence) {
 }
 
 function applyTrackInfoToPanel(track) {
-  titleEl.textContent = track.title || "Untitled track";
+  titleEl.textContent = track.title || i18nT("track.untitled");
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
   updateFooterTrack({
@@ -467,7 +473,7 @@ function applyTrackInfoToPanel(track) {
   if (summaryScale) summaryScale.textContent = track.scale || "";
   if (summaryScaleName) summaryScaleName.textContent = track.scale || "—";
   if (summaryLufs) summaryLufs.textContent = track.lufs != null ? Number(track.lufs).toFixed(1) : "—";
-  if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? `Peak ${Number(track.peakDb).toFixed(1)} dB` : "";
+  if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? i18nT("job.peakDb", { value: Number(track.peakDb).toFixed(1) }) : "";
   if (summaryDuration) summaryDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
 
   const trackExtracted = document.getElementById("track-extracted");
@@ -573,7 +579,7 @@ function reimportUnavailableTrack(trackId, track) {
     importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems });
     return;
   }
-  showError("This track's audio is no longer available. Re-upload to restore it.");
+  showError(i18nT("track.audioUnavailableError"));
 }
 
 async function loadTrackIntoStudio(trackId) {
@@ -617,7 +623,7 @@ async function loadTrackIntoStudio(trackId) {
       tracks[trackId] = track;
       saveState();
       updateTrackStatus(trackId, "unavailable");
-      showError("This track's audio is no longer available. Re-upload to restore it.");
+      showError(i18nT("track.audioUnavailableError"));
       return;
     }
   } catch (e) { console.warn("[catalog] server sync failed, using stored track:", e); }
@@ -681,8 +687,8 @@ export function addPlaylistToLibrary(playlistTitle, jobs) {
     if (!folder.items.includes(job.job_id)) folder.items.push(job.job_id);
     addTrackToLibrary({
       id: job.job_id,
-      title: job.title || job.source_url || "Queued track",
-      channel: "Processing",
+      title: job.title || job.source_url || i18nT("job.queuedTrack"),
+      channel: i18nT("job.processing"),
       thumb: "",
       stems: [...selectedStems],
       selectedStems: [...selectedStems],
@@ -787,32 +793,33 @@ function openFolderEditor(folderId) {
   const overlay = document.createElement("div");
   overlay.className = "folder-editor-backdrop";
   overlay.innerHTML = `
-    <form class="folder-editor" role="dialog" aria-modal="true" aria-label="Edit folder">
+    <form class="folder-editor" role="dialog" aria-modal="true" aria-label="Edit folder" data-i18n-aria-label="folderEditor.title">
       <div class="folder-editor-head">
-        <span>Edit folder</span>
-        <button class="folder-editor-close" type="button" aria-label="Close">
+        <span data-i18n="folderEditor.title">Edit folder</span>
+        <button class="folder-editor-close" type="button" aria-label="Close" data-i18n-aria-label="folderEditor.closeAria">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M18 6 6 18M6 6l12 12"></path>
           </svg>
         </button>
       </div>
       <label class="folder-editor-field">
-        <span>Name</span>
+        <span data-i18n="folderEditor.nameLabel">Name</span>
         <input class="folder-editor-name" type="text" maxlength="100" autocomplete="off" spellcheck="false" />
       </label>
       <div class="folder-editor-field">
-        <span>Color</span>
-        <div class="folder-editor-colors" role="group" aria-label="Folder color">
+        <span data-i18n="folderEditor.colorLabel">Color</span>
+        <div class="folder-editor-colors" role="group" aria-label="Folder color" data-i18n-aria-label="folderEditor.colorGroupAria">
           ${folderColorButtonsHtml(selectedColor)}
         </div>
       </div>
       <div class="folder-editor-msg" role="alert" aria-live="polite"></div>
       <div class="folder-editor-actions">
-        <button class="folder-editor-cancel" type="button">Cancel</button>
-        <button class="folder-editor-save" type="submit">Save</button>
+        <button class="folder-editor-cancel" type="button" data-i18n="folderEditor.cancel">Cancel</button>
+        <button class="folder-editor-save" type="submit" data-i18n="folderEditor.save">Save</button>
       </div>
     </form>
   `;
+  applyTranslations(overlay);
 
   const form = overlay.querySelector(".folder-editor");
   const input = overlay.querySelector(".folder-editor-name");
@@ -843,17 +850,17 @@ function openFolderEditor(folderId) {
     e.preventDefault();
     const name = input.value.trim();
     if (!name) {
-      msgEl.textContent = "Enter a folder name.";
+      msgEl.textContent = i18nT("folderEditor.emptyError");
       input.focus();
       return;
     }
     if (name.length > MAX_FOLDER_NAME_LEN) {
-      msgEl.textContent = `Folder name is too long (max ${MAX_FOLDER_NAME_LEN}).`;
+      msgEl.textContent = i18nT("folderEditor.tooLong", { max: MAX_FOLDER_NAME_LEN });
       input.focus();
       return;
     }
     if (!isValidFolderName(name)) {
-      msgEl.textContent = "Use letters, numbers, spaces, or - _ ' & ( ) . ,";
+      msgEl.textContent = i18nT("folderEditor.charsError");
       input.focus();
       return; // don't save or close until the name is valid
     }
@@ -1076,8 +1083,8 @@ function canReimportTrack(track) {
 
 function unavailableWarningHtml(track) {
   const label = canReimportTrack(track)
-    ? "Track unavailable - click to reimport"
-    : "Track unavailable - re-upload to restore";
+    ? i18nT("track.unavailableReimport")
+    : i18nT("track.unavailableReupload");
   return `<span class="cat-unavailable-warning">${esc(label)}</span>`;
 }
 
@@ -1090,7 +1097,7 @@ function renderRecentItem(trackId) {
   el.dataset.id = trackId;
   const duration = track.duration ? fmtTime(track.duration) : "";
   const stemCount = track.stems?.length ?? 0;
-  const sub = [duration, `${stemCount} stem${stemCount !== 1 ? "s" : ""}`].filter(Boolean).join(" · ");
+  const sub = [duration, i18nPlural("footer.stemsCount", stemCount)].filter(Boolean).join(" · ");
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
@@ -1115,7 +1122,7 @@ const _SOURCE_LABELS = [
 
 export function displayTitle(title) {
   const text = String(title ?? "").trim();
-  if (!/^https?:\/\//i.test(text)) return text || "Unknown track";
+  if (!/^https?:\/\//i.test(text)) return text || i18nT("track.unknown");
   try {
     const host = new URL(text).hostname.replace(/^www\./, "");
     const match = _SOURCE_LABELS.find(([re]) => re.test(host));
@@ -1162,7 +1169,7 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
     ? unavailableWarningHtml(track)
     : `<span>${esc(track.channel ?? "")}</span>
         <span class="dot">·</span>
-        <span>${inTrash ? "Removed" : `${stemCount} stem${stemCount !== 1 ? "s" : ""}`}</span>`;
+        <span>${inTrash ? esc(i18nT("track.removed")) : esc(i18nPlural("footer.stemsCount", stemCount))}</span>`;
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
@@ -1170,14 +1177,14 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
       <div class="cat-sub">${subHtml}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
-    ${inTrash ? "" : `<button class="cat-del" type="button" title="Move to Trash">
+    ${inTrash ? "" : `<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="3 6 5 6 21 6"></polyline>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
       </svg>
     </button>`}
   `;
-  el.querySelector(".cat-del")?.setAttribute("aria-label", `Move ${track.title ?? "track"} to Trash`);
+  el.querySelector(".cat-del")?.setAttribute("aria-label", i18nT("track.moveTitleToTrash", { title: track.title ?? i18nT("track.unknown") }));
 
   el.querySelector(".cat-del")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1208,7 +1215,7 @@ function renderFolder(folder) {
     : `<svg class="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
 
   head.innerHTML = `
-    ${isTrash ? "" : `<span class="f-grip" title="Drag to reorder">
+    ${isTrash ? "" : `<span class="f-grip" title="${esc(i18nT("folder.dragToReorder"))}">
       <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true">
         <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
         <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
@@ -1220,13 +1227,13 @@ function renderFolder(folder) {
     <span class="f-name">${esc(folder.name)}</span>
     <span class="f-count">${folder.items.length}</span>
     ${isTrash ? "" : `
-      <button class="f-subfolder" type="button" aria-label="New subfolder" title="New subfolder">
+      <button class="f-subfolder" type="button" aria-label="${esc(i18nT("folder.newSubfolder"))}" title="${esc(i18nT("folder.newSubfolder"))}">
         <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
           <path d="M12 11v6M9 14h6"/>
         </svg>
       </button>
-      ${isUnsorted ? "" : `<button class="f-del" type="button" aria-label="Delete folder" title="Delete folder">
+      ${isUnsorted ? "" : `<button class="f-del" type="button" aria-label="${esc(i18nT("folder.deleteFolder"))}" title="${esc(i18nT("folder.deleteFolder"))}">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
       </button>`}
     `}
@@ -1413,7 +1420,11 @@ function render() {
   document.querySelector(".rail-queue")?.setAttribute("aria-pressed", String(isQueueView));
 
   if (searchInput) {
-    searchInput.placeholder = isTrashView ? "Search trash…" : isFavoritesView ? "Search favorites…" : "Search library…";
+    searchInput.placeholder = isTrashView
+      ? i18nT("search.placeholderTrash")
+      : isFavoritesView
+        ? i18nT("search.placeholderFavorites")
+        : i18nT("search.placeholderLibrary");
   }
 
   // ── Queue view ──
@@ -1432,9 +1443,9 @@ function render() {
   if (isTrashView) {
     const visibleTrashItems = (trash?.items || []).filter((id) => trackMatchesSearch(tracks[id]));
     if (!trash?.items.length) {
-      list.innerHTML = '<span class="folder-empty trash-empty">Trash is empty</span>';
+      list.innerHTML = `<span class="folder-empty trash-empty">${esc(i18nT("trash.isEmptyState"))}</span>`;
     } else if (visibleTrashItems.length === 0) {
-      list.innerHTML = '<span class="folder-empty trash-empty">No deleted tracks match your search</span>';
+      list.innerHTML = `<span class="folder-empty trash-empty">${esc(i18nT("trash.noSearchMatch"))}</span>`;
     } else {
       for (const id of visibleTrashItems) {
         const item = renderTrackItem(id, { inTrash: true });
@@ -1451,7 +1462,7 @@ function render() {
       .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
       .map(([id]) => id);
     if (!favIds.length) {
-      list.innerHTML = `<span class="folder-empty trash-empty">${catalogSearchQuery ? "No favorites match your search" : "No favorites yet — click ♥ on a track to save it"}</span>`;
+      list.innerHTML = `<span class="folder-empty trash-empty">${esc(catalogSearchQuery ? i18nT("favorites.noSearchMatch") : i18nT("favorites.empty"))}</span>`;
     } else {
       for (const id of favIds) {
         const item = renderRecentItem(id);
@@ -1467,7 +1478,7 @@ function render() {
   // Recent section
   const recentIds = getRecentTracks(trashIds).filter((id) => trackMatchesSearch(tracks[id]));
   if (recentIds.length) {
-    const section = makeSectionEl("Recent");
+    const section = makeSectionEl(i18nT("library.recent"));
     for (const id of recentIds) {
       const item = renderRecentItem(id);
       if (item) section.appendChild(item);
@@ -1476,13 +1487,13 @@ function render() {
   }
 
   // Stem Collections section
-  const collectionsSection = makeSectionEl("Stem Collections");
+  const collectionsSection = makeSectionEl(i18nT("library.stemCollections"));
   const newFolderBtn = document.createElement("button");
   newFolderBtn.id = "newFolderBtn";
   newFolderBtn.className = "new-folder-btn";
   newFolderBtn.type = "button";
-  newFolderBtn.setAttribute("aria-label", "New folder");
-  newFolderBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6 M9 14h6"/></svg>New folder`;
+  newFolderBtn.setAttribute("aria-label", i18nT("library.newFolder"));
+  newFolderBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6 M9 14h6"/></svg>${esc(i18nT("library.newFolder"))}`;
   newFolderBtn.addEventListener("click", createFolder);
   collectionsSection.querySelector(".lib-section-head").appendChild(newFolderBtn);
   let hasCollections = false;
@@ -1503,7 +1514,7 @@ function render() {
   // Tags section
   const tags = getAllTags(trashIds);
   if (tags.length) {
-    const section = makeSectionEl("Tags");
+    const section = makeSectionEl(i18nT("library.tags"));
     const row = document.createElement("div");
     row.className = "lib-tags-row";
     const activeTag = catalogSearchQuery.startsWith("#") ? catalogSearchQuery.slice(1) : null;
@@ -1623,7 +1634,7 @@ async function completeSettledJob(jobId) {
     if (state.status === "error") {
       notifyFailure({
         kind: "import",
-        message: state.error || "Audio processing failed.",
+        message: state.error || i18nT("job.audioProcessingFailed"),
         detail: state.error_detail || null,
         context: {
           jobId,
@@ -1641,7 +1652,7 @@ async function completeSettledJob(jobId) {
     const finalState = state.status === "done" ? await runVocalSplitIfWanted(state) : state;
     const track = stateMetadataToTrack(finalState, { ...existing, id: jobId });
     track.id = jobId;
-    track.channel = finalState.status === "done" ? "Extracted" : existing.channel;
+    track.channel = finalState.status === "done" ? i18nT("footer.extractedLabel") : existing.channel;
     addTrackToLibrary(track);
   } catch (e) {
     console.warn("[catalog] could not finish background job", jobId, e);
@@ -1659,7 +1670,7 @@ function queueEntries(snap) {
 
 function queueRowHtml({ job, running }, place, { paused = false } = {}) {
   const track = tracks[job.job_id];
-  const label = running ? runningLabel(job) : paused ? "Paused" : `Queued - ${ordinal(place)} in line`;
+  const label = running ? runningLabel(job) : paused ? i18nT("queue.pausedStatus") : i18nT("queue.positionInLine", { position: place });
   const thumb = track ? thumbHtml(track) : thumbHtml({ thumb: job.thumbnail });
   // The running job cannot be reordered -- it is already running. Only waiting
   // rows drag, and only they offer "play next".
@@ -1681,14 +1692,14 @@ function queueRowHtml({ job, running }, place, { paused = false } = {}) {
         <div class="cat-sub"><span class="cat-queue-label">${esc(label)}</span></div>
         ${running ? '<div class="cat-progress"><div class="cat-progress-fill"></div></div>' : ""}
       </div>
-      ${running || place <= 2 ? "" : `<button class="queue-top" type="button" title="Extract this one next"
-              aria-label="Move ${esc(displayTitle(job.title || job.source_url))} to the front of the queue">
+      ${running || place <= 2 ? "" : `<button class="queue-top" type="button" title="${esc(i18nT("queue.extractNext"))}"
+              aria-label="${esc(i18nT("queue.moveToFront", { title: displayTitle(job.title || job.source_url) }))}">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
           <path d="M12 19V5 M5 12l7-7 7 7"></path>
         </svg>
       </button>`}
-      <button class="queue-cancel" type="button" title="Cancel this import"
-              aria-label="Cancel import of ${esc(displayTitle(job.title || job.source_url))}">
+      <button class="queue-cancel" type="button" title="${esc(i18nT("queue.cancelImport"))}"
+              aria-label="${esc(i18nT("queue.cancelImportOf", { title: displayTitle(job.title || job.source_url) }))}">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
           <path d="M18 6 6 18 M6 6l12 12"></path>
         </svg>
@@ -1773,13 +1784,12 @@ function wireQueueListDrop(listEl) {
 }
 
 function queuePausedBannerHtml(count) {
-  const noun = count === 1 ? "track" : "tracks";
   return `
     <div class="queue-paused-banner">
       <div class="queue-paused-text">
-        Paused - ${count} ${noun} from your last session.
+        ${i18nPlural("queue.paused", count)}
       </div>
-      <button class="queue-start-btn" type="button">Start</button>
+      <button class="queue-start-btn" type="button">${i18nT("queue.start")}</button>
     </div>`;
 }
 
@@ -1789,13 +1799,13 @@ function renderQueueList(listEl, snap = getQueueSnapshot()) {
 
   const section = document.createElement("div");
   section.className = "lib-section queue-section";
-  section.innerHTML = `<div class="lib-section-head"><span>IMPORT QUEUE</span></div>`;
+  section.innerHTML = `<div class="lib-section-head"><span>${esc(i18nT("queue.importQueue"))}</span></div>`;
 
   if (isPaused(snap)) {
     section.insertAdjacentHTML("beforeend", queuePausedBannerHtml(entries.length));
     section.querySelector(".queue-start-btn")?.addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
-      e.currentTarget.textContent = "Starting…";
+      e.currentTarget.textContent = i18nT("queue.starting");
       await startQueue();
     });
   }
@@ -1849,8 +1859,8 @@ function updateQueueRows(snap = getQueueSnapshot()) {
     const label = entry.running
       ? runningLabel(entry.job)
       : isPaused(snap)
-        ? "Paused"
-        : `Queued - ${ordinal(i + 1)} in line`;
+        ? i18nT("queue.pausedStatus")
+        : i18nT("queue.positionInLine", { position: i + 1 });
     const labelEl = el.querySelector(".cat-queue-label");
     if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
     const fill = el.querySelector(".cat-progress-fill");
@@ -2288,12 +2298,12 @@ async function openReleaseDialog() {
     const picked = pickReleaseAsset(latestRelease, target);
     if (picked) {
       download.href = picked.url;
-      download.textContent = "Download";
+      download.textContent = i18nT("release.download");
     } else {
       // No matching asset (e.g. an arch we don't build): fall back to the
       // release page so the user can pick manually.
       download.href = latestRelease.html_url || RELEASES_URL;
-      download.textContent = "View download";
+      download.textContent = i18nT("release.viewDownload");
     }
     download.classList.remove("hidden");
   }
@@ -2367,7 +2377,7 @@ async function checkForUpdate() {
     if (!(e instanceof TypeError)) {
       notifyFailure({
         kind: "update",
-        message: "Could not check for updates.",
+        message: i18nT("update.checkFailed"),
         detail: String(e?.message || e),
       });
     }
@@ -2524,11 +2534,29 @@ async function syncWithServer() {
 let libraryEditor = null;
 let libraryEditorOnKey = null;
 
+// The settings modal has a lot of server-fetched, dynamically-computed text
+// (resolved device suffix, out-of-sync status, stems-location message, ...)
+// that a generic data-i18n re-apply pass can't safely re-derive after a
+// language switch. Simplest robust fix: if the modal is open when the
+// language changes, just rebuild it from scratch -- openLibraryEditor()
+// already re-fetches everything fresh and is safe to call while already open
+// (it closes any existing instance first).
+onLanguageChange(() => {
+  if (libraryEditor) openLibraryEditor();
+});
+
+// Library list rows bake their subtitle/placeholder/empty-state text into
+// plain innerHTML at render time (no data-i18n hooks to re-resolve), so a
+// generic applyTranslations() pass can't fix an already-rendered list --
+// rebuild it explicitly on language switch (same reasoning as the editor
+// listener above).
+onLanguageChange(() => render());
+
 // Human-readable "Location" for a track: the imported filename for local
 // uploads, otherwise the source URL.
 function libraryLocation(sourceUrl) {
   if (!sourceUrl) return "—";
-  if (sourceUrl.startsWith("local:")) return sourceUrl.slice(6) || "Imported file";
+  if (sourceUrl.startsWith("local:")) return sourceUrl.slice(6) || i18nT("library.importedFile");
   return sourceUrl;
 }
 
@@ -2547,8 +2575,8 @@ function refreshLibrarySyncSummary() {
   const n = libraryUnavailableCount();
   statusEl.classList.toggle("out-of-sync", n > 0);
   statusEl.textContent = n > 0
-    ? `${n} ${n === 1 ? "track is" : "tracks are"} out of sync`
-    : "All tracks in sync";
+    ? i18nPlural("settings.outOfSync.summary", n)
+    : i18nT("settings.outOfSync.allSynced");
 }
 
 function closeLibraryEditor() {
@@ -2577,7 +2605,7 @@ function renderLibraryRows(tbody) {
     const td = document.createElement("td");
     td.colSpan = 3;
     td.className = "library-editor-empty";
-    td.textContent = "All tracks are in sync.";
+    td.textContent = i18nT("settings.stemsLocation.inSync");
     tr.appendChild(td);
     tbody.appendChild(tr);
     return;
@@ -2595,7 +2623,7 @@ function renderLibraryRows(tbody) {
     if (t.status === "unavailable") {
       const badge = document.createElement("span");
       badge.className = "le-badge";
-      badge.textContent = "unavailable";
+      badge.textContent = i18nT("status.unavailable");
       name.appendChild(badge);
     }
 
@@ -2624,9 +2652,9 @@ function networkSettingsHtml() {
     <div class="settings-section">
       <div class="settings-row">
         <div class="settings-row-text">
-          <div class="settings-row-title">Make StemDeck available on your network</div>
-          <div class="settings-row-desc">Let other devices (like your phone) open StemDeck at the address below.</div>
-          <div class="settings-row-desc settings-lock-note">Read-only when StemDeck is started in server mode — network access is then set by your server configuration.</div>
+          <div class="settings-row-title" data-i18n="settings.network.allowTitle">Make StemDeck available on your network</div>
+          <div class="settings-row-desc" data-i18n="settings.network.allowDesc">Let other devices (like your phone) open StemDeck at the address below.</div>
+          <div class="settings-row-desc settings-lock-note" data-i18n="settings.network.lockNote">Read-only when StemDeck is started in server mode — network access is then set by your server configuration.</div>
         </div>
         <label class="settings-switch">
           <input type="checkbox" class="net-access-input" />
@@ -2689,7 +2717,7 @@ async function wireStemsLocation(overlay) {
     pathEl.title = d.path;
     if (sizeEl) sizeEl.textContent = formatSize(d.bytes);
     // Reopening Settings after a move, before the restart, should still say so.
-    if (d.restart_required) setMessage("Restart StemDeck to finish switching over.", "ok");
+    if (d.restart_required) setMessage(i18nT("settings.stemsLocation.restartNote"), "ok");
   };
 
   // The backend decides whether this setting exists at all -- it is false on a
@@ -2724,7 +2752,7 @@ async function wireStemsLocation(overlay) {
         picked = await invoke("pick_stems_folder");
       } catch (e) {
         console.warn("[settings] folder picker failed:", e);
-        setMessage("Could not open the folder picker.", "error");
+        setMessage(i18nT("settings.stemsLocation.pickerFailed"), "error");
         return;
       }
     } else {
@@ -2736,7 +2764,7 @@ async function wireStemsLocation(overlay) {
     if (!picked) return; // cancelled
 
     btn.disabled = true;
-    setMessage("Moving stems… this can take a while for a large library.");
+    setMessage(i18nT("settings.stemsLocation.moving"));
     try {
       const r = await fetch("/api/settings/stems-location", {
         method: "POST",
@@ -2745,7 +2773,7 @@ async function wireStemsLocation(overlay) {
       });
       const data = await r.json();
       if (!r.ok) {
-        setMessage(data.detail || "Could not move the stems folder.", "error");
+        setMessage(data.detail || i18nT("settings.stemsLocation.moveFailed"), "error");
         return;
       }
       // Re-read rather than trust the POST: the GET reports where the stems
@@ -2763,26 +2791,32 @@ async function wireStemsLocation(overlay) {
         // but settings.json didn't take the new path, so a restart right now
         // would read the OLD default back while the library sits at the new
         // folder (#403). Say so plainly rather than the usual "ok" message.
-        setMessage(
-          `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}, but StemDeck ` +
-            "could not save this as your new location (check that the folder is writable). " +
-            "Restarting now would revert to the old location. Try setting it again.",
-          "error",
-        );
+        setMessage(i18nPlural("settings.stemsLocation.movedPersistFailed", data.moved_entries), "error");
       } else {
-        setMessage(
-          `Moved ${data.moved_entries} item${data.moved_entries === 1 ? "" : "s"}. ` +
-            "Restart StemDeck to finish switching over.",
-          "ok",
-        );
+        setMessage(i18nPlural("settings.stemsLocation.movedOk", data.moved_entries), "ok");
       }
     } catch (e) {
       console.warn("[settings] move failed:", e);
-      setMessage("Could not reach the server.", "error");
+      setMessage(i18nT("settings.stemsLocation.serverUnreachable"), "error");
     } finally {
       btn.disabled = false;
     }
   });
+}
+
+// Language picker: purely a client-side/cosmetic preference (no server
+// behavior depends on it), so it's read/written via setLanguage() (i18n.js,
+// storeGet/storeSet under "stemdeck.language") rather than the /api/settings
+// round trip the rest of this modal uses -- see i18n.js's module comment for
+// why that split matches the app's existing convention.
+function wireLanguageSetting(overlay) {
+  const sel = overlay.querySelector(".set-language");
+  if (!sel) return;
+  sel.innerHTML = LANGUAGES.map(
+    (l) => `<option value="${l.code}">${esc(l.flag)} ${esc(l.name)}</option>`,
+  ).join("");
+  sel.value = getLanguage();
+  sel.addEventListener("change", () => setLanguage(sel.value));
 }
 
 // General settings: max track length (minutes), playlist import limit, and
@@ -2795,7 +2829,7 @@ async function wireGeneralSettings(overlay) {
   const sampleRateSel = overlay.querySelector(".set-export-samplerate");
   const portInput = overlay.querySelector(".set-port");
   const deviceSel = overlay.querySelector(".set-demucs-device");
-  const deviceResolved = overlay.querySelector(".set-demucs-resolved");
+  const deviceDesc = overlay.querySelector(".set-demucs-desc");
   const qualitySel = overlay.querySelector(".set-separation-quality");
   if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel) return;
 
@@ -2813,22 +2847,28 @@ async function wireGeneralSettings(overlay) {
     if (deviceSel) {
       // Gray out devices this machine can't use (Auto and CPU are always
       // available). Label disabled options so it's clear WHY they're greyed.
+      // The base label is captured into a data attribute the first time this
+      // runs (before any "not available" suffix is ever appended), rather
+      // than stripped back out of a previous textContent each call -- a
+      // regex keyed to the English suffix would silently stop matching once
+      // that suffix is translated, leaving the untranslated suffix appended
+      // forever on every subsequent apply().
       const avail = new Set(d.demucs_devices_available || []);
       for (const opt of deviceSel.options) {
-        const base = opt.textContent.replace(/ — not available$/, "");
+        if (opt.dataset.baseLabel === undefined) opt.dataset.baseLabel = opt.textContent;
+        const base = opt.dataset.baseLabel;
         const ok = opt.value === "auto" || avail.has(opt.value);
         opt.disabled = !ok;
-        opt.textContent = ok ? base : `${base} — not available`;
+        opt.textContent = ok ? base : `${base}${i18nT("settings.device.notAvailable")}`;
       }
       if (d.demucs_device) {
         deviceSel.value = d.demucs_device;
         lastDevice = d.demucs_device;
       }
     }
-    if (deviceResolved) {
-      deviceResolved.textContent = d.demucs_device_resolved
-        ? ` (currently: ${d.demucs_device_resolved})`
-        : "";
+    if (deviceDesc) {
+      const resolved = d.demucs_device_resolved ? i18nT("settings.device.currently", { device: d.demucs_device_resolved }) : "";
+      deviceDesc.textContent = i18nT("settings.device.desc", { resolved });
     }
   };
 
@@ -2892,7 +2932,7 @@ async function wireGeneralSettings(overlay) {
         apply(await r.json());
         return;
       }
-      let detail = "Could not change the compute device.";
+      let detail = i18nT("settings.device.changeFailed");
       try {
         detail = (await r.json()).detail || detail;
       } catch (err) {
@@ -2939,7 +2979,7 @@ async function wireNetworkSetting(overlay) {
     if (addresses.length) {
       const hint = document.createElement("p");
       hint.className = "qr-hint";
-      hint.textContent = "Blurred so your camera doesn't get too excited. Tap to reveal.";
+      hint.textContent = i18nT("settings.network.qrHint");
       qrWrap.appendChild(hint);
       const row = document.createElement("div");
       row.className = "qr-cards-row";
@@ -2947,11 +2987,11 @@ async function wireNetworkSetting(overlay) {
         const mobileUrl = `${a}/mobile/`;
         const card = document.createElement("div");
         card.className = "qr-card qr-blurred";
-        card.title = "Tap to unblur";
+        card.title = i18nT("settings.network.tapToUnblur");
         card.addEventListener("click", () => card.classList.toggle("qr-blurred"));
         const img = document.createElement("img");
         img.src = `/api/qr?url=${encodeURIComponent(mobileUrl)}`;
-        img.alt = `QR code for ${mobileUrl}`;
+        img.alt = i18nT("settings.network.qrCodeFor", { url: mobileUrl });
         img.width = 130;
         img.height = 130;
         const label = document.createElement("div");
@@ -2967,7 +3007,7 @@ async function wireNetworkSetting(overlay) {
     } else {
       const span = document.createElement("span");
       span.className = "settings-net-empty";
-      span.textContent = "No local network connection detected.";
+      span.textContent = i18nT("settings.network.noConnection");
       qrWrap.appendChild(span);
     }
   }
@@ -3027,7 +3067,7 @@ async function loadLogsView(overlay) {
   const pathEl = overlay.querySelector(".settings-logs-path");
   const listEl = overlay.querySelector(".settings-logs-list");
   if (!pathEl || !listEl) return;
-  listEl.textContent = "Loading…";
+  listEl.textContent = i18nT("settings.logs.loading");
   try {
     const r = await fetch("/api/logs", { cache: "no-store" });
     if (!r.ok) throw new Error(`status ${r.status}`);
@@ -3035,9 +3075,9 @@ async function loadLogsView(overlay) {
     pathEl.textContent = info.dir;
     const present = (info.files || []).filter((f) => f.exists);
     if (!present.length) {
-      listEl.innerHTML = `<div class="settings-logs-empty">No log files yet${
-        info.dir_exists ? "" : " (the folder has not been created)"
-      }. Logging starts on the first message after launch.</div>`;
+      listEl.innerHTML = `<div class="settings-logs-empty">${esc(i18nT("settings.logs.noFilesYet", {
+        folderNote: info.dir_exists ? "" : i18nT("settings.logs.folderNotCreated"),
+      }))}</div>`;
       return;
     }
     listEl.innerHTML = present
@@ -3056,8 +3096,8 @@ async function loadLogsView(overlay) {
       .join("");
   } catch (e) {
     console.warn("[settings] failed to load log info:", e);
-    pathEl.textContent = "unavailable";
-    listEl.textContent = "Failed to load log information.";
+    pathEl.textContent = i18nT("status.unavailable");
+    listEl.textContent = i18nT("settings.logs.failedToLoad");
   }
 }
 
@@ -3080,7 +3120,7 @@ async function loadLogTail(overlay, view) {
 
 /** Download every log file as one zip, for attaching to a bug report. */
 async function exportLogs(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "Preparing…"; }
+  if (btn) { btn.disabled = true; btn.textContent = i18nT("settings.exportLogs.preparing"); }
   try {
     const r = await fetch("/api/logs.zip", { cache: "no-store" });
     if (!r.ok) throw new Error(`status ${r.status}`);
@@ -3099,15 +3139,15 @@ async function exportLogs(btn) {
     dismissFailuresByKind("export");
   } catch (e) {
     console.warn("[settings] log export failed:", e);
-    showError("Could not export the logs.", null, { retry: false });
+    showError(i18nT("settings.exportLogs.error"), null, { retry: false });
     notifyFailure({
       kind: "export",
-      message: "Could not export the logs.",
+      message: i18nT("settings.exportLogs.error"),
       detail: String(e?.message || e),
       context: { stage: "Exporting logs" },
     });
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "Export logs"; }
+    if (btn) { btn.disabled = false; btn.textContent = i18nT("settings.exportLogs.button"); }
   }
 }
 
@@ -3123,18 +3163,19 @@ function openResetConfirm() {
   const overlay = document.createElement("div");
   overlay.className = "reset-confirm-backdrop";
   overlay.innerHTML = `
-    <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Reset app data">
-      <div class="reset-confirm-title">Reset app data?</div>
-      <p class="reset-confirm-body">This permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. This cannot be undone.</p>
-      <p class="reset-confirm-hint">Type <strong>RESET</strong> to confirm.</p>
-      <input class="reset-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-label="Type RESET to confirm" />
+    <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Reset app data" data-i18n-aria-label="resetConfirm.ariaLabel">
+      <div class="reset-confirm-title" data-i18n="resetConfirm.title">Reset app data?</div>
+      <p class="reset-confirm-body" data-i18n="resetConfirm.body">This permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. This cannot be undone.</p>
+      <p class="reset-confirm-hint" data-i18n="resetConfirm.hint">Type <strong>RESET</strong> to confirm.</p>
+      <input class="reset-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-label="Type RESET to confirm" data-i18n-aria-label="resetConfirm.typeToConfirmAria" />
       <div class="reset-confirm-msg" role="alert" aria-live="polite"></div>
       <div class="reset-confirm-actions">
-        <button class="reset-confirm-cancel" type="button">Cancel</button>
-        <button class="reset-confirm-go" type="button" disabled>Reset app data</button>
+        <button class="reset-confirm-cancel" type="button" data-i18n="resetConfirm.cancel">Cancel</button>
+        <button class="reset-confirm-go" type="button" disabled data-i18n="resetConfirm.go">Reset app data</button>
       </div>
     </div>
   `;
+  applyTranslations(overlay);
 
   const input = overlay.querySelector(".reset-confirm-input");
   const goBtn = overlay.querySelector(".reset-confirm-go");
@@ -3151,11 +3192,11 @@ function openResetConfirm() {
   goBtn.addEventListener("click", async () => {
     goBtn.disabled = true;
     input.disabled = true;
-    msg.textContent = "Resetting…";
+    msg.textContent = i18nT("resetConfirm.resetting");
     try {
       const r = await fetch("/api/reset", { method: "POST" });
       if (!r.ok) {
-        let detail = "Reset failed.";
+        let detail = i18nT("resetConfirm.failed");
         try { detail = (await r.json()).detail || detail; } catch (err) { console.warn("reset error body parse failed:", err); }
         msg.textContent = detail;
         goBtn.disabled = false;
@@ -3178,7 +3219,7 @@ function openResetConfirm() {
       window.location.reload();
     } catch (err) {
       console.warn("reset failed:", err);
-      msg.textContent = "Reset failed — check your connection.";
+      msg.textContent = i18nT("resetConfirm.failedConnection");
       goBtn.disabled = false;
       input.disabled = false;
     }
@@ -3196,44 +3237,53 @@ function openLibraryEditor() {
   const overlay = document.createElement("div");
   overlay.className = "library-editor-backdrop";
   overlay.innerHTML = `
-    <div class="library-editor" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="library-editor" role="dialog" aria-modal="true" aria-label="Settings" data-i18n-aria-label="settings.title">
       <div class="library-editor-head">
-        <span>Settings</span>
-        <button class="library-editor-close" type="button" aria-label="Close">
+        <span data-i18n="settings.title">Settings</span>
+        <button class="library-editor-close" type="button" aria-label="Close" data-i18n-aria-label="settings.closeAria">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
         </button>
       </div>
       <div class="settings-tabs" role="tablist">
-        <button class="settings-tab active" type="button" data-tab="general" role="tab">General</button>
-        <button class="settings-tab" type="button" data-tab="network" role="tab">Network</button>
-        <button class="settings-tab" type="button" data-tab="export" role="tab">Export</button>
-        <button class="settings-tab" type="button" data-tab="logs" role="tab">Logs</button>
-        <button class="settings-tab" type="button" data-tab="registry" role="tab">Registry</button>
+        <button class="settings-tab active" type="button" data-tab="general" role="tab" data-i18n="settings.tab.general">General</button>
+        <button class="settings-tab" type="button" data-tab="network" role="tab" data-i18n="settings.tab.network">Network</button>
+        <button class="settings-tab" type="button" data-tab="export" role="tab" data-i18n="settings.tab.export">Export</button>
+        <button class="settings-tab" type="button" data-tab="logs" role="tab" data-i18n="settings.tab.logs">Logs</button>
+        <button class="settings-tab" type="button" data-tab="registry" role="tab" data-i18n="settings.tab.registry">Registry</button>
       </div>
       <div class="settings-pane" data-pane="general">
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Max track length</div>
-              <div class="settings-row-desc">Longest track accepted for processing, in minutes (max 20).</div>
+              <div class="settings-row-title" data-i18n="settings.language.title">Language</div>
+              <div class="settings-row-desc" data-i18n="settings.language.desc">Display language for this app.</div>
             </div>
-            <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" />
+            <select class="settings-select settings-select-wide set-language" aria-label="Language"></select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.maxDuration.title">Max track length</div>
+              <div class="settings-row-desc" data-i18n="settings.maxDuration.desc">Longest track accepted for processing, in minutes (max 20).</div>
+            </div>
+            <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" data-i18n-aria-label="settings.maxDuration.title" />
           </div>
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Playlist import limit</div>
-              <div class="settings-row-desc">Most tracks one playlist import will queue (max 200).</div>
+              <div class="settings-row-title" data-i18n="settings.playlistLimit.title">Playlist import limit</div>
+              <div class="settings-row-desc" data-i18n="settings.playlistLimit.desc">Most tracks one playlist import will queue (max 200).</div>
             </div>
-            <input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" />
+            <input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" data-i18n-aria-label="settings.playlistLimit.title" />
           </div>
           <div class="settings-row settings-row-stack">
             <div class="settings-row-text">
-              <div class="settings-row-title">StemData location</div>
+              <div class="settings-row-title" data-i18n="settings.stemsLocation.title">StemData location</div>
             </div>
             <div class="stems-location">
               <code class="stems-location-path" title=""></code>
               <span class="stems-location-size"></span>
-              <button class="settings-btn set-stems-location" type="button">Change…</button>
+              <button class="settings-btn set-stems-location" type="button" data-i18n="settings.stemsLocation.change">Change…</button>
             </div>
             <div class="stems-location-msg" role="status" aria-live="polite"></div>
           </div>
@@ -3241,11 +3291,11 @@ function openLibraryEditor() {
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Compute device</div>
-              <div class="settings-row-desc">Device used for stem separation. Applies to the next track<span class="set-demucs-resolved"></span>.</div>
+              <div class="settings-row-title" data-i18n="settings.device.title">Compute device</div>
+              <div class="settings-row-desc set-demucs-desc">Device used for stem separation. Applies to the next track.</div>
             </div>
-            <select class="settings-select set-demucs-device" aria-label="Compute device">
-              <option value="auto">Auto</option>
+            <select class="settings-select settings-select-wide set-demucs-device" aria-label="Compute device" data-i18n-aria-label="settings.device.title">
+              <option value="auto" data-i18n="settings.device.auto">Auto</option>
               <option value="cuda">CUDA (NVIDIA)</option>
               <option value="mps">MPS (Apple Silicon)</option>
               <option value="cpu">CPU</option>
@@ -3255,43 +3305,43 @@ function openLibraryEditor() {
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Separation quality</div>
-              <div class="settings-row-desc">Best runs the separator twice with randomized shifts and averages the result — cleaner stems, twice the time.</div>
+              <div class="settings-row-title" data-i18n="settings.quality.title">Separation quality</div>
+              <div class="settings-row-desc" data-i18n="settings.quality.desc">Best runs the separator twice with randomized shifts and averages the result — cleaner stems, twice the time.</div>
             </div>
-            <select class="settings-select set-separation-quality" aria-label="Separation quality">
-              <option value="standard">Standard</option>
-              <option value="best">Best (2× slower)</option>
+            <select class="settings-select settings-select-wide set-separation-quality" aria-label="Separation quality" data-i18n-aria-label="settings.quality.title">
+              <option value="standard" data-i18n="settings.quality.standard">Standard</option>
+              <option value="best" data-i18n="settings.quality.best">Best (2× slower)</option>
             </select>
           </div>
         </div>
-        <div class="settings-subhead">Out of sync tracks</div>
+        <div class="settings-subhead" data-i18n="settings.outOfSync.subhead">Out of sync tracks</div>
         <div class="library-editor-table-wrap">
           <table class="library-editor-table">
-            <thead><tr><th>Name</th><th>Source</th><th>Location</th></tr></thead>
+            <thead><tr><th data-i18n="settings.outOfSync.colName">Name</th><th data-i18n="settings.outOfSync.colSource">Source</th><th data-i18n="settings.outOfSync.colLocation">Location</th></tr></thead>
             <tbody class="library-editor-body"></tbody>
           </table>
         </div>
         <div class="library-editor-foot">
           <span class="library-editor-status" aria-live="polite"></span>
-          <button class="library-editor-sync" type="button">Resync out of sync tracks</button>
+          <button class="library-editor-sync" type="button" data-i18n="settings.outOfSync.resync">Resync out of sync tracks</button>
         </div>
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Export logs</div>
-              <div class="settings-row-desc">Download every log file as a single zip — the thing to attach to a bug report. See the Logs tab for where they live.</div>
+              <div class="settings-row-title" data-i18n="settings.exportLogs.title">Export logs</div>
+              <div class="settings-row-desc" data-i18n="settings.exportLogs.desc">Download every log file as a single zip — the thing to attach to a bug report. See the Logs tab for where they live.</div>
             </div>
-            <button class="settings-export-logs" type="button">Export logs</button>
+            <button class="settings-export-logs" type="button" data-i18n="settings.exportLogs.button">Export logs</button>
           </div>
         </div>
         <div class="settings-section settings-danger-zone">
-          <div class="settings-subhead settings-danger-subhead">Danger zone</div>
+          <div class="settings-subhead settings-danger-subhead" data-i18n="settings.dangerZone">Danger zone</div>
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Reset app data</div>
-              <div class="settings-row-desc">Permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. Cannot be undone.</div>
+              <div class="settings-row-title" data-i18n="settings.resetData.title">Reset app data</div>
+              <div class="settings-row-desc" data-i18n="settings.resetData.desc">Permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. Cannot be undone.</div>
             </div>
-            <button class="settings-reset-btn" type="button">Reset app data…</button>
+            <button class="settings-reset-btn" type="button" data-i18n="settings.resetData.button">Reset app data…</button>
           </div>
         </div>
       </div>
@@ -3300,10 +3350,10 @@ function openLibraryEditor() {
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Port</div>
-              <div class="settings-row-desc">Port StemDeck runs on. Restart to apply.</div>
+              <div class="settings-row-title" data-i18n="settings.network.port.title">Port</div>
+              <div class="settings-row-desc" data-i18n="settings.network.port.desc">Port StemDeck runs on. Restart to apply.</div>
             </div>
-            <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" />
+            <input type="text" class="settings-num-input set-port" inputmode="numeric" maxlength="5" aria-label="Port" data-i18n-aria-label="settings.network.port.title" />
           </div>
         </div>
       </div>
@@ -3311,10 +3361,10 @@ function openLibraryEditor() {
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Sample rate</div>
-              <div class="settings-row-desc">Sample rate for exported mixes and regions (WAV, FLAC, MP3). 44.1 kHz suits most DAWs and samplers; pick another if your hardware needs it.</div>
+              <div class="settings-row-title" data-i18n="settings.export.sampleRate.title">Sample rate</div>
+              <div class="settings-row-desc" data-i18n="settings.export.sampleRate.desc">Sample rate for exported mixes and regions (WAV, FLAC, MP3). 44.1 kHz suits most DAWs and samplers; pick another if your hardware needs it.</div>
             </div>
-            <select class="settings-select set-export-samplerate" aria-label="Export sample rate">
+            <select class="settings-select set-export-samplerate" aria-label="Export sample rate" data-i18n-aria-label="settings.export.sampleRate.title">
               <option value="22050">22.05 kHz</option>
               <option value="32000">32 kHz</option>
               <option value="44100">44.1 kHz</option>
@@ -3325,8 +3375,8 @@ function openLibraryEditor() {
         <div class="settings-section">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">MP4 video quality</div>
-              <div class="settings-row-desc">Max resolution for MP4 export and YouTube video.</div>
+              <div class="settings-row-title" data-i18n="settings.export.videoQuality.title">MP4 video quality</div>
+              <div class="settings-row-desc" data-i18n="settings.export.videoQuality.desc">Max resolution for MP4 export and YouTube video.</div>
             </div>
             <select class="settings-select set-video-height">
               <option value="360">360p</option>
@@ -3339,68 +3389,69 @@ function openLibraryEditor() {
       </div>
       <div class="settings-pane hidden" data-pane="logs">
         <div class="settings-subtabs" role="tablist">
-          <button class="settings-subtab active" type="button" data-sub="location" role="tab">Location</button>
-          <button class="settings-subtab" type="button" data-sub="application" role="tab">Application log</button>
-          <button class="settings-subtab" type="button" data-sub="backend" role="tab">Backend log</button>
-          <button class="settings-subtab" type="button" data-sub="setup" role="tab">Setup log</button>
+          <button class="settings-subtab active" type="button" data-sub="location" role="tab" data-i18n="settings.logs.locationTab">Location</button>
+          <button class="settings-subtab" type="button" data-sub="application" role="tab" data-i18n="settings.logs.applicationTab">Application log</button>
+          <button class="settings-subtab" type="button" data-sub="backend" role="tab" data-i18n="settings.logs.backendTab">Backend log</button>
+          <button class="settings-subtab" type="button" data-sub="setup" role="tab" data-i18n="settings.logs.setupTab">Setup log</button>
         </div>
         <div class="settings-subpane" data-subpane="location">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Log location</div>
-              <div class="settings-row-desc">Where StemDeck writes its logs on this machine. Read-only — open them in a file manager or use Export logs.</div>
+              <div class="settings-row-title" data-i18n="settings.logs.location.title">Log location</div>
+              <div class="settings-row-desc" data-i18n="settings.logs.location.desc">Where StemDeck writes its logs on this machine. Read-only — open them in a file manager or use Export logs.</div>
             </div>
-            <button class="settings-registry-refresh settings-logs-refresh" type="button">Refresh</button>
+            <button class="settings-registry-refresh settings-logs-refresh" type="button" data-i18n="settings.logs.refresh">Refresh</button>
           </div>
-          <div class="settings-logs-dir"><code class="settings-logs-path">Loading…</code></div>
-          <div class="settings-logs-list">Loading…</div>
+          <div class="settings-logs-dir"><code class="settings-logs-path" data-i18n="settings.logs.loading">Loading…</code></div>
+          <div class="settings-logs-list" data-i18n="settings.logs.loading">Loading…</div>
         </div>
         <div class="settings-subpane hidden" data-subpane="application">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Application log</div>
-              <div class="settings-row-desc">The last hour from <code>stemdeck.log</code> — pipeline, API and job activity. Read-only.</div>
+              <div class="settings-row-title" data-i18n="settings.logs.application.title">Application log</div>
+              <div class="settings-row-desc" data-i18n="settings.logs.application.desc">The last hour from <code>stemdeck.log</code> — pipeline, API and job activity. Read-only.</div>
             </div>
-            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="application">Refresh</button>
+            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="application" data-i18n="settings.logs.refresh">Refresh</button>
           </div>
-          <textarea class="settings-registry-view settings-logtail-view" data-view="application" readonly spellcheck="false" aria-label="Application log (read only)">Loading…</textarea>
+          <textarea class="settings-registry-view settings-logtail-view" data-view="application" readonly spellcheck="false" aria-label="Application log (read only)" data-i18n-aria-label="settings.logs.applicationAria" data-i18n="settings.logs.loading">Loading…</textarea>
         </div>
         <div class="settings-subpane hidden" data-subpane="backend">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Backend log</div>
-              <div class="settings-row-desc">The last hour from <code>backend.log</code> — raw output of the bundled Python process, including anything that crashed it before the application log could record it. Desktop app only. Read-only.</div>
+              <div class="settings-row-title" data-i18n="settings.logs.backend.title">Backend log</div>
+              <div class="settings-row-desc" data-i18n="settings.logs.backend.desc">The last hour from <code>backend.log</code> — raw output of the bundled Python process, including anything that crashed it before the application log could record it. Desktop app only. Read-only.</div>
             </div>
-            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="backend">Refresh</button>
+            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="backend" data-i18n="settings.logs.refresh">Refresh</button>
           </div>
-          <textarea class="settings-registry-view settings-logtail-view" data-view="backend" readonly spellcheck="false" aria-label="Backend log (read only)">Loading…</textarea>
+          <textarea class="settings-registry-view settings-logtail-view" data-view="backend" readonly spellcheck="false" aria-label="Backend log (read only)" data-i18n-aria-label="settings.logs.backendAria" data-i18n="settings.logs.loading">Loading…</textarea>
         </div>
         <div class="settings-subpane hidden" data-subpane="setup">
           <div class="settings-row">
             <div class="settings-row-text">
-              <div class="settings-row-title">Setup log</div>
-              <div class="settings-row-desc">The last hour from <code>setup.log</code> — first-run setup and GPU runtime installation. Desktop app only. Read-only.</div>
+              <div class="settings-row-title" data-i18n="settings.logs.setup.title">Setup log</div>
+              <div class="settings-row-desc" data-i18n="settings.logs.setup.desc">The last hour from <code>setup.log</code> — first-run setup and GPU runtime installation. Desktop app only. Read-only.</div>
             </div>
-            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="setup">Refresh</button>
+            <button class="settings-registry-refresh settings-logtail-refresh" type="button" data-view="setup" data-i18n="settings.logs.refresh">Refresh</button>
           </div>
-          <textarea class="settings-registry-view settings-logtail-view" data-view="setup" readonly spellcheck="false" aria-label="Setup log (read only)">Loading…</textarea>
+          <textarea class="settings-registry-view settings-logtail-view" data-view="setup" readonly spellcheck="false" aria-label="Setup log (read only)" data-i18n-aria-label="settings.logs.setupAria" data-i18n="settings.logs.loading">Loading…</textarea>
         </div>
       </div>
       <div class="settings-pane hidden" data-pane="registry">
         <div class="settings-row">
           <div class="settings-row-text">
-            <div class="settings-row-title">Job registry</div>
-            <div class="settings-row-desc">Read-only view of <code>registry.json</code> — the persisted list of completed jobs on disk.</div>
+            <div class="settings-row-title" data-i18n="settings.registry.title">Job registry</div>
+            <div class="settings-row-desc" data-i18n="settings.registry.desc">Read-only view of <code>registry.json</code> — the persisted list of completed jobs on disk.</div>
           </div>
-          <button class="settings-registry-refresh" type="button">Refresh</button>
+          <button class="settings-registry-refresh" type="button" data-i18n="settings.logs.refresh">Refresh</button>
         </div>
-        <textarea class="settings-registry-view" readonly spellcheck="false" aria-label="Job registry (read only)">Loading…</textarea>
+        <textarea class="settings-registry-view" readonly spellcheck="false" aria-label="Job registry (read only)" data-i18n-aria-label="settings.registry.aria" data-i18n="settings.logs.loading">Loading…</textarea>
       </div>
       <div class="settings-foot">
-        <button class="settings-done" type="button">Done</button>
+        <button class="settings-done" type="button" data-i18n="settings.done">Done</button>
       </div>
     </div>
   `;
+  applyTranslations(overlay);
 
   renderLibraryRows(overlay.querySelector(".library-editor-body"));
 
@@ -3442,6 +3493,7 @@ function openLibraryEditor() {
   libraryEditor = overlay;
   refreshLibrarySyncSummary();
   const isDesktop = Boolean(window.__TAURI__?.core?.invoke);
+  wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
   wireStemsLocation(overlay);
   wireNetworkSetting(overlay);
@@ -3451,7 +3503,7 @@ function openLibraryEditor() {
     overlay.querySelector(".set-port")?.setAttribute("disabled", "");
     const note = document.createElement("p");
     note.className = "settings-server-note";
-    note.textContent = "These settings are read-only in server mode. To change them, update your server configuration (e.g. docker-compose.yml) and restart.";
+    note.textContent = i18nT("settings.readOnlyServer");
     overlay.querySelector("[data-pane='network']")?.prepend(note);
   }
   // Reset app data (#312): originally a "session keeps coming back across
@@ -3495,7 +3547,7 @@ async function waitForJobTerminal(jobId) {
 async function resyncLibrary() {
   const statusEl = libraryEditor?.querySelector(".library-editor-status");
   const syncBtn = libraryEditor?.querySelector(".library-editor-sync");
-  if (statusEl) statusEl.textContent = "Syncing…";
+  if (statusEl) statusEl.textContent = i18nT("library.syncing");
   if (syncBtn) syncBtn.disabled = true;
 
   try {
@@ -3531,7 +3583,7 @@ async function resyncLibrary() {
     refreshLibrarySyncSummary();
   } catch (e) {
     console.warn("[catalog] resync failed:", e);
-    if (statusEl) statusEl.textContent = "Sync failed — check your connection.";
+    if (statusEl) statusEl.textContent = i18nT("library.syncFailed");
   } finally {
     if (syncBtn) syncBtn.disabled = false;
   }

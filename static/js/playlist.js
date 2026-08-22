@@ -9,6 +9,7 @@
 
 import { addPlaylistToLibrary } from "./catalog.js";
 import { showError } from "./job.js";
+import { t, plural } from "./i18n.js";
 
 /** Does this URL look like a playlist we should offer to expand? Deliberately
  *  permissive -- the server is the authority, this only decides which flow the
@@ -33,16 +34,14 @@ export function looksLikePlaylist(url) {
 
 function countLine(preview) {
   const parts = [];
-  if (preview.skipped_unavailable) parts.push(`${preview.skipped_unavailable} unavailable`);
-  if (preview.skipped_too_long) parts.push(`${preview.skipped_too_long} too long`);
+  if (preview.skipped_unavailable) parts.push(t("playlist.skip.unavailable", { count: preview.skipped_unavailable }));
+  if (preview.skipped_too_long) parts.push(t("playlist.skip.tooLong", { count: preview.skipped_too_long }));
   const overflow =
     preview.total_found - preview.skipped_unavailable - preview.skipped_too_long - preview.will_queue;
-  if (overflow > 0) parts.push(`${overflow} that will not fit in the queue right now`);
-  if (preview.truncated) parts.push(`anything past the first ${preview.cap}`);
+  if (overflow > 0) parts.push(t("playlist.skip.overflow", { count: overflow }));
+  if (preview.truncated) parts.push(t("playlist.skip.truncated", { cap: preview.cap }));
   if (!parts.length) return "";
-  const list =
-    parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
-  return `Skipping ${list}.`;
+  return t("playlist.skippingPrefix", { list: parts.join(t("playlist.listSep")) });
 }
 
 let openDialog = null;
@@ -58,18 +57,17 @@ function confirmImport(preview) {
     const overlay = document.createElement("div");
     overlay.className = "reset-confirm-backdrop playlist-confirm";
     const skipped = countLine(preview);
-    const plural = preview.will_queue === 1 ? "track" : "tracks";
+    const confirmBody = plural("playlist.confirmBody", preview.will_queue, { skipped: skipped ? ` ${skipped}` : "" });
     overlay.innerHTML = `
-      <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Import playlist">
-        <div class="reset-confirm-title playlist-confirm-title">Import this playlist?</div>
+      <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="${t("playlist.importAriaLabel")}">
+        <div class="reset-confirm-title playlist-confirm-title">${t("playlist.confirmTitle")}</div>
         <p class="reset-confirm-body">
           <strong class="playlist-name"></strong><br />
-          Queues <strong>${preview.will_queue}</strong> ${plural}, one at a time, into a folder
-          of the same name. ${skipped}
+          ${confirmBody}
         </p>
         <div class="reset-confirm-actions">
-          <button class="reset-confirm-cancel" type="button">Cancel</button>
-          <button class="playlist-confirm-go" type="button">Import ${preview.will_queue} ${plural}</button>
+          <button class="reset-confirm-cancel" type="button">${t("playlist.cancel")}</button>
+          <button class="playlist-confirm-go" type="button">${plural("playlist.import", preview.will_queue)}</button>
         </div>
       </div>
     `;
@@ -105,15 +103,15 @@ export async function importPlaylist(url, stems) {
     preview = await res.json();
     if (!res.ok) throw new Error(preview.detail || res.statusText);
   } catch (err) {
-    showError(`Could not read that playlist: ${err.message}`);
+    showError(t("playlist.couldNotRead", { message: err.message }));
     return 0;
   }
 
   if (!preview.will_queue) {
     showError(
       preview.capacity_left === 0
-        ? "The queue is full. Wait for it to drain, or cancel something first."
-        : "Nothing in that playlist can be imported right now.",
+        ? t("playlist.queueFull")
+        : t("playlist.nothingImportable"),
       countLine(preview) || null,
       { retry: false },
     );
@@ -132,7 +130,7 @@ export async function importPlaylist(url, stems) {
     result = await res.json();
     if (!res.ok) throw new Error(result.detail || res.statusText);
   } catch (err) {
-    showError(`Could not import that playlist: ${err.message}`);
+    showError(t("playlist.couldNotImport", { message: err.message }));
     return 0;
   }
 

@@ -1,5 +1,7 @@
 // sections.js — interactive sections bar above the waveform
 
+import { t } from "./i18n.js";
+
 const SECTION_COLORS = [
   "#4a7fff",
   "#2ab8e8",
@@ -82,7 +84,7 @@ function _makeSectionEl(section) {
   el.innerHTML = `
     <div class="section-handle section-handle-l" data-edge="left"></div>
     <span class="section-label">${_esc(section.name)}</span>
-    <button class="section-del" type="button" aria-label="Delete section" tabindex="-1">×</button>
+    <button class="section-del" type="button" aria-label="${t("sections.deleteAria")}" tabindex="-1">×</button>
     <div class="section-handle section-handle-r" data-edge="right"></div>
   `;
 
@@ -270,7 +272,7 @@ function _addSection() {
   if (_sections.some((s) => start < s.end && end > s.start)) return;
 
   const color = _nextColor();
-  const section = { id: _nextId(), name: "Section", start, end, color };
+  const section = { id: _nextId(), name: t("sections.defaultName"), start, end, color };
   _sections.push(section);
   _render();
   _scheduleSave();
@@ -321,14 +323,14 @@ function _showSaving() {
   const el = document.getElementById("sectionsSaveIndicator");
   if (!el) return;
   clearTimeout(_savedTimer);
-  el.textContent = "Saving";
+  el.textContent = t("sections.saving");
   el.className = "sections-save-indicator";
 }
 
 function _showSaved() {
   const el = document.getElementById("sectionsSaveIndicator");
   if (!el) return;
-  el.textContent = "Saved";
+  el.textContent = t("sections.saved");
   el.className = "sections-save-indicator saved";
   _savedTimer = setTimeout(() => {
     el.className = "sections-save-indicator hidden";

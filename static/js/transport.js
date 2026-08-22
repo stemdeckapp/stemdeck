@@ -19,6 +19,7 @@ import {
 import { applyMix } from "./mixer.js";
 import { isDownbeatIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn } from "./metronome.js";
+import { t } from "./i18n.js";
 
 const MIN_LOOP_SEC = 0.2;
 // Below this visible width the waveform stops compressing to fit and instead
@@ -668,7 +669,7 @@ export function applyMetronomeAccent() {
 
 function _renderMetroVolume() {
   const pct = `${Math.round(metronomeVolume * 100)}%`;
-  if (metroVolEl) { metroVolEl.value = String(metronomeVolume); metroVolEl.title = `Click volume: ${pct}`; }
+  if (metroVolEl) { metroVolEl.value = String(metronomeVolume); metroVolEl.title = t("click.volumeTitle", { pct }); }
   // Readout sits next to the slider (design 1b): a click level you can only
   // learn by hovering is one you cannot match between sessions.
   if (metroVolLabel) metroVolLabel.textContent = pct;
@@ -722,25 +723,28 @@ function _renderMetroNote(grid) {
   const bpm = Number.isFinite(eff) ? eff : Number(grid.bpm);
   const conf = Number(grid.confidence);
 
-  const parts = [];
-  if (Number.isFinite(bpm)) parts.push(`Clicking ${bpm.toFixed(1)} BPM`);
-  if (Number.isFinite(conf)) parts.push(`${conf}% of beats sit on a drum hit`);
-
-  // Deliberately worded as "on a drum hit", not "confidence the tempo is
-  // right". A half-time grid scores ~100% here and is still musically wrong,
-  // so the note must not imply the metrical level was verified -- that is
-  // what the halve/double control is for.
-  const nBars = Array.isArray(grid.bars) ? grid.bars.length : 0;
-  if (metronomeBeatsPerBar < 0 && nBars) {
-    parts.push(nBars === 1
-      ? `accenting ${grid.bars[0].beats_per_bar}/4 from the detected downbeat`
-      : `accenting ${nBars} detected meter regions`);
-  } else if (metronomeBeatsPerBar > 0) {
-    parts.push(`accenting every ${metronomeBeatsPerBar} beats`);
+  // Each branch is one complete, translated sentence (not clauses joined at
+  // runtime) so word order can differ freely per language -- see i18n.js's
+  // metro.note.* keys. Deliberately worded as "on a drum hit", not
+  // "confidence the tempo is right": a half-time grid scores ~100% here and
+  // is still musically wrong, so the note must not imply the metrical level
+  // was verified -- that is what the halve/double control is for.
+  let text = "";
+  if (Number.isFinite(bpm) && Number.isFinite(conf)) {
+    const bpmStr = bpm.toFixed(1);
+    const nBars = Array.isArray(grid.bars) ? grid.bars.length : 0;
+    if (metronomeBeatsPerBar < 0 && nBars === 1) {
+      text = t("metro.note.detectedSingleBar", { bpm: bpmStr, conf, beats: grid.bars[0].beats_per_bar });
+    } else if (metronomeBeatsPerBar < 0 && nBars > 1) {
+      text = t("metro.note.detectedMultiBar", { bpm: bpmStr, conf, count: nBars });
+    } else if (metronomeBeatsPerBar > 0) {
+      text = t("metro.note.full", { bpm: bpmStr, conf, accent: metronomeBeatsPerBar });
+    } else {
+      text = t("metro.note.noAccent", { bpm: bpmStr, conf });
+    }
+  } else if (Number.isFinite(bpm)) {
+    text = t("metro.note.fallback", { bpm: bpm.toFixed(1) });
   }
-  const text = parts.length
-    ? `${parts.join(" -- ")}. Use /2 or x2 if the click feels half or double speed.`
-    : "";
   metroNoteEl.textContent = text;
   metroNoteEl.title = text; // clipped to one line; the full text is a hover away
   metroNoteEl.className = Number.isFinite(conf) && conf < 60 ? "metro-note warn" : "metro-note";
@@ -751,7 +755,7 @@ export function updateMetronomeAvailability(grid, reason = "") {
   _lastGrid = grid || null;
   const available = !!(grid && Array.isArray(grid.beats) && grid.beats.length);
   metroBtn.disabled = !available;
-  metroBtn.title = available ? "Click track (K)" : (reason || "Click track unavailable");
+  metroBtn.title = available ? t("click.toggleTitle") : (reason || t("click.unavailableAria"));
 
   if (!available) {
     // Keep the stored preference so the click returns on the next track that
@@ -770,7 +774,7 @@ export function updateMetronomeAvailability(grid, reason = "") {
   const autoOpt = metroBarEl?.querySelector('option[value="-1"]');
   if (autoOpt) {
     autoOpt.disabled = !metronomeHasBars;
-    autoOpt.textContent = metronomeHasBars ? "Auto (detected)" : "Auto (none found)";
+    autoOpt.textContent = metronomeHasBars ? t("click.auto") : t("click.autoNone");
   }
   if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
   _renderMetroMultiplier();

@@ -17,6 +17,7 @@ import {
   masterVolume, audioEngine,
 } from "./state.js";
 import { storeGet, storeSetDebounced } from "./utils.js";
+import { t } from "./i18n.js";
 
 function defaultMixerEntry() {
   return { volume: 1, muted: false, soloed: false };
@@ -317,7 +318,7 @@ function makeVolumeKnob(stemName, color) {
   input.setAttribute("value", "1");
   input.style.setProperty("--fader-color", color);
   input.style.setProperty("--lane-pos", "0.5");
-  input.setAttribute("aria-label", `${STEM_DISPLAY[stemName] || stemName} volume`);
+  input.setAttribute("aria-label", t("aria.volume", { name: STEM_DISPLAY[stemName] || stemName }));
   input.addEventListener("input", () => setLaneVolume(stemName, parseFloat(input.value)));
   input.addEventListener("dblclick", (e) => { e.stopPropagation(); setLaneVolume(stemName, 1); });
   wrap.appendChild(input);
@@ -393,7 +394,7 @@ export function renderMixerRow(stem) {
   muteBtn.type = "button";
   muteBtn.className = "lane-icon-toggle mx-btn mute";
   muteBtn.textContent = "M";
-  muteBtn.setAttribute("aria-label", `Mute ${display}`);
+  muteBtn.setAttribute("aria-label", t("aria.mute", { name: display }));
   muteBtn.setAttribute("aria-pressed", String(state?.muted ?? false));
   if (!state?.muted) muteBtn.classList.add("active");
 
@@ -402,7 +403,7 @@ export function renderMixerRow(stem) {
   soloBtn.type = "button";
   soloBtn.className = "solo ms-btn mx-btn";
   soloBtn.textContent = "S";
-  soloBtn.setAttribute("aria-label", `Solo ${display}`);
+  soloBtn.setAttribute("aria-label", t("aria.solo", { name: display }));
   soloBtn.setAttribute("aria-pressed", String(state?.soloed ?? false));
   if (state?.soloed) soloBtn.classList.add("active");
 
@@ -411,7 +412,7 @@ export function renderMixerRow(stem) {
   dl.className = "lane-dl mx-btn";
   dl.href = stem.url;
   dl.download = `${stem.name}.wav`;
-  dl.title = `Download ${display}`;
+  dl.title = t("aria.download", { name: display });
   dl.appendChild(downloadIcon());
 
   // Wrap name + VU in a column so VU appears below the name
