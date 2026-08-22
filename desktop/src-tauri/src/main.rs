@@ -2787,6 +2787,19 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         return Ok(existing);
     }
 
+    // Prefer a system FFmpeg on PATH -- a Homebrew/apt/choco install, or a dev
+    // machine that already has one -- over downloading our own, on every
+    // platform. verify_ffmpeg() confirms it both runs on this OS *and* has
+    // every encoder StemDeck's export pipeline needs (see its doc comment),
+    // so this only short-circuits the download when the system build can
+    // actually fulfill StemDeck's requirements. This also protects macOS
+    // users on an older OS than our downloaded build assumes (#414): if they
+    // already have a working system FFmpeg, we no longer force a potentially
+    // incompatible download on top of it.
+    if verify_ffmpeg(Path::new("ffmpeg")).is_ok() {
+        return Ok(PathBuf::from("ffmpeg"));
+    }
+
     #[cfg(windows)]
     {
         download_windows_ffmpeg(data_dir)?;
@@ -2807,13 +2820,9 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // Prefer a system ffmpeg on PATH (dev installs, or users who already have
-        // one) so we skip the download entirely. Otherwise fetch a static build
-        // into data_dir/ffmpeg -- the shared config.json PATH plumbing then lets
-        // the Demucs subprocess find it too.
-        if verify_ffmpeg(Path::new("ffmpeg")).is_ok() {
-            return Ok(PathBuf::from("ffmpeg"));
-        }
+        // No system FFmpeg was usable above -- fetch a static build into
+        // data_dir/ffmpeg. The shared config.json PATH plumbing then lets the
+        // Demucs subprocess find it too.
         download_linux_ffmpeg(data_dir)?;
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
@@ -3026,8 +3035,13 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     // (GitHub's global CDN) -- the same class of fix that already solved this
     // for Windows (#248, off gyan.dev's single mirror). evermeet.cx is the
     // fallback: a single host with no CDN behind it, reported unreachable
-    // from multiple regions (#388).
-    if let Err(primary_err) = download_macos_ffmpeg_primary(&ffmpeg_dir) {
+    // from multiple regions (#388). A checksum match only proves the bytes are
+    // what we expect, not that the binary actually launches on this machine's
+    // macOS version or has every encoder StemDeck needs -- verify both before
+    // accepting it over the fallback (#414).
+    let primary_result = download_macos_ffmpeg_primary(&ffmpeg_dir)
+        .and_then(|()| verify_ffmpeg(&ffmpeg_dir.join("ffmpeg")));
+    if let Err(primary_err) = primary_result {
         eprintln!("primary FFmpeg source failed, trying the evermeet.cx fallback: {primary_err}");
         return download_macos_ffmpeg_zip_source(
             DEFAULT_MACOS_FFMPEG_URL,
@@ -3270,6 +3284,49 @@ fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), S
     Ok(())
 }
 
+// Encoders StemDeck's export pipeline actually calls for by name: pcm_s16le
+// (WAV stems), flac (FLAC stems), libmp3lame (MP3 stems/zips), libvorbis (OGG
+// stems), aac (the audio track on MP4 video exports) -- see app/api/stems.py's
+// per-format ffmpeg args. A minimal or distro-stripped FFmpeg build can pass a
+// bare `-version` check yet be missing one of these, which would otherwise
+// only surface later as an export failure deep in the pipeline (#414).
+const REQUIRED_FFMPEG_ENCODERS: &[&str] = &["pcm_s16le", "flac", "libmp3lame", "libvorbis", "aac"];
+
+fn missing_required_encoders(listing: &str) -> Vec<&'static str> {
+    REQUIRED_FFMPEG_ENCODERS
+        .iter()
+        .copied()
+        .filter(|codec| !listing.contains(codec))
+        .collect()
+}
+
+fn verify_ffmpeg_encoders(path: &Path) -> Result<(), String> {
+    let mut command = Command::new(path);
+    command
+        .args(["-hide_banner", "-encoders"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console_window(&mut command);
+    let output =
+        command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg encoder check")
+            .map_err(|e| format!("failed to list FFmpeg encoders at {}: {e}", path.display()))?;
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let missing = missing_required_encoders(&listing);
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "FFmpeg at {} is missing required encoder(s): {}",
+            path.display(),
+            missing.join(", ")
+        ))
+    }
+}
+
+// A binary is only "compatible with StemDeck's requirements" (#414) if it
+// both runs on this machine and has every encoder the export pipeline needs
+// -- checking just one half would let either a broken-on-this-OS build or a
+// minimal/stripped one through.
 fn verify_ffmpeg(path: &Path) -> Result<(), String> {
     let mut command = Command::new(path);
     command
@@ -3279,16 +3336,15 @@ fn verify_ffmpeg(path: &Path) -> Result<(), String> {
     hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
         .map_err(|e| format!("failed to run FFmpeg at {}: {e}", path.display()))?;
-    if output.status.success() {
-        Ok(())
-    } else {
+    if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
+        return Err(format!(
             "FFmpeg at {} failed verification: {}",
             path.display(),
             stderr.trim()
-        ))
+        ));
     }
+    verify_ffmpeg_encoders(path)
 }
 
 fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
@@ -3870,6 +3926,34 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         let flat = dir.path().join("ffmpeg").join(name);
         fs::write(&flat, b"x").unwrap();
         assert_eq!(super::resolve_existing_ffmpeg(dir.path()), Some(flat));
+    }
+
+    #[test]
+    fn missing_required_encoders_flags_only_the_absent_ones() {
+        // A full build listing every codec StemDeck needs -> nothing missing.
+        let full = "\
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3)
+ A....D libvorbis            libvorbis
+ A....D aac                  AAC (Advanced Audio Coding)
+";
+        assert!(super::missing_required_encoders(full).is_empty());
+
+        // A minimal/stripped build missing the patent-sensitive encoders.
+        let stripped = "\
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+";
+        assert_eq!(
+            super::missing_required_encoders(stripped),
+            vec!["libmp3lame", "libvorbis", "aac"]
+        );
+
+        assert_eq!(
+            super::missing_required_encoders(""),
+            super::REQUIRED_FFMPEG_ENCODERS
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
