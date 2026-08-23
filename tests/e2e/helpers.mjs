@@ -169,7 +169,11 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ tag_name: "v9.9.9", body: "notes", html_url: "https://example.invalid", assets: [] }),
+        // An ARRAY: the app polls /releases (the list), not /releases/latest,
+        // so that a version published as a pre-release is still seen.
+        body: JSON.stringify([
+          { tag_name: "v9.9.9", draft: false, prerelease: false, body: "notes", html_url: "https://example.invalid", assets: [] },
+        ]),
       }));
     return;
   }
