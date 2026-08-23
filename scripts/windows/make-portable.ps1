@@ -181,6 +181,12 @@ if ($CpuOnly) {
 
 Copy-Tree (Join-Path $Root "app") (Join-Path $BackendDir "app")
 Copy-Tree (Join-Path $Root "static") (Join-Path $BackendDir "static")
+# Copy-Tree mirrors the working tree, so a developer's local __pycache__ rides
+# along into the shipped app layer. Harmless (Python revalidates by mtime+size)
+# but it is stale bytecode from someone else's machine, and it is dead weight in
+# the small update asset that exists precisely to stay small (#421).
+Get-ChildItem -Path $BackendDir -Filter "__pycache__" -Recurse -Directory -Force |
+  Remove-Item -Recurse -Force
 $PackageVersion = Get-PackageVersion
 $VersionJson = @{ version = $PackageVersion } | ConvertTo-Json -Compress
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -292,6 +298,14 @@ $RuntimeId = "py$PyMajorMinor-$LockHash"
 $RuntimeIdJson = @{ runtimeId = $RuntimeId } | ConvertTo-Json -Compress
 [System.IO.File]::WriteAllText((Join-Path $PythonDir "runtime-version.json"), $RuntimeIdJson + "`n", $utf8NoBom)
 Write-Host "Runtime id  : $RuntimeId"
+
+# Every Python invocation above wrote __pycache__ back for the modules it
+# touched: the post-strip import check alone regenerated a measured 1,912 files
+# / 39 MB, which had cancelled out nearly the whole strip. Drop it once here,
+# AFTER the last time this script runs the packaged interpreter, so the checks
+# stay checks instead of becoming the thing that re-bloats the package.
+Get-ChildItem -Path $PythonDir -Filter "__pycache__" -Recurse -Directory -Force |
+  Remove-Item -Recurse -Force
 
 Push-Location $DesktopDir
 try {

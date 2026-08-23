@@ -2283,47 +2283,36 @@ function findReleaseAsset(release, name) {
   return (release.assets || []).find((a) => a.name === name) || null;
 }
 
-async function fetchAssetText(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
-  return res.text();
-}
-
-// The checksum files this release publishes are `<hash>  <filename>` lines
-// (make-portable.ps1's `Get-FileHash` + `Set-Content` convention) -- same
-// shape BtbN's FFmpeg checksums.sha256 uses, just one line here.
-function parseSha256File(text) {
-  const hash = (text.trim().split(/\s+/)[0] || "").toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("malformed checksum file");
-  return hash;
-}
-
 // Resolves the app-layer asset for the in-app updater, or null when this
 // release cannot be applied in place -- it predates the updater assets, is
 // missing one, or changed the Python dependency set. Null means "use the full
 // download link", which is always correct, just less convenient.
+//
+// The checksum and runtime-id files are read by Rust (`check_app_update`), not
+// fetched here. This page is served by the Python backend, so its CSP applies,
+// and connect-src allows api.github.com but NOT the github.com /
+// objects.githubusercontent.com hosts that serve release *assets*. Fetching
+// them from JS is blocked outright; Rust's HTTP client is not bound by the page
+// CSP, so the policy stays as tight as it is today.
 async function resolveWindowsUpdatePlan(release) {
   const appAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip");
   const appShaAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip.sha256");
   const runtimeIdAsset = findReleaseAsset(release, "StemDeck-Windows-x64-runtime-version.json");
   if (!appAsset || !appShaAsset || !runtimeIdAsset) return null;
 
-  // Compatibility gate. Any uncertainty here -- an unreadable asset, an install
-  // with no recorded runtime id -- must fall back to the full download: an app
-  // layer whose imports the installed runtime cannot satisfy is a broken app.
-  const releaseRuntimeId = JSON.parse(await fetchAssetText(runtimeIdAsset.browser_download_url))?.runtimeId;
-  const installedRuntimeId = await window.__TAURI__.core.invoke("installed_runtime_id");
-  if (!releaseRuntimeId || !installedRuntimeId || releaseRuntimeId !== installedRuntimeId) {
+  const check = await window.__TAURI__.core.invoke("check_app_update", {
+    query: {
+      appShaUrl: appShaAsset.browser_download_url,
+      runtimeIdUrl: runtimeIdAsset.browser_download_url,
+    },
+  });
+  if (!check?.supported) {
+    console.info("[catalog] in-app update unavailable:", check?.reason || "unknown");
     return null;
   }
 
-  return {
-    appUrl: appAsset.browser_download_url,
-    appSha256: parseSha256File(await fetchAssetText(appShaAsset.browser_download_url)),
-  };
+  return { appUrl: appAsset.browser_download_url, appSha256: check.appSha256 };
 }
-
-let _appUpdateProgressUnlisten = null;
 
 function showInappError(message) {
   const errorEl = document.getElementById("releaseInappError");
@@ -2340,7 +2329,6 @@ async function wireWindowsUpdate() {
   const applyBtn = document.getElementById("releaseApplyUpdate");
   const inapp = document.getElementById("releaseInapp");
   const progress = document.getElementById("releaseInappProgress");
-  const progressFill = document.getElementById("releaseInappProgressFill");
   const progressText = document.getElementById("releaseInappProgressText");
   const errorEl = document.getElementById("releaseInappError");
   if (!downloadBtn || !applyBtn || !latestRelease) return false;
@@ -2348,7 +2336,9 @@ async function wireWindowsUpdate() {
   const plan = await resolveWindowsUpdatePlan(latestRelease);
   if (!plan) return false;
 
-  document.getElementById("releaseDownload")?.classList.add("hidden");
+  // The manual download stays visible alongside the auto-update pill: some
+  // people would rather grab the zip, and it is the escape hatch if an in-app
+  // update fails.
   inapp?.classList.remove("hidden");
   progress?.classList.add("hidden");
   errorEl?.classList.add("hidden");
@@ -2357,24 +2347,21 @@ async function wireWindowsUpdate() {
   downloadBtn.classList.remove("hidden");
   applyBtn.classList.add("hidden");
 
+  // Indeterminate, not a byte-accurate bar. Real progress would mean listening
+  // to the Rust download event, and this page is served over http by the Python
+  // backend -- a remote origin, which the Tauri capability in
+  // desktop/src-tauri/capabilities/default.json does not cover, so
+  // `plugin:event|listen` is refused by the ACL. Granting a remote origin event
+  // permissions would widen exactly the IPC surface #171 locked down, and the
+  // app layer is ~5 MB. Not worth it. (App-defined commands like the invokes
+  // below are not ACL-gated, which is why those work.)
   downloadBtn.onclick = async () => {
     errorEl?.classList.add("hidden");
     downloadBtn.disabled = true;
-    if (progressFill) progressFill.style.width = "0%";
     if (progressText) progressText.textContent = i18nT("release.downloading");
     progress?.classList.remove("hidden");
-
-    if (_appUpdateProgressUnlisten) { _appUpdateProgressUnlisten(); _appUpdateProgressUnlisten = null; }
+    progress?.classList.add("indeterminate");
     try {
-      _appUpdateProgressUnlisten = await window.__TAURI__.event.listen(
-        "runtime-download-progress",
-        (event) => {
-          const { received, total } = event.payload;
-          if (total && progressFill) {
-            progressFill.style.width = `${Math.min(100, Math.round((received / total) * 100))}%`;
-          }
-        },
-      );
       await window.__TAURI__.core.invoke("download_app_update", { plan });
       progress?.classList.add("hidden");
       downloadBtn.classList.add("hidden");
@@ -2384,8 +2371,6 @@ async function wireWindowsUpdate() {
       showInappError(String(e?.message || e));
       downloadBtn.disabled = false;
       progress?.classList.add("hidden");
-    } finally {
-      if (_appUpdateProgressUnlisten) { _appUpdateProgressUnlisten(); _appUpdateProgressUnlisten = null; }
     }
   };
 
@@ -2438,6 +2423,21 @@ async function openReleaseDialog() {
     docker?.classList.add("hidden");
     const target = await getBuildTarget();
 
+    // The manual download is always offered. On Windows, when the release can
+    // be applied in place, an "Update now" pill appears beside it -- additive,
+    // never a replacement, so the zip stays one click away either way.
+    const picked = pickReleaseAsset(latestRelease, target);
+    if (picked) {
+      download.href = picked.url;
+      download.textContent = i18nT("release.download");
+    } else {
+      // No matching asset (e.g. an arch we don't build): fall back to the
+      // release page so the user can pick manually.
+      download.href = latestRelease.html_url || RELEASES_URL;
+      download.textContent = i18nT("release.viewDownload");
+    }
+    download.classList.remove("hidden");
+
     let usedInapp = false;
     if (target.os === "windows") {
       try {
@@ -2446,22 +2446,10 @@ async function openReleaseDialog() {
         console.warn("[catalog] in-app update setup failed, falling back to link:", e);
       }
     }
-
     if (!usedInapp) {
       document.getElementById("releaseInapp")?.classList.add("hidden");
       document.getElementById("releaseDownloadApp")?.classList.add("hidden");
       document.getElementById("releaseApplyUpdate")?.classList.add("hidden");
-      const picked = pickReleaseAsset(latestRelease, target);
-      if (picked) {
-        download.href = picked.url;
-        download.textContent = i18nT("release.download");
-      } else {
-        // No matching asset (e.g. an arch we don't build): fall back to the
-        // release page so the user can pick manually.
-        download.href = latestRelease.html_url || RELEASES_URL;
-        download.textContent = i18nT("release.viewDownload");
-      }
-      download.classList.remove("hidden");
     }
   }
 

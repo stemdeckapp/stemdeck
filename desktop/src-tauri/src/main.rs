@@ -217,6 +217,36 @@ struct AppUpdatePlan {
     app_sha256: String,
 }
 
+/// Asset URLs lifted from the GitHub release JSON by the frontend, for
+/// `check_app_update` to resolve.
+///
+/// The small metadata files are fetched HERE rather than in JS on purpose. The
+/// page is served by the Python backend over http, so the backend's own
+/// Content-Security-Policy applies to it, and `connect-src` allows
+/// `api.github.com` but NOT `github.com`/`objects.githubusercontent.com` where
+/// release *assets* actually live (app/main.py). A `fetch()` for the checksum
+/// or the runtime id would be blocked outright and the updater would silently
+/// never appear. reqwest is not bound by the page CSP, so doing it in Rust
+/// keeps that policy exactly as tight as it is today.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct AppUpdateQuery {
+    app_sha_url: String,
+    runtime_id_url: String,
+}
+
+/// Whether this release can be installed in place, and the verified checksum to
+/// install it with. `reason` is for the log, not the user: the UI just falls
+/// back to the normal download link.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateAvailability {
+    supported: bool,
+    app_sha256: Option<String>,
+    reason: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadProgress {
@@ -276,6 +306,21 @@ fn main() {
             };
             let _ = fs::create_dir_all(&data_dir);
 
+            // Sweep what an in-app update left at the app root: the previous
+            // backend/ and exe, plus a staging dir if the update was
+            // interrupted before it could clean up. The new files are already
+            // in place, so these are only ever the old version's leftovers.
+            //
+            // Runs on EVERY launch, not just a version change. apply_app_update
+            // relaunches and then exits, so on the very first launch of the new
+            // build the outgoing process is usually still alive and Windows
+            // still holds StemDeck.exe.old open -- the delete fails silently
+            // and, gated on a version change that has already happened, would
+            // never be retried. Verified: after a real self-update both
+            // backend.old and StemDeck.exe.old were still on disk. Three path
+            // checks per launch is nothing; leaking ~30 MB forever is not.
+            sweep_update_leftovers();
+
             let version_file = data_dir.join("last_version.txt");
             let migration_flag = data_dir.join("store_migration_done");
             let current = env!("CARGO_PKG_VERSION");
@@ -297,23 +342,6 @@ fn main() {
                 // moved their library to another disk back to the default
                 // folder, to an empty app with their stems stranded.
                 prune_runtime_leftovers(&data_dir);
-                // Sweep what an in-app update left at the app root: the
-                // previous backend/ and exe, plus a staging directory if the
-                // update was interrupted before it could clean up. The new
-                // files are already in place either way, so these are only
-                // ever the old version's leftovers (#421).
-                if let Ok(root) = app_root() {
-                    for name in ["backend.old", "_update_app.tmp"] {
-                        let stale = root.join(name);
-                        if stale.is_dir() {
-                            let _ = fs::remove_dir_all(&stale);
-                        }
-                    }
-                    let stale_exe = root.join("StemDeck.exe.old");
-                    if stale_exe.is_file() {
-                        let _ = fs::remove_file(&stale_exe);
-                    }
-                }
                 let manifest = app_root()
                     .ok()
                     .and_then(|root| load_runtime_manifest(&root).ok());
@@ -354,6 +382,7 @@ fn main() {
             verify_runtime_pack,
             extract_runtime_pack,
             installed_runtime_id,
+            check_app_update,
             download_app_update,
             apply_app_update,
             ensure_external_assets,
@@ -445,7 +474,8 @@ fn current_jobs_dir(app: &tauri::AppHandle) -> PathBuf {
 /// delete so a problem here can never lose the only copy of that data.
 fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let jobs_dir = current_jobs_dir(app);
-    fs::create_dir_all(&jobs_dir).map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
+    fs::create_dir_all(&jobs_dir)
+        .map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
     let new_path = jobs_dir.join("user-data.json");
     if !new_path.is_file() {
         if let Ok(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
@@ -781,6 +811,23 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
     runtime_pack_status()
 }
 
+/// Delete the `.old` siblings and staging dir an in-app update leaves at the
+/// app root (#421). Best-effort and idempotent: whatever is still locked by the
+/// outgoing process this launch is simply picked up on the next one.
+fn sweep_update_leftovers() {
+    let Ok(root) = app_root() else { return };
+    for name in ["backend.old", "python.old", "_update_app.tmp"] {
+        let stale = root.join(name);
+        if stale.is_dir() {
+            let _ = fs::remove_dir_all(&stale);
+        }
+    }
+    let stale_exe = root.join("StemDeck.exe.old");
+    if stale_exe.is_file() {
+        let _ = fs::remove_file(&stale_exe);
+    }
+}
+
 /// The Python dependency-set id of the runtime currently on disk, written into
 /// `python/runtime-version.json` by make-portable.ps1. `None` when the marker
 /// is absent -- a pre-#421 install, a non-Windows build, or a source checkout.
@@ -802,6 +849,107 @@ fn installed_runtime_id() -> Option<String> {
 fn parse_runtime_id(text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     value.get("runtimeId")?.as_str().map(|s| s.to_string())
+}
+
+/// Decides whether the latest release can be applied in place, and resolves its
+/// checksum. Windows-only; every other platform reports unsupported.
+///
+/// An in-app update is offered only when the release's Python dependency set
+/// matches the installed one, because the updater cannot replace `python/`
+/// (see `AppUpdatePlan`). Any uncertainty -- an unreachable asset, an install
+/// with no recorded runtime id, a malformed checksum -- reports unsupported, so
+/// the UI falls back to the full download rather than risking an app layer
+/// whose imports the installed runtime cannot satisfy.
+#[tauri::command]
+async fn check_app_update(query: AppUpdateQuery) -> Result<AppUpdateAvailability, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = query;
+        Ok(AppUpdateAvailability {
+            supported: false,
+            reason: Some("in-app updates are Windows-only".to_string()),
+            ..Default::default()
+        })
+    }
+    #[cfg(windows)]
+    {
+        let unsupported = |reason: &str| {
+            Ok(AppUpdateAvailability {
+                supported: false,
+                reason: Some(reason.to_string()),
+                ..Default::default()
+            })
+        };
+
+        let Some(installed) = installed_runtime_id() else {
+            return unsupported("this install records no runtime id");
+        };
+        let release_marker = match fetch_text(&query.runtime_id_url).await {
+            Ok(text) => text,
+            Err(e) => return unsupported(&format!("could not read the release runtime id: {e}")),
+        };
+        let Some(release_id) = parse_runtime_id(&release_marker) else {
+            return unsupported("the release runtime id could not be parsed");
+        };
+        if release_id != installed {
+            return unsupported(&format!(
+                "python dependencies changed ({installed} -> {release_id})"
+            ));
+        }
+
+        let checksum_file = match fetch_text(&query.app_sha_url).await {
+            Ok(text) => text,
+            Err(e) => return unsupported(&format!("could not read the update checksum: {e}")),
+        };
+        let Some(sha256) = parse_sha256_line(&checksum_file) else {
+            return unsupported("the update checksum could not be parsed");
+        };
+
+        Ok(AppUpdateAvailability {
+            supported: true,
+            app_sha256: Some(sha256),
+            reason: None,
+        })
+    }
+}
+
+/// Fetch a small text file (a checksum, a version marker). Capped so a wrong
+/// URL that points at something huge cannot be read into memory unbounded.
+#[cfg(windows)]
+async fn fetch_text(url: &str) -> Result<String, String> {
+    const MAX_BYTES: usize = 64 * 1024;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("read failed: {e}"))?;
+    if bytes.len() > MAX_BYTES {
+        return Err(format!("response larger than {MAX_BYTES} bytes"));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|e| format!("response was not valid UTF-8: {e}"))
+}
+
+/// Pull the hash out of a `<sha256>  <filename>` checksum file, the shape
+/// make-portable.ps1 writes (Get-FileHash + Set-Content). Rejects anything that
+/// is not exactly one 64-char hex digest so a redirect to an HTML error page
+/// can never be mistaken for a checksum.
+#[cfg(any(windows, test))]
+fn parse_sha256_line(text: &str) -> Option<String> {
+    let token = text.split_whitespace().next()?.to_ascii_lowercase();
+    let ok = token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit());
+    ok.then_some(token)
 }
 
 /// Downloads and checksum-verifies the app-layer update. Windows-only: the
@@ -4166,6 +4314,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_the_checksum_file_make_portable_writes() {
+        // "<sha256>  <filename>" -- Get-FileHash + Set-Content.
+        let sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let written = format!("{}  StemDeck-Windows-x64-app.zip\n", sha.to_uppercase());
+        assert_eq!(super::parse_sha256_line(&written).as_deref(), Some(sha));
+    }
+
+    #[test]
+    fn a_non_checksum_response_is_rejected() {
+        // An asset URL that redirects to an HTML error page must never be
+        // mistaken for a checksum -- that would verify the download against
+        // garbage instead of failing closed.
+        for text in [
+            "",
+            "<!DOCTYPE html><html>404</html>",
+            "not-a-hash  file.zip",
+            "2cf24dba  file.zip",
+            "zzf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  f.zip",
+        ] {
+            assert_eq!(super::parse_sha256_line(text), None, "input: {text:?}");
+        }
+    }
+
     // --- macOS FFmpeg checksum verification (#172) ---
 
     #[cfg(target_os = "macos")]
@@ -4406,7 +4578,9 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     #[test]
     fn directory_has_entries_false_for_a_missing_dir() {
         let dir = make_tmp();
-        assert!(!super::directory_has_entries(&dir.path().join("does-not-exist")));
+        assert!(!super::directory_has_entries(
+            &dir.path().join("does-not-exist")
+        ));
     }
 
     #[test]

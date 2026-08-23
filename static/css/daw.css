@@ -2676,6 +2676,15 @@ input, textarea { font-family: inherit; }
   color: var(--fg-2);
 }
 .about-link-secondary:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+/* The in-app update pill: sits beside the plain Download link and is the
+   recommended action, so it carries the accent fill by default rather than
+   only on hover. */
+.about-link-accent {
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #000; font-weight: 600; cursor: pointer;
+}
+.about-link-accent:hover { filter: brightness(1.08); }
+.about-link-accent:disabled { opacity: 0.55; cursor: default; filter: none; }
 .about-divider {
   width: 100%; height: 1px; background: var(--border); margin-bottom: 16px;
 }
@@ -2796,6 +2805,16 @@ input, textarea { font-family: inherit; }
   height: 100%; width: 0; border-radius: 2px;
   background: var(--accent);
   transition: width 260ms linear;
+}
+/* Indeterminate: the updater cannot listen to the Rust progress event from this
+   origin (see catalog.js), so the bar shows activity rather than a percentage. */
+.release-inapp-progress.indeterminate .release-inapp-progress-fill {
+  width: 40%;
+  animation: release-inapp-slide 1.1s ease-in-out infinite;
+}
+@keyframes release-inapp-slide {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
 }
 .release-inapp-progress-text { margin: 0; font-size: 11px; color: var(--muted); }
 .release-inapp-error { margin: 0; font-size: 12px; color: #e54e4e; }
