@@ -2060,7 +2060,14 @@ const FALLBACK_VERSION = "0.1.0";
 let currentVersion = FALLBACK_VERSION;
 const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
 const RELEASES_URL = "https://github.com/stemdeckapp/stemdeck/releases";
-const RELEASES_API = "https://api.github.com/repos/stemdeckapp/stemdeck/releases/latest";
+// The releases LIST, not /releases/latest. GitHub defines "latest" as the most
+// recent NON-PRERELEASE release, so the moment a version ships with the
+// pre-release box ticked it becomes invisible here and nobody is ever told an
+// update exists. StemDeck has historically published even its alphas as normal
+// releases, which is why that has not bitten yet -- this makes the check
+// correct either way rather than dependent on remembering not to tick a box.
+const RELEASES_API =
+  "https://api.github.com/repos/stemdeckapp/stemdeck/releases?per_page=10";
 const DISMISSED_UPDATE_KEY = "stemdeck.dismissed_update";
 
 // The full GitHub release object from the last successful update check, used to
@@ -2497,7 +2504,12 @@ async function checkForUpdate() {
     // The check itself succeeded, regardless of what it finds below — clear
     // any stale "update check failed" card (#401).
     dismissFailuresByKind("update");
-    const data = await res.json();
+    // Newest first, as GitHub returns them. Drafts are invisible to an
+    // unauthenticated request anyway, but filter them so a maintainer running a
+    // dev build is not offered a release that has no assets yet.
+    const releases = await res.json();
+    const data = Array.isArray(releases) ? releases.find((r) => !r.draft) : null;
+    if (!data) return;
     const latest = normalizeVersion(data.tag_name);
     // Compare canonically so a PEP440 current version (0.7.0a9) matches the
     // release tag form (0.7.0-alpha.9) and we don't nag an already-current app.

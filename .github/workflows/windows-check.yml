@@ -9,6 +9,15 @@ name: Windows Rust Check
 # build in v0.11.1's first release attempt.
 on:
   workflow_dispatch:
+  # Also on PRs that actually touch the Rust, so a desktop-shell change cannot
+  # merge without a real compiler pass on this platform. Scoped by path so the
+  # self-hosted runner's load is unchanged for the majority of PRs, which do not
+  # go near src-tauri. (#421 added ~600 lines of mostly cfg-gated Rust and every
+  # CI check passed without compiling any of it.)
+  pull_request:
+    paths:
+      - "desktop/src-tauri/**"
+      - ".github/workflows/windows-check.yml"
 
 permissions: {}
 
