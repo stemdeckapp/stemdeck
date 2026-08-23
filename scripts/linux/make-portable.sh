@@ -183,6 +183,44 @@ done
 # Static link archives are only needed to build C++ extensions, never to run.
 find "$TORCH_LIB" -name "*.a" -type f -delete 2>/dev/null || true
 
+# The stdlib's own test suite and every package's bundled test/tests directory
+# are never imported at runtime -- on Windows this accounted for ~2,000 files
+# and 33 MB (#421). Mirrored here so both platforms ship the same shape.
+rm -rf "${PYTHON_DIR}/lib/python${PYTHON_VERSION}/test" 2>/dev/null || true
+for d in "${PYTHON_DIR}/lib/python${PYTHON_VERSION}/site-packages"/*/; do
+  for name in test tests; do
+    rm -rf "${d}${name}" 2>/dev/null || true
+  done
+done
+# NOTE: do NOT strip .dist-info RECORD files. pip needs them to replace a
+# package, and the NVIDIA variant pip-installs CUDA torch into this very tree on
+# the user's first run (install_cuda_torch).
+
+# Re-verify after the widened strip: the check above ran before it and would not
+# catch a strip that removed something load-bearing (#407, #421).
+"$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"
+
+# Runtime fingerprint, shipped inside python/ in every package (#421).
+#
+# The in-app updater's SAFETY GATE, not a download trigger: it replaces
+# StemDeck + backend/ only and never touches python/, so an app-only update is
+# safe exactly when the release needs the same Python dependencies already
+# installed. Derived from uv.lock plus the interpreter's major.minor -- the same
+# formula make-portable.ps1 uses, deliberately not the package version, which
+# changes every release and would make every update look incompatible.
+RUNTIME_ID="py${PYTHON_VERSION}-$(sha256sum "${REPO_ROOT}/uv.lock" | cut -c1-16)"
+printf '{"runtimeId":"%s"}\n' "$RUNTIME_ID" > "${PYTHON_DIR}/runtime-version.json"
+echo "==> Runtime id: ${RUNTIME_ID}"
+
+# Importing above rewrote __pycache__ for everything it touched; on Windows that
+# measured 1,912 files / 39 MB and cancelled out most of the strip. Drop it once
+# here, after the last time this script runs the packaged interpreter.
+find "$PYTHON_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
+find "$PYTHON_DIR" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete 2>/dev/null || true
+# A developer's local __pycache__ rides along in the cp -R above, and it is dead
+# weight in the small update asset that exists precisely to stay small.
+find "$BACKEND_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
+
 echo "==> Building Tauri desktop binary"
 if [[ "$SKIP_TAURI_BUILD" != "1" ]]; then
   pushd "$REPO_ROOT/desktop" >/dev/null
@@ -205,6 +243,30 @@ chmod +x "$STAGE/StemDeck"
 echo "==> Creating archive"
 tar -czf "$ARCHIVE_PATH" -C "${REPO_ROOT}/${OUTPUT_ROOT}" "$PACKAGE_NAME"
 ( cd "${REPO_ROOT}/${OUTPUT_ROOT}" && sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256" )
+
+# Slim "app layer" asset for the in-app updater (#421). The full archive above
+# is untouched and stays the only thing a fresh install needs; this is an extra,
+# much smaller asset used only by an already-installed app updating itself, so
+# it never re-extracts the whole Python runtime for a release that only changed
+# app code.
+#
+# StemDeck and backend/ are identical between the CPU and NVIDIA variants -- the
+# only per-variant difference in the package is the `cpu-only` marker at the
+# root, which the updater never touches -- so this is built once, from whichever
+# invocation sets PUBLISH_UPDATER_ASSETS=1, and needs no variant suffix.
+#
+# tar rather than zip so the executable bit on StemDeck survives; a zip would
+# land it without +x and the relaunch after an update would fail.
+if [[ "${PUBLISH_UPDATER_ASSETS:-0}" == "1" ]]; then
+  echo "==> Creating updater app-layer asset"
+  UPDATER_APP_NAME="StemDeck-Linux-x64-app"
+  ( cd "$STAGE" && tar -czf "${REPO_ROOT}/${OUTPUT_ROOT}/${UPDATER_APP_NAME}.tar.gz" StemDeck backend )
+  ( cd "${REPO_ROOT}/${OUTPUT_ROOT}" \
+      && sha256sum "${UPDATER_APP_NAME}.tar.gz" > "${UPDATER_APP_NAME}.tar.gz.sha256" )
+  cp "${PYTHON_DIR}/runtime-version.json" \
+     "${REPO_ROOT}/${OUTPUT_ROOT}/StemDeck-Linux-x64-runtime-version.json"
+  echo "Updater app pack : ${REPO_ROOT}/${OUTPUT_ROOT}/${UPDATER_APP_NAME}.tar.gz"
+fi
 
 echo "==> Done"
 if [[ "$CPU_ONLY" == "1" ]]; then

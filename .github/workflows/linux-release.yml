@@ -102,8 +102,12 @@ jobs:
 
       - name: build Linux CPU
         run: |
+          # PUBLISH_UPDATER_ASSETS=1 also emits the slim app-layer asset the
+          # in-app updater downloads (#421). Built once here: StemDeck and
+          # backend/ are identical in both variants.
           PACKAGE_NAME=StemDeck-Linux-x64 \
           PACKAGE_VERSION="$VERSION" \
+          PUBLISH_UPDATER_ASSETS=1 \
             bash scripts/linux/make-portable.sh
           # Drop the uncompressed stage but keep the tarball; frees disk for the
           # larger NVIDIA build. The Tauri binary under target/ is preserved.
@@ -145,3 +149,6 @@ jobs:
             dist/StemDeck-Linux-x64.tar.gz.sha256
             dist/StemDeck-Linux-x64.NVIDIA.tar.gz
             dist/StemDeck-Linux-x64.NVIDIA.tar.gz.sha256
+            dist/StemDeck-Linux-x64-app.tar.gz
+            dist/StemDeck-Linux-x64-app.tar.gz.sha256
+            dist/StemDeck-Linux-x64-runtime-version.json

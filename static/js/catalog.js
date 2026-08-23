@@ -2266,13 +2266,17 @@ function pickReleaseAsset(release, target) {
   return asset ? { url: asset.browser_download_url, name } : null;
 }
 
-// ─── Windows in-app updater ───
+// ─── In-app updater ───
 // Downloads and applies an update without leaving the app, instead of sending
 // the user to a browser download -- see download_app_update/apply_app_update in
-// desktop/src-tauri/src/main.rs for the file swap. Windows-only: the portable
-// zip is the only distribution shaped for an in-place swap.
+// desktop/src-tauri/src/main.rs for the file swap.
 //
-// The updater replaces StemDeck.exe and backend/ ONLY. It never touches
+// Windows and Linux only. Both ship a flat directory with the executable,
+// backend/ and python/ side by side, which is the shape the swap needs. macOS
+// resolves its backend inside the downloaded runtime pack rather than the .app,
+// so its app layer is a different thing entirely and is handled separately.
+//
+// The updater replaces the executable and backend/ ONLY. It never touches
 // python/, because an NVIDIA install rewrites that directory with CUDA torch on
 // first run and replacing it would silently drop the machine back to CPU. So an
 // in-app update is only safe when the release needs the same Python
@@ -2281,6 +2285,20 @@ function pickReleaseAsset(release, target) {
 
 function findReleaseAsset(release, name) {
   return (release.assets || []).find((a) => a.name === name) || null;
+}
+
+// Asset names the packaging scripts publish for each in-place-updatable
+// platform. The archive format differs because each script already produces
+// one: Compress-Archive on Windows, tar on Linux (which also preserves the
+// executable bit the relaunch depends on).
+function updaterAssetNames(target) {
+  if (target.os === "windows") {
+    return { app: "StemDeck-Windows-x64-app.zip", runtimeId: "StemDeck-Windows-x64-runtime-version.json" };
+  }
+  if (target.os === "linux") {
+    return { app: "StemDeck-Linux-x64-app.tar.gz", runtimeId: "StemDeck-Linux-x64-runtime-version.json" };
+  }
+  return null;
 }
 
 // Resolves the app-layer asset for the in-app updater, or null when this
@@ -2294,10 +2312,12 @@ function findReleaseAsset(release, name) {
 // objects.githubusercontent.com hosts that serve release *assets*. Fetching
 // them from JS is blocked outright; Rust's HTTP client is not bound by the page
 // CSP, so the policy stays as tight as it is today.
-async function resolveWindowsUpdatePlan(release) {
-  const appAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip");
-  const appShaAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip.sha256");
-  const runtimeIdAsset = findReleaseAsset(release, "StemDeck-Windows-x64-runtime-version.json");
+async function resolveInAppUpdatePlan(release, target) {
+  const names = updaterAssetNames(target);
+  if (!names) return null;
+  const appAsset = findReleaseAsset(release, names.app);
+  const appShaAsset = findReleaseAsset(release, `${names.app}.sha256`);
+  const runtimeIdAsset = findReleaseAsset(release, names.runtimeId);
   if (!appAsset || !appShaAsset || !runtimeIdAsset) return null;
 
   const check = await window.__TAURI__.core.invoke("check_app_update", {
@@ -2324,7 +2344,7 @@ function showInappError(message) {
 // Wires the download/apply buttons for a resolved plan. Returns false (and
 // touches nothing) when this release has no in-app-updatable assets, so the
 // caller can fall back to the plain download link.
-async function wireWindowsUpdate() {
+async function wireInAppUpdate(target) {
   const downloadBtn = document.getElementById("releaseDownloadApp");
   const applyBtn = document.getElementById("releaseApplyUpdate");
   const inapp = document.getElementById("releaseInapp");
@@ -2333,7 +2353,7 @@ async function wireWindowsUpdate() {
   const errorEl = document.getElementById("releaseInappError");
   if (!downloadBtn || !applyBtn || !latestRelease) return false;
 
-  const plan = await resolveWindowsUpdatePlan(latestRelease);
+  const plan = await resolveInAppUpdatePlan(latestRelease, target);
   if (!plan) return false;
 
   // The manual download stays visible alongside the auto-update pill: some
@@ -2439,9 +2459,9 @@ async function openReleaseDialog() {
     download.classList.remove("hidden");
 
     let usedInapp = false;
-    if (target.os === "windows") {
+    if (updaterAssetNames(target)) {
       try {
-        usedInapp = await wireWindowsUpdate();
+        usedInapp = await wireInAppUpdate(target);
       } catch (e) {
         console.warn("[catalog] in-app update setup failed, falling back to link:", e);
       }
