@@ -111,7 +111,13 @@ def app_version() -> str:
         packaged = json.loads(raw).get("version")
         if isinstance(packaged, str) and packaged.strip():
             return packaged.strip()
-    except Exception:
+    except (OSError, ValueError, AttributeError):
+        # Absent or unreadable (OSError), not valid JSON or not decodable
+        # (ValueError), or valid JSON that is not an object so has no .get
+        # (AttributeError). All of those simply mean "no app-layer marker
+        # here", so fall through to the metadata below. Narrow rather than a
+        # bare except so a genuine bug in this function still surfaces instead
+        # of silently degrading the reported version (bandit B110).
         pass
     # Installed package metadata (set at install/build from the tag); then the
     # generated app/_version.py for non-installed runs, then a dev placeholder.

@@ -28,7 +28,7 @@ def test_health_endpoints_report_ok():
 
 
 def test_app_version_prefers_the_app_layer_marker(tmp_path, monkeypatch):
-    import app.main as main
+    from app import main
 
     monkeypatch.setattr(main, "STATIC_DIR", tmp_path)
     (tmp_path / "version.json").write_text('{"version": "9.9.9"}\n', encoding="utf-8")
@@ -39,7 +39,7 @@ def test_app_version_tolerates_a_bom(tmp_path, monkeypatch):
     # PowerShell's Set-Content -Encoding UTF8 emits a BOM, which json.loads
     # rejects outright; the packaged writer avoids it but the repo-root copy
     # written by the release workflow does not.
-    import app.main as main
+    from app import main
 
     monkeypatch.setattr(main, "STATIC_DIR", tmp_path)
     (tmp_path / "version.json").write_text('{"version": "1.2.3"}\n', encoding="utf-8-sig")
@@ -49,11 +49,12 @@ def test_app_version_tolerates_a_bom(tmp_path, monkeypatch):
 def test_app_version_falls_back_when_marker_is_absent_or_junk(tmp_path, monkeypatch):
     # Docker images and source checkouts have no marker (it is gitignored) and
     # must fall through to the hatch-vcs package metadata, not to a placeholder.
-    import app.main as main
+    from app import main
 
     monkeypatch.setattr(main, "STATIC_DIR", tmp_path)
     assert main.app_version() == main.package_version("stemdeck")
 
-    for junk in ('{"version": ""}', '{"version": null}', "{}", "not json"):
+    # "[]" parses fine but has no .get -- the narrowed except must still catch it.
+    for junk in ('{"version": ""}', '{"version": null}', "{}", "not json", "[]"):
         (tmp_path / "version.json").write_text(junk, encoding="utf-8")
         assert main.app_version() == main.package_version("stemdeck"), junk
