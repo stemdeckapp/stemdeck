@@ -896,8 +896,18 @@
           <pre class="release-docker-cmd"><code id="releaseDockerCmd"></code></pre>
           <p class="release-docker-note" data-i18n="release.unraidNote">On Unraid, update via the Community Applications template instead.</p>
         </div>
+        <!-- Windows desktop only: download + apply in place instead of a browser download. -->
+        <div class="release-inapp hidden" id="releaseInapp">
+          <div class="release-inapp-progress hidden" id="releaseInappProgress">
+            <div class="release-inapp-progress-bar"><div class="release-inapp-progress-fill" id="releaseInappProgressFill"></div></div>
+            <p class="release-inapp-progress-text" id="releaseInappProgressText"></p>
+          </div>
+          <p class="release-inapp-error hidden" id="releaseInappError"></p>
+        </div>
         <div class="about-primary-links">
           <a class="about-link about-link-primary" id="releaseDownload" href="#" target="_blank" rel="noopener noreferrer" data-i18n="release.download">Download</a>
+          <button class="about-link about-link-primary hidden" id="releaseDownloadApp" type="button" data-i18n="release.downloadUpdate">Download update</button>
+          <button class="about-link about-link-primary hidden" id="releaseApplyUpdate" type="button" data-i18n="release.restartUpdate">Restart to update</button>
           <a class="about-link about-link-secondary" id="releaseAllLink" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer" data-i18n="release.allReleases">All releases</a>
         </div>
       </div>

@@ -2786,12 +2786,29 @@ input, textarea { font-family: inherit; }
 }
 .release-docker-note { margin: 0; font-size: 11px; color: var(--muted); }
 
+/* Windows desktop: in-app download + apply, in place of a browser download. */
+.release-inapp { width: 100%; text-align: left; margin: 0 0 16px; }
+.release-inapp-progress-bar {
+  height: 3px; border-radius: 2px; margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.09); overflow: hidden;
+}
+.release-inapp-progress-fill {
+  height: 100%; width: 0; border-radius: 2px;
+  background: var(--accent);
+  transition: width 260ms linear;
+}
+.release-inapp-progress-text { margin: 0; font-size: 11px; color: var(--muted); }
+.release-inapp-error { margin: 0; font-size: 12px; color: #e54e4e; }
+
 /* The release dialog lives outside `.daw`, so the scoped `.daw .hidden` rule
    does not reach its inner elements and base.css's global `.hidden` is not
    loaded on this page. Hide the mode-specific parts explicitly (same approach
    as `.about-backdrop.hidden`) so desktop hides the docker block and server
    hides the download button. */
 .release-docker.hidden,
+.release-inapp.hidden,
+.release-inapp-progress.hidden,
+.release-inapp-error.hidden,
 .release-card .about-link.hidden {
   display: none !important;
 }

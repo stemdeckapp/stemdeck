@@ -53,8 +53,7 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64.NVIDIA `
-            -PackageVersion "$env:REF_NAME" `
-            -StripVenv
+            -PackageVersion "$env:REF_NAME"
 
       - name: build Windows CPU
         run: |
@@ -62,7 +61,7 @@ jobs:
             -PackageName StemDeck-Windows-x64 `
             -PackageVersion "$env:REF_NAME" `
             -CpuOnly `
-            -StripVenv
+            -PublishUpdaterAssets
 
       - name: scan artifacts
         run: |
@@ -101,3 +100,6 @@ jobs:
             dist/StemDeck-Windows-x64.NVIDIA.zip.sha256
             dist/StemDeck-Windows-x64.zip
             dist/StemDeck-Windows-x64.zip.sha256
+            dist/StemDeck-Windows-x64-app.zip
+            dist/StemDeck-Windows-x64-app.zip.sha256
+            dist/StemDeck-Windows-x64-runtime-version.json

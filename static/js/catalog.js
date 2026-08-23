@@ -2266,6 +2266,148 @@ function pickReleaseAsset(release, target) {
   return asset ? { url: asset.browser_download_url, name } : null;
 }
 
+// ─── Windows in-app updater ───
+// Downloads and applies an update without leaving the app, instead of sending
+// the user to a browser download -- see download_app_update/apply_app_update in
+// desktop/src-tauri/src/main.rs for the file swap. Windows-only: the portable
+// zip is the only distribution shaped for an in-place swap.
+//
+// The updater replaces StemDeck.exe and backend/ ONLY. It never touches
+// python/, because an NVIDIA install rewrites that directory with CUDA torch on
+// first run and replacing it would silently drop the machine back to CPU. So an
+// in-app update is only safe when the release needs the same Python
+// dependencies the install already has -- that is what the runtime id gates.
+// When it doesn't match, we fall back to the normal full-package download.
+
+function findReleaseAsset(release, name) {
+  return (release.assets || []).find((a) => a.name === name) || null;
+}
+
+async function fetchAssetText(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  return res.text();
+}
+
+// The checksum files this release publishes are `<hash>  <filename>` lines
+// (make-portable.ps1's `Get-FileHash` + `Set-Content` convention) -- same
+// shape BtbN's FFmpeg checksums.sha256 uses, just one line here.
+function parseSha256File(text) {
+  const hash = (text.trim().split(/\s+/)[0] || "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("malformed checksum file");
+  return hash;
+}
+
+// Resolves the app-layer asset for the in-app updater, or null when this
+// release cannot be applied in place -- it predates the updater assets, is
+// missing one, or changed the Python dependency set. Null means "use the full
+// download link", which is always correct, just less convenient.
+async function resolveWindowsUpdatePlan(release) {
+  const appAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip");
+  const appShaAsset = findReleaseAsset(release, "StemDeck-Windows-x64-app.zip.sha256");
+  const runtimeIdAsset = findReleaseAsset(release, "StemDeck-Windows-x64-runtime-version.json");
+  if (!appAsset || !appShaAsset || !runtimeIdAsset) return null;
+
+  // Compatibility gate. Any uncertainty here -- an unreadable asset, an install
+  // with no recorded runtime id -- must fall back to the full download: an app
+  // layer whose imports the installed runtime cannot satisfy is a broken app.
+  const releaseRuntimeId = JSON.parse(await fetchAssetText(runtimeIdAsset.browser_download_url))?.runtimeId;
+  const installedRuntimeId = await window.__TAURI__.core.invoke("installed_runtime_id");
+  if (!releaseRuntimeId || !installedRuntimeId || releaseRuntimeId !== installedRuntimeId) {
+    return null;
+  }
+
+  return {
+    appUrl: appAsset.browser_download_url,
+    appSha256: parseSha256File(await fetchAssetText(appShaAsset.browser_download_url)),
+  };
+}
+
+let _appUpdateProgressUnlisten = null;
+
+function showInappError(message) {
+  const errorEl = document.getElementById("releaseInappError");
+  if (!errorEl) return;
+  errorEl.textContent = `${i18nT("release.updateFailed")}: ${message}`;
+  errorEl.classList.remove("hidden");
+}
+
+// Wires the download/apply buttons for a resolved plan. Returns false (and
+// touches nothing) when this release has no in-app-updatable assets, so the
+// caller can fall back to the plain download link.
+async function wireWindowsUpdate() {
+  const downloadBtn = document.getElementById("releaseDownloadApp");
+  const applyBtn = document.getElementById("releaseApplyUpdate");
+  const inapp = document.getElementById("releaseInapp");
+  const progress = document.getElementById("releaseInappProgress");
+  const progressFill = document.getElementById("releaseInappProgressFill");
+  const progressText = document.getElementById("releaseInappProgressText");
+  const errorEl = document.getElementById("releaseInappError");
+  if (!downloadBtn || !applyBtn || !latestRelease) return false;
+
+  const plan = await resolveWindowsUpdatePlan(latestRelease);
+  if (!plan) return false;
+
+  document.getElementById("releaseDownload")?.classList.add("hidden");
+  inapp?.classList.remove("hidden");
+  progress?.classList.add("hidden");
+  errorEl?.classList.add("hidden");
+  downloadBtn.disabled = false;
+  applyBtn.disabled = false;
+  downloadBtn.classList.remove("hidden");
+  applyBtn.classList.add("hidden");
+
+  downloadBtn.onclick = async () => {
+    errorEl?.classList.add("hidden");
+    downloadBtn.disabled = true;
+    if (progressFill) progressFill.style.width = "0%";
+    if (progressText) progressText.textContent = i18nT("release.downloading");
+    progress?.classList.remove("hidden");
+
+    if (_appUpdateProgressUnlisten) { _appUpdateProgressUnlisten(); _appUpdateProgressUnlisten = null; }
+    try {
+      _appUpdateProgressUnlisten = await window.__TAURI__.event.listen(
+        "runtime-download-progress",
+        (event) => {
+          const { received, total } = event.payload;
+          if (total && progressFill) {
+            progressFill.style.width = `${Math.min(100, Math.round((received / total) * 100))}%`;
+          }
+        },
+      );
+      await window.__TAURI__.core.invoke("download_app_update", { plan });
+      progress?.classList.add("hidden");
+      downloadBtn.classList.add("hidden");
+      applyBtn.classList.remove("hidden");
+    } catch (e) {
+      console.warn("[catalog] download_app_update failed:", e);
+      showInappError(String(e?.message || e));
+      downloadBtn.disabled = false;
+      progress?.classList.add("hidden");
+    } finally {
+      if (_appUpdateProgressUnlisten) { _appUpdateProgressUnlisten(); _appUpdateProgressUnlisten = null; }
+    }
+  };
+
+  applyBtn.onclick = async () => {
+    errorEl?.classList.add("hidden");
+    applyBtn.disabled = true;
+    if (progressText) progressText.textContent = i18nT("release.applying");
+    progress?.classList.remove("hidden");
+    try {
+      // On success the app exits and relaunches -- this promise never resolves.
+      await window.__TAURI__.core.invoke("apply_app_update");
+    } catch (e) {
+      console.warn("[catalog] apply_app_update failed:", e);
+      showInappError(String(e?.message || e));
+      applyBtn.disabled = false;
+      progress?.classList.add("hidden");
+    }
+  };
+
+  return true;
+}
+
 async function openReleaseDialog() {
   const dialog = document.getElementById("releaseDialog");
   if (!dialog || !latestRelease) return;
@@ -2295,17 +2437,32 @@ async function openReleaseDialog() {
   } else if (download) {
     docker?.classList.add("hidden");
     const target = await getBuildTarget();
-    const picked = pickReleaseAsset(latestRelease, target);
-    if (picked) {
-      download.href = picked.url;
-      download.textContent = i18nT("release.download");
-    } else {
-      // No matching asset (e.g. an arch we don't build): fall back to the
-      // release page so the user can pick manually.
-      download.href = latestRelease.html_url || RELEASES_URL;
-      download.textContent = i18nT("release.viewDownload");
+
+    let usedInapp = false;
+    if (target.os === "windows") {
+      try {
+        usedInapp = await wireWindowsUpdate();
+      } catch (e) {
+        console.warn("[catalog] in-app update setup failed, falling back to link:", e);
+      }
     }
-    download.classList.remove("hidden");
+
+    if (!usedInapp) {
+      document.getElementById("releaseInapp")?.classList.add("hidden");
+      document.getElementById("releaseDownloadApp")?.classList.add("hidden");
+      document.getElementById("releaseApplyUpdate")?.classList.add("hidden");
+      const picked = pickReleaseAsset(latestRelease, target);
+      if (picked) {
+        download.href = picked.url;
+        download.textContent = i18nT("release.download");
+      } else {
+        // No matching asset (e.g. an arch we don't build): fall back to the
+        // release page so the user can pick manually.
+        download.href = latestRelease.html_url || RELEASES_URL;
+        download.textContent = i18nT("release.viewDownload");
+      }
+      download.classList.remove("hidden");
+    }
   }
 
   dialog.classList.remove("hidden");

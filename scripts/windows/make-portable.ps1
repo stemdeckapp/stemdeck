@@ -5,7 +5,7 @@ param(
   [string]$PackageVersion,
   [switch]$SkipTauriBuild,
   [switch]$CpuOnly,
-  [switch]$StripVenv
+  [switch]$PublishUpdaterAssets
 )
 
 $ErrorActionPreference = "Stop"
@@ -229,20 +229,69 @@ if ($CpuOnly) {
 Bundle-PythonRuntime $PythonDir $PythonExe
 & $PythonExe -c "import sys, fastapi, uvicorn; print('Portable Python:', sys.executable)"
 
-if ($StripVenv) {
-  Write-Host "Stripping venv of build-time artifacts..."
-  Get-ChildItem -Path $PythonDir -Filter "__pycache__" -Recurse -Directory -Force |
-    Remove-Item -Recurse -Force
-  foreach ($rel in @("torch\include", "torch\share\cmake", "torch\test")) {
-    $p = Join-Path $PythonDir "Lib\site-packages\$rel"
-    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
-  }
-  # Remove C++ static link libraries from torch — needed only for building C++ extensions,
-  # never for running Python. dnnl.lib alone is ~623 MB.
-  Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages\torch") `
-      -Filter "*.lib" -Recurse -File -Force |
-    Remove-Item -Force
+Write-Host "Stripping venv of build-time and dead-weight artifacts..."
+Get-ChildItem -Path $PythonDir -Filter "__pycache__" -Recurse -Directory -Force |
+  Remove-Item -Recurse -Force
+foreach ($rel in @("torch\include", "torch\share\cmake", "torch\test")) {
+  $p = Join-Path $PythonDir "Lib\site-packages\$rel"
+  if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
+# Remove C++ static link libraries from torch — needed only for building C++ extensions,
+# never for running Python. dnnl.lib alone is ~623 MB.
+Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages\torch") `
+    -Filter "*.lib" -Recurse -File -Force |
+  Remove-Item -Force
+
+# The stdlib's own test suite (Lib/test) and every package's bundled test/tests
+# directory are never imported by the running app -- pure dead weight that is a
+# large share of the ~20k loose files in the shipped venv (#421).
+$stdlibTest = Join-Path $PythonDir "base\Lib\test"
+if (Test-Path $stdlibTest) { Remove-Item -Recurse -Force $stdlibTest }
+Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages") -Directory -Force |
+  ForEach-Object {
+    foreach ($name in @("test", "tests")) {
+      $p = Join-Path $_.FullName $name
+      if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+    }
+  }
+
+# NOTE: do NOT strip .dist-info RECORD files to save space. pip needs RECORD to
+# uninstall or replace a package, and the NVIDIA build pip-installs CUDA torch
+# into this very venv on the user's first run (install_cuda_torch). Without
+# RECORD that turns into "Failed to uninstall ... due to missing RECORD file.
+# Installation may result in an incomplete environment" -- a broken torch on the
+# machines that most need a working one, to save a few hundred KB.
+
+# The strip above widened what ships (#421), so re-verify the packaged
+# interpreter can still import everything the pipeline needs -- the earlier
+# import check ran pre-strip and pre-bundle, and would not catch a strip that
+# removed something load-bearing. Same rationale as that check: catch it here
+# rather than in a release (#407).
+& $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"
+
+# Runtime fingerprint, shipped INSIDE python/ in every package (#421).
+#
+# This is the in-app updater's SAFETY GATE, not a download trigger. The updater
+# only ever replaces StemDeck.exe + backend/; it never touches python/, because
+# an NVIDIA install rewrites python/ with CUDA torch at first run
+# (install_cuda_torch) and swapping the directory would silently drop that user
+# back to CPU. So an app-only update is safe exactly when the new release needs
+# the same Python dependencies the install already has -- and this id is how the
+# updater checks that. When it differs, the updater stands down and points the
+# user at the full package download instead.
+#
+# Derived from uv.lock (the dependency set, identical for both variants) plus
+# the bundled interpreter's major.minor. Deliberately NOT the package version,
+# which changes every release and would make every update look incompatible;
+# and deliberately not the installed wheel list, which differs between the CPU
+# and NVIDIA variants by torch's local version tag alone (2.6.0+cpu vs 2.6.0)
+# even though their dependency requirements are identical.
+$PyMajorMinor = (& $PythonExe -c "import sys; print('%d.%d' % sys.version_info[:2])").Trim()
+$LockHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $Root "uv.lock")).Hash.Substring(0, 16).ToLower()
+$RuntimeId = "py$PyMajorMinor-$LockHash"
+$RuntimeIdJson = @{ runtimeId = $RuntimeId } | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText((Join-Path $PythonDir "runtime-version.json"), $RuntimeIdJson + "`n", $utf8NoBom)
+Write-Host "Runtime id  : $RuntimeId"
 
 Push-Location $DesktopDir
 try {
@@ -273,8 +322,38 @@ Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $ZipPath -Force
 $Hash = Get-FileHash -Algorithm SHA256 $ZipPath
 Set-Content -Path $ChecksumPath -Value "$($Hash.Hash)  $PackageName.zip"
 
+# Slim "app layer" asset for the in-app updater (#421). The full zip above is
+# untouched and remains the only thing a fresh install ever needs; this is an
+# extra, much smaller asset used only by an already-installed app updating
+# itself, so it never has to re-extract the ~20k-file Python runtime to pick up
+# a release that only changed app code.
+#
+# StemDeck.exe and backend/ are byte-identical between the CPU and NVIDIA
+# variants -- the only per-variant difference in the package is the `cpu-only`
+# marker at the package root, which the updater never touches -- so this is
+# built once, from whichever invocation passes -PublishUpdaterAssets, and needs
+# no variant suffix.
+#
+# There is deliberately NO runtime asset: the updater never replaces python/.
+# See the runtime-id note above for why. runtime-version.json is published on
+# its own so the updater can check compatibility before offering to update.
+if ($PublishUpdaterAssets) {
+  $UpdaterAppZipName = "StemDeck-Windows-x64-app"
+  $UpdaterAppZipPath = Join-Path $Root "$OutputRoot\$UpdaterAppZipName.zip"
+  Compress-Archive -Path (Join-Path $Stage "StemDeck.exe"), (Join-Path $Stage "backend") `
+      -DestinationPath $UpdaterAppZipPath -Force
+  $AppHash = Get-FileHash -Algorithm SHA256 $UpdaterAppZipPath
+  Set-Content -Path "$UpdaterAppZipPath.sha256" -Value "$($AppHash.Hash)  $UpdaterAppZipName.zip"
+
+  $RuntimeIdAssetPath = Join-Path $Root "$OutputRoot\StemDeck-Windows-x64-runtime-version.json"
+  [System.IO.File]::WriteAllText($RuntimeIdAssetPath, $RuntimeIdJson + "`n", $utf8NoBom)
+}
+
 $Variant = if ($CpuOnly) { "CPU-only" } else { "CUDA/GPU (NVIDIA)" }
 Write-Host "Variant     : $Variant"
 Write-Host "Staged at   : $Stage"
 Write-Host "Zip created : $ZipPath"
 Write-Host "Checksum    : $ChecksumPath"
+if ($PublishUpdaterAssets) {
+  Write-Host "Updater app pack : $UpdaterAppZipPath"
+}
