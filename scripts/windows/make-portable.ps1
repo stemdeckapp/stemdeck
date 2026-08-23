@@ -293,7 +293,18 @@ Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages") -Directory -Force
 # and NVIDIA variants by torch's local version tag alone (2.6.0+cpu vs 2.6.0)
 # even though their dependency requirements are identical.
 $PyMajorMinor = (& $PythonExe -c "import sys; print('%d.%d' % sys.version_info[:2])").Trim()
-$LockHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $Root "uv.lock")).Hash.Substring(0, 16).ToLower()
+# Hash the CONTENT with newlines normalised, not the bytes on disk. A Windows
+# checkout with core.autocrlf=true stores uv.lock as CRLF and Linux as LF, so
+# hashing raw bytes produced a different id per platform for an identical
+# lockfile -- and would shift spuriously if a runner's autocrlf ever changed,
+# silently declining app-only updates that were in fact compatible.
+$LockText = ([System.IO.File]::ReadAllText((Join-Path $Root "uv.lock")) -replace "`r", "")
+$Sha = [System.Security.Cryptography.SHA256]::Create()
+try {
+  $LockHash = [System.BitConverter]::ToString(
+    $Sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($LockText))
+  ).Replace("-", "").Substring(0, 16).ToLower()
+} finally { $Sha.Dispose() }
 $RuntimeId = "py$PyMajorMinor-$LockHash"
 $RuntimeIdJson = @{ runtimeId = $RuntimeId } | ConvertTo-Json -Compress
 [System.IO.File]::WriteAllText((Join-Path $PythonDir "runtime-version.json"), $RuntimeIdJson + "`n", $utf8NoBom)

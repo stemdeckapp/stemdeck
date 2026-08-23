@@ -208,7 +208,10 @@ done
 # installed. Derived from uv.lock plus the interpreter's major.minor -- the same
 # formula make-portable.ps1 uses, deliberately not the package version, which
 # changes every release and would make every update look incompatible.
-RUNTIME_ID="py${PYTHON_VERSION}-$(sha256sum "${REPO_ROOT}/uv.lock" | cut -c1-16)"
+# tr -d '\r': hash the CONTENT with newlines normalised, not the bytes on
+# disk, so a Windows checkout (CRLF) and a Linux one (LF) agree on the id for
+# an identical lockfile. See the matching note in make-portable.ps1.
+RUNTIME_ID="py${PYTHON_VERSION}-$(tr -d '\r' < "${REPO_ROOT}/uv.lock" | sha256sum | cut -c1-16)"
 printf '{"runtimeId":"%s"}\n' "$RUNTIME_ID" > "${PYTHON_DIR}/runtime-version.json"
 echo "==> Runtime id: ${RUNTIME_ID}"
 
