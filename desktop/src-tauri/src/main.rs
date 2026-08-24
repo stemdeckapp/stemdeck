@@ -1,11 +1,12 @@
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
     env, fs,
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::Mutex,
@@ -1485,7 +1486,7 @@ fn start_backend(
             "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
         })?;
         patch_pyvenv_cfg(&python);
-        let (port, port_guard) = reserve_port(configured_port())?;
+        let (port, port_guard) = reserve_port(bind_host, configured_port())?;
         let url = format!("http://127.0.0.1:{port}");
         let log_path = data_dir.join("logs").join("backend.log");
         let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
@@ -1574,7 +1575,7 @@ fn start_backend(
         // Release the reserved port immediately after spawn so uvicorn can bind it.
         drop(port_guard);
 
-        if let Err(err) = wait_for_health(port, Duration::from_secs(90), &log_path) {
+        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(90), &log_path) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(err);
@@ -3324,16 +3325,42 @@ fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
     path.parent().map(Path::to_path_buf)
 }
 
-/// Bind to port 0 and return both the chosen port and the live listener.
-/// Caller must hold the listener until just after the child process is
-/// spawned, then drop it so the child can bind the same port.  Holding the
-/// socket until spawn narrows the TOCTOU window to a single OS context
-/// switch rather than the entire command-setup period.
-fn free_port() -> Result<(u16, TcpListener), String> {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port bind failed: {e}"))?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    Ok((port, listener))
+/// Claim `host:port` without serving on it, and report the port that was
+/// actually granted (`port` of 0 asks the OS to choose).
+///
+/// Bound but never listening, on purpose. `bind` is what reserves the address,
+/// which is all this needs to do; `listen` is what makes a program a server,
+/// and a server on `0.0.0.0` is what makes Windows Firewall interrupt the user.
+/// The backend is the thing that should be answering that prompt, not the shell
+/// that starts it.
+fn claim_port(host: &str, port: u16) -> Result<(u16, Socket), String> {
+    let addr: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|e| format!("bad bind address {host}:{port}: {e}"))?;
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| format!("socket failed: {e}"))?;
+    socket
+        .bind(&addr.into())
+        .map_err(|e| format!("port bind failed: {e}"))?;
+    let granted = socket
+        .local_addr()
+        .map_err(|e| e.to_string())?
+        .as_socket()
+        .ok_or_else(|| "bound socket has no address".to_string())?
+        .port();
+    Ok((granted, socket))
+}
+
+/// Bind to port 0 and return both the chosen port and the held reservation.
+/// Caller must hold it until just after the child process is spawned, then drop
+/// it so the child can bind the same port.  Holding the socket until spawn
+/// narrows the TOCTOU window to a single OS context switch rather than the
+/// entire command-setup period.
+///
+/// `host` must be the address the backend itself will bind. Probing a
+/// different one proves nothing: see [`reserve_port`].
+fn free_port(host: &str) -> Result<(u16, Socket), String> {
+    claim_port(host, 0)
 }
 
 /// The user's preferred port (Settings -> port), read from the backend's
@@ -3357,45 +3384,104 @@ fn configured_port() -> u16 {
 
 /// Reserve the user's preferred port; fall back to any free port if it's taken,
 /// so a port conflict can never block startup.
-fn reserve_port(desired: u16) -> Result<(u16, TcpListener), String> {
-    if let Ok(listener) = TcpListener::bind(("127.0.0.1", desired)) {
-        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-        return Ok((port, listener));
+///
+/// `host` must be the address the backend will bind (`0.0.0.0`), not loopback.
+/// The two are not interchangeable: on Windows, binding `127.0.0.1:8000`
+/// succeeds even while another process holds `0.0.0.0:8000`, because neither
+/// socket sets `SO_EXCLUSIVEADDRUSE`. Probing loopback therefore reported a
+/// taken port as free, the fallback below never ran, and the backend we spawned
+/// died with `10048` while the *other* instance kept answering on that port
+/// (#424).
+fn reserve_port(host: &str, desired: u16) -> Result<(u16, Socket), String> {
+    if let Ok(claimed) = claim_port(host, desired) {
+        return Ok(claimed);
     }
-    free_port()
+    free_port(host)
 }
 
-fn wait_for_health(port: u16, timeout: Duration, log_path: &Path) -> Result<(), String> {
+/// Wait until *our own* backend answers on `port`.
+///
+/// Identity matters as much as liveness here. A 200 only proves something is
+/// listening; before #424 that was enough, so a second StemDeck launched while
+/// one was already running would adopt the first instance's backend, and with
+/// it the first instance's data directory and library, with nothing on screen
+/// to suggest anything was wrong. The health payload carries the answering
+/// process's PID, and only the child we just spawned is accepted.
+///
+/// Watching the child also turns the common failure into a fast, clear one: a
+/// backend that cannot bind its port exits within a second or so, and there is
+/// no reason to keep polling for ninety.
+fn wait_for_health(
+    child: &mut Child,
+    port: u16,
+    timeout: Duration,
+    log_path: &Path,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let mut interval = Duration::from_millis(250);
+    let expected_pid = child.id();
+    let mut foreign_pid: Option<u32> = None;
     loop {
-        if Instant::now() >= deadline {
-            let tail = file_tail(log_path, 30);
-            let hint = if tail.trim().is_empty() {
-                format!(
-                    "No backend log output was captured at {}.",
-                    log_path.display()
-                )
-            } else {
-                format!(
-                    "Last backend log lines from {}:\n{}",
-                    log_path.display(),
-                    tail
-                )
-            };
+        // Checked before the deadline so a child that died is always reported
+        // as a death rather than as a timeout.
+        if let Ok(Some(status)) = child.try_wait() {
             return Err(format!(
-                "backend did not become healthy within {} seconds.\n\n{}",
-                timeout.as_secs(),
-                hint
+                "The backend stopped during startup ({}).{}\n\n{}",
+                status,
+                port_conflict_hint(port, foreign_pid),
+                log_hint(log_path)
             ));
         }
-        if health_once(port).is_ok() {
-            return Ok(());
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "backend did not become healthy within {} seconds.{}\n\n{}",
+                timeout.as_secs(),
+                port_conflict_hint(port, foreign_pid),
+                log_hint(log_path)
+            ));
+        }
+        match health_once(port) {
+            Ok(pid) if pid == expected_pid => return Ok(()),
+            // Something is listening, but it is not the process we started.
+            // Keep waiting rather than failing outright: our child is still
+            // alive, and if it never gets the port it will exit and be caught
+            // above. What must never happen is returning Ok for this.
+            Ok(pid) => foreign_pid = Some(pid),
+            Err(_) => {}
         }
         thread::sleep(interval);
         // Exponential backoff capped at 2 s to reduce busy-polling while
         // still detecting fast startups quickly.
         interval = (interval * 2).min(Duration::from_secs(2));
+    }
+}
+
+/// Names the real problem when another program holds the port, instead of
+/// leaving the user to infer it from a stack trace in the log tail.
+fn port_conflict_hint(port: u16, foreign_pid: Option<u32>) -> String {
+    match foreign_pid {
+        Some(pid) => format!(
+            "\n\nAnother program is already using port {port} (process {pid}). \
+             If that is a second copy of StemDeck, close it and try again, or \
+             change the port in Settings."
+        ),
+        None => String::new(),
+    }
+}
+
+fn log_hint(log_path: &Path) -> String {
+    let tail = file_tail(log_path, 30);
+    if tail.trim().is_empty() {
+        format!(
+            "No backend log output was captured at {}.",
+            log_path.display()
+        )
+    } else {
+        format!(
+            "Last backend log lines from {}:\n{}",
+            log_path.display(),
+            tail
+        )
     }
 }
 
@@ -3408,7 +3494,9 @@ fn file_tail(path: &Path, max_lines: usize) -> String {
         .unwrap_or_default()
 }
 
-fn health_once(port: u16) -> Result<(), String> {
+/// Returns the PID the backend reports for itself, so the caller can tell our
+/// own child apart from any other process that happens to hold the port.
+fn health_once(port: u16) -> Result<u32, String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -3420,11 +3508,25 @@ fn health_once(port: u16) -> Result<(), String> {
     stream
         .read_to_string(&mut response)
         .map_err(|e| e.to_string())?;
-    if response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200") {
-        Ok(())
-    } else {
-        Err("health endpoint did not return 200".to_string())
+    if !(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")) {
+        return Err("health endpoint did not return 200".to_string());
     }
+    parse_health_pid(&response).ok_or_else(|| "health response carried no pid".to_string())
+}
+
+/// Pull `"pid"` out of a raw HTTP response. Deliberately parses only the JSON
+/// body: the headers are not JSON, and a `pid` appearing there (or in a header
+/// value) must not be mistaken for the backend's own.
+fn parse_health_pid(response: &str) -> Option<u32> {
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .or_else(|| response.split_once("\n\n").map(|(_, body)| body))?;
+    let start = body.find('{')?;
+    let json: serde_json::Value = serde_json::from_str(body[start..].trim()).ok()?;
+    json.get("pid")?
+        .as_u64()
+        .and_then(|p| u32::try_from(p).ok())
 }
 
 fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
@@ -4182,7 +4284,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
     use tempfile::TempDir;
 
     fn make_tmp() -> TempDir {
@@ -5012,5 +5116,184 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert!(super::validate_download_url("http://example.com/x.wav").is_err());
         assert!(super::validate_download_url("file:///etc/passwd").is_err());
         assert!(super::validate_download_url("not a url").is_err());
+    }
+
+    // #424: a second StemDeck adopted the first one's backend, and with it the
+    // first one's library. Both halves of that are pinned below.
+
+    #[test]
+    fn a_taken_port_is_reported_as_taken() {
+        // The bug: the reservation probed 127.0.0.1 while the backend binds
+        // 0.0.0.0. On Windows those do not collide, so an occupied port looked
+        // free, the fallback never ran, and the spawned backend died on bind
+        // while the other instance kept answering.
+        let held = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let taken = held.local_addr().unwrap().port();
+
+        let (got, _guard) = super::reserve_port("0.0.0.0", taken).unwrap();
+
+        assert_ne!(
+            got, taken,
+            "handed back a port another socket already holds"
+        );
+    }
+
+    #[test]
+    fn a_free_port_is_granted_as_asked() {
+        // The fallback must not fire needlessly: the user's configured port is
+        // honoured whenever it genuinely is available.
+        let probe = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let wanted = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let (got, _guard) = super::reserve_port("0.0.0.0", wanted).unwrap();
+
+        assert_eq!(got, wanted);
+    }
+
+    #[test]
+    fn a_held_reservation_keeps_everyone_else_out() {
+        // The reservation binds without listening, so that StemDeck.exe is not
+        // a server in the firewall's eyes. That only works if bind alone still
+        // holds the address against a real listener -- if it did not, the port
+        // could be stolen between reserving it and the backend binding it.
+        let (port, _guard) = super::free_port("0.0.0.0").unwrap();
+        assert!(
+            std::net::TcpListener::bind(("0.0.0.0", port)).is_err(),
+            "a bound reservation did not hold port {port}"
+        );
+    }
+
+    #[test]
+    fn reserved_port_is_usable_by_the_backend_after_release() {
+        // The guard exists so nothing steals the port between reserving and
+        // spawning; dropping it must leave the port bindable, or every start
+        // would fail.
+        let (port, guard) = super::free_port("0.0.0.0").unwrap();
+        drop(guard);
+        assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
+    }
+
+    #[test]
+    fn health_pid_comes_from_the_body_only() {
+        let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
+                  {\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":4242}";
+        assert_eq!(super::parse_health_pid(ok), Some(4242));
+
+        // A header must never be mistaken for the payload, or a stranger could
+        // claim to be our child just by setting one.
+        let header_only = "HTTP/1.1 200 OK\r\nX-Pid: 4242\r\n\r\n{\"status\":\"ok\"}";
+        assert_eq!(super::parse_health_pid(header_only), None);
+
+        // An older backend that does not report a pid cannot be verified, so it
+        // must not be accepted as ours.
+        let no_pid = "HTTP/1.1 200 OK\r\n\r\n{\"name\":\"StemDeck\",\"status\":\"ok\"}";
+        assert_eq!(super::parse_health_pid(no_pid), None);
+
+        assert_eq!(
+            super::parse_health_pid("HTTP/1.1 200 OK\r\n\r\nnot json"),
+            None
+        );
+        assert_eq!(super::parse_health_pid(""), None);
+    }
+
+    /// Stands in for the *other* StemDeck: something already listening on the
+    /// port, answering /api/health with a 200 that is not ours.
+    fn other_instance_on_a_port(pid: u32) -> u16 {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(16) {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let body = format!("{{\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":{pid}}}");
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        port
+    }
+
+    /// A child that outlives the first poll and then exits, like a backend that
+    /// loses the race for its port and dies on bind.
+    fn briefly_alive_child() -> Child {
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "ping", "-n", "2", "127.0.0.1"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "sleep 1"]);
+            c
+        };
+        cmd.stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_stranger_on_the_port_is_never_accepted_as_our_backend() {
+        // The whole of #424 in one test. Another instance answers 200 on the
+        // port while the backend we spawned dies. Before the fix this returned
+        // Ok, the shell pointed the window at that backend, and the second
+        // install quietly drove the first install's library.
+        let port = other_instance_on_a_port(999_999);
+        let mut child = briefly_alive_child();
+
+        let result = super::wait_for_health(
+            &mut child,
+            port,
+            Duration::from_secs(20),
+            Path::new("does-not-exist.log"),
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let err = result.expect_err("adopted a backend that was not ours");
+        assert!(
+            err.contains(&port.to_string()),
+            "the error should name the contended port, got: {err}"
+        );
+    }
+
+    #[test]
+    fn our_own_backend_is_accepted() {
+        // The other half: verification must not be so strict that a healthy
+        // start is rejected. A responder reporting our child's pid is ours.
+        let mut child = briefly_alive_child();
+        let port = other_instance_on_a_port(child.id());
+
+        let result = super::wait_for_health(
+            &mut child,
+            port,
+            Duration::from_secs(20),
+            Path::new("does-not-exist.log"),
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.is_ok(), "rejected our own backend: {result:?}");
+    }
+
+    #[test]
+    fn a_conflict_hint_names_the_port_and_stays_quiet_otherwise() {
+        let hint = super::port_conflict_hint(8000, Some(1234));
+        assert!(hint.contains("8000") && hint.contains("1234"));
+        // No foreign responder seen: say nothing rather than guess at a cause.
+        assert!(super::port_conflict_hint(8000, None).is_empty());
     }
 }

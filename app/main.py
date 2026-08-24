@@ -289,6 +289,15 @@ def health() -> dict[str, object]:
         "ffmpeg_configured": FFMPEG_BIN.is_file(),
         "demucs_model": DEMUCS_MODEL,
         "demucs_device": get_demucs_device(),
+        # Which process is answering. The desktop shell spawns this backend and
+        # then polls this endpoint to know it came up -- but a 200 alone only
+        # proves *something* is listening on that port, not that it is the child
+        # the shell just started. When a second StemDeck was launched, the new
+        # window adopted the already-running instance's backend, and with it
+        # that instance's data directory and library (#424). The shell compares
+        # this against the PID it spawned, so a stranger on the port is refused
+        # rather than silently trusted.
+        "pid": os.getpid(),
     }
 
 

@@ -19,6 +19,20 @@ def test_health_endpoints_report_ok():
             assert "data_dir" not in body
 
 
+def test_health_identifies_the_answering_process():
+    # The desktop shell spawns this backend and polls /api/health to know it
+    # started. A 200 alone only proves *something* holds the port: a second
+    # StemDeck used to adopt the first instance's backend, and with it the first
+    # instance's data directory and library (#424). The shell compares this pid
+    # against the child it spawned, so it must be the real one.
+    import os
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["pid"] == os.getpid()
+
+
 # --- version source precedence (#421) ---------------------------------------
 #
 # The in-app updater replaces backend/ but never python/, where the installed

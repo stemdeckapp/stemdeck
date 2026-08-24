@@ -17,6 +17,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# Binding a port without listening on it. std's TcpListener always listens, and
+# a listener on 0.0.0.0 makes StemDeck.exe itself a server in the eyes of
+# Windows Firewall, prompting the user. Reserving a port is not serving on it.
+socket2 = "0.6"
 tar = "0.4"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
