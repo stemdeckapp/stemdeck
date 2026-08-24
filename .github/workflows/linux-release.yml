@@ -144,6 +144,12 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
+          # Carry the release's own flag. The action defaults `prerelease` to
+          # false and writes it back, so attaching assets silently promoted a
+          # pre-release to the latest release -- which also fires `released`,
+          # pushing :latest to GHCR, and makes the in-app updater offer a build
+          # that was never verified.
+          prerelease: ${{ github.event.release.prerelease }}
           files: |
             dist/StemDeck-Linux-x64.tar.gz
             dist/StemDeck-Linux-x64.tar.gz.sha256

@@ -2513,8 +2513,18 @@ async function checkForUpdate() {
     // Newest first, as GitHub returns them. Drafts are invisible to an
     // unauthenticated request anyway, but filter them so a maintainer running a
     // dev build is not offered a release that has no assets yet.
+    //
+    // Pre-releases are skipped as well: a release is published as a pre-release
+    // first, verified, and only then promoted ("Set as the latest release"), so
+    // nobody is offered a build that has not been through that. The list
+    // endpoint is used rather than /releases/latest because it keeps the choice
+    // here, in code, rather than in GitHub's endpoint semantics. It assumes a
+    // stable release inside the last 10 -- true unless ten consecutive
+    // pre-releases go out without one being promoted.
     const releases = await res.json();
-    const data = Array.isArray(releases) ? releases.find((r) => !r.draft) : null;
+    const data = Array.isArray(releases)
+      ? releases.find((r) => !r.draft && !r.prerelease)
+      : null;
     if (!data) return;
     const latest = normalizeVersion(data.tag_name);
     // Compare canonically so a PEP440 current version (0.7.0a9) matches the

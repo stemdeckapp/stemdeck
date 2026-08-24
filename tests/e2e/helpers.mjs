@@ -169,9 +169,12 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        // An ARRAY: the app polls /releases (the list), not /releases/latest,
-        // so that a version published as a pre-release is still seen.
+        // An ARRAY: the app polls /releases (the list), not /releases/latest.
+        // The unpromoted pre-release in front of the stable one is deliberate:
+        // it must be skipped, because a release is only offered once it has
+        // been promoted to the latest release.
         body: JSON.stringify([
+          { tag_name: "v9.9.10", draft: false, prerelease: true, body: "unpromoted", html_url: "https://example.invalid", assets: [] },
           { tag_name: "v9.9.9", draft: false, prerelease: false, body: "notes", html_url: "https://example.invalid", assets: [] },
         ]),
       }));

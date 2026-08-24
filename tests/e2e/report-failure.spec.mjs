@@ -97,6 +97,11 @@ test.describe("failure notifications", () => {
     await openStudio(page, { tauri: true, updateAvailable: true });
     await expect(page.locator("#notifReleaseCard")).not.toHaveClass(/hidden/);
     await expect(page.locator("#notifBadge")).not.toHaveClass(/hidden/);
+    // The newest release in the stub is an unpromoted pre-release. The card must
+    // name the promoted one behind it: a release is offered only once it has
+    // been promoted to the latest release, so nobody is updated to a build that
+    // was never verified.
+    await expect(page.locator("#notifReleaseDesc")).toHaveText("v9.9.9");
 
     await failAnExport(page);
     await openBell(page);
