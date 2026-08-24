@@ -113,6 +113,7 @@ struct BackendHandles {
     url: String,
 }
 
+#[derive(Default)]
 struct BackendStateInner {
     handles: Option<BackendHandles>,
     /// True while start_backend is executing; prevents concurrent starts (#145).
@@ -138,18 +139,6 @@ struct BackendStateInner {
 /// closes the window mid-export) would otherwise sit here for the life of the
 /// process.
 const MAX_PENDING_SAVES: usize = 16;
-
-impl Default for BackendStateInner {
-    fn default() -> Self {
-        BackendStateInner {
-            handles: None,
-            starting: false,
-            setup_child_pid: None,
-            pending_saves: HashMap::new(),
-            next_save_token: 0,
-        }
-    }
-}
 
 struct BackendState {
     inner: Mutex<BackendStateInner>,
@@ -423,16 +412,16 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
-        .run(|app_handle, event| match event {
-            tauri::RunEvent::WindowEvent {
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::CloseRequested { .. },
                 ..
-            } => {
+            } = event
+            {
                 let state = app_handle.state::<BackendState>();
                 stop_backend(&state);
                 app_handle.exit(0);
             }
-            _ => {}
         });
 }
 
@@ -1284,6 +1273,48 @@ fn apply_app_update(
     }
 }
 
+/// The per-user directory holding the settings copy that survives reinstalling.
+///
+/// A portable package keeps its data in `<app>/data` (#399), which means
+/// settings.json lives *inside the install*. Upgrading by extracting the new
+/// zip to a fresh folder therefore lost every setting the user had changed:
+/// stems location, port, compute device, quality, language. `ensure_workspace`
+/// already restores from here, but nothing wrote it after #399 moved the data
+/// directory — the backend mirrors to it now, via STEMDECK_SETTINGS_MIRROR.
+///
+/// Deliberately the OS-standard data dir, i.e. exactly what `local_data_dir`
+/// returns for a NON-portable install, so the two layouts share one location
+/// and an install that switches between them keeps its settings either way.
+fn shared_settings_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        env::var("LOCALAPPDATA")
+            .ok()
+            .map(|base| PathBuf::from(base).join("StemDeck"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        env::var("HOME").ok().map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("StemDeck")
+        })
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(xdg) = env::var("XDG_DATA_HOME") {
+            return Some(PathBuf::from(xdg).join("stemdeck"));
+        }
+        env::var("HOME").ok().map(|home| {
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("stemdeck")
+        })
+    }
+}
+
 /// Creates required data directories and runs any pending data migrations.
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
@@ -1301,7 +1332,16 @@ fn ensure_workspace() -> Result<(), String> {
         }
     }
 
-    migrate_legacy_data(&root, &data);
+    #[cfg(windows)]
+    if is_portable_package(&root) {
+        // Portable data moved from %LocalAppData% to <app>/data in #399. A
+        // freshly extracted package has an empty data directory, so carry the
+        // user's prior choices forward before the backend reads settings.json.
+        if let Some(shared) = shared_settings_dir() {
+            migrate_persisted_files(&shared, &data, &["settings.json"])?;
+        }
+    }
+    migrate_legacy_data(&root, &data)?;
     fs::create_dir_all(&data).map_err(|e| format!("failed to create data dir: {e}"))?;
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
         fs::create_dir_all(data.join(dir))
@@ -1498,6 +1538,14 @@ fn start_backend(
             .env("STEMDECK_DATA_DIR", &data_dir)
             .env("STEMDECK_DEFAULT_JOBS_DIR", &jobs_dir)
             .env("STEMDECK_DESKTOP", "1")
+            // Where the backend keeps the per-user copy of settings.json that
+            // survives extracting a new package into a fresh folder. Computed
+            // here so the write half and ensure_workspace's restore half can
+            // never point at different places.
+            .envs(
+                shared_settings_dir()
+                    .map(|dir| ("STEMDECK_SETTINGS_MIRROR", dir.join("settings.json"))),
+            )
             .env("STEMDECK_PARENT_PID", std::process::id().to_string())
             .env("PYTHONUNBUFFERED", "1")
             .env("XDG_CACHE_HOME", data_dir.join("cache"))
@@ -1917,12 +1965,7 @@ fn parse_cuda_version(smi_output: &str) -> Option<String> {
     for line in smi_output.lines() {
         if let Some(pos) = line.find("CUDA Version:") {
             let rest = &line[pos + "CUDA Version:".len()..];
-            let v = rest
-                .trim()
-                .split_whitespace()
-                .next()?
-                .trim_matches('|')
-                .trim();
+            let v = rest.split_whitespace().next()?.trim_matches('|').trim();
             if !v.is_empty() && v != "N/A" {
                 return Some(v.to_string());
             }
@@ -2567,7 +2610,7 @@ async fn save_audio_file(
 }
 
 fn stop_backend(state: &BackendState) {
-    let (handles, setup_child_pid) = match state.inner.lock() {
+    let (handles, _setup_child_pid) = match state.inner.lock() {
         Ok(mut guard) => (guard.handles.take(), guard.setup_child_pid.take()),
         Err(_) => return,
     };
@@ -2575,7 +2618,7 @@ fn stop_backend(state: &BackendState) {
     // Kill any in-progress setup-time subprocess (pip install, model warmup)
     // so it doesn't corrupt the venv/cache if the window is closed mid-setup (#140).
     #[cfg(unix)]
-    if let Some(pid) = setup_child_pid {
+    if let Some(pid) = _setup_child_pid {
         // SAFETY: pid was stored immediately after spawn; we send SIGTERM best-effort.
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     }
@@ -2671,30 +2714,86 @@ fn append_to_setup_log(data_dir: &Path, msg: &str) {
 
 /// One-time migration: move legacy data/models/jobs/ffmpeg from the install
 /// directory into the new per-user data directory on the user's first launch
-/// after upgrading to a version that uses local_data_dir().
-fn migrate_legacy_data(root: &Path, data_dir: &Path) {
+/// after upgrading to a version that uses local_data_dir(). User-owned settings
+/// are copied as well so reinstalling cannot silently restore defaults.
+fn migrate_legacy_data(root: &Path, data_dir: &Path) -> Result<(), String> {
     let old = root.join("data");
-    // Only migrate if the old location exists and the new one doesn't yet.
-    if !old.is_dir() || data_dir.exists() {
-        return;
+    if !old.is_dir() || old == data_dir {
+        return Ok(());
     }
+    let _ = fs::create_dir_all(data_dir);
     for name in ["models", "jobs", "ffmpeg", "logs", "cache"] {
         let src = old.join(name);
-        if src.is_dir() {
+        let destination = data_dir.join(name);
+        if src.is_dir() && !destination.exists() {
             // rename is a cheap move on the same volume; ignore errors silently
             // so a cross-volume failure doesn't block startup.
-            let _ = fs::rename(&src, data_dir.join(name));
+            let _ = fs::rename(&src, destination);
         }
     }
     // NOTE: deliberately does NOT migrate `cpu-only` -- the marker is only
     // trusted in the app root (see is_cpu_only_package); carrying it into the
     // shared data dir poisoned later NVIDIA installs (#247).
-    {
-        let src = old.join("config.json");
-        if src.exists() {
-            let _ = fs::copy(&src, data_dir.join("config.json"));
+    migrate_persisted_files(&old, data_dir, &["config.json", "settings.json"])
+}
+
+/// Copy persisted choices from an older data directory without ever replacing
+/// state already written at the destination.
+fn migrate_persisted_files(
+    source_dir: &Path,
+    data_dir: &Path,
+    names: &[&str],
+) -> Result<(), String> {
+    if source_dir == data_dir || !source_dir.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(data_dir)
+        .map_err(|e| format!("failed to prepare settings migration: {e}"))?;
+    for name in names {
+        let source = source_dir.join(name);
+        let destination = data_dir.join(name);
+        if source.is_file() && !destination.exists() {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let temporary = data_dir.join(format!(
+                ".{name}.migrate.{}.{nonce}.tmp",
+                std::process::id()
+            ));
+            let result = (|| -> Result<(), String> {
+                let mut input = fs::File::open(&source)
+                    .map_err(|e| format!("failed to read existing {name}: {e}"))?;
+                let mut output = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temporary)
+                    .map_err(|e| format!("failed to stage existing {name}: {e}"))?;
+                std::io::copy(&mut input, &mut output)
+                    .map_err(|e| format!("failed to copy existing {name}: {e}"))?;
+                output
+                    .flush()
+                    .map_err(|e| format!("failed to flush existing {name}: {e}"))?;
+                output
+                    .sync_all()
+                    .map_err(|e| format!("failed to sync existing {name}: {e}"))?;
+                drop(output);
+
+                // Another process may have completed migration while this copy
+                // was staged. Its destination wins; never replace it.
+                if destination.exists() {
+                    return Ok(());
+                }
+                fs::rename(&temporary, &destination)
+                    .map_err(|e| format!("failed to preserve existing {name}: {e}"))
+            })();
+            if temporary.exists() {
+                let _ = fs::remove_file(&temporary);
+            }
+            result?;
         }
     }
+    Ok(())
 }
 
 fn runtime_dir(data_dir: &Path) -> PathBuf {
@@ -3355,7 +3454,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
         verify_ffmpeg(&portable)?;
-        return Ok(portable);
+        Ok(portable)
     }
 
     #[cfg(target_os = "macos")]
@@ -4088,6 +4187,87 @@ mod tests {
 
     fn make_tmp() -> TempDir {
         tempfile::tempdir().expect("failed to create temp dir")
+    }
+
+    #[test]
+    fn legacy_migration_preserves_user_settings_when_data_dir_already_exists() {
+        // setup() creates the destination before ensure_workspace() invokes
+        // migration, which used to make migration return without copying any
+        // user state at all.
+        let root = make_tmp();
+        let destination_parent = make_tmp();
+        let destination = destination_parent.path().join("StemDeck");
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(root.path().join("data")).unwrap();
+        let settings = br#"{"jobs_dir":"D:\\Audio\\StemDeck","separation_quality":"best"}"#;
+        fs::write(root.path().join("data/settings.json"), settings).unwrap();
+        fs::write(
+            root.path().join("data/config.json"),
+            br#"{"torchDevice":"cuda"}"#,
+        )
+        .unwrap();
+
+        super::migrate_legacy_data(root.path(), &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("settings.json")).unwrap(),
+            settings
+        );
+        assert!(destination.join("config.json").is_file());
+        assert!(root.path().join("data/settings.json").is_file());
+        assert!(
+            fs::read_dir(&destination).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".migrate.")),
+            "successful migration must not leave staging files"
+        );
+    }
+
+    #[test]
+    fn legacy_migration_never_overwrites_newer_user_settings() {
+        let root = make_tmp();
+        let destination_parent = make_tmp();
+        let destination = destination_parent.path().join("StemDeck");
+        fs::create_dir_all(root.path().join("data")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(
+            root.path().join("data/settings.json"),
+            br#"{"jobs_dir":"D:\\Old"}"#,
+        )
+        .unwrap();
+        let current = br#"{"jobs_dir":"E:\\Current"}"#;
+        fs::write(destination.join("settings.json"), current).unwrap();
+
+        super::migrate_legacy_data(root.path(), &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("settings.json")).unwrap(),
+            current
+        );
+    }
+
+    #[test]
+    fn portable_migration_carries_preferences_but_not_install_readiness() {
+        let source = make_tmp();
+        let destination_parent = make_tmp();
+        let destination = destination_parent.path().join("data");
+        fs::write(
+            source.path().join("settings.json"),
+            br#"{"jobs_dir":"D:\\Audio"}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.path().join("config.json"),
+            br#"{"modelReady":true,"ffmpegReady":true}"#,
+        )
+        .unwrap();
+
+        super::migrate_persisted_files(source.path(), &destination, &["settings.json"]).unwrap();
+
+        assert!(destination.join("settings.json").is_file());
+        assert!(!destination.join("config.json").exists());
     }
 
     // ── stale app-data cleanup (#356) ────────────────────────────────────────

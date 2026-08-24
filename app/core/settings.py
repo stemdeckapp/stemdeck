@@ -94,10 +94,45 @@ def _save() -> bool:
     try:
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         _SETTINGS_PATH.write_text(json.dumps(_ensure()), encoding="utf-8")
-        return True
     except Exception:
         _log.warning("could not persist settings to %s", _SETTINGS_PATH, exc_info=True)
         return False
+    _mirror_settings()
+    return True
+
+
+def _mirror_settings() -> None:
+    """Keep a per-user copy of settings.json outside the install directory.
+
+    A Windows portable package keeps its data in `<app>/data` (#399), so
+    settings.json lives *inside the install*. Upgrading by extracting the new
+    zip to a fresh folder therefore started that install with no settings at
+    all: the stems location, port, compute device, quality and language were
+    all silently back to defaults, and a relocated library looked empty.
+
+    The desktop shell already restores from this copy -- `ensure_workspace`
+    seeds a fresh portable install from it before the backend ever reads
+    settings.json. Only the write half was missing, because #399 moved the
+    data directory and nothing took over writing the old location.
+
+    Best-effort by definition: this is a redundant copy, and failing to write
+    it must never fail the setting the user just changed. The path comes from
+    the shell (STEMDECK_SETTINGS_MIRROR) so the platform logic stays in one
+    place and both halves cannot drift apart.
+    """
+    target = os.environ.get("STEMDECK_SETTINGS_MIRROR", "").strip()
+    if not target:
+        return
+    try:
+        path = Path(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Same-directory temp + replace: a torn write here would be restored
+        # verbatim into the user's next install.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(_ensure()), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        _log.warning("could not mirror settings to %s", target, exc_info=True)
 
 
 def _num(v: object) -> int | None:
