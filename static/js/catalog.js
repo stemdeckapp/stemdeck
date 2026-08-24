@@ -89,6 +89,12 @@ const FRIENDS = [
     url: "https://seratone.audio/",
   },
   {
+    name: "slashCAM",
+    role: "German-language camera and video tech: hands-on tests, industry news, and the post-production details most reviews skip",
+    url: "https://www.instagram.com/slashcam.de",
+    logo: "/img/friends/slashcam.webp",
+  },
+  {
     name: "Thomann",
     role: "One of Europe's largest music gear retailers, practically everything a musician could need",
     url: "https://www.instagram.com/thomann.music",

@@ -62,6 +62,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding** - no
 | Lisbon Guitar Works | Guitars built by hand in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | More Notes Less Talk | Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping. | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
 | Seratone | Turns any TV into a studio-grade karaoke stage | [seratone.audio](https://seratone.audio/) |
+| slashCAM | German-language camera and video tech: hands-on tests, industry news, and the post-production details most reviews skip | [@slashcam.de](https://www.instagram.com/slashcam.de) |
 | Thomann | One of Europe's largest music gear retailers, practically everything a musician could need | [@thomann.music](https://www.instagram.com/thomann.music) |
 
 
