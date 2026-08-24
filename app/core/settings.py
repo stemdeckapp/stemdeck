@@ -81,6 +81,15 @@ def _ensure() -> dict:
     global _state
     if _state is None:
         _state = _load()
+        # Seed the per-user copy from settings that already exist. Mirroring
+        # only on _save() would protect nobody who configured StemDeck before
+        # this shipped and never opens Settings again -- their next install
+        # would still start empty. Safe against recursion (_state is assigned
+        # first) and against clobbering: an empty dict means a genuine first
+        # run, and overwriting a good copy with it is exactly the data loss
+        # this whole mechanism exists to prevent.
+        if _state:
+            _mirror_settings()
     return _state
 
 

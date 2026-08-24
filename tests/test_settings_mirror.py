@@ -67,6 +67,39 @@ def test_a_failing_mirror_never_fails_the_setting(tmp_path, monkeypatch):
     )
 
 
+def test_existing_settings_are_mirrored_without_waiting_for_a_change(tmp_path, monkeypatch):
+    # Someone who relocated their stems folder in an earlier release and never
+    # opens Settings again would never trigger a save, so mirroring on save
+    # alone would leave them exposed on their next install.
+    _settings._SETTINGS_PATH.write_text(
+        json.dumps({"jobs_dir": str(tmp_path / "MyStems")}), encoding="utf-8"
+    )
+    _settings._state = None  # a fresh process, reading what is already on disk
+    mirror = tmp_path / "shared" / "settings.json"
+    monkeypatch.setenv("STEMDECK_SETTINGS_MIRROR", str(mirror))
+
+    _settings.get_jobs_dir()
+
+    assert mirror.is_file()
+    assert json.loads(mirror.read_text(encoding="utf-8"))["jobs_dir"] == str(tmp_path / "MyStems")
+
+
+def test_a_first_run_never_clobbers_an_existing_mirror(tmp_path, monkeypatch):
+    # The restore is what seeds a new install, and it happens before the backend
+    # starts. If a run with no settings of its own overwrote the copy with its
+    # defaults, it would destroy the very thing being preserved.
+    mirror = tmp_path / "shared" / "settings.json"
+    mirror.parent.mkdir(parents=True)
+    mirror.write_text(json.dumps({"jobs_dir": str(tmp_path / "MyStems")}), encoding="utf-8")
+    monkeypatch.setenv("STEMDECK_SETTINGS_MIRROR", str(mirror))
+    _settings._state = None
+    assert not _settings._SETTINGS_PATH.exists()
+
+    _settings.get_jobs_dir()
+
+    assert json.loads(mirror.read_text(encoding="utf-8"))["jobs_dir"] == str(tmp_path / "MyStems")
+
+
 def test_mirror_holds_the_relocated_stems_folder(tmp_path, monkeypatch):
     # The reported symptom: a new install went back to the default jobs folder
     # because jobs_dir only existed inside the old install directory.
