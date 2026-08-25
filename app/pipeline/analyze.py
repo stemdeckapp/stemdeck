@@ -210,7 +210,13 @@ def _load_audio_ffmpeg(
     cmd.append("-")  # write to stdout
     try:
         proc = subprocess.run(cmd, capture_output=True, check=True, timeout=timeout)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+    # OSError, not just FileNotFoundError. A missing binary is only one way
+    # spawning fails: a portable install whose ffmpeg lost its executable bit
+    # raises PermissionError, which is an OSError but not a FileNotFoundError,
+    # and would have crashed the analysis instead of degrading. Everything this
+    # function produces is a display field, so None is always the right answer
+    # on failure.
+    except (subprocess.SubprocessError, OSError) as e:
         logger.warning("ffmpeg decode failed for %s: %s", source, e)
         return None
     y = np.frombuffer(proc.stdout, dtype=np.float32)
