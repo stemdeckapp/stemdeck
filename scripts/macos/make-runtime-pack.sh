@@ -178,11 +178,14 @@ JSON
 #
 # Pinned by version and SHA256, the same rule as the macOS FFmpeg download
 # (#172).
+# ARCH is this script's own value, validated at the top as arm64 or x64. It is
+# not the asset naming, which uses x86_64: mapping between the two is the whole
+# job of this case, and conflating them is what broke the first x64 build.
 QJS_VERSION="v0.16.2"
 case "$ARCH" in
-  arm64)  QJS_ASSET="qjs-darwin-arm64";  QJS_SHA256="f6200e9856c45578a5d42ac873a32f3f994b421e29df9f63b452d9c7145015fc" ;;
-  x86_64) QJS_ASSET="qjs-darwin-x86_64"; QJS_SHA256="4448991c0500dbe40c7b2f91ba39275995413aa4ee59db3b513b68350908a413" ;;
-  *) echo "unknown arch for QuickJS: $ARCH" >&2; exit 1 ;;
+  arm64) QJS_ASSET="qjs-darwin-arm64";  QJS_SHA256="f6200e9856c45578a5d42ac873a32f3f994b421e29df9f63b452d9c7145015fc" ;;
+  x64)   QJS_ASSET="qjs-darwin-x86_64"; QJS_SHA256="4448991c0500dbe40c7b2f91ba39275995413aa4ee59db3b513b68350908a413" ;;
+  *) echo "ERROR: no QuickJS mapping for ARCH '${ARCH}'" >&2; exit 1 ;;
 esac
 QJS_DIR="${BACKEND_DIR}/jsruntime"
 mkdir -p "$QJS_DIR"
