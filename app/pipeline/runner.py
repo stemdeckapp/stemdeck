@@ -265,12 +265,17 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
     tail: list[str] = getattr(exc, "tail", None) or []
     cause = classify_failure("\n".join([*tail, repr(exc)]))
     detail = cause
-    if tail:
-        # error_detail reaches the client directly (job state, notification
-        # card, and the report URL's "what" field) -- redact before the [:200]
-        # truncation, not after, so a redaction placeholder never gets cut in
-        # half.
-        detail += f" — {redact(tail[-1])[:200]}"
+    # error_detail reaches the client directly (job state, notification card,
+    # and the report URL's "what" field) -- redact before the [:200] truncation,
+    # not after, so a redaction placeholder never gets cut in half.
+    #
+    # Prefer the stderr tail, which only SeparationError carries. Without the
+    # fallback, every yt-dlp failure arrived as the bare word "unknown" with no
+    # message at all, and the only way to find out what happened was to read
+    # data/logs/ (#434).
+    message = redact(tail[-1]) if tail else redact(str(exc))
+    if message.strip():
+        detail += f" — {message[:200]}"
     job.error_detail = detail
 
     try:

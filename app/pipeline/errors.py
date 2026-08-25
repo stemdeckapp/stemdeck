@@ -63,6 +63,31 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "disk quota exceeded",
         ),
     ),
+    # Source-fetch failures (#434). Placed after the resource-level causes above
+    # so a genuine disk-full or OOM during a download still classifies as such,
+    # and before "bad-input" so yt-dlp's wording wins over the generic
+    # file-read patterns there.
+    (
+        "source-blocked",
+        (
+            # Apostrophe-insensitive: yt-dlp's wording is "Sign in to confirm
+            # you're not a bot", and the quoting has changed between releases.
+            "sign in to confirm",
+            "http error 429",
+            "too many requests",
+        ),
+    ),
+    (
+        "source-unavailable",
+        (
+            "requested format is not available",
+            "only images are available",
+            "n challenge solving failed",
+            "video unavailable",
+            "private video",
+            "has been removed",
+        ),
+    ),
     (
         "bad-input",
         (
@@ -80,7 +105,7 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def classify_failure(text: str) -> str:
     """Map failure output to one of: out-of-memory, unsupported-device,
-    disk-full, bad-input, unknown."""
+    disk-full, source-blocked, source-unavailable, bad-input, unknown."""
     low = text.lower()
     for cause, patterns in _CAUSE_PATTERNS:
         if any(p in low for p in patterns):

@@ -150,6 +150,71 @@ async def test_local_pipeline_error_cleans_up_job_dir(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_download_failure_carries_its_message(tmp_path: Path):
+    """#434: a yt-dlp failure has no stderr tail (only SeparationError carries
+    one), so error_detail used to arrive as the bare word "unknown". It must
+    now classify the cause AND carry the message."""
+    job = Job(id="abcdefabcde7")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot.")
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert job.error_detail is not None
+    assert job.error_detail.startswith("source-blocked")
+    assert "Sign in to confirm" in job.error_detail
+    assert job.error_detail != "source-blocked"
+
+
+@pytest.mark.asyncio
+async def test_error_detail_stays_bare_when_exception_has_no_message(tmp_path: Path):
+    """The message fallback must not append an empty separator: a bare cause is
+    correct when there is genuinely nothing to say."""
+    job = Job(id="abcdefabcde8")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=RuntimeError()):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.error_detail == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_download_failure_message_is_redacted(tmp_path: Path):
+    """error_detail is served to the client and pasted into public reports, so
+    the source URL yt-dlp embeds in its errors must not survive."""
+    job = Job(id="abcdefabcde9")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(
+            "ERROR: Unable to download https://www.youtube.com/watch?v=dQw4w9WgXcQ: "
+            "Requested format is not available"
+        )
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.error_detail is not None
+    assert job.error_detail.startswith("source-unavailable")
+    assert "youtube.com" not in job.error_detail
+    assert "dQw4w9WgXcQ" not in job.error_detail
+
+
+@pytest.mark.asyncio
 async def test_pipeline_error_quarantines_evidence(tmp_path: Path):
     """#277: a failed job's dir moves to jobs/failed/<id> with error.txt
     (device, cause, stderr tail) and the heavy audio payloads stripped."""
