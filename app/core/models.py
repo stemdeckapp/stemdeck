@@ -61,6 +61,15 @@ class Job:
     # True when a silent video track (video.mp4) was preserved from an .mp4
     # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
+    # Why has_video is what it is (#436). None when video was never attempted
+    # (SoundCloud, a non-mp4 upload); "ok" when a track was preserved;
+    # "unavailable" when the source simply offers no video stream; "failed"
+    # when the fetch or extract errored.
+    #
+    # has_video alone collapses the last two into the same silent absence, so a
+    # user who imported a track specifically to export a karaoke video could not
+    # tell "this never had video" from "the video fetch broke".
+    video_status: str | None = None
     error: str | None = None
     # Classified failure cause + last stderr line (e.g. "out-of-memory — ...").
     # Shown by the UI as a secondary line under the generic error message so
@@ -127,6 +136,7 @@ class Job:
             "mix_url": self.mix_url,
             "source_url": self.source_url,
             "has_video": self.has_video,
+            "video_status": self.video_status,
             "error": self.error,
             "error_detail": self.error_detail,
             "compute_device": self.compute_device,

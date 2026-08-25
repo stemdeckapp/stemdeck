@@ -957,7 +957,7 @@ function _applyLaneHeight(count) {
   return laneH;
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false) {
+export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false, videoStatus = null) {
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -1024,7 +1024,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   _mixUrl = mixUrl || null;
   _currentTitle = title || "";
   _currentHasVideo = !!hasVideo;
-  document.getElementById("footer-export-wrap")?.classList.toggle("has-video", !!hasVideo);
+  const exportWrap = document.getElementById("footer-export-wrap");
+  exportWrap?.classList.toggle("has-video", !!hasVideo);
+  // "failed" is the only status worth showing. "unavailable" means the source
+  // genuinely has no video stream, which is not a fault and not news (#436).
+  exportWrap?.classList.toggle("video-failed", videoStatus === "failed");
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
   updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 

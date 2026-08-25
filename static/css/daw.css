@@ -2615,6 +2615,16 @@ input, textarea { font-family: inherit; }
 .export-fmt-video { display: none; }
 #footer-export-wrap.has-video .export-fmt-video { display: block; flex: 1; }
 
+/* Shown only when the video fetch actually failed, never when the source
+   simply has no video stream. An absent MP4 button is normal; a broken one
+   the user was never told about is not (#436). */
+.export-video-failed { display: none; }
+#footer-export-wrap.video-failed .export-video-failed {
+  display: block;
+  margin: 2px 4px 4px; padding: 5px 6px;
+  font-size: 11px; line-height: 1.4; color: var(--muted);
+}
+
 /* In MP4 mode only "Export Mix" applies — the audio-only Stems/Region rows
    are hidden. main.js toggles .fmt-mp4 on the panel. */
 #t-export-panel.fmt-mp4 #t-export-stems,

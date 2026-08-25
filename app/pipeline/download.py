@@ -468,6 +468,10 @@ def _download_video_track(job: Job, url: str, job_dir: Path, *, use_cookies: boo
     }
 
     _set(job, stage="Fetching video...")
+    # Distinguishes "this video has no MP4 stream to offer" from "the fetch
+    # broke", which has_video alone cannot (#436). Only the second is worth
+    # telling the user about.
+    failed = False
     try:
         with YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
@@ -476,12 +480,15 @@ def _download_video_track(job: Job, url: str, job_dir: Path, *, use_cookies: boo
     except Exception as exc:
         if job.cancel_requested:
             raise JobCancelled() from exc
+        failed = True
         logger.warning("[%s] video track unavailable (audio-only): %s", job.id, exc)
 
     video = job_dir / "video.mp4"
     if video.is_file() and video.stat().st_size > 0:
         job.has_video = True
+        job.video_status = "ok"
     else:
+        job.video_status = "failed" if failed else "unavailable"
         # Drop any partial/non-mp4 leftover so the export endpoint sees nothing.
         for f in job_dir.glob("video.*"):
             f.unlink(missing_ok=True)
