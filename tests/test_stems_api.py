@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.core.models import Job
 from app.core.registry import _jobs
+from tests.ffmpeg_probe import ffmpeg_available, skip_without_ffmpeg
 
 
 @pytest.fixture(autouse=True)
@@ -370,10 +371,9 @@ def test_all_stems_zip_404_when_no_stem_files(client, tmp_path):
 def test_all_stems_zip_mp3(client, tmp_path):
     """MP3 zip transcodes via ffmpeg; skip if ffmpeg isn't available."""
     import io
-    import shutil
     import zipfile
 
-    if shutil.which("ffmpeg") is None:
+    if not ffmpeg_available():
         import pytest
 
         pytest.skip("ffmpeg not available")
@@ -405,10 +405,9 @@ def test_all_stems_zip_mp3(client, tmp_path):
 def test_all_stems_zip_ogg(client, tmp_path):
     """OGG zip transcodes via ffmpeg (libvorbis); skip if ffmpeg isn't available."""
     import io
-    import shutil
     import zipfile
 
-    if shutil.which("ffmpeg") is None:
+    if not ffmpeg_available():
         import pytest
 
         pytest.skip("ffmpeg not available")
@@ -533,12 +532,10 @@ def test_mixdown_404_for_missing_stem_file(client, tmp_path):
 
 
 def _skip_without_ffmpeg():
-    import shutil
-
-    if shutil.which("ffmpeg") is None:
-        import pytest
-
-        pytest.skip("ffmpeg not available")
+    # Resolves ffmpeg the way the app does, not by looking at PATH. See
+    # tests/ffmpeg_probe.py: the PATH-only check silently skipped twenty tests
+    # on machines where the bundled binary works fine.
+    skip_without_ffmpeg()
 
 
 def test_mixdown_wav_happy(client, tmp_path):

@@ -16,9 +16,10 @@ from app.pipeline.runner import (
 
 
 def _ffmpeg_available() -> bool:
-    import shutil
+    # See tests/ffmpeg_probe.py: PATH is not how the app finds ffmpeg.
+    from tests.ffmpeg_probe import ffmpeg_available
 
-    return shutil.which("ffmpeg") is not None
+    return ffmpeg_available()
 
 
 @pytest.mark.asyncio
