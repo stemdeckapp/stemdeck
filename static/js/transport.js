@@ -602,7 +602,10 @@ export function wireTransportButtons() {
 
 // Fixed presets, not a continuous dial -- practice speeds for slowing a part
 // down, not a general-purpose tempo control (issue #269 follow-up).
-const SPEED_PRESETS = [0.25, 0.5, 1];
+// 0.75x rather than 0.5x/0.25x (#433): below ~0.7x the time-stretch artefacts
+// dominate and the part gets harder to follow, which is the opposite of what
+// a practice speed is for.
+const SPEED_PRESETS = [0.75, 1];
 
 function applySpeed(rate) {
   // Snap to the nearest preset rather than clamping continuously: every

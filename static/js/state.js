@@ -17,7 +17,7 @@ export const keyChip = $("t-key");
 export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
 export const masterFader = $("t-master");
-export const speedBtns = ["t-speed-025", "t-speed-05", "t-speed-1"].map($);
+export const speedBtns = ["t-speed-075", "t-speed-1"].map($);
 export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 
