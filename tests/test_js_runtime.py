@@ -54,13 +54,49 @@ def test_the_runtime_pack_layout_is_found(tmp_path, monkeypatch):
     assert cfg.bundled_js_runtime() == ("quickjs", exe)
 
 
-def test_the_real_search_path_covers_both_layouts():
-    """The list itself, not a monkeypatched stand-in: a refactor that drops the
-    second location would leave macOS silently unbundled."""
+def test_the_real_search_path_covers_the_packaged_layout():
+    """The list itself, not a monkeypatched stand-in.
+
+    In a package this file is backend/app/core/config.py, so parents[2] is
+    backend/ and backend/jsruntime is where all three build scripts put the
+    binary. A refactor that changes that index leaves every desktop package
+    silently without an engine, and silently is the whole problem: yt-dlp just
+    falls back to the client that skips the challenge.
+    """
+    from pathlib import Path
+
     dirs = cfg._js_runtime_dirs()
-    assert cfg.JS_RUNTIME_DIR in dirs
-    assert len(dirs) >= 2
+    assert cfg.JS_RUNTIME_DIR in dirs, "the env-var override must still win"
+    package_root = Path(cfg.__file__).resolve().parents[2]
+    assert package_root / "jsruntime" in dirs, (
+        "backend/jsruntime is not searched; the build scripts put the engine there"
+    )
     assert len(set(dirs)) == len(dirs), "duplicate directories mean a wasted stat per lookup"
+
+
+def test_the_build_scripts_agree_with_the_lookup():
+    """A cross-language contract: three shell/PowerShell scripts choose where
+    the engine lands, and Python decides where to look. Nothing else checks
+    that those two facts still match, and a mismatch only shows up as YouTube
+    imports quietly degrading on one platform.
+    """
+    from pathlib import Path
+
+    repo = Path(cfg.__file__).resolve().parents[2]
+    scripts = {
+        "windows": repo / "scripts" / "windows" / "make-portable.ps1",
+        "linux": repo / "scripts" / "linux" / "make-portable.sh",
+        "macos": repo / "scripts" / "macos" / "make-runtime-pack.sh",
+    }
+    for name, path in scripts.items():
+        if not path.is_file():
+            continue  # running from an installed package, not the repo
+        text = path.read_text(encoding="utf-8")
+        assert "jsruntime" in text, f"{name} no longer installs a JS runtime"
+        assert "BackendDir" in text or "BACKEND_DIR" in text, (
+            f"{name} puts the engine outside backend/, where the updater cannot reach it"
+        )
+        assert "sha256" in text.lower(), f"{name} fetches a binary without verifying it"
 
 
 def test_ytdlp_preference_order_is_honoured(tmp_path, monkeypatch):
