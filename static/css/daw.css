@@ -110,7 +110,10 @@ input, textarea { font-family: inherit; }
 .daw-process-btn > svg { display: none; }
 .daw-url-zone svg { flex-shrink: 0; }
 
-.daw-url-zone input[type="url"] {
+/* Keyed off the id, not the type. This input is type="text" so a search
+   query is not marked invalid; an attribute selector here silently drops
+   every rule the moment that changes. */
+.daw-url-zone #url {
   flex: 1;
   min-width: 0;
   background: none;
@@ -121,7 +124,7 @@ input, textarea { font-family: inherit; }
   font-family: inherit;
   letter-spacing: -0.005em;
 }
-.daw-url-zone input[type="url"]::placeholder { color: var(--muted); }
+.daw-url-zone #url::placeholder { color: var(--muted); }
 
 /* Upload button inside URL zone */
 .daw-upload-btn {
@@ -173,7 +176,7 @@ input, textarea { font-family: inherit; }
   background: rgba(244,183,64,0.06);
   box-shadow: inset 0 0 0 1px rgba(244,183,64,0.3);
 }
-.daw-url-zone.has-file input[type="url"] { display: none; }
+.daw-url-zone.has-file #url { display: none; }
 
 /* Composer vertical divider */
 .daw-composer-sep {
@@ -2611,6 +2614,111 @@ input, textarea { font-family: inherit; }
 .export-click-opt input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 .export-click-opt.disabled { opacity: 0.4; cursor: not-allowed; }
 .export-click-opt.disabled:hover { background: none; color: var(--fg-2); }
+
+/* ── Live search dropdown (topbar) ────────────────────────────────
+   Anchored to .url-wrap, which is position:relative already for the drag
+   overlay. contain:layout paint keeps a long result list from forcing the
+   composer above it to re-layout while rows stream in. */
+/* Lives on <body>, not in .url-wrap: the composer clips its children
+   (overflow:hidden for the rounded pill), which made an absolutely positioned
+   panel invisible. JS sets left/top/width from the composer's rect. */
+.search-panel {
+  position: fixed; z-index: 300;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.42);
+  overflow: hidden; contain: layout paint;
+}
+.search-panel.hidden { display: none; }
+.search-tabs { display: flex; gap: 2px; padding: 5px; border-bottom: 1px solid var(--border); }
+.search-tab {
+  flex: 1; border: 0; background: transparent; cursor: pointer;
+  padding: 5px 8px; border-radius: 6px; color: var(--muted);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.search-tab:hover { background: var(--panel-3); color: var(--fg); }
+.search-tab.active { background: var(--panel-3); color: var(--accent); }
+.search-status { padding: 12px 12px; font-size: 11.5px; color: var(--muted); }
+.search-status.hidden { display: none; }
+.search-list {
+  list-style: none; margin: 0; padding: 4px;
+  max-height: 340px; overflow-y: auto; overscroll-behavior: contain;
+}
+.search-row {
+  display: flex; flex-direction: column;
+  padding: 6px; border-radius: 7px; cursor: pointer;
+}
+.search-row-main { display: flex; align-items: center; gap: 9px; }
+.search-row:hover, .search-row.active { background: var(--panel-3); }
+.search-thumb {
+  flex-shrink: 0; width: 64px; height: 36px; object-fit: cover;
+  border-radius: 4px; background: var(--panel-2);
+}
+.search-thumb-empty { display: block; }
+.search-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.search-title {
+  font-size: 12px; font-weight: 600; color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.search-meta {
+  font-size: 10.5px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Over the duration limit the pipeline refuses the job, so the row is not
+   selectable at all rather than merely warning about it. */
+.search-row.too-long { cursor: not-allowed; opacity: 0.55; }
+.search-row.too-long:hover { background: none; }
+.search-warn {
+  flex-shrink: 0; font-size: 10px; font-weight: 600; color: var(--danger);
+  white-space: nowrap;
+}
+
+/* Audition controls. Hidden until the row is hovered or playing, so a list of
+   eight results is not eight competing buttons. */
+/* A labelled pill, not a bare glyph. An unlabelled circle on a search result
+   reads as "play this result", which is the one thing it does not do: it
+   auditions, it does not select. Always visible for the same reason -- a
+   control you have to hover to discover is not a control most people find. */
+.search-preview-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 10px 0 8px;
+  border: 1px solid var(--border-strong); border-radius: 13px;
+  background: var(--panel-2); color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.01em; white-space: nowrap;
+  opacity: 0.75;
+  transition: opacity var(--t-fast), color var(--t-fast),
+              background var(--t-fast), border-color var(--t-fast);
+}
+.search-row:hover .search-preview-btn,
+.search-row.active .search-preview-btn,
+.search-preview-btn:focus-visible { opacity: 1; }
+.search-preview-btn:hover { background: var(--panel-3); color: var(--fg); border-color: var(--fg-2); }
+.search-preview-btn.playing {
+  opacity: 1; color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.search-player {
+  display: flex; align-items: center; gap: 9px;
+  margin: 7px 2px 1px; padding-left: 73px; cursor: default;
+}
+.search-player.loading .search-seek { opacity: 0.4; }
+.search-player.failed .search-clock { color: var(--danger); }
+.search-play {
+  flex-shrink: 0; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: var(--accent); color: #0b1118; cursor: pointer;
+}
+.search-seek {
+  flex: 1; min-width: 0; height: 4px; accent-color: var(--accent);
+  cursor: pointer;
+}
+.search-clock {
+  flex-shrink: 0; font-family: var(--font-mono); font-size: 10px;
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
 
 .export-fmt-video { display: none; }
 #footer-export-wrap.has-video .export-fmt-video { display: block; flex: 1; }

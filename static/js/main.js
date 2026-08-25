@@ -6,6 +6,7 @@ import {
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
+import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome } from "./transport.js";
@@ -134,6 +135,21 @@ const i18nReady = initI18n().then(() => applyTranslations(document));
 
 syncStemNamesFromAPI().then(() => buildStripStems());
 wireJobForm();
+// Live search on the topbar box. Picking a result fills the box and stops
+// there: extraction is minutes of work, so it stays behind the deliberate
+// press of Process rather than starting on a click in a list the user may
+// still be reading. The import flow (single track, playlist, capacity, stems)
+// is untouched, and search never learns about any of it.
+initSearch((item) => {
+  const urlInput = document.getElementById("url");
+  if (!urlInput) return;
+  urlInput.value = item.url;
+  // Fire input so anything listening to the box (the drop zone, the file pill)
+  // sees the new value, then leave the caret where a correction would go.
+  urlInput.dispatchEvent(new Event("input", { bubbles: true }));
+  urlInput.focus();
+  urlInput.setSelectionRange(urlInput.value.length, urlInput.value.length);
+});
 wireTransportButtons();
 wireBeatGridUi();
 wireFooterControls();

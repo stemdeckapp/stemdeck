@@ -36,10 +36,15 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8" style="flex-shrink:0" aria-hidden="true">
               <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1 M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>
             </svg>
+            <!-- type="text", not "url": this box takes a search query as well as a
+                 link, and type="url" marks a query invalid, which blocks form
+                 submission. A pasted link is validated server-side either way
+                 (validate_youtube_url). The topbar styling keys off #url, not
+                 the type, so it survives this. -->
             <input
               id="url"
-              type="url"
-              placeholder="Paste a YouTube or SoundCloud link, or drop an audio file…"
+              type="text"
+              placeholder="Search, or paste a YouTube or SoundCloud link, or drop an audio file…"
               data-i18n-placeholder="topbar.urlPlaceholder"
               spellcheck="false"
               autocomplete="off"
