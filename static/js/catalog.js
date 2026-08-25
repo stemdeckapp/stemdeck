@@ -3018,6 +3018,7 @@ function wireLanguageSetting(overlay) {
 // and POSTed on change to /api/settings (same runtime store as the toggle).
 async function wireGeneralSettings(overlay) {
   const durInput = overlay.querySelector(".set-max-duration");
+  const durDesc = overlay.querySelector(".set-max-duration-desc");
   const playlistInput = overlay.querySelector(".set-playlist-max");
   const heightSel = overlay.querySelector(".set-video-height");
   const sampleRateSel = overlay.querySelector(".set-export-samplerate");
@@ -3035,6 +3036,13 @@ async function wireGeneralSettings(overlay) {
 
   const apply = (d) => {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
+    // Same reason: the copy in the description text went stale alongside the
+    // clamp, telling the user "max 20" for a limit that was really 60.
+    if (durDesc && d.max_duration_max_sec) {
+      durDesc.textContent = i18nT("settings.maxDuration.desc", {
+        max: Math.round(d.max_duration_max_sec / 60),
+      });
+    }
     if (playlistInput && d.playlist_max_items) playlistInput.value = String(d.playlist_max_items);
     if (heightSel && d.video_max_height) heightSel.value = String(d.video_max_height);
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
@@ -3097,7 +3105,11 @@ async function wireGeneralSettings(overlay) {
   };
 
   durInput?.addEventListener("change", () => {
-    const mins = Math.max(1, Math.min(20, parseInt(durInput.value, 10) || 20));
+    // No ceiling of its own. This used to clamp to 20 while the backend
+    // allowed 60, so typing 60 silently posted 20 and the field snapped back
+    // with no explanation. The server clamps and returns the value it kept,
+    // and apply() writes that back, so it stays the single authority.
+    const mins = Math.max(1, parseInt(durInput.value, 10) || 20);
     post({ max_duration_sec: mins * 60 });
   });
   playlistInput?.addEventListener("change", () => {
@@ -3485,7 +3497,7 @@ function openLibraryEditor() {
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.maxDuration.title">Max track length</div>
-              <div class="settings-row-desc" data-i18n="settings.maxDuration.desc">Longest track accepted for processing, in minutes (max 20).</div>
+              <div class="settings-row-desc set-max-duration-desc">Longest track accepted for processing, in minutes (max 60).</div>
             </div>
             <input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" data-i18n-aria-label="settings.maxDuration.title" />
           </div>

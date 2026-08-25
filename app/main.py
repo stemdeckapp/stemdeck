@@ -40,6 +40,8 @@ from app.core.registry import registry_path, take_pending_resume
 from app.core.registry import reset_all as reset_registry
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
+    DURATION_MAX_SEC,
+    DURATION_MIN_SEC,
     get_allow_network,
     get_cookies_file,
     get_demucs_device,
@@ -319,6 +321,11 @@ def _settings_payload() -> dict[str, object]:
     return {
         "allow_network": get_allow_network(),
         "max_duration_sec": get_max_duration_sec(),
+        # The clamp bounds, so the UI does not need its own copy of them. It
+        # had one, it was stale (20 min against a 60 min ceiling), and the
+        # symptom was a user typing 60 and silently getting 20 back.
+        "max_duration_min_sec": DURATION_MIN_SEC,
+        "max_duration_max_sec": DURATION_MAX_SEC,
         "playlist_max_items": get_playlist_max_items(),
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),

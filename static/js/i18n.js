@@ -456,7 +456,7 @@ const en = {
   "settings.language.desc": "Display language for this app.",
 
   "settings.maxDuration.title": "Max track length",
-  "settings.maxDuration.desc": "Longest track accepted for processing, in minutes (max 20).",
+  "settings.maxDuration.desc": "Longest track accepted for processing, in minutes (max {max}).",
   "settings.playlistLimit.title": "Playlist import limit",
   "settings.playlistLimit.desc": "Most tracks one playlist import will queue (max 200).",
   "settings.cookies.title": "YouTube cookies",
@@ -977,7 +977,7 @@ const pl = {
   "settings.language.desc": "Język wyświetlania tej aplikacji.",
 
   "settings.maxDuration.title": "Maks. długość utworu",
-  "settings.maxDuration.desc": "Najdłuższy utwór akceptowany do przetworzenia, w minutach (maks. 20).",
+  "settings.maxDuration.desc": "Najdłuższy utwór akceptowany do przetworzenia, w minutach (maks. {max}).",
   "settings.playlistLimit.title": "Limit importu playlisty",
   "settings.playlistLimit.desc": "Ile utworów najwyżej zakolejkuje jeden import playlisty (maks. 200).",
   "settings.cookies.title": "Pliki cookie YouTube",
@@ -1490,7 +1490,7 @@ const ja = {
   "settings.language.desc": "このアプリの表示言語。",
 
   "settings.maxDuration.title": "最大トラック長",
-  "settings.maxDuration.desc": "処理を受け付ける最長トラック長(分単位、最大20分)。",
+  "settings.maxDuration.desc": "処理を受け付ける最長トラック長(分単位、最大{max}分)。",
   "settings.playlistLimit.title": "プレイリストインポート上限",
   "settings.playlistLimit.desc": "プレイリストのインポート1回でキューされる最大トラック数(最大200)。",
   "settings.cookies.title": "YouTube の Cookie",
@@ -1979,7 +1979,7 @@ const zhHans = {
   "settings.language.desc": "此应用的显示语言。",
 
   "settings.maxDuration.title": "最长曲目时长",
-  "settings.maxDuration.desc": "可处理的最长曲目时长,单位为分钟(最长20分钟)。",
+  "settings.maxDuration.desc": "可处理的最长曲目时长,单位为分钟(最长{max}分钟)。",
   "settings.playlistLimit.title": "播放列表导入上限",
   "settings.playlistLimit.desc": "单次播放列表导入最多排队的曲目数(最多200首)。",
   "settings.cookies.title": "YouTube Cookie",
@@ -2469,7 +2469,7 @@ const de = {
   "settings.language.desc": "Anzeigesprache für diese App.",
 
   "settings.maxDuration.title": "Maximale Tracklänge",
-  "settings.maxDuration.desc": "Längster zur Verarbeitung akzeptierter Track, in Minuten (max. 20).",
+  "settings.maxDuration.desc": "Längster zur Verarbeitung akzeptierter Track, in Minuten (max. {max}).",
   "settings.playlistLimit.title": "Playlist-Import-Limit",
   "settings.playlistLimit.desc": "Höchste Anzahl Tracks, die ein Playlist-Import einreiht (max. 200).",
   "settings.cookies.title": "YouTube-Cookies",
@@ -2969,7 +2969,7 @@ const pt = {
   "settings.language.desc": "Idioma de exibição deste aplicativo.",
 
   "settings.maxDuration.title": "Duração máxima da faixa",
-  "settings.maxDuration.desc": "Faixa mais longa aceita para processamento, em minutos (máx. 20).",
+  "settings.maxDuration.desc": "Faixa mais longa aceita para processamento, em minutos (máx. {max}).",
   "settings.playlistLimit.title": "Limite de importação de playlist",
   "settings.playlistLimit.desc": "Máximo de faixas que uma importação de playlist enfileira (máx. 200).",
   "settings.cookies.title": "Cookies do YouTube",
@@ -3470,7 +3470,7 @@ const id = {
   "settings.language.desc": "Bahasa tampilan untuk aplikasi ini.",
 
   "settings.maxDuration.title": "Panjang trek maksimum",
-  "settings.maxDuration.desc": "Trek terpanjang yang diterima untuk diproses, dalam menit (maks. 20).",
+  "settings.maxDuration.desc": "Trek terpanjang yang diterima untuk diproses, dalam menit (maks. {max}).",
   "settings.playlistLimit.title": "Batas impor playlist",
   "settings.playlistLimit.desc": "Jumlah trek terbanyak yang akan diantrekan satu kali impor playlist (maks. 200).",
   "settings.cookies.title": "Cookie YouTube",
@@ -3961,7 +3961,7 @@ const fr = {
   "settings.language.desc": "Langue d'affichage de l'application.",
 
   "settings.maxDuration.title": "Durée maximale d'un morceau",
-  "settings.maxDuration.desc": "Durée maximale acceptée pour le traitement, en minutes (max. 20).",
+  "settings.maxDuration.desc": "Durée maximale acceptée pour le traitement, en minutes (max. {max}).",
   "settings.playlistLimit.title": "Limite d'import de playlist",
   "settings.playlistLimit.desc": "Nombre maximal de morceaux mis en file lors d'un import de playlist (max. 200).",
   "settings.cookies.title": "Cookies YouTube",

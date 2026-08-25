@@ -42,6 +42,9 @@ _state: dict | None = None  # whole settings dict, loaded lazily
 
 # Clamp bounds. Max track length is capped at 60 min (the product ceiling).
 _DURATION_MIN, _DURATION_MAX = 60, 3600  # 1 min .. 60 min
+# Published through /api/settings so the UI reads the ceiling rather than
+# keeping its own copy of it.
+DURATION_MIN_SEC, DURATION_MAX_SEC = _DURATION_MIN, _DURATION_MAX
 _HEIGHT_MIN, _HEIGHT_MAX = 144, 2160
 _PLAYLIST_MIN, _PLAYLIST_MAX = 1, 200
 _PORT_MIN, _PORT_MAX = 1024, 65535
