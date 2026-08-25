@@ -76,7 +76,12 @@ def _probe_duration(path: Path) -> float:
             str(path),
         ],
         capture_output=True,
+        # See the note in pipeline/separate.py: text=True alone decodes with the
+        # Windows locale encoding and a stray byte in ffprobe's output would
+        # fail the upload outright.
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     if result.returncode != 0:

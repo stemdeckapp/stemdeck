@@ -56,6 +56,12 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
 
     device = get_demucs_device()
     env = os.environ.copy()
+    # Pin the child's stdio encoding to match what the parent now decodes with.
+    # Without it a Windows child writes cp1252 while the parent reads utf-8, so
+    # the mismatch simply moves rather than being fixed. Demucs and audio-
+    # separator both emit progress bars and can echo track metadata, neither of
+    # which is guaranteed to be cp1252-safe.
+    env["PYTHONIOENCODING"] = "utf-8:replace"
     try:
         import certifi
 
@@ -68,7 +74,14 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
         _spawn_cmd(device, vocals_path, stems_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        # utf-8/replace explicitly. text=True alone decodes with the locale
+        # encoding, which on Windows is cp1252, and a single byte outside it
+        # in a child's output kills the whole job with a UnicodeDecodeError
+        # ("'charmap' codec can't decode byte 0x8f"). This is diagnostic text:
+        # a byte we cannot read is never a reason to fail a separation.
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         env=env,
     )
