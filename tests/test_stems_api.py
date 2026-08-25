@@ -604,13 +604,13 @@ def test_mixdown_cache_hit_skips_second_render(client, tmp_path, monkeypatch):
     from app.api import stems as stems_mod
 
     calls = {"n": 0}
-    original = stems_mod._stream_ffmpeg
+    original = stems_mod._render_ffmpeg  # WAV renders via the seekable-output path
 
-    def counting_stream_ffmpeg(*args, **kwargs):
+    def counting_render_ffmpeg(*args, **kwargs):
         calls["n"] += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(stems_mod, "_stream_ffmpeg", counting_stream_ffmpeg)
+    monkeypatch.setattr(stems_mod, "_render_ffmpeg", counting_render_ffmpeg)
 
     job = _done_job_with_stems(tmp_path, "abcdef000020", ["vocals", "drums"])
     url = f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,0.5"
@@ -826,3 +826,62 @@ def test_video_mux_happy(client, tmp_path):
     assert r.headers["content-type"] == "video/mp4"
     # ISO-BMFF: bytes 4-8 of the first box are the "ftyp" type.
     assert r.content[4:8] == b"ftyp"
+
+
+# ─── WAV/FLAC headers must be finalised (seekable output, not pipe:1) ─────
+
+
+def _assert_wav_header_sizes_match(content: bytes) -> None:
+    """ffmpeg's WAV muxer can only patch the RIFF and data sizes on a seekable
+    output; streamed via pipe:1 both stay 0xFFFFFFFF and strict hardware
+    players (samplers, drum machines) reject the file."""
+    assert content[:4] == b"RIFF" and content[8:12] == b"WAVE"
+    riff_size = int.from_bytes(content[4:8], "little")
+    assert riff_size == len(content) - 8, f"RIFF size {riff_size:#x} vs file {len(content)}"
+    pos = 12
+    while pos + 8 <= len(content):
+        cid = content[pos : pos + 4]
+        clen = int.from_bytes(content[pos + 4 : pos + 8], "little")
+        if cid == b"data":
+            assert clen != 0xFFFFFFFF, "data chunk size left as placeholder"
+            assert pos + 8 + clen == len(content), "data chunk does not end at EOF"
+            return
+        pos += 8 + clen + (clen & 1)
+    raise AssertionError("no data chunk found")
+
+
+def test_mixdown_wav_header_sizes_are_finalised(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000030", ["vocals", "drums"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,0.5")
+    assert r.status_code == 200
+    _assert_wav_header_sizes_match(r.content)
+    # The cached copy is the same finalised file.
+    (cached,) = (tmp_path / "cache" / "mixdown").glob("*.wav")
+    assert cached.read_bytes() == r.content
+    r2 = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,0.5")
+    _assert_wav_header_sizes_match(r2.content)
+
+
+def test_stem_region_wav_header_sizes_are_finalised(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000031", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/stems/vocals.wav?start=0&end=0.05")
+    assert r.status_code == 200
+    _assert_wav_header_sizes_match(r.content)
+    # No temp file left behind for the uncached region render.
+    cache_dir = tmp_path / "cache" / "mixdown"
+    assert not [p for p in cache_dir.glob(".*") if cache_dir.is_dir()]
+
+
+def test_mixdown_flac_streaminfo_has_total_samples(client, tmp_path):
+    _skip_without_ffmpeg()
+    job = _done_job_with_stems(tmp_path, "abcdef000032", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.flac?stems=vocals&gains=1")
+    assert r.status_code == 200
+    assert r.content[:4] == b"fLaC"
+    # STREAMINFO block: 4-byte header, then 34 bytes; total_samples is the low
+    # 36 bits of bytes 13..21 of the block body.
+    body = r.content[8 : 8 + 34]
+    total_samples = int.from_bytes(body[13:21], "big") & ((1 << 36) - 1)
+    assert total_samples > 0, "STREAMINFO total_samples left at 0 (unseekable output)"

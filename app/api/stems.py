@@ -65,6 +65,7 @@ _ENCODE_ARGS = {
     "ogg": ["-c:a", "libvorbis", "-q:a", "6"],
 }
 MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
+_SEEKABLE_OUTPUT_EXTS = frozenset({"wav", "flac"})
 MIXDOWN_MEDIA_TYPES = {
     "wav": "audio/wav",
     "mp3": "audio/mpeg",
@@ -397,6 +398,77 @@ async def _stream_ffmpeg(cmd: list[str], context: str = "", cache_path: Path | N
                 tmp_path.unlink(missing_ok=True)
 
 
+async def _render_ffmpeg(
+    cmd: list[str], suffix: str, context: str = "", cache_path: Path | None = None
+):
+    """Run ffmpeg to completion writing a temp file, then yield that file in
+    64 KB chunks. The sibling of _stream_ffmpeg for containers in
+    _SEEKABLE_OUTPUT_EXTS: WAV and FLAC muxers patch their header (RIFF and
+    data chunk sizes, STREAMINFO total samples) by seeking back once the
+    stream ends, which is impossible on pipe:1, so anything streamed straight
+    from ffmpeg's stdout carries a 0xFFFFFFFF-sized data chunk that strict
+    hardware players refuse.
+
+    `cmd` is the full ffmpeg command *without* an output path; the temp path
+    is appended here. With `cache_path` the temp file lives beside it and a
+    clean render is atomically renamed into place as the cache entry (#290);
+    otherwise it is discarded after streaming. A failed render yields nothing
+    -- the HTTP status is already committed, so like _stream_ffmpeg the log
+    entry is where the failure surfaces -- and never becomes a cache hit."""
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp{suffix}")
+    else:
+        _MIXDOWN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = _MIXDOWN_CACHE_DIR / f".render.{uuid.uuid4().hex}.tmp{suffix}"
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        "-y",
+        str(tmp_path),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stderr_tail: deque[str] = deque(maxlen=30)
+    drain_task = asyncio.create_task(_drain_stderr(proc.stderr, stderr_tail))
+    ok = False
+    try:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=TIMEOUT_FFMPEG)
+        except (TimeoutError, asyncio.TimeoutError):
+            proc.kill()
+            await proc.wait()
+        try:
+            await asyncio.wait_for(drain_task, timeout=5)
+        except (TimeoutError, asyncio.TimeoutError):
+            drain_task.cancel()
+        if proc.returncode != 0:
+            logger.warning(
+                "render ffmpeg exit %s [%s]: %s",
+                proc.returncode,
+                context,
+                " | ".join(list(stderr_tail)[-8:]) or "(no stderr)",
+            )
+            return
+        ok = True
+
+        with open(tmp_path, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        if ok and cache_path is not None:
+            os.replace(tmp_path, cache_path)
+            _prune_mixdown_cache(cache_path.parent)
+        else:
+            tmp_path.unlink(missing_ok=True)
+
+
 async def _ensure_cached_mp3(src: Path) -> Path:
     """Transcode `src` (a stem WAV) to a sibling `<name>.mp3`, cached on disk.
     Re-encoding a full song on every request is the slow part of loading a track
@@ -533,10 +605,9 @@ async def get_stem(
         "pcm_s16le",
         "-f",
         "wav",
-        "pipe:1",
     ]
     return StreamingResponse(
-        _stream_ffmpeg(cmd, context=f"stem-region job={job_id} stem={name}"),
+        _render_ffmpeg(cmd, ".wav", context=f"stem-region job={job_id} stem={name}"),
         media_type="audio/wav",
         headers={
             "Content-Disposition": (
@@ -739,13 +810,15 @@ async def get_mixdown(
         *post_seek,
         *codec,
         *rate,
-        "pipe:1",
     ]
 
+    context = f"mixdown job={job_id} ext={ext} stems={stems}"
+    if ext in _SEEKABLE_OUTPUT_EXTS:
+        body = _render_ffmpeg(cmd, f".{ext}", context=context, cache_path=cache_path)
+    else:
+        body = _stream_ffmpeg([*cmd, "pipe:1"], context=context, cache_path=cache_path)
     return StreamingResponse(
-        _stream_ffmpeg(
-            cmd, context=f"mixdown job={job_id} ext={ext} stems={stems}", cache_path=cache_path
-        ),
+        body,
         media_type=media_type,
         headers={
             "Content-Disposition": (
