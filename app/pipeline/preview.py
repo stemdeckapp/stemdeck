@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import urllib.parse
 
 from yt_dlp import YoutubeDL
 
@@ -120,6 +121,15 @@ def resolve(url: str) -> dict:
     fmt = _pick_format(info)
     if not fmt:
         raise PreviewUnavailable("no progressive audio stream")
+
+    # The proxy opens this URL, so the scheme is checked here rather than
+    # trusted. _pick_format reads yt-dlp's `protocol` field, which is metadata
+    # about the format and not a guarantee about the string: a file:// or a
+    # custom scheme reaching urlopen would be read off the host's disk and
+    # streamed straight to the client. Cheap to assert, and the assertion is
+    # what makes the nosec on the urlopen honest.
+    if urllib.parse.urlparse(fmt["url"]).scheme not in _PROGRESSIVE:
+        raise PreviewUnavailable("resolved stream is not http(s)")
 
     payload = {
         "url": fmt["url"],

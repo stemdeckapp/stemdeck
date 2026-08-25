@@ -22,6 +22,7 @@ import asyncio
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from fastapi import APIRouter, HTTPException, Request
@@ -180,10 +181,22 @@ def _proxy(stream: dict, range_header: str | None):
     Range is forwarded rather than swallowed, so seeking the time bar costs one
     short request instead of pulling the track from the beginning again.
     """
+    # Belt and suspenders, the same shape as the path-traversal checks in
+    # api/stems.py. preview.resolve() already refuses anything that is not
+    # http(s), and this refuses it again at the one call that actually opens a
+    # socket. A file:// or custom scheme here would be read off the host's disk
+    # and streamed to the client.
+    if urllib.parse.urlparse(stream["url"]).scheme not in ("http", "https"):
+        raise ValueError("refusing to proxy a non-http(s) stream")
+
     req = urllib.request.Request(stream["url"], headers=dict(stream["headers"]))
     if range_header:
         req.add_header("Range", range_header)
-    upstream = urllib.request.urlopen(req, timeout=_PREVIEW_TIMEOUT_SEC)
+    # The scheme is verified immediately above and again in preview.resolve(),
+    # and the URL comes from yt-dlp resolving a page that already passed
+    # validate_youtube_url (#173), never from the client. B310 exists to catch
+    # exactly the file:// case those two checks refuse.
+    upstream = urllib.request.urlopen(req, timeout=_PREVIEW_TIMEOUT_SEC)  # nosec B310
 
     def body():
         try:

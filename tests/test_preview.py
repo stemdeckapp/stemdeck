@@ -215,3 +215,45 @@ def test_range_is_forwarded_upstream(client):
     assert seen["ua"] == "yt-dlp", "yt-dlp's negotiated headers were dropped"
     assert r.headers["content-range"] == "bytes 100-199/1000"
     assert r.headers["accept-ranges"] == "bytes"
+
+
+# ── the scheme boundary ──────────────────────────────────────────────
+
+
+def test_a_non_http_url_is_refused_even_when_the_protocol_field_lies():
+    """yt-dlp's `protocol` field is metadata about the format, not a guarantee
+    about the string. The proxy opens this URL, so a file:// slipping through
+    would be read off the host's disk and streamed to the client.
+
+    This is what makes the `# nosec B310` on the urlopen honest rather than a
+    silenced warning.
+    """
+    _FakeYDL.formats = [{**AUDIO_LOW, "url": "file:///etc/passwd", "protocol": "https"}]
+    with pytest.raises(preview_mod.PreviewUnavailable, match="not http"):
+        preview_mod.resolve(URL)
+
+
+@pytest.mark.parametrize("bad", ["file:///etc/passwd", "ftp://host/x", "data:audio/mp3;base64,AA"])
+def test_the_proxy_refuses_a_non_http_scheme_too(client, bad):
+    """Belt and suspenders, the same shape as the path-traversal checks in
+    api/stems.py: refused where it is resolved, and again at the one call that
+    actually opens a socket."""
+    opened = []
+
+    def fake_urlopen(req, timeout=None):
+        opened.append(req)
+        raise AssertionError("urlopen must not be reached")
+
+    stream = {"url": bad, "headers": {}, "mime": "audio/mpeg"}
+    with (
+        patch.object(api_search, "resolve_preview", lambda _u: stream),
+        patch.object(api_search.urllib.request, "urlopen", fake_urlopen),
+    ):
+        r = client.get("/api/search/preview", params={"url": URL})
+    assert r.status_code == 502
+    assert not opened, "a socket was opened for a non-http(s) scheme"
+
+
+def test_a_normal_https_stream_still_passes_the_check():
+    """The guard must not be so tight that it refuses the real thing."""
+    assert preview_mod.resolve(URL)["url"].startswith("https://")
