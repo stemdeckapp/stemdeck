@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -157,6 +158,18 @@ def bundled_js_runtime() -> tuple[str, Path] | None:
     except OSError:
         return None
     return None
+
+
+def js_solver_available() -> bool:
+    """Whether anything on this machine could run YouTube's challenge solver.
+
+    Used to explain a failure, never to gate one: yt-dlp does its own runtime
+    discovery and this is only a best-effort mirror of it. A false positive
+    just means the user gets the generic error instead of the specific one.
+    """
+    if bundled_js_runtime() is not None:
+        return True
+    return any(shutil.which(exe) for _, exe in _JS_RUNTIME_BINARIES)
 
 
 DEMUCS_MODEL = os.environ.get("STEMDECK_DEMUCS_MODEL", "htdemucs_6s").strip() or "htdemucs_6s"

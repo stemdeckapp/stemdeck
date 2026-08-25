@@ -81,12 +81,14 @@ def test_socket_timeout_is_set_everywhere(tmp_path):
         assert o.get("socket_timeout") == dl_mod._SOCKET_TIMEOUT_SEC
 
 
-def test_cookies_reach_every_call_site(tmp_path, monkeypatch):
-    """The bot check hits the probe first, so a cookie file that only reached
-    the audio fetch would never be used (#432)."""
+def test_cookies_are_not_used_when_nothing_has_failed(tmp_path, monkeypatch):
+    """The whole point of the fallback design (#432): a configured cookie file
+    must not touch a request that was going to succeed. Sending cookies makes
+    yt-dlp drop every client that does not support them, which is exactly the
+    unauthenticated fallback carrying most imports today."""
     monkeypatch.setattr(dl_mod, "get_cookies_file", lambda: "/tmp/cookies.txt")
     for o in _all_call_sites(tmp_path):
-        assert o.get("cookiefile") == "/tmp/cookies.txt"
+        assert "cookiefile" not in o
 
 
 def test_no_cookie_key_when_unset(tmp_path):

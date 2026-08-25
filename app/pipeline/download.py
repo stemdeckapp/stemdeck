@@ -8,7 +8,7 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from app.core.config import FFMPEG_DIR, bundled_js_runtime
+from app.core.config import FFMPEG_DIR, bundled_js_runtime, js_solver_available
 from app.core.models import Job, JobCancelled, _set
 from app.core.settings import get_cookies_file, get_max_duration_sec, get_video_max_height
 
@@ -86,6 +86,70 @@ def _with_retries(job: Job, fn, *, what: str):
                 raise
 
 
+# YouTube refusing to serve us at all, as opposed to a video being unavailable.
+# Cookies are the only remedy in-tree: yt-dlp ships no PO token generator.
+_BOT_CHECK = ("sign in to confirm", "http error 429", "too many requests")
+
+# What a missing challenge solver looks like once cookies ARE in play.
+_NEEDS_SOLVER = (
+    "requested format is not available",
+    "only images are available",
+    "n challenge solving failed",
+)
+
+
+def _is_bot_check(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return any(s in low for s in _BOT_CHECK)
+
+
+def _with_cookie_fallback(job: Job, fn, *, what: str) -> tuple[object, bool]:
+    """Run `fn(use_cookies)` without cookies first, with them only if YouTube
+    turned us away (#432).
+
+    Cookies are not a better way to fetch: supplying them makes yt-dlp skip
+    every client that does not support them, which removes the unauthenticated
+    fallback clients that resolve formats today without any JS challenge
+    solver. Applying them to every request would therefore break imports that
+    currently work, in order to fix imports for the smaller group whose IP
+    YouTube has flagged.
+
+    Trying without them first means the setting cannot make anything worse: by
+    the time cookies are used, the path they would have displaced has already
+    failed. Same shape as separate()'s GPU->CPU retry -- the fallback runs only
+    once the primary path is known to be dead.
+
+    Returns (result, used_cookies). The caller passes that flag into any later
+    request for the same URL, so one job never re-derives the answer.
+    """
+
+    def attempt(use_cookies: bool):
+        return _with_retries(job, lambda: fn(use_cookies), what=what)
+
+    try:
+        return attempt(False), False
+    except Exception as exc:
+        if job.cancel_requested or not _is_bot_check(exc) or get_cookies_file() is None:
+            raise
+        logger.info("[%s] %s hit YouTube's bot check; retrying with cookies", job.id, what)
+        _set(job, stage="Retrying with cookies...")
+        try:
+            return attempt(True), True
+        except Exception as retry_exc:
+            # The cookies cleared the bot check and the job then died for want
+            # of a challenge solver. Say that, rather than leaving the user to
+            # infer it from "Requested format is not available" (#432).
+            low = str(retry_exc).lower()
+            if any(p in low for p in _NEEDS_SOLVER) and not js_solver_available():
+                raise RuntimeError(
+                    "Cookies cleared YouTube's bot check, but no JavaScript runtime is "
+                    "available to solve YouTube's format challenge, so no audio format "
+                    "could be resolved. Clearing the cookies path in Settings restores "
+                    "the fallback that does not need one."
+                ) from retry_exc
+            raise
+
+
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _YOUTUBE_HOSTS = frozenset(
     (
@@ -126,7 +190,7 @@ _ALLOWED_PLAYLIST_EXTRACTORS = [
 ]
 
 
-def _base_ydl_opts(extractors: list[str]) -> dict:
+def _base_ydl_opts(extractors: list[str], *, use_cookies: bool = False) -> dict:
     """Options every YoutubeDL built in this module must share (#435).
 
     There are four call sites -- playlist expansion, the metadata probe, the
@@ -156,9 +220,9 @@ def _base_ydl_opts(extractors: list[str]) -> dict:
     if (runtime := bundled_js_runtime()) is not None:
         name, exe = runtime
         opts["js_runtimes"] = {name: {"path": str(exe)}}
-    # Opt-in, empty by default: cookies clear the bot check but make yt-dlp
-    # drop every client that does not support them (#432).
-    if (cookies := get_cookies_file()) is not None:
+    # Only on an explicit retry, never on the first attempt. See
+    # _with_cookie_fallback for why (#432).
+    if use_cookies and (cookies := get_cookies_file()) is not None:
         opts["cookiefile"] = cookies
     return opts
 
@@ -365,7 +429,7 @@ def expand_playlist(url: str, limit: int) -> dict:
     }
 
 
-def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
+def _download_video_track(job: Job, url: str, job_dir: Path, *, use_cookies: bool = False) -> None:
     """Best-effort: download a video-only H.264/MP4 stream to video.mp4 for the
     MP4 export (issue #219). The audio source is downloaded separately as
     usual; this is a second, additive fetch so the audio pipeline is untouched.
@@ -392,7 +456,7 @@ def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
     # devices) can't decode. Fall back to any <=cap mp4 only if no avc1 exists.
     max_height = get_video_max_height()
     ydl_opts = {
-        **_base_ydl_opts(_ALLOWED_EXTRACTORS),
+        **_base_ydl_opts(_ALLOWED_EXTRACTORS, use_cookies=use_cookies),
         "format": (
             f"bestvideo[height<={max_height}][vcodec^=avc1]"
             f"/bestvideo[height<={max_height}][ext=mp4]"
@@ -432,11 +496,16 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # too long before wasting bandwidth and disk. Runs under the same retry
     # policy as the download itself -- a transient blip on this first request
     # used to fail the whole job immediately (#279).
-    def _probe() -> dict:
-        with YoutubeDL({**_base_ydl_opts(_ALLOWED_EXTRACTORS), "noplaylist": True}) as ydl:
+    def _probe(use_cookies: bool) -> dict:
+        opts = {**_base_ydl_opts(_ALLOWED_EXTRACTORS, use_cookies=use_cookies), "noplaylist": True}
+        with YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False) or {}
 
-    meta = _with_retries(job, _probe, what="metadata probe")
+    # The bot check lands on this first request, so this is where the cookie
+    # fallback is decided. Whether it engaged is remembered below so the fetch
+    # does not have to rediscover it.
+    probed, needs_cookies = _with_cookie_fallback(job, _probe, what="metadata probe")
+    meta: dict = probed if isinstance(probed, dict) else {}
     duration = meta.get("duration") or 0
     max_duration = get_max_duration_sec()
     if duration > max_duration:
@@ -463,20 +532,24 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # No postprocessors -- Demucs reads the raw audio container (webm/m4a/opus/...)
     # directly via torchaudio + ffmpeg. Skipping the WAV transcode saves the slowest
     # part of the download pipeline and a lot of disk.
-    ydl_opts = {
-        **_base_ydl_opts(_ALLOWED_EXTRACTORS),
-        "format": "bestaudio/best",
-        "outtmpl": str(job_dir / "source.%(ext)s"),
-        "noprogress": True,
-        "noplaylist": True,
-        "progress_hooks": [hook],
-    }
-
-    def _fetch() -> dict:
+    def _fetch(use_cookies: bool) -> dict:
+        ydl_opts = {
+            **_base_ydl_opts(_ALLOWED_EXTRACTORS, use_cookies=use_cookies),
+            "format": "bestaudio/best",
+            "outtmpl": str(job_dir / "source.%(ext)s"),
+            "noprogress": True,
+            "noplaylist": True,
+            "progress_hooks": [hook],
+        }
         with YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(url, download=True) or {}
 
-    info: dict = _with_retries(job, _fetch, what="download")
+    # If the probe already needed cookies, this request will too -- go straight
+    # there rather than spending another round trip proving it again.
+    if needs_cookies:
+        info: dict = _with_retries(job, lambda: _fetch(True), what="download")
+    else:
+        info, needs_cookies = _with_cookie_fallback(job, _fetch, what="download")
 
     _set(
         job,
@@ -497,7 +570,7 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # Best-effort: fetch the real video stream for the MP4 export.
     # Non-fatal -- on any failure the job proceeds audio-only.
     if is_youtube:
-        _download_video_track(job, url, job_dir)
+        _download_video_track(job, url, job_dir, use_cookies=needs_cookies)
 
     candidates = sorted(job_dir.glob("source.*"))
     if not candidates:
