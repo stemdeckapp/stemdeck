@@ -168,6 +168,36 @@ New-Item -ItemType Directory -Force (Join-Path $Stage "data") | Out-Null
 foreach ($Dir in @("cache", "downloads", "ffmpeg", "jobs", "logs", "models")) {
   New-Item -ItemType Directory -Force (Join-Path $Stage "data\$Dir") | Out-Null
 }
+# QuickJS, for YouTube's signature/n-challenge solver (#438). yt-dlp ships the
+# solver script (the yt-dlp-ejs dependency) but needs a JavaScript engine to run
+# it, and a portable install has nothing on PATH.
+#
+# quickjs-ng rather than deno: 2 MB against deno's ~110 MB, times two bundles,
+# against a 2 GiB release asset cap this project has already hit once (#318).
+#
+# It lives in backend/, not data/. The in-app updater replaces the executable
+# and backend/ and leaves data/ alone, so a binary in data/ would only ever
+# reach a fresh install. Here it arrives through an ordinary update, which is
+# the whole point: shipping this must not cost existing users a reinstall.
+#
+# Pinned by version and SHA256, the same rule as the macOS FFmpeg download
+# (#172). An unverified binary fetched at package time is a supply-chain hole
+# whether or not it is small.
+$QjsVersion = "v0.16.2"
+$QjsSha256 = "7b27412de844403545bd151fbe49191b4d5b91a9e15b5db7c863fea54639a82b"
+$QjsUrl = "https://github.com/quickjs-ng/quickjs/releases/download/$QjsVersion/qjs-windows-x86_64.exe"
+$QjsDir = Join-Path $BackendDir "jsruntime"
+New-Item -ItemType Directory -Force $QjsDir | Out-Null
+$QjsExe = Join-Path $QjsDir "qjs.exe"
+Write-Host "Fetching QuickJS $QjsVersion ..."
+Invoke-WebRequest -Uri $QjsUrl -OutFile $QjsExe -UseBasicParsing
+$QjsActual = (Get-FileHash -Path $QjsExe -Algorithm SHA256).Hash.ToLower()
+if ($QjsActual -ne $QjsSha256) {
+  Remove-Item -Force $QjsExe
+  throw "QuickJS checksum mismatch: expected $QjsSha256, got $QjsActual"
+}
+Write-Host "QuickJS verified."
+
 # Portable marker: present in every zip (CPU and NVIDIA alike) so double-
 # clicking StemDeck.exe uses .\data next to the exe for ffmpeg/models/config/
 # logs instead of AppData (#399). Root-only trust, mirroring cpu-only below.

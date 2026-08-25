@@ -140,23 +140,47 @@ JS_RUNTIME_DIR = _env_path("STEMDECK_JS_RUNTIME_DIR", DATA_DIR / "jsruntime")
 _JS_RUNTIME_BINARIES = (("deno", "deno"), ("node", "node"), ("quickjs", "qjs"))
 
 
+def _js_runtime_dirs() -> tuple[Path, ...]:
+    """Where a bundled JS runtime can live, in priority order.
+
+    Two layouts, because the packages are not built the same way. Windows and
+    Linux stage a whole tree and put the binary in `data/jsruntime`, which is
+    JS_RUNTIME_DIR's default. macOS downloads a runtime pack and keeps its own
+    data directory in ~/Library/Application Support, so the binary rides in the
+    pack next to `backend/` instead.
+
+    Checking both here rather than setting an env var from the desktop shell
+    keeps this a Python-side fact that can be tested, instead of a contract
+    split across two languages that only breaks on one platform.
+    """
+    dirs = [JS_RUNTIME_DIR]
+    # app/core/config.py -> app/core -> app -> backend/ (or the repo root).
+    backend_root = Path(__file__).resolve().parents[2]
+    dirs.append(backend_root / "jsruntime")
+    dirs.append(backend_root.parent / "jsruntime")
+    seen: set[Path] = set()
+    return tuple(d for d in dirs if not (d in seen or seen.add(d)))  # type: ignore[func-returns-value]
+
+
 def bundled_js_runtime() -> tuple[str, Path] | None:
     """The JS runtime shipped with this install, as (yt-dlp name, path).
 
-    None when nothing is bundled, which is the normal case outside a portable
-    build -- yt-dlp then falls back to its own PATH lookup. Never raises: a
-    missing or unreadable directory just means "not bundled".
+    None when nothing is bundled, which is the normal case outside a packaged
+    build -- yt-dlp then falls back to its own PATH lookup, which is how Docker
+    finds the deno it ships. Never raises: a missing or unreadable directory
+    just means "not bundled".
     """
-    try:
-        if not JS_RUNTIME_DIR.is_dir():
-            return None
-        suffix = ".exe" if sys.platform.startswith("win") else ""
-        for name, stem in _JS_RUNTIME_BINARIES:
-            exe = JS_RUNTIME_DIR / f"{stem}{suffix}"
-            if exe.is_file():
-                return name, exe
-    except OSError:
-        return None
+    suffix = ".exe" if sys.platform.startswith("win") else ""
+    for directory in _js_runtime_dirs():
+        try:
+            if not directory.is_dir():
+                continue
+            for name, stem in _JS_RUNTIME_BINARIES:
+                exe = directory / f"{stem}{suffix}"
+                if exe.is_file():
+                    return name, exe
+        except OSError:
+            continue
     return None
 
 

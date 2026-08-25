@@ -80,6 +80,36 @@ echo "==> Cleaning stage"
 rm -rf "$STAGE" "$ARCHIVE_PATH" "$CHECKSUM_PATH"
 mkdir -p "$STAGE" "$BACKEND_DIR" "$PYTHON_DIR"
 
+# QuickJS, for YouTube's signature/n-challenge solver (#438). yt-dlp ships the
+# solver script (the yt-dlp-ejs dependency) but needs a JavaScript engine to
+# run it, and a portable install has nothing on PATH.
+#
+# quickjs-ng rather than deno: 2.6 MB against deno's ~110 MB, times two
+# bundles, against a 2 GiB release asset cap this project has already hit once
+# (#222, #225).
+#
+# It lives in backend/, not data/. The in-app updater replaces the executable
+# and backend/ and leaves data/ alone, so a binary in data/ would only ever
+# reach a fresh install. Here it arrives through an ordinary update, which is
+# the whole point: shipping this must not cost existing users a reinstall.
+#
+# Pinned by version and SHA256, the same rule as the macOS FFmpeg download
+# (#172). An unverified binary fetched at package time is a supply-chain hole
+# whether or not it is small.
+QJS_VERSION="v0.16.2"
+QJS_SHA256="c5e1b16adfa36def7ac523d6ba54edc77ef66a4dfd65d73e6eae19025f9b7b0a"
+QJS_URL="https://github.com/quickjs-ng/quickjs/releases/download/${QJS_VERSION}/qjs-linux-x86_64"
+QJS_DIR="${BACKEND_DIR}/jsruntime"
+mkdir -p "$QJS_DIR"
+echo "==> Fetching QuickJS ${QJS_VERSION}"
+curl -fsSL --retry 3 -o "${QJS_DIR}/qjs" "$QJS_URL"
+echo "${QJS_SHA256}  ${QJS_DIR}/qjs" | sha256sum -c - >/dev/null || {
+    rm -f "${QJS_DIR}/qjs"
+    echo "QuickJS checksum mismatch" >&2
+    exit 1
+}
+chmod +x "${QJS_DIR}/qjs"
+
 # Copy the entire PBS install into python/ (-a preserves symlinks/permissions).
 echo "==> Bundling Python runtime from ${PBS_BASE_PREFIX}"
 cp -a "$PBS_BASE_PREFIX/." "$PYTHON_DIR/"

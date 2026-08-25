@@ -166,6 +166,35 @@ cat > "$BACKEND_DIR/static/version.json" <<JSON
 }
 JSON
 
+# QuickJS, for YouTube's signature/n-challenge solver (#438). yt-dlp ships the
+# solver script (the yt-dlp-ejs dependency) but needs a JavaScript engine to
+# run it, and a packaged install has nothing on PATH.
+#
+# It rides inside backend/, the same place Windows and Linux put it, so all
+# three packages agree and config.bundled_js_runtime() has one layout to find.
+# Not the app's data directory: on macOS that lives in ~/Library/Application
+# Support and is user-owned, so a binary there would have to be installed at
+# first run rather than shipped.
+#
+# Pinned by version and SHA256, the same rule as the macOS FFmpeg download
+# (#172).
+QJS_VERSION="v0.16.2"
+case "$ARCH" in
+  arm64)  QJS_ASSET="qjs-darwin-arm64";  QJS_SHA256="f6200e9856c45578a5d42ac873a32f3f994b421e29df9f63b452d9c7145015fc" ;;
+  x86_64) QJS_ASSET="qjs-darwin-x86_64"; QJS_SHA256="4448991c0500dbe40c7b2f91ba39275995413aa4ee59db3b513b68350908a413" ;;
+  *) echo "unknown arch for QuickJS: $ARCH" >&2; exit 1 ;;
+esac
+QJS_DIR="${BACKEND_DIR}/jsruntime"
+mkdir -p "$QJS_DIR"
+echo "==> Fetching QuickJS ${QJS_VERSION} (${QJS_ASSET})"
+curl -fsSL --retry 3 -o "${QJS_DIR}/qjs"   "https://github.com/quickjs-ng/quickjs/releases/download/${QJS_VERSION}/${QJS_ASSET}"
+echo "${QJS_SHA256}  ${QJS_DIR}/qjs" | shasum -a 256 -c - >/dev/null || {
+    rm -f "${QJS_DIR}/qjs"
+    echo "QuickJS checksum mismatch" >&2
+    exit 1
+}
+chmod +x "${QJS_DIR}/qjs"
+
 echo "==> Capturing dependency inventory"
 mkdir -p "$RUNTIME_DIR/licenses"
 uv pip list --system --python "$PYTHON_DIR/bin/python" --format=json > "$RUNTIME_DIR/licenses/pip-list.json"
