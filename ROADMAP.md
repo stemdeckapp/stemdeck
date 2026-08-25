@@ -3,7 +3,8 @@
 Where StemDeck has been, and what is next. Dates are the first tag in each
 line, taken from the repository rather than reconstructed.
 
-Live board: [StemDeck Health & Roadmap](https://github.com/orgs/stemdeckapp/projects/2)
+Day to day work is tracked in
+[issues](https://github.com/stemdeckapp/stemdeck/issues).
 
 ---
 
@@ -71,9 +72,7 @@ Six weeks and the largest single body of work in the project. Two halves.
 QR codes, Docker and Unraid via GHCR, playback speed with pitch preservation,
 the click track and beat grid, background import queue and playlist import.
 
-**Health.** A codebase health report turned into
-[project 2](https://github.com/orgs/stemdeckapp/projects/2) and worked in four
-phases:
+**Health.** A codebase health report, worked in four phases:
 
 | Phase | What it was for |
 |---|---|
@@ -157,8 +156,17 @@ Exploratory.
 
 ## How releases work
 
-The version comes from the git tag; nothing is hand-edited. Every release ships
-as a pre-release and is promoted by hand once verified, and only a promoted
-release is offered by the in-app updater. Desktop and Docker take deliberately
-different paths for the CPU and GPU split. See
-[`.claude/rules/versioning.md`](.claude/rules/versioning.md).
+The version comes from the git tag. `pyproject.toml` is `dynamic`, and the
+desktop manifests hold `0.0.0` placeholders the release workflow stamps, so
+there is no version number to hand-edit anywhere.
+
+Every release ships as a pre-release and is promoted by hand once it has been
+verified. That promotion is what the in-app updater watches: it takes the
+newest release that is neither a draft nor a pre-release, so an unpromoted
+build is invisible to it. That is the point, not an oversight.
+
+Desktop and Docker split CPU and GPU differently on purpose. Docker publishes
+one `linux/amd64` image that works on CPU and activates GPU through
+`--runtime=nvidia`. The desktop builds two bundles, and the NVIDIA one installs
+the CUDA torch wheel at first run rather than shipping it, because bundling it
+once put the release past GitHub's 2 GiB asset cap (#318, reverted by #320).
