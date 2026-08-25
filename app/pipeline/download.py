@@ -8,9 +8,9 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from app.core.config import FFMPEG_DIR
+from app.core.config import FFMPEG_DIR, bundled_js_runtime
 from app.core.models import Job, JobCancelled, _set
-from app.core.settings import get_max_duration_sec, get_video_max_height
+from app.core.settings import get_cookies_file, get_max_duration_sec, get_video_max_height
 
 logger = logging.getLogger("stemdeck.download")
 
@@ -124,6 +124,44 @@ _ALLOWED_PLAYLIST_EXTRACTORS = [
     "soundcloud:set",
     "soundcloud",
 ]
+
+
+def _base_ydl_opts(extractors: list[str]) -> dict:
+    """Options every YoutubeDL built in this module must share (#435).
+
+    There are four call sites -- playlist expansion, the metadata probe, the
+    audio fetch and the MP4 video fetch -- and they used to build their options
+    independently. They had already drifted (`ffmpeg_location` set in one of
+    four, `noplaylist` in three), and the drift is invisible: a fix applied to
+    the audio fetch silently misses the probe that runs before it and the video
+    fetch that runs after. `_download_video_track` swallows every exception and
+    falls back to audio-only, so a missing option there costs the user their
+    MP4 export with nothing surfaced anywhere.
+
+    `allowed_extractors` is a required argument rather than a default because
+    it is the SSRF boundary (#173) and the two valid values are genuinely
+    different; a caller must state which one it means.
+    """
+    opts: dict = {
+        "quiet": True,
+        "allowed_extractors": extractors,
+        "socket_timeout": _SOCKET_TIMEOUT_SEC,
+    }
+    # Portable builds have no ffmpeg on PATH; needed wherever a DASH stream
+    # might be remuxed. Inert for the metadata-only calls.
+    if FFMPEG_DIR.is_dir():
+        opts["ffmpeg_location"] = str(FFMPEG_DIR)
+    # YouTube's n-challenge solver needs a JS runtime. Absent outside portable
+    # builds, where yt-dlp resolves its own from PATH instead (#432).
+    if (runtime := bundled_js_runtime()) is not None:
+        name, exe = runtime
+        opts["js_runtimes"] = {name: {"path": str(exe)}}
+    # Opt-in, empty by default: cookies clear the bot check but make yt-dlp
+    # drop every client that does not support them (#432).
+    if (cookies := get_cookies_file()) is not None:
+        opts["cookiefile"] = cookies
+    return opts
+
 
 # YouTube list ids. RD-prefixed ones are algorithmic radio: effectively endless
 # and different for every viewer, so there is no meaningful set to import.
@@ -282,7 +320,7 @@ def expand_playlist(url: str, limit: int) -> dict:
     """
     playlist_url = validate_playlist_url(url)
     ydl_opts = {
-        "quiet": True,
+        **_base_ydl_opts(_ALLOWED_PLAYLIST_EXTRACTORS),
         "noprogress": True,
         "skip_download": True,
         "extract_flat": "in_playlist",
@@ -290,8 +328,6 @@ def expand_playlist(url: str, limit: int) -> dict:
         # One past the cap, so a playlist longer than the cap can be reported as
         # truncated rather than silently looking like it ends there.
         "playlistend": max(1, limit) + 1,
-        "allowed_extractors": _ALLOWED_PLAYLIST_EXTRACTORS,
-        "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(playlist_url, download=False) or {}
@@ -356,22 +392,16 @@ def _download_video_track(job: Job, url: str, job_dir: Path) -> None:
     # devices) can't decode. Fall back to any <=cap mp4 only if no avc1 exists.
     max_height = get_video_max_height()
     ydl_opts = {
+        **_base_ydl_opts(_ALLOWED_EXTRACTORS),
         "format": (
             f"bestvideo[height<={max_height}][vcodec^=avc1]"
             f"/bestvideo[height<={max_height}][ext=mp4]"
         ),
         "outtmpl": str(job_dir / "video.%(ext)s"),
-        "quiet": True,
         "noprogress": True,
         "noplaylist": True,
-        "allowed_extractors": _ALLOWED_EXTRACTORS,
         "progress_hooks": [vhook],
-        "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
-    # Point yt-dlp at the bundled ffmpeg in case a DASH stream needs remuxing;
-    # in portable builds ffmpeg is not on PATH.
-    if FFMPEG_DIR.is_dir():
-        ydl_opts["ffmpeg_location"] = str(FFMPEG_DIR)
 
     _set(job, stage="Fetching video...")
     try:
@@ -403,14 +433,7 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # policy as the download itself -- a transient blip on this first request
     # used to fail the whole job immediately (#279).
     def _probe() -> dict:
-        with YoutubeDL(
-            {
-                "quiet": True,
-                "noplaylist": True,
-                "allowed_extractors": _ALLOWED_EXTRACTORS,
-                "socket_timeout": _SOCKET_TIMEOUT_SEC,
-            }
-        ) as ydl:
+        with YoutubeDL({**_base_ydl_opts(_ALLOWED_EXTRACTORS), "noplaylist": True}) as ydl:
             return ydl.extract_info(url, download=False) or {}
 
     meta = _with_retries(job, _probe, what="metadata probe")
@@ -441,14 +464,12 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # directly via torchaudio + ffmpeg. Skipping the WAV transcode saves the slowest
     # part of the download pipeline and a lot of disk.
     ydl_opts = {
+        **_base_ydl_opts(_ALLOWED_EXTRACTORS),
         "format": "bestaudio/best",
         "outtmpl": str(job_dir / "source.%(ext)s"),
-        "quiet": True,
         "noprogress": True,
         "noplaylist": True,
-        "allowed_extractors": _ALLOWED_EXTRACTORS,
         "progress_hooks": [hook],
-        "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
 
     def _fetch() -> dict:

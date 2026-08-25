@@ -3024,7 +3024,9 @@ async function wireGeneralSettings(overlay) {
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceDesc = overlay.querySelector(".set-demucs-desc");
   const qualitySel = overlay.querySelector(".set-separation-quality");
-  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel) return;
+  const cookiesInput = overlay.querySelector(".set-cookies-file");
+  const cookiesMsg = overlay.querySelector(".cookies-file-msg");
+  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !cookiesInput) return;
 
   // Last server-confirmed device choice, to revert the select when the server
   // rejects a forced device (e.g. CUDA not available on this machine).
@@ -3037,6 +3039,9 @@ async function wireGeneralSettings(overlay) {
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
     if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
+    // Unset is the normal case, so read the key rather than truthiness --
+    // clearing the field must survive the round trip and not be repopulated.
+    if (cookiesInput && "cookies_file" in d) cookiesInput.value = d.cookies_file || "";
     if (deviceSel) {
       // Gray out devices this machine can't use (Auto and CPU are always
       // available). Label disabled options so it's clear WHY they're greyed.
@@ -3097,6 +3102,27 @@ async function wireGeneralSettings(overlay) {
   playlistInput?.addEventListener("change", () => {
     const items = Math.max(1, Math.min(200, parseInt(playlistInput.value, 10) || 50));
     post({ playlist_max_items: items });
+  });
+  // Not routed through post(): that helper drops a non-ok response silently,
+  // which is exactly the wrong behaviour for a path the user typed. A bad path
+  // has to say so, or the user retypes it and never learns why nothing
+  // happened.
+  cookiesInput?.addEventListener("change", async () => {
+    if (cookiesMsg) cookiesMsg.textContent = "";
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cookies_file: cookiesInput.value.trim() }),
+      });
+      if (r.ok) {
+        apply(await r.json());
+      } else if (cookiesMsg) {
+        // The server's detail is an English string; show the translated key
+        // instead so this reads correctly in every locale.
+        cookiesMsg.textContent = i18nT("settings.cookies.invalid");
+      }
+    } catch { /* offline: leave the field as typed */ }
   });
   heightSel?.addEventListener("change", () => {
     post({ video_max_height: parseInt(heightSel.value, 10) });
@@ -3468,6 +3494,14 @@ function openLibraryEditor() {
               <div class="settings-row-desc" data-i18n="settings.playlistLimit.desc">Most tracks one playlist import will queue (max 200).</div>
             </div>
             <input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" data-i18n-aria-label="settings.playlistLimit.title" />
+          </div>
+          <div class="settings-row settings-row-stack">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.cookies.title">YouTube cookies</div>
+              <div class="settings-row-desc" data-i18n="settings.cookies.desc">Optional. Path to a cookies.txt file, used only when YouTube asks StemDeck to confirm it is not a bot. Leave this empty unless imports are failing.</div>
+            </div>
+            <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
+            <div class="cookies-file-msg" role="status" aria-live="polite"></div>
           </div>
           <div class="settings-row settings-row-stack">
             <div class="settings-row-text">

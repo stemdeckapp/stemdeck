@@ -41,6 +41,7 @@ from app.core.registry import reset_all as reset_registry
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
     get_allow_network,
+    get_cookies_file,
     get_demucs_device,
     get_demucs_device_choice,
     get_export_sample_rate,
@@ -51,6 +52,7 @@ from app.core.settings import (
     get_separation_quality,
     get_video_max_height,
     set_allow_network,
+    set_cookies_file,
     set_demucs_device,
     set_export_sample_rate,
     set_jobs_dir,
@@ -321,6 +323,9 @@ def _settings_payload() -> dict[str, object]:
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),
         "separation_quality": get_separation_quality(),
+        # Absent unless the user set one. Only the path is exposed, never the
+        # file's contents -- those are the user's YouTube session.
+        "cookies_file": get_cookies_file(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
         # select; the resolved value shows what jobs will actually run on;
@@ -371,6 +376,14 @@ async def update_settings(request: Request) -> dict[str, object]:
         except ValueError as e:
             # Allowlist violation / non-integer -- the message names the valid rates.
             raise HTTPException(status_code=422, detail=str(e)) from None
+    if "cookies_file" in body:
+        try:
+            set_cookies_file(body["cookies_file"])
+        except ValueError as e:
+            # "cookies file not found" / "not readable" -- both safe to show.
+            raise HTTPException(status_code=422, detail=str(e)) from None
+        except (TypeError, OSError):
+            raise HTTPException(status_code=422, detail="invalid cookies file") from None
     if "demucs_device" in body:
         try:
             set_demucs_device(str(body["demucs_device"]))

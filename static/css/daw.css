@@ -3201,6 +3201,19 @@ input, textarea { font-family: inherit; }
 .stems-location-msg.error { color: var(--danger); }
 .stems-location-msg.ok { color: var(--accent); }
 
+/* Cookies path field (#432). Full width rather than the 84px num input: this
+   holds an absolute filesystem path, which is long and worth reading back. */
+.settings-text-input {
+  width: 100%; box-sizing: border-box; margin-top: 8px;
+  background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong);
+  border-radius: 7px; color: var(--fg);
+  font-family: var(--font-mono); font-size: 12px; padding: 6px 9px;
+}
+.settings-text-input:focus { outline: none; border-color: rgba(244,183,64,0.5); }
+.cookies-file-msg {
+  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--danger);
+}
+
 /* Logs sub-navigation: Location / Application / Setup. */
 .settings-subtabs {
   display: flex; gap: 2px; margin: 0 0 10px;

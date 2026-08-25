@@ -11,6 +11,7 @@ at startup), so the Settings UI can change them without a restart:
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
 - `separation_quality` — demucs shift-averaging: standard | best (2x slower).
+- `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -206,6 +207,53 @@ def set_jobs_dir(value: str | None) -> tuple[str | None, bool]:
         resolved = str(Path(str(value)).expanduser().resolve())
         _ensure()["jobs_dir"] = resolved
         return resolved, _save()
+
+
+# ── cookies_file ──
+# Path to a Netscape-format cookies.txt handed to yt-dlp as `cookiefile`.
+#
+# This exists because YouTube's bot check ("Sign in to confirm you're not a
+# bot") has no other remedy: yt-dlp ships no PO token generator, so an IP that
+# YouTube has flagged cannot import anything without credentials (#432).
+#
+# Deliberately a file path and not `cookiesfrombrowser`: reading a live browser
+# profile means touching the user's logged-in session on disk, and yt-dlp can
+# only do it reliably while that browser is closed. Exporting a cookies.txt is
+# an explicit, revocable act the user controls.
+#
+# Empty by default, and that matters. Supplying cookies makes yt-dlp skip every
+# client that does not support them, which removes the unauthenticated fallback
+# clients that work for most people today. Turning this on when you do not need
+# it makes imports worse, not better.
+def get_cookies_file() -> str | None:
+    with _LOCK:
+        value = _ensure().get("cookies_file")
+        return value if isinstance(value, str) and value.strip() else None
+
+
+def set_cookies_file(value: str | None) -> str | None:
+    """Persist the cookies.txt path, or clear it when given empty/None.
+
+    Raises ValueError when the path does not point at a readable file, so the
+    Settings UI can say so immediately rather than the user discovering it as a
+    failed import an hour later.
+    """
+    with _LOCK:
+        if value is None or not str(value).strip():
+            _ensure().pop("cookies_file", None)
+            _save()
+            return None
+        resolved = Path(str(value)).expanduser().resolve()
+        if not resolved.is_file():
+            raise ValueError("cookies file not found")
+        try:
+            with resolved.open("rb") as fh:
+                fh.read(1)
+        except OSError as e:
+            raise ValueError("cookies file is not readable") from e
+        _ensure()["cookies_file"] = str(resolved)
+        _save()
+        return str(resolved)
 
 
 # ── playlist_max_items ──
