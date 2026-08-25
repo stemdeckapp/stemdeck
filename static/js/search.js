@@ -193,7 +193,11 @@ function render(maxDurationSec) {
       // something that can only fail.
       const warn = document.createElement("span");
       warn.className = "search-warn";
+      // Terse inline, because it shares a 620px row with a title, an uploader,
+      // a duration and the Preview pill. The part the user can act on lives in
+      // the tooltip rather than squeezing the title it sits next to.
       warn.textContent = t("search.tooLong", { mins });
+      warn.title = t("search.tooLongHint", { mins });
       main.appendChild(warn);
     }
 

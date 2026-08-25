@@ -28,11 +28,29 @@ export const LANGUAGES = [
   { code: "zh-Hans", flag: "🇨🇳", name: "简体中文" },
   { code: "de", flag: "🇩🇪", name: "Deutsch" },
   { code: "fr", flag: "🇫🇷", name: "Français" },
-  { code: "pt", flag: "🇧🇷", name: "Português" },
+  { code: "pt", flag: "🇧🇷", name: "Português (Brasil)" },
+  { code: "pt-PT", flag: "🇵🇹", name: "Português (Portugal)" },
   { code: "id", flag: "🇮🇩", name: "Bahasa Indonesia" },
 ];
 const SUPPORTED_CODES = new Set(LANGUAGES.map((l) => l.code));
 const DEFAULT_LANG = "en";
+
+// Regional variants resolve through their base language before English.
+//
+// European and Brazilian Portuguese share the overwhelming majority of 461
+// keys. Duplicating the whole table to change "ficheiro" and a few dozen
+// verb forms would mean every future key had to be written twice and would
+// drift the moment one was missed. A variant carries only what genuinely
+// differs, and falls through for the rest.
+const FALLBACK = { "pt-PT": "pt" };
+
+function _tables() {
+  const chain = [_lang];
+  const base = FALLBACK[_lang];
+  if (base) chain.push(base);
+  chain.push(DEFAULT_LANG);
+  return chain.map((code) => TRANSLATIONS[code]).filter(Boolean);
+}
 
 let _lang = DEFAULT_LANG;
 const _listeners = new Set();
@@ -46,8 +64,11 @@ function _detectDefault() {
   // unless it's explicitly a traditional-script region, which we don't ship).
   if (lower.startsWith("zh")) return "zh-Hans";
   if (lower.startsWith("de")) return "de";
-  // Portuguese: pt-BR, pt-PT, or bare "pt" all map to the single pt table
-  // (written in Brazilian Portuguese, the more widely used variant).
+  // Portuguese: an explicit Portugal locale gets the European variant, which
+  // overrides only the words that differ and falls through to pt for the rest.
+  // pt-BR and a bare "pt" both take the Brazilian table, which is the more
+  // widely used variant and so the sensible default for an unqualified tag.
+  if (lower.startsWith("pt-pt") || lower === "pt_pt") return "pt-PT";
   if (lower.startsWith("pt")) return "pt";
   if (lower.startsWith("id")) return "id";
   return "en";
@@ -94,8 +115,10 @@ function _interpolate(str, vars) {
 }
 
 export function t(key, vars) {
-  const table = TRANSLATIONS[_lang] || TRANSLATIONS[DEFAULT_LANG];
-  const str = table[key] ?? TRANSLATIONS[DEFAULT_LANG][key];
+  let str;
+  for (const table of _tables()) {
+    if (table[key] != null) { str = table[key]; break; }
+  }
   if (str == null) {
     console.warn(`[i18n] missing key "${key}"`);
     return key;
@@ -110,7 +133,6 @@ export function t(key, vars) {
 // and the fallback chain below finds it regardless of computed form). Polish
 // needs three (one / few / many) per its numeral rules.
 export function plural(key, count, vars) {
-  const table = TRANSLATIONS[_lang] || TRANSLATIONS[DEFAULT_LANG];
   let form;
   if (_lang === "pl") {
     const n = Math.abs(count);
@@ -127,11 +149,14 @@ export function plural(key, count, vars) {
   // English -- languages with no grammatical plural (Japanese, Chinese) only
   // define ".other", so a singular count must resolve there, not to an
   // English ".one" string mixed into otherwise-translated text.
-  const str =
-    table[fullKey] ??
-    table[`${key}.other`] ??
-    TRANSLATIONS[DEFAULT_LANG][fullKey] ??
-    TRANSLATIONS[DEFAULT_LANG][`${key}.other`];
+  // Walk the same chain as t(), trying each table's exact form before its
+  // "other" bucket, so a variant that does not override a plural falls through
+  // to its base language rather than to English.
+  let str;
+  for (const table of _tables()) {
+    str = table[fullKey] ?? table[`${key}.other`];
+    if (str != null) break;
+  }
   if (str == null) {
     console.warn(`[i18n] missing plural key "${fullKey}"`);
     return key;
@@ -241,7 +266,8 @@ const en = {
   "search.searching": "Searching…",
   "search.noResults": "No results",
   "search.failed": "Search failed. Check your connection.",
-  "search.tooLong": "Over {mins} min limit",
+  "search.tooLong": "Over {mins} min",
+  "search.tooLongHint": "Longer than your {mins} minute limit. Change it in Settings.",
   "search.preview": "Preview",
   "search.play": "Play",
   "search.pause": "Pause",
@@ -764,7 +790,8 @@ const pl = {
   "search.searching": "Szukanie…",
   "search.noResults": "Brak wyników",
   "search.failed": "Wyszukiwanie nie powiodło się. Sprawdź połączenie.",
-  "search.tooLong": "Ponad limit {mins} min",
+  "search.tooLong": "Ponad {mins} min",
+  "search.tooLongHint": "Dłuższy niż Twój limit {mins} minut. Zmień go w Ustawieniach.",
   "search.preview": "Odsłuch",
   "search.play": "Odtwórz",
   "search.pause": "Pauza",
@@ -1277,7 +1304,8 @@ const ja = {
   "search.searching": "検索中…",
   "search.noResults": "結果がありません",
   "search.failed": "検索に失敗しました。接続を確認してください。",
-  "search.tooLong": "{mins} 分の上限超過",
+  "search.tooLong": "{mins} 分超",
+  "search.tooLongHint": "設定した {mins} 分の上限を超えています。設定で変更できます。",
   "search.preview": "試聴",
   "search.play": "再生",
   "search.pause": "一時停止",
@@ -1765,7 +1793,8 @@ const zhHans = {
   "search.searching": "搜索中…",
   "search.noResults": "没有结果",
   "search.failed": "搜索失败，请检查网络连接。",
-  "search.tooLong": "超过 {mins} 分钟上限",
+  "search.tooLong": "超过 {mins} 分钟",
+  "search.tooLongHint": "超过您设置的 {mins} 分钟上限。可在“设置”中修改。",
   "search.preview": "试听",
   "search.play": "播放",
   "search.pause": "暂停",
@@ -2253,7 +2282,8 @@ const de = {
   "search.searching": "Suche läuft…",
   "search.noResults": "Keine Ergebnisse",
   "search.failed": "Suche fehlgeschlagen. Verbindung prüfen.",
-  "search.tooLong": "Über dem Limit von {mins} Min.",
+  "search.tooLong": "Über {mins} Min.",
+  "search.tooLongHint": "Länger als Ihr Limit von {mins} Minuten. Änderbar in den Einstellungen.",
   "search.preview": "Vorhören",
   "search.play": "Abspielen",
   "search.pause": "Pause",
@@ -2752,7 +2782,8 @@ const pt = {
   "search.searching": "Pesquisando…",
   "search.noResults": "Nenhum resultado",
   "search.failed": "A pesquisa falhou. Verifique sua conexão.",
-  "search.tooLong": "Acima do limite de {mins} min",
+  "search.tooLong": "Mais de {mins} min",
+  "search.tooLongHint": "Maior que o seu limite de {mins} minutos. Altere nas Configurações.",
   "search.preview": "Prévia",
   "search.play": "Reproduzir",
   "search.pause": "Pausar",
@@ -3253,7 +3284,8 @@ const id = {
   "search.searching": "Mencari…",
   "search.noResults": "Tidak ada hasil",
   "search.failed": "Pencarian gagal. Periksa koneksi Anda.",
-  "search.tooLong": "Melebihi batas {mins} mnt",
+  "search.tooLong": "Lebih {mins} mnt",
+  "search.tooLongHint": "Lebih panjang dari batas {mins} menit Anda. Ubah di Pengaturan.",
   "search.preview": "Pratinjau",
   "search.play": "Putar",
   "search.pause": "Jeda",
@@ -3741,7 +3773,8 @@ const fr = {
   "search.searching": "Recherche…",
   "search.noResults": "Aucun résultat",
   "search.failed": "La recherche a échoué. Vérifiez votre connexion.",
-  "search.tooLong": "Au-delà de la limite de {mins} min",
+  "search.tooLong": "Plus de {mins} min",
+  "search.tooLongHint": "Plus long que votre limite de {mins} minutes. Modifiable dans les Réglages.",
   "search.preview": "Écouter",
   "search.play": "Lecture",
   "search.pause": "Pause",
@@ -4182,4 +4215,53 @@ const fr = {
   "resetConfirm.failedConnection": "Échec de la réinitialisation — vérifiez votre connexion.",
 };
 
-export const TRANSLATIONS = { en, pl, ja, "zh-Hans": zhHans, de, fr, pt, id };
+// European Portuguese. Overrides only: anything not listed here resolves
+// through pt (see FALLBACK), so the two variants cannot drift and a key
+// added to pt later is picked up here rather than reverting to English.
+const ptPT = {
+  "topbar.urlPlaceholder": "Pesquise, ou cole um link do YouTube ou SoundCloud, ou largue um ficheiro de áudio…",
+  "topbar.removeFile": "Remover ficheiro",
+  "topbar.uploadFile": "Carregar ficheiro de áudio",
+  "library.importedFile": "Ficheiro importado",
+  "track.localFile": "Ficheiro local",
+  "settings.cookies.invalid": "Ficheiro não encontrado ou ilegível.",
+  "upload.unsupportedFormat": "Apenas ficheiros MP3, WAV, FLAC, MP4, M4A, OGG e Opus são compatíveis.",
+  "upload.fileTooLarge": "O ficheiro é demasiado grande ({size}). O máximo é {max}.",
+  "upload.skippedFiles.one": "{count} ficheiro ignorado ({reason}).",
+  "upload.skippedFiles.other": "{count} ficheiros ignorados ({reason}).",
+  "settings.logs.noFilesYet": "Ainda não há ficheiros de log{folderNote}. O registo começa na primeira mensagem após o arranque.",
+  "settings.logs.location.desc": "Onde o StemDeck grava os logs nesta máquina. Só de leitura, abra-os num gestor de ficheiros ou use Exportar logs.",
+  "nav.settings": "Definições",
+  "settings.title": "Definições",
+  "settings.closeAria": "Fechar definições",
+  "settings.readOnlyServer": "Estas definições são só de leitura no modo servidor. Para as alterar, atualize a configuração do servidor (ex.: docker-compose.yml) e reinicie.",
+  "search.tooLongHint": "Maior que o seu limite de {mins} minutos. Altere nas Definições.",
+  "settings.folder.save": "Guardar",
+  "folderEditor.save": "Guardar",
+  "sections.savingAria": "A guardar secções",
+  "aria.download": "Transferir {name}",
+  "release.download": "Transferir",
+  "release.downloading": "A transferir atualização…",
+  "release.pullImage": "Transfira a nova imagem e reinicie o contentor:",
+  "settings.exportLogs.desc": "Transfira todos os ficheiros de log num único zip, o que anexar a um relatório de erro. Veja o separador Logs para saber onde ficam.",
+  "wave.loadingAria": "A carregar forma de onda",
+  "player.stillLoadingWaveform": "Ainda a carregar a forma de onda…",
+  "release.applying": "A aplicar atualização…",
+  "failure.collecting": "A recolher detalhes…",
+  "failure.fetchingLogs": "A obter logs…",
+  "job.processingTrackTitle": "A processar faixa",
+  "settings.stemsLocation.moving": "A mover stems, isto pode demorar numa biblioteca grande.",
+  "settings.cookies.desc": "Opcional. Caminho para um ficheiro cookies.txt, usado apenas quando o YouTube pede ao StemDeck para confirmar que não é um robô. Deixe vazio a menos que as importações estejam a falhar.",
+  "search.preview": "Pré-escuta",
+  "search.previewFailed": "Pré-escuta indisponível",
+  "export.includeClickTitle": "Misturar o clique de referência no ficheiro exportado",
+  "settings.network.allowDesc": "Permite que outros dispositivos (como o seu telemóvel) abram o StemDeck no endereço abaixo.",
+  "settings.network.lockNote": "Só de leitura quando o StemDeck é iniciado em modo servidor, o acesso à rede é então definido pela configuração do seu servidor.",
+  "settings.logs.setupAria": "Log de configuração (só de leitura)",
+  "settings.logs.setup.desc": "A última hora de <code>setup.log</code>, configuração inicial e instalação do runtime de GPU. Apenas app desktop. Só de leitura.",
+  "settings.stemsLocation.movedPersistFailed.one": "{count} item movido, mas o StemDeck não conseguiu guardar isto como o novo local (verifique se a pasta é gravável). Reiniciar agora reverteria para o local antigo. Tente definir novamente.",
+  "settings.stemsLocation.movedPersistFailed.other": "{count} itens movidos, mas o StemDeck não conseguiu guardar isto como o novo local (verifique se a pasta é gravável). Reiniciar agora reverteria para o local antigo. Tente definir novamente.",
+  "failure.hint": "Estes detalhes vão para o relatório. O título da faixa e o link de origem não são incluídos, adicione-os se ajudar. Clicar num botão abaixo copia isto para a área de transferência.",
+};
+
+export const TRANSLATIONS = { en, pl, ja, "zh-Hans": zhHans, de, fr, pt, "pt-PT": ptPT, id };
