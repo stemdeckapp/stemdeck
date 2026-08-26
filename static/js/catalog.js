@@ -3038,6 +3038,15 @@ async function wireGeneralSettings(overlay) {
   // rejects a forced device (e.g. CUDA not available on this machine).
   let lastDevice = "auto";
 
+  // "Delete after" only means anything while automatic deletion is on. Dim it
+  // and take it out of the tab order rather than removing it, so the number is
+  // still readable: deciding whether to switch deletion on is easier when you
+  // can already see how long tracks would be kept.
+  const setDaysEnabled = (on) => {
+    autoDeleteDaysRow?.classList.toggle("disabled", !on);
+    if (autoDeleteDays) autoDeleteDays.disabled = !on;
+  };
+
   const apply = (d) => {
     if (durInput && d.max_duration_sec) durInput.value = String(Math.round(d.max_duration_sec / 60));
     // Same reason: the copy in the description text went stale alongside the
@@ -3060,9 +3069,16 @@ async function wireGeneralSettings(overlay) {
     // switch showing whatever it showed last.
     if (autoDeleteInput && "auto_delete_jobs" in d) {
       autoDeleteInput.checked = d.auto_delete_jobs === true;
-      autoDeleteDaysRow?.classList.toggle("hidden", !autoDeleteInput.checked);
+      setDaysEnabled(autoDeleteInput.checked);
     }
-    if (autoDeleteDays && d.auto_delete_days) autoDeleteDays.value = String(d.auto_delete_days);
+    // Never overwrite a field the user is currently in. Flipping the switch
+    // POSTs, and that response used to land on top of whatever they had just
+    // started typing into the field the switch had only just enabled. The
+    // days handler below writes its own result back explicitly, so the
+    // server still owns the ceiling.
+    if (autoDeleteDays && d.auto_delete_days && document.activeElement !== autoDeleteDays) {
+      autoDeleteDays.value = String(d.auto_delete_days);
+    }
     if (autoDeleteDaysDesc && d.auto_delete_days_max) {
       autoDeleteDaysDesc.textContent = i18nT("settings.autoDelete.daysDesc", {
         max: d.auto_delete_days_max,
@@ -3118,8 +3134,13 @@ async function wireGeneralSettings(overlay) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      if (r.ok) apply(await r.json()); // reflect the server's clamped value
+      if (r.ok) {
+        const data = await r.json();
+        apply(data); // reflect the server's clamped value
+        return data;
+      }
     } catch { /* ignore */ }
+    return null;
   };
 
   durInput?.addEventListener("change", () => {
@@ -3169,16 +3190,21 @@ async function wireGeneralSettings(overlay) {
     post({ separation_quality: qualitySel.value });
   });
   autoDeleteInput?.addEventListener("change", () => {
-    // Reveal the days field immediately rather than waiting for the round
+    // Enable the days field immediately rather than waiting for the round
     // trip, so the switch does not appear to do nothing on a slow response.
     // apply() sets it again from the server's answer either way.
-    autoDeleteDaysRow?.classList.toggle("hidden", !autoDeleteInput.checked);
+    setDaysEnabled(autoDeleteInput.checked);
     post({ auto_delete_jobs: autoDeleteInput.checked });
   });
-  autoDeleteDays?.addEventListener("change", () => {
+  autoDeleteDays?.addEventListener("change", async () => {
     // Floor of 1 only. The server owns the ceiling and returns what it kept,
     // the same arrangement as max track length, so the two cannot drift.
-    post({ auto_delete_days: Math.max(1, parseInt(autoDeleteDays.value, 10) || 30) });
+    const days = Math.max(1, parseInt(autoDeleteDays.value, 10) || 30);
+    const data = await post({ auto_delete_days: days });
+    // Written back here rather than left to apply(), which skips a focused
+    // field: committing with Enter keeps focus, and the user still has to see
+    // the number the server actually kept.
+    if (data?.auto_delete_days) autoDeleteDays.value = String(data.auto_delete_days);
   });
   // Compute device needs its own POST path: unlike the clamped numeric
   // settings, the server can REJECT a forced device (422 with a reason, e.g.
@@ -3567,7 +3593,7 @@ function openLibraryEditor() {
               <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
             </label>
           </div>
-          <div class="settings-row auto-delete-days-row hidden">
+          <div class="settings-row auto-delete-days-row disabled">
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.autoDelete.daysTitle">Delete after</div>
               <div class="settings-row-desc auto-delete-days-desc">Days a finished track is kept before it is deleted.</div>

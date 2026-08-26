@@ -2,10 +2,14 @@
 //
 // Worth driving in a real browser rather than asserting on the API alone,
 // because the risk here is not the value, it is the control. This setting
-// destroys work that cannot be recovered, and the days field only exists while
-// the switch is on. A reveal that fails leaves someone unable to see, let alone
-// change, how long their library survives -- while the API happily reports a
-// number they never chose.
+// destroys work that cannot be recovered, and the days field is only live while
+// the switch is on. If that coupling breaks, someone edits a number that does
+// nothing, or cannot edit one that does -- while the API happily reports a
+// value they never chose.
+//
+// The field is dimmed rather than removed. `hidden` would not have worked here
+// in any case: base.css is not loaded by index.html and daw.css scopes its
+// rule to `.daw`, while the settings overlay is appended to document.body.
 
 import { test, expect } from "@playwright/test";
 import { seedLibrary } from "./helpers.mjs";
@@ -40,18 +44,20 @@ test.describe("automatic deletion", () => {
     await setRetention(page, { auto_delete_jobs: false, auto_delete_days: 30 });
   });
 
-  test("is off, and hides the days field until it is on", async ({ page }) => {
+  test("is off, and leaves the days field inert until it is on", async ({ page }) => {
     await openSettings(page);
 
     // The default is the whole point of the setting: an install nobody has
     // configured must not delete anything.
     await expect(page.locator(".auto-delete-input")).not.toBeChecked();
-    await expect(page.locator(".auto-delete-days-row")).toHaveClass(/hidden/);
+    await expect(page.locator(".auto-delete-days-row")).toHaveClass(/disabled/);
+    await expect(page.locator(".set-auto-delete-days")).toBeDisabled();
 
     await switchFor(page).click();
-    await expect(page.locator(".auto-delete-days-row")).not.toHaveClass(/hidden/);
-    // Revealed with a value rather than empty, so there is nothing to mistake
-    // for "no limit".
+    await expect(page.locator(".auto-delete-days-row")).not.toHaveClass(/disabled/);
+    await expect(page.locator(".set-auto-delete-days")).toBeEnabled();
+    // Readable the whole time, so deciding whether to switch deletion on does
+    // not require switching it on to find out what it would do.
     await expect(page.locator(".set-auto-delete-days")).toHaveValue("30");
   });
 
@@ -66,17 +72,19 @@ test.describe("automatic deletion", () => {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
     await expect(page.locator(".auto-delete-input")).toBeChecked();
-    await expect(page.locator(".auto-delete-days-row")).not.toHaveClass(/hidden/);
+    await expect(page.locator(".auto-delete-days-row")).not.toHaveClass(/disabled/);
+    await expect(page.locator(".set-auto-delete-days")).toBeEnabled();
   });
 
-  test("turning it back off hides the field and stops deletion", async ({ page }) => {
+  test("turning it back off makes the field inert and stops deletion", async ({ page }) => {
     await setRetention(page, { auto_delete_jobs: true, auto_delete_days: 14 });
     await openSettings(page);
     await expect(page.locator(".auto-delete-input")).toBeChecked();
     await expect(page.locator(".set-auto-delete-days")).toHaveValue("14");
 
     await switchFor(page).click();
-    await expect(page.locator(".auto-delete-days-row")).toHaveClass(/hidden/);
+    await expect(page.locator(".auto-delete-days-row")).toHaveClass(/disabled/);
+    await expect(page.locator(".set-auto-delete-days")).toBeDisabled();
     await expect
       .poll(async () => (await (await page.request.get("/api/settings")).json()).auto_delete_jobs)
       .toBe(false);

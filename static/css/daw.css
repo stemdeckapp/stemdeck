@@ -976,6 +976,15 @@ input, textarea { font-family: inherit; }
 .settings-switch input:checked + .settings-switch-track .settings-switch-thumb { transform: translateX(18px); background: var(--accent); }
 .settings-switch.disabled { cursor: default; opacity: 0.7; }
 .settings-switch.disabled input { cursor: default; }
+/* A row whose setting only applies while another one is on. Dimmed and inert
+   rather than removed, so the value stays readable: someone deciding whether to
+   switch automatic deletion on can see how long tracks would be kept before
+   committing to it, instead of having to turn the destructive setting on to
+   find out. Note that `hidden` would not work here anyway -- base.css is not
+   loaded by index.html and daw.css scopes its rule to `.daw`, while the
+   settings overlay is appended to document.body. */
+.settings-row.disabled { opacity: 0.45; }
+.settings-row.disabled input { cursor: not-allowed; }
 .settings-net { margin-top: 10px; font-size: 11px; color: var(--muted); }
 .settings-net.hidden { display: none; }
 .settings-net-empty { color: var(--muted); }
