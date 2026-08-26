@@ -479,10 +479,6 @@ const en = {
   "settings.stemsLocation.restartNote": "Restart StemDeck to finish switching over.",
   "settings.stemsLocation.pickerFailed": "Could not open the folder picker.",
   "settings.stemsLocation.moving": "Moving stems… this can take a while for a large library.",
-  "settings.autoDelete.title": "Eliminar automaticamente as faixas concluídas",
-  "settings.autoDelete.desc": "Desativado por predefinição. As faixas separadas são mantidas para sempre. A eliminação não pode ser anulada.",
-  "settings.autoDelete.daysTitle": "Eliminar após",
-  "settings.autoDelete.daysDesc": "Dias que uma faixa concluída é mantida antes de ser eliminada (máx. {max}).",
   "settings.stemsLocation.moveFailed": "Could not move the stems folder.",
   "settings.stemsLocation.serverUnreachable": "Could not reach the server.",
   "settings.stemsLocation.movedPersistFailed.one": "Moved {count} item, but StemDeck could not save this as your new location (check that the folder is writable). Restarting now would revert to the old location. Try setting it again.",
@@ -4255,6 +4251,10 @@ const fr = {
 // through pt (see FALLBACK), so the two variants cannot drift and a key
 // added to pt later is picked up here rather than reverting to English.
 const ptPT = {
+  "settings.autoDelete.title": "Eliminar automaticamente as faixas concluídas",
+  "settings.autoDelete.desc": "Desativado por predefinição. As faixas separadas são mantidas para sempre. A eliminação não pode ser anulada.",
+  "settings.autoDelete.daysTitle": "Eliminar após",
+  "settings.autoDelete.daysDesc": "Dias que uma faixa concluída é mantida antes de ser eliminada (máx. {max}).",
   "metro.note.full": "Clique a {bpm} BPM, {conf}% das batidas coincidem com uma batida de bateria, acentuando a cada {accent} batidas. Use /2 ou x2 se o clique parecer metade ou o dobro da velocidade.",
   "metro.note.noAccent": "Clique a {bpm} BPM, {conf}% das batidas coincidem com uma batida de bateria. Use /2 ou x2 se o clique parecer metade ou o dobro da velocidade.",
   "metro.note.fallback": "Clique a {bpm} BPM do rastreador alternativo. Use /2 ou x2 se o clique parecer metade ou o dobro da velocidade.",
