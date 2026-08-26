@@ -65,6 +65,9 @@ function _detectDefault() {
   // unless it's explicitly a traditional-script region, which we don't ship).
   if (lower.startsWith("zh")) return "zh-Hans";
   if (lower.startsWith("de")) return "de";
+  // Neutral Spanish for every es-* locale. There is one table, deliberately
+  // free of regional vocabulary, so es-ES and es-419 both land on it.
+  if (lower.startsWith("es")) return "es";
   // Portuguese: an explicit Portugal locale gets the European variant, which
   // overrides only the words that differ and falls through to pt for the rest.
   // pt-BR and a bare "pt" both take the Brazilian table, which is the more
@@ -4601,6 +4604,10 @@ const es = {
   "settings.cookies.placeholder": "Ruta al archivo cookies.txt",
   "settings.cookies.invalid": "No se encontró el archivo, o no se puede leer.",
   "settings.stemsLocation.title": "Ubicación de StemData",
+  "settings.autoDelete.title": "Eliminar automáticamente las pistas terminadas",
+  "settings.autoDelete.desc": "Desactivado salvo que lo actives. Las pistas separadas se conservan de forma indefinida. Eliminarlas no se puede deshacer.",
+  "settings.autoDelete.daysTitle": "Eliminar después de",
+  "settings.autoDelete.daysDesc": "Días que se conserva una pista terminada antes de eliminarla (máx. {max}).",
   "settings.stemsLocation.change": "Cambiar…",
   "settings.stemsLocation.resetting": "Restableciendo…",
   "settings.stemsLocation.resetFailed": "No se pudo restablecer — revisa tu conexión.",
