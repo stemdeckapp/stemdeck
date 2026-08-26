@@ -20,7 +20,7 @@ const MAX_FAILURES = 20;
 const NEW_ISSUE_URL = "https://github.com/stemdeckapp/stemdeck/issues/new";
 // Support channel for a quicker back-and-forth than a public issue -- same
 // invite as the About dialog's Discord icon (index.html).
-const DISCORD_URL = "https://discord.gg/JGk7FdZb9N";
+const DISCORD_URL = "https://discord.gg/YhCKsjhcwB";
 // Named views the Settings -> Logs viewer offers (app/main.py _LOG_VIEWS).
 // Opt-in only (fetchRecentLogs): unlike the per-job traceback, these cover
 // more than one failure and are worth a deliberate click, not an automatic

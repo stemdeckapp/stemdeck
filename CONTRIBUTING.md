@@ -79,4 +79,4 @@ contributions are licensed under the same terms.
 ## Questions
 
 Open a [Discussion](https://github.com/stemdeckapp/stemdeck/discussions) or join the
-[Discord](https://discord.gg/2MVsWqaPRe). Thanks for helping make StemDeck better.
+[Discord](https://discord.gg/YhCKsjhcwB). Thanks for helping make StemDeck better.

@@ -17,7 +17,7 @@
 <p align="center"><sub>JOIN THE COMMUNITY</sub></p>
 <div align="center">
   <a href="https://github.com/stemdeckapp/stemdeck"><img src="https://img.shields.io/badge/GitHub-stemdeckapp-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub"></a>
-  <a href="https://discord.gg/2MVsWqaPRe"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.gg/YhCKsjhcwB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://www.reddit.com/r/StemDeckApp/"><img src="https://img.shields.io/badge/Reddit-r%2FStemDeckApp-FF4500?style=flat-square&logo=reddit&logoColor=white" alt="Reddit"></a>
   <a href="https://www.instagram.com/stemdeck"><img src="https://img.shields.io/badge/Instagram-stemdeck-E4405F?style=flat-square&logo=instagram&logoColor=white" alt="Instagram"></a>
   <a href="https://x.com/StemDeckApp"><img src="https://img.shields.io/badge/X-StemDeckApp-000000?style=flat-square&logo=x&logoColor=white" alt="X"></a>
@@ -410,11 +410,11 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 | Platform | Link |
 |---|---|
 | GitHub | [stemdeckapp/stemdeck](https://github.com/stemdeckapp/stemdeck) |
-| Discord | [discord.gg/2MVsWqaPRe](https://discord.gg/2MVsWqaPRe) |
+| Discord | [discord.gg/YhCKsjhcwB](https://discord.gg/YhCKsjhcwB) |
 | Reddit | [r/StemDeckApp](https://www.reddit.com/r/StemDeckApp/) |
 | Instagram | [@stemdeck](https://www.instagram.com/stemdeck) |
 | X | [@StemDeckApp](https://x.com/StemDeckApp) |
-| Website | [stemdeck.app](https://stemdeck.app) *(coming soon)* |
+| Website | [stemdeck.app](https://stemdeck.app) |
 
 ---
 
