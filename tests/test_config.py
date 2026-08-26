@@ -82,3 +82,48 @@ def test_configure_portable_environment_leaves_dev_cache_env_alone(monkeypatch):
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
         monkeypatch.delenv("TORCH_HOME", raising=False)
         importlib.reload(original)
+
+
+# --- packaged data directory discovery (#459) --------------------------------
+#
+# The desktop shell always passes STEMDECK_DATA_DIR. These cover what happens
+# when the backend is started some other way: by hand, from a terminal, out of
+# the package the shell would normally launch. That used to resolve DATA_DIR to
+# backend/ itself, so the backend read a settings.json that did not exist and
+# quietly ignored every choice the user had made in the app.
+
+
+def test_packaged_layout_finds_the_data_dir_beside_the_backend(tmp_path, monkeypatch):
+    from app.core import config
+
+    package = tmp_path / "StemDeck-Windows-x64"
+    backend = package / "backend"
+    data = package / "data"
+    backend.mkdir(parents=True)
+    data.mkdir()
+
+    monkeypatch.setattr(config, "ROOT", backend)
+    assert config._packaged_data_dir() == data
+
+
+def test_a_source_checkout_is_not_a_package(tmp_path, monkeypatch):
+    """ROOT is the repo root in a checkout and /app under Docker. Neither is
+    named backend, so neither changes behaviour."""
+    from app.core import config
+
+    for name in ("stemdeck", "app"):
+        root = tmp_path / name
+        (root / "data").mkdir(parents=True)
+        monkeypatch.setattr(config, "ROOT", root)
+        assert config._packaged_data_dir() is None
+
+
+def test_a_backend_without_a_data_sibling_is_not_a_package(tmp_path, monkeypatch):
+    """Half a layout is not a layout. Returning a path that is not there would
+    invent a data directory next to whatever the backend happened to sit in."""
+    from app.core import config
+
+    backend = tmp_path / "somewhere" / "backend"
+    backend.mkdir(parents=True)
+    monkeypatch.setattr(config, "ROOT", backend)
+    assert config._packaged_data_dir() is None

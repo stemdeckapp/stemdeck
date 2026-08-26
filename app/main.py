@@ -40,9 +40,13 @@ from app.core.registry import registry_path, take_pending_resume
 from app.core.registry import reset_all as reset_registry
 from app.core.registry import restore as restore_registry
 from app.core.settings import (
+    AUTO_DELETE_DAYS_MAX,
+    AUTO_DELETE_DAYS_MIN,
     DURATION_MAX_SEC,
     DURATION_MIN_SEC,
     get_allow_network,
+    get_auto_delete_days,
+    get_auto_delete_jobs,
     get_cookies_file,
     get_demucs_device,
     get_demucs_device_choice,
@@ -54,6 +58,8 @@ from app.core.settings import (
     get_separation_quality,
     get_video_max_height,
     set_allow_network,
+    set_auto_delete_days,
+    set_auto_delete_jobs,
     set_cookies_file,
     set_demucs_device,
     set_export_sample_rate,
@@ -137,34 +143,18 @@ def app_version() -> str:
         return "0.0.0-dev"
 
 
-def _sweep_disabled() -> bool:
-    """The desktop app is a personal, user-curated library (folders + Trash),
-    with its track list persisted permanently in ~/Documents/StemDeck. The 24h
-    job TTL sweep -- a sensible disk-hygiene default for the shared server/Docker
-    deployment -- would wrongly purge stems the user kept, leaving orphaned
-    library entries that ask to "re-upload to restore".
-
-    So skip the sweep under the desktop shell (STEMDECK_DESKTOP=1), or when a
-    self-hosted deployment opts into a persistent library
-    (STEMDECK_PERSIST_LIBRARY=1 -- set by default in run.sh). The user manages
-    disk via Trash. Shared/Docker deployments that set neither keep the sweep."""
-    return (
-        os.environ.get("STEMDECK_DESKTOP") == "1"
-        or os.environ.get("STEMDECK_PERSIST_LIBRARY") == "1"
-    )
-
-
 async def _sweep_loop() -> None:
-    # The job TTL sweep is disabled for persistent libraries, but the
-    # failed-job quarantine (jobs/failed/) expires unconditionally -- failure
+    # Finished jobs are only deleted when the user has asked for it. The
+    # failed-job quarantine (jobs/failed/) expires either way -- failure
     # evidence is diagnostics, not library content, on every deployment.
-    persistent = _sweep_disabled()
-    if persistent:
-        _log.info("job TTL sweep disabled (persistent library; user-managed)")
     while True:
         try:
-            if not persistent:
-                await asyncio.to_thread(sweep_old_jobs, JOBS_DIR)
+            # Read every pass rather than once at startup. This is a live
+            # setting, so turning deletion on or off has to take effect without
+            # a restart, the same as every other setting in the panel.
+            if get_auto_delete_jobs():
+                ttl = get_auto_delete_days() * 86400
+                await asyncio.to_thread(sweep_old_jobs, JOBS_DIR, ttl)
             await asyncio.to_thread(sweep_failed_jobs, JOBS_DIR)
         except Exception:
             _log.warning("sweep failed", exc_info=True)
@@ -329,6 +319,13 @@ def _is_lan_ipv4(ip: str) -> bool:
 def _settings_payload() -> dict[str, object]:
     return {
         "allow_network": get_allow_network(),
+        # Off unless the user asked for it. The days value is published even
+        # when it is off, so the field the toggle reveals has something to show
+        # rather than appearing empty on first click.
+        "auto_delete_jobs": get_auto_delete_jobs(),
+        "auto_delete_days": get_auto_delete_days(),
+        "auto_delete_days_min": AUTO_DELETE_DAYS_MIN,
+        "auto_delete_days_max": AUTO_DELETE_DAYS_MAX,
         "max_duration_sec": get_max_duration_sec(),
         # The clamp bounds, so the UI does not need its own copy of them. It
         # had one, it was stale (20 min against a 60 min ceiling), and the
@@ -375,7 +372,10 @@ async def update_settings(request: Request) -> dict[str, object]:
         body = {}
     if "allow_network" in body:
         set_allow_network(bool(body["allow_network"]))
+    if "auto_delete_jobs" in body:
+        set_auto_delete_jobs(bool(body["auto_delete_jobs"]))
     for key, setter in (
+        ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),
         ("playlist_max_items", set_playlist_max_items),
         ("video_max_height", set_video_max_height),

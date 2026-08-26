@@ -250,17 +250,19 @@ def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> None:
         logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
 
 
-def sweep_old_jobs(jobs_dir: Path) -> None:
-    """Delete job directories older than JOB_TTL_SECONDS and remove them from
-    the in-memory registry. Called hourly from the background sweep loop
-    started at app startup.
+def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
+    """Delete job directories older than `ttl_seconds` (JOB_TTL_SECONDS when
+    not given) and remove them from the in-memory registry. Called hourly from
+    the background sweep loop started at app startup, and only when the user
+    has asked for automatic deletion -- deciding *whether* to sweep is the
+    caller's job, this one only decides what is old.
 
     Prefers Job.created_at over directory mtime (which can be touched by
     unrelated filesystem events), and never deletes the directory of an
     active (non-terminal) registered job even if its timestamp looks old.
     Falls back to mtime for orphan directories left over from a previous
     server run, since the registry is in-memory only."""
-    cutoff = time.time() - JOB_TTL_SECONDS
+    cutoff = time.time() - (JOB_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
     if not jobs_dir.is_dir():
         return
     jobs = registry_all()

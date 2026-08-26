@@ -61,12 +61,38 @@ STEM_NAMES: tuple[str, ...] = ("vocals", "drums", "bass", "guitar", "piano", "ot
 EXTRA_STEM_NAMES: tuple[str, ...] = ("lead_vocals", "backing_vocals")
 JOB_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 
+
+def _packaged_data_dir() -> Path | None:
+    """The data folder of a desktop package, found without being told.
+
+    The desktop shell always passes STEMDECK_DATA_DIR, so this only matters
+    when the backend is started some other way: by hand, from a terminal, out
+    of the package the shell would normally launch. That used to resolve
+    DATA_DIR to `backend/` itself, so the backend read a settings.json that did
+    not exist and ignored every choice the user had made in the app. Silent,
+    and it made a directly-run backend a different application with the same
+    files (#459).
+
+    Keyed on the layout every package shares -- `<package>/backend/app` here,
+    `<package>/data` beside it -- rather than on a marker file, because only
+    the Windows package writes one. A source checkout has ROOT named for the
+    repo and Docker has WORKDIR /app, so neither matches and neither changes.
+    """
+    if ROOT.name != "backend":
+        return None
+    candidate = ROOT.parent / "data"
+    return candidate if candidate.is_dir() else None
+
+
 # Runtime knobs -- env-backed so Docker / desktop packaging / local dev can
 # tune without a code edit. STEMDECK_DATA_DIR is the portable app root for
-# mutable runtime data; when unset, dev behavior remains the repo-local jobs/
-# folder.
-PORTABLE_DATA_DIR_ENABLED = bool(os.environ.get("STEMDECK_DATA_DIR", "").strip())
-DATA_DIR = _env_path("STEMDECK_DATA_DIR", ROOT)
+# mutable runtime data; when unset, a package finds its own (above) and a plain
+# dev checkout stays on the repo-local jobs/ folder.
+_PACKAGED_DATA_DIR = _packaged_data_dir()
+PORTABLE_DATA_DIR_ENABLED = bool(
+    os.environ.get("STEMDECK_DATA_DIR", "").strip() or _PACKAGED_DATA_DIR
+)
+DATA_DIR = _env_path("STEMDECK_DATA_DIR", _PACKAGED_DATA_DIR or ROOT)
 
 
 def _stored_jobs_dir() -> Path | None:
