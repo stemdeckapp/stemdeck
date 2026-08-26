@@ -56,7 +56,11 @@ function _tables() {
 let _lang = DEFAULT_LANG;
 const _listeners = new Set();
 
-function _detectDefault() {
+// Exported for tests/js/i18n-detect.test.mjs. Adding a table to LANGUAGES and
+// forgetting the branch here is silent: the language shows up in the picker and
+// simply never gets chosen on its own. That happened to fr, which shipped and
+// went undetected until Spanish was added beside it.
+export function _detectDefault() {
   const nav = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
   const lower = nav.toLowerCase();
   if (lower.startsWith("pl")) return "pl";
@@ -65,6 +69,7 @@ function _detectDefault() {
   // unless it's explicitly a traditional-script region, which we don't ship).
   if (lower.startsWith("zh")) return "zh-Hans";
   if (lower.startsWith("de")) return "de";
+  if (lower.startsWith("fr")) return "fr";
   // Neutral Spanish for every es-* locale. There is one table, deliberately
   // free of regional vocabulary, so es-ES and es-419 both land on it.
   if (lower.startsWith("es")) return "es";
