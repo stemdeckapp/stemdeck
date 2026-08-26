@@ -65,7 +65,21 @@ _ENCODE_ARGS = {
     "ogg": ["-c:a", "libvorbis", "-q:a", "6"],
 }
 MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
-_SEEKABLE_OUTPUT_EXTS = frozenset({"wav", "flac"})
+
+# Containers whose muxer finishes the file by seeking back to a header it wrote
+# earlier, which is impossible on a pipe (#458):
+#
+#   wav   RIFF and data chunk sizes, left as the 0xFFFFFFFF placeholder, so the
+#         file claims ~4 GB of audio and strict hardware refuses it
+#   flac  STREAMINFO total samples and the MD5 signature, left as zeros
+#   mp3   the Xing/Info frame, which ffmpeg simply omits rather than writing a
+#         wrong one -- and these are VBR (-q:a 2), so without it there is no
+#         duration and no seek table
+#
+# ogg is absent on purpose: a granule position rides on every page, so nothing
+# is patched afterwards. mp4 is handled separately by get_video_mixdown, which
+# already muxes fragmented (frag_keyframe+empty_moov) for exactly this reason.
+_SEEKABLE_OUTPUT_EXTS = frozenset({"wav", "flac", "mp3"})
 MIXDOWN_MEDIA_TYPES = {
     "wav": "audio/wav",
     "mp3": "audio/mpeg",
@@ -85,6 +99,18 @@ _MIXDOWN_CACHE_MAX_FILES = 20
 _MIXDOWN_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
+# Folded into every cache key. Bump it whenever a render's *output* changes for
+# inputs that are otherwise identical, so entries written by an older build can
+# never be served by a newer one.
+#
+# "2": everything cached before #458 was streamed through a pipe and carries an
+# unpatched container header. Those files are wrong, the key that produced them
+# is still reachable, and _prune_mixdown_cache evicts by age rather than
+# validity -- so without this a user who exported before upgrading would be
+# handed the same broken file back for the same parameters indefinitely.
+_RENDER_CACHE_VERSION = "2"
+
+
 def _mixdown_cache_key(
     job_id: str,
     ext: str,
@@ -102,6 +128,7 @@ def _mixdown_cache_key(
     ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry."""
     raw = "|".join(
         [
+            _RENDER_CACHE_VERSION,
             job_id,
             ext,
             ",".join(names),
@@ -398,29 +425,38 @@ async def _stream_ffmpeg(cmd: list[str], context: str = "", cache_path: Path | N
                 tmp_path.unlink(missing_ok=True)
 
 
-async def _render_ffmpeg(
+async def _render_to_file(
     cmd: list[str], suffix: str, context: str = "", cache_path: Path | None = None
-):
-    """Run ffmpeg to completion writing a temp file, then yield that file in
-    64 KB chunks. The sibling of _stream_ffmpeg for containers in
-    _SEEKABLE_OUTPUT_EXTS: WAV and FLAC muxers patch their header (RIFF and
-    data chunk sizes, STREAMINFO total samples) by seeking back once the
-    stream ends, which is impossible on pipe:1, so anything streamed straight
-    from ffmpeg's stdout carries a 0xFFFFFFFF-sized data chunk that strict
-    hardware players refuse.
+) -> Path:
+    """Run ffmpeg to completion against a real file and return the path.
 
-    `cmd` is the full ffmpeg command *without* an output path; the temp path
-    is appended here. With `cache_path` the temp file lives beside it and a
-    clean render is atomically renamed into place as the cache entry (#290);
-    otherwise it is discarded after streaming. A failed render yields nothing
-    -- the HTTP status is already committed, so like _stream_ffmpeg the log
-    entry is where the failure surfaces -- and never becomes a cache hit."""
+    The sibling of _stream_ffmpeg, for the containers in _SEEKABLE_OUTPUT_EXTS
+    whose muxer finishes the file by seeking back to a header it wrote earlier
+    (#458). A pipe cannot seek, so those headers were never patched and every
+    exported WAV claimed roughly 4 GB of audio.
+
+    Returning a path rather than yielding chunks is what lets the caller answer
+    with FileResponse, and that is worth more than the extra buffering costs.
+    A streamed render commits HTTP 200 before ffmpeg has exited, so a failure
+    reaches the client as a truncated file that only the server log records;
+    here the exit code is known while the response is still ours to choose, so
+    a failed render is an honest 500. It also brings Content-Length and range
+    requests, which chunked encoding cannot offer at all.
+
+    `cmd` must not carry an output path -- this appends one. With `cache_path`
+    the temp file is created beside it and a clean render is renamed into place
+    as the cache entry (#290); the caller then serves the cache entry and must
+    not delete it. Without one the caller owns the returned temp file and is
+    responsible for removing it once the response has been sent.
+    """
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.tmp{suffix}")
     else:
         _MIXDOWN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_path = _MIXDOWN_CACHE_DIR / f".render.{uuid.uuid4().hex}.tmp{suffix}"
+    # Both names start with a dot, which is what keeps an in-flight render out
+    # of _prune_mixdown_cache's eviction list and out of the cache-hit path.
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -449,24 +485,34 @@ async def _render_ffmpeg(
                 context,
                 " | ".join(list(stderr_tail)[-8:]) or "(no stderr)",
             )
-            return
+            raise HTTPException(status_code=500, detail="export failed")
         ok = True
-
-        with open(tmp_path, "rb") as f:
-            while True:
-                chunk = f.read(65536)
-                if not chunk:
-                    break
-                yield chunk
     finally:
+        # A cancelled request (client gone) unwinds through here too, so the
+        # process is never left running and the temp file is never orphaned.
         if proc.returncode is None:
             proc.kill()
             await proc.wait()
-        if ok and cache_path is not None:
-            os.replace(tmp_path, cache_path)
-            _prune_mixdown_cache(cache_path.parent)
-        else:
+        if not ok:
             tmp_path.unlink(missing_ok=True)
+
+    if cache_path is not None:
+        os.replace(tmp_path, cache_path)
+        _prune_mixdown_cache(cache_path.parent)
+        return cache_path
+    return tmp_path
+
+
+def _unlink_later(path: Path) -> None:
+    """Drop a rendered temp file once its response has been sent.
+
+    Only ever attached to an uncached render. A cached one returns the cache
+    entry itself, and deleting that would throw away the render the cache
+    exists to keep."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("could not remove rendered export %s", path, exc_info=True)
 
 
 async def _ensure_cached_mp3(src: Path) -> Path:
@@ -606,14 +652,16 @@ async def get_stem(
         "-f",
         "wav",
     ]
-    return StreamingResponse(
-        _render_ffmpeg(cmd, ".wav", context=f"stem-region job={job_id} stem={name}"),
+    rendered = await _render_to_file(cmd, ".wav", context=f"stem-region job={job_id} stem={name}")
+    return FileResponse(
+        rendered,
         media_type="audio/wav",
         headers={
             "Content-Disposition": (
                 f'attachment; filename="{_stem_download_name(job_id, name, "wav", "_region")}"'
             )
         },
+        background=BackgroundTask(_unlink_later, rendered),
     )
 
 
@@ -667,14 +715,18 @@ async def get_stem_mp3(
         "2",  # VBR ~190 kbps
         "-f",
         "mp3",
-        "pipe:1",
     ]
     # Only the trimmed branch reaches here; the untrimmed one returned above.
     filename = _stem_download_name(job_id, name, "mp3", "_region")
-    return StreamingResponse(
-        _stream_ffmpeg(cmd, context=f"stem-mp3 job={job_id} stem={name}"),
+    # Rendered rather than streamed for the same reason as the WAV region
+    # above: on a pipe ffmpeg omits the Xing frame entirely, and these are VBR,
+    # so the result has no duration and no seek table (#458).
+    rendered = await _render_to_file(cmd, ".mp3", context=f"stem-mp3 job={job_id} stem={name}")
+    return FileResponse(
+        rendered,
         media_type="audio/mpeg",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=BackgroundTask(_unlink_later, rendered),
     )
 
 
@@ -813,18 +865,24 @@ async def get_mixdown(
     ]
 
     context = f"mixdown job={job_id} ext={ext} stems={stems}"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
+        )
+    }
     if ext in _SEEKABLE_OUTPUT_EXTS:
-        body = _render_ffmpeg(cmd, f".{ext}", context=context, cache_path=cache_path)
-    else:
-        body = _stream_ffmpeg([*cmd, "pipe:1"], context=context, cache_path=cache_path)
+        # Rendered to a file so the muxer can seek back and finish its header
+        # (#458). It lands in the cache, so nothing is deleted afterwards --
+        # this is the same file a later identical request will be served from
+        # by the cache-hit branch above.
+        rendered = await _render_to_file(cmd, f".{ext}", context=context, cache_path=cache_path)
+        return FileResponse(rendered, media_type=media_type, headers=headers)
+    # ogg needs no back-patching, so it keeps streaming and the client sees
+    # bytes as soon as ffmpeg produces them.
     return StreamingResponse(
-        body,
+        _stream_ffmpeg([*cmd, "pipe:1"], context=context, cache_path=cache_path),
         media_type=media_type,
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
-            )
-        },
+        headers=headers,
     )
 
 
