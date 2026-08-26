@@ -5222,9 +5222,22 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     fn a_free_port_is_granted_as_asked() {
         // The fallback must not fire needlessly: the user's configured port is
         // honoured whenever it genuinely is available.
-        let probe = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
-        let wanted = probe.local_addr().unwrap().port();
-        drop(probe);
+        //
+        // The port must come from outside the OS ephemeral range. This test can
+        // only establish that a port is free by binding it and letting go, and
+        // reserve_port then has to re-claim it. If that number came from
+        // bind(0), any other test in this binary calling bind(0) in that gap is
+        // handed the number we just released, claim_port fails, and the
+        // fallback returns the next port up -- which is how this failed in CI,
+        // asserting 62251 against 62250. Cargo runs these in parallel and
+        // several of them stand up throwaway listeners.
+        //
+        // A fixed port is also the honest shape of the thing under test:
+        // reserve_port is given a configured port (8000 by default), never one
+        // the OS just handed out.
+        let wanted = (21_000..21_200)
+            .find(|port| std::net::TcpListener::bind(("0.0.0.0", *port)).is_ok())
+            .expect("no free port in 21000..21200 to test with");
 
         let (got, _guard) = super::reserve_port("0.0.0.0", wanted).unwrap();
 
