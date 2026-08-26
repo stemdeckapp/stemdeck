@@ -293,15 +293,24 @@ def health() -> dict[str, object]:
         "ffmpeg_configured": FFMPEG_BIN.is_file(),
         "demucs_model": DEMUCS_MODEL,
         "demucs_device": get_demucs_device(),
-        # Which process is answering. The desktop shell spawns this backend and
-        # then polls this endpoint to know it came up -- but a 200 alone only
-        # proves *something* is listening on that port, not that it is the child
-        # the shell just started. When a second StemDeck was launched, the new
+        # Who is answering. The desktop shell spawns this backend and then polls
+        # this endpoint to know it came up -- but a 200 alone only proves
+        # *something* is listening on that port, not that it is the backend the
+        # shell just started. When a second StemDeck was launched, the new
         # window adopted the already-running instance's backend, and with it
-        # that instance's data directory and library (#424). The shell compares
-        # this against the PID it spawned, so a stranger on the port is refused
-        # rather than silently trusted.
+        # that instance's data directory and library (#424).
+        #
+        # The token is the answer to that, and the PID is now only diagnostic
+        # (it is what the shell names in its port-conflict message). #424 used
+        # the PID for identity, which assumed the process that binds the port is
+        # the one the shell spawned. On the Windows portable build it is not:
+        # python/Scripts/python.exe is a venv launcher and Windows has no exec,
+        # so it starts python/base/python.exe as a child and *that* is the
+        # process here. The comparison could never succeed and every Windows
+        # portable launch timed out (#457). The environment survives any number
+        # of re-execs, so identity travels there instead.
         "pid": os.getpid(),
+        "instance": os.environ.get("STEMDECK_INSTANCE_TOKEN", ""),
     }
 
 

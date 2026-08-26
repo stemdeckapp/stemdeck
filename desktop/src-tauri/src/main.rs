@@ -9,7 +9,10 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -1507,6 +1510,7 @@ fn start_backend(
             .and_then(|bin_dir| bin_dir.parent().map(|venv| (venv, bin_dir)))
             .and_then(|(venv, bin_dir)| bundled_python_home(venv, bin_dir).map(|(home, _)| home));
 
+        let instance_token = new_instance_token();
         let mut cmd = Command::new(python);
         cmd.args([
             "-m",
@@ -1548,6 +1552,11 @@ fn start_backend(
                     .map(|dir| ("STEMDECK_SETTINGS_MIRROR", dir.join("settings.json"))),
             )
             .env("STEMDECK_PARENT_PID", std::process::id().to_string())
+            // How the backend proves it is ours when it answers /api/health.
+            // The environment is the only channel that survives the Windows
+            // venv launcher re-execing into python/base (#457), which is why
+            // this exists rather than a PID comparison. See wait_for_health.
+            .env("STEMDECK_INSTANCE_TOKEN", &instance_token)
             .env("PYTHONUNBUFFERED", "1")
             .env("XDG_CACHE_HOME", data_dir.join("cache"))
             .env("TORCH_HOME", data_dir.join("models").join("torch"))
@@ -1575,7 +1584,13 @@ fn start_backend(
         // Release the reserved port immediately after spawn so uvicorn can bind it.
         drop(port_guard);
 
-        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(90), &log_path) {
+        if let Err(err) = wait_for_health(
+            &mut child,
+            port,
+            &instance_token,
+            Duration::from_secs(90),
+            &log_path,
+        ) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(err);
@@ -3399,14 +3414,58 @@ fn reserve_port(host: &str, desired: u16) -> Result<(u16, Socket), String> {
     free_port(host)
 }
 
+/// A fresh identity for the backend this launch is about to spawn, handed to
+/// it as `STEMDECK_INSTANCE_TOKEN` and echoed back by `/api/health`.
+///
+/// It has to be unique per launch, not unguessable: it answers "is the process
+/// on this port the one I just started", and anything on the loopback
+/// interface that wanted to lie could already read the token out of the health
+/// response. So it is derived from the clock, this process and a counter
+/// rather than drawn from a CSPRNG, which keeps the shell free of an RNG
+/// dependency it has no other use for.
+fn new_instance_token() -> String {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut hasher = Sha256::new();
+    hasher.update(std::process::id().to_le_bytes());
+    hasher.update(nanos.to_le_bytes());
+    hasher.update(SEQUENCE.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    format!("{:x}", hasher.finalize())[..32].to_string()
+}
+
+/// Who is answering `/api/health`. Both fields are optional because either can
+/// be absent from a backend older than the shell asking.
+#[derive(Debug, Default, PartialEq)]
+struct HealthIdentity {
+    pid: Option<u32>,
+    instance: Option<String>,
+}
+
 /// Wait until *our own* backend answers on `port`.
 ///
 /// Identity matters as much as liveness here. A 200 only proves something is
 /// listening; before #424 that was enough, so a second StemDeck launched while
 /// one was already running would adopt the first instance's backend, and with
 /// it the first instance's data directory and library, with nothing on screen
-/// to suggest anything was wrong. The health payload carries the answering
-/// process's PID, and only the child we just spawned is accepted.
+/// to suggest anything was wrong.
+///
+/// #424 established that identity by comparing the PID in the health payload
+/// against the child we spawned, which assumed the process that binds the port
+/// is the process we started. On the Windows portable build it is not (#457).
+/// There `python/Scripts/python.exe` is a venv launcher pointing at
+/// `python/base/python.exe`, and Windows has no `exec`, so the launcher starts
+/// the real interpreter as a *child of its own*. The PID that binds the port is
+/// therefore a grandchild and can never equal `child.id()`. Every Windows
+/// portable user got the full ninety second timeout followed by "Another
+/// program is already using port 8000", naming StemDeck's own healthy backend
+/// as the intruder.
+///
+/// So identity travels in the environment instead, where it survives any number
+/// of re-execs: the backend echoes back the token we gave it. A backend that
+/// predates the token falls back to the PID comparison it was built for.
 ///
 /// Watching the child also turns the common failure into a fast, clear one: a
 /// backend that cannot bind its port exits within a second or so, and there is
@@ -3414,6 +3473,7 @@ fn reserve_port(host: &str, desired: u16) -> Result<(u16, Socket), String> {
 fn wait_for_health(
     child: &mut Child,
     port: u16,
+    token: &str,
     timeout: Duration,
     log_path: &Path,
 ) -> Result<(), String> {
@@ -3441,12 +3501,19 @@ fn wait_for_health(
             ));
         }
         match health_once(port) {
-            Ok(pid) if pid == expected_pid => return Ok(()),
+            // Our token came back: this is the backend we started, whatever
+            // process ended up holding the socket.
+            Ok(id) if id.instance.as_deref() == Some(token) => return Ok(()),
+            // No token at all means a backend older than this shell, which can
+            // only be identified the #424 way. Anything that does report a
+            // token reports *a different one*, so it is not ours and the PID is
+            // not consulted.
+            Ok(id) if id.instance.is_none() && id.pid == Some(expected_pid) => return Ok(()),
             // Something is listening, but it is not the process we started.
             // Keep waiting rather than failing outright: our child is still
             // alive, and if it never gets the port it will exit and be caught
             // above. What must never happen is returning Ok for this.
-            Ok(pid) => foreign_pid = Some(pid),
+            Ok(id) => foreign_pid = id.pid,
             Err(_) => {}
         }
         thread::sleep(interval);
@@ -3494,9 +3561,9 @@ fn file_tail(path: &Path, max_lines: usize) -> String {
         .unwrap_or_default()
 }
 
-/// Returns the PID the backend reports for itself, so the caller can tell our
-/// own child apart from any other process that happens to hold the port.
-fn health_once(port: u16) -> Result<u32, String> {
+/// Returns what the process on `port` claims about itself, so the caller can
+/// tell our own backend apart from anything else holding the port.
+fn health_once(port: u16) -> Result<HealthIdentity, String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -3511,22 +3578,35 @@ fn health_once(port: u16) -> Result<u32, String> {
     if !(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")) {
         return Err("health endpoint did not return 200".to_string());
     }
-    parse_health_pid(&response).ok_or_else(|| "health response carried no pid".to_string())
+    parse_health_identity(&response)
+        .ok_or_else(|| "health response was not a JSON object".to_string())
 }
 
-/// Pull `"pid"` out of a raw HTTP response. Deliberately parses only the JSON
-/// body: the headers are not JSON, and a `pid` appearing there (or in a header
-/// value) must not be mistaken for the backend's own.
-fn parse_health_pid(response: &str) -> Option<u32> {
+/// Pull the identity fields out of a raw HTTP response. Deliberately parses
+/// only the JSON body: the headers are not JSON, and a `pid` appearing there
+/// (or in a header value) must not be mistaken for the backend's own.
+///
+/// An empty `instance` is the same as none. Every distribution but the desktop
+/// shell runs the backend without a token (Docker, Unraid, a source checkout),
+/// and reporting `""` for all of them must not let them match each other.
+fn parse_health_identity(response: &str) -> Option<HealthIdentity> {
     let body = response
         .split_once("\r\n\r\n")
         .map(|(_, body)| body)
         .or_else(|| response.split_once("\n\n").map(|(_, body)| body))?;
     let start = body.find('{')?;
     let json: serde_json::Value = serde_json::from_str(body[start..].trim()).ok()?;
-    json.get("pid")?
-        .as_u64()
-        .and_then(|p| u32::try_from(p).ok())
+    Some(HealthIdentity {
+        pid: json
+            .get("pid")
+            .and_then(|v| v.as_u64())
+            .and_then(|p| u32::try_from(p).ok()),
+        instance: json
+            .get("instance")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    })
 }
 
 fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
@@ -5175,41 +5255,67 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     }
 
     #[test]
-    fn health_pid_comes_from_the_body_only() {
+    fn health_identity_comes_from_the_body_only() {
         let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
-                  {\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":4242}";
-        assert_eq!(super::parse_health_pid(ok), Some(4242));
+                  {\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":4242,\"instance\":\"abc\"}";
+        assert_eq!(
+            super::parse_health_identity(ok),
+            Some(super::HealthIdentity {
+                pid: Some(4242),
+                instance: Some("abc".to_string()),
+            })
+        );
 
         // A header must never be mistaken for the payload, or a stranger could
-        // claim to be our child just by setting one.
-        let header_only = "HTTP/1.1 200 OK\r\nX-Pid: 4242\r\n\r\n{\"status\":\"ok\"}";
-        assert_eq!(super::parse_health_pid(header_only), None);
+        // claim to be our backend just by setting one.
+        let header_only =
+            "HTTP/1.1 200 OK\r\nX-Pid: 4242\r\nX-Instance: abc\r\n\r\n{\"status\":\"ok\"}";
+        assert_eq!(
+            super::parse_health_identity(header_only),
+            Some(super::HealthIdentity::default())
+        );
 
-        // An older backend that does not report a pid cannot be verified, so it
-        // must not be accepted as ours.
-        let no_pid = "HTTP/1.1 200 OK\r\n\r\n{\"name\":\"StemDeck\",\"status\":\"ok\"}";
-        assert_eq!(super::parse_health_pid(no_pid), None);
+        // Every non-desktop distribution runs without a token and reports "".
+        // Read as a token, they would all match one another.
+        let untokened = "HTTP/1.1 200 OK\r\n\r\n{\"pid\":7,\"instance\":\"\"}";
+        assert_eq!(
+            super::parse_health_identity(untokened),
+            Some(super::HealthIdentity {
+                pid: Some(7),
+                instance: None,
+            })
+        );
 
         assert_eq!(
-            super::parse_health_pid("HTTP/1.1 200 OK\r\n\r\nnot json"),
+            super::parse_health_identity("HTTP/1.1 200 OK\r\n\r\nnot json"),
             None
         );
-        assert_eq!(super::parse_health_pid(""), None);
+        assert_eq!(super::parse_health_identity(""), None);
     }
 
-    /// Stands in for the *other* StemDeck: something already listening on the
-    /// port, answering /api/health with a 200 that is not ours.
-    fn other_instance_on_a_port(pid: u32) -> u16 {
+    #[test]
+    fn instance_tokens_differ_between_launches() {
+        assert_ne!(super::new_instance_token(), super::new_instance_token());
+        assert_eq!(super::new_instance_token().len(), 32);
+    }
+
+    /// A stand-in backend on a port, answering /api/health with the pid and
+    /// token it is told to claim.
+    fn responder_on_a_port(pid: u32, instance: &str) -> u16 {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
+        let instance = instance.to_string();
         std::thread::spawn(move || {
             for stream in listener.incoming().take(16) {
                 let Ok(mut stream) = stream else { continue };
                 let mut buf = [0u8; 512];
                 let _ = stream.read(&mut buf);
-                let body = format!("{{\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":{pid}}}");
+                let body = format!(
+                    "{{\"name\":\"StemDeck\",\"status\":\"ok\",\"pid\":{pid},\
+                     \"instance\":\"{instance}\"}}"
+                );
                 let _ = stream.write_all(
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
@@ -5251,12 +5357,13 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // port while the backend we spawned dies. Before the fix this returned
         // Ok, the shell pointed the window at that backend, and the second
         // install quietly drove the first install's library.
-        let port = other_instance_on_a_port(999_999);
+        let port = responder_on_a_port(999_999, "a-different-launch");
         let mut child = briefly_alive_child();
 
         let result = super::wait_for_health(
             &mut child,
             port,
+            "our-token",
             Duration::from_secs(20),
             Path::new("does-not-exist.log"),
         );
@@ -5271,15 +5378,42 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     }
 
     #[test]
-    fn our_own_backend_is_accepted() {
-        // The other half: verification must not be so strict that a healthy
-        // start is rejected. A responder reporting our child's pid is ours.
+    fn our_own_backend_is_accepted_from_a_process_we_did_not_spawn_directly() {
+        // #457. On the Windows portable build the process that binds the port
+        // is a *grandchild*: python/Scripts/python.exe is a venv launcher and
+        // Windows has no exec, so it starts python/base/python.exe beneath
+        // itself. A pid that will never equal child.id() is the normal case,
+        // not a stranger, and requiring equality timed out every launch.
         let mut child = briefly_alive_child();
-        let port = other_instance_on_a_port(child.id());
+        let grandchild_pid = child.id().wrapping_add(4);
+        let port = responder_on_a_port(grandchild_pid, "our-token");
 
         let result = super::wait_for_health(
             &mut child,
             port,
+            "our-token",
+            Duration::from_secs(20),
+            Path::new("does-not-exist.log"),
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.is_ok(), "rejected our own backend: {result:?}");
+    }
+
+    #[test]
+    fn a_backend_older_than_the_token_still_starts() {
+        // Verification must not be so strict that a healthy start is rejected.
+        // A backend that reports no token at all predates this shell and can
+        // only be identified the #424 way, so the pid comparison still stands
+        // for it.
+        let mut child = briefly_alive_child();
+        let port = responder_on_a_port(child.id(), "");
+
+        let result = super::wait_for_health(
+            &mut child,
+            port,
+            "our-token",
             Duration::from_secs(20),
             Path::new("does-not-exist.log"),
         );

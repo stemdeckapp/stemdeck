@@ -23,14 +23,38 @@ def test_health_identifies_the_answering_process():
     # The desktop shell spawns this backend and polls /api/health to know it
     # started. A 200 alone only proves *something* holds the port: a second
     # StemDeck used to adopt the first instance's backend, and with it the first
-    # instance's data directory and library (#424). The shell compares this pid
-    # against the child it spawned, so it must be the real one.
+    # instance's data directory and library (#424). The pid is what the shell
+    # names when it reports a port conflict, so it must be the real one.
     import os
 
     from app.main import app
 
     with TestClient(app) as client:
         assert client.get("/api/health").json()["pid"] == os.getpid()
+
+
+def test_health_echoes_the_instance_token(monkeypatch):
+    # How the shell recognises its own backend (#457). The pid cannot do it: on
+    # the Windows portable build the venv launcher re-execs into
+    # python/base/python.exe, so the process that binds the port is a grandchild
+    # of the shell and its pid never matches the child that was spawned. The
+    # environment survives that re-exec, so identity travels there.
+    from app.main import app
+
+    monkeypatch.setenv("STEMDECK_INSTANCE_TOKEN", "deadbeef")
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["instance"] == "deadbeef"
+
+
+def test_health_reports_an_empty_token_when_unset(monkeypatch):
+    # Docker, Unraid and source checkouts have no shell to hand them a token.
+    # The field is always present so the shell can tell "no token" apart from a
+    # backend too old to have the field at all.
+    from app.main import app
+
+    monkeypatch.delenv("STEMDECK_INSTANCE_TOKEN", raising=False)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["instance"] == ""
 
 
 # --- version source precedence (#421) ---------------------------------------
