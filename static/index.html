@@ -742,6 +742,20 @@
 
           <span class="footer-divider" aria-hidden="true"></span>
 
+          <div class="footer-group footer-group-key">
+            <span class="footer-group-label" id="t-pitch-label" data-i18n="pitch.group">Global key</span>
+            <div class="footer-group-body">
+              <div class="footer-seg pitch-group" id="t-pitch-wrap" role="group" aria-labelledby="t-pitch-label">
+                <button class="pitch-btn" id="t-pitch-down" type="button" title="Transpose down a semitone" aria-label="Transpose down a semitone" data-i18n-title="pitch.downTitle" data-i18n-aria-label="pitch.downTitle" disabled>&minus;</button>
+                <output class="pitch-value" id="t-pitch-value" for="t-pitch-down t-pitch-up" aria-labelledby="t-pitch-label" aria-live="polite">0</output>
+                <button class="pitch-btn" id="t-pitch-up" type="button" title="Transpose up a semitone" aria-label="Transpose up a semitone" data-i18n-title="pitch.upTitle" data-i18n-aria-label="pitch.upTitle" disabled>+</button>
+              </div>
+              <button class="pitch-reset" id="t-pitch-reset" type="button" title="Put every lane back in the original key" aria-label="Put every lane back in the original key" data-i18n-title="pitch.resetTitle" data-i18n-aria-label="pitch.resetTitle" disabled>&#8634;</button>
+            </div>
+          </div>
+
+          <span class="footer-divider" aria-hidden="true"></span>
+
           <div class="footer-group footer-group-click" id="t-metro-wrap">
             <span class="footer-group-label"><span data-i18n="click.group">Click track</span> <span class="alpha-badge" data-i18n="click.alpha">Alpha</span></span>
             <div class="footer-group-body">

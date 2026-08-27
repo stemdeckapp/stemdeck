@@ -18,9 +18,15 @@ import {
 } from "./state.js";
 import { storeGet, storeSetDebounced } from "./utils.js";
 import { t } from "./i18n.js";
+import { PITCH_MAX, PITCH_MIN, clampPitch } from "./pitchBus.js";
 
 function defaultMixerEntry() {
-  return { volume: 1, muted: false, soloed: false };
+  // `pitch` is the key this lane is actually in, in semitones from the
+  // recording's own key. Absolute rather than an offset from the global
+  // control, so the number on a lane never has to be added to another number to
+  // know what you are hearing. It rides along in the same per-track store as
+  // volume and mute, so a lane's key survives a reload.
+  return { volume: 1, muted: false, soloed: false, pitch: 0 };
 }
 
 export function ensureMixerStateDefaults() {
@@ -54,6 +60,102 @@ export function resetMixerState() {
 function saveMix() {
   if (!currentJobId) return;
   storeSetDebounced(`stemdeck:mix:${currentJobId}`, mixerState);
+}
+
+/** Push one lane's transpose into whichever engine is playing. */
+export function applyLanePitch(name) {
+  if (!audioEngine?.setStemPitch) return;
+  audioEngine.setStemPitch(name, mixerState[name]?.pitch ?? 0);
+}
+
+/** Re-send every lane transpose. Called once an engine finishes starting. */
+export function applyAllLanePitches() {
+  for (const name of allTrackNames()) {
+    if (mixerState[name]) applyLanePitch(name);
+    refreshLaneKeyVisual(name);
+  }
+}
+
+/**
+ * Move every lane by `delta` semitones.
+ *
+ * This is what the transport bar's global control does. It nudges rather than
+ * overrides, so a lane deliberately put in a different key keeps its distance
+ * from the rest instead of being flattened back in with them.
+ */
+export function nudgeAllLanePitches(delta) {
+  if (!delta) return;
+  for (const name of allTrackNames()) {
+    const state = mixerState[name];
+    if (!state || name === "drums") continue;
+    setLanePitch(name, state.pitch + delta);
+  }
+}
+
+/** Put every lane back in the recording's own key. */
+export function resetAllLanePitches() {
+  for (const name of allTrackNames()) {
+    if (mixerState[name]) setLanePitch(name, 0);
+  }
+}
+
+/**
+ * Transpose one lane.
+ *
+ * Drums are refused here as well as in the engine and the worklet. Three
+ * refusals sounds excessive for one rule, but each covers a different way in:
+ * this one is the UI, the engine covers a caller reaching past it, and the
+ * worklet covers a bus being wired wrong.
+ */
+export function setLanePitch(name, semitones) {
+  const state = mixerState[name];
+  if (!state || name === "drums") return;
+  const next = clampPitch(semitones);
+  if (state.pitch === next) return;
+  state.pitch = next;
+  saveMix();
+  applyLanePitch(name);
+  refreshLaneKeyVisual(name);
+}
+
+/** Redraw one lane's key stepper from state. */
+export function refreshLaneKeyVisual(name) {
+  const wrap = mixerEl?.querySelector(`.lane-key[data-stem="${name}"]`);
+  if (!wrap) return;
+  const n = mixerState[name]?.pitch ?? 0;
+  const signed = n > 0 ? `+${n}` : String(n);
+  const valueEl = wrap.querySelector(".lane-key-value");
+  // "K" while the lane is in its own key, so the control reads as a label
+  // until it is doing something, and as a number the moment it is.
+  if (valueEl) valueEl.textContent = n === 0 ? "K" : signed;
+  wrap.classList.toggle("active", n !== 0);
+
+  const locked = wrap.classList.contains("locked");
+  const unsupported = wrap.classList.contains("unsupported");
+  const up = wrap.querySelector(".lane-key-step.up");
+  const down = wrap.querySelector(".lane-key-step.down");
+  if (up) up.disabled = locked || unsupported || n >= PITCH_MAX;
+  if (down) down.disabled = locked || unsupported || n <= PITCH_MIN;
+  // One place decides the tooltip. Setting it from both here and from
+  // availability left a drum lane explaining the wrong thing after the engine
+  // came up, because whichever ran last won and neither restored the other.
+  if (locked) wrap.title = t("mixer.key.drumsLocked");
+  else if (unsupported) wrap.title = t("mixer.key.unavailable");
+  else wrap.title = t("mixer.key.title", { n: signed });
+}
+
+/**
+ * Mark every lane's key stepper usable or not.
+ *
+ * Without AudioWorklet there is no pitch stage at all, and a stepper that
+ * changes its own label while the sound never moves is worse than one that
+ * plainly says it cannot.
+ */
+export function setLaneKeysAvailable(available) {
+  for (const wrap of mixerEl?.querySelectorAll(".lane-key") || []) {
+    wrap.classList.toggle("unsupported", !available);
+    refreshLaneKeyVisual(wrap.dataset.stem);
+  }
 }
 
 export function applyMix() {
@@ -389,7 +491,14 @@ export function renderMixerRow(stem) {
   const initFrac = Math.max(0, Math.min(1, (state?.volume ?? 1) / LANE_VOLUME_MAX));
   val.textContent = String(Math.round(initFrac * 100));
 
-  // Col 6: M button
+  // Col 6: this lane's key, just left of the mute button.
+  //
+  // Laid out along the row like everything beside it. The original version
+  // stacked its buttons vertically next to M and S, which put one widget on the
+  // opposite axis to its neighbours and read as a jumble.
+  const key = makeLaneKey(stem.name, display);
+
+  // Col 7: M button
   const muteBtn = document.createElement("button");
   muteBtn.type = "button";
   muteBtn.className = "lane-icon-toggle mx-btn mute";
@@ -420,15 +529,62 @@ export function renderMixerRow(stem) {
   nameVuCol.className = "lane-name-vu";
   nameVuCol.append(nameEl, vu);
 
-  row.append(iconCell, nameVuCol, fader, val, muteBtn, soloBtn, dl);
+  row.append(iconCell, nameVuCol, fader, val, key, muteBtn, soloBtn, dl);
 
   muteBtn.addEventListener("click", () => toggleStemMute(stem.name));
   soloBtn.addEventListener("click", () => toggleStemSolo(stem.name));
 
   row.classList.toggle("muted", state?.muted ?? false);
   if (state) updateLaneKnobVisual(fader, state.volume);
+  refreshLaneKeyVisual(stem.name);
 
   return { row, vuEl: vu };
+}
+
+/**
+ * The per-lane key stepper: plus above, the reading in the middle, minus below.
+ *
+ * Drums get the control too, disabled and saying why, rather than no control at
+ * all. A missing button on one row reads as a rendering bug; a disabled one
+ * that explains itself teaches the rule.
+ */
+function makeLaneKey(stemName, display) {
+  const wrap = document.createElement("div");
+  wrap.className = "lane-key";
+  wrap.dataset.stem = stemName;
+
+  const up = document.createElement("button");
+  up.type = "button";
+  up.className = "lane-key-step up";
+  up.textContent = "+";
+  up.setAttribute("aria-label", t("aria.laneKeyUp", { name: display }));
+
+  const valueEl = document.createElement("span");
+  valueEl.className = "lane-key-value";
+  valueEl.textContent = "K";
+
+  const down = document.createElement("button");
+  down.type = "button";
+  down.className = "lane-key-step down";
+  // A real minus sign: a hyphen next to a plus sign reads as a dash.
+  down.textContent = "\u2212";
+  down.setAttribute("aria-label", t("aria.laneKeyDown", { name: display }));
+
+  // Plus above, the reading, minus below.
+  wrap.append(up, valueEl, down);
+
+  if (stemName === "drums") {
+    wrap.classList.add("locked");
+    wrap.title = t("mixer.key.drumsLocked");
+    up.disabled = true;
+    down.disabled = true;
+    return wrap;
+  }
+
+  const step = (delta) => setLanePitch(stemName, (mixerState[stemName]?.pitch ?? 0) + delta);
+  up.addEventListener("click", () => step(1));
+  down.addEventListener("click", () => step(-1));
+  return wrap;
 }
 
 // ─── Stem-list panel (Stems sidebar) ───

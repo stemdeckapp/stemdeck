@@ -242,6 +242,11 @@ const en = {
 
   "aria.mute": "Mute {name}",
   "aria.solo": "Solo {name}",
+  "aria.laneKeyUp": "Transpose {name} up one semitone",
+  "aria.laneKeyDown": "Transpose {name} down one semitone",
+  "mixer.key.title": "Transpose this lane: {n} semitones",
+  "mixer.key.drumsLocked": "Drums are never transposed",
+  "mixer.key.unavailable": "Transpose needs Web Audio",
   "aria.soloOnly": "Solo only {name}",
   "aria.download": "Download {name}",
   "aria.volume": "{name} volume",
@@ -384,6 +389,10 @@ const en = {
   "position.loopEndAria": "Loop end",
 
   "speed.group": "Speed",
+  "pitch.group": "Global key",
+  "pitch.resetTitle": "Put every lane back in the original key",
+  "pitch.downTitle": "Transpose down a semitone",
+  "pitch.upTitle": "Transpose up a semitone",
   "speed.ariaLabel": "Playback speed",
 
   "click.group": "Click track",
@@ -770,6 +779,11 @@ const pl = {
 
   "aria.mute": "Wycisz: {name}",
   "aria.solo": "Solo: {name}",
+  "aria.laneKeyUp": "Transponuj {name} o półton w górę",
+  "aria.laneKeyDown": "Transponuj {name} o półton w dół",
+  "mixer.key.title": "Transpozycja tej ścieżki: {n} półtonu",
+  "mixer.key.drumsLocked": "Perkusja nigdy nie jest transponowana",
+  "mixer.key.unavailable": "Transpozycja wymaga Web Audio",
   "aria.soloOnly": "Tylko solo: {name}",
   "aria.download": "Pobierz: {name}",
   "aria.volume": "Głośność: {name}",
@@ -910,6 +924,10 @@ const pl = {
   "position.loopEndAria": "Koniec pętli",
 
   "speed.group": "Prędkość",
+  "pitch.group": "Tonacja globalna",
+  "pitch.resetTitle": "Przywróć wszystkim ścieżkom oryginalną tonację",
+  "pitch.downTitle": "Transponuj w dół o półton",
+  "pitch.upTitle": "Transponuj w górę o półton",
   "speed.ariaLabel": "Prędkość odtwarzania",
 
   "click.group": "Metronom",
@@ -1288,6 +1306,11 @@ const ja = {
 
   "aria.mute": "{name}をミュート",
   "aria.solo": "{name}をソロ",
+  "aria.laneKeyUp": "{name}を半音上げる",
+  "aria.laneKeyDown": "{name}を半音下げる",
+  "mixer.key.title": "このトラックの移調: {n} 半音",
+  "mixer.key.drumsLocked": "ドラムは移調されません",
+  "mixer.key.unavailable": "移調には Web Audio が必要です",
   "aria.soloOnly": "{name}のみソロ",
   "aria.download": "{name}をダウンロード",
   "aria.volume": "{name}の音量",
@@ -1427,6 +1450,10 @@ const ja = {
   "position.loopEndAria": "ループ終了",
 
   "speed.group": "速度",
+  "pitch.group": "全体のキー",
+  "pitch.resetTitle": "すべてのトラックを元のキーに戻す",
+  "pitch.downTitle": "半音下げる",
+  "pitch.upTitle": "半音上げる",
   "speed.ariaLabel": "再生速度",
 
   "click.group": "クリックトラック",
@@ -1781,6 +1808,11 @@ const zhHans = {
 
   "aria.mute": "静音{name}",
   "aria.solo": "独奏{name}",
+  "aria.laneKeyUp": "将{name}升高半音",
+  "aria.laneKeyDown": "将{name}降低半音",
+  "mixer.key.title": "此音轨移调：{n} 个半音",
+  "mixer.key.drumsLocked": "鼓声部不会被移调",
+  "mixer.key.unavailable": "移调需要 Web Audio",
   "aria.soloOnly": "仅独奏{name}",
   "aria.download": "下载{name}",
   "aria.volume": "{name}音量",
@@ -1920,6 +1952,10 @@ const zhHans = {
   "position.loopEndAria": "循环终点",
 
   "speed.group": "速度",
+  "pitch.group": "全局变调",
+  "pitch.resetTitle": "将所有音轨恢复为原调",
+  "pitch.downTitle": "降低半音",
+  "pitch.upTitle": "升高半音",
   "speed.ariaLabel": "播放速度",
 
   "click.group": "节拍器",
@@ -2274,6 +2310,11 @@ const de = {
 
   "aria.mute": "{name} stummschalten",
   "aria.solo": "{name} solo",
+  "aria.laneKeyUp": "{name} um einen Halbton höher transponieren",
+  "aria.laneKeyDown": "{name} um einen Halbton tiefer transponieren",
+  "mixer.key.title": "Transposition dieser Spur: {n} Halbtöne",
+  "mixer.key.drumsLocked": "Schlagzeug wird nie transponiert",
+  "mixer.key.unavailable": "Transposition benötigt Web Audio",
   "aria.soloOnly": "Nur {name} solo",
   "aria.download": "{name} herunterladen",
   "aria.volume": "Lautstärke von {name}",
@@ -2414,6 +2455,10 @@ const de = {
   "position.loopEndAria": "Loop-Ende",
 
   "speed.group": "Geschwindigkeit",
+  "pitch.group": "Globale Tonart",
+  "pitch.resetTitle": "Alle Spuren in die Originaltonart zurücksetzen",
+  "pitch.downTitle": "Einen Halbton tiefer transponieren",
+  "pitch.upTitle": "Einen Halbton höher transponieren",
   "speed.ariaLabel": "Wiedergabegeschwindigkeit",
 
   "click.group": "Click-Track",
@@ -2778,6 +2823,11 @@ const pt = {
 
   "aria.mute": "Mudo {name}",
   "aria.solo": "Solo {name}",
+  "aria.laneKeyUp": "Transpor {name} um semitom para cima",
+  "aria.laneKeyDown": "Transpor {name} um semitom para baixo",
+  "mixer.key.title": "Transposição desta faixa: {n} semitons",
+  "mixer.key.drumsLocked": "A bateria nunca é transposta",
+  "mixer.key.unavailable": "A transposição precisa de Web Audio",
   "aria.soloOnly": "Apenas solo {name}",
   "aria.download": "Baixar {name}",
   "aria.volume": "Volume de {name}",
@@ -2918,6 +2968,10 @@ const pt = {
   "position.loopEndAria": "Fim do loop",
 
   "speed.group": "Velocidade",
+  "pitch.group": "Tom global",
+  "pitch.resetTitle": "Retornar todas as faixas ao tom original",
+  "pitch.downTitle": "Transpor um semitom para baixo",
+  "pitch.upTitle": "Transpor um semitom para cima",
   "speed.ariaLabel": "Velocidade de reprodução",
 
   "click.group": "Clique de referência",
@@ -3284,6 +3338,11 @@ const id = {
 
   "aria.mute": "Bisukan {name}",
   "aria.solo": "Solo {name}",
+  "aria.laneKeyUp": "Naikkan {name} satu semiton",
+  "aria.laneKeyDown": "Turunkan {name} satu semiton",
+  "mixer.key.title": "Transposisi trek ini: {n} semiton",
+  "mixer.key.drumsLocked": "Drum tidak pernah ditransposisi",
+  "mixer.key.unavailable": "Transposisi memerlukan Web Audio",
   "aria.soloOnly": "Hanya solo {name}",
   "aria.download": "Unduh {name}",
   "aria.volume": "Volume {name}",
@@ -3423,6 +3482,10 @@ const id = {
   "position.loopEndAria": "Akhir loop",
 
   "speed.group": "Kecepatan",
+  "pitch.group": "Nada dasar global",
+  "pitch.resetTitle": "Kembalikan semua trek ke nada aslinya",
+  "pitch.downTitle": "Turunkan satu semitone",
+  "pitch.upTitle": "Naikkan satu semitone",
   "speed.ariaLabel": "Kecepatan putar",
 
   "click.group": "Click Track",
@@ -3777,6 +3840,11 @@ const fr = {
 
   "aria.mute": "Couper {name}",
   "aria.solo": "Solo {name}",
+  "aria.laneKeyUp": "Transposer {name} d'un demi-ton vers le haut",
+  "aria.laneKeyDown": "Transposer {name} d'un demi-ton vers le bas",
+  "mixer.key.title": "Transposition de cette piste : {n} demi-tons",
+  "mixer.key.drumsLocked": "La batterie n'est jamais transposée",
+  "mixer.key.unavailable": "La transposition nécessite Web Audio",
   "aria.soloOnly": "Solo uniquement {name}",
   "aria.download": "Télécharger {name}",
   "aria.volume": "Volume {name}",
@@ -3917,6 +3985,10 @@ const fr = {
   "position.loopEndAria": "Fin de la boucle",
 
   "speed.group": "Vitesse",
+  "pitch.group": "Tonalité globale",
+  "pitch.resetTitle": "Remettre toutes les pistes dans la tonalité d'origine",
+  "pitch.downTitle": "Transposer d'un demi-ton vers le bas",
+  "pitch.upTitle": "Transposer d'un demi-ton vers le haut",
   "speed.ariaLabel": "Vitesse de lecture",
 
   "click.group": "Métronome",
@@ -4261,6 +4333,7 @@ const fr = {
 // added to pt later is picked up here rather than reverting to English.
 const ptPT = {
   "settings.autoDelete.title": "Eliminar automaticamente as faixas concluídas",
+  "pitch.resetTitle": "Repor todas as faixas no tom original",
   "settings.autoDelete.desc": "Desativado por predefinição. As faixas separadas são mantidas para sempre. A eliminação não pode ser anulada.",
   "settings.autoDelete.daysTitle": "Eliminar após",
   "settings.autoDelete.daysDesc": "Dias que uma faixa concluída é mantida antes de ser eliminada (máx. {max}).",
@@ -4380,6 +4453,11 @@ const es = {
 
   "aria.mute": "Mute {name}",
   "aria.solo": "Solo {name}",
+  "aria.laneKeyUp": "Transponer {name} un semitono hacia arriba",
+  "aria.laneKeyDown": "Transponer {name} un semitono hacia abajo",
+  "mixer.key.title": "Transposición de esta pista: {n} semitonos",
+  "mixer.key.drumsLocked": "La batería nunca se transpone",
+  "mixer.key.unavailable": "La transposición necesita Web Audio",
   "aria.soloOnly": "Solo únicamente {name}",
   "aria.download": "Descargar {name}",
   "aria.volume": "Volumen de {name}",
@@ -4520,6 +4598,10 @@ const es = {
   "position.loopEndAria": "Fin del loop",
 
   "speed.group": "Velocidad",
+  "pitch.group": "Tonalidad global",
+  "pitch.resetTitle": "Devolver todas las pistas al tono original",
+  "pitch.downTitle": "Transponer un semitono hacia abajo",
+  "pitch.upTitle": "Transponer un semitono hacia arriba",
   "speed.ariaLabel": "Velocidad",
 
   "click.group": "Click",

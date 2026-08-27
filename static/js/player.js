@@ -29,6 +29,7 @@ import {
 } from "./state.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
+import { addVisualOnlyStems, buildPlaybackStems } from "./playbackStems.js";
 import { vuLevel } from "./vuScale.js";
 import { createMetronome } from "./metronome.js";
 import { initBeatGrid, destroyBeatGrid } from "./beatgrid.js";
@@ -37,11 +38,13 @@ import {
   loadMixIntoState, resetMixerState, refreshMixerVisuals,
   setLaneControlsEnabled, ensureMixerStateDefaults, applyMix,
   renderRealMiniWave, renderRealMiniWaveFromPeaks, renderMixerRow,
+  applyAllLanePitches, setLaneKeysAvailable,
 } from "./mixer.js";
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
   applyWaveZoom, buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
-  updatePresencePlayhead, resetSpeed, updateMetronomeAvailability, applyMetronomeAccent,
+  updatePresencePlayhead, resetSpeed, resetPitch, updatePitchAvailability,
+  updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
@@ -666,15 +669,16 @@ function startStemVuLoop(stems, decodedMap, token) {
 function startAnalyserVuLoop(stems, engine, token) {
   stopStemVuLoop();
   const meters = stems.map((stem) => {
-    const analyser = engine.getAnalyser?.(stem.name);
-    if (!analyser) return null;
+    const analysers = engine.getAnalysers?.(stem.name)
+      ?? [engine.getAnalyser?.(stem.name)].filter(Boolean);
+    if (!analysers.length) return null;
     return {
       name: stem.name,
-      analyser,
+      analysers,
       // Float rather than byte samples. On a dB scale the 8-bit path's own
       // quantisation step, one part in 128, is -42 dBFS: it would light every
       // meter to roughly a third of full even over silence.
-      data: new Float32Array(analyser.fftSize),
+      data: analysers.map((analyser) => new Float32Array(analyser.fftSize)),
       miniMeterEl: document.querySelector(`.stem-list [data-stem="${stem.name}"] .mini-meter`),
       vuEl: mixerEl.querySelector(`.lane-vu[data-stem="${stem.name}"]`),
       peak: 0,
@@ -695,10 +699,18 @@ function startAnalyserVuLoop(stems, engine, token) {
       const gain = stemVuGain(m.name);
       let input = 0;
       if (playing && gain > 0) {
-        m.analyser.getFloatTimeDomainData(m.data);
         let sum = 0;
-        for (let i = 0; i < m.data.length; i++) sum += m.data[i] * m.data[i];
-        input = vuLevel(Math.sqrt(sum / Math.max(1, m.data.length)));
+        let samples = 0;
+        for (let a = 0; a < m.analysers.length; a++) {
+          const analyser = m.analysers[a];
+          const data = m.data[a];
+          analyser.getFloatTimeDomainData(data);
+          samples = Math.max(samples, data.length);
+          for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+        }
+        // Summed across the group's analysers, so a control group like
+        // "original" meters the power of everything it plays, not one source.
+        input = vuLevel(Math.sqrt(sum / Math.max(1, samples)));
       } else {
         m.peak = 0;
         m.peakHold = 0;
@@ -742,7 +754,7 @@ function startAnalyserVuLoop(stems, engine, token) {
   stemVuRafId = requestAnimationFrame(tick);
 }
 
-// The metronome holds nodes on the engine's master bus, so it must never
+// The metronome holds nodes on the engine's unpitched bus, so it must never
 // outlive the engine that owns them. Called at every engine teardown site.
 function teardownMetronome() {
   if (metronome) {
@@ -763,6 +775,8 @@ export function destroyPlayer() {
   stopVuLoop();
   stopStemVuLoop();
   resetSpeed();
+  resetPitch();
+  updatePitchAvailability(false);
   teardownMetronome();
   updateMetronomeAvailability(null, t("click.reason.loadTrack"));
   setExportClickAvailable(false);
@@ -959,6 +973,7 @@ function _applyLaneHeight(count) {
 }
 
 export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false, videoStatus = null) {
+  const rawStems = stems.filter((stem) => stem?.name && stem?.url);
   const app = document.querySelector(".app");
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
@@ -971,6 +986,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   }
   playBtn.classList.remove("playing");
   stopBtn.classList.remove("stopped");
+  resetPitch();
+  updatePitchAvailability(false);
   visualRenderToken += 1;
   const token = visualRenderToken;
   window.setTimeout(() => {
@@ -1021,6 +1038,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     if (s.name === "lead_vocals" || s.name === "backing_vocals") return wantsVocals && splitDone;
     return selectedStems.has(s.name);
   });
+  const playbackStems = buildPlaybackStems(rawStems, stems, STEM_NAMES);
+  const fullDecodeStems = addVisualOnlyStems(playbackStems, stems);
   _currentStems = stems;
   _mixUrl = mixUrl || null;
   _currentTitle = title || "";
@@ -1107,7 +1126,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // WAVs — otherwise its 6 blob fetches compete with the engine's 6 decodes for
   // the 6-connection HTTP/1.1 limit and `canplay` stalls (the WebView2/WKWebView
   // freeze). Null URLs make the multitrack's <audio> elements ready instantly.
-  const engineStemCount = stems.filter((s) => s.url).length;
+  const engineStemCount = fullDecodeStems.filter((s) => s.url).length;
   const mode = engineMode();
   // Only the full-decode engine holds all PCM in RAM, so only it is size-capped;
   // the chunked engine streams and is never "too large".
@@ -1323,12 +1342,14 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       // backend's documented degradation for missing peaks is client-side
       // decode — which only the full-decode engine can provide.
       const startEngine = (kind) => {
+        updatePitchAvailability(false);
+        setLaneKeysAvailable(false);
         // Retract a previous track's playback failure. Without this the box
         // stays up over a track that plays fine, since nothing else clears it.
         clearPlaybackError();
         const eng = kind === "chunked"
-          ? createChunkedAudioEngine(stems, { onTime: driveTransportUi, onEnded })
-          : createAudioEngine(stems, { onTime: driveTransportUi, onEnded });
+          ? createChunkedAudioEngine(playbackStems, { onTime: driveTransportUi, onEnded })
+          : createAudioEngine(fullDecodeStems, { onTime: driveTransportUi, onEnded });
         setAudioEngine(eng);
         eng.ready.then((ok) => {
           // Bail if the user switched tracks while we were initialising.
@@ -1369,7 +1390,12 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
           // "playback failed" notification if one was sitting there (#401).
           resolvePlaybackSuccess(jobId);
           eng.setLoop(loopEnabled, loopStart, loopEnd);
+          updatePitchAvailability(eng.supportsPitchShift?.() === true);
           applyMix(); // push per-stem gains (incl. >1.0 boost) into the engine
+          // Lane keys ride on the same engine, so they are restored from the
+          // per-track store in the same breath as the gains.
+          setLaneKeysAvailable(eng.supportsPitchShift?.() === true);
+          applyAllLanePitches();
 
           // Click track. Bound to this engine instance, so it is rebuilt on
           // every engine bring-up (including the chunked -> fulldecode swap
@@ -1485,6 +1511,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       // worse than not offering it.
       teardownMetronome();
       updateMetronomeAvailability(null, t("click.reason.needsWebAudio"));
+      updatePitchAvailability(false);
+      setLaneKeysAvailable(false);
     }
   });
 }

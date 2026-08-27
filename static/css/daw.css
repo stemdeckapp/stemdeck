@@ -1687,7 +1687,7 @@ input, textarea { font-family: inherit; }
 .lane-header.mx-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0 10px;
   height: var(--lane-h, 72px);
   min-height: 72px;
@@ -1705,12 +1705,16 @@ input, textarea { font-family: inherit; }
 .lane-stripe { display: none; }
 
 /* Name + VU stacked vertically */
+/* The name and its meter share a fixed column, and the fader takes whatever is
+   left of the row. So this width is the fader's length: every pixel taken off
+   here is a pixel the fader gains. 76px left the fader badly compressed once
+   the key stepper joined the row. */
 .lane-name-vu {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 5px;
-  width: 76px;
+  width: 58px;
   flex-shrink: 0;
 }
 
@@ -1777,9 +1781,11 @@ input, textarea { font-family: inherit; }
 }
 
 /* VU meter — sits below stem name in .lane-left-col, spans full column width */
+/* 5px read as a hairline rather than a meter: at that height the gradient had
+   nowhere to show and a moving level was hard to see at a glance. */
 .lane-vu.mx-meter {
   position: relative;
-  height: 5px;
+  height: 10px;
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2383,6 +2389,48 @@ input, textarea { font-family: inherit; }
 .speed-btn.active:hover {
   background: rgba(232,200,64,0.16); color: var(--accent);
 }
+/* Transpose stepper (#245). Sits in a .footer-seg so it inherits the frame and
+   hover behaviour of the speed and click controls beside it; only the readout
+   between the two buttons is new. */
+.pitch-value {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 34px; padding: 0 6px;
+  border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums;  /* so +10 and -6 do not shift the buttons */
+  transition: color var(--t-fast), background var(--t-fast);
+}
+/* Lit only when transposed, so "this track is not in its original key" is
+   visible at a glance rather than needing the number to be read. */
+.pitch-value.active {
+  background: rgba(232,200,64,0.16); color: var(--accent);
+}
+.pitch-btn:disabled {
+  opacity: 0.35; cursor: default;
+}
+.pitch-btn:disabled:hover { background: transparent; color: var(--muted); }
+
+/* Reset. Outside the stepper's frame, because it does something to the whole
+   mix rather than one more step: it returns every mixer lane to the key the
+   recording is in, which the stepper alone cannot do once lanes have been moved
+   individually. */
+.pitch-reset {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.pitch-reset:hover:not(:disabled) {
+  background: var(--panel-3); color: var(--fg); border-color: var(--border);
+}
+.pitch-reset:disabled { opacity: 0.35; cursor: default; }
+
 .metro-mult-btn.active,
 .metro-mult-btn.active:hover {
   background: rgba(74,140,255,0.16); color: #4a8cff;
@@ -3366,3 +3414,82 @@ input, textarea { font-family: inherit; }
   width: 100%; box-sizing: border-box;
   min-height: 260px; white-space: pre; overflow-wrap: normal; overflow-x: auto;
 }
+
+/* ── Per-lane transpose (the K stepper) ────────────────────────────────────
+   Sits in the row just left of M, with its arrows stacked above and below the
+   reading, and drawn from the same kit as M and S: same border, same radius,
+   same mono face, same width. It reads as one more control in that cluster
+   rather than as a different kind of thing parked next to it.
+
+   Stacked rather than inline because the lane row only has about 300px, and at
+   the inline width the fader collapsed to 10px. The vertical form costs 22px
+   instead of 55px, and the row has the height spare. */
+.lane-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 22px;
+  flex-shrink: 0;
+}
+/* The K is the button, and it is the same box as M and S: same size, same
+   border, same radius, same mono face. Boxing the arrows instead put two
+   look-alike buttons around a floating letter, which is the opposite of the
+   family it belongs to -- M and S are each one box with one character in it. */
+.lane-key-value {
+  width: 22px;
+  height: 20px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+/* Lit while the lane is off its own key, the way S lights when soloed. */
+.lane-key.active .lane-key-value {
+  background: rgba(244, 183, 64, 0.18);
+  color: var(--accent);
+  border-color: rgba(244, 183, 64, 0.4);
+}
+
+/* The arrows are the stepper around it, not two more buttons: no border, so
+   they stay quiet next to the three boxes they sit beside. */
+.lane-key-step {
+  width: 22px;
+  height: 11px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.lane-key-step:hover:not(:disabled) {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.07);
+}
+.lane-key-step:disabled { opacity: 0.3; cursor: default; }
+/* Drums, and anything else that must never be resampled. */
+.lane-key.locked,
+.lane-key.unsupported { opacity: 0.35; }
+.lane-key.locked .lane-key-step,
+.lane-key.unsupported .lane-key-step { cursor: not-allowed; }

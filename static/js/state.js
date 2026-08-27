@@ -18,6 +18,10 @@ export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
 export const masterFader = $("t-master");
 export const speedBtns = ["t-speed-075", "t-speed-1"].map($);
+export const pitchDownBtn = $("t-pitch-down");
+export const pitchUpBtn = $("t-pitch-up");
+export const pitchValueEl = $("t-pitch-value");
+export const pitchResetBtn = $("t-pitch-reset");
 export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 

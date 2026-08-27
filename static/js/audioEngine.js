@@ -16,9 +16,13 @@
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 
 /**
- * @param {{name:string,url:string}[]} stems  Active stems only (caller filters).
+ * @param {{name:string,url:string,controlName?:string,pitched?:boolean,visualOnly?:boolean}[]} stems
  * @param {{onTime?:(t:number)=>void, onEnded?:()=>void}} cbs
  */
+import {
+  INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
+} from "./pitchBus.js";
+
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
   // Callers can pass a shared, gesture-unlocked `context` (the mobile UI does);
@@ -26,22 +30,44 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const ctx = context || new AudioCtx();
   const ownsCtx = !context;
   const master = ctx.createGain();
+  // One bus per semitone the worklet offers. A lane's transpose is expressed
+  // as which bus it is connected to, so several lanes can sit in different
+  // keys at once while still sharing the worklet's single tempo stage.
+  const buses = Array.from({ length: INPUT_COUNT }, () => ctx.createGain());
+  master.connect(ctx.destination);
 
-  // SoundTouch pitch-preserving time-stretch on the master bus.
-  // Falls back to tape-effect (playbackRate) if AudioWorklet is unavailable.
+  let _playbackRate = 1.0;
+
+  // SoundTouch takes one input per semitone. Input ZERO_INPUT is the plain
+  // delay line: drums, the click, and any lane sitting at its own key.
   let stNode = null;
+  // Reported by the processor, because deriving it here would mean keeping a
+  // copy of its buffering constants in sync by hand.
+  let _workletLatencyFrames = 0;
   const _workletReady = (ctx.audioWorklet
     ? ctx.audioWorklet.addModule('/vendor/soundtouch-processor.js').then(() => {
-        stNode = new AudioWorkletNode(ctx, 'soundtouch-processor');
-        master.connect(stNode);
-        stNode.connect(ctx.destination);
+        stNode = new AudioWorkletNode(ctx, 'soundtouch-processor', {
+          numberOfInputs: INPUT_COUNT,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+        });
+        stNode.port.onmessage = (event) => {
+          if (event?.data?.type === 'latency') _workletLatencyFrames = event.data.frames || 0;
+        };
+        // The worklet loads asynchronously, so anything set before it arrived
+        // would otherwise be dropped. Re-apply the current value now.
+        stNode.parameters.get('tempo').value = _playbackRate;
+        for (let k = 0; k < INPUT_COUNT; k++) buses[k].connect(stNode, 0, k);
+        stNode.connect(master);
       }).catch((err) => {
         console.warn('[audioEngine] SoundTouch worklet load failed, using tape-effect fallback:', err);
-        master.connect(ctx.destination);
+        for (const bus of buses) bus.connect(master);
       })
-    : Promise.resolve().then(() => { master.connect(ctx.destination); }));
+    : Promise.resolve().then(() => {
+        for (const bus of buses) bus.connect(master);
+      }));
 
-  /** @type {Map<string,{buffer:AudioBuffer,gain:GainNode,analyser:AnalyserNode,source:AudioBufferSourceNode|null}>} */
+  /** @type {Map<string,{buffer:AudioBuffer,gain:GainNode,analyser:AnalyserNode,source:AudioBufferSourceNode|null,controlName:string,pitched:boolean,visualOnly:boolean}>} */
   const tracks = new Map();
   let duration = 0;
   let playing = false;
@@ -50,7 +76,6 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let rafId = null;
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
-  let _playbackRate = 1.0;
   // Bumped whenever the media-time -> ctx-time mapping below changes (start,
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
@@ -85,12 +110,28 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
         try {
           const buffer = await ctx.decodeAudioData(bytes);
           if (destroyed) return;
+          const visualOnly = s.visualOnly === true;
+          const pitchable = s.name !== "drums" && s.pitched !== false;
           const gain = ctx.createGain();
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 1024;
-          gain.connect(analyser);
-          analyser.connect(master);
-          tracks.set(s.name, { buffer, gain, analyser, source: null });
+          if (!visualOnly) gain.connect(analyser);
+          const track = {
+            buffer,
+            gain,
+            analyser,
+            source: null,
+            name: s.name,
+            controlName: s.controlName || s.name,
+            pitchable,
+            pitched: pitchable,
+            pitch: 0,
+            bus: null,
+            level: 1,
+            visualOnly,
+          };
+          tracks.set(s.name, track);
+          routeTrack(track, true);
           duration = Math.max(duration, buffer.duration);
         } catch (e) {
           undecodable++;
@@ -99,14 +140,15 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       }),
     ]);
 
-    if (tracks.size === 0) {
+    const hasPlaybackTrack = [...tracks.values()].some((track) => !track.visualOnly);
+    if (!hasPlaybackTrack) {
       _loadError = undecodable
         ? "This track's audio files are in a format StemDeck could not read."
         : unreachable
           ? "Could not load this track's audio files."
           : "This track has no stem files to play.";
     }
-    return tracks.size > 0;
+    return hasPlaybackTrack;
   })();
 
   // Clamped so the reported playhead never reads before the start position.
@@ -114,8 +156,34 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // (startCtxTime > ctx.currentTime), which would otherwise make this go
   // negative -- the playhead must sit still at the start until the audio enters.
   // A no-op for a normal start, where startCtxTime == the moment play() ran.
-  const now = () =>
-    playing ? Math.max(startOffset, (ctx.currentTime - startCtxTime) * _playbackRate + startOffset) : startOffset;
+  const wsolaLatencySeconds = () => {
+    const needed = Math.round(0.012 * ctx.sampleRate)
+      + Math.round(0.028 * ctx.sampleRate)
+      + Math.round(0.082 * ctx.sampleRate);
+    return Math.floor(needed / 128) * 128 / ctx.sampleRate;
+  };
+  const anyLaneTransposed = () => {
+    for (const t of tracks.values()) {
+      if (t.visualOnly) continue;
+      if (effectivePitch(t.name, t.pitch, t.pitchable) !== 0) return true;
+    }
+    return false;
+  };
+  const pipelineLatencySeconds = () => {
+    if (!stNode) return 0;
+    // The pitch buses only buffer once something is actually transposed. Until
+    // then the worklet hands its input straight back, with no delay to correct.
+    const pitchLatency = anyLaneTransposed() ? _workletLatencyFrames / ctx.sampleRate : 0;
+    const tempoStages = Math.abs(_playbackRate - 1) >= 1e-3 ? 1 : 0;
+    return pitchLatency + tempoStages * wsolaLatencySeconds();
+  };
+  const now = () => playing
+    ? Math.max(
+        startOffset,
+        Math.max(0, ctx.currentTime - startCtxTime - pipelineLatencySeconds())
+          * _playbackRate + startOffset,
+      )
+    : startOffset;
 
   // Extra headroom folded into a count-in's lead so every count click lands
   // safely in the future even after the small gap between scheduling the
@@ -132,8 +200,14 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     }
   }
 
+  function resetProcessor() {
+    try { stNode?.port?.postMessage({ type: "reset" }); } catch { /* processor is gone */ }
+  }
+
   function startSources(offset, when = ctx.currentTime) {
+    resetProcessor();
     for (const t of tracks.values()) {
+      if (t.visualOnly) continue;
       const src = ctx.createBufferSource();
       src.buffer = t.buffer;
       // SoundTouch handles time-stretch; playbackRate stays 1.0.
@@ -155,9 +229,8 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
 
   // Inverse of the scheduling in startSources: the AudioContext time at which
   // media time `t` is fed into the graph. Scheduling a click here puts it in
-  // the same sample frame as the stems, which is what keeps the two locked
-  // together -- and because it describes the *input* to SoundTouch, it holds
-  // whatever the worklet does downstream, since the click goes through it too.
+  // the same sample frame as the stems. The click uses the unpitched input and
+  // shares the worklet's tempo stage with the combined audio.
   const sourceTimeToCtxTime = (t) => startCtxTime + (t - startOffset) / srcRate();
 
   // True inverse of the above. The metronome re-anchors with this rather than
@@ -206,6 +279,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     if (!playing) return;
     const t = now();
     stopSources();
+    resetProcessor();
     playing = false;
     startOffset = Math.max(0, Math.min(t, duration));
     _epoch++;
@@ -218,6 +292,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       stopSources();
       startSources(clamped); // bumps _epoch
     } else {
+      resetProcessor();
       startOffset = clamped;
       _epoch++;
     }
@@ -225,8 +300,40 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   }
 
   function setGain(name, v) {
-    const t = tracks.get(name);
-    if (t) t.gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
+    for (const t of tracks.values()) {
+      if (!t.visualOnly && t.controlName === name) {
+        t.level = Math.max(0, v);
+        t.gain.gain.setTargetAtTime(t.level, ctx.currentTime, 0.01);
+      }
+    }
+  }
+
+  // Ducking either side of a bus change. Both buses are delayed by the same
+  // amount, so a dip scheduled at the source lands at the output as one short
+  // dip rather than as a click from splicing two different keys together.
+  const ROUTE_FADE = 0.006;
+  const ROUTE_HOLD = 0.02;
+
+  /** Connect a track to the bus for its current transpose. */
+  function routeTrack(t, immediate = false) {
+    if (t.visualOnly) return;
+    const target = buses[inputForPitch(effectivePitch(t.name, t.pitch, t.pitchable))];
+    if (t.bus === target) return;
+    const swap = () => {
+      if (destroyed) return;
+      try { t.analyser.disconnect(); } catch { /* was not connected yet */ }
+      t.analyser.connect(target);
+      t.bus = target;
+    };
+    if (immediate || !playing) { swap(); return; }
+    const g = t.gain.gain;
+    const at = ctx.currentTime;
+    g.cancelScheduledValues(at);
+    g.setValueAtTime(g.value, at);
+    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
+    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
+    g.linearRampToValueAtTime(t.level, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
+    setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
   }
 
   function setMasterGain(v) {
@@ -236,6 +343,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   function destroy() {
     destroyed = true;
     stopSources();
+    resetProcessor();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     tracks.clear();
     if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
@@ -264,16 +372,57 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     ctxTimeToSourceTime,
     getScheduleEpoch: () => _epoch,
     isClockReady: () => playing,
-    // The click connects here, not to ctx.destination: same bus as the stems,
-    // so it inherits master gain and the identical SoundTouch path.
-    getMasterNode: () => master,
+    // The click shares the unpitched input with drums. It still passes through
+    // the common tempo stage and master gain.
+    getMasterNode: () => buses[ZERO_INPUT],
+    /**
+     * Put one mixer lane in a given key.
+     *
+     * Nothing restarts and nothing is flushed. Every bus is delayed by the same
+     * amount, so the lane's old bus plays out the couple of hundred
+     * milliseconds it has already buffered while its new bus, primed with
+     * exactly that much silence, takes over at the instant the old one runs
+     * dry. The handover is a duck, not a gap.
+     */
+    setStemPitch(name, semitones) {
+      if (!stNode) return false;
+      const next = clampPitch(semitones);
+      let found = false;
+      for (const t of tracks.values()) {
+        if (t.visualOnly || t.controlName !== name) continue;
+        found = true;
+        if (t.pitch === next) continue;
+        t.pitch = next;
+        routeTrack(t);
+      }
+      return found;
+    },
+    getStemPitch(name) {
+      for (const t of tracks.values()) {
+        if (!t.visualOnly && t.controlName === name) return t.pitch;
+      }
+      return 0;
+    },
+    /** False for lanes that must never be resampled, so the UI can say so. */
+    isStemPitchable(name) {
+      for (const t of tracks.values()) {
+        if (!t.visualOnly && t.controlName === name) return t.pitchable;
+      }
+      return false;
+    },
+    supportsPitchShift: () => !!stNode,
     setPlaybackRate(rate) {
       if (stNode) {
-        // Pitch-preserving: update SoundTouch tempo parameter. The sources keep
-        // running at 1.0x, so the source-domain clock anchor is untouched.
+        const t = now();
         _playbackRate = rate;
-        _epoch++;
         stNode.parameters.get('tempo').value = rate;
+        if (playing) {
+          stopSources();
+          startSources(Math.max(0, Math.min(t, duration)));
+        } else {
+          resetProcessor();
+          _epoch++;
+        }
         return;
       }
       // Tape-effect fallback: the sources themselves resample, so the new rate
@@ -294,7 +443,11 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     },
     setGain,
     setMasterGain,
-    getAnalyser: (name) => tracks.get(name)?.analyser ?? null,
+    getAnalysers: (name) => [...tracks.values()]
+      .filter((track) => !track.visualOnly && track.controlName === name)
+      .map((track) => track.analyser),
+    getAnalyser: (name) => [...tracks.values()]
+      .find((track) => !track.visualOnly && track.controlName === name)?.analyser ?? null,
     // Decoded AudioBuffers keyed by stem name — reused by the visuals (overview
     // waveforms, mini-waves, VU envelopes, energy bars) so they don't need the
     // multitrack to also decode the audio. Map<name, AudioBuffer>.

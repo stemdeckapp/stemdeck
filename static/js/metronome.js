@@ -8,10 +8,9 @@
 //   Clicks are scheduled in the engine's *source* time domain via
 //   `engine.sourceTimeToCtxTime(mediaTime)` -- the exact inverse of the maths
 //   the engine uses to start its own stem sources -- and are connected to the
-//   engine's master bus rather than straight to ctx.destination. So a click
-//   and the audio sample it belongs with enter the graph in the same frame and
-//   travel an identical path to the speakers. Whatever SoundTouch does
-//   downstream, it does to both equally.
+//   engine's unpitched bus rather than straight to ctx.destination. So a click
+//   and the drum sample it belongs with enter the graph in the same frame and
+//   share the tempo stage. Key transposition never resamples either one.
 //
 // Timers cannot be trusted for audio, so nothing here decides *when* a click
 // sounds: setInterval only wakes us up to hand future clicks to the Web Audio

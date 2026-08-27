@@ -2,6 +2,10 @@ import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } f
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   speedBtns,
+  pitchDownBtn,
+  pitchUpBtn,
+  pitchValueEl,
+  pitchResetBtn,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
@@ -16,7 +20,7 @@ import {
   setMetronomeEnabled, setMetronomeVolume, setMetronomeBeatsPerBar,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
 } from "./state.js";
-import { applyMix } from "./mixer.js";
+import { applyMix, nudgeAllLanePitches, resetAllLanePitches } from "./mixer.js";
 import { isDownbeatIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn } from "./metronome.js";
 import { t } from "./i18n.js";
@@ -598,6 +602,7 @@ export function wireTransportButtons() {
   });
   wireSpeedControl();
   wireMetronomeControl();
+  wirePitchControl();
 }
 
 // Fixed presets, not a continuous dial -- practice speeds for slowing a part
@@ -627,6 +632,84 @@ function applySpeed(rate) {
       try { a.playbackRate = clamped; } catch { /* noop */ }
     }
   }
+}
+
+
+// ── Transpose (#245) ────────────────────────────────────────────────────────
+//
+// Semitones, not a continuous dial, for the same reason the speed control uses
+// presets: this is for moving a backing track into a singer's range, and every
+// useful destination is a whole semitone away.
+//
+// Capped at a fifth rather than an octave. The worklet stretches then resamples,
+// and past roughly five semitones that starts to be audible on sustained
+// material. A control whose extremes sound broken is worse than a narrower one
+// that always sounds right.
+const PITCH_MIN = -6;
+const PITCH_MAX = 6;
+
+let _pitchSemitones = 0;
+let _pitchAvailable = false;
+
+/** Redraw the global key readout and its buttons. Touches no lane. */
+function renderPitch() {
+  if (pitchValueEl) {
+    // Signed, so "+2" and "-2" are distinguishable at a glance; bare "0" for
+    // the default rather than a redundant "+0".
+    pitchValueEl.textContent = _pitchSemitones > 0 ? `+${_pitchSemitones}` : String(_pitchSemitones);
+    pitchValueEl.classList.toggle("active", _pitchSemitones !== 0);
+  }
+  // A stepper that silently stops responding reads as broken, so say which end
+  // has been reached rather than only going inert.
+  if (pitchDownBtn) pitchDownBtn.disabled = !_pitchAvailable || _pitchSemitones <= PITCH_MIN;
+  if (pitchUpBtn) pitchUpBtn.disabled = !_pitchAvailable || _pitchSemitones >= PITCH_MAX;
+  if (pitchResetBtn) pitchResetBtn.disabled = !_pitchAvailable;
+}
+
+/**
+ * Move the global key, and every lane with it.
+ *
+ * The lanes carry absolute keys, so this applies the *change* rather than the
+ * new value: a lane deliberately put a third above the rest stays a third above
+ * the rest when the whole track moves. Overriding instead would flatten every
+ * per-lane decision the moment the global control was touched.
+ */
+function applyPitch(semitones) {
+  const clamped = Math.max(PITCH_MIN, Math.min(PITCH_MAX, Math.round(semitones)));
+  const delta = clamped - _pitchSemitones;
+  _pitchSemitones = clamped;
+  renderPitch();
+  if (delta !== 0) nudgeAllLanePitches(delta);
+}
+
+/**
+ * Clear the readout when a track is torn down or swapped.
+ *
+ * Deliberately does not touch the lanes: their keys are saved per track and are
+ * about to be reloaded from the store for whatever is being opened.
+ */
+export function resetPitch() {
+  _pitchSemitones = 0;
+  renderPitch();
+}
+
+/** The user's reset: the global key and every lane, back to the original. */
+export function resetAllKeys() {
+  _pitchSemitones = 0;
+  resetAllLanePitches();
+  renderPitch();
+}
+
+export function updatePitchAvailability(available) {
+  _pitchAvailable = available === true;
+  if (!_pitchAvailable && _pitchSemitones !== 0) _pitchSemitones = 0;
+  renderPitch();
+}
+
+function wirePitchControl() {
+  pitchDownBtn?.addEventListener("click", () => applyPitch(_pitchSemitones - 1));
+  pitchUpBtn?.addEventListener("click", () => applyPitch(_pitchSemitones + 1));
+  pitchResetBtn?.addEventListener("click", () => resetAllKeys());
 }
 
 export function resetSpeed() {
