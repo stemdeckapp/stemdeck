@@ -29,6 +29,7 @@ import {
 } from "./state.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
+import { vuLevel } from "./vuScale.js";
 import { createMetronome } from "./metronome.js";
 import { initBeatGrid, destroyBeatGrid } from "./beatgrid.js";
 import { setBeatGridAvailable, syncBeatGridButtons } from "./beatgridUi.js";
@@ -670,7 +671,10 @@ function startAnalyserVuLoop(stems, engine, token) {
     return {
       name: stem.name,
       analyser,
-      data: new Uint8Array(analyser.fftSize),
+      // Float rather than byte samples. On a dB scale the 8-bit path's own
+      // quantisation step, one part in 128, is -42 dBFS: it would light every
+      // meter to roughly a third of full even over silence.
+      data: new Float32Array(analyser.fftSize),
       miniMeterEl: document.querySelector(`.stem-list [data-stem="${stem.name}"] .mini-meter`),
       vuEl: mixerEl.querySelector(`.lane-vu[data-stem="${stem.name}"]`),
       peak: 0,
@@ -691,13 +695,10 @@ function startAnalyserVuLoop(stems, engine, token) {
       const gain = stemVuGain(m.name);
       let input = 0;
       if (playing && gain > 0) {
-        m.analyser.getByteTimeDomainData(m.data);
+        m.analyser.getFloatTimeDomainData(m.data);
         let sum = 0;
-        for (let i = 0; i < m.data.length; i++) {
-          const v = (m.data[i] - 128) / 128;
-          sum += v * v;
-        }
-        input = Math.min(1, Math.sqrt(sum / m.data.length) * 2.5);
+        for (let i = 0; i < m.data.length; i++) sum += m.data[i] * m.data[i];
+        input = vuLevel(Math.sqrt(sum / Math.max(1, m.data.length)));
       } else {
         m.peak = 0;
         m.peakHold = 0;
