@@ -1,0 +1,5 @@
+# Shell scripts are executed by bash, which treats a trailing CR as part of the
+# command and fails on every line. On Windows `core.autocrlf=true` would check
+# them out with CRLF, so the browser test harness (tests/e2e/serve.sh) is only
+# runnable on Linux. Pin them to LF regardless of the developer's setting.
+*.sh text eol=lf
