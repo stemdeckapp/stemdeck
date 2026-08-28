@@ -4,11 +4,14 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -396,6 +399,20 @@ async def start_vocal_split(job_id: str) -> Response:
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+_SECTIONS_WRITE_LOCK = threading.Lock()
+
+
+def _write_json_atomic(path: Path, data: dict) -> None:
+    """Durably replace a JSON file without exposing a partial write."""
+    temp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        with temp.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 class SectionItem(BaseModel):
@@ -404,6 +421,10 @@ class SectionItem(BaseModel):
     start: float
     end: float
     color: str
+    kind: (
+        Literal["intro", "outro", "break", "bridge", "inst", "solo", "verse", "chorus", "part"]
+        | None
+    ) = None
 
     @field_validator("id")
     @classmethod
@@ -445,30 +466,29 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
 
-    validated = [s.model_dump() for s in body.sections]
-    job.sections = validated
+    validated = [s.model_dump(exclude_none=True) for s in body.sections]
 
     job_dir = (JOBS_DIR / job_id).resolve()
     if not job_dir.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="job not found")
     meta_path = job_dir / "metadata.json"
 
-    meta: dict = {}
-    if meta_path.is_file():
+    with _SECTIONS_WRITE_LOCK:
+        meta: dict = {}
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    meta["sections"] = validated
-    try:
-        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        logger.exception("failed to write sections for %s: %s", job_id, exc)
-        raise HTTPException(status_code=500, detail="failed to save sections") from exc
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["sections"] = validated
+            meta["sections_source"] = "manual"
+            _write_json_atomic(meta_path, meta)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.exception("failed to write sections for %s: %s", job_id, exc)
+            raise HTTPException(status_code=500, detail="failed to save sections") from exc
 
-    registry_persist(JOBS_DIR)
+        _set(job, sections=validated, sections_source="manual")
+        registry_persist(JOBS_DIR)
 
-    return {"job_id": job_id, "sections": validated}
+    return {"job_id": job_id, "sections": validated, "sections_source": "manual"}
 
 
 # Upper bound on an edited grid. A 20-minute track at 300 BPM is ~6000 beats;

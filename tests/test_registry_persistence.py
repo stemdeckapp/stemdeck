@@ -205,6 +205,30 @@ def test_restore_recovers_orphan_done_job_from_stems(tmp_path: Path):
     assert {stem["name"] for stem in restored.stems} == {"vocals", "drums"}
 
 
+def test_restore_recovers_automatic_sections_from_metadata(tmp_path: Path):
+    job_dir = tmp_path / "abcdefabc115"
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "vocals.wav").write_bytes(b"RIFF")
+    sections = [{"id": "auto-001", "kind": "verse"}]
+    (job_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "title": "Structured Song",
+                "sections": sections,
+                "sections_source": "automatic",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restore_registry(tmp_path)
+
+    restored = _jobs["abcdefabc115"]
+    assert restored.sections == sections
+    assert restored.sections_source == "automatic"
+
+
 def test_restore_recovers_orphan_without_metadata(tmp_path: Path):
     """#284: a crash between status=done and the metadata write used to leave
     a complete stems dir permanently unrecoverable. Now it comes back with a

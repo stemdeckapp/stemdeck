@@ -212,6 +212,30 @@ def set_auto_delete_jobs(value: bool) -> bool:
         return bool(value)
 
 
+def _default_auto_sections() -> bool:
+    """Automatic song-structure detection, off until the user asks for it.
+
+    The stage costs a CPU inference pass per job and produces suggestions
+    rather than ground truth, so nobody should pay for it without having
+    chosen to. STEMDECK_AUTO_SECTIONS=1 turns it on for a deployment that
+    wants it from first boot.
+    """
+    return os.environ.get("STEMDECK_AUTO_SECTIONS", "").strip() == "1"
+
+
+def get_auto_sections() -> bool:
+    with _LOCK:
+        v = _ensure().get("auto_sections")
+        return v if isinstance(v, bool) else _default_auto_sections()
+
+
+def set_auto_sections(value: bool) -> bool:
+    with _LOCK:
+        _ensure()["auto_sections"] = bool(value)
+        _save()
+        return bool(value)
+
+
 def _default_auto_delete_days() -> int:
     """Honour a STEMDECK_JOB_TTL_SECONDS somebody already tuned.
 

@@ -74,6 +74,8 @@ export async function runVocalSplitIfWanted(state) {
       lufs: finalState.lufs,
       peakDb: finalState.peak_db,
       stemPresence: finalState.stem_presence,
+      sections: finalState.sections,
+      sectionsSource: finalState.sections_source,
       sourceUrl: jobSources.get(finalState.job_id) || "",
       createdAt: finalState.created_at,
     });
@@ -332,7 +334,12 @@ async function finishDoneJob(state) {
     null,
     finalState.has_video ?? false,
   );
-  initSections(finalState.job_id, finalState.sections, finalState.duration || 0);
+  initSections(
+    finalState.job_id,
+    finalState.sections,
+    finalState.duration || 0,
+    finalState.sections_source,
+  );
 }
 
 function applyState(state) {
@@ -363,6 +370,8 @@ function applyState(state) {
       lufs: state.lufs,
       peakDb: state.peak_db,
       stemPresence: state.stem_presence,
+      sections: state.sections,
+      sectionsSource: state.sections_source,
       sourceUrl: jobSources.get(state.job_id) || (isForeground ? urlInput.value : ""),
       createdAt: state.created_at,
     });

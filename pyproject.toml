@@ -38,6 +38,12 @@ dependencies = [
     # librosa upgrade silently break the vocal-split feature (#407). Pin
     # <1 to match what audio-separator expects and what uv.lock resolves.
     "librosa>=0.10,<1",
+    # Functional song-section boundaries and semantic labels (intro, verse,
+    # chorus, bridge, etc.). This maintained inference-only package preserves
+    # the upstream All-In-One model while replacing NATTEN's compiled extension
+    # with a cross-platform pure-PyTorch implementation. StemDeck supplies its
+    # already-separated stems, so the package's Demucs path is never invoked.
+    "all-in-one-infer>=3.1,<4",
     # Beat/downbeat tracker for the click track. MIT for both code and the
     # published weights. librosa's tracker resolves fast music to half tempo
     # (180 BPM punk -> 90) because of its 120 BPM lognormal prior, which is not

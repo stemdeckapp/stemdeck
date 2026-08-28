@@ -1,6 +1,6 @@
 // sections.js — interactive sections bar above the waveform
 
-import { t } from "./i18n.js";
+import { onLanguageChange, t } from "./i18n.js";
 
 const SECTION_COLORS = [
   "#4a7fff",
@@ -15,20 +15,29 @@ const SECTION_COLORS = [
 
 const MIN_SEC = 0.5; // minimum section duration in seconds
 const DEFAULT_WIDTH_FRAC = 0.12; // default new section = 12% of track
+const SECTION_KINDS = new Set([
+  "intro", "outro", "break", "bridge", "inst", "solo", "verse", "chorus", "part",
+]);
 
 let _trackId = null;
 let _duration = 0;
 let _sections = [];
+let _sectionsSource = null;
 let _container = null;
 let _saveTimer = null;
+let _saveChain = Promise.resolve();
+
+onLanguageChange(() => _render());
 
 // ─── Public API ───────────────────────────────────────────
 
-export function initSections(trackId, sections, duration) {
+export function initSections(trackId, sections, duration, sectionsSource = null) {
   _trackId = trackId;
   _duration = Math.max(1, duration || 0);
   _sections = (sections || []).map((s) => ({ ...s }));
+  _sectionsSource = sectionsSource;
   _container = document.getElementById("daw-sections");
+  _updateSuggestedBadge();
   if (!_container) return;
 
   // Wire the static "Add" button in the label area (may already be wired)
@@ -49,14 +58,16 @@ export function destroySections() {
   if (_saveTimer !== null) {
     clearTimeout(_saveTimer);
     _saveTimer = null;
-    _save();
+    _queueSaveSnapshot();
   }
   _hideSaveIndicator();
   _trackId = null;
   _sections = [];
+  _sectionsSource = null;
   _duration = 0;
   if (_container) _container.innerHTML = "";
   _container = null;
+  _updateSuggestedBadge();
 }
 
 // ─── Rendering ────────────────────────────────────────────
@@ -83,7 +94,7 @@ function _makeSectionEl(section) {
 
   el.innerHTML = `
     <div class="section-handle section-handle-l" data-edge="left"></div>
-    <span class="section-label">${_esc(section.name)}</span>
+    <span class="section-label">${_esc(sectionDisplayName(section, _sections))}</span>
     <button class="section-del" type="button" aria-label="${t("sections.deleteAria")}" tabindex="-1">×</button>
     <div class="section-handle section-handle-r" data-edge="right"></div>
   `;
@@ -106,6 +117,29 @@ function _makeSectionEl(section) {
   return el;
 }
 
+export function sectionDisplayName(section, all) {
+  const kind = String(section?.kind || "").toLowerCase();
+  if (!SECTION_KINDS.has(kind)) return String(section?.name || "");
+  const name = t(`sections.kind.${kind}`);
+  // The model predicts boundaries and labels with separate heads, so two
+  // neighbouring spans can share a kind and still be a real structural change
+  // (chorus one and chorus two). Merging them was tried and silently discarded
+  // five true boundaries on the reference track, so they are numbered instead:
+  // the boundary survives and "Chorus Chorus" stops reading as a bug.
+  if (!Array.isArray(all)) return name;
+  const ordered = [...all].sort((a2, b2) => a2.start - b2.start);
+  const peers = ordered.filter((s) => String(s?.kind || "").toLowerCase() === kind);
+  if (peers.length < 2) return name;
+  const position = peers.findIndex((s) => s.id === section.id);
+  if (position < 0) return name;
+  return t("sections.kindNumbered", { kind: name, n: position + 1 });
+}
+
+function _updateSuggestedBadge() {
+  const badge = document.getElementById("sectionsSuggested");
+  if (badge) badge.classList.toggle("hidden", _sectionsSource !== "automatic" || !_sections.length);
+}
+
 function _esc(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -120,12 +154,16 @@ function _wireDrag(el, section) {
   let active = false;
   let startX = 0;
   let origStart = 0;
+  let origEnd = 0;
+  let changed = false;
 
   el.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".section-handle,.section-del")) return;
     active = true;
     startX = e.clientX;
     origStart = section.start;
+    origEnd = section.end;
+    changed = false;
     el.setPointerCapture(e.pointerId);
     el.classList.add("sec-dragging");
     e.preventDefault();
@@ -137,8 +175,11 @@ function _wireDrag(el, section) {
     if (!cw) return;
     const dt = ((e.clientX - startX) / cw) * _duration;
     const w = section.end - section.start;
-    section.start = _clampMove(section.id, origStart + dt, w);
-    section.end = section.start + w;
+    const nextStart = _clampMove(section.id, origStart + dt, w);
+    const nextEnd = nextStart + w;
+    changed ||= _timesChanged(origStart, origEnd, nextStart, nextEnd);
+    section.start = nextStart;
+    section.end = nextEnd;
     el.style.left = `${(section.start / _duration) * 100}%`;
   });
 
@@ -146,10 +187,15 @@ function _wireDrag(el, section) {
     if (!active) return;
     active = false;
     el.classList.remove("sec-dragging");
-    _scheduleSave();
+    if (changed) _scheduleSave();
   });
 
   el.addEventListener("pointercancel", () => {
+    if (active) {
+      section.start = origStart;
+      section.end = origEnd;
+      _render();
+    }
     active = false;
     el.classList.remove("sec-dragging");
   });
@@ -162,11 +208,17 @@ function _wireResize(handle, el, section) {
   let active = false;
   let startX = 0;
   let origTime = 0;
+  let origStart = 0;
+  let origEnd = 0;
+  let changed = false;
 
   handle.addEventListener("pointerdown", (e) => {
     active = true;
     startX = e.clientX;
     origTime = edge === "left" ? section.start : section.end;
+    origStart = section.start;
+    origEnd = section.end;
+    changed = false;
     handle.setPointerCapture(e.pointerId);
     el.classList.add("sec-resizing");
     e.preventDefault();
@@ -192,6 +244,7 @@ function _wireResize(handle, el, section) {
 
     const ps = (section.start / _duration) * 100;
     const pw = ((section.end - section.start) / _duration) * 100;
+    changed ||= _timesChanged(origStart, origEnd, section.start, section.end);
     el.style.left = `${ps}%`;
     el.style.width = `${pw}%`;
   });
@@ -200,10 +253,15 @@ function _wireResize(handle, el, section) {
     if (!active) return;
     active = false;
     el.classList.remove("sec-resizing");
-    _scheduleSave();
+    if (changed) _scheduleSave();
   });
 
   handle.addEventListener("pointercancel", () => {
+    if (active) {
+      section.start = origStart;
+      section.end = origEnd;
+      _render();
+    }
     active = false;
     el.classList.remove("sec-resizing");
   });
@@ -296,7 +354,8 @@ function _openRename(id, labelEl) {
   const input = document.createElement("input");
   input.className = "section-rename-input";
   input.type = "text";
-  input.value = section.name;
+  const originalName = sectionDisplayName(section, _sections);
+  input.value = originalName;
   input.style.setProperty("--sc", section.color);
   labelEl.replaceWith(input);
   input.focus();
@@ -304,14 +363,23 @@ function _openRename(id, labelEl) {
 
   const commit = () => {
     const n = input.value.trim();
-    if (n) section.name = n;
+    if (n && n !== originalName) {
+      section.name = n;
+      delete section.kind;
+      _render();
+      _scheduleSave();
+      return;
+    }
     _render();
-    _scheduleSave();
   };
   input.addEventListener("blur", commit, { once: true });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-    if (e.key === "Escape") { input.value = section.name; input.removeEventListener("blur", commit); input.blur(); }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      input.removeEventListener("blur", commit);
+      _render();
+    }
   });
 }
 
@@ -346,13 +414,29 @@ function _hideSaveIndicator() {
 function _scheduleSave() {
   clearTimeout(_saveTimer);
   _showSaving();
-  _saveTimer = setTimeout(_save, 600);
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    _queueSaveSnapshot();
+  }, 600);
 }
 
-async function _save() {
-  if (!_trackId) return;
+export function flushSectionsSave() {
+  if (_saveTimer !== null) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+  return _queueSaveSnapshot();
+}
+
+function _queueSaveSnapshot() {
+  if (!_trackId) return _saveChain;
   const id = _trackId;
   const body = JSON.stringify({ sections: _sections });
+  _saveChain = _saveChain.then(() => _sendSave(id, body));
+  return _saveChain;
+}
+
+async function _sendSave(id, body) {
   try {
     const res = await fetch(`/api/jobs/${id}/sections`, {
       method: "PATCH",
@@ -365,11 +449,19 @@ async function _save() {
       if (id === _trackId) _hideSaveIndicator();
       return;
     }
-    if (id === _trackId) _showSaved();
+    if (id === _trackId) {
+      _sectionsSource = "manual";
+      _updateSuggestedBadge();
+      if (body === JSON.stringify({ sections: _sections }) && _saveTimer === null) _showSaved();
+    }
   } catch (e) {
     console.warn("[sections] save failed:", e);
     if (id === _trackId) _hideSaveIndicator();
   }
+}
+
+function _timesChanged(beforeStart, beforeEnd, afterStart, afterEnd) {
+  return Math.abs(beforeStart - afterStart) > 1e-6 || Math.abs(beforeEnd - afterEnd) > 1e-6;
 }
 
 // ─── Utilities ────────────────────────────────────────────

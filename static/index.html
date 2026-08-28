@@ -102,6 +102,14 @@
             </div>
           </div>
 
+          <!-- Experimental automatic song-structure detection. Off makes the
+               pipeline skip the inference stage entirely; the backend reads
+               the setting once per job, so a change applies to the next import
+               without a restart. -->
+          <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental Song Structure Extraction" aria-label="Experimental Song Structure Extraction" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleTitle">
+            <span class="stem-dot"></span><span data-i18n="structure.toggle">Song structure</span>
+          </button>
+
           <!-- Process button -->
           <button id="submit" class="daw-process-btn" type="submit">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -347,7 +355,10 @@
           <!-- Sections bar -->
           <div class="daw-section-ribbon">
             <div class="daw-mixer-label daw-sections-header">
-              <span class="daw-label-title" data-i18n="sections.title">Sections</span>
+              <span class="daw-sections-title-group">
+                <span class="daw-label-title" data-i18n="sections.title">Sections</span>
+                <span class="sections-suggested-badge hidden" id="sectionsSuggested" data-i18n="sections.suggested">Experimental - drag to adjust.</span>
+              </span>
               <span class="sections-save-indicator hidden" id="sectionsSaveIndicator" aria-live="polite" aria-label="Saving sections" data-i18n-aria-label="sections.savingAria"></span>
               <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-title="sections.addAria" data-i18n-aria-label="sections.addAria">
                 <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>

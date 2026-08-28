@@ -245,6 +245,32 @@ PLAYLIST_MAX_ITEMS = max(1, min(200, _env_int("STEMDECK_PLAYLIST_MAX_ITEMS", 50)
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
+# Automatic functional-section analysis. Inference stays on CPU because the
+# persistent Demucs worker deliberately keeps its model resident on the chosen
+# accelerator between jobs; loading a second model beside it would make VRAM
+# use depend on GPU size and the preceding job. The ensemble name remains
+# configurable for deployments evaluating a different compatible checkpoint.
+SECTION_MODEL = os.environ.get("STEMDECK_SECTION_MODEL", "harmonix-all").strip() or "harmonix-all"
+TIMEOUT_SECTIONS = max(60, _env_int("STEMDECK_TIMEOUT_SECTIONS", 30 * 60))
+TIMEOUT_SECTIONS_STALL = max(30, _env_int("STEMDECK_TIMEOUT_SECTIONS_STALL", 120))
+# Conservative evidence gates for the section refiner. The first real-song
+# diagnostic found that the upstream decoder emitted 13 Come As You Are spans
+# but our equal-label merge hid six boundaries. It also found a suppressed
+# 0.059 activation inside the intro with only 0.18 embedding novelty. Requiring
+# 0.05 activation and 0.35 novelty preserves strong independent evidence
+# without turning each instrumental entrance into a new functional section.
+SECTION_REFINEMENT_GRID_MIN_CONFIDENCE = 70
+SECTION_REFINEMENT_BEAT_SNAP_SECONDS = 0.12
+SECTION_REFINEMENT_MIN_ACTIVATION = 0.05
+SECTION_REFINEMENT_MIN_NOVELTY = 0.35
+SECTION_REFINEMENT_NOVELTY_WINDOW_SECONDS = 8.0
+SECTION_REFINEMENT_MIN_SEGMENT_SECONDS = 6.0
+# The test track's disputed 49.85-65.89 span had a 0.045 Verse/Chorus margin,
+# while the surrounding accepted semantic spans were at least 0.10. A weak
+# tie becomes neutral Part rather than a confidently wrong functional label.
+SECTION_REFINEMENT_MIN_LABEL_MARGIN = 0.08
+SECTION_REFINEMENT_RECURRENCE_SIMILARITY = 0.85
+SECTION_REFINEMENT_RECURRENCE_LABEL_MARGIN = 0.25
 # On-demand lead/backing vocal split (#275). UVR-MDX-NET Karaoke 2 is an
 # officially-distributed UVR-project model (MIT + credit-to-UVR per the
 # audio-separator README) -- the default. STEMDECK_KARAOKE_MODEL lets a

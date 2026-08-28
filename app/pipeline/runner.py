@@ -14,6 +14,7 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
 from app.core.registry import persist as persist_registry
+from app.core.settings import get_auto_sections
 from app.pipeline.analyze import analyze
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
@@ -25,6 +26,7 @@ from app.pipeline.collect import (
 )
 from app.pipeline.download import download
 from app.pipeline.errors import classify_failure
+from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -213,7 +215,25 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
         compute_beat_grid(stems_dir)
     except Exception:
         logger.exception("beat grid stage failed for job %s", job.id)
-    _lap(job, "beatgrid", mark)
+    mark = _lap(job, "beatgrid", mark)
+
+    # Automatic sections are suggestions and never make an otherwise usable
+    # separation fail. Cancellation remains authoritative so a user can still
+    # stop a long CPU inference pass immediately. The setting is read here, per
+    # job, rather than captured at import, so turning the toggle off applies to
+    # the next job without a restart.
+    _check_cancel(job)
+    if get_auto_sections() and job.sections is None and job.duration_sec and job.duration_sec > 0:
+        _set(job, stage="Analyzing song structure...")
+        try:
+            sections = detect_sections(job, stems_dir, job.duration_sec)
+            if sections:
+                _set(job, sections=sections, sections_source="automatic")
+        except JobCancelled:
+            raise
+        except Exception:
+            logger.exception("section analysis stage failed for job %s", job.id)
+    _lap(job, "sections", mark)
 
 
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
@@ -246,6 +266,8 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "dynamic_range": job.dynamic_range,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
+        "sections": job.sections,
+        "sections_source": job.sections_source,
         "tags": job.tags,
         "has_video": job.has_video,
         "video_status": job.video_status,

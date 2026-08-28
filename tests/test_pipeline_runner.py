@@ -10,6 +10,8 @@ from app.core.registry import _jobs
 from app.pipeline.runner import (
     _extract_video_track,
     _presence_from_rms,
+    _run_common,
+    _write_metadata,
     run_local_pipeline,
     run_pipeline,
 )
@@ -427,3 +429,184 @@ def test_presence_from_rms_empty_input():
 
 def test_presence_from_rms_all_silent():
     assert _presence_from_rms({"vocals": 0.0, "drums": 0.0}) == {"vocals": 0, "drums": 0}
+
+
+def _common_stage_patches(job_dir: Path, sections):
+    section_patch = (
+        patch("app.pipeline.runner.detect_sections", side_effect=sections)
+        if isinstance(sections, BaseException)
+        else patch("app.pipeline.runner.detect_sections", return_value=sections)
+    )
+    return (
+        patch("app.pipeline.runner.analyze"),
+        patch("app.pipeline.runner.separate", return_value=job_dir / "model"),
+        patch("app.pipeline.runner.collect", return_value=["bass", "drums", "vocals"]),
+        patch("app.pipeline.runner.cleanup_source"),
+        patch("app.pipeline.runner.make_original_track", return_value=None),
+        patch("app.pipeline.runner.make_selected_mix", return_value=None),
+        patch("app.pipeline.runner.compute_stem_peaks", return_value={}),
+        patch("app.pipeline.runner.compute_beat_grid"),
+        section_patch,
+    )
+
+
+def test_common_pipeline_stores_automatic_section_suggestions(tmp_path: Path):
+    job = Job(id="abcdefabc111", duration_sec=60.0)
+    job_dir = tmp_path / job.id
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    suggested = [
+        {
+            "id": "auto-001",
+            "name": "Verse",
+            "kind": "verse",
+            "start": 0.0,
+            "end": 60.0,
+            "color": "#00c8a0",
+        }
+    ]
+
+    patches = _common_stage_patches(job_dir, suggested)
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8] as detect,
+        patch("app.pipeline.runner.get_auto_sections", return_value=True),
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    assert job.sections == suggested
+    assert job.sections_source == "automatic"
+    detect.assert_called_once_with(job, stems_dir, 60.0)
+    assert "sections" in (job.stage_timings or {})
+
+
+def test_common_pipeline_skips_sections_when_the_user_turned_them_off(tmp_path: Path):
+    """The toggle must stop the inference pass, not just hide its result.
+
+    The setting is read per job rather than captured at import, so switching it
+    off applies to the next import without restarting the server.
+    """
+    job = Job(id="abcdefabc116", duration_sec=60.0)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+
+    patches = _common_stage_patches(job_dir, [{"id": "auto-001", "kind": "verse"}])
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8] as detect,
+        patch("app.pipeline.runner.get_auto_sections", return_value=False),
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    detect.assert_not_called()
+    assert job.sections is None
+    assert job.sections_source is None
+
+
+def test_common_pipeline_keeps_section_failure_nonfatal(tmp_path: Path, caplog):
+    job = Job(id="abcdefabc112", duration_sec=60.0)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    patches = _common_stage_patches(job_dir, RuntimeError("model unavailable"))
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8],
+        patch("app.pipeline.runner.get_auto_sections", return_value=True),
+        caplog.at_level("ERROR", logger="stemdeck.pipeline"),
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    assert job.sections is None
+    assert "section analysis stage failed" in caplog.text
+
+
+def test_common_pipeline_preserves_section_cancellation(tmp_path: Path):
+    job = Job(id="abcdefabc113", duration_sec=60.0)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    patches = _common_stage_patches(job_dir, JobCancelled())
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8],
+        patch("app.pipeline.runner.get_auto_sections", return_value=True),
+        pytest.raises(JobCancelled),
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+
+def test_common_pipeline_never_reanalyzes_existing_manual_sections(tmp_path: Path):
+    manual = [{"id": "custom", "name": "Pre-Chorus"}]
+    job = Job(
+        id="abcdefabc119",
+        duration_sec=60.0,
+        sections=manual,
+        sections_source="manual",
+    )
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    patches = _common_stage_patches(job_dir, [{"id": "auto-001"}])
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8] as detect,
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    detect.assert_not_called()
+    assert job.sections == manual
+    assert job.sections_source == "manual"
+
+
+def test_metadata_includes_sections_and_source(tmp_path: Path):
+    job = Job(
+        id="abcdefabc114",
+        sections=[{"id": "auto-001"}],
+        sections_source="automatic",
+    )
+    job_dir = tmp_path / job.id
+    job_dir.mkdir()
+
+    _write_metadata(job, job_dir)
+
+    import json as _json
+
+    meta = _json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["sections"] == [{"id": "auto-001"}]
+    assert meta["sections_source"] == "automatic"

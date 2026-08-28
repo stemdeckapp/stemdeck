@@ -378,6 +378,7 @@ function stateMetadataToTrack(state, fallbackTrack) {
     tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
     tags: state.tags ?? fallbackTrack.tags ?? [],
     sections: state.sections ?? fallbackTrack.sections ?? null,
+    sectionsSource: state.sections_source ?? fallbackTrack.sectionsSource ?? null,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
     mixUrl: state.mix_url ?? fallbackTrack.mixUrl ?? null,
     hasVideo: state.has_video ?? fallbackTrack.hasVideo ?? false,
@@ -654,7 +655,7 @@ async function loadTrackIntoStudio(trackId) {
 
   applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
-  initSections(trackId, track.sections, track.duration || 0);
+  initSections(trackId, track.sections, track.duration || 0, track.sectionsSource);
 }
 
 export function setCurrentTrack(trackId) {

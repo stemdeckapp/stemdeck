@@ -293,7 +293,16 @@ def done_job(client, tmp_path, monkeypatch):
 
 def test_sections_happy_path(client, done_job, tmp_path):
     payload = {
-        "sections": [{"id": "sec1", "name": "Verse", "start": 0.0, "end": 30.0, "color": "#ff0000"}]
+        "sections": [
+            {
+                "id": "sec1",
+                "name": "Verse",
+                "kind": "verse",
+                "start": 0.0,
+                "end": 30.0,
+                "color": "#ff0000",
+            }
+        ]
     }
     r = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
     assert r.status_code == 200
@@ -301,11 +310,34 @@ def test_sections_happy_path(client, done_job, tmp_path):
     assert body["job_id"] == done_job.id
     assert len(body["sections"]) == 1
     assert body["sections"][0]["name"] == "Verse"
+    assert body["sections_source"] == "manual"
+    assert done_job.sections_source == "manual"
     # Verify written to disk
     meta_path = tmp_path / done_job.id / "metadata.json"
     assert meta_path.is_file()
     meta = json.loads(meta_path.read_text())
     assert meta["sections"][0]["id"] == "sec1"
+    assert meta["sections_source"] == "manual"
+
+
+def test_sections_accepts_neutral_part_kind(client, done_job):
+    payload = {
+        "sections": [
+            {
+                "id": "auto-005",
+                "name": "Part",
+                "kind": "part",
+                "start": 49.874,
+                "end": 65.901,
+                "color": "#8391a5",
+            }
+        ]
+    }
+
+    response = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["sections"][0]["kind"] == "part"
 
 
 def test_sections_unknown_job_returns_404(client):
@@ -336,6 +368,56 @@ def test_sections_invalid_id_returns_422(client, done_job):
     }
     r = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
     assert r.status_code == 422
+
+
+def test_sections_invalid_kind_returns_422(client, done_job):
+    payload = {
+        "sections": [
+            {
+                "id": "sec1",
+                "name": "Pre-chorus",
+                "kind": "prechorus",
+                "start": 0.0,
+                "end": 5.0,
+                "color": "#fff",
+            }
+        ]
+    }
+    r = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
+    assert r.status_code == 422
+
+
+def test_sections_write_failure_does_not_mutate_live_job(client, done_job, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    original = [{"id": "old", "name": "Old", "start": 0.0, "end": 5.0, "color": "#fff"}]
+    done_job.sections = original
+    done_job.sections_source = "automatic"
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(jobs_mod, "_write_json_atomic", fail_write)
+    response = client.patch(
+        f"/api/jobs/{done_job.id}/sections",
+        json={
+            "sections": [{"id": "new", "name": "New", "start": 0.0, "end": 5.0, "color": "#000"}]
+        },
+    )
+
+    assert response.status_code == 500
+    assert done_job.sections == original
+    assert done_job.sections_source == "automatic"
+
+
+def test_atomic_section_metadata_write_leaves_no_temporary_file(tmp_path):
+    from app.api.jobs import _write_json_atomic
+
+    path = tmp_path / "metadata.json"
+    _write_json_atomic(path, {"sections_source": "manual"})
+
+    assert json.loads(path.read_text(encoding="utf-8"))["sections_source"] == "manual"
+    assert not list(tmp_path.glob(".metadata.json.*.tmp"))
 
 
 # ─── SSE job_id validation ────────────────────────────────────────────────────

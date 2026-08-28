@@ -9,6 +9,20 @@ license file are documented here.
 MIT, published by the `demucs` PyPI package (Meta/Facebook Research). No
 audit needed -- an unambiguous upstream license.
 
+## All-In-One (automatic song sections)
+
+- **Runtime**: `all-in-one-infer` 3.x, the cross-platform inference fork of
+  the All-In-One music-structure model.
+- **Checkpoint**: `harmonix-all`, downloaded from the upstream Hugging Face
+  repository during desktop warmup or on first use elsewhere.
+- **License**: MIT for both the original All-In-One project and the
+  `all-in-one-infer` runtime.
+- **Upstream**: https://github.com/mir-aidj/all-in-one and
+  https://github.com/openmirlab/all-in-one-infer
+
+StemDeck runs this model on CPU after separation and passes its existing stems.
+The checkpoint is not bundled in StemDeck installers.
+
 ## UVR-MDX-NET Karaoke 2 (on-demand lead/backing vocal split, #275)
 
 - **File**: `UVR_MDXNET_KARA_2.onnx`

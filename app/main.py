@@ -47,6 +47,7 @@ from app.core.settings import (
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
+    get_auto_sections,
     get_cookies_file,
     get_demucs_device,
     get_demucs_device_choice,
@@ -60,6 +61,7 @@ from app.core.settings import (
     set_allow_network,
     set_auto_delete_days,
     set_auto_delete_jobs,
+    set_auto_sections,
     set_cookies_file,
     set_demucs_device,
     set_export_sample_rate,
@@ -324,6 +326,10 @@ def _settings_payload() -> dict[str, object]:
         # rather than appearing empty on first click.
         "auto_delete_jobs": get_auto_delete_jobs(),
         "auto_delete_days": get_auto_delete_days(),
+        # Automatic song-structure detection. Costs a CPU inference pass per
+        # job and produces suggestions rather than ground truth, so the user
+        # decides whether to pay for it.
+        "auto_sections": get_auto_sections(),
         "auto_delete_days_min": AUTO_DELETE_DAYS_MIN,
         "auto_delete_days_max": AUTO_DELETE_DAYS_MAX,
         "max_duration_sec": get_max_duration_sec(),
@@ -374,6 +380,8 @@ async def update_settings(request: Request) -> dict[str, object]:
         set_allow_network(bool(body["allow_network"]))
     if "auto_delete_jobs" in body:
         set_auto_delete_jobs(bool(body["auto_delete_jobs"]))
+    if "auto_sections" in body:
+        set_auto_sections(bool(body["auto_sections"]))
     for key, setter in (
         ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),

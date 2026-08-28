@@ -66,6 +66,46 @@ function wireVocalModeToggle() {
   }
 }
 
+// ─── Experimental song-structure extraction ───
+//
+// The server owns this flag, not the browser: the pipeline reads it per job,
+// so a phone and a laptop pointed at the same StemDeck must not disagree about
+// whether the next import pays for an inference pass. The button therefore
+// reflects the server's answer and writes back, rather than keeping its own
+// local state.
+function wireAutoSectionsToggle() {
+  const btn = document.getElementById("autoSectionsBtn");
+  if (!btn) return;
+  const paint = (on) => btn.setAttribute("aria-pressed", String(!!on));
+
+  // Bound before the state is fetched, so an early click is never dropped and
+  // a settings request that never returns cannot leave the button inert.
+  btn.addEventListener("click", async () => {
+    const next = btn.getAttribute("aria-pressed") !== "true";
+    paint(next);
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_sections: next }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      paint((await r.json()).auto_sections);
+    } catch (e) {
+      console.warn("[structure] could not save the setting:", e);
+      paint(!next); // the server did not take it, so do not claim it did
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  fetch("/api/settings", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => d && paint(d.auto_sections))
+    .catch((e) => console.warn("[structure] could not read the setting:", e));
+}
+
 function handleStemChoiceClick(stem) {
   const allSelected = selectedStems.size === STEM_NAMES.length;
   if (allSelected) {
@@ -159,6 +199,7 @@ wireMixerToolbar();
 wireStemChoiceButtons();
 wireAllButton();
 wireVocalModeToggle();
+wireAutoSectionsToggle();
 wireFileDrop();
 wireAppShellControls();
 

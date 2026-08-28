@@ -234,6 +234,10 @@ input, textarea { font-family: inherit; }
   opacity: 0.85;
 }
 .stem-choice[aria-pressed="false"] .stem-dot { opacity: 0.4; }
+/* Automatic song-structure detection. Not a stem and not the primary action,
+   so it takes the section timeline's blue rather than the amber the Split
+   button owns -- two amber chips side by side read as two competing CTAs. */
+.structure-toggle { --color: #4a7fff; margin-left: 10px; }
 
 /* "All" toggle */
 .stem-choice-all {
@@ -1453,6 +1457,19 @@ input, textarea { font-family: inherit; }
 .daw-label-title { font-size: 12px; font-weight: 600; }
 .daw-label-sub { font-size: 9px; }
 .daw-sections-header { justify-content: space-between; }
+.daw-sections-title-group { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.sections-suggested-badge {
+  padding: 2px 5px;
+  border: 1px solid rgba(74,127,255,0.4);
+  border-radius: 4px;
+  color: #7fa2ff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.sections-suggested-badge.hidden { display: none; }
 .daw-sections-area {
   flex: 1;
   position: relative;

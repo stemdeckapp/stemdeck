@@ -292,6 +292,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
+        sections_source=meta.get("sections_source"),
         tags=meta.get("tags"),
         vocal_split=vocal_split,
     )

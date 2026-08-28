@@ -1381,11 +1381,12 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
 struct ModelWarmupStatus {
     demucs_ready: bool,
     beat_this_ready: bool,
+    sections_ready: bool,
     vocal_split_ready: bool,
 }
 
 /// Eagerly downloads/caches the ML models StemDeck uses (Demucs, beat-this,
-/// and the on-demand lead/backing vocal-split karaoke model, #275) via
+/// automatic song sections, and the on-demand lead/backing vocal-split karaoke model, #275) via
 /// `app/pipeline/warmup.py`, so a user's first real job doesn't pay for any
 /// of them mid-pipeline. Best-effort per model: a single model failing to
 /// download (e.g. no network) does not fail this command — the setup wizard
@@ -1431,12 +1432,14 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
     let mut status = ModelWarmupStatus {
         demucs_ready: false,
         beat_this_ready: false,
+        sections_ready: false,
         vocal_split_ready: false,
     };
     for line in stdout.lines() {
         match line {
             "WARMUP_OK demucs" => status.demucs_ready = true,
             "WARMUP_OK beat_this" => status.beat_this_ready = true,
+            "WARMUP_OK sections" => status.sections_ready = true,
             "WARMUP_OK vocal_split" => status.vocal_split_ready = true,
             _ if line.starts_with("WARMUP_FAILED") => {
                 append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
