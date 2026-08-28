@@ -18,7 +18,7 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
@@ -81,6 +81,7 @@ from app.core.stems_location import (
     validate_target,
 )
 from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
+from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_section_workspaces
 
 # Set the stemdeck logger level (Python's default root level of WARNING would
 # silently drop every logger.info(...) call) and attach the rotating file log
@@ -197,6 +198,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # A restored queue can be dozens of tracks and hours of GPU, and the user
     # may well have opened StemDeck to do something else entirely. They press
     # Start (or simply import something new, which lifts the pause).
+    # Nothing is analyzing yet, so any section workspace still on disk belongs
+    # to a process that died mid-stage and is safe to remove (#483).
+    try:
+        await asyncio.to_thread(sweep_orphaned_section_workspaces, JOBS_DIR)
+    except Exception:
+        _log.exception("could not sweep orphaned section workspaces")
+
     resumed = take_pending_resume()
     if resumed:
         jobqueue.pause()

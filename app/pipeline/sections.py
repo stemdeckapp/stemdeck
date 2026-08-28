@@ -360,6 +360,52 @@ def _safe_rmtree(path: Path, parent: Path) -> None:
         logger.error("refusing to remove invalid section workspace %s", resolved)
 
 
+def sweep_orphaned_workspaces(jobs_dir: Path) -> int:
+    """Remove section workspaces a previous process died before cleaning up.
+
+    detect_sections stages inside the job's own stems folder and removes the
+    directory in a finally, which covers every ordinary ending including
+    cancellation. It does not cover the process dying: a force quit, a lost
+    machine, an OOM kill, or the desktop shell tearing the backend down while
+    the stage runs. The stage is a CPU inference pass measured in minutes and
+    is the last thing a job does, so it is running exactly when an impatient
+    user quits.
+
+    What is left behind is not trivial. ``other.wav`` inside it is a real file,
+    the other/guitar/piano mix written as pcm_f32le: about 1.27 GB for a
+    60-minute track, plus the extracted spectrograms. The name starts with a
+    dot, so a user wondering why their library outgrew their songs cannot
+    easily find it (#483).
+
+    Call this at startup only. Nothing is analyzing yet at that point, so every
+    workspace found is certainly dead; running it later could delete one out
+    from under a live job. Errors are swallowed for the same reason the stage
+    itself is non-fatal: tidying up must never be what breaks a library.
+    """
+    removed = 0
+    try:
+        job_dirs = list(jobs_dir.iterdir())
+    except OSError:
+        return 0
+    for job_dir in job_dirs:
+        stems_dir = job_dir / "stems"
+        try:
+            candidates = list(stems_dir.iterdir()) if stems_dir.is_dir() else []
+        except OSError:
+            continue
+        for entry in candidates:
+            if not entry.is_dir() or not entry.name.startswith(_WORK_PREFIX):
+                continue
+            # Same guard as the in-band cleanup: prefix and parent must both
+            # match before anything inside a user's library is deleted.
+            _safe_rmtree(entry, stems_dir)
+            if not entry.exists():
+                removed += 1
+    if removed:
+        logger.info("removed %d orphaned section workspace(s)", removed)
+    return removed
+
+
 def detect_sections(job: Job, stems_dir: Path, duration: float) -> list[dict] | None:
     """Return automatic section suggestions, or None when analysis is unavailable."""
     if job.cancel_requested:

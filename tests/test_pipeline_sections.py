@@ -11,7 +11,7 @@ import pytest
 
 from app.core.models import Job, JobCancelled
 from app.pipeline.section_refine import refine_segments
-from app.pipeline.sections import normalize_sections
+from app.pipeline.sections import normalize_sections, sweep_orphaned_workspaces
 
 MODEL_LABELS = (
     "start",
@@ -478,3 +478,49 @@ def test_mix_other_stems_uses_all_sources_and_float_output(tmp_path: Path, monke
     assert any("amix=inputs=3:normalize=0:duration=longest" in arg for arg in captured)
     assert "pcm_f32le" in captured
     assert all(str(stems_dir / f"{name}.wav") in captured for name in ("other", "guitar", "piano"))
+
+
+def test_sweep_removes_a_workspace_a_dead_process_left_behind(tmp_path: Path):
+    """A force quit bypasses detect_sections' finally, and nothing else in the
+    codebase has ever heard of the prefix. What is stranded is a pcm_f32le mix
+    of three stems: about 1.27 GB for a 60-minute track, hidden behind a dot
+    (#483)."""
+    jobs_dir = tmp_path / "jobs"
+    stems_dir = jobs_dir / "abcdefabcdef" / "stems"
+    stems_dir.mkdir(parents=True)
+    orphan = stems_dir / ".sections-work-dead"
+    orphan.mkdir()
+    (orphan / "other.wav").write_bytes(b"x" * 1024)
+    keeper = stems_dir / "drums.wav"
+    keeper.write_bytes(b"audio")
+
+    removed = sweep_orphaned_workspaces(jobs_dir)
+
+    assert removed == 1
+    assert not orphan.exists()
+    assert keeper.is_file(), "a real stem was deleted"
+
+
+def test_sweep_leaves_everything_that_is_not_a_workspace(tmp_path: Path):
+    """It runs against the user's library, so the prefix and the parent are
+    both load-bearing. Anything else in a stems folder must survive."""
+    jobs_dir = tmp_path / "jobs"
+    stems_dir = jobs_dir / "abcdefabcdef" / "stems"
+    stems_dir.mkdir(parents=True)
+    survivors = [
+        stems_dir / "htdemucs_6s",  # a real demucs output directory
+        stems_dir / ".cache",  # dot-prefixed, but not ours
+        stems_dir / "sections-work-no-dot",  # close, but missing the leading dot
+    ]
+    for path in survivors:
+        path.mkdir()
+        (path / "keep.wav").write_bytes(b"x")
+
+    assert sweep_orphaned_workspaces(jobs_dir) == 0
+    for path in survivors:
+        assert (path / "keep.wav").is_file(), f"{path.name} was deleted"
+
+
+def test_sweep_survives_a_library_it_cannot_read(tmp_path: Path):
+    """Tidying up must never be the thing that breaks startup."""
+    assert sweep_orphaned_workspaces(tmp_path / "does-not-exist") == 0
