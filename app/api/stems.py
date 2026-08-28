@@ -146,16 +146,35 @@ def _mixdown_cache_key(
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _prune_mixdown_cache(cache_dir: Path) -> None:
+def _prune_mixdown_cache(cache_dir: Path, keep: Path | None = None) -> None:
     """Evict oldest-first once either the file-count or total-size budget is
     exceeded. Best-effort: a failed prune just means the cache grows past
-    budget until the next successful render, not a broken export."""
+    budget until the next successful render, not a broken export.
+
+    `keep` is never evicted, and exists because a render is added to the cache
+    and then pruned before it is served. A single render larger than the whole
+    budget put the directory over on its own, so the loop deleted it, newest
+    and only entry though it was, and the caller handed a path that no longer
+    existed to FileResponse. A 60-minute WAV crosses the 500 MB budget at about
+    49.5 minutes, well inside the 60 StemDeck accepts (#482).
+
+    Its size still counts toward the total, so an oversized entry evicts
+    everything else and then stops, leaving the cache one file over budget
+    until the next render clears it. That is the intended trade: a rendered
+    file the user is waiting on outranks the budget.
+    """
     try:
         entries = sorted(
-            (p for p in cache_dir.iterdir() if p.is_file() and not p.name.startswith(".")),
+            (
+                p
+                for p in cache_dir.iterdir()
+                if p.is_file() and not p.name.startswith(".") and p != keep
+            ),
             key=lambda p: p.stat().st_mtime,
         )
         total = sum(p.stat().st_size for p in entries)
+        if keep is not None and keep.is_file():
+            total += keep.stat().st_size
     except OSError:
         return
     while entries and (len(entries) > _MIXDOWN_CACHE_MAX_FILES or total > _MIXDOWN_CACHE_MAX_BYTES):
@@ -498,7 +517,8 @@ async def _render_to_file(
 
     if cache_path is not None:
         os.replace(tmp_path, cache_path)
-        _prune_mixdown_cache(cache_path.parent)
+        # Exempt from its own prune: this is the file about to be served.
+        _prune_mixdown_cache(cache_path.parent, keep=cache_path)
         return cache_path
     return tmp_path
 

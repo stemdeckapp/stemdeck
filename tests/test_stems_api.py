@@ -973,3 +973,51 @@ def test_cached_render_survives_its_response(client, tmp_path):
     (cached,) = (tmp_path / "cache" / "mixdown").glob("*.wav")
     assert cached.is_file(), "the cache entry was deleted with the response"
     assert client.get(url).content == cached.read_bytes()
+
+
+def test_prune_never_evicts_the_render_it_is_about_to_serve(tmp_path, monkeypatch):
+    """A render bigger than the whole budget used to delete itself (#482).
+
+    _render_to_file moves a finished render into the cache and prunes before
+    returning the path the response is built from. Eviction is oldest-first,
+    but a single entry over budget puts the directory over on its own, so the
+    loop removed it even as the newest and only file, and FileResponse was
+    handed a path that no longer existed. WAV crosses the 500 MB budget at
+    about 49.5 minutes; StemDeck accepts 60.
+    """
+    from app.api import stems as stems_mod
+
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 100)
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 25)
+    cache_dir = tmp_path / "mixdown"
+    cache_dir.mkdir()
+    fresh = cache_dir / "fresh.wav"
+    fresh.write_bytes(b"x" * 400)  # one render, far over the whole budget
+    os.utime(fresh, (99, 99))  # newest
+
+    stems_mod._prune_mixdown_cache(cache_dir, keep=fresh)
+
+    assert fresh.is_file(), "the file about to be served was evicted"
+
+
+def test_prune_still_evicts_older_entries_around_a_kept_render(tmp_path, monkeypatch):
+    """Exempting the served render must not turn the prune into a no-op."""
+    from app.api import stems as stems_mod
+
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_FILES", 100)
+    monkeypatch.setattr(stems_mod, "_MIXDOWN_CACHE_MAX_BYTES", 25)
+    cache_dir = tmp_path / "mixdown"
+    cache_dir.mkdir()
+    for i in range(4):
+        p = cache_dir / f"old{i}.wav"
+        p.write_bytes(b"x" * 10)
+        os.utime(p, (i, i))
+    fresh = cache_dir / "fresh.wav"
+    fresh.write_bytes(b"x" * 10)
+    os.utime(fresh, (99, 99))
+
+    stems_mod._prune_mixdown_cache(cache_dir, keep=fresh)
+
+    remaining = {p.name for p in cache_dir.iterdir()}
+    assert "fresh.wav" in remaining
+    assert len(remaining) < 5, "nothing was evicted"
