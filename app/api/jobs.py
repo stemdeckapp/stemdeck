@@ -453,8 +453,18 @@ class SectionItem(BaseModel):
         return round(v, 3)
 
 
+# Upper bound on a section list. normalize_sections and the timeline editor
+# both refuse a section shorter than 0.5 s, so the longest track StemDeck
+# accepts (3600 s) cannot legitimately carry more than 7200 of them; 10000
+# leaves headroom while refusing a payload sent to stall the event loop.
+# Without a bound here a 33 MB body held every other request for ~4 seconds,
+# and needed no valid job to do it: the body is parsed before the handler runs
+# and answers 404 (#481).
+_MAX_SECTIONS = 10000
+
+
 class SectionsBody(BaseModel):
-    sections: list[SectionItem]
+    sections: list[SectionItem] = Field(max_length=_MAX_SECTIONS)
 
 
 @router.patch("/{job_id}/sections")

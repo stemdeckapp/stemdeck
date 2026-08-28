@@ -838,6 +838,33 @@ _CSP = (
 # restarts -- updated HTML loads against stale modules and the form
 # silently breaks. `must-revalidate` keeps 304s working (cheap) while
 # guaranteeing the latest mtime is honored.
+# The timeline editors post JSON that is bounded by its model, but a model
+# bounds only what is *stored*. FastAPI reads and parses a request body before
+# the handler runs, so an oversized payload holds the event loop no matter what
+# the model says: 32 MB of sections stalled every other request, including a
+# running job's progress stream, for five seconds, and needed no valid job to
+# do it (#481). Content-Length is checked here because middleware is the last
+# point that runs before the body is touched. Same shape as the upload
+# pre-check in app/api/jobs.py.
+#
+# The ceiling is far above either editor's reach: 10000 sections with the
+# longest name each is about 1.6 MB, and 20000 beats about 0.4 MB. Uploads are
+# unaffected -- they are a different path with their own 400 MB limit.
+_EDITOR_BODY_LIMIT = 4 * 1024 * 1024
+_EDITOR_PATH_SUFFIXES = ("/sections", "/beats")
+
+
+@app.middleware("http")
+async def limit_editor_body_size(request: Request, call_next):
+    if request.method in ("PATCH", "POST", "PUT") and request.url.path.endswith(
+        _EDITOR_PATH_SUFFIXES
+    ):
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > _EDITOR_BODY_LIMIT:
+            return JSONResponse({"detail": "request body too large"}, status_code=413)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def security_and_cache_headers(request: Request, call_next):
     response = await call_next(request)
