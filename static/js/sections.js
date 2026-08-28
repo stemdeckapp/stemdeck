@@ -22,7 +22,6 @@ const SECTION_KINDS = new Set([
 let _trackId = null;
 let _duration = 0;
 let _sections = [];
-let _sectionsSource = null;
 let _container = null;
 let _saveTimer = null;
 let _saveChain = Promise.resolve();
@@ -31,13 +30,14 @@ onLanguageChange(() => _render());
 
 // ─── Public API ───────────────────────────────────────────
 
-export function initSections(trackId, sections, duration, sectionsSource = null) {
+export function initSections(trackId, sections, duration) {
   _trackId = trackId;
   _duration = Math.max(1, duration || 0);
   _sections = (sections || []).map((s) => ({ ...s }));
-  _sectionsSource = sectionsSource;
+  // Clear lives in the header rather than the ribbon, so it has to be correct
+  // even when the ribbon is absent and the render below never runs.
+  _refreshClearVisibility();
   _container = document.getElementById("daw-sections");
-  _updateSuggestedBadge();
   if (!_container) return;
 
   // Wire the static "Add" button in the label area (may already be wired)
@@ -46,6 +46,7 @@ export function initSections(trackId, sections, duration, sectionsSource = null)
     addBtn.dataset.sectionsWired = "1";
     addBtn.addEventListener("click", () => _addSection());
   }
+  _wireClearButton();
 
   _render();
 }
@@ -63,16 +64,18 @@ export function destroySections() {
   _hideSaveIndicator();
   _trackId = null;
   _sections = [];
-  _sectionsSource = null;
   _duration = 0;
   if (_container) _container.innerHTML = "";
   _container = null;
-  _updateSuggestedBadge();
+  _refreshClearVisibility();
 }
 
 // ─── Rendering ────────────────────────────────────────────
 
 function _render() {
+  // Before the container guard: the button lives in the header, not the
+  // ribbon, so its state must stay correct even when the ribbon is absent.
+  _refreshClearVisibility();
   if (!_container) return;
   _container.innerHTML = "";
 
@@ -133,11 +136,6 @@ export function sectionDisplayName(section, all) {
   const position = peers.findIndex((s) => s.id === section.id);
   if (position < 0) return name;
   return t("sections.kindNumbered", { kind: name, n: position + 1 });
-}
-
-function _updateSuggestedBadge() {
-  const badge = document.getElementById("sectionsSuggested");
-  if (badge) badge.classList.toggle("hidden", _sectionsSource !== "automatic" || !_sections.length);
 }
 
 function _esc(str) {
@@ -340,6 +338,57 @@ function _addSection() {
   if (el) _openRename(section.id, el.querySelector(".section-label"));
 }
 
+// Removing every marker at once cannot be undone, and an automatic set costs
+// a whole re-import to regenerate, so the first click only arms the button.
+// The app has no modal-confirm idiom, so this is the lightest guard that still
+// makes a mis-click harmless.
+const CLEAR_ARM_MS = 4000;
+let _clearArmTimer = null;
+
+function _disarmClear() {
+  clearTimeout(_clearArmTimer);
+  _clearArmTimer = null;
+  const btn = document.getElementById("sectionsClearBtn");
+  if (!btn) return;
+  delete btn.dataset.armed;
+  const label = btn.querySelector(".sections-clear-label");
+  if (label) label.textContent = t("sections.clear");
+}
+
+function _wireClearButton() {
+  const btn = document.getElementById("sectionsClearBtn");
+  if (!btn || btn.dataset.sectionsWired) return;
+  btn.dataset.sectionsWired = "1";
+  btn.addEventListener("click", () => {
+    if (btn.dataset.armed === "1") {
+      _disarmClear();
+      clearAllSections();
+      return;
+    }
+    btn.dataset.armed = "1";
+    const label = btn.querySelector(".sections-clear-label");
+    if (label) label.textContent = t("sections.clearConfirm");
+    clearTimeout(_clearArmTimer);
+    _clearArmTimer = setTimeout(_disarmClear, CLEAR_ARM_MS);
+  });
+}
+
+function _refreshClearVisibility() {
+  const btn = document.getElementById("sectionsClearBtn");
+  if (!btn) return;
+  btn.classList.toggle("hidden", _sections.length === 0);
+  if (_sections.length === 0) _disarmClear();
+}
+
+export function clearAllSections() {
+  if (!_sections.length) return;
+  _sections = [];
+  // The set is now the user's own empty one, not a model suggestion, so the
+  // experimental badge must go with it.
+  _render();
+  _scheduleSave();
+}
+
 function _deleteSection(id) {
   _sections = _sections.filter((s) => s.id !== id);
   _render();
@@ -450,8 +499,6 @@ async function _sendSave(id, body) {
       return;
     }
     if (id === _trackId) {
-      _sectionsSource = "manual";
-      _updateSuggestedBadge();
       if (body === JSON.stringify({ sections: _sections }) && _saveTimer === null) _showSaved();
     }
   } catch (e) {

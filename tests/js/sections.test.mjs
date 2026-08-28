@@ -4,6 +4,7 @@ import {
   flushSectionsSave,
   initSections,
   sectionDisplayName,
+  clearAllSections,
 } from "../../static/js/sections.js";
 
 let pass = 0;
@@ -19,7 +20,6 @@ const check = (name, condition) => {
 };
 
 const sectionKeys = [
-  "sections.suggested",
   "sections.kind.intro",
   "sections.kind.outro",
   "sections.kind.break",
@@ -36,11 +36,6 @@ for (const { code } of LANGUAGES) {
   const table = code === "pt-PT" ? TRANSLATIONS.pt : TRANSLATIONS[code];
   check(`${code} has every automatic-section label`, sectionKeys.every((key) => table[key]));
 }
-check(
-  "English automatic-section badge explains that adjustment is experimental",
-  TRANSLATIONS.en["sections.suggested"] === "Experimental - drag to adjust.",
-);
-
 check(
   "canonical kinds use translated display labels",
   sectionDisplayName({ kind: "chorus", name: "model-label" }) === "Chorus",
@@ -83,17 +78,20 @@ check(
   }),
 );
 
-const badge = {
+const clearBtn = {
   hidden: true,
+  dataset: {},
   classList: {
     toggle(_name, force) {
-      badge.hidden = force;
+      clearBtn.hidden = force;
     },
   },
+  querySelector: () => null,
+  addEventListener: () => {},
 };
 globalThis.document = {
   getElementById(id) {
-    return id === "sectionsSuggested" ? badge : null;
+    return id === "sectionsClearBtn" ? clearBtn : null;
   },
 };
 
@@ -101,11 +99,10 @@ initSections(
   "abcdefabcdef",
   [{ id: "auto-001", kind: "verse", name: "Verse", start: 0, end: 10, color: "#fff" }],
   10,
-  "automatic",
 );
-check("automatic sections show the experimental adjustment badge", badge.hidden === false);
+check("Clear appears once there is something to clear", clearBtn.hidden === false);
 destroySections();
-check("destroying sections hides the experimental adjustment badge", badge.hidden === true);
+check("Clear disappears with the last section", clearBtn.hidden === true);
 
 const requests = [];
 const complete = [];
@@ -118,7 +115,6 @@ initSections(
   "abcdefabcdef",
   [{ id: "auto-001", kind: "intro", name: "Intro", start: 0, end: 10, color: "#fff" }],
   20,
-  "automatic",
 );
 const firstSave = flushSectionsSave();
 await Promise.resolve();
@@ -126,7 +122,6 @@ initSections(
   "abcdefabcdef",
   [{ id: "auto-002", kind: "verse", name: "Verse", start: 10, end: 20, color: "#fff" }],
   20,
-  "automatic",
 );
 const secondSave = flushSectionsSave();
 await Promise.resolve();
@@ -139,6 +134,39 @@ check("the first queued snapshot is preserved", requests[0].sections[0].id === "
 check("the second queued snapshot is preserved", requests[1].sections[0].id === "auto-002");
 complete[1]({ ok: true });
 await secondSave;
+destroySections();
+
+// Clearing every marker at once, and the Clear button retiring with them.
+requests.length = 0;
+complete.length = 0;
+initSections(
+  "abcdefabcdef",
+  [
+    { id: "auto-001", kind: "intro", name: "Intro", start: 0, end: 10, color: "#fff" },
+    { id: "auto-002", kind: "verse", name: "Verse", start: 10, end: 20, color: "#fff" },
+  ],
+  20,
+);
+check("Clear is offered while sections exist", clearBtn.hidden === false);
+clearAllSections();
+const clearSave = flushSectionsSave();
+await Promise.resolve();
+check(
+  "clearing saves an empty section list",
+  requests.length === 1 && requests[0].sections.length === 0,
+);
+check("Clear hides itself once the list is empty", clearBtn.hidden === true);
+complete[0]({ ok: true });
+await clearSave;
+
+// Clearing an already-empty list is a no-op: no second save is scheduled and
+// Clear stays hidden. (flushSectionsSave always queues a write, so this
+// asserts the state rather than the request count.)
+requests.length = 0;
+complete.length = 0;
+clearAllSections();
+check("clearing an already-empty list schedules nothing", requests.length === 0);
+check("Clear stays hidden after a redundant clear", clearBtn.hidden === true);
 destroySections();
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -234,10 +234,34 @@ input, textarea { font-family: inherit; }
   opacity: 0.85;
 }
 .stem-choice[aria-pressed="false"] .stem-dot { opacity: 0.4; }
-/* Automatic song-structure detection. Not a stem and not the primary action,
-   so it takes the section timeline's blue rather than the amber the Split
-   button owns -- two amber chips side by side read as two competing CTAs. */
-.structure-toggle { --color: #4a7fff; margin-left: 10px; }
+/* Automatic song-structure detection. It sits at the end of the composer next
+   to Split stems and matches its footprint, so the pair reads as two segments
+   of one bar rather than a chip loose beside a button. Colour still separates
+   them: the timeline blue, never the amber the primary action owns. */
+.structure-toggle {
+  --color: #4a7fff;
+  min-width: var(--composer-action-w);
+  height: auto;
+  align-self: stretch;
+  margin-left: 0;
+  justify-content: center;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid var(--border-strong);
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.15;
+}
+.structure-toggle-main { display: inline-flex; align-items: center; gap: 6px; }
+/* Says what the feature is, quietly and where the choice is actually made,
+   rather than as a badge on the results after the fact. */
+.structure-toggle-note {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
 
 /* "All" toggle */
 .stem-choice-all {
@@ -281,6 +305,11 @@ input, textarea { font-family: inherit; }
 /* Process button */
 .daw-process-btn {
   height: auto;
+  /* Shared with .structure-toggle so the two end segments are the same width.
+     A min rather than a fixed width, because a longer translation must be
+     allowed to grow instead of being clipped. */
+  min-width: var(--composer-action-w);
+  justify-content: center;
   padding: 0 20px;
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
   border: none;
@@ -1458,18 +1487,9 @@ input, textarea { font-family: inherit; }
 .daw-label-sub { font-size: 9px; }
 .daw-sections-header { justify-content: space-between; }
 .daw-sections-title-group { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-.sections-suggested-badge {
-  padding: 2px 5px;
-  border: 1px solid rgba(74,127,255,0.4);
-  border-radius: 4px;
-  color: #7fa2ff;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.sections-suggested-badge.hidden { display: none; }
+/* Clear and Add belong together. The header is space-between, so without this
+   group each control drifts to its own corner and Clear ends up marooned. */
+.sections-header-actions { display: inline-flex; align-items: center; gap: 6px; }
 .daw-sections-area {
   flex: 1;
   position: relative;
@@ -1602,6 +1622,14 @@ input, textarea { font-family: inherit; }
   background: var(--panel-2);
   color: var(--fg);
   border-color: rgba(255,255,255,0.18);
+}
+
+/* Clear-all sections. Neutral until it is armed, then it states plainly that
+   the next click destroys something, because nothing here can be undone. */
+.sections-clear-btn[data-armed="1"] {
+  border-color: color-mix(in srgb, var(--vocals) 55%, transparent);
+  background: color-mix(in srgb, var(--vocals) 14%, transparent);
+  color: var(--vocals);
 }
 
 /* Wave label (left column in wave header — Mixer label) */

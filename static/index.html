@@ -107,7 +107,10 @@
                the setting once per job, so a change applies to the next import
                without a restart. -->
           <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental Song Structure Extraction" aria-label="Experimental Song Structure Extraction" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleTitle">
-            <span class="stem-dot"></span><span data-i18n="structure.toggle">Song structure</span>
+            <span class="structure-toggle-main">
+              <span class="stem-dot"></span><span data-i18n="structure.toggle">Song structure</span>
+            </span>
+            <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
           </button>
 
           <!-- Process button -->
@@ -357,13 +360,22 @@
             <div class="daw-mixer-label daw-sections-header">
               <span class="daw-sections-title-group">
                 <span class="daw-label-title" data-i18n="sections.title">Sections</span>
-                <span class="sections-suggested-badge hidden" id="sectionsSuggested" data-i18n="sections.suggested">Experimental - drag to adjust.</span>
               </span>
-              <span class="sections-save-indicator hidden" id="sectionsSaveIndicator" aria-live="polite" aria-label="Saving sections" data-i18n-aria-label="sections.savingAria"></span>
-              <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-title="sections.addAria" data-i18n-aria-label="sections.addAria">
-                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                <span data-i18n="sections.add">Add</span>
-              </button>
+              <span class="sections-header-actions">
+                <span class="sections-save-indicator hidden" id="sectionsSaveIndicator" aria-live="polite" aria-label="Saving sections" data-i18n-aria-label="sections.savingAria"></span>
+                <!-- Clearing every marker at once is not undoable and an
+                     automatic set costs a whole re-import to regenerate, so the
+                     button arms on the first click and only clears on the
+                     second. Hidden entirely while there is nothing to clear. -->
+                <button class="sections-add-btn-label sections-clear-btn hidden" id="sectionsClearBtn" type="button" title="Clear all sections" aria-label="Clear all sections" data-i18n-title="sections.clearAria" data-i18n-aria-label="sections.clearAria">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+                  <span class="sections-clear-label" data-i18n="sections.clear">Clear</span>
+                </button>
+                <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-title="sections.addAria" data-i18n-aria-label="sections.addAria">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  <span data-i18n="sections.add">Add</span>
+                </button>
+              </span>
             </div>
             <div class="daw-sections-area" id="daw-sections"></div>
           </div>

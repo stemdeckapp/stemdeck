@@ -655,7 +655,7 @@ async function loadTrackIntoStudio(trackId) {
 
   applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
-  initSections(trackId, track.sections, track.duration || 0, track.sectionsSource);
+  initSections(trackId, track.sections, track.duration || 0);
 }
 
 export function setCurrentTrack(trackId) {

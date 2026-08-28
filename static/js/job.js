@@ -334,12 +334,7 @@ async function finishDoneJob(state) {
     null,
     finalState.has_video ?? false,
   );
-  initSections(
-    finalState.job_id,
-    finalState.sections,
-    finalState.duration || 0,
-    finalState.sections_source,
-  );
+  initSections(finalState.job_id, finalState.sections, finalState.duration || 0);
 }
 
 function applyState(state) {
