@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import jobs as jobs_api
 from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
 from app.core.models import Job
 from app.core.registry import _jobs
@@ -356,7 +355,9 @@ def test_sections_rejects_a_list_long_enough_to_stall_the_server(client, done_jo
     """The body is parsed before the handler runs, so an unbounded list holds
     the event loop and every other request with it (#481). A 33 MB body stalled
     an idle server's health check from 31 ms to 3.8 seconds."""
-    payload = {"sections": [_section(i) for i in range(jobs_api._MAX_SECTIONS + 1)]}
+    import app.api.jobs as jobs_mod
+
+    payload = {"sections": [_section(i) for i in range(jobs_mod._MAX_SECTIONS + 1)]}
 
     r = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
 
@@ -367,7 +368,9 @@ def test_sections_rejects_a_list_long_enough_to_stall_the_server(client, done_jo
 def test_sections_cap_clears_the_longest_legitimate_track(client, done_job):
     """0.5 s is the shortest section either the editor or normalize_sections
     allows, so a 3600 s track tops out at 7200. The cap must not reject that."""
-    assert jobs_api._MAX_SECTIONS >= 3600 / 0.5
+    import app.api.jobs as jobs_mod
+
+    assert jobs_mod._MAX_SECTIONS >= 3600 / 0.5
 
     payload = {"sections": [_section(i) for i in range(7200)]}
 
@@ -406,11 +409,12 @@ def test_oversized_editor_body_is_refused_before_it_is_parsed(client, done_job):
 def test_the_body_ceiling_clears_the_largest_legitimate_editor_payload(client, done_job):
     """The ceiling must never be reachable by a real track. 10000 sections at
     the longest permitted name is about 1.6 MB against a 4 MB ceiling."""
+    import app.api.jobs as jobs_mod
     from app.main import _EDITOR_BODY_LIMIT
 
     payload = {
         "sections": [
-            dict(_section(i), id=f"sec{i}", name="V" * 64) for i in range(jobs_api._MAX_SECTIONS)
+            dict(_section(i), id=f"sec{i}", name="V" * 64) for i in range(jobs_mod._MAX_SECTIONS)
         ]
     }
     raw = json.dumps(payload, separators=(",", ":")).encode()
