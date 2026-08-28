@@ -499,10 +499,10 @@ def test_sections_write_failure_does_not_mutate_live_job(client, done_job, monke
 
 
 def test_atomic_section_metadata_write_leaves_no_temporary_file(tmp_path):
-    from app.api.jobs import _write_json_atomic
+    import app.api.jobs as jobs_mod
 
     path = tmp_path / "metadata.json"
-    _write_json_atomic(path, {"sections_source": "manual"})
+    jobs_mod._write_json_atomic(path, {"sections_source": "manual"})
 
     assert json.loads(path.read_text(encoding="utf-8"))["sections_source"] == "manual"
     assert not list(tmp_path.glob(".metadata.json.*.tmp"))
