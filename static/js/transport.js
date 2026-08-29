@@ -554,27 +554,6 @@ function wireLaneScrollSync() {
   link(waveScroll, mixer);
 }
 
-// The track panel at the bottom of the library sidebar reads as one band with
-// the footer beside it, so the two have to be exactly as tall as each other.
-// The footer's height is not a constant -- the click track's options appear
-// only once a beat grid exists, and the metronome note under the timeline wraps
-// -- so it is measured and published as a custom property rather than
-// duplicated as a number in the stylesheet.
-function syncTrackPanelHeight() {
-  const footer = document.querySelector(".daw-footer");
-  const app = document.querySelector(".app");
-  if (!footer || !app) return;
-  const h = Math.round(footer.getBoundingClientRect().height);
-  if (h > 0) app.style.setProperty("--daw-footer-h", `${h}px`);
-}
-
-function wireTrackPanelHeight() {
-  const footer = document.querySelector(".daw-footer");
-  if (!footer) return;
-  new ResizeObserver(syncTrackPanelHeight).observe(footer);
-  syncTrackPanelHeight();
-}
-
 // ─── Wire transport buttons ───
 
 export function wireTransportButtons() {
@@ -584,7 +563,6 @@ export function wireTransportButtons() {
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
   wireLoopInputs();
-  wireTrackPanelHeight();
   wireZoomButtons();
   wireLaneScrollSync();
   masterFader?.addEventListener("input", () => {

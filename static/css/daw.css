@@ -537,10 +537,7 @@ input, textarea { font-family: inherit; }
 /* Sidebar body */
 .sidebar-body {
   flex: 1;
-  /* No bottom padding: .track-panel is the last child and has to reach the
-     window's bottom edge, so its band lines up with the footer's. The panel
-     carries its own bottom padding instead. */
-  padding: 12px 12px 0;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2205,48 +2202,22 @@ input, textarea { font-family: inherit; }
   display: flex; flex-direction: column;
 }
 
-/* ── Track identity: the bottom panel of the library sidebar ── */
-/* Pinned below .daw-lib-list rather than inside it, so the loaded track stays
-   put while the folders and the Tags section scroll. flex: none keeps it at its
-   natural height and lets the list take the rest.
-
-   No overflow clipping: the export menu is absolutely positioned in here and
-   opens upward past this panel's top edge. The title clamps itself and the meta
-   line has its own overflow rule, so nothing here needs clipping. */
-.track-panel {
-  flex: none;
-  box-sizing: border-box;
-  /* Exactly as tall as the footer beside it, measured live by
-     syncTrackPanelHeight (transport.js) because the footer grows when the
-     click cluster wraps. The fallback matches .daw-footer's min-height, so the
-     panel is the right size on the first paint too. Content is centred rather
-     than top-aligned: the block is shorter than the band and centring splits
-     the leftover instead of leaving it all underneath. */
-  height: var(--daw-footer-h, 200px);
-  padding: 12px 2px;
-  border-top: 1px solid var(--border);
-  display: flex; flex-direction: column; justify-content: center; gap: 8px;
-  min-width: 0;
-}
+/* ── Track identity, in the footer's timeline gutter ── */
 .track-panel-head {
   display: flex; align-items: flex-start; gap: 10px; min-width: 0;
 }
-.track-panel-actions {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 2px;
-}
-/* Boxed like the Export button beside it: both are actions on the track, and
-   a bare icon next to a filled button reads as decoration. */
-.track-panel-actions .daw-fav-btn {
-  width: 32px; height: 32px; padding: 0;
+/* Favourite belongs with what it marks, so it rides the title line rather than
+   sitting with Export Mix. Boxed, because a bare icon beside the cover art
+   reads as decoration. */
+.track-panel-head .daw-fav-btn {
+  flex: none; margin-left: auto;
+  width: 28px; height: 28px; padding: 0;
   justify-content: center;
   background: var(--panel-2); border: 1px solid var(--border-strong);
   border-radius: 8px;
   transition: background var(--t-fast), color var(--t-fast);
 }
-.track-panel-actions .daw-fav-btn:hover { background: var(--panel-3); }
-.track-panel-actions .track-chip { height: 32px; }
-
+.track-panel-head .daw-fav-btn:hover { background: var(--panel-3); }
 /* Hairline cluster separator: fades out at both ends so it reads as a seam
    between groups rather than a hard rule across the footer. Every one of these
    separates something now that .footer-row-controls never wraps -- the
@@ -2271,10 +2242,30 @@ input, textarea { font-family: inherit; }
    the window is too narrow the row scrolls sideways rather than reflowing. */
 .footer-row-controls {
   display: flex; align-items: flex-start; flex-wrap: nowrap;
-  overflow-x: auto;
-  gap: 10px 16px;
+  gap: 16px;
   padding: 12px 18px 14px;
 }
+/* The clusters, and only the clusters, scroll. Favourite and Export Mix sit
+   outside this box so a window too narrow for the row cannot carry them off
+   the right-hand edge. */
+.footer-clusters {
+  flex: 1; min-width: 0;
+  display: flex; align-items: flex-start; flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 16px;
+}
+/* Acts on the track, not on playback, so it is pinned opposite the clusters
+   rather than filed among them. Nudged down to sit on the controls' own line
+   instead of the labels above them. */
+.footer-track-actions {
+  flex: none;
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 18px;
+}
+.footer-track-actions .track-chip { height: 32px; }
+/* Opens toward the middle of the window: anchored left, a 260px menu on the
+   footer's right edge would hang off it. */
+.footer-track-actions .track-chip-panel { left: auto; right: 0; }
 /* Natural width, never squeezed: a cluster that shrinks re-wraps its own
    controls, which is the pile-up the row-level nowrap exists to prevent. */
 .footer-group {
@@ -2312,18 +2303,15 @@ input, textarea { font-family: inherit; }
   padding: 0 18px 14px 0; flex-shrink: 0;
 }
 /* Exactly the mixer column's width: that offset is what puts the timeline
-   beside it on the lanes' x. */
-.footer-export-slot {
+   beside it on the lanes' x, so the alignment and the block that fills the
+   gutter are one fact rather than two numbers that have to agree. */
+.footer-track-slot {
   width: var(--daw-col-w); flex: none;
   box-sizing: border-box;
-  padding: 0 18px;
-  /* Centred in the gutter rather than pinned to its left edge: it is the only
-     thing in this column, so aligning it under Transport left a lopsided gap
-     on the other side. */
-  display: flex; align-items: center; justify-content: center;
-  /* The export menu is absolutely positioned in here and opens upward past
-     this slot's top edge, so nothing on this path may clip. */
+  padding: 0 18px 0 18px;
+  display: flex; flex-direction: column; justify-content: center; gap: 5px;
   min-width: 0;
+  overflow: hidden;
 }
 .footer-wave-col {
   flex: 1; min-width: 0;
@@ -2396,9 +2384,9 @@ input, textarea { font-family: inherit; }
   border-radius: 7px;
   flex-shrink: 0;
 }
-/* Wraps freely here -- the column is narrow and the whole block is stacked,
-   so the meta reads as a short paragraph rather than a clipped line. */
-.track-panel .daw-track-meta-line { row-gap: 3px; line-height: 1.45; }
+/* Wraps freely here -- the gutter is narrow and the block is stacked, so the
+   meta reads as a short paragraph rather than a clipped line. */
+.footer-track-slot .daw-track-meta-line { row-gap: 2px; line-height: 1.35; }
 .footer-art {
   width: 44px; height: 44px; border-radius: 6px;
   background: var(--panel-3); flex-shrink: 0; overflow: hidden;
