@@ -40,6 +40,20 @@ async function zoomState(page) {
   });
 }
 
+// The loop bounds as the app holds them, not as they are drawn: the region is
+// positioned in percentages, so reading the element back would only prove the
+// percentages agree with themselves.
+const loopBounds = (page) =>
+  page.evaluate(() => {
+    const el = document.getElementById("loop-region");
+    const parent = el.parentElement.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    return {
+      start: +((box.left - parent.left) / parent.width).toFixed(4),
+      end: +((box.right - parent.left) / parent.width).toFixed(4),
+    };
+  });
+
 // Deliberately wide: the bar-count maths only has room to prove itself when the
 // panel can hold a few hundred bars.
 test.use({ viewport: { width: 1600, height: 900 } });
@@ -116,7 +130,7 @@ test.describe("waveform zoom", () => {
     expect(Math.abs(nowUnderPointer - timeUnderPointer)).toBeLessThan(0.005);
   });
 
-  test("the loop tools are inert while zoomed and come back at 1x", async ({ page }) => {
+  test("a loop survives zooming in and out untouched", async ({ page }) => {
     await openStudio(page, { tauri: true });
 
     // The ruler, not the lane body: the fixture keeps its loading overlay over
@@ -134,25 +148,57 @@ test.describe("waveform zoom", () => {
     await dragRuler(0.2, 0.6);
     await expect(page.locator("#t-loop")).toHaveClass(/active/);
     const armed = await page.locator("#loop-region").getAttribute("style");
+    const bounds = await loopBounds(page);
+    expect(bounds.end).toBeGreaterThan(bounds.start);
 
-    await wheel(page, -300);
-    const zoomed = await zoomState(page);
-    expect(zoomed.loopDisabled).toBe(true);
-    expect(zoomed.loopStartDisabled).toBe(true);
-    await expect(page.locator("#t-loop")).not.toHaveClass(/active/);
-    await expect(page.locator("#loop-region")).toHaveClass(/hidden/);
-
-    // A drag while zoomed must not define a new region.
-    await dragRuler(0.05, 0.35);
-    await expect(page.locator("#loop-region")).toHaveClass(/hidden/);
-
-    // Back at 1x the original loop returns, unchanged.
-    for (let i = 0; i < 30; i++) await wheel(page, 300);
-    const back = await zoomState(page);
-    expect(back.content).toBe(back.viewport);
-    expect(back.loopDisabled).toBe(false);
+    // Zoom is a view change, not an edit. Nothing about the loop may move.
+    for (let i = 0; i < 12; i++) await wheel(page, -240);
     await expect(page.locator("#t-loop")).toHaveClass(/active/);
+    await expect(page.locator("#loop-region")).not.toHaveClass(/hidden/);
+    expect(await loopBounds(page)).toEqual(bounds);
+    expect((await zoomState(page)).loopDisabled).toBe(false);
+
+    for (let i = 0; i < 30; i++) await wheel(page, 240);
+    expect(await loopBounds(page)).toEqual(bounds);
+    // Same percentages, so the region lands back on exactly the same span.
     expect(await page.locator("#loop-region").getAttribute("style")).toBe(armed);
+    await expect(page.locator("#t-loop")).toHaveClass(/active/);
+  });
+
+  test("a loop can be marked while zoomed in", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    for (let i = 0; i < 12; i++) await wheel(page, -240);
+    const zoomed = await zoomState(page);
+    expect(zoomed.content).toBeGreaterThan(zoomed.viewport);
+    expect(zoomed.loopDisabled).toBe(false);
+    expect(zoomed.loopStartDisabled).toBe(false);
+
+    // Drag across the visible slice. The ruler is translated by scrollLeft, so
+    // its box is the whole zoomed timeline and a drag inside the viewport marks
+    // the times actually under the pointer -- which is the thing that has to
+    // hold once loops can be made at any zoom.
+    const ruler = await page.locator("#ruler-time").boundingBox();
+    const view = await page.locator(".wave-scroll").boundingBox();
+    const y = view.y + 10;
+    const fromX = view.x + view.width * 0.3;
+    const toX = view.x + view.width * 0.7;
+    await page.mouse.move(fromX, y);
+    await page.mouse.down();
+    await page.mouse.move(toX, y, { steps: 10 });
+    await page.mouse.up();
+
+    await expect(page.locator("#t-loop")).toHaveClass(/active/);
+    const bounds = await loopBounds(page);
+
+    // Where the pointer actually was, as a fraction of the whole timeline,
+    // taken from the ruler's own box: it is translated by scrollLeft, so its
+    // left edge is off screen and this is the only honest reference.
+    const expectStart = (fromX - ruler.x) / ruler.width;
+    const expectEnd = (toX - ruler.x) / ruler.width;
+    expect(bounds.start).toBeCloseTo(expectStart, 2);
+    expect(bounds.end).toBeCloseTo(expectEnd, 2);
+    // A drag across part of a zoomed view marks a slice, not the whole track.
+    expect(bounds.end - bounds.start).toBeLessThan(0.2);
   });
 
   test("the ruler gets finer as you zoom, and the footer strip does not", async ({ page }) => {

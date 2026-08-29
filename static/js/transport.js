@@ -241,7 +241,7 @@ export function updateLoopRegionVisual() {
 // programmatic change (drag, toggle). Never overwrite a field the user is
 // actively editing, and disable both when no track is loaded.
 function syncLoopInputs() {
-  const enabled = totalDuration > 0 && loopToolsAvailable();
+  const enabled = totalDuration > 0;
   for (const [input, value] of [
     [loopStartInput, loopStart],
     [loopEndInput, loopEnd],
@@ -422,7 +422,6 @@ export function stopTransport() {
 }
 
 export function toggleLoop() {
-  if (!loopToolsAvailable()) return;
   setLoopEnabled(!loopEnabled);
   loopBtn.classList.toggle("active", loopEnabled);
   updateLoopRegionVisual();
@@ -439,9 +438,6 @@ function wireLoopDrag() {
 
   const startDrag = (e, surface) => {
     if (e.button !== 0 || e.target.closest(".loop-region")) return;
-    // Zoomed in, a drag would define a region whose ends are off screen and
-    // whose overlay is positioned against a timeline the user cannot see.
-    if (!loopToolsAvailable()) return;
     const t = timeFromClientX(e.clientX);
     if (t === null) return;
     dragging = true;
@@ -557,45 +553,6 @@ export function applyWaveZoom() {
   }
 }
 
-// The loop tools belong to the whole-track view. Zoomed in, a drag selects a
-// region the user cannot see the ends of, and the region overlay is positioned
-// as a percentage of a timeline that is now mostly off screen. So they are
-// available at 1x and inert everywhere else.
-//
-// The bounds themselves are never discarded. Zooming out restores the loop
-// exactly as it was, including whether it was running.
-let _loopArmedBeforeZoom = false;
-
-export function loopToolsAvailable() {
-  return waveZoom === WAVE_ZOOM_MIN;
-}
-
-function syncLoopAvailability() {
-  const available = loopToolsAvailable();
-  if (!available && loopEnabled) {
-    _loopArmedBeforeZoom = true;
-    setLoopEnabled(false);
-    loopBtn.classList.remove("active");
-    updateLoopRegionVisual();
-  } else if (available && _loopArmedBeforeZoom) {
-    _loopArmedBeforeZoom = false;
-    setLoopEnabled(true);
-    loopBtn.classList.add("active");
-    updateLoopRegionVisual();
-  }
-  if (loopBtn) {
-    loopBtn.disabled = !available;
-    loopBtn.classList.toggle("zoom-locked", !available);
-    loopBtn.title = available ? t("position.loopTitle") : t("position.loopZoomLocked");
-  }
-  for (const input of [loopStartInput, loopEndInput]) {
-    if (!input) continue;
-    input.disabled = !available || totalDuration <= 0;
-  }
-  document.querySelector(".waves-column")?.classList.toggle("zoom-locked", !available);
-  rulerTime?.classList.toggle("zoom-locked", !available);
-}
-
 /**
  * Set the zoom, keeping the time under `anchorClientX` where it is.
  *
@@ -615,7 +572,6 @@ export function setWaveZoomLevel(next, anchorClientX = null) {
 
   setWaveZoom(clamped);
   applyWaveZoom();
-  syncLoopAvailability();
   // Everything positioned against the timeline is laid out again at the new
   // width: the ruler because its ticks are now the wrong distance apart for the
   // detail on screen, the playhead and the loop region because buildRuler
@@ -674,7 +630,6 @@ function wireZoomButtons() {
     waveScroll.addEventListener("scroll", syncRulerScroll, { passive: true });
   }
   applyWaveZoom();
-  syncLoopAvailability();
 }
 
 // Keep the mixer column and the waveform area scrolled in lockstep so stem

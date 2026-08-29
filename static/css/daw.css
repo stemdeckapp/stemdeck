@@ -2053,18 +2053,6 @@ input, textarea { font-family: inherit; }
 
 .loop-region.hidden { display: none !important; }
 
-/* ── Waveform zoom ── */
-/* Zoomed in, the loop tools are inert (see loopToolsAvailable in transport.js):
-   a drag would define a region whose ends are off screen. Say so rather than
-   letting the controls look live and do nothing. The crosshair is the "you can
-   drag a loop here" affordance, so it goes too. */
-.loop-btn.zoom-locked,
-#t-loop.zoom-locked {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.waves-column.zoom-locked { cursor: default; }
-.daw .lanes-ruler-time.zoom-locked { cursor: default; }
 
 /* Wave loading overlay */
 .wave-loading-overlay {
