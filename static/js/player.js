@@ -22,7 +22,7 @@ import {
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
   footerTitle, footerMeta, footerThumb,
-  setFooterWaveDrawFn,
+  setFooterWaveDrawFn, setOverviewRerenderFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
   setMetronomeHasBars,
@@ -42,7 +42,7 @@ import {
 } from "./mixer.js";
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
-  applyWaveZoom, buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
+  applyWaveZoom, resetWaveZoom, buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
   updatePresencePlayhead, resetSpeed, resetPitch, updatePitchAvailability,
   updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
@@ -433,7 +433,23 @@ function overviewLaneNames(stems) {
   return present.has("original") ? ["original", ...order] : order;
 }
 
+// What the overview bars were last drawn from, so a zoom change can redraw them
+// at the new resolution without reloading the track. Zoom widens .waves-column,
+// overviewBarCount() reads that width, and the bars come back the same 3px wide
+// with more of them -- redrawing is what keeps the art identical, where
+// stretching the same SVG would smear it.
+let _overviewSource = null;
+
+function rerenderOverviewWaveforms() {
+  if (!_overviewSource) return;
+  const { kind, stems, data } = _overviewSource;
+  if (kind === "peaks") renderAllOverviewWaveformsFromPeaks(stems, data);
+  else renderAllOverviewWaveforms(stems, data);
+}
+setOverviewRerenderFn(rerenderOverviewWaveforms);
+
 function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
+  _overviewSource = { kind: "peaks", stems, data: peaksData };
   const laneNames = overviewLaneNames(stems);
   // Only the extracted/selected stems (plus original) get a waveform, even if
   // peaks.json carries data for stems the user didn't keep (Demucs separates
@@ -463,13 +479,20 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
 // matching what a DAW shows. Per-stem normalization made every lane
 // fill its row regardless of how loud the stem actually was.
 function renderAllOverviewWaveforms(stems, decodedMap) {
+  // Decoded buffers beat peaks.json: bufferMinMaxPeaks can be asked for as many
+  // points as the zoom needs, where peaks.json is fixed at 1500.
+  _overviewSource = { kind: "decoded", stems, data: decodedMap };
   const laneNames = overviewLaneNames(stems);
   const peaksByStem = new Map();
   let globalMax = 0;
   for (const name of laneNames) {
     const buf = decodedMap.get(name);
     if (!isAudioBufferLike(buf)) continue;
-    const peaks = bufferMinMaxPeaks(buf, OVERVIEW_WAVE_POINTS);
+    // Enough points for the bars actually being drawn. At 1x that is well under
+    // OVERVIEW_WAVE_POINTS, but a wide panel at 5x asks for more bars than 1500,
+    // and short of that every extra bar would repeat its neighbour's sample and
+    // the zoom would show stair-steps instead of detail.
+    const peaks = bufferMinMaxPeaks(buf, Math.max(OVERVIEW_WAVE_POINTS, overviewBarCount()));
     peaksByStem.set(name, peaks);
     for (const [mn, mx] of peaks) {
       if (mx > globalMax) globalMax = mx;
@@ -1009,6 +1032,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   }, 60000);
   setCurrentJobId(jobId);
   setTotalDuration(duration || 0);
+  // A new track starts fitted. Carrying the previous track's zoom over would
+  // open it scrolled into the middle of a song the user has not seen yet, with
+  // the loop tools silently unavailable.
+  resetWaveZoom();
   refreshMixerVisuals();
   const mixReady = loadMixIntoState(jobId, stems.map((s) => s.name))
     .then(() => { if (currentJobId === jobId) refreshMixerVisuals(); })

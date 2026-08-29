@@ -399,6 +399,7 @@ const en = {
 
   "position.group": "Position",
   "position.loopTitle": "Loop the selected position (L)",
+  "position.loopZoomLocked": "Looping is available at 1x zoom. Reset the zoom to use it.",
   "position.loopLabel": "Loop position",
   "position.loopExactTitle": "Exact loop start / end (mm:ss.mmm or seconds)",
   "position.loopStartAria": "Loop start",
@@ -950,6 +951,7 @@ const pl = {
 
   "position.group": "Pozycja",
   "position.loopTitle": "Zapętl zaznaczoną pozycję (L)",
+  "position.loopZoomLocked": "Zapętlanie działa przy powiększeniu 1x. Zresetuj powiększenie, aby go użyć.",
   "position.loopLabel": "Pętla pozycji",
   "position.loopExactTitle": "Dokładny początek / koniec pętli (mm:ss.mmm lub sekundy)",
   "position.loopStartAria": "Początek pętli",
@@ -1492,6 +1494,7 @@ const ja = {
 
   "position.group": "位置",
   "position.loopTitle": "選択した位置をループ (L)",
+  "position.loopZoomLocked": "ループはズーム 1x でのみ使えます。ズームをリセットしてください。",
   "position.loopLabel": "位置をループ",
   "position.loopExactTitle": "正確なループ開始/終了 (mm:ss.mmm または秒)",
   "position.loopStartAria": "ループ開始",
@@ -2010,6 +2013,7 @@ const zhHans = {
 
   "position.group": "位置",
   "position.loopTitle": "循环所选位置 (L)",
+  "position.loopZoomLocked": "循环仅在 1x 缩放下可用。请重置缩放后使用。",
   "position.loopLabel": "循环位置",
   "position.loopExactTitle": "精确循环起止点 (mm:ss.mmm 或秒)",
   "position.loopStartAria": "循环起点",
@@ -2529,6 +2533,7 @@ const de = {
 
   "position.group": "Position",
   "position.loopTitle": "Ausgewählte Position loopen (L)",
+  "position.loopZoomLocked": "Loopen ist bei 1x-Zoom verfügbar. Zoom zurücksetzen, um es zu nutzen.",
   "position.loopLabel": "Loop-Position",
   "position.loopExactTitle": "Genauer Loop-Start/-Ende (mm:ss.mmm oder Sekunden)",
   "position.loopStartAria": "Loop-Start",
@@ -3058,6 +3063,7 @@ const pt = {
 
   "position.group": "Posição",
   "position.loopTitle": "Repetir a posição selecionada (L)",
+  "position.loopZoomLocked": "O loop fica disponível no zoom 1x. Redefina o zoom para usá-lo.",
   "position.loopLabel": "Posição de loop",
   "position.loopExactTitle": "Início/fim exato do loop (mm:ss.mmm ou segundos)",
   "position.loopStartAria": "Início do loop",
@@ -3588,6 +3594,7 @@ const id = {
 
   "position.group": "Posisi",
   "position.loopTitle": "Loop posisi yang dipilih (L)",
+  "position.loopZoomLocked": "Loop tersedia pada zoom 1x. Atur ulang zoom untuk memakainya.",
   "position.loopLabel": "Posisi loop",
   "position.loopExactTitle": "Awal/akhir loop yang tepat (mm:ss.mmm atau detik)",
   "position.loopStartAria": "Awal loop",
@@ -4107,6 +4114,7 @@ const fr = {
 
   "position.group": "Position",
   "position.loopTitle": "Boucler la position sélectionnée (L)",
+  "position.loopZoomLocked": "La boucle est disponible au zoom 1x. Réinitialisez le zoom pour l'utiliser.",
   "position.loopLabel": "Boucler la position",
   "position.loopExactTitle": "Début / fin exacts de la boucle (mm:ss.mmm ou secondes)",
   "position.loopStartAria": "Début de la boucle",
@@ -4737,6 +4745,7 @@ const es = {
 
   "position.group": "Posición",
   "position.loopTitle": "Repetir en loop la posición seleccionada (L)",
+  "position.loopZoomLocked": "El bucle está disponible con zoom 1x. Restablece el zoom para usarlo.",
   "position.loopLabel": "Loop de la posición",
   "position.loopExactTitle": "Inicio / fin exacto del loop (mm:ss.mmm o segundos)",
   "position.loopStartAria": "Inicio del loop",

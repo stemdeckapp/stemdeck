@@ -195,6 +195,13 @@ export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
 export let playbackSpeed = 1.0;
 export function setPlaybackSpeed(v) { playbackSpeed = v; }
+// Horizontal waveform zoom. 1 is the whole track fitted to the panel and is
+// also the floor: there is nothing to see below it, the track is already
+// entirely on screen. Shared state because three modules read it -- transport.js
+// drives it, player.js redraws the bars at the new resolution, and the loop
+// tools are only available at 1.
+export let waveZoom = 1;
+export function setWaveZoom(v) { waveZoom = v; }
 export function setVuRafId(v) { vuRafId = v; }
 export function setMasterBusGain(v) { masterBusGain = v; }
 export function setMasterLimiter(v) { masterLimiter = v; }
@@ -202,6 +209,13 @@ export function setMasterLimiter(v) { masterLimiter = v; }
 // Footer waveform draw callback — set by player.js, called by transport.js
 export let footerWaveDrawFn = null;
 export function setFooterWaveDrawFn(fn) { footerWaveDrawFn = fn; }
+
+// Redraws the overview bars at the current zoom. Registered by player.js, which
+// owns the renderer, and called by transport.js, which owns the zoom. Passed as
+// a callback rather than imported so the two modules do not form a cycle:
+// player.js already imports transport.js.
+export let overviewRerenderFn = null;
+export function setOverviewRerenderFn(fn) { overviewRerenderFn = fn; }
 
 // Click track. `metronome` is the scheduler bound to the current engine (null
 // when the job has no beat grid or the streaming path is in use); the enabled
