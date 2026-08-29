@@ -65,6 +65,27 @@ const loopBounds = (page) =>
     };
   });
 
+// Every canvas WaveSurfer has drawn, reached through the shadow roots it renders
+// into. `#multitrack-container.querySelectorAll("canvas")` returns nothing --
+// not because the streaming path draws nothing, but because querySelectorAll
+// does not cross a shadow boundary. That blind spot is the reason this path
+// looked broken and went uncovered.
+const waveSurferCanvases = (page) =>
+  page.evaluate(() => {
+    const out = [];
+    const walk = (root) => {
+      for (const el of root.querySelectorAll("*")) {
+        if (!el.shadowRoot) continue;
+        for (const c of el.shadowRoot.querySelectorAll("canvas")) {
+          out.push({ backing: c.width, css: Math.round(c.getBoundingClientRect().width) });
+        }
+        walk(el.shadowRoot);
+      }
+    };
+    walk(document.querySelector("#multitrack-container"));
+    return out;
+  });
+
 // Deliberately wide: the bar-count maths only has room to prove itself when the
 // panel can hold a few hundred bars.
 test.use({ viewport: { width: 1600, height: 900 } });
@@ -268,6 +289,54 @@ test.describe("waveform zoom", () => {
 
     expect(panned.content).toBe(zoomed.content);
     expect(panned.scrollLeft).not.toBe(zoomed.scrollLeft);
+  });
+
+  // The SVG overview is only the visible waveform when the Web Audio engine owns
+  // playback. On the streaming path WaveSurfer draws the lanes into canvases
+  // instead and gets its own zoom call, so the "bars keep their width" promise
+  // rests on a completely different mechanism there: its bars are configured in
+  // pixels (barWidth 3, barGap 2), which holds only if it re-renders rather than
+  // letting a fixed-size canvas stretch.
+  test("the streaming path re-renders its canvases instead of stretching them", async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem("stemdeck.audioEngine", "0"));
+    await openStudio(page, { tauri: true });
+    await page.waitForFunction(
+      () => {
+        let n = 0;
+        const walk = (root) => {
+          for (const el of root.querySelectorAll("*")) {
+            if (!el.shadowRoot) continue;
+            n += el.shadowRoot.querySelectorAll("canvas").length;
+            walk(el.shadowRoot);
+          }
+        };
+        walk(document.querySelector("#multitrack-container"));
+        return n > 0;
+      },
+      null,
+      { timeout: 20000 },
+    );
+
+    const before = await zoomState(page);
+    const canvasesBefore = await waveSurferCanvases(page);
+    expect(canvasesBefore.length).toBeGreaterThan(0);
+
+    for (let i = 0; i < 40; i++) await wheel(page, -240);
+    await page.waitForTimeout(1200);
+
+    const after = await zoomState(page);
+    const canvasesAfter = await waveSurferCanvases(page);
+    expect(after.content).toBeGreaterThan(before.content * 4);
+
+    // A canvas whose backing store matches its CSS width was drawn at that
+    // width. A stretched one keeps its original pixel width while its box grows,
+    // which is the failure the SVG path had to be fixed for.
+    for (const c of canvasesAfter) expect(c.backing).toBe(c.css);
+    // And something actually got wider, rather than the lanes being re-cut into
+    // more canvases of the same size. WaveSurfer chunks at 4000px, so the widest
+    // is the one to look at.
+    const widest = (list) => Math.max(...list.map((c) => c.backing));
+    expect(widest(canvasesAfter)).toBeGreaterThan(widest(canvasesBefore) * 2);
   });
 
   test("opening another track returns to the fitted view", async ({ page }) => {
