@@ -218,13 +218,18 @@ def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> dict[str, floa
     return rms_values
 
 
-def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> None:
+def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> dict[str, float]:
     """Add peaks/RMS for newly-produced stems (e.g. the on-demand lead/backing
     vocal split, #275) into the existing peaks.json instead of recomputing
     every stem. Best-effort, same as compute_stem_peaks: a failure here only
-    costs client-side waveform decode for the new stems, never the job."""
+    costs client-side waveform decode for the new stems, never the job.
+
+    Returns each scanned stem's RMS, from the same pass, so the caller can
+    extend stem presence without decoding anything twice (see
+    presence_for_split)."""
     path = stems_dir / "peaks.json"
     peaks: dict[str, list[list[float]]] = {}
+    rms_values: dict[str, float] = {}
     if path.is_file():
         try:
             peaks = json.loads(path.read_text(encoding="utf-8"))
@@ -236,7 +241,8 @@ def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> None:
         if not wav.is_file():
             continue
         try:
-            result, _rms = scan_stem(wav, _PEAK_POINTS)
+            result, rms = scan_stem(wav, _PEAK_POINTS)
+            rms_values[name] = rms
             if result:
                 peaks[name] = result
         except Exception:
@@ -248,6 +254,43 @@ def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> None:
         tmp.replace(path)
     except Exception:
         logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
+
+    return rms_values
+
+
+def presence_for_split(
+    rms_values: dict[str, float],
+    stem_presence: dict[str, int] | None,
+    *,
+    reference: str = "vocals",
+) -> dict[str, int]:
+    """Put the lead/backing stems on the same 0-100 scale the pipeline already
+    recorded for the base six.
+
+    Presence is a stem's RMS as a percentage of the loudest stem in the job,
+    and that loudest value is not stored anywhere -- only the percentages are.
+    It can be recovered exactly from any stem whose presence is known:
+
+        loudest = rms[reference] / (presence[reference] / 100)
+
+    So scanning the reference stem alongside the new ones is enough, and the
+    alternative (re-decoding all eight stems to renormalise) is avoided.
+
+    Returns an empty dict when the reference is missing or silent, which leaves
+    the new cards reading "--" rather than showing a number derived from
+    nothing."""
+    reference_rms = rms_values.get(reference)
+    reference_pct = (stem_presence or {}).get(reference)
+    if not reference_rms or not reference_pct:
+        return {}
+    loudest = reference_rms / (reference_pct / 100)
+    if loudest < 1e-9:
+        return {}
+    return {
+        name: max(0, min(100, round(rms / loudest * 100)))
+        for name, rms in rms_values.items()
+        if name != reference
+    }
 
 
 def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:

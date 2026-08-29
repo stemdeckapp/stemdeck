@@ -179,6 +179,14 @@ function applyStemSelectionFilter(presentNames) {
     row.classList.toggle("unavailable", !available);
     row.classList.toggle("hidden", isVocalFamily(stem) ? !order.includes(stem) : false);
   }
+  // Presence cards, top row of the track header. Only the vocals family moves:
+  // the single "Global Vocals" card and the lead/backing pair are alternatives,
+  // never both, and the panel's column count depends on which is showing.
+  for (const card of document.querySelectorAll(".stem-presence-panel .stem-card[data-stem]")) {
+    const stem = card.dataset.stem;
+    if (!isVocalFamily(stem)) continue;
+    card.classList.toggle("hidden", !order.includes(stem));
+  }
 }
 
 function clearStemSelectionFilter() {

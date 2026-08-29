@@ -174,23 +174,17 @@
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
             </button>
-            <button class="rail-btn rail-library active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true" data-i18n-title="nav.library" data-i18n-aria-label="nav.library">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                <path d="M4 4h16v16H4z M4 9h16"/>
-              </svg>
-              <span data-i18n="nav.library">Library</span>
-            </button>
             <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false" data-i18n-title="nav.favorites" data-i18n-aria-label="nav.favorites">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
               <span data-i18n="nav.favorites">Favorites</span>
             </button>
-            <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false" data-i18n-title="nav.trash" data-i18n-aria-label="nav.trash">
+            <button class="rail-btn rail-library active" id="appMenuBtn" type="button" title="Library" aria-label="Library" aria-pressed="true" data-i18n-title="nav.library" data-i18n-aria-label="nav.library">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
+                <path d="M4 4h16v16H4z M4 9h16"/>
               </svg>
-              <span data-i18n="nav.trash">Trash</span>
+              <span data-i18n="nav.library">Library</span>
             </button>
             <button class="rail-btn rail-queue hidden" type="button" title="Import queue" aria-label="Import queue" aria-pressed="false" data-i18n-title="nav.importQueue" data-i18n-aria-label="nav.importQueue">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -199,6 +193,12 @@
               </svg>
               <span data-i18n="nav.queue">Queue</span>
               <span class="rail-badge hidden" id="queueBadge" aria-hidden="true"></span>
+            </button>
+            <button class="rail-btn rail-trash" type="button" title="Trash" aria-label="Trash" aria-pressed="false" data-i18n-title="nav.trash" data-i18n-aria-label="nav.trash">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6"/>
+              </svg>
+              <span data-i18n="nav.trash">Trash</span>
             </button>
             <div style="flex:1"></div>
             <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog" data-i18n-aria-label="nav.settings">
@@ -249,6 +249,54 @@
             <!-- Catalog list (JS populates) -->
             <div id="catalogList" class="daw-lib-list" role="list"></div>
 
+            <!-- Now playing. Under the library list, whose last section is
+                 Tags, so it reads as the bottom of that column rather than
+                 as a second footer. Outside #catalogList on purpose: the
+                 list scrolls and the loaded track should not scroll away. -->
+            <div class="track-panel" id="nowPlayingPanel">
+            <div class="track-panel-head">
+              <div class="daw-cover track-panel-cover" id="np-art">
+                <div class="np-art-placeholder" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                  </svg>
+                </div>
+                <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+              </div>
+              <div class="track-panel-info">
+                <div class="daw-track-title track-panel-title" id="title">—</div>
+              </div>
+            </div>
+
+            <div class="daw-track-meta-line">
+              <span class="num" id="t-meta-duration">—</span>
+              <span class="daw-track-sep" aria-hidden="true">·</span>
+              <span id="t-stems-chip">— stems</span>
+              <span class="daw-track-sep" aria-hidden="true">·</span>
+              <span id="track-source">—</span>
+              <span class="daw-track-sep" aria-hidden="true">·</span>
+              <span id="track-quality">—</span>
+              <span class="daw-track-sep" aria-hidden="true">·</span>
+              <span><span data-i18n="footer.extractedLabel">Extracted</span> <span id="track-extracted">—</span></span>
+            </div>
+
+            <!-- Hidden spans for JS compat: not shown, but still written to
+                 (t-time is superseded here by the Position group in the
+                 controls row -- keeping it live would just duplicate that
+                 readout next to the title). -->
+            <div style="display:none" aria-hidden="true">
+              <span id="t-time"></span><span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
+            </div>
+
+            <div class="track-panel-actions">
+              <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+              </button>
+            </div>
+            </div>
+
             <!-- Collapsed strip (JS compat) -->
             <div id="catalogStrip" class="cat-collapsed-strip"></div>
           </div>
@@ -272,9 +320,9 @@
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-key">—</span>
                   <div class="daw-camelot-ring hidden" id="summary-confidence"></div>
+                  <span class="meta-card-sub" id="summary-scale"></span>
+                  <span class="meta-card-sub hidden" id="summary-confidence-label"></span>
                 </div>
-                <span class="meta-card-sub" id="summary-scale"></span>
-                <span class="meta-card-sub hidden" id="summary-confidence-label"></span>
               </div>
 
               <div class="daw-meta-card" data-meta="bpm">
@@ -288,8 +336,8 @@
                 <span class="meta-card-label" data-i18n="meta.lufs">LUFS</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-lufs">—</span>
+                  <span class="meta-card-sub" id="summary-peak"></span>
                 </div>
-                <span class="meta-card-sub" id="summary-peak"></span>
               </div>
 
               <div class="daw-meta-card" data-meta="duration">
@@ -310,23 +358,35 @@
                 <span class="meta-card-label" data-i18n="meta.dynamicRange">DYNAMIC RANGE</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-dr">—</span>
+                  <span class="meta-card-sub" id="summary-dr-label"></span>
                 </div>
-                <span class="meta-card-sub" id="summary-dr-label"></span>
               </div>
 
               <div class="daw-meta-card" data-meta="stability">
                 <span class="meta-card-label" data-i18n="meta.tempoStability">TEMPO STABILITY</span>
                 <div class="meta-card-main">
                   <span class="meta-card-value" id="summary-stability">—</span>
+                  <span class="meta-card-sub" id="summary-stability-label"></span>
                 </div>
-                <span class="meta-card-sub" id="summary-stability-label"></span>
               </div>
             </div>
 
             <!-- Row 2: stem presence cards -->
             <div class="stem-presence-panel">
               <div class="stem-card inactive" data-stem="vocals">
-                <span class="stem-card-label" data-i18n="presence.vocal">VOCAL PRESENCE</span>
+                <span class="stem-card-label" data-i18n="presence.vocalGlobal">GLOBAL VOCALS</span>
+                <span class="stem-card-pct">—</span>
+              </div>
+              <!-- The lead/backing pair replaces the single Vocals card once
+                   the on-demand split (#275) has run, so this row keeps the
+                   same seven columns as the metadata row above it. Hidden
+                   until then, by applyStemSelectionFilter. -->
+              <div class="stem-card inactive hidden" data-stem="lead_vocals">
+                <span class="stem-card-label" data-i18n="stem.lead_vocals">LEAD VOCALS</span>
+                <span class="stem-card-pct">—</span>
+              </div>
+              <div class="stem-card inactive hidden" data-stem="backing_vocals">
+                <span class="stem-card-label" data-i18n="stem.backing_vocals">BACKING VOCALS</span>
                 <span class="stem-card-pct">—</span>
               </div>
               <div class="stem-card inactive" data-stem="drums">
@@ -596,114 +656,10 @@
       <!-- ══ FOOTER — sibling of #lanes inside .daw-main-col, not clipped ══ -->
       <footer class="daw-footer">
 
-        <!-- Left column: what is loaded, and what leaves the app. Sits in the
-             gutter under the stems/mixer panel and carries its width, so it
-             reads as that column's footer rather than free-floating text. -->
-        <div class="footer-track">
-          <div class="footer-track-head">
-            <div class="daw-cover footer-cover" id="np-art">
-              <div class="np-art-placeholder" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                </svg>
-              </div>
-              <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
-            </div>
-            <div class="footer-track-info">
-              <div class="daw-track-title footer-track-title" id="title">—</div>
-            </div>
-          </div>
-
-          <div class="daw-track-meta-line">
-            <span class="num" id="t-meta-duration">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="t-stems-chip">— stems</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="track-source">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="track-quality">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span><span data-i18n="footer.extractedLabel">Extracted</span> <span id="track-extracted">—</span></span>
-          </div>
-
-          <!-- Hidden spans for JS compat: not shown, but still written to
-               (t-time is superseded here by the Position group in the
-               controls row -- keeping it live would just duplicate that
-               readout next to the title). -->
-          <div style="display:none" aria-hidden="true">
-            <span id="t-time"></span><span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
-          </div>
-
-          <div class="footer-row-actions">
-            <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-              </svg>
-            </button>
-            <div class="footer-chip-wrap" id="footer-export-wrap">
-              <button class="footer-chip footer-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
-                <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                <svg class="export-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/>
-                </svg>
-                <span class="export-btn-label" id="t-export-label" data-i18n="export.mix">Export Mix</span>
-                <svg class="export-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-              <div class="footer-chip-panel chip-panel-export hidden" id="t-export-panel" role="menu" aria-label="Export options" data-i18n-aria-label="export.optionsAria">
-                <div class="export-format-toggle" role="radiogroup" aria-label="Export format" data-i18n-aria-label="export.formatAria">
-                  <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
-                  <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
-                  <button class="export-fmt" id="t-fmt-flac" type="button" role="radio" aria-checked="false">FLAC</button>
-                  <button class="export-fmt" id="t-fmt-ogg" type="button" role="radio" aria-checked="false">OGG</button>
-                  <button class="export-fmt export-fmt-video" id="t-fmt-mp4" type="button" role="radio" aria-checked="false">MP4</button>
-                </div>
-                <div class="export-video-failed" role="status" data-i18n="export.videoFailed">MP4 export is unavailable: the video could not be fetched for this track. The audio stems are unaffected.</div>
-                <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file" data-i18n-title="export.includeClickTitle">
-                  <input type="checkbox" id="t-export-click">
-                  <span data-i18n="export.includeClick">Include click track</span>
-                </label>
-                <label class="export-click-opt" id="t-export-count-in-wrap" title="Prepend one bar of count-in click before the audio" data-i18n-title="export.addCountInTitle">
-                  <input type="checkbox" id="t-export-count-in">
-                  <span data-i18n="export.addCountIn">Add count-in (1 bar)</span>
-                </label>
-                <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
-                  <span class="chip-item-icon" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
-                  </span>
-                  <span class="chip-item-text">
-                    <span class="chip-item-title" data-i18n="export.mix">Export Mix</span>
-                    <span class="chip-item-desc" data-i18n="export.mixDesc">Export the mixed audio</span>
-                  </span>
-                  <svg class="chip-item-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                </button>
-                <button class="chip-panel-item export-item" id="t-export-stems" type="button" role="menuitem">
-                  <span class="chip-item-icon" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
-                  </span>
-                  <span class="chip-item-text">
-                    <span class="chip-item-title" data-i18n="export.allStems">Export All Stems</span>
-                    <span class="chip-item-desc" data-i18n="export.allStemsDesc">All stems as a .zip</span>
-                  </span>
-                </button>
-                <button class="chip-panel-item export-item" id="t-export-region" type="button" role="menuitem" aria-disabled="true">
-                  <span class="chip-item-icon" aria-hidden="true">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
-                  </span>
-                  <span class="chip-item-text">
-                    <span class="chip-item-title" data-i18n="export.currentRegion">Export Current Region</span>
-                    <span class="chip-item-desc" data-i18n="export.currentRegionDesc">Export selected region</span>
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div><!-- /.footer-track -->
-
-        <!-- Right column: everything time-related, aligned with the lanes. -->
+        <!-- Everything time-related, aligned with the lanes. The track identity
+             that used to sit to the left of this now lives at the bottom of the
+             library sidebar; the footer keeps that column's width as padding so
+             a position still reads at the same x here as in the lanes above. -->
         <div class="footer-main">
 
         <!-- Every playback and click control, in labelled clusters -->
@@ -830,6 +786,75 @@
 
         <!-- The timeline the clusters above act on -->
         <div class="footer-wave-region">
+
+          <!-- The gutter beside the timeline, under Transport and Position.
+               It exists because the timeline's left edge has to land on the
+               lane waveforms' left edge; Export Mix fills it rather than
+               leaving 300px of nothing under the controls. -->
+          <div class="footer-export-slot">
+              <div class="track-chip-wrap" id="footer-export-wrap">
+                <button class="track-chip track-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
+                  <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  <svg class="export-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/>
+                  </svg>
+                  <span class="export-btn-label" id="t-export-label" data-i18n="export.mix">Export Mix</span>
+                  <svg class="export-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
+                <div class="track-chip-panel chip-panel-export hidden" id="t-export-panel" role="menu" aria-label="Export options" data-i18n-aria-label="export.optionsAria">
+                  <div class="export-format-toggle" role="radiogroup" aria-label="Export format" data-i18n-aria-label="export.formatAria">
+                    <button class="export-fmt active" id="t-fmt-wav" type="button" role="radio" aria-checked="true">WAV</button>
+                    <button class="export-fmt" id="t-fmt-mp3" type="button" role="radio" aria-checked="false">MP3</button>
+                    <button class="export-fmt" id="t-fmt-flac" type="button" role="radio" aria-checked="false">FLAC</button>
+                    <button class="export-fmt" id="t-fmt-ogg" type="button" role="radio" aria-checked="false">OGG</button>
+                    <button class="export-fmt export-fmt-video" id="t-fmt-mp4" type="button" role="radio" aria-checked="false">MP4</button>
+                  </div>
+                  <div class="export-video-failed" role="status" data-i18n="export.videoFailed">MP4 export is unavailable: the video could not be fetched for this track. The audio stems are unaffected.</div>
+                  <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file" data-i18n-title="export.includeClickTitle">
+                    <input type="checkbox" id="t-export-click">
+                    <span data-i18n="export.includeClick">Include click track</span>
+                  </label>
+                  <label class="export-click-opt" id="t-export-count-in-wrap" title="Prepend one bar of count-in click before the audio" data-i18n-title="export.addCountInTitle">
+                    <input type="checkbox" id="t-export-count-in">
+                    <span data-i18n="export.addCountIn">Add count-in (1 bar)</span>
+                  </label>
+                  <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
+                    <span class="chip-item-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
+                    </span>
+                    <span class="chip-item-text">
+                      <span class="chip-item-title" data-i18n="export.mix">Export Mix</span>
+                      <span class="chip-item-desc" data-i18n="export.mixDesc">Export the mixed audio</span>
+                    </span>
+                    <svg class="chip-item-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                  <button class="chip-panel-item export-item" id="t-export-stems" type="button" role="menuitem">
+                    <span class="chip-item-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
+                    </span>
+                    <span class="chip-item-text">
+                      <span class="chip-item-title" data-i18n="export.allStems">Export All Stems</span>
+                      <span class="chip-item-desc" data-i18n="export.allStemsDesc">All stems as a .zip</span>
+                    </span>
+                  </button>
+                  <button class="chip-panel-item export-item" id="t-export-region" type="button" role="menuitem" aria-disabled="true">
+                    <span class="chip-item-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+                    </span>
+                    <span class="chip-item-text">
+                      <span class="chip-item-title" data-i18n="export.currentRegion">Export Current Region</span>
+                      <span class="chip-item-desc" data-i18n="export.currentRegionDesc">Export selected region</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+          </div>
+
+          <div class="footer-wave-col">
           <div class="footer-wave-panel">
             <div class="footer-wave-ticks" id="footer-wave-ticks" aria-hidden="true"></div>
             <div class="footer-wave-bar">
@@ -840,6 +865,7 @@
             </div>
           </div>
           <div class="metro-note" id="t-metro-note"></div>
+          </div><!-- /.footer-wave-col -->
         </div>
 
         </div><!-- /.footer-main -->

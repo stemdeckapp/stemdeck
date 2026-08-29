@@ -481,7 +481,7 @@ function wireFooterControls() {
 }
 
 function closeAllChipPanels() {
-  document.querySelectorAll(".footer-chip-panel:not(.hidden)").forEach((p) => {
+  document.querySelectorAll(".track-chip-panel:not(.hidden)").forEach((p) => {
     p.classList.add("hidden");
     p.previousElementSibling?.setAttribute("aria-expanded", "false");
   });

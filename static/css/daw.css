@@ -537,7 +537,10 @@ input, textarea { font-family: inherit; }
 /* Sidebar body */
 .sidebar-body {
   flex: 1;
-  padding: 12px;
+  /* No bottom padding: .track-panel is the last child and has to reach the
+     window's bottom edge, so its band lines up with the footer's. The panel
+     carries its own bottom padding instead. */
+  padding: 12px 12px 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -622,11 +625,13 @@ input, textarea { font-family: inherit; }
   gap: 2px;
 }
 
-/* Thin auto-hide scrollbar shared by the library list, the mixer column and the
-   waveform panel (both axes) — hidden until the area is hovered/focused, reserves
-   no visible gutter. `.daw .wave-scroll` overrides the gold bar from waves.css. */
+/* Thin auto-hide scrollbar shared by the library list, the mixer column, the
+   footer's control row and the waveform panel (both axes) — hidden until the
+   area is hovered/focused, reserves no visible gutter. `.daw .wave-scroll`
+   overrides the gold bar from waves.css. */
 .daw-lib-list,
 .mixer-column,
+.footer-row-controls,
 .daw .wave-scroll {
   /* Firefox: thin overlay-style bar, fades to transparent track */
   scrollbar-width: thin;
@@ -636,6 +641,8 @@ input, textarea { font-family: inherit; }
 .daw-lib-list:focus-within,
 .mixer-column:hover,
 .mixer-column:focus-within,
+.footer-row-controls:hover,
+.footer-row-controls:focus-within,
 .daw .wave-scroll:hover,
 .daw .wave-scroll:focus-within {
   scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
@@ -643,17 +650,20 @@ input, textarea { font-family: inherit; }
 /* WebKit (Chrome/Safari/WKWebView): thin thumb, hidden until hover/scroll */
 .daw-lib-list::-webkit-scrollbar,
 .mixer-column::-webkit-scrollbar,
+.footer-row-controls::-webkit-scrollbar,
 .daw .wave-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 .daw-lib-list::-webkit-scrollbar-track,
 .mixer-column::-webkit-scrollbar-track,
+.footer-row-controls::-webkit-scrollbar-track,
 .daw .wave-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .daw-lib-list::-webkit-scrollbar-thumb,
 .mixer-column::-webkit-scrollbar-thumb,
+.footer-row-controls::-webkit-scrollbar-thumb,
 .daw .wave-scroll::-webkit-scrollbar-thumb {
   background: transparent;
   border: 2px solid transparent;
@@ -664,6 +674,8 @@ input, textarea { font-family: inherit; }
 .daw-lib-list:focus-within::-webkit-scrollbar-thumb,
 .mixer-column:hover::-webkit-scrollbar-thumb,
 .mixer-column:focus-within::-webkit-scrollbar-thumb,
+.footer-row-controls:hover::-webkit-scrollbar-thumb,
+.footer-row-controls:focus-within::-webkit-scrollbar-thumb,
 .daw .wave-scroll:hover::-webkit-scrollbar-thumb,
 .daw .wave-scroll:focus-within::-webkit-scrollbar-thumb {
   background: rgba(148, 163, 184, 0.4);
@@ -671,6 +683,7 @@ input, textarea { font-family: inherit; }
 }
 .daw-lib-list::-webkit-scrollbar-thumb:hover,
 .mixer-column::-webkit-scrollbar-thumb:hover,
+.footer-row-controls::-webkit-scrollbar-thumb:hover,
 .daw .wave-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.6);
   background-clip: padding-box;
@@ -1205,9 +1218,13 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 
-/* Row 1 */
+/* Row 1. A grid rather than a flex row so its column edges land on exactly
+   the same pixels as the presence grid below it -- flex and grid round
+   fractional track widths differently, which left the two rows a pixel out of
+   step at most window widths. */
 .daw-info-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid var(--border);
 }
 
@@ -1222,20 +1239,25 @@ input, textarea { font-family: inherit; }
   border-right: 1px solid var(--border);
 }
 
-/* Metadata cards */
+/* Metadata cards.
+   Two lines, not three: the qualifier (Natural Minor, Peak 3.5 dB, High) sits
+   on the value's own line rather than under it. Six stems only fit on a
+   1366x768 laptop if the panels above the mixer stop taking a third of the
+   window (#480), and a third text row here cost more height than it carried
+   information. */
 .daw-meta-card {
-  flex: 1;
   padding: 4px 16px;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
+  gap: 2px;
   min-width: 0;
 }
 .daw-meta-card:last-child { border-right: none; }
 .meta-card-label {
   font-size: 10px;
+  line-height: 1;
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -1243,21 +1265,28 @@ input, textarea { font-family: inherit; }
 }
 .meta-card-main {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
+  min-width: 0;
 }
 .meta-card-value {
-  font-size: 22px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--fg);
   line-height: 1;
   font-family: var(--font-mono);
+  flex-shrink: 0;
 }
 .meta-card-value.accent { color: var(--accent); }
 .meta-card-value.stability-high { color: #4caf7d; }
 .meta-card-sub {
   font-size: 11px;
+  line-height: 1;
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .daw-cover {
   width: 64px; height: 64px;
@@ -1396,33 +1425,52 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 
-/* Stem presence cards — row 2 */
+/* Stem presence cards — row 2. One line each: the label and its percentage
+   read as a pair, and stacking them doubled the row's height for no gain
+   (#480). */
 .stem-presence-panel {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* Seven, matching the seven metadata cards above, so the two rows share
+     their dividers instead of interleaving them. Six presence stems fill
+     seven columns because Vocals takes two; a completed lead/backing split
+     replaces that one card with two and the row becomes a plain 7x1. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
+.stem-card[data-stem="vocals"] { grid-column: span 2; }
 .stem-card {
-  padding: 14px 16px;
+  padding: 8px 12px;
   border-right: 1px solid var(--border);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 .stem-card:last-child { border-right: none; }
 .stem-card-label {
   font-size: 10px;
+  line-height: 1;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  /* Tighter than the metadata labels above: on a side-by-side row these
+     compete with the percentage for width, and 0.07em truncated
+     "VOCAL PRESENCE" at 1366px. */
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .stem-card-pct {
-  font-size: 28px;
+  font-size: 18px;
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1;
   color: var(--fg);
   transition: color 200ms;
+  flex-shrink: 0;
 }
 .stem-card:not(.inactive)[data-stem="vocals"] .stem-card-pct { color: var(--vocals); }
 .stem-card:not(.inactive)[data-stem="drums"]  .stem-card-pct { color: var(--drums); }
@@ -1459,10 +1507,12 @@ input, textarea { font-family: inherit; }
 .daw-analysis-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
 .daw-analysis-divider { width: 1px; background: var(--border); align-self: stretch; }
 .daw-camelot-ring {
-  width: 28px; height: 28px; border-radius: 50%;
+  width: 20px; height: 20px; border-radius: 50%;
   border: 1.5px solid var(--accent);
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; color: var(--accent);
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 9px; font-weight: 700; color: var(--accent);
   background: rgba(244,183,64,0.08);
   font-family: var(--font-mono);
 }
@@ -2043,9 +2093,13 @@ input, textarea { font-family: inherit; }
 /* ── Transport footer ── */
 
 .daw-footer {
-  /* min-height, not height: the click-track cluster can wrap onto more than
-     one line in a narrow window, and a rigid height would clip it. */
-  min-height: 200px;
+  /* No height of its own: the two tiers inside decide it, and every pixel not
+     spent here goes to the mixer, which is the panel actually short of room
+     (#480). This used to carry min-height: 200px, from when the click-track
+     cluster could wrap onto a second line and a rigid height would have
+     clipped it. The controls row no longer wraps, so the floor only padded the
+     footer past its content -- 30px of it, which pooled as a gap wherever the
+     tiers were not pushed. */
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -2151,44 +2205,53 @@ input, textarea { font-family: inherit; }
   display: flex; flex-direction: column;
 }
 
-/* ── Left column: track identity ── */
-/* Padded like the mixer rows above it (14px), so title, stem names and the
-   "Mixer" heading all share one left edge down the column. */
-.footer-track {
-  width: var(--daw-col-w); flex: none;
+/* ── Track identity: the bottom panel of the library sidebar ── */
+/* Pinned below .daw-lib-list rather than inside it, so the loaded track stays
+   put while the folders and the Tags section scroll. flex: none keeps it at its
+   natural height and lets the list take the rest.
+
+   No overflow clipping: the export menu is absolutely positioned in here and
+   opens upward past this panel's top edge. The title clamps itself and the meta
+   line has its own overflow rule, so nothing here needs clipping. */
+.track-panel {
+  flex: none;
   box-sizing: border-box;
-  padding: 12px 14px 14px;
-  /* Centred, not top-aligned: the identity block is shorter than the control
-     column beside it, and centring splits the leftover height instead of
-     leaving it all as a void under the buttons. Stays balanced when the
-     controls wrap to another line and the footer grows. */
+  /* Exactly as tall as the footer beside it, measured live by
+     syncTrackPanelHeight (transport.js) because the footer grows when the
+     click cluster wraps. The fallback matches .daw-footer's min-height, so the
+     panel is the right size on the first paint too. Content is centred rather
+     than top-aligned: the block is shorter than the band and centring splits
+     the leftover instead of leaving it all underneath. */
+  height: var(--daw-footer-h, 200px);
+  padding: 12px 2px;
+  border-top: 1px solid var(--border);
   display: flex; flex-direction: column; justify-content: center; gap: 8px;
-  /* No overflow clipping: the export menu is absolutely positioned inside this
-     column and opens upward past its top edge. The title clamps itself and the
-     meta line has its own overflow rule, so nothing here needs clipping. */
   min-width: 0;
 }
-.footer-track-head {
+.track-panel-head {
   display: flex; align-items: flex-start; gap: 10px; min-width: 0;
 }
-.footer-row-actions {
+.track-panel-actions {
   display: flex; align-items: center; gap: 8px;
   margin-top: 2px;
 }
 /* Boxed like the Export button beside it: both are actions on the track, and
    a bare icon next to a filled button reads as decoration. */
-.footer-row-actions .daw-fav-btn {
+.track-panel-actions .daw-fav-btn {
   width: 32px; height: 32px; padding: 0;
   justify-content: center;
   background: var(--panel-2); border: 1px solid var(--border-strong);
   border-radius: 8px;
   transition: background var(--t-fast), color var(--t-fast);
 }
-.footer-row-actions .daw-fav-btn:hover { background: var(--panel-3); }
-.footer-row-actions .footer-chip { height: 32px; }
+.track-panel-actions .daw-fav-btn:hover { background: var(--panel-3); }
+.track-panel-actions .track-chip { height: 32px; }
 
 /* Hairline cluster separator: fades out at both ends so it reads as a seam
-   between groups rather than a hard rule across the footer. */
+   between groups rather than a hard rule across the footer. Every one of these
+   separates something now that .footer-row-controls never wraps -- the
+   is-orphan state that used to hide a divider stranded at the end of a wrapped
+   line went with the wrapping. */
 .footer-divider {
   width: 1px; flex: none;
   background: linear-gradient(
@@ -2196,19 +2259,27 @@ input, textarea { font-family: inherit; }
   );
 }
 .footer-row-controls .footer-divider { height: 44px; }
-/* Stranded at the end of a wrapped line, separating nothing (marked by
-   syncFooterDividers). Hidden rather than removed: taking its box out would
-   change the very wrap that was measured. */
-.footer-divider.is-orphan { visibility: hidden; }
+/* Starts at the footer's own left edge. The track identity that used to sit in
+   front of it now lives in the library sidebar, and leaving its 300px gutter
+   behind pushed every control into the right of the window with a void beside
+   it.
 
+   One line, always. Wrapping rearranged the band into a different shape at
+   every window width -- clusters piling onto a second row, the click track
+   splitting its own options in half -- so the footer never looked like itself
+   twice. Nothing here shrinks either (.footer-group is flex: none), so when
+   the window is too narrow the row scrolls sideways rather than reflowing. */
 .footer-row-controls {
-  display: flex; align-items: flex-end; flex-wrap: wrap;
+  display: flex; align-items: flex-start; flex-wrap: nowrap;
+  overflow-x: auto;
   gap: 10px 16px;
-  padding: 12px 18px 14px 0;
+  padding: 12px 18px 14px;
 }
+/* Natural width, never squeezed: a cluster that shrinks re-wraps its own
+   controls, which is the pile-up the row-level nowrap exists to prevent. */
 .footer-group {
   display: flex; flex-direction: column; gap: 6px;
-  min-width: 0;
+  flex: none;
 }
 .footer-group-label {
   display: flex; align-items: center; gap: 7px;
@@ -2218,14 +2289,9 @@ input, textarea { font-family: inherit; }
 /* One control height across every cluster, so the row reads as a single band
    of controls rather than a ragged stack. */
 .footer-group-body {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
   min-height: 34px;
 }
-/* Click track carries the most controls -- a wide basis so it either shares
-   the line with the other three clusters or takes a line of its own, rather
-   than squeezing into a leftover gap and wrapping into a ragged block. */
-.footer-group-click { flex: 1 1 520px; }
-
 .alpha-badge {
   padding: 1px 5px; border-radius: 4px;
   background: rgba(74,140,255,0.16); border: 1px solid rgba(74,140,255,0.4);
@@ -2237,8 +2303,31 @@ input, textarea { font-family: inherit; }
    left edge has to land exactly on the lane waveforms' left edge, and a side
    border would offset the canvas by its own width. Top and bottom rules only,
    the way the ruler area above the lanes is drawn. */
+/* Bottom tier: the gutter, then the timeline. Two columns rather than one, so
+   the timeline's left edge lands exactly on the lane waveforms' left edge and
+   a position reads at the same x in both -- while the 300px that alignment
+   costs carries Export Mix instead of standing empty. */
 .footer-wave-region {
-  padding: 0 0 14px; flex-shrink: 0;
+  display: flex; align-items: stretch;
+  padding: 0 18px 14px 0; flex-shrink: 0;
+}
+/* Exactly the mixer column's width: that offset is what puts the timeline
+   beside it on the lanes' x. */
+.footer-export-slot {
+  width: var(--daw-col-w); flex: none;
+  box-sizing: border-box;
+  padding: 0 18px;
+  /* Centred in the gutter rather than pinned to its left edge: it is the only
+     thing in this column, so aligning it under Transport left a lopsided gap
+     on the other side. */
+  display: flex; align-items: center; justify-content: center;
+  /* The export menu is absolutely positioned in here and opens upward past
+     this slot's top edge, so nothing on this path may clip. */
+  min-width: 0;
+}
+.footer-wave-col {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
 }
 .footer-wave-panel {
   border-top: 1px solid var(--border);
@@ -2286,13 +2375,13 @@ input, textarea { font-family: inherit; }
 }
 .footer-scrub-fill { display: none; }
 
-.footer-track-info {
+.track-panel-info {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column; gap: 3px;
 }
 /* Two lines, then clipped: a column this narrow would otherwise cut most
    titles after three or four words. */
-.footer-track-title {
+.track-panel-title {
   min-width: 0;
   font-size: 13px; font-weight: 600; line-height: 1.35;
   /* Overrides the nowrap/ellipsis on .daw-track-title, which is written for
@@ -2302,14 +2391,14 @@ input, textarea { font-family: inherit; }
   overflow: hidden; overflow-wrap: anywhere;
   color: var(--fg);
 }
-.footer-cover {
+.track-panel-cover {
   width: 40px !important; height: 40px !important;
   border-radius: 7px;
   flex-shrink: 0;
 }
 /* Wraps freely here -- the column is narrow and the whole block is stacked,
    so the meta reads as a short paragraph rather than a clipped line. */
-.footer-track .daw-track-meta-line { row-gap: 3px; line-height: 1.45; }
+.track-panel .daw-track-meta-line { row-gap: 3px; line-height: 1.45; }
 .footer-art {
   width: 44px; height: 44px; border-radius: 6px;
   background: var(--panel-3); flex-shrink: 0; overflow: hidden;
@@ -2601,7 +2690,9 @@ input, textarea { font-family: inherit; }
    1b). Hidden until it has text, clipped to one line with the full text as a
    native tooltip. */
 .metro-note {
-  margin-top: 8px; padding-right: 18px;
+  /* No padding of its own: .footer-wave-region insets the right and the
+     export gutter the left, so the note already starts on the timeline's x. */
+  margin-top: 8px;
   font-size: 11px; line-height: 1.3; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -2609,11 +2700,11 @@ input, textarea { font-family: inherit; }
 .metro-note.warn { color: var(--danger); }
 
 /* Export chip button */
-.footer-chip-wrap {
+.track-chip-wrap {
   position: relative; flex-shrink: 0;
   display: flex; align-items: center;
 }
-.footer-chip {
+.track-chip {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--panel-2); border: 1px solid var(--border-strong);
   color: var(--fg); border-radius: 8px; font-size: 12px; font-weight: 500;
@@ -2621,18 +2712,18 @@ input, textarea { font-family: inherit; }
   white-space: nowrap;
   transition: background var(--t-fast);
 }
-.footer-chip:hover { background: var(--panel-3); }
-.footer-chip-primary {
+.track-chip:hover { background: var(--panel-3); }
+.track-chip-primary {
   background: var(--accent); color: #1a1206;
   border-color: transparent;
 }
-.footer-chip-primary:hover { background: color-mix(in srgb, var(--accent) 85%, white); }
-.footer-chip-primary:disabled {
+.track-chip-primary:hover { background: color-mix(in srgb, var(--accent) 85%, white); }
+.track-chip-primary:disabled {
   background: var(--panel-2); color: var(--fg-muted);
   border-color: var(--border-strong); cursor: not-allowed; opacity: 0.5;
 }
 
-.footer-chip-panel {
+.track-chip-panel {
   /* Opens up and to the right: the button now lives in the left column, and a
      right-aligned panel would hang past the footer's left edge over the
      sidebar. */
@@ -2642,7 +2733,7 @@ input, textarea { font-family: inherit; }
   min-width: 120px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
-.footer-chip-panel.hidden { display: none !important; }
+.track-chip-panel.hidden { display: none !important; }
 
 .chip-panel-item {
   display: flex; align-items: center; gap: 8px;
@@ -2660,8 +2751,8 @@ input, textarea { font-family: inherit; }
 .export-caret { opacity: 0.8; }
 /* Primary button busy state: swap the download icon for a spinner. */
 .export-spinner { display: none; }
-.footer-chip.is-busy .export-dl-icon { display: none; }
-.footer-chip.is-busy .export-spinner { display: inline-block; animation: sections-spin 700ms linear infinite; }
+.track-chip.is-busy .export-dl-icon { display: none; }
+.track-chip.is-busy .export-spinner { display: inline-block; animation: sections-spin 700ms linear infinite; }
 
 .chip-panel-export { min-width: 260px; padding: 6px; }
 
@@ -3345,9 +3436,10 @@ input, textarea { font-family: inherit; }
 
 /* ── Responsive: hide zoom in small windows ── */
 @media (max-width: 900px) {
-  .daw-info-row { flex-wrap: wrap; }
-  .daw-track-card { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
-  .stem-presence-panel { grid-template-columns: repeat(3, 1fr); }
+  .daw-info-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .daw-track-card { grid-column: 1 / -1; width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .stem-presence-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stem-card[data-stem="vocals"] { grid-column: span 1; }
 }
 
 /* Settings -> Logs. Read-only: paths, sizes and what writes each file. Log

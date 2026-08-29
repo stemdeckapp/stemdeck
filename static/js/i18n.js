@@ -319,7 +319,7 @@ const en = {
   "meta.dynamicRange": "Dynamic Range",
   "meta.tempoStability": "Tempo Stability",
 
-  "presence.vocal": "Vocal Presence",
+  "presence.vocalGlobal": "Global Vocals",
   "presence.drum": "Drum Intensity",
   "presence.bass": "Bass Depth",
   "presence.guitar": "Guitar Presence",
@@ -872,7 +872,7 @@ const pl = {
   "meta.dynamicRange": "Zakres dynamiki",
   "meta.tempoStability": "Stabilność tempa",
 
-  "presence.vocal": "Obecność wokalu",
+  "presence.vocalGlobal": "Wokal ogólny",
   "presence.drum": "Intensywność perkusji",
   "presence.bass": "Głębia basu",
   "presence.guitar": "Obecność gitary",
@@ -1415,7 +1415,7 @@ const ja = {
   "meta.dynamicRange": "ダイナミックレンジ",
   "meta.tempoStability": "テンポ安定性",
 
-  "presence.vocal": "ボーカルの存在感",
+  "presence.vocalGlobal": "ボーカル全体",
   "presence.drum": "ドラムの強さ",
   "presence.bass": "ベースの深さ",
   "presence.guitar": "ギターの存在感",
@@ -1933,7 +1933,7 @@ const zhHans = {
   "meta.dynamicRange": "动态范围",
   "meta.tempoStability": "速度稳定性",
 
-  "presence.vocal": "人声强度",
+  "presence.vocalGlobal": "整体人声",
   "presence.drum": "鼓组强度",
   "presence.bass": "贝斯深度",
   "presence.guitar": "吉他强度",
@@ -2451,7 +2451,7 @@ const de = {
   "meta.dynamicRange": "Dynamikumfang",
   "meta.tempoStability": "Tempostabilität",
 
-  "presence.vocal": "Gesangspräsenz",
+  "presence.vocalGlobal": "Gesang gesamt",
   "presence.drum": "Schlagzeugintensität",
   "presence.bass": "Basstiefe",
   "presence.guitar": "Gitarrenpräsenz",
@@ -2980,7 +2980,7 @@ const pt = {
   "meta.dynamicRange": "Faixa dinâmica",
   "meta.tempoStability": "Estabilidade de tempo",
 
-  "presence.vocal": "Presença de vocal",
+  "presence.vocalGlobal": "Vocais globais",
   "presence.drum": "Intensidade da bateria",
   "presence.bass": "Profundidade do baixo",
   "presence.guitar": "Presença da guitarra",
@@ -3511,7 +3511,7 @@ const id = {
   "meta.dynamicRange": "Rentang Dinamis",
   "meta.tempoStability": "Stabilitas Tempo",
 
-  "presence.vocal": "Kehadiran Vokal",
+  "presence.vocalGlobal": "Vokal Global",
   "presence.drum": "Intensitas Drum",
   "presence.bass": "Kedalaman Bass",
   "presence.guitar": "Kehadiran Gitar",
@@ -4029,7 +4029,7 @@ const fr = {
   "meta.dynamicRange": "Plage dynamique",
   "meta.tempoStability": "Stabilité du tempo",
 
-  "presence.vocal": "Présence de la voix",
+  "presence.vocalGlobal": "Voix globales",
   "presence.drum": "Intensité de la batterie",
   "presence.bass": "Profondeur de la basse",
   "presence.guitar": "Présence de la guitare",
@@ -4659,7 +4659,7 @@ const es = {
   "meta.dynamicRange": "Rango dinámico",
   "meta.tempoStability": "Estabilidad del tempo",
 
-  "presence.vocal": "Presencia de voz",
+  "presence.vocalGlobal": "Voces globales",
   "presence.drum": "Intensidad de batería",
   "presence.bass": "Profundidad del bajo",
   "presence.guitar": "Presencia de guitarra",

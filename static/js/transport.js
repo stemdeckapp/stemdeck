@@ -554,29 +554,25 @@ function wireLaneScrollSync() {
   link(waveScroll, mixer);
 }
 
-// The control clusters wrap when the window is too narrow to hold them side
-// by side, which can leave a divider stranded at the end of a line with
-// nothing after it to separate. Mark those so CSS can hide them.
-//
-// Compares bottom edges, not tops: the row is bottom-aligned, so a divider
-// and the cluster beside it share a baseline but start at different heights.
-function syncFooterDividers() {
-  const row = document.querySelector(".footer-row-controls");
-  if (!row) return;
-  const bottom = (el) => Math.round(el.getBoundingClientRect().bottom);
-  for (const divider of row.querySelectorAll(".footer-divider")) {
-    const next = divider.nextElementSibling;
-    divider.classList.toggle("is-orphan", !next || bottom(next) !== bottom(divider));
-  }
+// The track panel at the bottom of the library sidebar reads as one band with
+// the footer beside it, so the two have to be exactly as tall as each other.
+// The footer's height is not a constant -- the click track's options appear
+// only once a beat grid exists, and the metronome note under the timeline wraps
+// -- so it is measured and published as a custom property rather than
+// duplicated as a number in the stylesheet.
+function syncTrackPanelHeight() {
+  const footer = document.querySelector(".daw-footer");
+  const app = document.querySelector(".app");
+  if (!footer || !app) return;
+  const h = Math.round(footer.getBoundingClientRect().height);
+  if (h > 0) app.style.setProperty("--daw-footer-h", `${h}px`);
 }
 
-function wireFooterDividers() {
-  const row = document.querySelector(".footer-row-controls");
-  if (!row) return;
-  // Observing the row catches both window resizes and the controls changing
-  // width (a track with a click track has more of them than one without).
-  new ResizeObserver(syncFooterDividers).observe(row);
-  syncFooterDividers();
+function wireTrackPanelHeight() {
+  const footer = document.querySelector(".daw-footer");
+  if (!footer) return;
+  new ResizeObserver(syncTrackPanelHeight).observe(footer);
+  syncTrackPanelHeight();
 }
 
 // ─── Wire transport buttons ───
@@ -588,7 +584,7 @@ export function wireTransportButtons() {
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
   wireLoopInputs();
-  wireFooterDividers();
+  wireTrackPanelHeight();
   wireZoomButtons();
   wireLaneScrollSync();
   masterFader?.addEventListener("input", () => {

@@ -36,7 +36,7 @@ from app.core.registry import remove as registry_remove
 from app.core.settings import get_max_duration_sec
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
-from app.pipeline.collect import merge_stem_peaks
+from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
 from app.pipeline.errors import classify_failure
 from app.pipeline.runner import _pipeline_lock
@@ -390,7 +390,13 @@ async def start_vocal_split(job_id: str) -> Response:
     for name in new_names:
         if name not in existing:
             job.stems.append({"name": name, "url": f"/api/jobs/{job_id}/stems/{name}.wav"})
-    merge_stem_peaks(stems_dir, new_names)
+    # "vocals" rides along so presence_for_split can recover the scale the base
+    # stems were normalised against; without it the two new cards would have no
+    # percentage to show.
+    rms_values = merge_stem_peaks(stems_dir, ["vocals", *new_names])
+    extra_presence = presence_for_split(rms_values, job.stem_presence)
+    if extra_presence:
+        job.stem_presence = {**(job.stem_presence or {}), **extra_presence}
     job.vocal_split = "done"
     _set(job, stage="Done")
     registry_persist(JOBS_DIR)

@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.pipeline.collect import _PEAK_POINTS, compute_stem_peaks
+from app.pipeline.collect import (
+    _PEAK_POINTS,
+    compute_stem_peaks,
+    merge_stem_peaks,
+    presence_for_split,
+)
 
 
 def _write_wav(path: Path, samples: list[float], sample_rate: int = 44100) -> None:
@@ -168,3 +173,48 @@ def test_peaks_match_full_load_reference(tmp_path):
     for (a_min, a_max), (e_min, e_max) in zip(actual, expected, strict=True):
         assert a_min == pytest.approx(e_min, abs=1e-4)
         assert a_max == pytest.approx(e_max, abs=1e-4)
+
+
+def test_split_presence_lands_on_the_same_scale_as_the_base_stems(tmp_path):
+    """The lead/backing cards must be comparable with the six the pipeline
+    already measured. Presence is RMS against the loudest stem in the job, and
+    that reference is never stored -- only the percentages are -- so it has to
+    be recovered from the vocals stem rather than recomputed over every file."""
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    sr = 44100
+    t = np.linspace(0, 1, sr, endpoint=False)
+    # vocals = lead + backing, exactly as the split produces them.
+    lead = 0.4 * np.sin(2 * np.pi * 440 * t)
+    backing = 0.1 * np.sin(2 * np.pi * 660 * t)
+    _write_wav(stems_dir / "vocals.wav", (lead + backing).tolist(), sr)
+    _write_wav(stems_dir / "lead_vocals.wav", lead.tolist(), sr)
+    _write_wav(stems_dir / "backing_vocals.wav", backing.tolist(), sr)
+
+    rms_values = merge_stem_peaks(stems_dir, ["vocals", "lead_vocals", "backing_vocals"])
+    # Vocals at 50 means the loudest stem in this job is twice as loud as it.
+    presence = presence_for_split(rms_values, {"vocals": 50, "drums": 100})
+
+    assert set(presence) == {"lead_vocals", "backing_vocals"}
+    loudest = rms_values["vocals"] / 0.5
+    for name in ("lead_vocals", "backing_vocals"):
+        assert presence[name] == round(rms_values[name] / loudest * 100)
+    # Lead carries most of the vocal, so it must read louder than backing and
+    # neither may exceed the vocals stem they came from.
+    assert presence["lead_vocals"] > presence["backing_vocals"]
+    assert presence["lead_vocals"] <= 50
+
+
+def test_split_presence_is_empty_without_a_reference(tmp_path):
+    """No vocals presence recorded (an older job) means there is no scale to
+    place the new stems on. Returning nothing leaves the cards reading "--",
+    which is honest; inventing a percentage would not be."""
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    t = np.linspace(0, 1, 44100, endpoint=False)
+    _write_wav(stems_dir / "lead_vocals.wav", (0.4 * np.sin(2 * np.pi * 440 * t)).tolist())
+
+    rms_values = merge_stem_peaks(stems_dir, ["vocals", "lead_vocals"])
+    assert presence_for_split(rms_values, None) == {}
+    assert presence_for_split(rms_values, {"drums": 90}) == {}
+    assert presence_for_split(rms_values, {"vocals": 0}) == {}
