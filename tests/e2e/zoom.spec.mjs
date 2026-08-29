@@ -43,6 +43,17 @@ async function zoomState(page) {
 // The loop bounds as the app holds them, not as they are drawn: the region is
 // positioned in percentages, so reading the element back would only prove the
 // percentages agree with themselves.
+// The lane body is under the wave-loading overlay until the waveforms have
+// rendered, and a drag that lands on the overlay is swallowed. Measured on the
+// fixture: without this wait a 1x lane drag arms the loop 3 times in 6. Nothing
+// to do with zoom, but every test that drags on the lanes has to wait for it.
+const lanesReady = (page) =>
+  page.waitForFunction(
+    () => document.getElementById("waveLoadingOverlay")?.classList.contains("hidden") !== false,
+    null,
+    { timeout: 20000 },
+  );
+
 const loopBounds = (page) =>
   page.evaluate(() => {
     const el = document.getElementById("loop-region");
@@ -167,6 +178,7 @@ test.describe("waveform zoom", () => {
 
   test("a loop can be marked while zoomed in", async ({ page }) => {
     await openStudio(page, { tauri: true });
+    await lanesReady(page);
     for (let i = 0; i < 12; i++) await wheel(page, -240);
     const zoomed = await zoomState(page);
     expect(zoomed.content).toBeGreaterThan(zoomed.viewport);
@@ -199,6 +211,32 @@ test.describe("waveform zoom", () => {
     expect(bounds.end).toBeCloseTo(expectEnd, 2);
     // A drag across part of a zoomed view marks a slice, not the whole track.
     expect(bounds.end - bounds.start).toBeLessThan(0.2);
+  });
+
+  // WAVE_MIN_WIDTH floors the content width at 720px, so on a narrow window the
+  // first zoom step can widen the content by less than its own factor, or not at
+  // all. Deriving the scroll correction from the zoom ratio rather than the
+  // measured width slides the anchor out from under the pointer exactly here.
+  // 1150px leaves the wave area 460px wide, where the floor is active.
+  test("the anchor holds where the minimum wave width floors the growth", async ({ page }) => {
+    await page.setViewportSize({ width: 1150, height: 800 });
+    await openStudio(page, { tauri: true });
+    const rect = await page.locator(".wave-scroll").boundingBox();
+    const anchorX = rect.x + rect.width * 0.6;
+
+    const before = await zoomState(page);
+    // The floor is genuinely in play: the content is already wider than the
+    // viewport at 1x, so the first notch cannot widen it proportionally.
+    expect(before.content).toBeGreaterThan(before.viewport);
+
+    const held = (s) => (s.scrollLeft + (anchorX - rect.x)) / s.content;
+    const target = held(before);
+
+    for (let i = 0; i < 3; i++) await wheel(page, -240, anchorX, rect.y + 40);
+    const after = await zoomState(page);
+
+    expect(after.content).toBeGreaterThan(before.content);
+    expect(Math.abs(held(after) - target)).toBeLessThan(0.01);
   });
 
   test("the ruler gets finer as you zoom, and the footer strip does not", async ({ page }) => {

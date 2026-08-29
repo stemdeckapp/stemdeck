@@ -42,7 +42,8 @@ import {
 } from "./mixer.js";
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
-  applyWaveZoom, resetWaveZoom, buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
+  applyWaveZoom, resetWaveZoom, WAVE_ZOOM_MAX,
+  buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
   updatePresencePlayhead, resetSpeed, resetPitch, updatePitchAvailability,
   updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
@@ -442,14 +443,12 @@ let _overviewSource = null;
 
 function rerenderOverviewWaveforms() {
   if (!_overviewSource) return;
-  const { kind, stems, data } = _overviewSource;
-  if (kind === "peaks") renderAllOverviewWaveformsFromPeaks(stems, data);
-  else renderAllOverviewWaveforms(stems, data);
+  renderAllOverviewWaveformsFromPeaks(_overviewSource.stems, _overviewSource.data);
 }
 setOverviewRerenderFn(rerenderOverviewWaveforms);
 
 function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
-  _overviewSource = { kind: "peaks", stems, data: peaksData };
+  _overviewSource = { stems, data: peaksData };
   const laneNames = overviewLaneNames(stems);
   // Only the extracted/selected stems (plus original) get a waveform, even if
   // peaks.json carries data for stems the user didn't keep (Demucs separates
@@ -479,31 +478,20 @@ function renderAllOverviewWaveformsFromPeaks(stems, peaksData) {
 // matching what a DAW shows. Per-stem normalization made every lane
 // fill its row regardless of how loud the stem actually was.
 function renderAllOverviewWaveforms(stems, decodedMap) {
-  // Decoded buffers beat peaks.json: bufferMinMaxPeaks can be asked for as many
-  // points as the zoom needs, where peaks.json is fixed at 1500.
-  _overviewSource = { kind: "decoded", stems, data: decodedMap };
   const laneNames = overviewLaneNames(stems);
-  const peaksByStem = new Map();
-  let globalMax = 0;
+  const peaksByStem = {};
   for (const name of laneNames) {
     const buf = decodedMap.get(name);
     if (!isAudioBufferLike(buf)) continue;
-    // Enough points for the bars actually being drawn. At 1x that is well under
-    // OVERVIEW_WAVE_POINTS, but a wide panel at 5x asks for more bars than 1500,
-    // and short of that every extra bar would repeat its neighbour's sample and
-    // the zoom would show stair-steps instead of detail.
-    const peaks = bufferMinMaxPeaks(buf, Math.max(OVERVIEW_WAVE_POINTS, overviewBarCount()));
-    peaksByStem.set(name, peaks);
-    for (const [mn, mx] of peaks) {
-      if (mx > globalMax) globalMax = mx;
-      if (-mn > globalMax) globalMax = -mn;
-    }
+    // Scanned once per track, at the finest resolution any zoom will ask for.
+    // bufferMinMaxPeaks walks every sample, so doing this per zoom step would
+    // re-read the whole song per stem on each wheel notch. The bars are
+    // downsampled from this cache instead, which is what peaks.json already is
+    // -- the two sources are the same shape from here on, they just differ in
+    // how many points they carry.
+    peaksByStem[name] = bufferMinMaxPeaks(buf, OVERVIEW_WAVE_POINTS * WAVE_ZOOM_MAX);
   }
-  const norm = globalMax > 0 ? 1 / globalMax : 0;
-  const bars = overviewBarCount();
-  laneNames.forEach((name, i) => {
-    renderOverviewWaveformPath(name, peaksByStem.get(name), norm, STEM_COLORS[name] || "#a0a0a0", bars, i);
-  });
+  renderAllOverviewWaveformsFromPeaks(stems, peaksByStem);
 }
 
 function renderDecodedStemVisuals(stemName, audioBuffer, color) {
@@ -1032,10 +1020,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   }, 60000);
   setCurrentJobId(jobId);
   setTotalDuration(duration || 0);
-  // A new track starts fitted. Carrying the previous track's zoom over would
-  // open it scrolled into the middle of a song the user has not seen yet, with
-  // the loop tools silently unavailable.
-  resetWaveZoom();
   refreshMixerVisuals();
   const mixReady = loadMixIntoState(jobId, stems.map((s) => s.name))
     .then(() => { if (currentJobId === jobId) refreshMixerVisuals(); })
@@ -1046,6 +1030,12 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   setLoopEnd(0);
   loopBtn.classList.remove("active");
   loopRegionEl.classList.add("hidden");
+  // After the loop is cleared, never before: resetWaveZoom redraws the loop
+  // region, so running it first would paint the previous track's loop against
+  // this track's duration for a frame. A new track also starts fitted -- the
+  // previous track's zoom would open this one scrolled into the middle of a
+  // song the user has not seen yet.
+  resetWaveZoom();
   // Refresh loop UI so the exact-loop inputs enable + reset to 00:00.000 now
   // that the track duration is known.
   updateLoopRegionVisual();

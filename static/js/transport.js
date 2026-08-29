@@ -33,7 +33,7 @@ const MIN_LOOP_SEC = 0.2;
 // panel asks for more bars than there are samples behind them, and the extra
 // bars repeat their neighbours instead of revealing anything.
 const WAVE_ZOOM_MIN = 1;
-const WAVE_ZOOM_MAX = 5;
+export const WAVE_ZOOM_MAX = 5;
 // One wheel notch. Multiplicative, so a notch covers the same proportion of the
 // range at 1x as at 4x; linear steps feel fast at the bottom and stuck at the top.
 const WAVE_ZOOM_STEP = 1.18;
@@ -91,6 +91,12 @@ const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300];
 // `contentWidthPx` is the width the ticks will actually occupy. Omitted (the
 // footer strip, which always shows the whole track) the step is the plain
 // duration-based one, which is also what 1x has always used.
+// The step the ruler was last built with. buildRuler mutates elements inside
+// .wave-scroll, which is the element the resize observer watches, so rebuilding
+// unconditionally from that callback can re-trigger it. Comparing against this
+// makes the rebuild idempotent: once the ruler matches the width, it settles.
+let _rulerStep = 0;
+
 function tickStep(durationSec, contentWidthPx = 0) {
   const base = durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
   // Zoom is the only thing that subdivides it. Spreading the same handful of
@@ -119,6 +125,7 @@ export function buildRuler(durationSec) {
   // The ruler is width: calc(100% * var(--zoom)), so its own box already is the
   // zoomed width; no need to recompute it here.
   const step = tickStep(durationSec, rulerTime.getBoundingClientRect().width);
+  _rulerStep = step;
   for (let t = 0; t <= durationSec; t += step) {
     const leftPct = (t / durationSec) * 100;
     const tick = document.createElement("div");
@@ -562,28 +569,38 @@ export function applyWaveZoom() {
 export function setWaveZoomLevel(next, anchorClientX = null) {
   const clamped = Math.min(WAVE_ZOOM_MAX, Math.max(WAVE_ZOOM_MIN, next));
   if (Math.abs(clamped - waveZoom) < 1e-4) return false;
-  const previous = waveZoom;
   // Which content pixel the anchor is on, before anything moves.
   const rect = waveScroll?.getBoundingClientRect();
   const offsetX = anchorClientX !== null && rect
     ? Math.min(rect.width, Math.max(0, anchorClientX - rect.left))
     : (waveScroll ? waveScroll.clientWidth / 2 : 0);
   const contentX = (waveScroll?.scrollLeft ?? 0) + offsetX;
+  // Measured, not derived from the zoom ratio. WAVE_MIN_WIDTH floors the
+  // content width, so on a window narrower than 720px a zoom step can widen the
+  // content by less than its own factor -- or not at all -- and scaling by the
+  // ratio would slide the anchor out from under the pointer.
+  const beforeWidth = waveCanvas?.getBoundingClientRect().width || 0;
 
   setWaveZoom(clamped);
   applyWaveZoom();
+  const afterWidth = waveCanvas?.getBoundingClientRect().width || beforeWidth;
+  const growth = beforeWidth > 0 ? afterWidth / beforeWidth : 1;
   // Everything positioned against the timeline is laid out again at the new
   // width: the ruler because its ticks are now the wrong distance apart for the
   // detail on screen, the playhead and the loop region because buildRuler
   // rebuilds the elements they live in.
   buildRuler(totalDuration);
-  updatePlayheadMarker((audioEngine ?? multitrack)?.getCurrentTime?.() ?? 0);
+  // buildRuler re-creates the marker element, so it comes back at 0. Put it
+  // back where the transport actually is -- but only if something can say;
+  // defaulting to 0 would yank the playhead to the start of the track.
+  const now = (audioEngine ?? multitrack)?.getCurrentTime?.();
+  if (typeof now === "number") updatePlayheadMarker(now);
   updateLoopRegionVisual();
 
   if (waveScroll) {
     // The same content pixel after the widening, minus where it sits in the
     // viewport, is the scroll offset that leaves it under the pointer.
-    const target = contentX * (clamped / previous) - offsetX;
+    const target = contentX * growth - offsetX;
     waveScroll.scrollLeft = Math.max(0, target);
     syncRulerScroll();
   }
@@ -600,7 +617,20 @@ function wireZoomButtons() {
     const ro = new ResizeObserver(() => {
       if (!multitrack || totalDuration <= 0) return;
       if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => { rafId = null; applyWaveZoom(); });
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        applyWaveZoom();
+        // Tick spacing is chosen from the content width, so a resize can leave
+        // the ruler at the density the old width called for. Rebuild only when
+        // the step it would pick has actually changed: buildRuler writes inside
+        // the observed element, so rebuilding every time would feed the
+        // observer its own output.
+        const next = tickStep(totalDuration, rulerTime?.getBoundingClientRect().width || 0);
+        if (next !== _rulerStep) {
+          buildRuler(totalDuration);
+          updateLoopRegionVisual();
+        }
+      });
     });
     ro.observe(waveScroll);
   }
@@ -613,7 +643,10 @@ function wireZoomButtons() {
       if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         if (waveScroll.scrollWidth <= waveScroll.clientWidth) return;
         e.preventDefault();
-        waveScroll.scrollLeft += (e.shiftKey ? e.deltaY : e.deltaX) || e.deltaY;
+        // Whichever axis the gesture actually carried. Shift-wheel puts it on
+        // deltaY, a trackpad swipe on deltaX, and shift plus a swipe on deltaX
+        // with deltaY at zero.
+        waveScroll.scrollLeft += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
         syncRulerScroll();
         return;
       }
