@@ -2045,10 +2045,15 @@ input, textarea { font-family: inherit; }
 .daw.engine-waveforms .stem-waveform-layer {
   display: flex !important;
 }
-/* waves-column must size naturally now that multitrack is in flow */
+/* waves-column must size naturally now that multitrack is in flow -- but not
+   below the stack height _applyLaneHeight computed. Its natural height is the
+   multitrack's, whose lane height is fixed when the tracks are created, so on
+   its own the column stays whatever size it was at load however much room the
+   panel is given. The var is already kept in step with the panel, so a floor is
+   all that is needed. */
 .daw .waves-column {
   height: auto !important;
-  min-height: 0 !important;
+  min-height: var(--wave-widget-track-stack-h, 0) !important;
 }
 
 .loop-region.hidden { display: none !important; }

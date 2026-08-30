@@ -976,17 +976,56 @@ export function buildStripStems() {
   }
 }
 
+// The lane count the panel is currently laid out for, and the observer that
+// re-fits it. _applyLaneHeight divides the wave panel's height between the
+// lanes, so it has to run again whenever that height changes -- which it now
+// does on demand, because collapsing a panel (#480) hands its height straight
+// to this one. Without this the lanes keep the size they were given at load and
+// the reclaimed space becomes a gap under them: 141px of it with all three
+// panels collapsed.
+let _laneCount = 0;
+let _laneFitObs = null;
+
+function _watchLaneFit(count) {
+  _laneCount = count;
+  _laneFitObs?.disconnect();
+  const panel = document.querySelector(".daw-wave-panel");
+  if (!panel) return;
+  // The panel is flex: 1 inside a fixed-height column, so its own height comes
+  // from its parent and never from the lanes. Writing lane heights from here
+  // cannot feed the observer its own output.
+  _laneFitObs = new ResizeObserver(() => {
+    // Only where the SVG overlay is the visible waveform. On the streaming path
+    // the lanes are WaveSurfer canvases sized when the tracks are created, and
+    // setOptions only re-renders the ones that have audio: a lane for a stem
+    // the user did not extract keeps its old height and the two columns drift
+    // apart. Measured on a six-lane job with two empty: 93, 93, 93, 70, 70, 93
+    // against mixer rows all at 95. Leaving that path at its load-time height
+    // costs it the reclaimed space and keeps it aligned, which is the better
+    // trade for an opt-out path.
+    if (!document.querySelector(".app")?.classList.contains("engine-waveforms")) return;
+    if (_laneCount > 0) _applyLaneHeight(_laneCount);
+  });
+  _laneFitObs.observe(panel);
+}
+
 function _applyLaneHeight(count) {
   const wavePanel = document.querySelector(".daw-wave-panel");
   const panelH = wavePanel?.clientHeight ?? 0;
+  // The separators between lanes are part of the stack, so the height available
+  // to the lanes themselves is the panel minus them. Dividing the whole panel by
+  // the lane count overshoots by exactly that much, which stayed invisible while
+  // the lanes sat at their floor and overflowed anyway -- and became a 7px
+  // scrollbar the moment collapsing a panel let them actually fill it.
+  const gaps = Math.max(0, count - 1) * WAVEFORM_SEPARATOR_HEIGHT;
   const laneH = panelH > 0 && count > 0
-    ? Math.max(WAVEFORM_LANE_HEIGHT, Math.floor(panelH / count))
+    ? Math.max(WAVEFORM_LANE_HEIGHT, Math.floor((panelH - gaps) / count))
     : WAVEFORM_LANE_HEIGHT;
   const appEl = document.querySelector(".app");
   appEl?.style.setProperty("--lane-h", `${laneH + 2}px`);
   appEl?.style.setProperty(
     "--wave-widget-track-stack-h",
-    `${count * laneH + (count - 1) * WAVEFORM_SEPARATOR_HEIGHT}px`,
+    `${count * laneH + gaps}px`,
   );
   return laneH;
 }
@@ -1171,6 +1210,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   }
 
   const laneH = _applyLaneHeight(orderedNames.length);
+  _watchLaneFit(orderedNames.length);
 
   const mt = Multitrack.create(
     orderedNames.map((name, i) => ({
