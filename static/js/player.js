@@ -1012,22 +1012,23 @@ function _watchLaneFit(count) {
 function _applyLaneHeight(count) {
   const wavePanel = document.querySelector(".daw-wave-panel");
   const panelH = wavePanel?.clientHeight ?? 0;
-  // The separators between lanes are part of the stack, so the height available
-  // to the lanes themselves is the panel minus them. Dividing the whole panel by
-  // the lane count overshoots by exactly that much, which stayed invisible while
-  // the lanes sat at their floor and overflowed anyway -- and became a 7px
-  // scrollbar the moment collapsing a panel let them actually fill it.
-  const gaps = Math.max(0, count - 1) * WAVEFORM_SEPARATOR_HEIGHT;
-  const laneH = panelH > 0 && count > 0
-    ? Math.max(WAVEFORM_LANE_HEIGHT, Math.floor((panelH - gaps) / count))
-    : WAVEFORM_LANE_HEIGHT;
+  // One row is a lane plus its separator, and BOTH columns have to agree on
+  // that number or they drift apart down the stack. They did: every mixer row
+  // draws its own 2px bottom border, so the mixer stack was count * (lane + 2),
+  // while the waveform column was told count * lane + (count - 1) * 2 -- one
+  // separator short. Two pixels over six lanes, which is why a stem name and
+  // its waveform ended up on different lines by the bottom of the mixer.
+  //
+  // So the row is the unit. Divide the panel by the row count, and give the
+  // mixer and the waveform column exactly the same total.
+  const rowH = panelH > 0 && count > 0
+    ? Math.max(WAVEFORM_LANE_HEIGHT + WAVEFORM_SEPARATOR_HEIGHT, Math.floor(panelH / count))
+    : WAVEFORM_LANE_HEIGHT + WAVEFORM_SEPARATOR_HEIGHT;
   const appEl = document.querySelector(".app");
-  appEl?.style.setProperty("--lane-h", `${laneH + 2}px`);
-  appEl?.style.setProperty(
-    "--wave-widget-track-stack-h",
-    `${count * laneH + gaps}px`,
-  );
-  return laneH;
+  appEl?.style.setProperty("--lane-h", `${rowH}px`);
+  appEl?.style.setProperty("--wave-widget-track-stack-h", `${count * rowH}px`);
+  // The drawable height inside a row, which is what the multitrack is given.
+  return rowH - WAVEFORM_SEPARATOR_HEIGHT;
 }
 
 export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false, videoStatus = null) {

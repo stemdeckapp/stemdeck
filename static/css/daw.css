@@ -1884,9 +1884,17 @@ input, textarea { font-family: inherit; }
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
+  gap: var(--lane-name-vu-gap, 5px);
   width: 58px;
   flex-shrink: 0;
+  /* Centres the NAME on the row, not the name-and-meter pair. The row centres
+     its children, so a stacked pair puts the name above the centre line by half
+     the meter plus the gap -- and the waveform beside it is centred on that
+     line, so the label reads as sitting too high. A top margin is centred with
+     the item, so this offsets the pair by exactly half of it and the name comes
+     level with its own waveform. Cheap and reversible: the meter simply moves
+     down with it. */
+  margin-top: calc(var(--lane-vu-h, 10px) + var(--lane-name-vu-gap, 5px));
 }
 
 /* Stem icon — hidden per user preference */
@@ -1954,9 +1962,11 @@ input, textarea { font-family: inherit; }
 /* VU meter — sits below stem name in .lane-left-col, spans full column width */
 /* 5px read as a hairline rather than a meter: at that height the gradient had
    nowhere to show and a moving level was hard to see at a glance. */
+/* Height shared with .lane-name-vu's centring offset, so the two cannot drift. */
+:root { --lane-vu-h: 10px; }
 .lane-vu.mx-meter {
   position: relative;
-  height: 10px;
+  height: var(--lane-vu-h, 10px);
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2124,15 +2134,19 @@ input, textarea { font-family: inherit; }
 .daw.engine-waveforms .stem-waveform-layer {
   display: flex !important;
 }
-/* waves-column must size naturally now that multitrack is in flow -- but not
-   below the stack height _applyLaneHeight computed. Its natural height is the
-   multitrack's, whose lane height is fixed when the tracks are created, so on
-   its own the column stays the size it was at load. Collapsing a panel (#480)
-   hands this panel height it would then leave as a gap under the waveforms:
-   141px of it with all three collapsed. The var is already kept in step with
-   the panel, so a floor is all that is needed. */
+/* The column is exactly the stack _applyLaneHeight computed, never whatever the
+   multitrack happens to be. Letting the multitrack size it looks reasonable and
+   is where the misalignment came from: its lane height is fixed when the tracks
+   are created, so after a resize the column keeps the old size while the mixer
+   rows beside it follow the new one, and the two walk apart down the stack.
+   Measured at 1600x768 after a resize from 900: the column stayed 498px against
+   a 432px stack, so waveform rows sat 83px apart against the mixer's 72 and the
+   last pair was 55px out of line.
+
+   The mixer stack is count * --lane-h and this is count * --lane-h, so they
+   agree by construction rather than by coincidence. */
 .daw .waves-column {
-  height: auto !important;
+  height: var(--wave-widget-track-stack-h, auto) !important;
   min-height: var(--wave-widget-track-stack-h, 0) !important;
 }
 
