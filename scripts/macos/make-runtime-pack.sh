@@ -214,6 +214,20 @@ echo "==> Stripping Python caches"
 find "$PYTHON_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
 find "$PYTHON_DIR" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
 
+# The ditto above preserves extended attributes on every copied file (#505).
+# macOS tar then serializes those xattrs as AppleDouble "._name" members, and
+# the Rust tar crate that unpacks this archive on the user's machine knows
+# nothing about AppleDouble, so it writes them out as literal files. One of
+# them lands in matplotlib's style directory, where the "*.mplstyle" glob picks
+# it up and chokes on the binary header -- taking down every import of
+# matplotlib.pyplot, and with it allin1_infer and automatic song sections.
+# Strip the xattrs, delete any sidecars already on disk, and tell tar not to
+# regenerate them.
+echo "==> Stripping extended attributes and AppleDouble sidecars"
+xattr -cr "$STAGING" 2>/dev/null || true
+find "$STAGING" -name "._*" -delete
+
+export COPYFILE_DISABLE=1
 ARCHIVE_NAME="StemDeck-runtime-macOS-${ARCH}.tar.zst"
 ARCHIVE_PATH="${BUILD_DIR}/${ARCHIVE_NAME}"
 if command -v zstd >/dev/null 2>&1; then
@@ -222,6 +236,38 @@ else
   ARCHIVE_NAME="StemDeck-runtime-macOS-${ARCH}.tar.gz"
   ARCHIVE_PATH="${BUILD_DIR}/${ARCHIVE_NAME}"
   tar -czf "$ARCHIVE_PATH" -C "$STAGING" runtime
+fi
+
+# The three guards above are all environment-dependent -- whether macOS tar
+# emits AppleDouble members at all varies by OS version -- so verify the actual
+# archive rather than trusting them. A pack that ships even one sidecar is a
+# broken pack.
+#
+# `tar -tf` cannot do this audit: macOS tar folds "._name" members back into
+# their sibling's metadata while listing, exactly as it does while creating, so
+# it reports a clean archive whether or not one is clean. Stream the members
+# through Python's tarfile instead, which has no AppleDouble handling at all.
+echo "==> Verifying archive carries no AppleDouble entries"
+if [[ "$ARCHIVE_PATH" == *.zst ]]; then
+  DECOMPRESS=(zstd -dc "$ARCHIVE_PATH")
+else
+  DECOMPRESS=(gzip -dc "$ARCHIVE_PATH")
+fi
+APPLE_DOUBLE="$("${DECOMPRESS[@]}" | "$PYTHON_BIN" -c '
+import posixpath, sys, tarfile
+
+found = [
+  member.name
+  for member in tarfile.open(fileobj=sys.stdin.buffer, mode="r|")
+  if posixpath.basename(member.name).startswith("._")
+]
+print("\n".join(found[:5]))
+print(f"({len(found)} total)" if found else "", end="")
+')"
+if [[ -n "$APPLE_DOUBLE" ]]; then
+  echo "ERROR: archive contains AppleDouble ._ entries (see #505)" >&2
+  echo "$APPLE_DOUBLE" >&2
+  exit 1
 fi
 
 SIZE="$(stat -f%z "$ARCHIVE_PATH")"

@@ -3172,6 +3172,47 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// True for AppleDouble sidecars -- the `._name` files macOS `tar` emits to
+/// carry a file's extended attributes (#505).
+///
+/// The runtime pack is built on macOS, where `ditto` preserves xattrs and `tar`
+/// may encode them as these sidecar members. This crate has no AppleDouble
+/// support, so unpacking them writes 30k binary stubs into `site-packages` --
+/// and `matplotlib`'s `*.mplstyle` glob then matches `._seaborn-v0_8-bright
+/// .mplstyle` and dies decoding its header, which takes down `matplotlib
+/// .pyplot`, `allin1_infer`, and automatic song sections with it.
+///
+/// The pack script strips them at build time and fails if any survive, so this
+/// exists for the packs already published without that guard.
+fn is_apple_double(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
+}
+
+fn unpack_without_apple_double<R: Read>(
+    mut archive: Archive<R>,
+    destination: &Path,
+) -> Result<(), String> {
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("failed to read runtime pack: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("failed to read runtime pack: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("failed to read runtime pack: {e}"))?
+            .into_owned();
+        if is_apple_double(&path) {
+            continue;
+        }
+        entry
+            .unpack_in(destination)
+            .map_err(|e| format!("failed to extract runtime pack: {e}"))?;
+    }
+    Ok(())
+}
+
 fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), String> {
     let file = fs::File::open(archive)
         .map_err(|e| format!("failed to open archive {}: {e}", archive.display()))?;
@@ -3181,14 +3222,10 @@ fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), String>
     if is_zst {
         let decoder =
             zstd::Decoder::new(file).map_err(|e| format!("failed to init zstd decoder: {e}"))?;
-        Archive::new(decoder)
-            .unpack(destination)
-            .map_err(|e| format!("failed to extract runtime pack: {e}"))
+        unpack_without_apple_double(Archive::new(decoder), destination)
     } else {
         let decoder = GzDecoder::new(file);
-        Archive::new(decoder)
-            .unpack(destination)
-            .map_err(|e| format!("failed to extract runtime pack: {e}"))
+        unpack_without_apple_double(Archive::new(decoder), destination)
     }
 }
 
@@ -4374,6 +4411,52 @@ mod tests {
 
     fn make_tmp() -> TempDir {
         tempfile::tempdir().expect("failed to create temp dir")
+    }
+
+    #[test]
+    fn extract_tar_archive_drops_apple_double_sidecars() {
+        // A macOS-built runtime pack can carry `._name` AppleDouble members
+        // alongside the real files. Unpacked verbatim, the one beside
+        // matplotlib's stylelib matches its `*.mplstyle` glob and kills every
+        // import of matplotlib.pyplot -- and with it automatic song sections
+        // (#505).
+        let source = make_tmp();
+        let stylelib = source.path().join("runtime/stylelib");
+        fs::create_dir_all(&stylelib).unwrap();
+        fs::write(
+            stylelib.join("seaborn-v0_8-bright.mplstyle"),
+            b"axes.grid: True",
+        )
+        .unwrap();
+        fs::write(
+            stylelib.join("._seaborn-v0_8-bright.mplstyle"),
+            b"\x00\x05\x16\x07\xa3binary AppleDouble header",
+        )
+        .unwrap();
+
+        // Must be .tar.zst: that is the shape the macOS runtime pack ships in,
+        // and the only one extract_tar_archive routes away from gzip.
+        let archive_dir = make_tmp();
+        let archive = archive_dir.path().join("runtime.tar.zst");
+        let encoder = zstd::Encoder::new(fs::File::create(&archive).unwrap(), 0).unwrap();
+        let mut builder = tar::Builder::new(encoder);
+        builder
+            .append_dir_all("runtime", source.path().join("runtime"))
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        let destination = make_tmp();
+        super::extract_tar_archive(&archive, destination.path()).unwrap();
+
+        let unpacked = destination.path().join("runtime/stylelib");
+        assert!(
+            unpacked.join("seaborn-v0_8-bright.mplstyle").is_file(),
+            "real files must still be extracted"
+        );
+        assert!(
+            !unpacked.join("._seaborn-v0_8-bright.mplstyle").exists(),
+            "AppleDouble sidecar must not be written to disk"
+        );
     }
 
     #[test]
