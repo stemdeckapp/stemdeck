@@ -332,6 +332,18 @@ const en = {
   "sections.savingAria": "Saving sections",
 
   "mixer.title": "Mixer",
+
+  "panels.analysis": "Analysis",
+
+  "panels.clickToCollapse": "Click to collapse",
+
+  "panels.timeline": "Timeline",
+
+  "panels.analysisTitle": "Show or hide the track analysis",
+
+  "panels.sectionsTitle": "Show or hide the sections bar",
+
+  "panels.timelineTitle": "Show or hide the timeline",
   "mixer.hint": "Drag fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -885,6 +897,18 @@ const pl = {
   "sections.savingAria": "Zapisywanie sekcji",
 
   "mixer.title": "Mikser",
+
+  "panels.analysis": "Analiza",
+
+  "panels.clickToCollapse": "Kliknij, aby zwinąć",
+
+  "panels.timeline": "Oś czasu",
+
+  "panels.analysisTitle": "Pokaż lub ukryj analizę utworu",
+
+  "panels.sectionsTitle": "Pokaż lub ukryj pasek sekcji",
+
+  "panels.timelineTitle": "Pokaż lub ukryj oś czasu",
   "mixer.hint": "Przeciągnij suwak · M/S",
   "stemsPanel.ariaLabel": "Ścieżki",
 
@@ -1428,6 +1452,18 @@ const ja = {
   "sections.savingAria": "セクションを保存中",
 
   "mixer.title": "ミキサー",
+
+  "panels.analysis": "解析",
+
+  "panels.clickToCollapse": "クリックで折りたたみ",
+
+  "panels.timeline": "タイムライン",
+
+  "panels.analysisTitle": "トラック解析の表示を切り替えます",
+
+  "panels.sectionsTitle": "セクションバーの表示を切り替えます",
+
+  "panels.timelineTitle": "タイムラインの表示を切り替えます",
   "mixer.hint": "フェーダーをドラッグ · M/S",
   "stemsPanel.ariaLabel": "パート",
 
@@ -1946,6 +1982,18 @@ const zhHans = {
   "sections.savingAria": "正在保存段落",
 
   "mixer.title": "混音台",
+
+  "panels.analysis": "分析",
+
+  "panels.clickToCollapse": "点击可折叠",
+
+  "panels.timeline": "时间轴",
+
+  "panels.analysisTitle": "显示或隐藏音轨分析",
+
+  "panels.sectionsTitle": "显示或隐藏段落栏",
+
+  "panels.timelineTitle": "显示或隐藏时间轴",
   "mixer.hint": "拖动推子 · M/S",
   "stemsPanel.ariaLabel": "音轨",
 
@@ -2464,6 +2512,18 @@ const de = {
   "sections.savingAria": "Abschnitte werden gespeichert",
 
   "mixer.title": "Mixer",
+
+  "panels.analysis": "Analyse",
+
+  "panels.clickToCollapse": "Zum Einklappen klicken",
+
+  "panels.timeline": "Zeitleiste",
+
+  "panels.analysisTitle": "Track-Analyse ein- oder ausblenden",
+
+  "panels.sectionsTitle": "Abschnittsleiste ein- oder ausblenden",
+
+  "panels.timelineTitle": "Zeitleiste ein- oder ausblenden",
   "mixer.hint": "Fader ziehen · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -2993,6 +3053,18 @@ const pt = {
   "sections.savingAria": "Salvando seções",
 
   "mixer.title": "Mixer",
+
+  "panels.analysis": "Análise",
+
+  "panels.clickToCollapse": "Clique para recolher",
+
+  "panels.timeline": "Linha do tempo",
+
+  "panels.analysisTitle": "Mostrar ou ocultar a análise da faixa",
+
+  "panels.sectionsTitle": "Mostrar ou ocultar a barra de seções",
+
+  "panels.timelineTitle": "Mostrar ou ocultar a linha do tempo",
   "mixer.hint": "Arraste o fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3524,6 +3596,18 @@ const id = {
   "sections.savingAria": "Menyimpan bagian",
 
   "mixer.title": "Mixer",
+
+  "panels.analysis": "Analisis",
+
+  "panels.clickToCollapse": "Klik untuk menciutkan",
+
+  "panels.timeline": "Lini masa",
+
+  "panels.analysisTitle": "Tampilkan atau sembunyikan analisis trek",
+
+  "panels.sectionsTitle": "Tampilkan atau sembunyikan bilah bagian",
+
+  "panels.timelineTitle": "Tampilkan atau sembunyikan lini masa",
   "mixer.hint": "Seret fader · M/S",
   "stemsPanel.ariaLabel": "Stem",
 
@@ -4042,6 +4126,18 @@ const fr = {
   "sections.savingAria": "Enregistrement des sections",
 
   "mixer.title": "Mixage",
+
+  "panels.analysis": "Analyse",
+
+  "panels.clickToCollapse": "Cliquez pour réduire",
+
+  "panels.timeline": "Chronologie",
+
+  "panels.analysisTitle": "Afficher ou masquer l'analyse du morceau",
+
+  "panels.sectionsTitle": "Afficher ou masquer la barre de sections",
+
+  "panels.timelineTitle": "Afficher ou masquer la chronologie",
   "mixer.hint": "Glissez le fader · M/S",
   "stemsPanel.ariaLabel": "Pistes",
 
@@ -4672,6 +4768,18 @@ const es = {
   "sections.savingAria": "Guardando secciones",
 
   "mixer.title": "Mezclador",
+
+  "panels.analysis": "Análisis",
+
+  "panels.clickToCollapse": "Haz clic para contraer",
+
+  "panels.timeline": "Línea de tiempo",
+
+  "panels.analysisTitle": "Mostrar u ocultar el análisis de la pista",
+
+  "panels.sectionsTitle": "Mostrar u ocultar la barra de secciones",
+
+  "panels.timelineTitle": "Mostrar u ocultar la línea de tiempo",
   "mixer.hint": "Arrastra el fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 

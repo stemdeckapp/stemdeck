@@ -42,7 +42,12 @@ input, textarea { font-family: inherit; }
    TOPBAR
    ═══════════════════════════════════ */
 .daw-topbar {
-  height: 77px;
+  /* Was a flat 77px. The panel-toggle row under the composer needs a second
+     line, and auto height means a translation that wraps grows the bar rather
+     than being clipped. */
+  min-height: 77px;
+  padding-top: 10px;
+  padding-bottom: 10px;
   flex-shrink: 0;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
@@ -1687,6 +1692,80 @@ input, textarea { font-family: inherit; }
   padding: 0 14px;
 }
 
+/* ── Panel toggles (#480) ── */
+/* A second row under the composer, aligned to its right-hand end so it reads as
+   belonging to the two controls above it. Collapse to nothing, not to a stub:
+   the whole point is the height back, and a stub tall enough to hold a control
+   is most of what the smaller panels are worth. That is only possible because
+   the controls live up here, where the way back is always in the same place.
+
+   This row costs the topbar about 19px, against up to 202px it can return. */
+.daw-composer-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.daw-composer-stack > .daw-composer { flex: none; }
+/* Exactly as wide as the two controls above it, and sharing their right edge:
+   the same --composer-action-w they are each sized from, so a longer
+   translation widens all three together instead of leaving this one ragged.
+   margin-left:auto does the alignment, since the stack is the composer's width. */
+.daw-panel-toggles {
+  width: calc(var(--composer-action-w) * 2);
+  margin-left: auto;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 2px 7px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  min-width: 0;
+}
+.daw-panel-toggles-label,
+.daw-panel-toggles-sep {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+.daw-panel-toggle {
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-2);
+  font-family: inherit;
+  font-size: 8.5px; font-weight: 600; letter-spacing: 0.03em;
+  text-transform: uppercase;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--t-fast), background var(--t-fast), opacity var(--t-fast);
+}
+.daw-panel-toggle:hover { background: var(--panel-2); }
+/* Legible means the panel is there, struck through means it is put away. The
+   other way round -- highlighting the hidden ones -- inverts what a pressed
+   toggle normally looks like, and makes the default state the loud one. */
+.daw-panel-toggle[aria-pressed="true"] { color: var(--fg-2); }
+.daw-panel-toggle[aria-pressed="false"] {
+  color: var(--muted);
+  opacity: 0.6;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.app.panel-analysis-off .daw-track-header { display: none; }
+.app.panel-sections-off .daw-section-ribbon { display: none; }
+.app.panel-timeline-off .footer-wave-region { display: none; }
+
 /* ── Waveform header ── */
 .daw-wave-header {
   display: flex;
@@ -2048,9 +2127,10 @@ input, textarea { font-family: inherit; }
 /* waves-column must size naturally now that multitrack is in flow -- but not
    below the stack height _applyLaneHeight computed. Its natural height is the
    multitrack's, whose lane height is fixed when the tracks are created, so on
-   its own the column stays whatever size it was at load however much room the
-   panel is given. The var is already kept in step with the panel, so a floor is
-   all that is needed. */
+   its own the column stays the size it was at load. Collapsing a panel (#480)
+   hands this panel height it would then leave as a gap under the waveforms:
+   141px of it with all three collapsed. The var is already kept in step with
+   the panel, so a floor is all that is needed. */
 .daw .waves-column {
   height: auto !important;
   min-height: var(--wave-widget-track-stack-h, 0) !important;

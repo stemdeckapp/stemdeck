@@ -29,6 +29,7 @@
         <div class="daw-sep"></div>
 
         <!-- Composer pill -->
+        <div class="daw-composer-stack">
         <form id="job-form" class="daw-composer">
 
           <!-- URL zone (JS uses .url-wrap for drag events) -->
@@ -121,6 +122,34 @@
             <span data-i18n="process.splitStems">Split stems</span>
           </button>
         </form>
+
+        <!-- Panel toggles (#480). Every panel around the mixer is useful and
+             none of them is useful all the time, so the fix is a way to put one
+             away rather than a smaller default. They sit under the composer's
+             right-hand end, beneath the two controls that decide what an import
+             produces, because these decide what the studio shows: both are
+             choices about the layout rather than about a track. Collapsing to
+             zero is only possible because the way back is always here; a
+             control on each panel would need that panel to keep a stub, and the
+             stub costs most of what collapsing the smaller ones returns. -->
+        <div class="daw-panel-toggles">
+          <span class="daw-panel-toggles-label" data-i18n="panels.clickToCollapse">Click to collapse</span>
+          <button class="daw-panel-toggle" type="button" data-panel="analysis" aria-pressed="true"
+                  title="Show or hide the track analysis" data-i18n-title="panels.analysisTitle" data-i18n-aria-label="panels.analysisTitle">
+            <span data-i18n="panels.analysis">Analysis</span>
+          </button>
+          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
+          <button class="daw-panel-toggle" type="button" data-panel="sections" aria-pressed="true"
+                  title="Show or hide the sections bar" data-i18n-title="panels.sectionsTitle" data-i18n-aria-label="panels.sectionsTitle">
+            <span data-i18n="sections.title">Sections</span>
+          </button>
+          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
+          <button class="daw-panel-toggle" type="button" data-panel="timeline" aria-pressed="true"
+                  title="Show or hide the timeline" data-i18n-title="panels.timelineTitle" data-i18n-aria-label="panels.timelineTitle">
+            <span data-i18n="panels.timeline">Timeline</span>
+          </button>
+        </div>
+        </div><!-- /.daw-composer-stack -->
 
         <!-- Notification bell -->
         <div class="daw-notif-wrap" style="position:relative;flex-shrink:0;">
