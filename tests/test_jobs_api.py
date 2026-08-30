@@ -758,3 +758,25 @@ def test_vocal_split_failure_keeps_job_done_with_base_stems(client, tmp_path, mo
     assert job.status == "done"  # the job itself is untouched
     assert job.vocal_split == "error"
     assert (stems_dir / "vocal_split_error.txt").is_file()
+
+
+def test_submit_captures_the_song_structure_setting_on_the_job(client, monkeypatch):
+    """The job carries the answer, so a later change cannot reach it.
+
+    The UI clears this toggle as soon as the user opens another song, and the
+    stage that reads it runs at the very end of the pipeline. If the flag were
+    not captured here, an import could lose a pass that was switched on when it
+    was submitted.
+    """
+    from app.core import registry
+
+    monkeypatch.setattr("app.api.jobs.get_auto_sections", lambda: True)
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    assert r.status_code == 200
+    assert registry.get(r.json()["job_id"]).auto_sections is True
+
+    # And the off case, so this is not just asserting a default.
+    monkeypatch.setattr("app.api.jobs.get_auto_sections", lambda: False)
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/oHg5SJYRHA0"})
+    assert r.status_code == 200
+    assert registry.get(r.json()["job_id"]).auto_sections is False

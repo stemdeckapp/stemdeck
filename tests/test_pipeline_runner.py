@@ -451,7 +451,7 @@ def _common_stage_patches(job_dir: Path, sections):
 
 
 def test_common_pipeline_stores_automatic_section_suggestions(tmp_path: Path):
-    job = Job(id="abcdefabc111", duration_sec=60.0)
+    job = Job(id="abcdefabc111", duration_sec=60.0, auto_sections=True)
     job_dir = tmp_path / job.id
     stems_dir = job_dir / "stems"
     stems_dir.mkdir(parents=True)
@@ -477,7 +477,6 @@ def test_common_pipeline_stores_automatic_section_suggestions(tmp_path: Path):
         patches[6],
         patches[7],
         patches[8] as detect,
-        patch("app.pipeline.runner.get_auto_sections", return_value=True),
     ):
         _run_common(job, job_dir / "source.wav", job_dir)
 
@@ -490,10 +489,11 @@ def test_common_pipeline_stores_automatic_section_suggestions(tmp_path: Path):
 def test_common_pipeline_skips_sections_when_the_user_turned_them_off(tmp_path: Path):
     """The toggle must stop the inference pass, not just hide its result.
 
-    The setting is read per job rather than captured at import, so switching it
-    off applies to the next import without restarting the server.
+    The flag is captured on the job when it is created, not read when this
+    stage is reached: the stage is the last thing the pipeline does, and the
+    toggle clears itself as soon as the user opens another song.
     """
-    job = Job(id="abcdefabc116", duration_sec=60.0)
+    job = Job(id="abcdefabc116", duration_sec=60.0, auto_sections=False)
     job_dir = tmp_path / job.id
     (job_dir / "stems").mkdir(parents=True)
 
@@ -508,7 +508,6 @@ def test_common_pipeline_skips_sections_when_the_user_turned_them_off(tmp_path: 
         patches[6],
         patches[7],
         patches[8] as detect,
-        patch("app.pipeline.runner.get_auto_sections", return_value=False),
     ):
         _run_common(job, job_dir / "source.wav", job_dir)
 
@@ -518,7 +517,7 @@ def test_common_pipeline_skips_sections_when_the_user_turned_them_off(tmp_path: 
 
 
 def test_common_pipeline_keeps_section_failure_nonfatal(tmp_path: Path, caplog):
-    job = Job(id="abcdefabc112", duration_sec=60.0)
+    job = Job(id="abcdefabc112", duration_sec=60.0, auto_sections=True)
     job_dir = tmp_path / job.id
     (job_dir / "stems").mkdir(parents=True)
     patches = _common_stage_patches(job_dir, RuntimeError("model unavailable"))
@@ -533,7 +532,6 @@ def test_common_pipeline_keeps_section_failure_nonfatal(tmp_path: Path, caplog):
         patches[6],
         patches[7],
         patches[8],
-        patch("app.pipeline.runner.get_auto_sections", return_value=True),
         caplog.at_level("ERROR", logger="stemdeck.pipeline"),
     ):
         _run_common(job, job_dir / "source.wav", job_dir)
@@ -543,7 +541,7 @@ def test_common_pipeline_keeps_section_failure_nonfatal(tmp_path: Path, caplog):
 
 
 def test_common_pipeline_preserves_section_cancellation(tmp_path: Path):
-    job = Job(id="abcdefabc113", duration_sec=60.0)
+    job = Job(id="abcdefabc113", duration_sec=60.0, auto_sections=True)
     job_dir = tmp_path / job.id
     (job_dir / "stems").mkdir(parents=True)
     patches = _common_stage_patches(job_dir, JobCancelled())
@@ -558,7 +556,6 @@ def test_common_pipeline_preserves_section_cancellation(tmp_path: Path):
         patches[6],
         patches[7],
         patches[8],
-        patch("app.pipeline.runner.get_auto_sections", return_value=True),
         pytest.raises(JobCancelled),
     ):
         _run_common(job, job_dir / "source.wav", job_dir)
@@ -610,3 +607,38 @@ def test_metadata_includes_sections_and_source(tmp_path: Path):
     meta = _json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
     assert meta["sections"] == [{"id": "auto-001"}]
     assert meta["sections_source"] == "automatic"
+
+
+def test_section_flag_is_captured_at_submit_not_at_the_sections_stage(tmp_path: Path):
+    """Turning the toggle off mid-import must not rob the running job.
+
+    The sections stage is the last thing the pipeline does, minutes after the
+    user pressed the button, and the toggle now clears itself the moment they
+    open another song. Reading the setting here would have let an import
+    silently lose a pass its owner had already asked and waited for, so the
+    answer is the one captured on the job at creation.
+    """
+    job = Job(id="abcdefabc117", duration_sec=60.0, auto_sections=True)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+
+    suggested = [{"id": "auto-001", "kind": "verse"}]
+    patches = _common_stage_patches(job_dir, suggested)
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8] as detect,
+        # The setting says off, the way it would after the user opened another
+        # song while this import was still running.
+        patch("app.core.settings.get_auto_sections", return_value=False),
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    detect.assert_called_once()
+    assert job.sections == suggested

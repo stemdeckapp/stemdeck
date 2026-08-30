@@ -49,6 +49,12 @@ class Job:
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     sections: list[dict] | None = None  # [{id, name, kind?, start, end, color}]
+    # Whether this job should run the automatic song-structure pass, captured
+    # from the setting when the job is created rather than read when the stage
+    # is reached. The stage runs at the very end of the pipeline, minutes after
+    # submit, and the toggle is a per-import choice that clears itself: reading
+    # it late let a job lose a pass the user had asked and waited for.
+    auto_sections: bool = False
     sections_source: Literal["automatic", "manual"] | None = None
     tags: list[str] | None = None  # YouTube tags + categories, lowercased, max 8
     stems: list[dict[str, str]] = field(default_factory=list)

@@ -14,7 +14,6 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
 from app.core.registry import persist as persist_registry
-from app.core.settings import get_auto_sections
 from app.pipeline.analyze import analyze
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
@@ -219,11 +218,15 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
 
     # Automatic sections are suggestions and never make an otherwise usable
     # separation fail. Cancellation remains authoritative so a user can still
-    # stop a long CPU inference pass immediately. The setting is read here, per
-    # job, rather than captured at import, so turning the toggle off applies to
-    # the next job without a restart.
+    # stop a long CPU inference pass immediately.
+    #
+    # The flag comes from the job, captured when it was created, not from the
+    # setting as it stands now. This stage is the last thing the pipeline does,
+    # so "now" can be many minutes after the user asked -- and the toggle clears
+    # itself on the next song they open. Reading it here let an import silently
+    # lose a pass its owner had already waited for.
     _check_cancel(job)
-    if get_auto_sections() and job.sections is None and job.duration_sec and job.duration_sec > 0:
+    if job.auto_sections and job.sections is None and job.duration_sec and job.duration_sec > 0:
         _set(job, stage="Analyzing song structure...")
         try:
             sections = detect_sections(job, stems_dir, job.duration_sec)

@@ -217,6 +217,12 @@ export function setFooterWaveDrawFn(fn) { footerWaveDrawFn = fn; }
 export let overviewRerenderFn = null;
 export function setOverviewRerenderFn(fn) { overviewRerenderFn = fn; }
 
+// Puts the song-structure toggle back to off. Registered by main.js, which owns
+// the button, and called by player.js when the studio loads a track. A callback
+// rather than an import because main.js is the entry point: nothing imports it.
+export let autoSectionsResetFn = null;
+export function setAutoSectionsResetFn(fn) { autoSectionsResetFn = fn; }
+
 // Click track. `metronome` is the scheduler bound to the current engine (null
 // when the job has no beat grid or the streaming path is in use); the enabled
 // flag and volume survive track switches so the user's choice sticks.

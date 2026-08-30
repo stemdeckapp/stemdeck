@@ -2,6 +2,7 @@ import {
   playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitMode, vocalSplitModeReady, setVocalSplitMode,
+  setAutoSectionsResetFn,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
@@ -100,9 +101,38 @@ function wireAutoSectionsToggle() {
     }
   });
 
+  // Off is the only state this starts in. It is a choice about the next import,
+  // not a preference: an inference pass costs minutes of CPU, so it should
+  // always be something the user asked for just now rather than something a
+  // previous session, or the previous song, left switched on.
+  //
+  // The server is what the runner actually reads, so turning the button off is
+  // not enough on its own -- the setting has to go with it, or the next import
+  // would still pay for a pass nobody asked for.
+  const forceOff = async () => {
+    if (btn.getAttribute("aria-pressed") !== "true") return;
+    paint(false);
+    try {
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_sections: false }),
+      });
+    } catch (e) {
+      console.warn("[structure] could not clear the setting:", e);
+    }
+  };
+  setAutoSectionsResetFn(forceOff);
+
+  // Read it once at startup only to find out whether it needs clearing: a
+  // setting left on by an earlier session must not survive into this one.
   fetch("/api/settings", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : null))
-    .then((d) => d && paint(d.auto_sections))
+    .then((d) => {
+      if (!d) return;
+      paint(d.auto_sections);
+      return forceOff();
+    })
     .catch((e) => console.warn("[structure] could not read the setting:", e));
 }
 

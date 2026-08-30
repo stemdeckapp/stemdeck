@@ -33,7 +33,7 @@ from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
-from app.core.settings import get_max_duration_sec
+from app.core.settings import get_auto_sections, get_max_duration_sec
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
@@ -190,7 +190,15 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
     if not selected:
         selected = list(STEM_NAMES)
 
-    job = Job(id=uuid.uuid4().hex[:12], selected_stems=selected, source_url=url)
+    job = Job(
+        id=uuid.uuid4().hex[:12],
+        selected_stems=selected,
+        source_url=url,
+        # Captured now, not when the sections stage is reached: that is the
+        # last thing the pipeline does, and the toggle clears itself as soon
+        # as the user opens another song.
+        auto_sections=get_auto_sections(),
+    )
     if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
         raise HTTPException(status_code=503, detail=_URL_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
@@ -282,6 +290,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         title=title,
         duration_sec=duration,
         source_url=local_source_url,
+        auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(job_dir, ignore_errors=True)

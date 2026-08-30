@@ -22,7 +22,7 @@ import {
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
   footerTitle, footerMeta, footerThumb,
-  setFooterWaveDrawFn, setOverviewRerenderFn,
+  setFooterWaveDrawFn, setOverviewRerenderFn, autoSectionsResetFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
   setMetronomeHasBars,
@@ -1070,6 +1070,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   setLoopEnd(0);
   loopBtn.classList.remove("active");
   loopRegionEl.classList.add("hidden");
+  // Loading a song is the end of whatever the structure toggle was asked to do
+  // for the last one. It costs minutes of CPU per import, so it goes back to
+  // off rather than quietly staying on for the next track.
+  autoSectionsResetFn?.();
   // After the loop is cleared, never before: resetWaveZoom redraws the loop
   // region, so running it first would paint the previous track's loop against
   // this track's duration for a frame. A new track also starts fitted -- the
