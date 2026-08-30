@@ -1414,6 +1414,9 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
         .env("TORCH_HOME", data_dir.join("models").join("torch"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // The vocal-split model's downloader probes for `ffmpeg` on PATH before it
+    // will load anything (#505).
+    apply_ffmpeg_path(&mut command, &data_dir)?;
 
     let child = command
         .spawn()
@@ -1566,13 +1569,7 @@ fn start_backend(
             .stdout(stdout)
             .stderr(stderr);
 
-        if let Some(ffmpeg_dir) = ffmpeg_dir_if_present(&data_dir) {
-            let existing = env::var_os("PATH").unwrap_or_default();
-            let mut paths = vec![ffmpeg_dir];
-            paths.extend(env::split_paths(&existing));
-            let joined = env::join_paths(paths).map_err(|e| e.to_string())?;
-            cmd.env("PATH", joined);
-        }
+        apply_ffmpeg_path(&mut cmd, &data_dir)?;
 
         #[cfg(windows)]
         {
@@ -3378,6 +3375,27 @@ fn resolve_existing_ffmpeg(data_dir: &Path) -> Option<PathBuf> {
 fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
     let path = resolve_existing_ffmpeg(data_dir)?;
     path.parent().map(Path::to_path_buf)
+}
+
+/// Prepend the bundled FFmpeg directory to `cmd`'s PATH.
+///
+/// Every child process that may shell out to `ffmpeg`/`ffprobe` needs this, not
+/// just the backend: a Finder-launched `.app` inherits a bare
+/// `/usr/bin:/bin:/usr/sbin:/sbin`, so an FFmpeg we downloaded into the data
+/// directory is invisible to anything we spawn unless we put it there
+/// ourselves. Warmup grew its own command without this and silently lost the
+/// karaoke vocal-split model to `FileNotFoundError` (#505), so it lives in one
+/// place now.
+fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
+    let Some(ffmpeg_dir) = ffmpeg_dir_if_present(data_dir) else {
+        return Ok(());
+    };
+    let existing = env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![ffmpeg_dir];
+    paths.extend(env::split_paths(&existing));
+    let joined = env::join_paths(paths).map_err(|e| e.to_string())?;
+    cmd.env("PATH", joined);
+    Ok(())
 }
 
 /// Claim `host:port` without serving on it, and report the port that was
