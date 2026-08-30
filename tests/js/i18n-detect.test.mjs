@@ -40,6 +40,7 @@ const LOCALES = {
   en: ["en", "en-US", "en-GB"],
   pl: ["pl", "pl-PL"],
   ja: ["ja", "ja-JP"],
+  ko: ["ko", "ko-KR"],
   "zh-Hans": ["zh", "zh-CN", "zh-Hans", "zh-SG"],
   de: ["de", "de-DE", "de-AT"],
   fr: ["fr", "fr-FR", "fr-CA"],
