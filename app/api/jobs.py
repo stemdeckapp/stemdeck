@@ -29,6 +29,7 @@ from app.core.models import Job, _set
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
+from app.core.registry import mark_deleted as registry_mark_deleted
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
@@ -110,14 +111,29 @@ def _copy_to_dest(src_file: object, dest: Path) -> None:
         shutil.copyfileobj(src_file, out)  # type: ignore[arg-type]
 
 
-def _rmtree_job(job_id: str) -> None:
+def _rmtree_job(job_id: str) -> bool:
+    """Remove a job's directory. False means files are still on disk.
+
+    The outcome used to be swallowed, so delete_job dropped the registry entry
+    whether or not anything was actually deleted -- and restore() then adopted
+    the surviving directory on the next start, which is how deleted songs came
+    back (#521).
+
+    Retried once: on macOS the common failure is Finder or Spotlight creating
+    a .DS_Store between rmtree's scan and its final rmdir, which leaves
+    "Directory not empty" on a directory that is about to be empty again."""
     job_dir = JOBS_DIR / job_id
-    if not job_dir.is_dir():
-        return
-    try:
-        shutil.rmtree(job_dir)
-    except Exception:
-        logger.warning("failed to remove job dir %s", job_dir, exc_info=True)
+    for attempt in (1, 2):
+        if not job_dir.is_dir():
+            return True
+        try:
+            shutil.rmtree(job_dir)
+            return True
+        except Exception:
+            logger.warning(
+                "failed to remove job dir %s (attempt %d)", job_dir, attempt, exc_info=True
+            )
+    return not job_dir.is_dir()
 
 
 def _job_files_missing(job: Job) -> bool:
@@ -759,7 +775,16 @@ def delete_job(job_id: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in ("done", "error", "cancelled"):
         raise HTTPException(status_code=409, detail="job is still running")
-    _rmtree_job(job_id)
+    removed = _rmtree_job(job_id)
+    # Recorded whether or not the files went away. The user asked for this job
+    # to be gone; without the record, a directory that outlived the delete is
+    # re-adopted by restore() on the next start and the track reappears.
+    registry_mark_deleted(job_id)
     registry_remove(job_id)
     registry_persist(JOBS_DIR)
+    if not removed:
+        raise HTTPException(
+            status_code=500,
+            detail="Removed from the library, but its files could not be deleted.",
+        )
     return {"job_id": job_id, "status": "deleted"}

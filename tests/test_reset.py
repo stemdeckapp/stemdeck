@@ -74,7 +74,8 @@ def test_reset_endpoint_works_without_desktop_mode(client, monkeypatch, tmp_path
     r = client.post("/api/reset")
 
     assert r.status_code == 200
-    assert r.json() == {"ok": True}
+    # "undeleted" reports what reset could not remove; 0 on a clean reset (#521).
+    assert r.json() == {"ok": True, "undeleted": 0}
     assert _jobs == {}
     assert not (tmp_path / job.id).exists()
 
@@ -99,7 +100,8 @@ def test_reset_endpoint_succeeds(client, monkeypatch, tmp_path):
     r = client.post("/api/reset")
 
     assert r.status_code == 200
-    assert r.json() == {"ok": True}
+    # "undeleted" reports what reset could not remove; 0 on a clean reset (#521).
+    assert r.json() == {"ok": True, "undeleted": 0}
     assert _jobs == {}
     assert not (tmp_path / job.id).exists()
 

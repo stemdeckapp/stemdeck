@@ -590,8 +590,15 @@ def reset_app_data() -> dict[str, object]:
     from app.pipeline import jobqueue
 
     jobqueue.clear()
-    reset_registry(JOBS_DIR)
-    return {"ok": True}
+    # Anything that could not be removed is reported rather than swallowed: the
+    # frontend used to take an unconditional {"ok": true} as licence to wipe its
+    # own deletion tombstone, and any surviving directory was then re-adopted on
+    # the next start with nothing left to suppress it (#521). reset_all also
+    # records the survivors server-side, so they stay deleted regardless.
+    undeleted = reset_registry(JOBS_DIR)
+    if undeleted:
+        _log.warning("reset left %d entries on disk: %s", len(undeleted), undeleted)
+    return {"ok": True, "undeleted": len(undeleted)}
 
 
 @app.get("/api/registry", tags=["settings"])

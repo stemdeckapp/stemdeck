@@ -130,11 +130,21 @@ function getDeletedJobIds() {
   return _deletedJobIds;
 }
 
-function markJobsDeleted(ids) {
+async function markJobsDeleted(ids) {
   for (const id of ids) _deletedJobIds.add(id);
-  storeSet(DELETED_JOBS_KEY, [..._deletedJobIds]).catch((e) =>
-    console.warn("[catalog] failed to persist deleted jobs", e)
-  );
+  // Awaited by callers before they purge. Fire-and-forget meant that quitting
+  // soon after clearing the bin -- or one failed store write -- left no
+  // tombstone, and syncWithServer re-imported everything on the next launch
+  // (#521). The backend keeps its own deletion record now, so this is a second
+  // line of defence rather than the only one, but it still has to be written
+  // before the tracks are dropped from the local index.
+  try {
+    await storeSet(DELETED_JOBS_KEY, [..._deletedJobIds]);
+    return true;
+  } catch (e) {
+    console.warn("[catalog] failed to persist deleted jobs", e);
+    return false;
+  }
 }
 
 function normalizeFolderColor(color) {
@@ -1958,15 +1968,43 @@ function wireCatalogRailViews() {
   document.querySelector(".rail-favorites")?.addEventListener("click", () => setCatalogView("favorites"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
   document.querySelector(".rail-queue")?.addEventListener("click", () => setCatalogView("queue"));
-  document.getElementById("clearBinBtn")?.addEventListener("click", () => {
-    const trash = getTrashFolder();
-    const toDelete = [...(trash?.items || [])];
-    markJobsDeleted(toDelete); // persist before purge so reload can't re-import
-    purgeTrash();
-    saveState();
-    render();
-    for (const id of toDelete) {
-      fetch(`/api/jobs/${id}`, { method: "DELETE" }).catch(() => {});
+  document.getElementById("clearBinBtn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const trash = getTrashFolder();
+      const toDelete = [...(trash?.items || [])];
+      // Awaited: the tombstone has to be on disk before the tracks leave the
+      // local index, or a reload re-imports them (#521).
+      await markJobsDeleted(toDelete);
+      purgeTrash();
+      saveState();
+      render();
+
+      // Awaited too. These used to be fire-and-forget with .catch(() => {}),
+      // so a delete that failed -- a 409 on a job stuck in "queued", a 500
+      // when the files could not be removed -- was invisible, and the track
+      // came back the next time the registry was read from disk.
+      const failed = [];
+      for (const id of toDelete) {
+        try {
+          const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+          if (!res.ok && res.status !== 404) failed.push(id);
+        } catch (err) {
+          console.warn("[catalog] delete failed for", id, err);
+          failed.push(id);
+        }
+      }
+      if (failed.length) {
+        console.warn("[catalog] %d track(s) could not be deleted on the server", failed.length);
+        notifyFailure({
+          kind: "delete",
+          message: i18nT("library.deleteFailed", { count: failed.length }),
+        });
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 }

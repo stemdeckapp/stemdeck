@@ -599,6 +599,7 @@ const en = {
   "settings.exportLogs.error": "Could not export the logs.",
   "status.unavailable": "unavailable",
 
+  "library.deleteFailed": "{count} track(s) could not be deleted. They stay out of your library, but their files may still be on disk.",
   "settings.resetData.title": "Reset app data",
   "settings.resetData.desc": "Permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. Cannot be undone.",
   "settings.resetData.button": "Reset app data…",

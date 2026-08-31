@@ -38,6 +38,14 @@ _MAX_RESUME_ATTEMPTS = 1
 # Ids restore() wants re-queued, drained once by the app lifespan.
 _pending_resume: list[str] = []
 
+# Job ids the user deleted. Orphan recovery in restore() adopts any job-shaped
+# directory it finds, which is what resurrected tracks whose files failed to
+# delete (#521). A directory that outlived its delete must not come back, and
+# the client-side tombstone cannot be relied on for that -- "Reset app data"
+# wipes it. Persisted with the registry; see _prune_deleted for why it stays
+# small.
+_deleted: set[str] = set()
+
 
 def register(job: Job) -> Job:
     with _lock:
@@ -105,6 +113,24 @@ def registry_path(jobs_dir: Path) -> Path:
     return jobs_dir / _REGISTRY_FILE
 
 
+def mark_deleted(job_id: str) -> None:
+    """Record that the user deleted this job, so restore() will not re-adopt
+    its directory if the files outlived the delete."""
+    with _lock:
+        _deleted.add(job_id)
+
+
+def _prune_deleted(jobs_dir: Path) -> None:
+    """Forget deletion records whose directory is finally gone.
+
+    A record only has to outlive the directory it refers to, so this keeps the
+    set naturally bounded instead of growing for the life of the install.
+    Caller must not hold _lock."""
+    with _lock:
+        stale = {job_id for job_id in _deleted if not (jobs_dir / job_id).exists()}
+        _deleted.difference_update(stale)
+
+
 def persist(jobs_dir: Path) -> None:
     """Persist terminal jobs so completed library entries survive restarts.
 
@@ -120,13 +146,24 @@ def persist(jobs_dir: Path) -> None:
         logger.warning("cannot create jobs dir %s; skipping persist", jobs_dir, exc_info=True)
         return
     path = registry_path(jobs_dir)
+    _prune_deleted(jobs_dir)
     with _lock:
         records = [
             job.to_record()
             for job in sorted(_jobs.values(), key=lambda item: item.created_at)
             if job.status in _PERSISTED
         ]
-        payload = json.dumps({"version": REGISTRY_VERSION, "jobs": records}, indent=2) + "\n"
+        payload = (
+            json.dumps(
+                {
+                    "version": REGISTRY_VERSION,
+                    "jobs": records,
+                    "deleted": sorted(_deleted),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
         tmp = jobs_dir / f".registry.{uuid.uuid4().hex}.tmp"
         try:
             tmp.write_text(payload, encoding="utf-8")
@@ -145,6 +182,10 @@ def restore(jobs_dir: Path) -> None:
     if path.is_file():
         try:
             data = _migrate(json.loads(path.read_text(encoding="utf-8")))
+            recorded = data.get("deleted")
+            if isinstance(recorded, list):
+                with _lock:
+                    _deleted.update(str(job_id) for job_id in recorded)
             to_add = {}
             resume: list[Job] = []
             for record in data.get("jobs", []):
@@ -190,8 +231,13 @@ def restore(jobs_dir: Path) -> None:
     try:
         with _lock:
             known = set(_jobs)
+            deleted = set(_deleted)
         for job_dir in jobs_dir.iterdir():
             if not job_dir.is_dir() or not JOB_ID_RE.match(job_dir.name) or job_dir.name in known:
+                continue
+            if job_dir.name in deleted:
+                # The user deleted this and its files outlived the delete.
+                # Adopting it here is what brought songs back (#521).
                 continue
             recovered = _recover_done_job(job_dir)
             if recovered is not None:
@@ -318,7 +364,7 @@ def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:
             _procs[job_id] = proc
 
 
-def reset_all(jobs_dir: Path) -> None:
+def reset_all(jobs_dir: Path) -> list[str]:
     """Delete every job directory and the registry file, clearing the
     in-memory registry too. Desktop-only factory reset (Settings -> General
     -> "Reset app data") -- the caller is responsible for checking no job is
@@ -328,7 +374,8 @@ def reset_all(jobs_dir: Path) -> None:
         _jobs.clear()
         _procs.clear()
     if not jobs_dir.is_dir():
-        return
+        return []
+    failed: list[str] = []
     for entry in jobs_dir.iterdir():
         try:
             if entry.is_dir():
@@ -337,6 +384,17 @@ def reset_all(jobs_dir: Path) -> None:
                 entry.unlink()
         except OSError:
             logger.warning("reset: could not remove %s", entry, exc_info=True)
+            failed.append(entry.name)
+    # Anything that survived is still a job-shaped directory on disk, so the
+    # next start would adopt it and the "reset" library would refill itself.
+    # Record it as deleted and persist that, which also recreates the registry
+    # file this loop just removed.
+    surviving = [name for name in failed if JOB_ID_RE.match(name)]
+    if surviving:
+        with _lock:
+            _deleted.update(surviving)
+        persist(jobs_dir)
+    return failed
 
 
 def get_proc(job_id: str) -> subprocess.Popen | None:
