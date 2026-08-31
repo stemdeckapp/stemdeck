@@ -43,11 +43,15 @@ def _isolate_job_queue():
     # the app lifespan drains it into the queue, which would otherwise leak a
     # real job into a test's queue.
     _registry._pending_resume.clear()
+    # Deletion records are module-global too, so one test's deleted id would
+    # suppress another test's orphan recovery (#521).
+    _registry._deleted.clear()
     yield
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
     _jobqueue._paused = False
     _registry._pending_resume.clear()
+    _registry._deleted.clear()
 
 
 @pytest.fixture(autouse=True)
