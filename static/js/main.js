@@ -1,5 +1,5 @@
 import {
-  playBtn, loopBtn, multitrack, totalDuration, loopEnabled, loopStart, loopEnd,
+  playBtn, loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitMode, vocalSplitModeReady, setVocalSplitMode,
   setAutoSectionsResetFn,
@@ -10,7 +10,7 @@ import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
-import { togglePlayPause, updateLoopRegionVisual, toggleMetronome } from "./transport.js";
+import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime } from "./transport.js";
 import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -486,10 +486,14 @@ function wireFooterControls() {
   const scrub = document.getElementById("footer-scrub");
   if (scrub) {
     function seekToX(clientX) {
-      if (!multitrack || !totalDuration) return;
+      // setPlayheadTime, not multitrack.setTime: on the default chunked engine
+      // the multitrack is silent and this whole bar did nothing. It also moves
+      // the playhead marker, footer times and presence playhead, which the old
+      // call never did (#515).
+      if (!totalDuration) return;
       const rect = scrub.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      multitrack.setTime(frac * totalDuration);
+      setPlayheadTime(frac * totalDuration);
     }
     let _scrubbing = false;
     scrub.addEventListener("mousedown", (e) => {
@@ -645,32 +649,36 @@ function wireAppShellControls() {
 // ─── Keyboard shortcuts ───
 
 document.addEventListener("keydown", (e) => {
-  if (!multitrack) return;
-  if (e.target instanceof HTMLInputElement) return;
+  if (!transport()) return;
+  // Textareas were not excluded, so Space in the log viewer started playback
+  // instead of scrolling.
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
   if (e.code === "Space") {
     e.preventDefault();
     togglePlayPause();
   } else if (e.code === "BracketLeft") {
     e.preventDefault();
-    multitrack.setTime(Math.max(0, multitrack.getCurrentTime() - 5));
+    // setPlayheadTime clamps to [0, totalDuration] itself, so the Math.max /
+    // Math.min the multitrack version needed are gone with it.
+    setPlayheadTime(transport().getCurrentTime() - 5);
   } else if (e.code === "BracketRight") {
     e.preventDefault();
-    multitrack.setTime(
-      Math.min(multitrack.getDuration(), multitrack.getCurrentTime() + 5),
-    );
+    setPlayheadTime(transport().getCurrentTime() + 5);
   } else if (e.code === "KeyL") {
     e.preventDefault();
     loopBtn.click();
   } else if (e.code === "KeyK") {
     e.preventDefault();
     toggleMetronome();
-  } else if (e.code === "KeyI" && loopEnabled && multitrack) {
+  } else if (e.code === "KeyI" && loopEnabled) {
     e.preventDefault();
-    setLoopStart(Math.min(multitrack.getCurrentTime(), loopEnd - 0.5));
+    // multitrack.getCurrentTime() is pinned at 0 on the engine path, so "set
+    // loop in at playhead" always wrote 0 regardless of where the playhead was.
+    setLoopStart(Math.min(transport().getCurrentTime(), loopEnd - 0.5));
     updateLoopRegionVisual();
-  } else if (e.code === "KeyO" && loopEnabled && multitrack) {
+  } else if (e.code === "KeyO" && loopEnabled) {
     e.preventDefault();
-    setLoopEnd(Math.max(multitrack.getCurrentTime(), loopStart + 0.5));
+    setLoopEnd(Math.max(transport().getCurrentTime(), loopStart + 0.5));
     updateLoopRegionVisual();
   }
 });

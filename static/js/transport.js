@@ -70,7 +70,18 @@ function timeFromClientX(clientX) {
   return frac * totalDuration;
 }
 
-function setPlayheadTime(sec) {
+/// The clock that actually owns playback.
+///
+/// engineMode() defaults to "chunked", where audioEngine drives audio and the
+/// multitrack is mounted with url: null for visuals only -- so operating on
+/// `multitrack` directly moves nothing and reads 0. Everything in this module
+/// already went through `audioEngine ?? multitrack`; exporting it stops other
+/// modules re-deriving it and drifting (#515).
+export function transport() {
+  return audioEngine ?? multitrack;
+}
+
+export function setPlayheadTime(sec) {
   const tx = audioEngine ?? multitrack;
   if (!tx || !totalDuration) return;
   const next = Math.max(0, Math.min(totalDuration, sec));
