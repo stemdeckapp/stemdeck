@@ -1,4 +1,5 @@
 import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } from "./utils.js";
+import { MIN_LOOP_SEC, loopDragResult } from "./loopRegion.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   speedBtns,
@@ -26,7 +27,6 @@ import { isDownbeatIndex, getBeats as getGridBeats, getBars as getGridBars } fro
 import { computeCountIn } from "./metronome.js";
 import { t } from "./i18n.js";
 
-const MIN_LOOP_SEC = 0.2;
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
 // it to show, so it is the floor rather than a soft default. 5 is the ceiling
 // because peaks.json carries 1500 points per stem: past roughly 5x a typical
@@ -447,6 +447,90 @@ export function toggleLoop() {
 
 // Click-drag on the timeline ruler or waveform body to define the loop
 // region. Drag direction doesn't matter -- start and end get sorted.
+// Adjust an existing loop region rather than redrawing it (#538, discussion
+// #507).
+//
+// Three gestures on one element:
+//   - a handle at either edge moves only that edge, so a loop can be tightened
+//     one side at a time instead of being re-measured from scratch;
+//   - the body moves both edges together, preserving length, so a loop found by
+//     ear can be slid;
+//   - a press that does not move is still a seek, which is what the region did
+//     before it became interactive, and losing that would be a regression for
+//     anyone who just wants to click inside their selection.
+//
+// Pointer events throughout, so this works with touch and pen as well as a
+// mouse.
+function wireLoopRegionAdjust() {
+  if (!loopRegionEl) return;
+
+  let mode = null; // "start" | "end" | "move"
+  let pointerId = null;
+  let grabTime = 0; // where in the track the pointer went down
+  let fromStart = 0;
+  let fromEnd = 0;
+  let moved = false;
+
+  const apply = (t) => {
+    const next = loopDragResult({
+      mode,
+      pointerTime: t,
+      grabTime,
+      fromStart,
+      fromEnd,
+      duration: totalDuration,
+    });
+    setLoopStart(next.start);
+    setLoopEnd(next.end);
+    updateLoopRegionVisual();
+  };
+
+  loopRegionEl.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !totalDuration) return;
+    const t = timeFromClientX(e.clientX);
+    if (t === null) return;
+    mode = e.target.closest("[data-loop-handle]")?.dataset.loopHandle ?? "move";
+    pointerId = e.pointerId;
+    grabTime = t;
+    fromStart = loopStart;
+    fromEnd = loopEnd;
+    moved = false;
+    loopRegionEl.classList.add("dragging");
+    loopRegionEl.setPointerCapture(e.pointerId);
+    // Stops wireLoopDrag's surface handler starting a fresh selection
+    // underneath this one.
+    e.stopPropagation();
+    e.preventDefault();
+  });
+
+  loopRegionEl.addEventListener("pointermove", (e) => {
+    if (mode === null || e.pointerId !== pointerId) return;
+    const t = timeFromClientX(e.clientX);
+    if (t === null) return;
+    // Same threshold the create-drag uses to tell a click from a drag.
+    if (Math.abs(t - grabTime) >= MIN_LOOP_SEC) moved = true;
+    apply(t);
+    e.preventDefault();
+  });
+
+  const finish = (e) => {
+    if (mode === null || e.pointerId !== pointerId) return;
+    const wasMove = mode === "move";
+    mode = null;
+    pointerId = null;
+    loopRegionEl.classList.remove("dragging");
+    if (!moved && wasMove) {
+      // A press with no travel: seek, exactly as clicking here did before the
+      // region took pointer events.
+      setPlayheadTime(grabTime);
+    }
+    syncLoopInputs();
+  };
+
+  loopRegionEl.addEventListener("pointerup", finish);
+  loopRegionEl.addEventListener("pointercancel", finish);
+}
+
 // Tiny drags are treated as clicks and seek the playhead instead.
 function wireLoopDrag() {
   let dragging = false;
@@ -701,6 +785,7 @@ export function wireTransportButtons() {
   stopBtn.addEventListener("click", stopTransport);
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
+  wireLoopRegionAdjust();
   wireLoopInputs();
   wireZoomButtons();
   wireLaneScrollSync();

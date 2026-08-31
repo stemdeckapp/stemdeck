@@ -765,8 +765,50 @@
   box-shadow:
     inset 1px 0 0 rgba(255, 255, 255, 0.18),
     inset -1px 0 0 rgba(255, 255, 255, 0.18);
-  pointer-events: none;
+  /* Interactive so the region can be moved and its edges adjusted (#538).
+     A pointerdown that does not move still falls through to a seek, so
+     clicking inside the selection behaves as it always did. */
+  pointer-events: auto;
+  cursor: grab;
   z-index: 3;
+}
+
+.loop-region.dragging {
+  cursor: grabbing;
+}
+
+/* Wider than the 2px border they sit on: an edge you cannot reliably grab is
+   the finnicky behaviour this replaces. Extends outside the region as well as
+   in, so the handle is catchable from either side. */
+.loop-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  cursor: ew-resize;
+  z-index: 4;
+}
+
+.loop-handle-start {
+  left: -7px;
+}
+
+.loop-handle-end {
+  right: -7px;
+}
+
+/* Only visible while the pointer is on the region, so the selection reads the
+   same as before at rest. */
+.loop-region:hover .loop-handle::after,
+.loop-region.dragging .loop-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 4px;
+  background: var(--gold);
+  border-radius: 2px;
 }
 
 .lane-placeholder {
