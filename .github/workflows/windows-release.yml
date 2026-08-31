@@ -92,6 +92,25 @@ jobs:
           }
           Write-Host "ClamAV scan completed successfully. No infected files reported."
 
+      # See the same guard in linux-release.yml: action-gh-release silently
+      # tolerates missing files, so an absent updater asset shipped a green
+      # release the in-app updater could not use.
+      - name: verify every asset exists
+        shell: powershell
+        run: |
+          $required = @(
+            "dist/StemDeck-Windows-x64.NVIDIA.zip",
+            "dist/StemDeck-Windows-x64.NVIDIA.zip.sha256",
+            "dist/StemDeck-Windows-x64.zip",
+            "dist/StemDeck-Windows-x64.zip.sha256",
+            "dist/StemDeck-Windows-x64-app.zip",
+            "dist/StemDeck-Windows-x64-app.zip.sha256",
+            "dist/StemDeck-Windows-x64-runtime-version.json"
+          )
+          foreach ($f in $required) {
+            if (-not (Test-Path $f)) { Write-Error "missing release asset: $f"; exit 1 }
+          }
+
       - name: upload artifacts
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
@@ -101,6 +120,7 @@ jobs:
           # pushing :latest to GHCR, and makes the in-app updater offer a build
           # that was never verified.
           prerelease: ${{ github.event.release.prerelease }}
+          fail_on_unmatched_files: true
           files: |
             dist/StemDeck-Windows-x64.NVIDIA.zip
             dist/StemDeck-Windows-x64.NVIDIA.zip.sha256

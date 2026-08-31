@@ -29,13 +29,23 @@ RUN apt-get update \
 
 # deno -- yt-dlp uses it as the JS runtime for YouTube format
 # extraction. Staged here so the runner doesn't need curl/unzip.
+# Pinned and checksummed, not "latest". Deno is the JS runtime yt-dlp feeds
+# YouTube's challenge payload to, so it executes against untrusted input --
+# and an unverified binary fetched at build time is a supply-chain hole
+# whether or not it is small. The desktop packaging scripts already pin and
+# verify QuickJS for exactly this reason; this was the one path that did not.
+# Bump DENO_VERSION and both hashes together.
 ARG TARGETARCH
+ARG DENO_VERSION=v2.9.6
+ARG DENO_SHA256_AMD64=394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2
+ARG DENO_SHA256_ARM64=9a46afc6c392c7cd2ff71a31558935545b46408d0e87f7a86908c712721c046e
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
-        amd64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
-        arm64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \
+        amd64) DENO_ARCH=x86_64-unknown-linux-gnu; DENO_SHA256="${DENO_SHA256_AMD64}" ;; \
+        arm64) DENO_ARCH=aarch64-unknown-linux-gnu; DENO_SHA256="${DENO_SHA256_ARM64}" ;; \
         *) echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
     esac \
-    && curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}.zip" \
+    && curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}.zip" \
+    && echo "${DENO_SHA256}  /tmp/deno.zip" | sha256sum -c - \
     && unzip /tmp/deno.zip -d /usr/local/bin \
     && rm /tmp/deno.zip \
     && /usr/local/bin/deno --version

@@ -9,7 +9,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# PowerShell 7+ only. CI invokes this script with `powershell` (Windows
+# PowerShell 5.1), where this variable does nothing and $ErrorActionPreference
+# does not cover native commands either -- so a failed pip install was ignored
+# and the build carried on. Kept for a pwsh run; Assert-LastExitCode below is
+# what actually enforces it on 5.1 (#517).
 $PSNativeCommandErrorActionPreference = "Stop"
+
+function Assert-LastExitCode {
+    param([Parameter(Mandatory)][string]$What)
+    if ($LASTEXITCODE -ne 0) {
+        throw "$What failed with exit code $LASTEXITCODE"
+    }
+}
 Set-StrictMode -Version Latest
 
 if ($env:OS -ne "Windows_NT") {
@@ -231,8 +243,10 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) {
 } else {
   & python -m venv $PythonDir
 }
+Assert-LastExitCode "creating the virtualenv"
 
 & $PythonExe -m pip install --upgrade pip
+Assert-LastExitCode "pip self-upgrade"
 
 # The project version is git-derived (hatch-vcs). Pin it from $PackageVersion so
 # the install doesn't depend on git tags in the build checkout (#169).
@@ -240,6 +254,7 @@ if ($PackageVersion) {
   $env:SETUPTOOLS_SCM_PRETEND_VERSION = ($PackageVersion -replace '^v', '')
 }
 & $PythonExe -m pip install "$Root"
+Assert-LastExitCode "installing the StemDeck package"
 
 if ($CpuOnly) {
   # Force the slim CPU-only wheel. On Windows the default PyPI torch wheel is
@@ -249,6 +264,10 @@ if ($CpuOnly) {
   & $PythonExe -m pip install torch==2.6.0+cpu torchaudio==2.6.0+cpu `
       --index-url https://download.pytorch.org/whl/cpu `
       --force-reinstall --no-deps
+  # Unchecked, a transient network failure here left whatever torch was already
+  # resolved in place and the zip labelled CPU shipped a non-CPU torch. The
+  # import checks later still pass, because torch imports fine either way.
+  Assert-LastExitCode "installing the CPU-only torch wheel"
 }
 # Do NOT bundle CUDA torch into the NVIDIA (non-CpuOnly) package. It ships base
 # torch and the desktop app installs the CUDA build on first run via

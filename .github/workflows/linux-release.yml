@@ -139,6 +139,24 @@ jobs:
             clamscan --recursive --infected --bell /scan
           echo "ClamAV scan completed successfully. No infected files reported."
 
+      # macos-release.yml asserts its assets exist before uploading; this did
+      # not. action-gh-release defaults fail_on_unmatched_files to false, so a
+      # missing updater asset published a release that looked fine and went
+      # green, and the in-app updater then 404'd for every installed user.
+      - name: verify every asset exists
+        if: github.event_name == 'release'
+        run: |
+          for f in \
+            dist/StemDeck-Linux-x64.tar.gz \
+            dist/StemDeck-Linux-x64.tar.gz.sha256 \
+            dist/StemDeck-Linux-x64.NVIDIA.tar.gz \
+            dist/StemDeck-Linux-x64.NVIDIA.tar.gz.sha256 \
+            dist/StemDeck-Linux-x64-app.tar.gz \
+            dist/StemDeck-Linux-x64-app.tar.gz.sha256 \
+            dist/StemDeck-Linux-x64-runtime-version.json; do
+            test -f "$f" || { echo "missing release asset: $f" >&2; exit 1; }
+          done
+
       - name: upload artifacts
         # Only attach to a real release; a manual test build has nothing to upload to.
         if: github.event_name == 'release'
@@ -150,6 +168,7 @@ jobs:
           # pushing :latest to GHCR, and makes the in-app updater offer a build
           # that was never verified.
           prerelease: ${{ github.event.release.prerelease }}
+          fail_on_unmatched_files: true
           files: |
             dist/StemDeck-Linux-x64.tar.gz
             dist/StemDeck-Linux-x64.tar.gz.sha256

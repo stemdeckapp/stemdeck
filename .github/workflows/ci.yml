@@ -178,7 +178,7 @@ jobs:
       # would scan its bundled extractor files and flag false-positive
       # secrets that ship inside third-party packages like yt-dlp).
       - name: trivy fs
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -190,7 +190,7 @@ jobs:
           skip-dirs: .venv,jobs
       # Dedicated Dockerfile + compose static analysis (Trivy's IaC linter).
       - name: trivy config
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: config
           scan-ref: build/
