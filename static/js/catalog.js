@@ -28,84 +28,138 @@ const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2; // bump to wipe stale seeded data
 const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 
-// Curated "Our Friends" partners shown at the bottom of the library. Add an
-// entry here to feature another store/band/etc. Logos are bundled under
-// static/img/friends/ so they render offline. Links open externally via the
-// document-level a[target="_blank"] handler in main.js (Tauri open_url).
-const FRIENDS = [
+// Curated "We Recommend" partners shown in the library's supporters dialog,
+// grouped into categories that render in this order. Add an entry to a group's
+// `members` to feature another store/band/etc.
+//
+// Logos are bundled under static/img/friends/ so they render offline. An entry
+// with `avatar: true` has a square profile photo, cropped to a circle; without
+// it the image is treated as a transparent wordmark and letterboxed into the
+// same slot. An entry with no `logo` at all falls back to an initial badge.
+//
+// `labelKey` and `roleKey` are i18n keys rather than literals: the rendered
+// nodes carry them as data-i18n, so setLanguage()'s applyTranslations(document)
+// pass re-resolves the text without the dialog having to be rebuilt.
+//
+// Links open externally via the document-level a[target="_blank"] handler in
+// main.js (Tauri open_url on desktop).
+const FRIEND_GROUPS = [
   {
-    name: "Analog4Lyfe",
-    role: "All-analog music gear, no digital shortcuts",
-    url: "https://www.instagram.com/analog4lyfe",
-    logo: "/img/friends/analog4lyfe.jpg",
-    avatar: true,
+    labelKey: "friends.cat.artists",
+    members: [
+      {
+        name: "Joao Gaspar",
+        roleKey: "friends.role.joaoGaspar",
+        url: "https://www.instagram.com/jay_glaspar",
+        logo: "/img/friends/joao-gaspar.jpg",
+        avatar: true,
+      },
+      {
+        name: "More Notes Less Talk",
+        roleKey: "friends.role.moreNotesLessTalk",
+        url: "https://www.youtube.com/@morenoteslesstalk",
+      },
+    ],
   },
   {
-    name: "Beltr",
-    role: "Turns the songs you already own into karaoke gold, right on your own machine, no subscription, no cloud, just you and the mic",
-    url: "https://beltr.app/",
+    labelKey: "friends.cat.builders",
+    members: [
+      {
+        name: "Dlima Guitars",
+        roleKey: "friends.role.dlimaGuitars",
+        url: "https://www.instagram.com/dlimaguitars",
+        logo: "/img/friends/dlima-guitars-ig.jpg",
+        avatar: true,
+      },
+      {
+        name: "Lisbon Guitar Works",
+        roleKey: "friends.role.lisbonGuitarWorks",
+        url: "https://dlimaguitars.com",
+        logo: "/img/friends/lisbon-guitar-works.webp",
+      },
+      {
+        name: "Kris Luthier",
+        roleKey: "friends.role.krisLuthier",
+        url: "https://www.instagram.com/krisluthier",
+        logo: "/img/friends/kris-luthier.jpg",
+        avatar: true,
+      },
+    ],
   },
   {
-    name: "Dlima Guitars",
-    role: "Custom guitars and basses, built one at a time",
-    url: "https://www.instagram.com/dlimaguitars",
-    logo: "/img/friends/dlima-guitars-ig.jpg",
-    avatar: true,
+    labelKey: "friends.cat.gear",
+    members: [
+      {
+        name: "Analog4Lyfe",
+        roleKey: "friends.role.analog4lyfe",
+        url: "https://www.instagram.com/analog4lyfe",
+        logo: "/img/friends/analog4lyfe.jpg",
+        avatar: true,
+      },
+      {
+        name: "Empress Effects",
+        roleKey: "friends.role.empressEffects",
+        url: "https://empresseffects.com",
+        logo: "/img/friends/empress-effects.png",
+      },
+      {
+        name: "Thomann",
+        roleKey: "friends.role.thomann",
+        url: "https://www.instagram.com/thomann.music",
+        logo: "/img/friends/thomann.jpg",
+        avatar: true,
+      },
+    ],
   },
   {
-    name: "Empress Effects",
-    role: "Boutique effects pedals for tone chasers who don't settle",
-    url: "https://empresseffects.com",
-    logo: "/img/friends/empress-effects.png",
+    labelKey: "friends.cat.karaoke",
+    members: [
+      {
+        name: "Beltr",
+        roleKey: "friends.role.beltr",
+        url: "https://beltr.app/",
+        logo: "/img/friends/beltr.jpg",
+        avatar: true,
+      },
+      {
+        name: "Seratone",
+        roleKey: "friends.role.seratone",
+        url: "https://seratone.audio/",
+        logo: "/img/friends/seratone.jpg",
+        avatar: true,
+      },
+    ],
   },
   {
-    name: "Joao Gaspar",
-    role: "Producer and film scorer, also plays as a touring/session musician",
-    url: "https://www.instagram.com/jay_glaspar",
-    logo: "/img/friends/joao-gaspar.jpg",
-    avatar: true,
-  },
-  {
-    name: "Kris Luthier",
-    role: "Hand-repairs and restores instruments in Lisbon, one careful fix at a time",
-    url: "https://www.instagram.com/krisluthier",
-    logo: "/img/friends/kris-luthier.jpg",
-    avatar: true,
-  },
-  {
-    name: "Lisbon Guitar Works",
-    role: "Guitars built by hand in Lisbon",
-    url: "https://dlimaguitars.com",
-    logo: "/img/friends/lisbon-guitar-works.webp",
-  },
-  {
-    name: "More Notes Less Talk",
-    role: "Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping.",
-    url: "https://www.youtube.com/@morenoteslesstalk",
-  },
-  {
-    name: "Seratone",
-    role: "Turns any TV into a studio-grade karaoke stage",
-    url: "https://seratone.audio/",
-  },
-  {
-    name: "slashCAM",
-    role: "German-language camera and video tech: hands-on tests, industry news, and the post-production details most reviews skip",
-    url: "https://www.instagram.com/slashcam.de",
-    logo: "/img/friends/slashcam.webp",
-  },
-  {
-    name: "Thomann",
-    role: "One of Europe's largest music gear retailers, practically everything a musician could need",
-    url: "https://www.instagram.com/thomann.music",
-    logo: "/img/friends/thomann.jpg",
-    avatar: true,
+    labelKey: "friends.cat.media",
+    members: [
+      {
+        name: "slashCAM",
+        roleKey: "friends.role.slashcam",
+        url: "https://www.instagram.com/slashcam.de",
+        logo: "/img/friends/slashcam.webp",
+      },
+      {
+        name: "r/bass",
+        roleKey: "friends.role.rbass",
+        url: "https://www.reddit.com/r/Bass/",
+      },
+    ],
   },
 ];
 
 // Instagram glyph (Simple Icons), shown under tiles that link to Instagram.
 const IG_ICON_PATH =
   "M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z";
+
+// Generic link glyph (Feather "link"), shown on cards that do not link to
+// Instagram. Stroked rather than filled, so it needs its own CSS class.
+const LINK_ICON_PATHS = [
+  "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+  "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+];
+
+const SVGNS = "http://www.w3.org/2000/svg";
 
 let folders = [];
 let tracks = {};
@@ -305,19 +359,23 @@ function saveState() {
 export function addTrackToLibrary(track) {
   // track: { id, title, channel, thumb, stems, status, sourceUrl }
   const existingId = findTrackBySource(track.sourceUrl, track.id);
-  if (existingId) {
-    const trash = getTrashFolder();
-    const inTrash = trash?.items.includes(existingId);
-    if (inTrash) {
-      // Old track was trashed — delete it silently so the new import lands
-      // in the library instead of inheriting the trash placement.
-      delete tracks[existingId];
-      for (const f of folders) f.items = f.items.filter((id) => id !== existingId);
-    } else {
-      replaceTrackId(existingId, track.id);
-    }
-    // The old track is gone either way (deleted or replaced) — any failure
-    // notification tied to it, whichever kind, is moot now (#401).
+  // A match already in the Trash is left exactly where it is. It is a distinct
+  // job with its own files on disk, and the user is the only one who decides
+  // when those go. The new track is in no folder yet, so the placement below
+  // still lands it in the library; evicting the old one was never what put it
+  // there.
+  //
+  // Evicting it did real damage: it dropped the catalog entry without deleting
+  // the job, so the directory and its registry record outlived their only
+  // reference. syncWithServer then found a job with no track, no trash entry
+  // and no tombstone, and re-adopted it into the library on the next launch.
+  // One extra job sharing the source URL was enough to reach this, so trashing
+  // a track and restarting brought it back.
+  if (existingId && !getTrashFolder()?.items.includes(existingId)) {
+    replaceTrackId(existingId, track.id);
+    // The old track is gone, so any failure notification tied to it is moot
+    // now (#401). A trashed match keeps the dismissal moveTrackToTrash already
+    // did, and nothing here revives it.
     dismissFailuresByJobId(existingId);
   }
   const existing = tracks[track.id] || {};
@@ -2639,9 +2697,82 @@ function wireAboutDialog() {
   });
 }
 
+// The small glyph at the foot of a partner card: the Instagram mark for an
+// Instagram profile, a generic link glyph for anything else.
+function friendGlyph(url) {
+  const instagram = /instagram\.com/i.test(url || "");
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", instagram ? "lib-friend-ig" : "lib-friend-link");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of instagram ? [IG_ICON_PATH] : LINK_ICON_PATHS) {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+// One partner card: image (or initial badge), name, role, link glyph.
+function friendCard(f) {
+  const a = document.createElement("a");
+  a.className = "lib-friend";
+  a.href = f.url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = f.name;
+
+  // A monogram badge (first initial) keeps the card on-brand when an entry has
+  // no image, or when its image fails to load (e.g. before the asset is added).
+  const makeMonogram = () => {
+    const m = document.createElement("span");
+    m.className = "lib-friend-monogram";
+    m.textContent = (f.name || "?").trim().charAt(0).toUpperCase();
+    m.setAttribute("aria-hidden", "true");
+    return m;
+  };
+
+  // Fixed-height slot so names line up across a row whichever of the three
+  // shapes (round avatar, wordmark, monogram) an entry ends up with.
+  const media = document.createElement("span");
+  media.className = "lib-friend-media";
+  if (f.logo) {
+    const img = document.createElement("img");
+    img.className = f.avatar ? "lib-friend-avatar" : "lib-friend-logo";
+    img.src = f.logo;
+    img.alt = f.name;
+    img.loading = "lazy";
+    img.addEventListener("error", () => img.replaceWith(makeMonogram()));
+    media.appendChild(img);
+  } else {
+    media.appendChild(makeMonogram());
+  }
+  a.appendChild(media);
+
+  // Partner names are proper nouns and stay as-is; only the role is translated.
+  const name = document.createElement("span");
+  name.className = "lib-friend-name";
+  name.textContent = f.name;
+  a.appendChild(name);
+
+  if (f.roleKey) {
+    const role = document.createElement("span");
+    role.className = "lib-friend-role";
+    // data-i18n lets applyTranslations() re-resolve this on a language switch;
+    // the textContent below is what shows until then.
+    role.setAttribute("data-i18n", f.roleKey);
+    role.textContent = i18nT(f.roleKey);
+    a.appendChild(role);
+  }
+
+  a.appendChild(friendGlyph(f.url));
+  return a;
+}
+
 // Supporters dialog: a TV rail button opens a centered modal (like About) with
-// the partner tiles. Links open externally via the document-level
-// a[target="_blank"] handler in main.js (Tauri open_url on desktop).
+// the partner cards, grouped by category. Links open externally via the
+// document-level a[target="_blank"] handler in main.js (Tauri open_url on
+// desktop).
 function wireSupportersDialog() {
   const btn = document.getElementById("friendsBtn");
   const dialog = document.getElementById("friendsDialog");
@@ -2651,69 +2782,17 @@ function wireSupportersDialog() {
 
   if (grid && grid.dataset.ready !== "1") {
     grid.dataset.ready = "1";
-    // Masonry: round-robin tiles into fixed columns so a tall tile in one
-    // column does not push the next row down. Small per-tile tilt gives the
-    // deliberately-uneven "frames on a wall" look.
-    const COLS = 3;
-    const tilts = ["-2deg", "1.5deg", "-1deg", "2deg", "-1.5deg", "1deg"];
-    const cols = [];
-    for (let i = 0; i < COLS; i++) {
-      const col = document.createElement("div");
-      col.className = "lib-friends-col";
-      cols.push(col);
-      grid.appendChild(col);
+    for (const group of FRIEND_GROUPS) {
+      const label = document.createElement("h3");
+      label.className = "lib-friends-cat";
+      label.setAttribute("data-i18n", group.labelKey);
+      label.textContent = i18nT(group.labelKey);
+      grid.appendChild(label);
+      const row = document.createElement("div");
+      row.className = "lib-friends-row";
+      for (const f of group.members) row.appendChild(friendCard(f));
+      grid.appendChild(row);
     }
-    FRIENDS.forEach((f, i) => {
-      const a = document.createElement("a");
-      a.className = "lib-friend";
-      a.href = f.url;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      a.title = f.name;
-      a.style.setProperty("--tilt", tilts[i % tilts.length]);
-      // A monogram avatar (first initial) keeps the tile on-brand when an entry
-      // has no image, or its image fails to load (e.g. before the asset is added).
-      const makeMonogram = () => {
-        const m = document.createElement("span");
-        m.className = "lib-friend-monogram";
-        m.textContent = (f.name || "?").trim().charAt(0).toUpperCase();
-        m.setAttribute("aria-hidden", "true");
-        return m;
-      };
-      if (f.logo) {
-        const img = document.createElement("img");
-        img.className = f.avatar ? "lib-friend-avatar" : "lib-friend-logo";
-        img.src = f.logo;
-        img.alt = f.name;
-        img.loading = "lazy";
-        img.addEventListener("error", () => img.replaceWith(makeMonogram()));
-        a.appendChild(img);
-      } else {
-        a.appendChild(makeMonogram());
-      }
-      const name = document.createElement("span");
-      name.className = "lib-friend-name";
-      name.textContent = f.name;
-      a.appendChild(name);
-      if (f.role) {
-        const role = document.createElement("span");
-        role.className = "lib-friend-role";
-        role.textContent = f.role;
-        a.appendChild(role);
-      }
-      if (/instagram\.com/i.test(f.url || "")) {
-        const SVGNS = "http://www.w3.org/2000/svg";
-        const ig = document.createElementNS(SVGNS, "svg");
-        ig.setAttribute("class", "lib-friend-ig");
-        ig.setAttribute("viewBox", "0 0 24 24");
-        ig.setAttribute("aria-hidden", "true");
-        const p = document.createElementNS(SVGNS, "path");
-        p.setAttribute("d", IG_ICON_PATH);
-        ig.appendChild(p);
-        a.appendChild(ig);
-      }
-      cols[i % COLS].appendChild(a);
-    });
   }
 
   const open = () => dialog.classList.remove("hidden");

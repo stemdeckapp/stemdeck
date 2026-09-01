@@ -15,33 +15,68 @@
 export const JOB_ID = "e2e0deadbeef";
 export const TRACK_TITLE = "E2E Fixture Track";
 
+// The second job seed.py writes, a re-extraction of the same source. Its
+// source_url is identical to the fixture track's, which is what makes the
+// catalog's dedup-by-source branch reachable (#542).
+export const SIBLING_JOB_ID = "e2e0cafebabe";
+export const SIBLING_TITLE = "E2E Fixture Track (again)";
+export const SOURCE_URL = "local:e2e-fixture.wav";
+
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2;
 
-/** Put the fixture track in the library so the sidebar renders it. */
+/** The library store's shape for one finished track. */
+export function fixtureTrack(id, title) {
+  return {
+    id,
+    title,
+    status: "done",
+    stems: ["vocals", "drums", "bass", "other"],
+    sourceUrl: SOURCE_URL,
+    createdAt: 1700000000,
+    favorite: false,
+  };
+}
+
+/**
+ * Write the library store before any of the app's scripts run.
+ *
+ * Tests that care about which folder a track is in build the state themselves
+ * and call this. seedLibrary is the default arrangement on top of it.
+ */
+export async function seedCatalogState(page, { folders, tracks }) {
+  await page.addInitScript(
+    ([key, value]) => window.localStorage.setItem(key, JSON.stringify(value)),
+    [STORAGE_KEY, { v: STORAGE_VERSION, folders, tracks }],
+  );
+}
+
+/** Read the library store back, to assert on what was persisted. */
+export async function readCatalogState(page) {
+  return page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) || "null"), STORAGE_KEY);
+}
+
+/**
+ * Put both fixture tracks in the library so the sidebar renders them.
+ *
+ * Both, not just one. syncWithServer imports any server job the store does not
+ * already know, and the sibling shares the fixture track's source_url, so
+ * leaving it out would send every page load in the suite through
+ * addTrackToLibrary's dedup branch. That branch renames the existing entry to
+ * the incoming job's id, and `.cat-item[data-id="e2e0deadbeef"]` -- which most
+ * specs here click -- would stop existing.
+ */
 export async function seedLibrary(page) {
-  const state = {
-    v: STORAGE_VERSION,
+  await seedCatalogState(page, {
     folders: [
-      { id: "f-unsorted", name: "Unsorted", items: [JOB_ID], color: null },
+      { id: "f-unsorted", name: "Unsorted", items: [JOB_ID, SIBLING_JOB_ID], color: null },
       { id: "trash", name: "Trash", items: [], color: null },
     ],
     tracks: {
-      [JOB_ID]: {
-        id: JOB_ID,
-        title: TRACK_TITLE,
-        status: "done",
-        stems: ["vocals", "drums", "bass", "other"],
-        sourceUrl: "local:e2e-fixture.wav",
-        createdAt: 1700000000,
-        favorite: false,
-      },
+      [JOB_ID]: fixtureTrack(JOB_ID, TRACK_TITLE),
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
     },
-  };
-  await page.addInitScript(
-    ([key, value]) => window.localStorage.setItem(key, JSON.stringify(value)),
-    [STORAGE_KEY, state],
-  );
+  });
 }
 
 /**

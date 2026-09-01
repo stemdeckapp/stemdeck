@@ -1,4 +1,4 @@
-"""Build a jobs directory containing one finished track, for the browser tests.
+"""Build a jobs directory containing two finished tracks, for the browser tests.
 
 The point is that the tests talk to the real backend: real Range requests for
 stems, the real registry, the real endpoints. Only the pipeline is skipped,
@@ -15,6 +15,21 @@ it drives is quietly untestable. Both were in the job root once: the studio fell
 back to decoding every stem for its waveforms, and the click track never
 appeared at all.
 
+There are two jobs, and they deliberately share one `source_url`. That is the
+whole shape of #542: the catalog deduplicates imports by source URL, so a second
+job for a URL the library already knows is what makes the dedup branch run at
+all. Processing the same link twice is ordinary user behaviour, and until #542
+it silently evicted a trashed track. A fixture with a single job cannot reach
+that code path.
+
+The sibling is shorter than the fixture track. Nothing needs six seconds of it,
+and the tone generator is a per-sample Python loop, so the extra seconds are
+paid on every single run of the suite.
+
+Both jobs are real and complete -- stems, peaks and beats -- so a later test can
+open either one. A half-built second job would look usable in the registry and
+fail only once someone clicked it.
+
 Usage:  python tests/e2e/seed.py <jobs-dir>
 """
 
@@ -29,10 +44,18 @@ from pathlib import Path
 
 JOB_ID = "e2e0deadbeef"
 TITLE = "E2E Fixture Track"
+DURATION_SEC = 6
+
+# A second extraction of the same source. Same `source_url` as the fixture
+# track, which is the point: see the module docstring.
+SIBLING_JOB_ID = "e2e0cafebabe"
+SIBLING_TITLE = "E2E Fixture Track (again)"
+SIBLING_DURATION_SEC = 2
+
+SOURCE_URL = "local:e2e-fixture.wav"
 STEMS = ["vocals", "drums", "bass", "other"]
 SAMPLE_RATE = 44100
 CHANNELS = 2
-DURATION_SEC = 6
 
 
 def _wav_bytes(freq: float, seconds: int = DURATION_SEC) -> bytes:
@@ -65,13 +88,13 @@ def _peaks(points: int = 400) -> list[list[float]]:
     return out
 
 
-def seed(jobs_dir: Path) -> str:
-    job_dir = jobs_dir / JOB_ID
-    stems_dir = job_dir / "stems"
+def _build_job(jobs_dir: Path, job_id: str, title: str, seconds: int) -> dict:
+    """Write one finished job's files and return its registry record."""
+    stems_dir = jobs_dir / job_id / "stems"
     stems_dir.mkdir(parents=True, exist_ok=True)
 
     for index, name in enumerate(STEMS):
-        (stems_dir / f"{name}.wav").write_bytes(_wav_bytes(220.0 * (index + 1)))
+        (stems_dir / f"{name}.wav").write_bytes(_wav_bytes(220.0 * (index + 1), seconds))
 
     (stems_dir / "peaks.json").write_text(
         json.dumps({name: _peaks() for name in STEMS}), encoding="utf-8"
@@ -86,7 +109,7 @@ def seed(jobs_dir: Path) -> str:
     # Shape matches what beatgrid.py emits, `bars` included: with no bar marks
     # the accent mode falls back to "Auto (none found)" and the detected-meter
     # path never runs.
-    beats = [round(i * 0.5, 3) for i in range(DURATION_SEC * 2)]
+    beats = [round(i * 0.5, 3) for i in range(seconds * 2)]
     (stems_dir / "beats.json").write_text(
         json.dumps(
             {
@@ -97,7 +120,7 @@ def seed(jobs_dir: Path) -> str:
                 # 2 s. Enough for "Auto (detected)" and a one-bar count-in.
                 "bars": [{"beat": 0, "beats_per_bar": 4}],
                 "bpm": 120.0,
-                "duration": float(DURATION_SEC),
+                "duration": float(seconds),
                 "confidence": 95,
                 # The grid editor snaps dragged beats onto these.
                 "onsets": beats,
@@ -110,14 +133,14 @@ def seed(jobs_dir: Path) -> str:
     # Field names are the dataclass's, not the API's: from_record filters on
     # Job's own fields, so "stage" or "duration" would be silently dropped and
     # the track would load without a duration.
-    record = {
-        "id": JOB_ID,
+    return {
+        "id": job_id,
         "status": "done",
         "progress": 1.0,
         "stage_message": "Done",
-        "title": TITLE,
-        "duration_sec": float(DURATION_SEC),
-        "source_url": "local:e2e-fixture.wav",
+        "title": title,
+        "duration_sec": float(seconds),
+        "source_url": SOURCE_URL,
         # Now, not a fixed date. The hourly sweep deletes job directories older
         # than JOB_TTL_SECONDS, and it runs at startup: a fixture with a
         # hardcoded timestamp is reaped before the first test opens the page,
@@ -131,15 +154,23 @@ def seed(jobs_dir: Path) -> str:
         # Same shape the pipeline writes (runner.py): entries, not bare names.
         # A list of strings deserialises without error and then leaves the
         # studio with nothing to play.
-        "stems": [{"name": name, "url": f"/api/jobs/{JOB_ID}/stems/{name}.wav"} for name in STEMS],
+        "stems": [{"name": name, "url": f"/api/jobs/{job_id}/stems/{name}.wav"} for name in STEMS],
     }
+
+
+def seed(jobs_dir: Path) -> list[str]:
+    records = [
+        _build_job(jobs_dir, JOB_ID, TITLE, DURATION_SEC),
+        _build_job(jobs_dir, SIBLING_JOB_ID, SIBLING_TITLE, SIBLING_DURATION_SEC),
+    ]
     (jobs_dir / "registry.json").write_text(
-        json.dumps({"version": 1, "jobs": [record]}, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"version": 1, "jobs": records}, indent=2) + "\n", encoding="utf-8"
     )
-    return JOB_ID
+    return [record["id"] for record in records]
 
 
 if __name__ == "__main__":
     target = Path(sys.argv[1]).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
-    print(seed(target))
+    for job_id in seed(target):
+        print(job_id)

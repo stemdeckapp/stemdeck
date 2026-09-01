@@ -3373,58 +3373,81 @@ input, textarea { font-family: inherit; }
 }
 .lib-tag-count { color: var(--muted); font-size: 11px; }
 
-/* Supporters (partner tiles, shown in the TV-icon dialog) */
-/* Slightly wider card so 3 tiles breathe; grid spans the card. */
-.friends-card { width: min(360px, calc(100vw - 32px)); }
+/* Supporters ("We Recommend" dialog): category sections, each a small uppercase
+   accent label with a rule, over a responsive grid of partner cards. */
+/* Wider than the stock about-card so 3 cards per row still breathe. */
+.friends-card { width: min(420px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
 .lib-friends-grid {
-  /* Masonry columns: each column stacks independently so a tall tile does not
-     push others down. Tiles are round-robined into these columns in JS. */
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 2px 0 0;
+  /* Five sections is taller than the viewport on a short window, so the list
+     scrolls inside the card rather than pushing it off-screen. */
+  text-align: left;
+  padding: 2px 2px 0 0;
+  max-height: min(58vh, 520px);
+  overflow-y: auto;
 }
-.lib-friends-col {
-  flex: 1 1 0;
-  min-width: 0;
+.lib-friends-cat {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 7px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.lib-friends-cat:first-child { margin-top: 2px; }
+/* Thin rule filling the width left over by the label. */
+.lib-friends-cat::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+.lib-friends-row {
+  display: grid;
+  /* ~3 per row in the card's default width, dropping to 2 as it narrows. */
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
   gap: 6px;
 }
 .lib-friend {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding: 9px 5px 12px;
+  padding: 10px 6px 9px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--fg-2);
   text-decoration: none;
   text-align: center;
-  /* deliberately-uneven "frames on a wall" tilt; per-tile angle set in JS */
-  transform: rotate(var(--tilt, 0deg));
-  transition: background var(--t-fast), color var(--t-fast),
-    border-color var(--t-fast), transform var(--t-fast);
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
 }
 .lib-friend:hover {
   background: var(--panel-2);
   color: var(--fg);
   border-color: rgba(255,255,255,0.15);
-  /* straighten the frame on hover */
-  transform: rotate(0deg);
 }
-/* Logos are transparent wordmarks; span the tile width, keep aspect, cap height. */
-.lib-friend-logo {
+/* Fixed-height slot so names line up across a row whichever of the three
+   shapes an entry ends up with: round avatar, wordmark, or monogram. */
+.lib-friend-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  height: auto;
-  max-height: 30px;
+  height: 44px;
+}
+/* Wordmark logos are transparent and not square: letterbox them into the slot. */
+.lib-friend-logo {
+  max-width: 100%;
+  max-height: 40px;
   object-fit: contain;
 }
-/* Instagram profile photos render as round avatars */
+/* Profile photos are square: crop to a circle. */
 .lib-friend-avatar {
   width: 44px;
   height: 44px;
@@ -3432,7 +3455,7 @@ input, textarea { font-family: inherit; }
   object-fit: cover;
   border: 1px solid var(--border);
 }
-/* Monogram fallback when a tile has no image (or it fails to load): matches the
+/* Monogram fallback when a card has no image (or it fails to load): matches the
    round avatar size, in the accent colour, so the grid stays on-brand. */
 .lib-friend-monogram {
   width: 44px;
@@ -3448,24 +3471,35 @@ input, textarea { font-family: inherit; }
   background: var(--panel-3);
   border: 1px solid var(--border);
 }
-/* Small Instagram glyph under the text on tiles that link to Instagram */
-.lib-friend-ig {
+/* Small link glyph at the foot of the card. margin-top:auto pins it to the
+   bottom so it lines up across cards with different role lengths. */
+.lib-friend-ig,
+.lib-friend-link {
   /* block + no-shrink avoids the WebKit baseline clip on small inline SVGs */
   display: block;
   flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
-  fill: currentColor;
-  opacity: 0.65;
+  width: 13px;
+  height: 13px;
+  margin-top: auto;
+  padding-top: 3px;
+  opacity: 0.6;
 }
-.lib-friend:hover .lib-friend-ig {
-  opacity: 1;
+.lib-friend-ig { fill: currentColor; }
+.lib-friend-link {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
+.lib-friend:hover .lib-friend-ig,
+.lib-friend:hover .lib-friend-link { opacity: 1; }
 .lib-friend-name {
   width: 100%;
-  font-size: 10.5px;
+  font-size: 11px;
+  font-weight: 600;
   line-height: 1.2;
+  color: var(--fg);
   /* full name across up to 2 lines, then ellipsis */
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -3474,11 +3508,10 @@ input, textarea { font-family: inherit; }
 }
 .lib-friend-role {
   width: 100%;
-  margin-top: 2px;
-  font-size: 9px;
-  line-height: 1.2;
-  color: var(--fg-3, var(--fg-2));
-  /* show the full role; the tile grows to fit it */
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: var(--muted);
+  /* show the full role; the card grows to fit it */
 }
 
 /* ── Clear bin bar (trash view only) ── */

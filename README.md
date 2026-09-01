@@ -51,20 +51,20 @@ Drop in an MP3, WAV, FLAC, OGG/Opus, MP4, or M4A file, or paste a YouTube URL, a
 
 StemDeck is free and **does not accept any money, sponsorship, or funding**  from anyone listed below. I share these makers and artists and communities purely for the joy of pointing you toward wonderful people doing beautiful work. Go meet them ❤️
 
-| Name | What they do | Link |
-|---|---|---|
-| Analog4Lyfe | All-analog music gear, no digital shortcuts | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
-| r/bass | My beloved bass community on reddit  | [r/Bass](https://www.reddit.com/r/Bass) |
-| Beltr | Turns the songs you already own into karaoke gold, right on your own machine, no subscription, no cloud, just you and the mic | [beltr.app](https://beltr.app/) |
-| Dlima Guitars | Custom guitars and basses, built one at a time | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
-| Empress Effects | Boutique effects pedals for tone chasers who don't settle | [empresseffects.com](https://empresseffects.com) |
-| Joao Gaspar | Producer and film scorer, also plays as a touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
-| Kris Luthier | Hand-repairs and restores instruments in Lisbon, one careful fix at a time | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Lisbon Guitar Works | Guitars built by hand in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
-| More Notes Less Talk | Instruments and gear with personality, recorded raw to tape. No hype, no gatekeeping. | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
-| Seratone | Turns any TV into a studio-grade karaoke stage | [seratone.audio](https://seratone.audio/) |
-| slashCAM | German-language camera and video tech: hands-on tests, industry news, and the post-production details most reviews skip | [@slashcam.de](https://www.instagram.com/slashcam.de) |
-| Thomann | One of Europe's largest music gear retailers, practically everything a musician could need | [@thomann.music](https://www.instagram.com/thomann.music) |
+| Category | Name | What they do | Link |
+|---|---|---|---|
+| Artists & Creators | Joao Gaspar | Producer, film scorer, touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
+| Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
+| Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
+| Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
+| Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
+| Music Gear | Analog4Lyfe | Analog gear specialist | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
+| Music Gear | Empress Effects | Boutique effects pedals | [empresseffects.com](https://empresseffects.com) |
+| Music Gear | Thomann | Large music-equipment retailer | [@thomann.music](https://www.instagram.com/thomann.music) |
+| Music & Karaoke Technology | Beltr | Local, subscription-free karaoke software | [beltr.app](https://beltr.app/) |
+| Music & Karaoke Technology | Seratone | TV-based karaoke system | [seratone.audio](https://seratone.audio/) |
+| Media & Community | slashCAM | Camera, video, and post-production media | [@slashcam.de](https://www.instagram.com/slashcam.de) |
+| Media & Community | r/bass | Bass-player community | [r/Bass](https://www.reddit.com/r/Bass) |
 
 
 ---
