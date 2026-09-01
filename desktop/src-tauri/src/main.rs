@@ -3910,7 +3910,12 @@ fn override_sha256(env_var: &str) -> Option<String> {
 // Verify a freshly downloaded archive against an expected SHA256 before it is
 // extracted or made executable (#172). On mismatch the file is removed so a
 // corrupt or tampered binary is never run. `None` means no hash to enforce.
-#[cfg(target_os = "macos")]
+//
+// Unix rather than macOS: the Linux FFmpeg download calls this too (#518).
+// While the gate said macOS the Linux caller referred to a function that was
+// configured out, and nothing noticed because nothing compiles the Linux shell
+// until a release builds it (#531).
+#[cfg(unix)]
 fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Result<(), String> {
     let Some(expected) = expected else {
         return Ok(());
@@ -5152,9 +5157,9 @@ mod tests {
         }
     }
 
-    // --- macOS FFmpeg checksum verification (#172) ---
+    // --- FFmpeg checksum verification (#172), macOS and Linux ---
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn verify_pinned_sha256_accepts_matching_hash() {
         let dir = make_tmp();
@@ -5166,7 +5171,7 @@ mod tests {
         assert!(f.exists(), "a valid download must be kept");
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn verify_pinned_sha256_rejects_and_removes_on_mismatch() {
         let dir = make_tmp();
@@ -5177,7 +5182,7 @@ mod tests {
         assert!(!f.exists(), "a tampered/corrupt download must be removed");
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn verify_pinned_sha256_none_skips() {
         let dir = make_tmp();

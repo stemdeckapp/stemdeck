@@ -1,0 +1,72 @@
+name: Linux Rust Check
+
+# ci.yml runs on every PR and is entirely ubuntu-latest, which made Linux look
+# covered. It is not: ci.yml never invokes cargo. Linux Rust was compiled only
+# by linux-release.yml, on release publish, so a Linux-only cfg block first met
+# a compiler after the tag existed and after the other platforms had begun
+# uploading assets (#531).
+#
+# That is not hypothetical. #518 added a call inside
+# #[cfg(all(unix, not(target_os = "macos")))] to a function gated
+# #[cfg(target_os = "macos")]. It was reviewed, merged and released to main
+# without compiling once (#550).
+#
+# Unlike macos-check.yml and windows-check.yml, this needs no self-hosted
+# runner, so there is no cost argument for making it manual. It runs on every
+# PR that touches the Rust.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "desktop/src-tauri/**"
+      - ".github/workflows/linux-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/src-tauri/**"
+      - ".github/workflows/linux-check.yml"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # GitHub-hosted and disposable, so a fork's build.rs or test body runs in a
+    # container that is thrown away and holds no signing material. The fork
+    # guard the other two check workflows carry exists because those run on the
+    # machine that builds releases; it would buy nothing here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop/src-tauri
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The same set scripts/linux/make-portable.sh needs to build the shell.
+      # Without them the glib/gtk/webkit sys crates fail in their build scripts,
+      # which is also why this cannot be cross-compiled from another platform.
+      - name: Install Tauri system dependencies
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo build
+        run: cargo build --tests
+
+      - name: cargo clippy
+        run: cargo clippy --tests -- -D warnings
+
+      - name: cargo test
+        run: cargo test
