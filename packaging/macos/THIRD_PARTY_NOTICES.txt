@@ -14,7 +14,29 @@ Downloaded during first-run setup:
 - FFmpeg and ffprobe
 - Demucs model weights
 
-The runtime pack includes its own dependency inventory under
-runtime/licenses/pip-list.json. Before public release, generate and include
-full license texts for every packaged dependency and verify the exact FFmpeg
-build license/provenance.
+The runtime pack carries the full inventory under licenses/. INDEX.txt there
+lists every packaged Python dependency with its version and license, and each
+entry's own license text sits beside it. It is generated from the packaged
+interpreter at build time rather than maintained by hand, so it describes what
+actually shipped.
+
+FFmpeg
+------
+StemDeck downloads FFmpeg and ffprobe at first run and calls them as
+separate executables. They are not linked into StemDeck and do not
+change StemDeck's own license.
+
+Build: ffmpeg 8.1.1 and ffprobe 8.1.1, from evermeet.cx
+License: GNU General Public License v3 or later
+         https://www.gnu.org/licenses/gpl-3.0.html
+
+Written offer of source. The complete corresponding source is:
+
+  FFmpeg itself, release 8.1.1
+    https://git.ffmpeg.org/ffmpeg.git
+  The build's configuration, reported by `ffmpeg -version`
+    https://evermeet.cx/ffmpeg/
+
+If either link stops resolving, open an issue at
+https://github.com/stemdeckapp/stemdeck/issues and the source will be
+provided by another means.

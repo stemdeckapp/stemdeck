@@ -4,9 +4,10 @@ THIRD-PARTY NOTICES
 StemDeck includes third-party open-source software. Each component is
 copyrighted by its respective authors and distributed under its own license.
 
-This starter notice is not a substitute for the full license inventory that
-must be generated from the final packaged Python runtime before a public
-release.
+The full inventory is generated from the packaged Python runtime at build
+time and ships in this download under licenses/. INDEX.txt there lists
+every packaged dependency with its version and license, and each entry's
+own license text sits beside it.
 
 Bundled Components
 ------------------
@@ -72,3 +73,25 @@ Disclaimer
 
 This notice file is not legal advice. Before public release, verify the exact
 licenses of every bundled package and generated binary artifact.
+
+FFmpeg (GPL build)
+------------------
+StemDeck downloads FFmpeg at first run and calls it as a separate
+executable. It is not linked into StemDeck and does not change
+StemDeck's own license.
+
+Build: ffmpeg-n8.1-latest-win64-gpl, from BtbN/FFmpeg-Builds
+License: GNU General Public License v3 or later
+         https://www.gnu.org/licenses/gpl-3.0.html
+
+Written offer of source. The complete corresponding source for this
+build is:
+
+  FFmpeg itself, tag n8.1
+    https://github.com/FFmpeg/FFmpeg/tree/n8.1
+  The build scripts and the exact configure flags used
+    https://github.com/BtbN/FFmpeg-Builds
+
+If either link stops resolving, open an issue at
+https://github.com/stemdeckapp/stemdeck/issues and the source will be
+provided by another means.

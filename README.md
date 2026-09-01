@@ -406,6 +406,16 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 
 ---
 
+## License
+
+StemDeck is [Apache-2.0](LICENSE).
+
+Every download ships a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `licenses/INDEX.txt` lists each packaged Python dependency with its version and license, and each one's full license text sits beside it. That inventory is generated from the packaged interpreter at build time, so it describes what actually shipped rather than what was expected to.
+
+FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executable, so it does not change StemDeck's own license, and `THIRD_PARTY_NOTICES.txt` carries the written offer of source for the exact build your platform receives.
+
+---
+
 ## Community
 
 | Platform | Link |

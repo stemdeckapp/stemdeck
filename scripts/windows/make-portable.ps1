@@ -324,6 +324,15 @@ Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages") -Directory -Force
 # rather than in a release (#407).
 & $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"
 
+# Full license texts for everything in the venv, generated from the venv rather
+# than maintained by hand. MIT, BSD and Apache-2.0 all require the copyright
+# notice and the license itself to travel with a binary; a name and the word
+# "MIT" in THIRD_PARTY_NOTICES.txt is not that. Runs here, after the strip, so
+# the inventory describes what actually ships.
+& $PythonExe (Join-Path $Root "scripts\collect_licenses.py") `
+    (Join-Path $PythonDir "Lib\site-packages") (Join-Path $Stage "licenses")
+Assert-LastExitCode "collecting dependency licenses"
+
 # Runtime fingerprint, shipped INSIDE python/ in every package (#421).
 #
 # This is the in-app updater's SAFETY GATE, not a download trigger. The updater

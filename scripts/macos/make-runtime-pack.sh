@@ -201,6 +201,12 @@ chmod +x "${QJS_DIR}/qjs"
 echo "==> Capturing dependency inventory"
 mkdir -p "$RUNTIME_DIR/licenses"
 uv pip list --system --python "$PYTHON_DIR/bin/python" --format=json > "$RUNTIME_DIR/licenses/pip-list.json"
+# pip-list.json is names and versions, which is an inventory but not a
+# notice. MIT, BSD and Apache-2.0 all require the copyright line and the
+# license text itself to travel with a binary, so collect those too.
+"$PYTHON_DIR/bin/python" "${REPO_ROOT}/scripts/collect_licenses.py" \
+  "$PYTHON_DIR/lib/python${PYTHON_VERSION}/site-packages" \
+  "$RUNTIME_DIR/licenses"
 
 cat > "$RUNTIME_DIR/runtime-manifest.json" <<JSON
 {
