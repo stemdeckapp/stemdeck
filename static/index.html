@@ -133,7 +133,23 @@
              control on each panel would need that panel to keep a stub, and the
              stub costs most of what collapsing the smaller ones returns. -->
         <div class="daw-panel-toggles">
-          <span class="daw-panel-toggles-label" data-i18n="panels.clickToCollapse">Click to collapse</span>
+          <!-- "Collapse" labels the row and is not a control, so the rule sits
+               after it: everything to its right is a button. "All" belongs with
+               the three panel names rather than with the label, because it is
+               the same kind of thing, one press that puts something away.
+               The label is one word because the row has no width for a sentence.
+
+               Its pressed state means what the row's state means, greyed and
+               struck once everything is away. The trap is the threshold: read
+               as "is anything hidden" it struck itself through the moment you
+               hid Analysis on its own, which looks like you pressed it. It is
+               off only when all four are. -->
+          <span class="daw-panel-toggles-label" data-i18n="panels.collapse">Collapse</span>
+          <button class="daw-panel-toggle daw-panel-toggle-all" type="button" data-panel-all aria-pressed="true"
+                  title="Show or hide every panel and the library" data-i18n-title="panels.allTitle" data-i18n-aria-label="panels.allTitle">
+            <span data-i18n="panels.all">All</span>
+          </button>
+          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
           <button class="daw-panel-toggle" type="button" data-panel="analysis" aria-pressed="true"
                   title="Show or hide the track analysis" data-i18n-title="panels.analysisTitle" data-i18n-aria-label="panels.analysisTitle">
             <span data-i18n="panels.analysis">Analysis</span>
@@ -147,14 +163,6 @@
           <button class="daw-panel-toggle" type="button" data-panel="timeline" aria-pressed="true"
                   title="Show or hide the timeline" data-i18n-title="panels.timelineTitle" data-i18n-aria-label="panels.timelineTitle">
             <span data-i18n="panels.timeline">Timeline</span>
-          </button>
-          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
-          <!-- The library is the largest thing on screen that is not the mixer,
-               so clearing the panels without it barely changes what you see.
-               "All" takes the three panels and the sidebar together. -->
-          <button class="daw-panel-toggle" type="button" data-panel-all aria-pressed="true"
-                  title="Show or hide every panel and the library" data-i18n-title="panels.allTitle" data-i18n-aria-label="panels.allTitle">
-            <span data-i18n="panels.all">All</span>
           </button>
         </div>
         </div><!-- /.daw-composer-stack -->
@@ -683,16 +691,26 @@
               <span class="num footer-elapsed" id="footer-time-elapsed">0:00</span>
               <span class="footer-time-sep">/</span>
               <span class="num footer-total" id="footer-time-total">0:00</span>
+              <!-- Loop stands beside the two bounds rather than over them. As a
+                   row of its own it stretched the footer bar to three lines for
+                   one button; as a column it fills the height the fields and
+                   their hint already take. -->
               <button class="daw-iconbtn btn-transport loop" id="t-loop" type="button" title="Loop the selected position (L)" aria-label="Loop" data-i18n-title="position.loopTitle">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M17 2l4 4-4 4 M3 12V8a2 2 0 0 1 2-2h16 M7 22l-4-4 4-4 M21 12v4a2 2 0 0 1-2 2H3"/>
                 </svg>
-                <span class="loop-btn-label" data-i18n="position.loopLabel">Loop position</span>
+                <span class="loop-btn-label" data-i18n="position.loopLabel">Loop</span>
               </button>
-              <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)" data-i18n-title="position.loopExactTitle">
-                <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" data-i18n-aria-label="position.loopStartAria" value="00:00.000">
-                <span class="loop-times-sep" aria-hidden="true">-</span>
-                <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" data-i18n-aria-label="position.loopEndAria" value="00:00.000">
+              <div class="footer-loop-times-wrap">
+                <!-- The hint sits with the fields it describes: wheel
+                     adjustment is invisible until you try it. It is a label,
+                     not a control, so nothing here looks pressable. -->
+                <span class="footer-loop-hint" data-i18n="position.loopScrollHint">Scroll up/down to adjust</span>
+                <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)" data-i18n-title="position.loopExactTitle">
+                  <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" data-i18n-aria-label="position.loopStartAria" value="00:00.000">
+                  <span class="loop-times-sep" aria-hidden="true">-</span>
+                  <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" data-i18n-aria-label="position.loopEndAria" value="00:00.000">
+                </div>
               </div>
             </div>
           </div>
@@ -726,7 +744,7 @@
           <span class="footer-divider" aria-hidden="true"></span>
 
           <div class="footer-group footer-group-click" id="t-metro-wrap">
-            <span class="footer-group-label"><span data-i18n="click.group">Click track</span> <span class="alpha-badge" data-i18n="click.alpha">Alpha</span></span>
+            <span class="footer-group-label" data-i18n="click.group">Click track</span>
             <div class="footer-group-body">
               <button class="click-toggle-btn" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" data-i18n-title="click.toggleTitle" data-i18n-aria-label="click.toggleAria" aria-pressed="false" disabled>
                 <svg class="click-metro-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">

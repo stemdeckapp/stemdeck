@@ -1726,6 +1726,14 @@ input, textarea { font-family: inherit; }
   border-radius: 6px;
   min-width: 0;
 }
+/* The rule separates the row's label from its controls. It sits after the
+   label, so "All" reads as the first of four buttons rather than as part of
+   the words describing them. */
+.daw-panel-toggles-label {
+  margin-right: 2px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border-strong);
+}
 .daw-panel-toggles-label,
 .daw-panel-toggles-sep {
   font-size: 8px;
@@ -2383,13 +2391,6 @@ input, textarea { font-family: inherit; }
   display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
   min-height: 34px;
 }
-.alpha-badge {
-  padding: 1px 5px; border-radius: 4px;
-  background: rgba(74,140,255,0.16); border: 1px solid rgba(74,140,255,0.4);
-  color: #4a8cff; font-size: 8.5px; font-weight: 700; letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
 /* Tier 3: the timeline. Full-bleed rather than an inset rounded panel -- its
    left edge has to land exactly on the lane waveforms' left edge, and a side
    border would offset the canvas by its own width. Top and bottom rules only,
@@ -2513,7 +2514,18 @@ input, textarea { font-family: inherit; }
 
 /* Position group: elapsed / total time, then the loop controls that act on
    that position (design 1b groups them together, not with the transport). */
-.footer-group-position .footer-group-body { gap: 4px; }
+/* The loop column is three rows tall while the rest of this group is one, so
+   centring it left the two bounds hanging below the elapsed/total readout they
+   belong to. Aligning to the bottom puts the fields on the readout's line and
+   lets the button and its hint stack up out of the way. */
+.footer-group-position .footer-group-body { gap: 4px; align-items: flex-end; }
+.footer-group-position .footer-elapsed,
+.footer-group-position .footer-total,
+.footer-group-position .footer-time-sep {
+  /* Match the fields' box height so the baselines land together, rather than
+     the text bottom meeting the border bottom. */
+  line-height: 22px;
+}
 .footer-elapsed {
   font-size: 18px; font-weight: 500; letter-spacing: -0.02em; color: var(--fg);
 }
@@ -2523,9 +2535,22 @@ input, textarea { font-family: inherit; }
 .footer-time-sep { font-size: 12px; color: var(--muted-2); }
 
 /* Exact loop start/end inputs (inline, right of the loop button) */
+/* The hint stacks over the two fields rather than beside them: the footer row
+   is already full, and a note about the fields belongs with the fields. Sized
+   to sit inside the width the two boxes already take, so it does not widen the
+   Position group. */
+.footer-loop-times-wrap {
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  margin-left: 6px;
+}
+.footer-loop-hint {
+  font-size: 7.5px; font-weight: 600; letter-spacing: 0.02em;
+  text-transform: uppercase; color: var(--muted);
+  line-height: 1; white-space: nowrap; text-align: center; user-select: none;
+}
 .footer-loop-times {
-  display: flex; align-items: center; gap: 5px;
-  margin-left: 4px; cursor: default; user-select: none;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  cursor: default; user-select: none;
 }
 .loop-times-sep { font-size: 12px; color: var(--muted); flex-shrink: 0; }
 .loop-time-input {
@@ -2536,7 +2561,8 @@ input, textarea { font-family: inherit; }
   color: var(--fg); font-family: inherit; font-size: 12px; font-weight: 600;
   font-variant-numeric: tabular-nums; text-align: center;
 }
-.loop-time-input:focus { border-color: var(--accent); }
+.loop-time-input { cursor: ns-resize; }
+.loop-time-input:focus { cursor: text; border-color: var(--accent); }
 .loop-time-input:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* Transport group: stop square + a play key wide enough to be the obvious
@@ -2572,7 +2598,12 @@ input, textarea { font-family: inherit; }
 /* Loop sits in the Position group and reads as a modifier on the readout next
    to it, so it is a short labelled pill rather than a full-height control. */
 .footer-group-position .daw-iconbtn.btn-transport.loop {
-  width: auto; height: 26px; padding: 0 9px; gap: 6px; margin-left: 6px;
+  /* A tall narrow pill beside the fields, not a bar over them. align-self
+     overrides the group's flex-end so it fills the two rows the hint and the
+     bounds take, which is what keeps the footer one line high. */
+  flex-direction: column; justify-content: center;
+  width: 46px; height: auto; align-self: stretch;
+  padding: 3px 4px; gap: 1px; margin-left: 4px;
   border-radius: 7px;
   background: var(--panel-2); border: 1px solid var(--border-strong);
   color: var(--fg-2);
@@ -2581,7 +2612,7 @@ input, textarea { font-family: inherit; }
 .footer-group-position .btn-transport.loop:hover {
   background: var(--panel-3); color: var(--fg);
 }
-.loop-btn-label { font-size: 11px; font-weight: 500; white-space: nowrap; }
+.loop-btn-label { font-size: 9.5px; font-weight: 500; white-space: nowrap; line-height: 1; }
 .footer-group-position .btn-transport.loop.active,
 .footer-group-position .btn-transport.loop.active:hover {
   background: rgba(74,140,255,0.16);

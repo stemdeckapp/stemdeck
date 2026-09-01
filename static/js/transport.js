@@ -298,6 +298,59 @@ function commitLoopInput(which) {
   updateLoopRegionVisual();
 }
 
+// Wheel over a loop field nudges it, in seconds on the left of the decimal
+// point and in milliseconds on the right. Two units in one field is the whole
+// point: a loop boundary is chosen coarsely first and then trimmed, and doing
+// the trim by retyping nine characters is why the fields were barely used.
+//
+// A tenth of a second per notch on the seconds half, ten milliseconds on the
+// other. One millisecond per notch would need a hundred notches to cover what
+// the ear can hear.
+const LOOP_WHEEL_SEC = 0.1;
+const LOOP_WHEEL_MS = 0.01;
+
+// Which half of the field the pointer is over. Character-level hit-testing
+// inside an <input> is not reliable across browsers (caretRangeFromPoint
+// returns the element, not an offset inside it), but only one boundary matters
+// here, so measure the text up to the decimal point and compare. The field is
+// centre-aligned and its padding is symmetric, so the border box and the
+// content box share a centre and the string starts halfway through the
+// leftover space.
+let _loopWheelCtx = null;
+function loopWheelUnit(input, clientX) {
+  const value = input.value || "";
+  const dot = value.indexOf(".");
+  if (dot < 0) return "sec";
+  const style = getComputedStyle(input);
+  _loopWheelCtx ||= document.createElement("canvas").getContext("2d");
+  _loopWheelCtx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const full = _loopWheelCtx.measureText(value).width;
+  const throughDot = _loopWheelCtx.measureText(value.slice(0, dot + 1)).width;
+  const rect = input.getBoundingClientRect();
+  const textStart = rect.left + (rect.width - full) / 2;
+  return clientX >= textStart + throughDot ? "ms" : "sec";
+}
+
+// Same rules as a typed commit: clamp to the track, never let the two bounds
+// cross inside MIN_LOOP_SEC. A nudge that would break either is dropped rather
+// than clamped to the limit, so holding the wheel against the end of a track
+// does not silently drag the other bound along.
+function nudgeLoopInput(which, direction, unit) {
+  if (totalDuration <= 0) return;
+  const step = unit === "ms" ? LOOP_WHEEL_MS : LOOP_WHEEL_SEC;
+  const current = which === "start" ? loopStart : loopEnd;
+  const next = Math.round((current + direction * step) * 1000) / 1000;
+  if (next < 0 || next > totalDuration) return;
+  const start = which === "start" ? next : loopStart;
+  const end = which === "end" ? next : loopEnd;
+  if (end - start < MIN_LOOP_SEC) return;
+  setLoopStart(start);
+  setLoopEnd(end);
+  setLoopEnabled(true);
+  loopBtn.classList.add("active");
+  updateLoopRegionVisual();
+}
+
 function wireLoopInputs() {
   for (const [input, which] of [
     [loopStartInput, "start"],
@@ -305,6 +358,21 @@ function wireLoopInputs() {
   ]) {
     if (!input) continue;
     input.addEventListener("blur", () => commitLoopInput(which));
+    input.addEventListener(
+      "wheel",
+      (e) => {
+        if (input.disabled || totalDuration <= 0) return;
+        // The lanes zoom on wheel (#493) and the page scrolls; neither is what
+        // a wheel over a numeric field is asking for.
+        e.preventDefault();
+        e.stopPropagation();
+        nudgeLoopInput(which, e.deltaY < 0 ? 1 : -1, loopWheelUnit(input, e.clientX));
+        // syncLoopInputs leaves a focused field alone so it cannot overwrite
+        // what is being typed. A wheel is not typing, so write it back here.
+        input.value = fmtTimeMs(which === "start" ? loopStart : loopEnd);
+      },
+      { passive: false }
+    );
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();

@@ -84,25 +84,30 @@ function wirePanelToggles() {
 
 // "All" clears the studio down to the mixer in one press, and brings it back
 // in one more. Clearing the three panels while the library still holds its
-// column barely changes what you see, which is what made a fourth button
-// worth having rather than three presses.
+// column barely changes what you see, which is what made a fourth button worth
+// having rather than three presses.
 //
-// It keeps no state of its own: it drives the same apply/persist the
-// individual toggles use, and reads its own pressed state back off .app. A
-// fourth flag would be a fourth thing to disagree with the other three the
-// moment the library was collapsed from its own button instead.
+// It greys and strikes through like the other three once everything is away.
+// The threshold is the whole trick. Read as "is anything hidden", it struck
+// itself through the moment Analysis was hidden on its own, which looks exactly
+// like you pressed it. It is off only when all four are off, so it describes
+// the row rather than the loudest thing in it.
+//
+// It stores nothing. The state is derived from .app either way, so there is no
+// fourth flag to disagree with the other three.
 function wireAllToggle(app, names, apply, persist) {
   const btn = document.querySelector(".daw-panel-toggle[data-panel-all]");
   if (!btn) return;
 
-  const everythingShown = () =>
-    names.every((name) => !app.classList.contains(`panel-${name}-off`)) && !isSidebarCollapsed();
+  const hiddenCount = () =>
+    names.filter((name) => app.classList.contains(`panel-${name}-off`)).length +
+    (isSidebarCollapsed() ? 1 : 0);
 
-  const sync = () => btn.setAttribute("aria-pressed", String(everythingShown()));
+  const sync = () => btn.setAttribute("aria-pressed", String(hiddenCount() < names.length + 1));
 
   btn.addEventListener("click", () => {
-    // Anything hidden means the press is asking for everything back.
-    const show = !everythingShown();
+    // Anything still on screen means the press is asking to clear it away.
+    const show = hiddenCount() === names.length + 1;
     for (const name of names) {
       apply(name, show);
       persist(name, show);
