@@ -623,11 +623,10 @@ function moveTrackToTrash(trackId) {
 
 function setCatalogView(view) {
   catalogView = ["trash", "favorites", "queue"].includes(view) ? view : "library";
-  const app = document.querySelector(".app");
-  if (catalogView !== "library") {
-    app?.classList.remove("cat-collapsed");
-    localStorage.setItem("stemdeck.catalog.collapsed", "0");
-  }
+  // Switching to Trash, Favourites or Queue is a request to look at the
+  // sidebar, so a collapsed one comes back. Through the shared helper, or the
+  // collapse button's aria-expanded is left claiming the sidebar is still shut.
+  if (catalogView !== "library") setSidebarCollapsed(false);
   render();
 }
 
@@ -1986,6 +1985,31 @@ function applyQueueDecorations(snap = getQueueSnapshot()) {
 
 // ─── Catalog panel collapse ───
 
+/** Collapse or restore the library sidebar.
+ *
+ *  Exported because the "All" panel toggle puts the library away along with
+ *  the three panels around the mixer. The state is one class on .app plus one
+ *  localStorage flag, and a second writer reproducing those by hand is exactly
+ *  the kind of pair that drifts the first time either changes.
+ */
+export function setSidebarCollapsed(isCollapsed) {
+  const app = document.querySelector(".app");
+  if (!app) return;
+  app.classList.toggle("cat-collapsed", isCollapsed);
+  document
+    .getElementById("sidebarCollapseBtn")
+    ?.setAttribute("aria-expanded", String(!isCollapsed));
+  try {
+    localStorage.setItem("stemdeck.catalog.collapsed", isCollapsed ? "1" : "0");
+  } catch (e) {
+    console.warn("[catalog] could not persist sidebar state:", e);
+  }
+}
+
+export function isSidebarCollapsed() {
+  return !!document.querySelector(".app")?.classList.contains("cat-collapsed");
+}
+
 function wireCatalogToggle() {
   const toggle = document.getElementById("catalogToggle");
   const collapseBtn = document.getElementById("sidebarCollapseBtn");
@@ -1996,12 +2020,6 @@ function wireCatalogToggle() {
   if (collapsed) {
     app.classList.add("cat-collapsed");
     collapseBtn?.setAttribute("aria-expanded", "false");
-  }
-
-  function setSidebarCollapsed(isCollapsed) {
-    app.classList.toggle("cat-collapsed", isCollapsed);
-    collapseBtn?.setAttribute("aria-expanded", String(!isCollapsed));
-    localStorage.setItem("stemdeck.catalog.collapsed", isCollapsed ? "1" : "0");
   }
 
   collapseBtn?.addEventListener("click", () => {

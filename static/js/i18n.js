@@ -346,6 +346,10 @@ const en = {
   "panels.sectionsTitle": "Show or hide the sections bar",
 
   "panels.timelineTitle": "Show or hide the timeline",
+
+  "panels.all": "All",
+
+  "panels.allTitle": "Show or hide every panel and the library",
   "mixer.hint": "Drag fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -929,6 +933,10 @@ const pl = {
   "panels.sectionsTitle": "Pokaż lub ukryj pasek sekcji",
 
   "panels.timelineTitle": "Pokaż lub ukryj oś czasu",
+
+  "panels.all": "Wszystko",
+
+  "panels.allTitle": "Pokaż lub ukryj wszystkie panele i bibliotekę",
   "mixer.hint": "Przeciągnij suwak · M/S",
   "stemsPanel.ariaLabel": "Ścieżki",
 
@@ -1502,6 +1510,10 @@ const ja = {
   "panels.sectionsTitle": "セクションバーの表示を切り替えます",
 
   "panels.timelineTitle": "タイムラインの表示を切り替えます",
+
+  "panels.all": "すべて",
+
+  "panels.allTitle": "すべてのパネルとライブラリの表示を切り替えます",
   "mixer.hint": "フェーダーをドラッグ · M/S",
   "stemsPanel.ariaLabel": "パート",
 
@@ -2050,6 +2062,10 @@ const zhHans = {
   "panels.sectionsTitle": "显示或隐藏段落栏",
 
   "panels.timelineTitle": "显示或隐藏时间轴",
+
+  "panels.all": "全部",
+
+  "panels.allTitle": "显示或隐藏所有面板和音乐库",
   "mixer.hint": "拖动推子 · M/S",
   "stemsPanel.ariaLabel": "音轨",
 
@@ -2598,6 +2614,10 @@ const de = {
   "panels.sectionsTitle": "Abschnittsleiste ein- oder ausblenden",
 
   "panels.timelineTitle": "Zeitleiste ein- oder ausblenden",
+
+  "panels.all": "Alle",
+
+  "panels.allTitle": "Alle Bereiche und die Bibliothek ein- oder ausblenden",
   "mixer.hint": "Fader ziehen · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3157,6 +3177,10 @@ const pt = {
   "panels.sectionsTitle": "Mostrar ou ocultar a barra de seções",
 
   "panels.timelineTitle": "Mostrar ou ocultar a linha do tempo",
+
+  "panels.all": "Tudo",
+
+  "panels.allTitle": "Mostrar ou ocultar todos os painéis e a biblioteca",
   "mixer.hint": "Arraste o fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3718,6 +3742,10 @@ const id = {
   "panels.sectionsTitle": "Tampilkan atau sembunyikan bilah bagian",
 
   "panels.timelineTitle": "Tampilkan atau sembunyikan lini masa",
+
+  "panels.all": "Semua",
+
+  "panels.allTitle": "Tampilkan atau sembunyikan semua panel dan pustaka",
   "mixer.hint": "Seret fader · M/S",
   "stemsPanel.ariaLabel": "Stem",
 
@@ -4266,6 +4294,10 @@ const fr = {
   "panels.sectionsTitle": "Afficher ou masquer la barre de sections",
 
   "panels.timelineTitle": "Afficher ou masquer la chronologie",
+
+  "panels.all": "Tout",
+
+  "panels.allTitle": "Afficher ou masquer tous les panneaux et la bibliothèque",
   "mixer.hint": "Glissez le fader · M/S",
   "stemsPanel.ariaLabel": "Pistes",
 
@@ -4936,6 +4968,10 @@ const es = {
   "panels.sectionsTitle": "Mostrar u ocultar la barra de secciones",
 
   "panels.timelineTitle": "Mostrar u ocultar la línea de tiempo",
+
+  "panels.all": "Todo",
+
+  "panels.allTitle": "Mostrar u ocultar todos los paneles y la biblioteca",
   "mixer.hint": "Arrastra el fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -5518,6 +5554,10 @@ const ko = {
   "panels.sectionsTitle": "구간 막대 표시하거나 숨기기",
 
   "panels.timelineTitle": "타임라인 표시하거나 숨기기",
+
+  "panels.all": "전체",
+
+  "panels.allTitle": "모든 패널과 라이브러리 표시하거나 숨기기",
   "mixer.hint": "페이더 드래그 · M/S",
   "stemsPanel.ariaLabel": "스템",
 

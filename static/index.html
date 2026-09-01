@@ -148,6 +148,14 @@
                   title="Show or hide the timeline" data-i18n-title="panels.timelineTitle" data-i18n-aria-label="panels.timelineTitle">
             <span data-i18n="panels.timeline">Timeline</span>
           </button>
+          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
+          <!-- The library is the largest thing on screen that is not the mixer,
+               so clearing the panels without it barely changes what you see.
+               "All" takes the three panels and the sidebar together. -->
+          <button class="daw-panel-toggle" type="button" data-panel-all aria-pressed="true"
+                  title="Show or hide every panel and the library" data-i18n-title="panels.allTitle" data-i18n-aria-label="panels.allTitle">
+            <span data-i18n="panels.all">All</span>
+          </button>
         </div>
         </div><!-- /.daw-composer-stack -->
 

@@ -2,6 +2,8 @@
 // attributes so the Content-Security-Policy can forbid inline script (#171).
 // Loaded as a module (deferred), so the DOM is parsed before this runs.
 
+import { setSidebarCollapsed, isSidebarCollapsed } from "./catalog.js";
+
 // Upload button → trigger the hidden file input.
 document.getElementById("uploadFileBtn")?.addEventListener("click", () => {
   document.getElementById("fileInput")?.click();
@@ -53,6 +55,14 @@ function wirePanelToggles() {
     }
   };
 
+  const persist = (name, shown) => {
+    try {
+      localStorage.setItem(PANEL_STORE_PREFIX + name, shown ? "1" : "0");
+    } catch (e) {
+      console.warn("[panels] could not persist state:", e);
+    }
+  };
+
   for (const btn of toggles) {
     const name = btn.dataset.panel;
     let shown = true;
@@ -65,13 +75,46 @@ function wirePanelToggles() {
     btn.addEventListener("click", () => {
       const next = app.classList.contains(`panel-${name}-off`);
       apply(name, next);
-      try {
-        localStorage.setItem(PANEL_STORE_PREFIX + name, next ? "1" : "0");
-      } catch (e) {
-        console.warn("[panels] could not persist state:", e);
-      }
+      persist(name, next);
     });
   }
+
+  wireAllToggle(app, toggles.map((btn) => btn.dataset.panel), apply, persist);
+}
+
+// "All" clears the studio down to the mixer in one press, and brings it back
+// in one more. Clearing the three panels while the library still holds its
+// column barely changes what you see, which is what made a fourth button
+// worth having rather than three presses.
+//
+// It keeps no state of its own: it drives the same apply/persist the
+// individual toggles use, and reads its own pressed state back off .app. A
+// fourth flag would be a fourth thing to disagree with the other three the
+// moment the library was collapsed from its own button instead.
+function wireAllToggle(app, names, apply, persist) {
+  const btn = document.querySelector(".daw-panel-toggle[data-panel-all]");
+  if (!btn) return;
+
+  const everythingShown = () =>
+    names.every((name) => !app.classList.contains(`panel-${name}-off`)) && !isSidebarCollapsed();
+
+  const sync = () => btn.setAttribute("aria-pressed", String(everythingShown()));
+
+  btn.addEventListener("click", () => {
+    // Anything hidden means the press is asking for everything back.
+    const show = !everythingShown();
+    for (const name of names) {
+      apply(name, show);
+      persist(name, show);
+    }
+    setSidebarCollapsed(!show);
+  });
+
+  // The panels and the sidebar can each be moved from their own controls, and
+  // both land as a class on .app, so watching that one attribute keeps this
+  // button honest without every other handler having to remember it exists.
+  new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ["class"] });
+  sync();
 }
 
 wirePanelToggles();
