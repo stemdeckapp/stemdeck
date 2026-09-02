@@ -329,3 +329,59 @@ test.describe("per-lane transpose", () => {
     await expect(laneUp(page, "vocals")).toBeDisabled();
   });
 });
+
+// AudioWorklet is a secure-context API, so a client reaching a networked
+// StemDeck over http://<lan-ip> is never given it and transpose cannot work
+// there at all. Nothing can be done about that in the page; what the page owes
+// the user is the actual reason, because "needs Web Audio" sent people looking
+// for a missing browser feature while Web Audio was working fine (#552).
+//
+// isSecureContext is read-only, so it is redefined before any app script runs.
+// The engine is separately denied its worklet: on the localhost origin these
+// tests run from, the real one would load and there would be nothing to
+// explain.
+test.describe("transpose over an insecure origin", () => {
+  const asInsecureClient = (page) =>
+    page.addInitScript(() => {
+      Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+      window.AudioWorkletNode = undefined;
+    });
+
+  test("the transport control says the connection is the problem", async ({ page }) => {
+    await asInsecureClient(page);
+    await openStudio(page);
+    await expect(down(page)).toBeDisabled();
+    // The reason sits on the group: a disabled button does not reliably fire
+    // the pointer events a tooltip needs.
+    await expect(page.locator("#t-pitch-wrap")).toHaveAttribute("title", /network connection/i);
+  });
+
+  test("a lane stepper gives the same answer, not a different one", async ({ page }) => {
+    await asInsecureClient(page);
+    await openStudio(page);
+    await expect(laneKey(page, "vocals")).toHaveAttribute("title", /network connection/i);
+  });
+
+  test("the speed control admits it will move the key too", async ({ page }) => {
+    await asInsecureClient(page);
+    await openStudio(page);
+    // Speed still works here, it just resamples -- the one degradation that is
+    // otherwise completely silent.
+    await expect(page.locator("#t-speed-wrap")).toHaveAttribute("title", /key|pitch/i);
+  });
+
+  test("a secure origin that still cannot build the worklet says something else", async ({ page }) => {
+    await page.addInitScript(() => { window.AudioWorkletNode = undefined; });
+    await openStudio(page);
+    const title = await page.locator("#t-pitch-wrap").getAttribute("title");
+    expect(title).toBeTruthy();
+    expect(title).not.toMatch(/network connection/i);
+  });
+
+  test("nothing is explained when transpose works", async ({ page }) => {
+    await openStudio(page);
+    await expect(up(page)).toBeEnabled();
+    await expect(page.locator("#t-pitch-wrap")).not.toHaveAttribute("title", /.+/);
+    await expect(page.locator("#t-speed-wrap")).not.toHaveAttribute("title", /.+/);
+  });
+});

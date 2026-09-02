@@ -40,3 +40,22 @@ export function effectivePitch(name, semitones, pitchable) {
 export function inputForPitch(semitones) {
   return clampPitch(semitones) + ZERO_INPUT;
 }
+
+/**
+ * The i18n key explaining why transpose is unavailable.
+ *
+ * Here for the same reason the input mapping is: the transport control and the
+ * lane steppers both have to say it, and two copies of this answer would drift
+ * into two different answers to one question.
+ *
+ * AudioWorklet is a secure-context API. A browser on http://<lan-ip> is never
+ * given it, so the SoundTouch stage cannot be built at all -- which is the
+ * common case by far, StemDeck hosted on the network and opened from another
+ * machine. "Needs Web Audio" sent those people looking for a missing browser
+ * feature when Web Audio was working fine and the origin was the problem
+ * (#552). Only on an already-secure origin is a genuine worklet failure the
+ * remaining explanation.
+ */
+export function pitchBlockedKey() {
+  return window.isSecureContext === false ? "pitch.insecureOrigin" : "pitch.unavailable";
+}

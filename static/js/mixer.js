@@ -18,7 +18,7 @@ import {
 } from "./state.js";
 import { storeGet, storeSetDebounced } from "./utils.js";
 import { t } from "./i18n.js";
-import { PITCH_MAX, PITCH_MIN, clampPitch } from "./pitchBus.js";
+import { PITCH_MAX, PITCH_MIN, clampPitch, pitchBlockedKey } from "./pitchBus.js";
 
 function defaultMixerEntry() {
   // `pitch` is the key this lane is actually in, in semitones from the
@@ -140,7 +140,10 @@ export function refreshLaneKeyVisual(name) {
   // availability left a drum lane explaining the wrong thing after the engine
   // came up, because whichever ran last won and neither restored the other.
   if (locked) wrap.title = t("mixer.key.drumsLocked");
-  else if (unsupported) wrap.title = t("mixer.key.unavailable");
+  // Same reason as the transport control, so the same sentence: a lane saying
+  // "needs Web Audio" while the group above it names the real cause would just
+  // be two answers to one question (#552).
+  else if (unsupported) wrap.title = t(pitchBlockedKey());
   else wrap.title = t("mixer.key.title", { n: signed });
 }
 

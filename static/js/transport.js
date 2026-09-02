@@ -7,6 +7,8 @@ import {
   pitchUpBtn,
   pitchValueEl,
   pitchResetBtn,
+  pitchWrap,
+  speedWrap,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
   waveScroll, waveCanvas, multitrackContainer,
@@ -26,6 +28,7 @@ import { applyMix, nudgeAllLanePitches, resetAllLanePitches } from "./mixer.js";
 import { isDownbeatIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn } from "./metronome.js";
 import { t } from "./i18n.js";
+import { pitchBlockedKey } from "./pitchBus.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
 // it to show, so it is the floor rather than a soft default. 5 is the ceiling
@@ -930,6 +933,21 @@ function renderPitch() {
   if (pitchDownBtn) pitchDownBtn.disabled = !_pitchAvailable || _pitchSemitones <= PITCH_MIN;
   if (pitchUpBtn) pitchUpBtn.disabled = !_pitchAvailable || _pitchSemitones >= PITCH_MAX;
   if (pitchResetBtn) pitchResetBtn.disabled = !_pitchAvailable;
+
+  // Three dead buttons still wearing "Transpose up a semitone" explain nothing.
+  // The reason lives on the group, because a disabled button does not reliably
+  // fire the pointer events a tooltip needs.
+  if (pitchWrap) {
+    if (_pitchAvailable) pitchWrap.removeAttribute("title");
+    else pitchWrap.title = t(pitchBlockedKey());
+  }
+  // Without the pitch stage the sources resample instead, so speed drags the
+  // key with it. That is the one degradation here that is otherwise silent:
+  // the control still works, it just quietly does something else (#552).
+  if (speedWrap) {
+    if (_pitchAvailable) speedWrap.removeAttribute("title");
+    else speedWrap.title = t("speed.pitchFollows");
+  }
 }
 
 /**
