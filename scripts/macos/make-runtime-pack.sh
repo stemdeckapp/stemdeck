@@ -198,6 +198,17 @@ echo "${QJS_SHA256}  ${QJS_DIR}/qjs" | shasum -a 256 -c - >/dev/null || {
 }
 chmod +x "${QJS_DIR}/qjs"
 
+echo "==> Pruning unreachable yt-dlp extractors"
+# yt-dlp ships ~940 site extractors. StemDeck rejects every host but YouTube
+# and SoundCloud before yt-dlp is called, so the rest are unreachable -- and
+# several dozen of them are adult sites, named as such, plus a 15,000-line
+# lazy_extractors.py listing every one of those domains. None of that belongs
+# on a user's disk. Runs before the import check below, so that check doubles
+# The script verifies itself: it re-imports the pruned tree and asserts
+# YouTube and SoundCloud still match.
+"$PYTHON_DIR/bin/python" "${REPO_ROOT}/scripts/prune_ytdlp_extractors.py" \
+  "$PYTHON_DIR/lib/python${PYTHON_VERSION}/site-packages"
+
 echo "==> Capturing dependency inventory"
 mkdir -p "$RUNTIME_DIR/licenses"
 uv pip list --system --python "$PYTHON_DIR/bin/python" --format=json > "$RUNTIME_DIR/licenses/pip-list.json"

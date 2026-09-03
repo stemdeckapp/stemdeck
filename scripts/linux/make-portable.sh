@@ -226,6 +226,17 @@ done
 # package, and the NVIDIA variant pip-installs CUDA torch into this very tree on
 # the user's first run (install_cuda_torch).
 
+# yt-dlp ships ~940 site extractors. StemDeck rejects every host but YouTube
+# and SoundCloud before yt-dlp is called, so the rest are unreachable -- and
+# several dozen of them are adult sites, named as such, plus a 15,000-line
+# lazy_extractors.py listing every one of those domains. None of that belongs
+# on a user's disk. The script verifies itself: it re-imports the pruned tree
+# and asserts YouTube and SoundCloud still match, because the import check
+# below would not catch a broken registry -- extractors resolve lazily through
+# __getattr__, so `import yt_dlp` succeeds even when none of them load.
+"$BUNDLED_PYTHON" "${REPO_ROOT}/scripts/prune_ytdlp_extractors.py" \
+  "${PYTHON_DIR}/lib/python${PYTHON_VERSION}/site-packages"
+
 # Re-verify after the widened strip: the check above ran before it and would not
 # catch a strip that removed something load-bearing (#407, #421).
 "$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"

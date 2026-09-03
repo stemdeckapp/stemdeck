@@ -317,6 +317,18 @@ Get-ChildItem -Path (Join-Path $PythonDir "Lib\site-packages") -Directory -Force
 # Installation may result in an incomplete environment" -- a broken torch on the
 # machines that most need a working one, to save a few hundred KB.
 
+# yt-dlp ships ~940 site extractors. StemDeck rejects every host but YouTube
+# and SoundCloud before yt-dlp is called, so the rest are unreachable -- and
+# several dozen of them are adult sites, named as such, plus a 15,000-line
+# lazy_extractors.py listing every one of those domains. None of that belongs
+# on a user's disk. The script verifies itself: it re-imports the pruned tree
+# and asserts YouTube and SoundCloud still match, because the import check
+# below would not catch a broken registry -- extractors resolve lazily through
+# __getattr__, so `import yt_dlp` succeeds even when none of them load.
+& $PythonExe (Join-Path $Root "scripts\prune_ytdlp_extractors.py") `
+    (Join-Path $PythonDir "Lib\site-packages")
+Assert-LastExitCode "pruning yt-dlp extractors"
+
 # The strip above widened what ships (#421), so re-verify the packaged
 # interpreter can still import everything the pipeline needs -- the earlier
 # import check ran pre-strip and pre-bundle, and would not catch a strip that

@@ -66,6 +66,15 @@ COPY static/ ./static/
 ARG VERSION=0.0.0
 RUN SETUPTOOLS_SCM_PRETEND_VERSION="${VERSION#v}" pip install . --timeout 300
 
+# Drop the ~930 yt-dlp extractors StemDeck can never reach. The container gets
+# the same treatment as the desktop bundles and for the same reason: several
+# dozen of them are adult sites, named as such, and lazy_extractors.py lists
+# every one of those domains. A self-hosted user browsing /opt/venv should not
+# find that in a music tool. The script verifies itself and fails the build if
+# the pruned tree stops matching YouTube or SoundCloud.
+COPY scripts/prune_ytdlp_extractors.py ./scripts/
+RUN python scripts/prune_ytdlp_extractors.py "$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+
 # ─── Stage 2: runner ─────────────────────────────────────────────
 FROM python:3.12-slim AS runner
 
