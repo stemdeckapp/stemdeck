@@ -54,7 +54,10 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Category | Name | What they do | Link |
 |---|---|---|---|
 | Artists & Creators | Joao Gaspar | Producer, film scorer, touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
+| Artists & Creators | Killah Trakz | Producer | [@killahtrakz](https://www.instagram.com/killahtrakz/) |
 | Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
+| Artists & Creators | Analog4Lyfe | Analog gear specialist | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
+| Artists & Creators | Dead röses | Cork-based punk rock band | [@dead_rosesband](https://www.instagram.com/dead_rosesband) |
 | Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
 | Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
@@ -64,6 +67,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Music & Karaoke Technology | Seratone | TV-based karaoke system | [seratone.audio](https://seratone.audio/) |
 | Media & Community | slashCAM | Camera, video, and post-production media | [@slashcam.de](https://www.instagram.com/slashcam.de) |
 | Media & Community | r/bass | Bass-player community | [r/Bass](https://www.reddit.com/r/Bass) |
+| Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
 
 ---

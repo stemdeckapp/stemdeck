@@ -3433,7 +3433,9 @@ input, textarea { font-family: inherit; }
 /* Wide enough for two columns of three cards. The single column it replaced
    was 420px and always scrolled: five sections stacked is taller than any
    normal window, so half the people on the list were never seen. */
-.friends-card { width: min(780px, calc(100vw - 32px)); }
+/* Wide enough that a four-person category is one row rather than two, which is
+   what was pushing the list past the dialog and putting a scrollbar on it. */
+.friends-card { width: min(1020px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
 .lib-friends-grid {
   display: grid;
@@ -3442,10 +3444,20 @@ input, textarea { font-family: inherit; }
   align-items: start;
   text-align: left;
   padding: 2px 2px 0 0;
-  /* Kept as a floor, not as the normal case: a very short window still has to
-     reach the bottom of the list somehow. */
-  max-height: min(74vh, 660px);
+  /* Nothing here is meant to be selected or dragged: these are link tiles, and
+     a stray drag across two of them selects half the dialog and leaves it
+     highlighted. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Kept as a floor, not as the normal case: the list is meant to fit, but a
+     very short window still has to reach the bottom of it somehow. */
+  max-height: min(88vh, 900px);
   overflow-y: auto;
+}
+.lib-friends-grid img {
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
 }
 .lib-friends-col { min-width: 0; }
 .lib-friends-split { align-self: stretch; background: var(--border); }
