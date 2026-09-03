@@ -98,6 +98,17 @@ class Job:
     # app/pipeline/vocal_split.py) and is recorded in stems/vocal_split_error.txt,
     # not job.error_detail, since the job itself did not fail.
     vocal_split: Literal["none", "running", "done", "error"] = "none"
+    # When the user put this job in the Trash, or None if they have not.
+    #
+    # Server-side on purpose. The Trash used to live only in the browser's
+    # catalog store, which is per-device: a track deleted on the desktop was
+    # still returned by GET /api/jobs, so the phone -- which builds its library
+    # straight from that endpoint -- listed everything the user thought they
+    # had thrown away. Two UIs, two answers to "what is in my library".
+    #
+    # A timestamp rather than a bool so the Trash can say when, and so a future
+    # auto-purge has something to work from.
+    trashed_at: float | None = None
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
@@ -151,6 +162,7 @@ class Job:
             "gpu_fallback": self.gpu_fallback,
             "stage_timings": self.stage_timings,
             "vocal_split": self.vocal_split,
+            "trashed_at": self.trashed_at,
             "created_at": self.created_at,
         }
 

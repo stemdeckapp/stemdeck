@@ -813,9 +813,14 @@ function closeSwipe() {
 async function deleteTrack(id) {
   state.swipedTrackId = null;
   try {
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    // Trash, not DELETE. This is a swipe on a touch screen with no undo, and
+    // DELETE removes the stems from disk for good. The desktop has always
+    // moved tracks to a Trash folder instead; now that the Trash lives on the
+    // server, this screen can do the same thing rather than being the one
+    // place in StemDeck where a stray thumb destroys a separation.
+    await fetch(`/api/jobs/${encodeURIComponent(id)}/trash`, { method: "POST" });
   } catch (e) {
-    console.warn("[mobile] delete failed:", e);
+    console.warn("[mobile] could not move track to trash:", e);
   }
   state.tracks = state.tracks.filter((t) => t.id !== id);
   if (!state.tracks.length) state.libState = "empty";
@@ -824,7 +829,7 @@ async function deleteTrack(id) {
     state.current = null;
     state.playing = false;
   }
-  toast("Track deleted");
+  toast("Moved to Trash");
   render();
 }
 

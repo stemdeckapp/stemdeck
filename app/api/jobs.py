@@ -34,6 +34,7 @@ from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
+from app.core.registry import set_trashed as registry_set_trashed
 from app.core.settings import get_auto_sections, get_max_duration_sec
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
@@ -317,13 +318,45 @@ async def _create_local_job(request: Request) -> dict[str, str]:
 
 
 @router.get("")
-def list_jobs() -> list[dict]:
-    """List all completed jobs in the library, sorted by creation time."""
+def list_jobs(trashed: Literal["exclude", "include", "only"] = "exclude") -> list[dict]:
+    """Completed jobs in the library, oldest first.
+
+    Trashed jobs are left out by default, which is the whole point of the
+    parameter: this endpoint is the phone UI's entire library, and before the
+    Trash moved server-side it happily listed tracks the user had deleted on
+    their desktop hours earlier.
+    """
+    jobs = sorted(registry_all_jobs().values(), key=lambda j: j.created_at)
     return [
         _job_state(job)
-        for job in sorted(registry_all_jobs().values(), key=lambda j: j.created_at)
+        for job in jobs
         if job.status == "done"
+        and (trashed == "include" or (job.trashed_at is not None) == (trashed == "only"))
     ]
+
+
+@router.post("/{job_id}/trash")
+def trash_job(job_id: str) -> dict:
+    """Put a job in the Trash. Reversible, and nothing on disk is touched."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_set_trashed(job_id, True)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    registry_persist(JOBS_DIR)
+    return {"job_id": job.id, "trashed_at": job.trashed_at}
+
+
+@router.post("/{job_id}/restore")
+def restore_job(job_id: str) -> dict:
+    """Take a job back out of the Trash."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_set_trashed(job_id, False)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    registry_persist(JOBS_DIR)
+    return {"job_id": job.id, "trashed_at": job.trashed_at}
 
 
 @router.get("/{job_id}")

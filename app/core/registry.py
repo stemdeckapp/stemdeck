@@ -5,6 +5,7 @@ import logging
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -89,6 +90,21 @@ def remove(job_id: str) -> None:
     with _lock:
         _jobs.pop(job_id, None)
         _procs.pop(job_id, None)
+
+
+def set_trashed(job_id: str, trashed: bool) -> Job | None:
+    """Move a job to the Trash, or take it back out.
+
+    Not a delete: the stems stay on disk and the job stays in the registry, so
+    restoring is free and the user's audio is never destroyed by a tap. Only
+    emptying the Trash calls DELETE, which is what actually removes files.
+    """
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return None
+        job.trashed_at = time.time() if trashed else None
+        return job
 
 
 def all_jobs() -> dict[str, Job]:

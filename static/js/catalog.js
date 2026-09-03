@@ -607,6 +607,25 @@ function applyTrackInfoToPanel(track) {
   }
 }
 
+/**
+ * Tell the server a track was binned or brought back.
+ *
+ * The Trash used to be purely local, which meant it was per-device: a track
+ * deleted here stayed in GET /api/jobs, and the phone UI builds its whole
+ * library from that endpoint, so it listed everything the user thought they
+ * had thrown away. The local folders are still the desktop's own view; this is
+ * what makes the server agree with it.
+ *
+ * Deliberately not awaited by the callers. Binning a track must feel instant
+ * and must not fail because the backend blinked; the reconcile on next load
+ * catches anything that did not land.
+ */
+function syncTrashToServer(trackId, trashed) {
+  const action = trashed ? "trash" : "restore";
+  fetch(`/api/jobs/${encodeURIComponent(trackId)}/${action}`, { method: "POST" })
+    .catch((e) => console.warn(`[catalog] could not ${action} ${trackId} on the server`, e));
+}
+
 function moveTrackToTrash(trackId) {
   if (!tracks[trackId]) return;
   removeTrackFromFolders(trackId);
@@ -617,6 +636,7 @@ function moveTrackToTrash(trackId) {
   // purgeTrash() does the same on permanent delete, for a job that errors
   // after being trashed but before it's purged.
   dismissFailuresByJobId(trackId);
+  syncTrashToServer(trackId, true);
   saveState();
   render();
 }
@@ -1072,6 +1092,7 @@ function restoreTrackFromTrash(trackId) {
     folders.unshift(target);
   }
   if (!target.items.includes(trackId)) target.items.push(trackId);
+  syncTrashToServer(trackId, false);
   saveState();
   render();
 }
@@ -2852,9 +2873,34 @@ function reconcileAvailability(jobs) {
   render();
 }
 
+/**
+ * Push this device's Trash up to the server.
+ *
+ * Every install that predates server-side Trash has a local bin the backend
+ * knows nothing about, and those tracks are exactly the ones showing up on the
+ * user's phone. One pass on load fixes them, and it doubles as the retry for
+ * any syncTrashToServer call that failed while offline.
+ *
+ * One-way on purpose. Letting the server's answer win here would mean a failed
+ * restore silently re-binning the track on the next load, and the desktop is
+ * the only client with a Trash to be authoritative about.
+ */
+function reconcileTrashWithServer(jobs, trashIds) {
+  for (const state of jobs) {
+    const shouldBeTrashed = trashIds.has(state.job_id);
+    if (shouldBeTrashed === (state.trashed_at != null)) continue;
+    syncTrashToServer(state.job_id, shouldBeTrashed);
+  }
+}
+
 async function syncWithServer() {
   try {
-    const res = await fetch("/api/jobs", { cache: "no-store" });
+    // trashed=include, because this side keeps its own view of the library and
+    // needs the whole registry to reconcile against. The default list leaves
+    // trashed jobs out -- right for the phone, which has no Trash of its own,
+    // and wrong here: reconcileAvailability would read every one of them as
+    // "gone from the registry" and mark the user's binned tracks unavailable.
+    const res = await fetch("/api/jobs?trashed=include", { cache: "no-store" });
     if (!res.ok) return;
     const jobs = await res.json();
     const trashIds = new Set(getTrashFolder()?.items || []);
