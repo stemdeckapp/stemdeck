@@ -296,6 +296,21 @@ button {
   font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
   color: #e8c96a; width: 38px; text-align: right; white-space: nowrap;
 }
+/* ── key / transpose ── */
+.key-row { margin-top: 8px; }
+.key-steps {
+  display: flex; flex: 1; gap: 8px;
+}
+.key-step {
+  flex: 1; height: 30px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(148,163,184,0.22);
+  background: rgba(148,163,184,0.1);
+  color: #e6e7ee; font-size: 16px; font-weight: 600; line-height: 1;
+}
+.key-step:active:not(:disabled) { background: rgba(232,201,106,0.18); }
+.key-step:disabled { opacity: 0.35; cursor: default; }
+.speed-row-val.off { color: #6b6c78; }
+
 .speed-slider {
   -webkit-appearance: none; appearance: none; flex: 1;
   height: 4px; border-radius: 999px; outline: none; cursor: pointer;

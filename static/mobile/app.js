@@ -5,6 +5,7 @@
 // Extract is still mock pending the SSE/upload wiring (next step).
 import { fetchJobs, jobToCard } from "../js/shared/jobs.js";
 import { createChunkedAudioEngine } from "../js/chunkedAudioEngine.js";
+import { PITCH_MAX, PITCH_MIN, clampPitch } from "../js/pitchBus.js";
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
 const STEM_META = {
@@ -80,6 +81,7 @@ const state = {
   muted: {},
   solo: {},
   speed: 1.0,
+  pitch: 0, // global transpose in semitones, -6..+6
   selected: { vocals: true, drums: true, bass: true, guitar: true, piano: true, other: true },
   quality: "High",
   filter: "All",
@@ -220,6 +222,7 @@ async function openTrack(card, { autoplay = false } = {}) {
   state.playing = false;
   state.progress = 0;
   state.speed = 1.0;
+  state.pitch = 0;
   render();
 
   if (engine) { engine.destroy(); engine = null; engineTrackId = null; }
@@ -449,6 +452,33 @@ function analysisBody() {
   return `<div class="pad" style="padding-top:16px">${statsHtml}${presenceHtml}${exportBtns}</div>`;
 }
 
+/**
+ * The global transpose row.
+ *
+ * Phones get this UI rather than the desktop one, which is where transpose
+ * lives everywhere else, so without a control here the feature simply does not
+ * exist on a phone however well the engine supports it. There are no per-lane
+ * keys on this screen, so this is the whole of transpose on mobile: every lane
+ * moves together.
+ *
+ * Steppers rather than a slider. A semitone is one twelfth of the range and a
+ * slider that wide is not something a thumb can land on.
+ */
+function keyRow() {
+  const n = state.pitch;
+  const label = n === 0 ? "0" : (n > 0 ? `+${n}` : `${n}`);
+  const off = !engineReady || engine?.supportsPitchShift?.() !== true;
+  const why = off ? ' title="Transpose is not available on this connection"' : "";
+  return `<div class="speed-row key-row"${why}>
+        <span class="speed-row-label">Key</span>
+        <div class="key-steps">
+          <button class="key-step" data-key-step="-1" ${off || n <= PITCH_MIN ? "disabled" : ""}>&minus;</button>
+          <button class="key-step" data-key-step="1" ${off || n >= PITCH_MAX ? "disabled" : ""}>+</button>
+        </div>
+        <span class="speed-row-val${off ? " off" : ""}">${label}</span>
+      </div>`;
+}
+
 function mixerScreen() {
   const c = state.current || { title: "No track selected", sub: "Pick one from your Library", initial: "♪", gradient: DEFAULT_GRADIENT, stemCount: 0 };
   const sourceTag = c.sub || "—";
@@ -489,6 +519,7 @@ function mixerScreen() {
         <input type="range" class="speed-slider" data-speed min="0" max="2" step="0.25" value="${state.speed}">
         <span class="speed-row-val">${state.speed % 1 === 0 ? state.speed.toFixed(1) : state.speed}x</span>
       </div>
+      ${keyRow()}
       ${preparing ? '<div class="mx-prep">Preparing audio…</div>' : ""}
       <div class="segmented">
         <button class="${state.mixerView === "stems" ? "on" : ""}" data-action="mixview" data-view="stems">Stems</button>
@@ -874,6 +905,18 @@ function wireFaders() {
       if (engine) engine.setPlaybackRate(rate);
     });
   }
+
+  app.querySelectorAll("[data-key-step]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!engine?.setStemPitch) return;
+      const next = clampPitch(state.pitch + Number(btn.dataset.keyStep));
+      if (next === state.pitch) return;
+      state.pitch = next;
+      // Every lane together: this screen has no per-lane keys to preserve.
+      for (const lane of lanes()) engine.setStemPitch(lane.name, next);
+      render();
+    });
+  });
 
   const bars = app.querySelector("[data-seek]");
   if (bars) {

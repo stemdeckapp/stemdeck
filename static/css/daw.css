@@ -1045,6 +1045,21 @@ input, textarea { font-family: inherit; }
 .settings-net { margin-top: 10px; font-size: 11px; color: var(--muted); }
 .settings-net.hidden { display: none; }
 .settings-net-empty { color: var(--muted); }
+/* Transpose-over-the-network warning. Red because the consequence is a control
+   that does nothing, or a browser page that says the connection is not
+   private: both look like the app is broken, and both are worth reading before
+   the user hands the address to their phone. */
+.settings-net-warn {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.settings-net-warn.hidden { display: none; }
 .settings-net-qr { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
 .qr-hint { font-size: 10px; color: var(--muted); margin: 0; line-height: 1.4; }
 .qr-cards-row { display: flex; flex-wrap: wrap; gap: 28px; }

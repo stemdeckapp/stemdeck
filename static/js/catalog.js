@@ -3050,6 +3050,7 @@ function networkSettingsHtml() {
         </label>
       </div>
       <div class="settings-net hidden">
+        <div class="settings-net-warn hidden"></div>
         <div class="settings-net-qr"></div>
       </div>
     </div>
@@ -3456,6 +3457,21 @@ async function wireNetworkSetting(overlay) {
   // QR codes: one per LAN address, each encodes the /mobile/ URL so the
   // phone camera opens StemDeck directly. Cards start blurred so an open
   // camera app on a nearby device doesn't scan them before you're ready.
+  // Transpose is an AudioWorklet, which browsers hand out only on a secure
+  // origin, so what this warning has to say depends on whether the addresses
+  // below are https. Getting it wrong in either direction is worse than saying
+  // nothing: over http the key control is simply dead with no reason given,
+  // and over https the phone throws a "not private" page that looks like the
+  // app is broken or unsafe when it is neither.
+  const warnEl = overlay.querySelector(".settings-net-warn");
+  if (warnEl) {
+    const secure = addresses.length > 0 && addresses.every((a) => a.startsWith("https://"));
+    warnEl.textContent = i18nT(
+      secure ? "settings.network.transposeCertPrompt" : "settings.network.transposeNeedsHttps",
+    );
+    warnEl.classList.toggle("hidden", addresses.length === 0);
+  }
+
   if (qrWrap) {
     qrWrap.textContent = "";
     if (addresses.length) {
