@@ -9,6 +9,7 @@ packaging script cannot find.
 from __future__ import annotations
 
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,27 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "packaging" / "linux" / "stemdeck.desktop.in"
 ICON = ROOT / "desktop" / "src-tauri" / "icons" / "icon.png"
 MAKE_PORTABLE = ROOT / "scripts" / "linux" / "make-portable.sh"
+
+
+def _git_mode(relative: str) -> str | None:
+    """The file mode git has recorded for `relative`, or None if it cannot say.
+
+    None covers both "git is not installed" and "this is not a working tree",
+    which are the same thing as far as the caller is concerned: fall back.
+    """
+    try:
+        out = subprocess.run(  # noqa: S603
+            ["git", "ls-files", "-s", "--", relative],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return out.stdout.split(maxsplit=1)[0]
 
 
 def _entries() -> dict[str, str]:
@@ -80,9 +102,29 @@ def test_make_portable_stages_the_installer():
 
 
 def test_the_installer_exists_and_is_executable():
+    """The bit that reaches the user is the one git records, not the one on disk.
+
+    Asking the filesystem is wrong on Windows, where NTFS carries no execute
+    bit at all and `core.filemode` is false, so a perfectly good `100755` file
+    reads back as `0o666` and this failed for everyone developing there. It is
+    also the wrong question: the tarball is built from what git has, so a file
+    committed without the bit would ship unrunnable even if the author had
+    chmod-ed their own copy.
+
+    So read git's index. The filesystem is kept only as a fallback for a
+    checkout that is not a git working tree at all, such as an unpacked sdist.
+    """
     installer = ROOT / "packaging" / "linux" / "install.sh"
     assert installer.is_file()
-    assert installer.stat().st_mode & 0o111, "install.sh must be executable in the repo"
+
+    mode = _git_mode("packaging/linux/install.sh")
+    if mode is None:
+        assert installer.stat().st_mode & 0o111, "install.sh must be executable"
+        return
+    assert mode == "100755", (
+        f"install.sh is recorded as {mode}; it ships unrunnable. "
+        "Fix with: git update-index --chmod=+x packaging/linux/install.sh"
+    )
 
 
 def test_readme_documents_the_installer():
