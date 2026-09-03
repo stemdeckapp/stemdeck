@@ -80,10 +80,10 @@ async def test_it_stays_off_unless_it_is_asked_for() -> None:
 async def test_a_missing_certificate_does_not_take_the_app_down(tmp_path) -> None:
     """Startup runs inside the lifespan. A bad certificate must cost LAN
     transpose, never the ability to open StemDeck at all."""
-    from app.main import app
+    import app.main as main
 
     started = await tls_listener.start(
-        app,
+        main.app,
         port=_free_port(),
         certfile=tmp_path / "absent.crt",
         keyfile=tmp_path / "absent.key",
@@ -104,11 +104,11 @@ async def test_it_serves_the_same_app_over_tls(certificate) -> None:
     A separate process per scheme would give a phone its own library and its own
     idea of what is separating.
     """
-    from app.main import app
+    import app.main as main
 
     cert, key = certificate
     port = _free_port()
-    assert await tls_listener.start(app, port=port, certfile=cert, keyfile=key)
+    assert await tls_listener.start(main.app, port=port, certfile=cert, keyfile=key)
     assert tls_listener.active_port() == port
     try:
         # Our own certificate signed it, so verification is the thing under
@@ -128,11 +128,11 @@ async def test_the_companion_does_not_run_the_lifespan(certificate) -> None:
     """Running it twice would start a second queue worker against the same
     registry, and the first server to stop would reap the demucs worker out
     from under the other. `lifespan="off"` is the whole safeguard."""
-    from app.main import app
+    import app.main as main
 
     cert, key = certificate
     port = _free_port()
-    assert await tls_listener.start(app, port=port, certfile=cert, keyfile=key)
+    assert await tls_listener.start(main.app, port=port, certfile=cert, keyfile=key)
     try:
         assert tls_listener._server.config.lifespan == "off"
     finally:
@@ -141,14 +141,14 @@ async def test_the_companion_does_not_run_the_lifespan(certificate) -> None:
 
 @pytest.mark.skipif(sys.platform not in ("win32", "linux", "darwin"), reason="needs sockets")
 async def test_a_taken_port_is_reported_rather_than_raised(certificate) -> None:
-    from app.main import app
+    import app.main as main
 
     cert, key = certificate
     with socket.socket() as held:
         held.bind(("0.0.0.0", 0))  # noqa: S104
         held.listen(1)
         port = held.getsockname()[1]
-        assert await tls_listener.start(app, port=port, certfile=cert, keyfile=key) is False
+        assert await tls_listener.start(main.app, port=port, certfile=cert, keyfile=key) is False
     assert tls_listener.active_port() is None
 
 

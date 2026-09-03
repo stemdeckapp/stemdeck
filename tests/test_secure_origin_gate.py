@@ -20,7 +20,6 @@ import httpx
 import pytest
 
 import app.main as main
-from app.main import app
 
 # Captured at import, before conftest's autouse fixture relaxes it for the rest
 # of the suite. Restoring the real function rather than restating its rule is
@@ -32,7 +31,7 @@ LOOPBACK = ("127.0.0.1", 51234)
 
 
 def _client(peer: tuple[str, int], base: str = "http://testserver") -> httpx.AsyncClient:
-    transport = httpx.ASGITransport(app=app, client=peer)
+    transport = httpx.ASGITransport(app=main.app, client=peer)
     return httpx.AsyncClient(transport=transport, base_url=base)
 
 
