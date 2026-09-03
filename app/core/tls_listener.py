@@ -78,9 +78,12 @@ async def start(app: object, *, port: int, certfile: Path, keyfile: Path) -> boo
 
     config = uvicorn.Config(
         app,
-        # The LAN is the entire point of this listener. The loopback half of
-        # the pair is the primary server, bound separately.
-        host="0.0.0.0",  # noqa: S104
+        # The LAN is the entire point of this listener: it exists so that a
+        # phone can reach StemDeck over a secure origin. The loopback half of
+        # the pair is the primary server, bound separately. Whether another
+        # device is actually served is decided per request by the network gate
+        # in app/main.py, which defaults to off.
+        host="0.0.0.0",  # noqa: S104  # nosec B104
         port=port,
         ssl_certfile=str(certfile),
         ssl_keyfile=str(keyfile),
