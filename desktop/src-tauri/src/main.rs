@@ -751,6 +751,7 @@ fn clear_webkit_data() {
 /// Returns current runtime state: Python path, FFmpeg path, and persisted torch device.
 #[tauri::command]
 fn probe_runtime() -> Result<RuntimeProbe, String> {
+    log_setup_step("probe-runtime");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
     let python = python_path(&root);
@@ -817,6 +818,7 @@ fn runtime_pack_status() -> Result<RuntimePackStatus, String> {
 /// Downloads the Python runtime pack archive, emitting progress events to the frontend.
 #[tauri::command]
 async fn download_runtime_pack(app_handle: tauri::AppHandle) -> Result<RuntimeArchive, String> {
+    log_setup_step("download-runtime-pack");
     ensure_workspace()?;
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -845,6 +847,7 @@ fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
 /// Extracts the verified runtime pack archive and atomically swaps it into place.
 #[tauri::command]
 fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
+    log_setup_step("extract-runtime-pack");
     ensure_workspace()?;
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1448,6 +1451,7 @@ fn shared_settings_dir() -> Option<PathBuf> {
 /// Creates required data directories and runs any pending data migrations.
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
+    log_setup_step("ensure-workspace");
     let root = app_root()?;
     let data = local_data_dir()?;
 
@@ -1491,6 +1495,7 @@ fn ensure_workspace() -> Result<(), String> {
 /// Downloads FFmpeg/ffprobe if absent and writes their paths to config.json.
 #[tauri::command]
 fn ensure_external_assets() -> Result<AssetStatus, String> {
+    log_setup_step("ensure-external-assets");
     ensure_workspace()?;
     let data_dir = local_data_dir()?;
     let ffmpeg = ensure_ffmpeg(&data_dir)?;
@@ -1520,6 +1525,7 @@ struct ModelWarmupStatus {
 /// lazy-download-on-first-use behavior, same as before this step existed.
 #[tauri::command]
 fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus, String> {
+    log_setup_step("model-warmup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
     let backend_dir = backend_dir(&root)?;
@@ -1815,6 +1821,7 @@ fn local_ip() -> Option<String> {
 /// Detects GPU hardware, installs CUDA torch if needed, and persists the chosen device.
 #[tauri::command]
 fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, String> {
+    log_setup_step("gpu-setup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
 
@@ -1992,15 +1999,21 @@ fn persist_torch_device(data_dir: &std::path::Path, device: &str, reason: &str) 
 
 #[cfg(target_os = "macos")]
 fn verify_mps_torch(python: &Path) -> bool {
-    Command::new(python)
+    // Bounded for the same reason as verify_cuda_torch: a probe that imports
+    // torch and asks the GPU a question can wedge, and an unbounded wait there
+    // stops setup with nothing written anywhere (#502). Nothing has been seen
+    // to hang on the MPS path, but the asymmetry was the accident, not the
+    // design.
+    let mut command = Command::new(python);
+    command
         .args([
             "-c",
             "import torch; exit(0 if getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available() else 1)",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
+        .stderr(Stdio::null());
+    command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "MPS verify")
+        .map(|out| out.status.success())
         .unwrap_or(false)
 }
 
@@ -2559,6 +2572,14 @@ fn cuda_install_passes<'a>(
     passes
 }
 
+/// How long a GPU probe may take before we give up on it.
+///
+/// Generous for what it does -- import torch, launch one kernel, synchronise --
+/// but bounded, which is the point. `torch.cuda.synchronize()` against a driver
+/// the wheel does not match blocks in the kernel and is not interruptible, so
+/// an unbounded wait is an unbounded hang (#502).
+const GPU_VERIFY_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[cfg(not(target_os = "macos"))]
 fn verify_cuda_torch(python: &Path) -> bool {
     // Don't trust torch.cuda.is_available() alone: it returns True even when the
@@ -2566,7 +2587,15 @@ fn verify_cuda_torch(python: &Path) -> bool {
     // build), which then crashes mid-extraction with "no kernel image is
     // available" (#217). Force a real kernel launch so an incompatible wheel is
     // caught here and the app falls back to CPU cleanly.
-    let result = Command::new(python)
+    //
+    // Timed out rather than waited on. That kernel launch is exactly what wedges
+    // when the installed wheel and the host driver disagree -- reported on
+    // Debian Sid with an RTX 5070Ti, where first launch sat forever with no
+    // progress and an empty setup.log (#502). A probe that cannot answer is a
+    // failed probe: fall back to CPU, which the caller already handles by
+    // restoring the CPU wheels.
+    let mut command = Command::new(python);
+    command
         .args([
             "-c",
             "import torch; \
@@ -2576,35 +2605,39 @@ fn verify_cuda_torch(python: &Path) -> bool {
              exit(0)",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output();
+        .stderr(Stdio::piped());
+    hide_console_window(&mut command);
 
-    match result {
+    let log = |msg: &str| {
+        if let Ok(data_dir) = local_data_dir() {
+            append_to_setup_log(&data_dir, msg);
+        }
+    };
+
+    match command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "CUDA verify") {
         Ok(out) if out.status.success() => true,
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             if !stderr.trim().is_empty() {
-                if let Ok(data_dir) = local_data_dir() {
-                    let log_path = data_dir.join("logs").join("setup.log");
-                    if let Some(parent) = log_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    if let Ok(mut f) = fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
-                    {
-                        let _ = writeln!(
-                            f,
-                            "[stemdeck] CUDA verify failed. stderr:\n{}",
-                            stderr.trim()
-                        );
-                    }
-                }
+                log(&format!("CUDA verify failed. stderr:\n{}", stderr.trim()));
+            } else {
+                // Exit 1 with nothing on stderr is the is_available() branch:
+                // torch loaded but reported no usable device.
+                log("CUDA verify failed: torch reported no usable CUDA device");
             }
             false
         }
-        Err(_) => false,
+        Err(e) => {
+            // The timeout path lands here, and it is the one worth naming
+            // precisely: without it this call never returned and setup simply
+            // stopped, with nothing written anywhere.
+            log(&format!(
+                "CUDA verify did not complete ({e}). Treating the GPU as unusable \
+                 and falling back to CPU. A driver that does not match the installed \
+                 CUDA wheel is the usual cause."
+            ));
+            false
+        }
     }
 }
 
@@ -2953,6 +2986,22 @@ fn local_data_dir() -> Result<PathBuf, String> {
 /// there is nothing to filter on. Epoch rather than a formatted date keeps this
 /// dependency-free -- the crate has no date library, and the viewer renders it
 /// readably.
+/// Record that a setup step has begun.
+///
+/// setup.log only ever recorded failures, so a step that hung wrote nothing at
+/// all and the log was indistinguishable from a launch that never happened.
+/// That is what left #502 undiagnosable: a user reporting "stuck, no progress,
+/// no logs" and no way to tell which step they were stuck in.
+///
+/// Steps run in sequence, so the last line in the log names the step that did
+/// not finish. Entry markers alone are enough for that, and they cost one line
+/// per step rather than a completion marker on every return path.
+fn log_setup_step(step: &str) {
+    if let Ok(data_dir) = local_data_dir() {
+        append_to_setup_log(&data_dir, &format!("step: {step}"));
+    }
+}
+
 fn append_to_setup_log(data_dir: &Path, msg: &str) {
     let log = data_dir.join("logs").join("setup.log");
     if let Some(p) = log.parent() {
@@ -4881,6 +4930,47 @@ mod tests {
             524_288,
             "stderr must be drained in full"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_gpu_probe_that_never_returns_is_given_up_on() {
+        // The #502 hang: verify_cuda_torch used Command::output() with no
+        // timeout, and torch.cuda.synchronize() against a driver the wheel does
+        // not match blocks in the kernel uninterruptibly. Setup simply stopped,
+        // with nothing written to setup.log.
+        //
+        // Stands in for the probe with a process that never exits, since a real
+        // wedged CUDA context cannot be summoned in a test.
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg("sleep 300")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let started = std::time::Instant::now();
+        let result =
+            super::command_output_with_timeout(command, Duration::from_secs(2), "wedged probe");
+
+        assert!(
+            result.is_err(),
+            "a probe that never returns must not be waited on"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "gave up after {:?}; the timeout is what stops setup hanging forever",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_gpu_probe_timeout_is_generous_but_bounded() {
+        // Long enough for a cold torch import plus a kernel launch on a slow
+        // disk; short enough that a wedged driver does not cost the user their
+        // whole first launch.
+        assert!(super::GPU_VERIFY_TIMEOUT >= Duration::from_secs(60));
+        assert!(super::GPU_VERIFY_TIMEOUT <= Duration::from_secs(300));
     }
 
     #[test]
