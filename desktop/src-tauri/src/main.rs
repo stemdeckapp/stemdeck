@@ -1874,9 +1874,32 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
     {
         let setup = match detect_nvidia_gpu(&data_dir) {
             Some((gpu_name, cuda_version, compute_cap)) => {
-                let index_url = cuda_index_url(compute_cap.as_deref(), &cuda_version);
-                install_cuda_torch(&python, &index_url, &state)?;
-                let cuda_verified = verify_cuda_torch(&python);
+                // Try each candidate wheel in turn. A build that installs but
+                // cannot launch a kernel is not a reason to give up on the GPU
+                // if another build might work -- that was the whole failure in
+                // #502, where cu128 was the only thing ever offered.
+                let candidates = wheel_candidates(compute_cap.as_deref(), &cuda_version);
+                let mut cuda_verified = false;
+                for tag in &candidates {
+                    append_to_setup_log(
+                        &data_dir,
+                        &format!(
+                            "trying CUDA wheel {tag} (torch {})",
+                            torch_version_for_tag(tag)
+                        ),
+                    );
+                    let index_url = format!("https://download.pytorch.org/whl/{tag}");
+                    if let Err(e) = install_cuda_torch(&python, &index_url, &state) {
+                        append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
+                        continue;
+                    }
+                    if verify_cuda_torch(&python) {
+                        append_to_setup_log(&data_dir, &format!("{tag} verified"));
+                        cuda_verified = true;
+                        break;
+                    }
+                    append_to_setup_log(&data_dir, &format!("{tag} installed but did not verify"));
+                }
                 let reason = if cuda_verified {
                     "verified"
                 } else {
@@ -2159,13 +2182,18 @@ fn parse_cuda_version(smi_output: &str) -> Option<String> {
     None
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), test))]
 fn cuda_tag(cuda_version: &str) -> &'static str {
     let parts: Vec<u32> = cuda_version
         .splitn(2, '.')
         .filter_map(|p| p.parse().ok())
         .collect();
     match parts.as_slice() {
+        // A CUDA 13 driver used to land in the catch-all below and be handed
+        // cu124 -- older than the driver by two major versions, on every card,
+        // not just Blackwell (#502). CUDA is backward compatible, so cu128 is
+        // the right floor for a 13.x driver.
+        [major, _] if *major >= 13 => "cu128",
         [12, minor] if *minor >= 4 => "cu124",
         [12, _] => "cu121",
         [11, _] => "cu118",
@@ -2177,16 +2205,61 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
 /// Blackwell (sm_100 / sm_120, major >= 10) has no kernels in the stock torch
 /// 2.6 cu12x wheels and needs a cu128 / torch 2.7 build (#217). Everything else
 /// falls back to the driver-CUDA-version heuristic.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), test))]
 fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
-    if let Some(cap) = compute_cap {
-        if let Some(major) = cap.split('.').next().and_then(|m| m.parse::<u32>().ok()) {
-            if major >= 10 {
-                return "cu128";
-            }
-        }
+    wheel_candidates(compute_cap, cuda_version)[0]
+}
+
+/// Wheel tags to try for this GPU, best first.
+///
+/// A list rather than one answer because the right wheel for a given
+/// card/driver pairing is not reliably knowable from here. Blackwell on a
+/// CUDA 13 driver is the case that prompted this: cu128 is the only tag it was
+/// ever offered, and when that pairing does not work the user got no GPU and no
+/// explanation (#502). Trying the newer build first and keeping the proven one
+/// as a fallback turns a wrong guess into a slower success instead of a dead
+/// install.
+///
+/// Blackwell (sm_100 / sm_120, major >= 10) has no kernels at all in the stock
+/// torch 2.6 cu12x wheels (#217), which is why it never falls through to the
+/// driver heuristic.
+#[cfg(any(not(target_os = "macos"), test))]
+fn wheel_candidates(compute_cap: Option<&str>, cuda_version: &str) -> Vec<&'static str> {
+    let blackwell = compute_cap
+        .and_then(|cap| cap.split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major >= 10);
+    if !blackwell {
+        return vec![cuda_tag(cuda_version)];
     }
-    cuda_tag(cuda_version)
+    let driver_major = cuda_version
+        .split('.')
+        .next()
+        .and_then(|m| m.parse::<u32>().ok())
+        .unwrap_or(12);
+    if driver_major >= 13 {
+        // The driver is new enough for either; prefer the build that matches it.
+        vec!["cu130", "cu128"]
+    } else {
+        vec!["cu128"]
+    }
+}
+
+/// The torch/torchaudio line that goes with a wheel tag.
+///
+/// Blackwell needs 2.7+ for sm_120 kernels at all, and 2.8.0 specifically
+/// because 2.7.1 shipped them incomplete (#239). cu130 only carries 2.9+, and
+/// 2.11.0 is the newest release with a matching torchaudio on that index.
+///
+/// A torchaudio newer than the 2.6 the project otherwise pins is safe here
+/// because demucs' torchaudio.save() dispatches through soundfile, a hard
+/// dependency, rather than torchaudio's own codecs.
+#[cfg(any(not(target_os = "macos"), test))]
+fn torch_version_for_tag(tag: &str) -> &'static str {
+    match tag {
+        "cu130" => "2.11.0",
+        "cu128" => "2.8.0",
+        _ => "2.6.0",
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2510,7 +2583,7 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
     // cu128 uses 2.8.0: 2.7.1 shipped incomplete sm_120 kernels for Blackwell
     // (RTX 5000 series), causing verify_cuda_torch to fail (#239).
     let tag = cuda_tag_from_url(index_url);
-    let torch_version = if tag == "cu128" { "2.8.0" } else { "2.6.0" };
+    let torch_version = torch_version_for_tag(tag);
     let torch_spec = format!("torch=={torch_version}+{tag}");
     let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
     for (label, args) in cuda_install_passes(
@@ -4971,6 +5044,42 @@ mod tests {
         // whole first launch.
         assert!(super::GPU_VERIFY_TIMEOUT >= Duration::from_secs(60));
         assert!(super::GPU_VERIFY_TIMEOUT <= Duration::from_secs(300));
+    }
+
+    #[test]
+    fn blackwell_on_a_cuda_13_driver_gets_a_matching_wheel_and_a_fallback() {
+        // The #502 case: an RTX 5070Ti on Debian Sid. cu128 was the only tag
+        // Blackwell was ever offered, so when that pairing did not work the
+        // user got no GPU and no explanation.
+        let candidates = super::wheel_candidates(Some("12.0"), "13.0");
+        assert_eq!(candidates, vec!["cu130", "cu128"]);
+        assert_eq!(super::torch_version_for_tag("cu130"), "2.11.0");
+        assert_eq!(super::torch_version_for_tag("cu128"), "2.8.0");
+    }
+
+    #[test]
+    fn blackwell_on_a_cuda_12_driver_keeps_the_proven_wheel_only() {
+        // Do not offer cu130 to a driver that predates it.
+        assert_eq!(super::wheel_candidates(Some("12.0"), "12.8"), vec!["cu128"]);
+        assert_eq!(super::wheel_candidates(Some("10.0"), "12.4"), vec!["cu128"]);
+    }
+
+    #[test]
+    fn a_cuda_13_driver_is_not_handed_a_cuda_12_4_wheel() {
+        // cuda_tag knew 11 and 12 only, so a 13.x driver fell into the
+        // catch-all and got cu124 -- two major versions behind, on every card.
+        assert_eq!(super::cuda_tag("13.0"), "cu128");
+        assert_eq!(super::cuda_tag("14.2"), "cu128");
+        // Older drivers keep their existing mapping.
+        assert_eq!(super::cuda_tag("12.8"), "cu124");
+        assert_eq!(super::cuda_tag("12.1"), "cu121");
+        assert_eq!(super::cuda_tag("11.8"), "cu118");
+    }
+
+    #[test]
+    fn a_non_blackwell_card_still_follows_the_driver() {
+        assert_eq!(super::wheel_candidates(Some("8.9"), "12.4"), vec!["cu124"]);
+        assert_eq!(super::wheel_candidates(None, "11.8"), vec!["cu118"]);
     }
 
     #[test]
