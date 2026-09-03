@@ -979,11 +979,16 @@ input, textarea { font-family: inherit; }
 .settings-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 5px 12px 9px; cursor: pointer; margin-bottom: -1px; }
 .settings-tab:hover { color: var(--fg-2); }
 .settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
-/* Every pane fills the fixed dialog body so all tabs are the same size; the
-   General pane (the tall one, with the tracks table) scrolls within it. */
-.settings-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.settings-pane[data-pane="general"] {
-  flex: 1; overflow-y: auto;
+/* Every pane fills the fixed dialog body so all tabs are the same size, and
+   every pane scrolls inside it.
+   Only General used to scroll, which was a bet that no other tab would ever
+   grow past the dialog's 540px. Network did, once it gained the secure-origin
+   warning and one QR card per network interface: the content simply ran on
+   underneath the footer, with the Done button sitting on top of the Port
+   setting. A pane that cannot scroll does not clip, it overlaps. */
+.settings-pane {
+  display: flex; flex-direction: column; min-height: 0; flex: 1;
+  overflow-y: auto;
   /* Reserve a gutter for the scrollbar so it never overlaps the right-aligned
      controls (Compute device, Out of sync tracks). padding-right insets the
      content; the equal negative margin lets that gutter sit in the card's own
@@ -997,7 +1002,11 @@ input, textarea { font-family: inherit; }
 .settings-pane.hidden { display: none; }
 .settings-pane[data-pane="general"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
 .settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
-.settings-foot { display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border); }
+/* flex-shrink: 0 so a tall pane squeezes itself, never the footer. */
+.settings-foot {
+  display: flex; justify-content: flex-end; flex-shrink: 0;
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
+}
 .settings-done { min-height: 32px; border-radius: 7px; border: 1px solid rgba(244,183,64,0.35); background: rgba(244,183,64,0.16); color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 0 22px; cursor: pointer; }
 .settings-done:hover { background: rgba(244,183,64,0.24); }
 /* Right-aligned form controls share a fixed width so they line up down the column. */
