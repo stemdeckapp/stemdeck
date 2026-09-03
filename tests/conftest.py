@@ -55,6 +55,18 @@ def _isolate_job_queue():
 
 
 @pytest.fixture(autouse=True)
+def _relax_secure_origin_gate(monkeypatch):
+    """Server mode refuses a plaintext request from a non-local client, and
+    TestClient's peer is "testclient" -- not loopback -- so the gate would 403
+    the entire suite for a reason none of those tests are about. The gate has
+    its own file, tests/test_secure_origin_gate.py, which puts it back."""
+    import app.main as _main
+
+    monkeypatch.setattr(_main, "_secure_origin_required", lambda: False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_network_settings(tmp_path, monkeypatch):
     """Isolate the runtime network gate for every test. Without this, a stray
     settings.json in the repo (written by a local dev server) could flip the

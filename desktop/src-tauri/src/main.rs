@@ -1,3 +1,5 @@
+mod certs;
+
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,6 +25,12 @@ use tauri_plugin_store::StoreExt;
 use zip::ZipArchive;
 
 const SETUP_VERSION: u64 = 1;
+
+/// Preferred port for the LAN https listener. 8443 is the conventional
+/// alternative https port, so it reads as intended rather than arbitrary in a
+/// firewall prompt. Taken ports fall back to any free one, same as the http
+/// listener, so this is a preference and never a requirement.
+const HTTPS_PORT: u16 = 8443;
 
 // ── In-app updater platform support (#421) ──────────────────────────────────
 //
@@ -324,6 +332,27 @@ struct GpuSetup {
 }
 
 fn main() {
+    // `StemDeck --emit-lan-cert <dir>` writes a certificate into <dir>/certs and
+    // exits without opening a window. Two callers: the Python test suite, which
+    // needs a certificate made by the code that actually ships rather than a
+    // hand-rolled stand-in that could drift from it, and anyone diagnosing a
+    // phone that will not accept the one on disk.
+    let mut args = env::args().skip(1);
+    if args.next().as_deref() == Some("--emit-lan-cert") {
+        let dir = args.next().unwrap_or_else(|| ".".to_string());
+        match certs::ensure(Path::new(&dir)) {
+            Ok(c) => {
+                println!("{}", c.cert.display());
+                println!("{}", c.key.display());
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -1534,6 +1563,26 @@ fn start_backend(
         })?;
         patch_pyvenv_cfg(&python);
         let (port, port_guard) = reserve_port(bind_host, configured_port())?;
+        // The LAN half of the pair. The webview talks plain http to the
+        // loopback listener above, because a self-signed certificate would
+        // raise an interstitial a Tauri window has no way to click through;
+        // phones get this one, because without TLS their origin is insecure
+        // and the browser withholds the AudioWorklet transpose runs on.
+        // Best-effort throughout: no certificate, no free port, or a backend
+        // too old to read the variables all mean LAN transpose is unavailable,
+        // never that StemDeck fails to start.
+        let https = certs::ensure(&data_dir)
+            .map_err(|e| {
+                eprintln!("stemdeck: no LAN certificate, https disabled: {e}");
+                e
+            })
+            .ok()
+            .and_then(|cert| {
+                reserve_port(bind_host, HTTPS_PORT)
+                    .map_err(|e| eprintln!("stemdeck: no port for https: {e}"))
+                    .ok()
+                    .map(|(https_port, guard)| (cert, https_port, guard))
+            });
         let url = format!("http://127.0.0.1:{port}");
         let log_path = data_dir.join("logs").join("backend.log");
         let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
@@ -1607,6 +1656,14 @@ fn start_backend(
             .stdout(stdout)
             .stderr(stderr);
 
+        // app/core/tls_listener reads these three together; any one missing
+        // means it stays off and the app is exactly what it was before.
+        if let Some((ref cert, https_port, _)) = https {
+            cmd.env("STEMDECK_SSL_CERT", &cert.cert)
+                .env("STEMDECK_SSL_KEY", &cert.key)
+                .env("STEMDECK_HTTPS_PORT", https_port.to_string());
+        }
+
         apply_ffmpeg_path(&mut cmd, &data_dir)?;
 
         #[cfg(windows)]
@@ -1619,8 +1676,10 @@ fn start_backend(
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to start backend: {e}"))?;
-        // Release the reserved port immediately after spawn so uvicorn can bind it.
+        // Release the reserved ports immediately after spawn so uvicorn can
+        // bind them. Both, or the companion listener finds its own port held.
         drop(port_guard);
+        drop(https);
 
         if let Err(err) = wait_for_health(
             &mut child,

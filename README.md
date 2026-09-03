@@ -58,7 +58,6 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
 | Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Music Gear | Analog4Lyfe | Analog gear specialist | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Music Gear | Empress Effects | Boutique effects pedals | [empresseffects.com](https://empresseffects.com) |
 | Music Gear | Thomann | Large music-equipment retailer | [@thomann.music](https://www.instagram.com/thomann.music) |
 | Music & Karaoke Technology | Beltr | Local, subscription-free karaoke software | [beltr.app](https://beltr.app/) |
@@ -336,8 +335,65 @@ The library is persistent by default (`STEMDECK_PERSIST_LIBRARY=1`), so tracks a
 | `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
 | `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
 | `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |
+| `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
+| `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
+| `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
 
 `run.sh` also reads: `HOST` (default `127.0.0.1`), `PORT` (default `8765`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+
+### Serving other devices: why https is not optional
+
+Transpose is built on `AudioWorklet`, and browsers grant that only to a
+**secure context**. `https://` and `localhost` qualify. A plain
+`http://192.168.1.20:8000` does not, so a phone reaching StemDeck over plain
+http gets working playback and a key control that cannot do anything. There is
+no fallback worth shipping: driving the same DSP from a `ScriptProcessorNode`
+measured around 5% of the audio missing, because that node type drops buffers
+on its own at every size.
+
+So a server that other devices will use terminates TLS, one of three ways:
+
+1. **A reverse proxy** (SWAG, Nginx Proxy Manager, Traefik, Caddy). The usual
+   self-hosted shape, and the best one if you already run it. StemDeck reads
+   `X-Forwarded-Proto` and the RFC 7239 `Forwarded` header, so an https browser
+   over a plain-http upstream hop is recognised as secure and served normally.
+2. **StemDeck itself**, by pointing `STEMDECK_SSL_CERT` and `STEMDECK_SSL_KEY`
+   at a certificate and key. uvicorn serves them directly; no extra package is
+   installed for this.
+3. **A private overlay network** such as Tailscale, whose addresses are already
+   https.
+
+Reaching a plaintext non-local origin with none of those in place is refused
+with a 403 that explains this, rather than served as an app that is quietly
+half-broken. Loopback is always served, so turning this on can never lock the
+host out of its own server.
+
+### The desktop app runs two listeners
+
+The desktop app does the same thing without being configured, because it has
+two audiences that need opposite things.
+
+- **Plain http on `127.0.0.1`** for its own window. Loopback is already a
+  secure context, so nothing is lost, and it is the only scheme that works: a
+  self-signed certificate would raise a warning page the app window has no way
+  to click through.
+- **https on the LAN**, port 8443 by default, for phones and other computers.
+  This is the address Settings shows and the QR code points at.
+
+Both listeners serve the same process, so there is one library, one queue and
+one Demucs worker either way.
+
+The certificate is generated on your own machine the first time you enable
+network access, and lives in `<data>/certs/` beside `jobs/` and
+`settings.json`. Nothing is shipped in the download: a certificate in the
+release would publish its private key to everyone who downloaded it, which is
+worse than plain http because it looks secure. It is regenerated automatically
+when your machine's addresses change or the certificate is close to expiring.
+
+Because it is signed by nobody, **your phone will show a "your connection is
+not private" warning the first time**. Tap Advanced, then Continue. Once per
+device, per computer. Settings says so, in red, next to the toggle.
+
 
 ---
 

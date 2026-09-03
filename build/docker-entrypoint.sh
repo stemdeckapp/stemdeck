@@ -17,6 +17,23 @@ PGID="${PGID:-1001}"
 chown -R "${PUID}:${PGID}" /app/jobs /cache 2>/dev/null || true
 touch /app/settings.json 2>/dev/null && chown "${PUID}:${PGID}" /app/settings.json 2>/dev/null || true
 
+# Serve TLS when a certificate is supplied. Appended to the CMD rather than
+# baked into it so `docker run ... uvicorn ...` overrides still work, and so an
+# install with no certificate is unchanged.
+#
+# StemDeck never generates a certificate: that needs a dependency, and a
+# self-signed one hands every client a full-page browser warning. Bring one from
+# a reverse proxy, `tailscale serve`, or mkcert. A proxy that terminates TLS in
+# front of the container needs nothing here at all -- it forwards
+# X-Forwarded-Proto and the app trusts that.
+if [ -n "${STEMDECK_SSL_CERT:-}" ] && [ -n "${STEMDECK_SSL_KEY:-}" ]; then
+  if [ ! -r "${STEMDECK_SSL_CERT}" ] || [ ! -r "${STEMDECK_SSL_KEY}" ]; then
+    echo "STEMDECK_SSL_CERT/STEMDECK_SSL_KEY are set but not readable" >&2
+    exit 1
+  fi
+  set -- "$@" --ssl-certfile "${STEMDECK_SSL_CERT}" --ssl-keyfile "${STEMDECK_SSL_KEY}"
+fi
+
 # Drop to the target user and exec the CMD. gosu accepts a numeric UID:GID even
 # when no matching named user exists.
 exec gosu "${PUID}:${PGID}" "$@"

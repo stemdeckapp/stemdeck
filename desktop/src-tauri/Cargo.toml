@@ -13,6 +13,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 flate2 = "1"
 libc = "0.2"
+# Enumerating this machine's own interface addresses, so the generated
+# certificate can name the IPs a phone will actually dial. std has no API for
+# this and the platform calls differ three ways.
+local-ip-address = "0.6"
+# Generating StemDeck's own LAN certificate on the user's machine. A shipped
+# certificate would ship its private key to every download, which is strictly
+# worse than plain http because it looks secure. See src/certs.rs.
+rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,6 +33,9 @@ tar = "0.4"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
+# Certificate validity dates. Already in the tree via rcgen; named here because
+# certs.rs uses it directly.
+time = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 

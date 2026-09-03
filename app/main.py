@@ -22,11 +22,15 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
+from app.core import tls_listener
 from app.core.config import (
     DEMUCS_MODEL,
     FFMPEG_BIN,
+    HTTPS_PORT,
     JOBS_DIR,
     LOGS_DIR,
+    SSL_CERTFILE,
+    SSL_KEYFILE,
     STATIC_DIR,
     available_torch_devices,
     configure_portable_environment,
@@ -179,7 +183,7 @@ async def _desktop_parent_watchdog(parent_pid: int) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _background_tasks = set()
     t = asyncio.create_task(_sweep_loop())
     _background_tasks.add(t)
@@ -226,7 +230,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                     wt = asyncio.create_task(_desktop_parent_watchdog(parent_pid_int))
                     _background_tasks.add(wt)
                     wt.add_done_callback(_background_tasks.discard)
+    # The LAN half of the desktop's two listeners. Only the shell sets these,
+    # and only once it has a certificate for this machine; server mode has a
+    # single listener whose scheme is not ours to decide. See app/core/tls_listener.
+    if HTTPS_PORT and SSL_CERTFILE and SSL_KEYFILE:
+        await tls_listener.start(app, port=HTTPS_PORT, certfile=SSL_CERTFILE, keyfile=SSL_KEYFILE)
     yield
+    await tls_listener.stop()
     # Stop taking new work. Deliberately not cancelling the in-flight job: it is
     # blocked in asyncio.to_thread, which cannot be cancelled, so it dies with
     # the process exactly as it did before the queue existed.
@@ -368,7 +378,23 @@ def get_settings(request: Request) -> dict[str, object]:
     # LAN addresses other devices can use — loopback excluded (only works on the
     # host). The port is whatever this request came in on.
     port = request.url.port or 8000
-    addresses = sorted(f"http://{ip}:{port}" for ip in _local_ips() if _is_lan_ipv4(ip))
+    # The address handed to another device is not necessarily the one this
+    # request arrived on. The desktop app answers its own webview over plain
+    # http on loopback while serving the LAN over TLS on a second port, so the
+    # companion listener -- when it is actually up -- is what the QR code has
+    # to point at. Reading its live port rather than the configured one means a
+    # failed bind shows as no address instead of an address that cannot connect.
+    tls_port = tls_listener.active_port()
+    if tls_port is not None:
+        scheme, port_out = "https", tls_port
+    else:
+        # Single-listener deployments: https only when we terminate TLS
+        # ourselves. Advertising https:// for a plain server, or the reverse,
+        # hands the user an address that will not connect -- and the scheme is
+        # also what decides whether transpose works once they open it.
+        scheme = "https" if SSL_CERTFILE and SSL_KEYFILE else "http"
+        port_out = port
+    addresses = sorted(f"{scheme}://{ip}:{port_out}" for ip in _local_ips() if _is_lan_ipv4(ip))
     # Show the port the server is actually running on rather than the stored
     # preference (which only takes effect on the next restart) -- so the field
     # reflects reality. Editing it still saves the preference via POST.
@@ -950,6 +976,87 @@ def _is_host_request(host: str | None) -> bool:
         return False
     h = host[7:] if host.startswith("::ffff:") else host
     return h in _local_ips()
+
+
+def _is_desktop_shell() -> bool:
+    """True when the Tauri app spawned this backend (it sets STEMDECK_DESKTOP)."""
+    return os.environ.get("STEMDECK_DESKTOP") == "1"
+
+
+def _client_scheme(request: Request) -> str:
+    """The scheme the BROWSER used, which is not always the one we were called on.
+
+    Behind a reverse proxy -- SWAG, Nginx Proxy Manager, Traefik, Caddy, which
+    is how most self-hosted StemDeck installs are reached -- the proxy
+    terminates TLS and forwards plain HTTP upstream. The browser has a perfectly
+    good secure context; only this hop is plaintext. Judging by our own socket
+    would reject exactly the deployments that already did the right thing.
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        # A chain of proxies appends, and the client-facing one is first.
+        return forwarded.split(",")[0].strip().lower()
+    # RFC 7239, which Caddy and some others prefer to the X- header.
+    rfc7239 = request.headers.get("forwarded")
+    if rfc7239:
+        for part in rfc7239.split(",")[0].split(";"):
+            key, _, value = part.strip().partition("=")
+            if key.lower() == "proto":
+                return value.strip().strip('"').lower()
+    return request.url.scheme
+
+
+# Shown in the browser, so it has to read as an explanation rather than an
+# error code. Someone hitting this did nothing wrong.
+_INSECURE_ORIGIN_MESSAGE = """StemDeck needs an https:// address when reached from another device.
+
+Browsers only grant a secure context to https:// and localhost. Without one
+the audio engine cannot build its pitch stage, so transpose silently stops
+working. Rather than serve a half-working app over the network, server mode
+asks for TLS.
+
+Any of these fixes it:
+  - Put a reverse proxy in front (SWAG, Nginx Proxy Manager, Traefik,
+    Caddy) and make sure it sends X-Forwarded-Proto.
+  - Run `tailscale serve` on the host for a real certificate, with no
+    browser warning and nothing to install on the phone.
+  - Point STEMDECK_SSL_CERT and STEMDECK_SSL_KEY at a certificate and
+    restart.
+
+The host machine itself is always served, over http, on localhost."""
+
+
+# Secure-origin gate. Server mode only: the desktop app spawns this backend on
+# loopback for its own webview, and its "available on your network" toggle is a
+# different feature with its own explanation in the UI.
+#
+# This is NOT about eavesdropping -- there is no auth here by design. It is
+# about not handing someone a browser tab that looks like StemDeck and quietly
+# is not, because half the audio engine needs a secure context and never says
+# so at the point of failure.
+#
+# X-Forwarded-Proto is taken on trust. Any device on the LAN could send it and
+# get through, which matters little in an app that has no authentication at all
+# (see .claude/rules/security.md) and would otherwise mean rejecting every
+# properly proxied install.
+def _secure_origin_required() -> bool:
+    """Whether this deployment enforces a secure origin for other devices.
+
+    Server mode does; the desktop app does not, because its "available on your
+    network" toggle is a different feature with its own explanation in the UI,
+    and hard-failing it would take playback away from a phone in order to fix
+    transpose on it.
+    """
+    return not _is_desktop_shell()
+
+
+@app.middleware("http")
+async def secure_origin_gate(request: Request, call_next):
+    if _secure_origin_required():
+        client_host = request.client.host if request.client else None
+        if not _is_host_request(client_host) and _client_scheme(request) != "https":
+            return PlainTextResponse(_INSECURE_ORIGIN_MESSAGE, status_code=403)
+    return await call_next(request)
 
 
 # Network availability gate (Settings → "Make StemDeck available on your

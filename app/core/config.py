@@ -19,6 +19,12 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser().resolve() if raw else default
 
 
+def _env_path_opt(name: str) -> Path | None:
+    """A path setting with no default: absent means the feature is off."""
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
 def available_torch_devices() -> list[str]:
     """Compute devices this machine can actually use, best-first. CPU is always
     present; cuda/mps depend on the hardware + installed torch build. The
@@ -146,6 +152,32 @@ DOWNLOADS_DIR = _env_path("STEMDECK_DOWNLOADS_DIR", DATA_DIR / "downloads")
 MODELS_DIR = _env_path("STEMDECK_MODELS_DIR", DATA_DIR / "models")
 LOGS_DIR = _env_path("STEMDECK_LOGS_DIR", DATA_DIR / "logs")
 FFMPEG_DIR = _env_path("STEMDECK_FFMPEG_DIR", DATA_DIR / "ffmpeg")
+
+# ── TLS, for server deployments ───────────────────────────────────────────────
+#
+# AudioWorklet -- and so transpose -- is a [SecureContext] API, which browsers
+# grant to https:// and localhost and to nothing else. A phone on
+# http://<lan-ip> therefore cannot have it, and there is no workaround worth
+# shipping: driving the same DSP from a ScriptProcessorNode was measured
+# dropping ~5% of the audio, audibly, because that node type is lossy on its
+# own regardless of buffer size.
+#
+# Terminating TLS here costs nothing. uvicorn uses the stdlib `ssl` module, so
+# no package is added, uv.lock does not change, and the desktop in-app updater
+# is unaffected (see .claude/rules/desktop-update-gate.md). Generating a
+# certificate would need a dependency and would hand every client a full-page
+# browser warning, so StemDeck never does that: bring your own, from a reverse
+# proxy, Tailscale Serve, or mkcert.
+SSL_CERTFILE = _env_path_opt("STEMDECK_SSL_CERT")
+SSL_KEYFILE = _env_path_opt("STEMDECK_SSL_KEY")
+# The desktop app runs two listeners, not one: plain http on loopback for its
+# own webview, and https on the LAN for phones. It needs both because the two
+# have incompatible requirements -- the webview cannot be shown a certificate
+# warning it has no way to click through, and a phone cannot have transpose
+# without a secure origin. When this is set, app.main starts the second
+# listener alongside the first; when it is not, there is only ever one server
+# and TLS (if configured at all) belongs to whoever launched uvicorn.
+HTTPS_PORT = _env_int("STEMDECK_HTTPS_PORT", 0) or None
 FFMPEG_BIN = _env_path(
     "STEMDECK_FFMPEG",
     FFMPEG_DIR / ("ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"),
