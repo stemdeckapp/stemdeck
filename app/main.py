@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
 from app.core import tls_listener
+from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddleware
 from app.core.config import (
     DEMUCS_MODEL,
     FFMPEG_BIN,
@@ -1076,6 +1077,16 @@ async def network_gate(request: Request, call_next):
             )
     return await call_next(request)
 
+
+# Compress text on the way out. Registered last, so it is the outermost layer
+# and sees the finished response -- including the headers the middleware above
+# add. Only text is touched: see app/core/compression.py for why a range window
+# of audio must not be.
+app.add_middleware(
+    TextGZipMiddleware,
+    minimum_size=MINIMUM_SIZE,
+    compresslevel=COMPRESS_LEVEL,
+)
 
 app.include_router(router, prefix="/api")
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
