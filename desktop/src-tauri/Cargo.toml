@@ -22,6 +22,11 @@ local-ip-address = "0.6"
 # worse than plain http because it looks secure. See src/certs.rs.
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+# Native drag-out of a rendered file to the OS (a DAW, Explorer, Finder).
+# The crate tauri-plugin-drag wraps; taken directly because the plugin exposes
+# start_drag only as a #[command], which would mean JavaScript naming the file
+# path. See dragout.rs.
+drag = "2.1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

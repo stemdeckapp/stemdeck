@@ -1919,6 +1919,45 @@ function _regionFilename(ext) {
   return `${safe || "region"}_region.${ext}`;
 }
 
+// The region a drag hands over, or null when there is nothing to drag.
+//
+// Named with the region bounds, unlike the Export Region filename: a dragged
+// file lands in a folder nothing ever cleans up, and the Rust side reuses a
+// file that is already there. Two different loops of one song sharing a name
+// would mean the second drag silently handed over the first one's audio.
+function _regionDragFilename(ext) {
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  const span = `${loopStart.toFixed(1)}-${loopEnd.toFixed(1)}`.replace(/\./g, "_");
+  return `${safe || "region"}_region_${span}.${ext}`;
+}
+
+export function regionDragPayload(ext = "wav") {
+  if (!loopEnabled || loopStart >= loopEnd) return null;
+  const url = _mixdownUrl(ext, true);
+  if (!url) return null;
+  return { url, filename: _regionDragFilename(ext) };
+}
+
+// Render the region before the user reaches for it.
+//
+// A drag has to be handed to the OS while the mouse button is still down, so
+// the file cannot be rendered during the gesture: ffmpeg takes long enough
+// that the button would be released first and the drag would never attach.
+// Warming the server's render cache (_mixdown_cache_key in app/api/stems.py)
+// is what makes the drag itself a file copy.
+//
+// Range: bytes=0-0 so this costs a render, which is the point, and not the
+// transfer, which would be the whole region twice.
+export function prewarmRegionMix(ext = "wav") {
+  const payload = regionDragPayload(ext);
+  if (!payload) return;
+  fetch(payload.url, { headers: { Range: "bytes=0-0" } }).catch(() => {});
+}
+
 export function downloadRegionMix(ext = "wav", onTransferStart) {
   if (!loopEnabled || loopStart >= loopEnd) return false;
   const url = _mixdownUrl(ext, true);

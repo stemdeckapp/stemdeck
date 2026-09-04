@@ -558,6 +558,9 @@ function wireLoopRegionAdjust() {
 
   loopRegionEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !totalDuration) return;
+    // The drag-out grip runs an HTML5 drag. Starting a pointer-drag from the
+    // same gesture would move the region while it is being dragged out.
+    if (e.target.closest("[data-loop-drag-out]")) return;
     const t = timeFromClientX(e.clientX);
     if (t === null) return;
     mode = e.target.closest("[data-loop-handle]")?.dataset.loopHandle ?? "move";

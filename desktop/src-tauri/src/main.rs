@@ -1,4 +1,5 @@
 mod certs;
+mod dragout;
 
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
@@ -456,6 +457,9 @@ fn main() {
             pick_export_destination,
             download_to_path,
             pick_stems_folder,
+            pick_exports_folder,
+            current_exports_dir,
+            start_audio_drag,
             store_get,
             store_set,
             reset_user_data,
@@ -620,6 +624,61 @@ async fn pick_stems_folder(app: tauri::AppHandle) -> Result<Option<String>, Stri
         });
     let picked = rx.recv().map_err(|e| e.to_string())?;
     Ok(picked.map(|p| p.to_string()))
+}
+
+/// Settings key holding the folder the user picked for exports and drags.
+const EXPORTS_DIR_KEY: &str = "exports_dir";
+
+/// Native folder picker for the exports location, persisted here rather than
+/// handed back for JS to store: the drag path is resolved in Rust and nothing
+/// in the WebView should be able to point it somewhere by itself.
+#[tauri::command]
+async fn pick_exports_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose where StemDeck puts dragged and exported audio")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    let Some(picked) = rx.recv().map_err(|e| e.to_string())? else {
+        return Ok(None); // user cancelled
+    };
+
+    let chosen = picked.to_string();
+    let store_path = documents_store_path(&app)?;
+    let store = app.store(store_path).map_err(|e| e.to_string())?;
+    store.set(EXPORTS_DIR_KEY, serde_json::Value::String(chosen.clone()));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(Some(chosen))
+}
+
+/// The exports folder as it stands, for the Settings row to display.
+#[tauri::command]
+fn current_exports_dir(app: tauri::AppHandle) -> Result<String, String> {
+    exports_dir(&app).map(|p| p.to_string_lossy().to_string())
+}
+
+/// Read a string out of the persistent store, or None if it is absent or is
+/// not a string. Never fails the caller: a missing store means "not chosen".
+fn stored_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
+    let path = documents_store_path(app).ok()?;
+    let store = app.store(path).ok()?;
+    let value = store.get(key)?;
+    value.as_str().map(|s| s.to_string())
+}
+
+/// Where dragged and exported audio lands, created if it does not exist.
+fn exports_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let jobs = current_jobs_dir(app);
+    let data = local_data_dir()?;
+    let fallback = dragout::default_exports_dir(&jobs, &data);
+    let dir =
+        dragout::resolve_exports_dir(stored_string(app, EXPORTS_DIR_KEY).as_deref(), &fallback);
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 /// Get a value from the persistent user-data store.
@@ -2703,15 +2762,22 @@ async fn download_to_path(
 ) -> Result<(), String> {
     validate_download_url(&url)?;
     let dest = take_pending_save(&state, &token)?;
+    stream_url_to_file(&url, &dest).await
+}
 
-    // Stream response to disk to avoid buffering a large audio file in memory (#139).
-    // 5-minute timeout covers large WAV exports over a slow loopback.
+/// Streams a URL to `dest`, via a temp file so a failure never leaves a
+/// half-written export looking complete.
+///
+/// Streamed rather than buffered to avoid holding a large audio file in memory
+/// (#139); the 5-minute timeout covers large WAV exports over a slow loopback.
+/// The caller has already validated the URL.
+async fn stream_url_to_file(url: &str, dest: &Path) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| format!("failed to build client: {e}"))?;
     let mut resp = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("fetch failed: {e}"))?;
@@ -2731,7 +2797,7 @@ async fn download_to_path(
     }
     file.sync_all().map_err(|e| format!("flush failed: {e}"))?;
     drop(file);
-    std::fs::rename(&tmp, &dest).map_err(|e| format!("rename failed: {e}"))?;
+    std::fs::rename(&tmp, dest).map_err(|e| format!("rename failed: {e}"))?;
     Ok(())
 }
 
@@ -2752,6 +2818,49 @@ async fn save_audio_file(
         return Ok(()); // user cancelled
     };
     download_to_path(state, token, url).await
+}
+
+/// Renders a localhost URL into the exports folder and starts an OS drag of it.
+///
+/// JavaScript cancels its own `dragstart` and calls this, because a WebView
+/// cannot hand the OS a file. It passes a URL and a bare filename; the folder
+/// is resolved here and the path never crosses back, for the same reason
+/// `download_to_path` takes a token (see dragout.rs).
+#[tauri::command]
+async fn start_audio_drag(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    url: String,
+    filename: String,
+) -> Result<(), String> {
+    validate_download_url(&url)?;
+    let name = dragout::sanitize_filename(&filename)?;
+    let dest = exports_dir(&app)?.join(&name);
+
+    // Reuse an identical earlier export. The backend already caches the render;
+    // this saves the transfer too, so dragging the same loop twice is instant.
+    // Zero-length means an interrupted write, which must not be handed to a DAW.
+    let usable = matches!(fs::metadata(&dest), Ok(m) if m.len() > 0);
+    if !usable {
+        stream_url_to_file(&url, &dest).await?;
+    }
+
+    // Every platform backend touches UI state that is not thread-safe, and this
+    // command runs on a worker, so the drag has to be started on the main
+    // thread.
+    //
+    // Deliberately not waited on. The platform drag is modal -- Windows'
+    // DoDragDrop does not return until the drop completes -- so blocking here
+    // would hold a runtime worker for as long as the user keeps the mouse
+    // down. There is nothing useful the caller could do with the result by
+    // then either: the gesture is over. Everything that can fail in a way JS
+    // can act on (a bad name, a failed render) has already happened above.
+    app.run_on_main_thread(move || {
+        if let Err(e) = dragout::begin_drag(&window, dest) {
+            eprintln!("[stemdeck] could not start the drag: {e}");
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn stop_backend(state: &BackendState) {

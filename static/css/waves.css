@@ -777,6 +777,40 @@
   cursor: grabbing;
 }
 
+/* Drag the rendered region out to a DAW or a folder. Only the desktop app can
+   hand the OS a file, so the grip is hidden everywhere else rather than
+   offering a gesture that would silently do nothing (see dragout.rs). */
+.loop-grip {
+  display: none;
+}
+
+.can-drag-out .loop-grip {
+  display: block;
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--gold);
+  opacity: 0;
+  cursor: grab;
+  /* Above the resize handles: it overlaps neither, but a narrow region
+     squeezes all three together and the grip must stay grabbable. */
+  z-index: 5;
+  transition: opacity 0.12s ease;
+}
+
+.can-drag-out .loop-region:hover .loop-grip {
+  opacity: 0.85;
+}
+
+.can-drag-out .loop-grip:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
 /* Wider than the 2px border they sit on: an edge you cannot reliably grab is
    the finnicky behaviour this replaces. Extends outside the region as well as
    in, so the handle is catchable from either side. */

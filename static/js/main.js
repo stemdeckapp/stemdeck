@@ -5,7 +5,7 @@ import {
   setAutoSectionsResetFn,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, prewarmRegionMix } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
@@ -682,6 +682,76 @@ document.addEventListener("keydown", (e) => {
     updateLoopRegionVisual();
   }
 });
+
+// ─── Drag audio out to a DAW or a folder ───
+//
+// Only the desktop app can do this: handing the OS a file needs a real path,
+// which no browser will produce. The gesture is cancelled here and the
+// platform drag is started in Rust (desktop/src-tauri/src/dragout.rs).
+
+const canDragOut = Boolean(window.__TAURI__?.core?.invoke);
+if (canDragOut) document.body.classList.add("can-drag-out");
+
+// The export panel's format, read from the DOM rather than its closure.
+// MP4 is a video mux that cannot be region-trimmed, so a drag is always audio.
+function exportFormat() {
+  const ext = document.querySelector(".export-fmt.active")?.id?.replace("t-fmt-", "") || "wav";
+  return ext === "mp4" ? "wav" : ext;
+}
+
+if (canDragOut) {
+  document.addEventListener("dragstart", (e) => {
+    const grip = e.target.closest("[data-loop-drag-out]");
+    const lane = e.target.closest("a.lane-dl");
+    if (!grip && !lane) return;
+
+    // The lane anchor already carries the song-prefixed filename the click
+    // path saves under, set in player.js. Reuse it rather than deriving a
+    // second one. Placeholder rows for absent stems keep href="#".
+    const payload = grip
+      ? regionDragPayload(exportFormat())
+      : lane.download && !lane.getAttribute("href").endsWith("#")
+        ? { url: lane.href, filename: lane.download }
+        : null;
+
+    // Always cancel: an HTML5 drag of a lane anchor would otherwise offer the
+    // page's own URL to the drop target, which is worse than doing nothing.
+    e.preventDefault();
+    if (!payload) return;
+    invokeDrag(payload);
+  });
+}
+
+function invokeDrag({ url, filename }) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  invoke?.("start_audio_drag", { url, filename }).catch((err) => {
+    console.warn("[stemdeck] drag failed:", err);
+  });
+}
+
+// Render the region before it is grabbed.
+//
+// A platform drag must start while the button is still down, so the file
+// cannot be rendered during the gesture. Warming on pointerup covers both
+// moving the loop and moving a fader, since a gain change alters the mixdown
+// and so the cache key the drag will ask for.
+let prewarmTimer = null;
+let lastWarmed = "";
+if (canDragOut) {
+  document.addEventListener(
+    "pointerup",
+    () => {
+      clearTimeout(prewarmTimer);
+      prewarmTimer = setTimeout(() => {
+        const payload = regionDragPayload(exportFormat());
+        if (!payload || payload.url === lastWarmed) return;
+        lastWarmed = payload.url;
+        prewarmRegionMix(exportFormat());
+      }, 500);
+    },
+    true,
+  );
+}
 
 // ─── External links ───
 

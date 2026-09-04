@@ -3143,6 +3143,57 @@ function formatSize(bytes) {
 
 // Where extracted stems live (#354). Documents is a fine default until you
 // notice it is syncing tens of gigabytes to iCloud.
+// The folder dragged audio lands in. Desktop only: the drag gesture it serves
+// does not exist anywhere else, so the row is removed rather than shown inert.
+async function wireExportsLocation(overlay) {
+  const row = overlay.querySelector(".exports-location-row");
+  const pathEl = overlay.querySelector(".exports-location-path");
+  const btn = overlay.querySelector(".set-exports-location");
+  const msg = overlay.querySelector(".exports-location-msg");
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!row || !pathEl || !btn) return;
+  if (!invoke) {
+    row.remove();
+    return;
+  }
+
+  const show = (dir) => {
+    pathEl.textContent = dir;
+    pathEl.title = dir;
+  };
+
+  try {
+    const dir = await invoke("current_exports_dir");
+    // A shell too old to know the command resolves it to null rather than
+    // failing, which would otherwise put the word "null" in the row.
+    if (!dir) {
+      row.remove();
+      return;
+    }
+    show(dir);
+  } catch (e) {
+    console.warn("[settings] could not read the exports location:", e);
+    row.remove();
+    return;
+  }
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const picked = await invoke("pick_exports_folder");
+      if (picked) show(picked);
+    } catch (e) {
+      console.warn("[settings] exports folder picker failed:", e);
+      if (msg) {
+        msg.textContent = i18nT("settings.exportsLocation.pickerFailed");
+        msg.className = "exports-location-msg error";
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function wireStemsLocation(overlay) {
   const pathEl = overlay.querySelector(".stems-location-path");
   const sizeEl = overlay.querySelector(".stems-location-size");
@@ -3854,6 +3905,17 @@ function openLibraryEditor() {
             </div>
             <div class="stems-location-msg" role="status" aria-live="polite"></div>
           </div>
+          <div class="settings-row settings-row-stack exports-location-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.exportsLocation.title">Exports folder</div>
+              <div class="settings-row-desc" data-i18n="settings.exportsLocation.desc">Where audio goes when you drag a stem or a loop out of StemDeck. Nothing here is ever deleted automatically, because a project that references a dragged file needs it to stay put.</div>
+            </div>
+            <div class="stems-location">
+              <code class="exports-location-path" title=""></code>
+              <button class="settings-btn set-exports-location" type="button" data-i18n="settings.exportsLocation.change">Change…</button>
+            </div>
+            <div class="exports-location-msg" role="status" aria-live="polite"></div>
+          </div>
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.autoDelete.title">Automatically delete finished tracks</div>
@@ -4080,6 +4142,7 @@ function openLibraryEditor() {
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
   wireStemsLocation(overlay);
+  wireExportsLocation(overlay);
   wireNetworkSetting(overlay);
   if (!isDesktop) {
     overlay.querySelector(".net-access-input")?.setAttribute("disabled", "");
