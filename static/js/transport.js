@@ -31,15 +31,30 @@ import { t } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
-// it to show, so it is the floor rather than a soft default. 5 is the ceiling
-// because peaks.json carries 1500 points per stem: past roughly 5x a typical
-// panel asks for more bars than there are samples behind them, and the extra
-// bars repeat their neighbours instead of revealing anything.
+// it to show, so it is the floor rather than a soft default.
+//
+// The ceiling is set by how many points back the picture, not by taste. A bar
+// occupies OVERVIEW_BAR_SLOT_PX, so a panel of W pixels draws W/5 bars at 1x
+// and Z times that at Zx. Ask for more bars than there are points and the
+// extra ones repeat their neighbours: a fatter picture, not a closer one,
+// which is the exact failure this feature exists to avoid.
+//
+// 10x needs roughly 2400 points for a full-width panel, so _PEAK_POINTS in
+// app/pipeline/collect.py carries 3000. Raise them together or not at all.
+//
+// Tracks separated before that change kept 1500-point peaks.json and repeat
+// bars past 5x on the streaming path. The Web Audio path is unaffected either
+// way: it scans the decoded buffer itself, at whatever this ceiling asks for.
 const WAVE_ZOOM_MIN = 1;
-export const WAVE_ZOOM_MAX = 5;
+export const WAVE_ZOOM_MAX = 10;
 // One wheel notch. Multiplicative, so a notch covers the same proportion of the
 // range at 1x as at 4x; linear steps feel fast at the bottom and stuck at the top.
 const WAVE_ZOOM_STEP = 1.18;
+
+// The handles that drag audio out to the OS. Both run an HTML5 drag, and any
+// pointer handler that calls preventDefault on their pointerdown stops that
+// drag before it starts. Excluded from both loop gestures for that reason.
+const DRAG_OUT_SELECTOR = "[data-loop-drag-out], [data-lane-drag-out]";
 // Below this visible width the waveform stops compressing to fit and instead
 // keeps a minimum size, overflowing horizontally so .wave-scroll can scroll.
 const WAVE_MIN_WIDTH = 720;
@@ -244,6 +259,7 @@ export function updateLoopRegionVisual() {
   syncLoopInputs();
   if (!loopEnabled || !totalDuration) {
     loopRegionEl.classList.add("hidden");
+    document.querySelector(".waves-column")?.classList.remove("loop-armed");
     return;
   }
   ensureLoopRegionParent();
@@ -256,6 +272,32 @@ export function updateLoopRegionVisual() {
   loopRegionEl.style.left = `${startPct}%`;
   loopRegionEl.style.width = `${Math.max(0, endPct - startPct)}%`;
   loopRegionEl.classList.remove("hidden");
+  positionLaneNuggets(endPct);
+}
+
+// The per-lane drag nuggets live in the waveform overlay, not in the loop
+// region, because each one has to sit on its own lane. They follow the loop
+// through a custom property on the column both subtrees share: one write per
+// loop change rather than one per lane per frame.
+//
+// No minimum size. A width threshold in percent is a threshold on the fraction
+// of the song selected, so a four-bar loop in a four-minute track never meets
+// it and the handles simply never appear -- which is what shipped first and is
+// the whole reason this note exists. Measuring pixels instead would go stale,
+// since zooming changes the rendered width without going through here.
+//
+// On a selection narrower than the nugget it does cover the resize handles,
+// but those extend 7px outside the region on each side (.loop-handle in
+// waves.css), so both stay grabbable from the outer edge.
+function positionLaneNuggets(endPct) {
+  // The column itself, not whatever the region is parented to:
+  // loopOverlayParent falls back to the ruler when the column does not exist
+  // yet, and the class would then be added to one element and removed from
+  // another, leaving the handles showing with no loop behind them.
+  const column = document.querySelector(".waves-column");
+  if (!column) return;
+  column.style.setProperty("--loop-right", `${endPct}%`);
+  column.classList.add("loop-armed");
 }
 
 // Keep the exact-loop text fields in sync with loopStart/loopEnd after any
@@ -558,9 +600,9 @@ function wireLoopRegionAdjust() {
 
   loopRegionEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !totalDuration) return;
-    // The drag-out grip runs an HTML5 drag. Starting a pointer-drag from the
-    // same gesture would move the region while it is being dragged out.
-    if (e.target.closest("[data-loop-drag-out]")) return;
+    // Starting a pointer-drag from the same gesture would move the region
+    // while it is being dragged out.
+    if (e.target.closest(DRAG_OUT_SELECTOR)) return;
     const t = timeFromClientX(e.clientX);
     if (t === null) return;
     mode = e.target.closest("[data-loop-handle]")?.dataset.loopHandle ?? "move";
@@ -613,7 +655,12 @@ function wireLoopDrag() {
   let moved = false;
 
   const startDrag = (e, surface) => {
+    // .loop-region covers the mix grip, which lives inside it. The lane
+    // nuggets sit in the waveform overlay instead, so they need naming: without
+    // this, grabbing one starts a new selection and preventDefault below kills
+    // the drag-out before dragstart ever fires.
     if (e.button !== 0 || e.target.closest(".loop-region")) return;
+    if (e.target.closest(DRAG_OUT_SELECTOR)) return;
     const t = timeFromClientX(e.clientX);
     if (t === null) return;
     dragging = true;

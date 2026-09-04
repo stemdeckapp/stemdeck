@@ -787,28 +787,138 @@
 .can-drag-out .loop-grip {
   display: block;
   position: absolute;
-  top: 3px;
+  /* Flush with the top of the selection, hanging off its own border like the
+     lane grips hang off the right one. It cannot go any higher: .waves-column
+     clips its overflow, and 3px down was enough to look like it had come
+     loose and landed on the first lane's waveform. */
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
-  width: 26px;
-  height: 14px;
-  border-radius: 3px;
-  background: var(--gold);
+  width: 44px;
+  height: 13px;
+  border-radius: 0 0 4px 4px;
+  background-color: rgba(8, 13, 18, 0.88);
+  /* Gold, where a lane grip takes its own stem's colour: this one is the mix
+     and belongs to no single track. */
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--gold) 0 2px,
+    transparent 2px 5px
+  );
+  background-size: 20px 7px;
+  background-repeat: no-repeat;
+  background-position: center;
+  border: 1px solid rgba(216, 168, 74, 0.55);
+  border-top: 0;
   opacity: 0;
   cursor: grab;
-  /* Above the resize handles: it overlaps neither, but a narrow region
-     squeezes all three together and the grip must stay grabbable. */
+  /* Above the resize handles: a narrow region squeezes all three together and
+     the grip must stay grabbable. */
   z-index: 5;
-  transition: opacity 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .can-drag-out .loop-region:hover .loop-grip {
   opacity: 0.85;
 }
 
+.can-drag-out .loop-grip:hover {
+  opacity: 1;
+  border-color: var(--gold);
+}
+
 .can-drag-out .loop-grip:active {
   cursor: grabbing;
   opacity: 1;
+}
+
+/* Nothing audible to export, so there is nothing to drag. Shown rather than
+   hidden: a grip that vanishes when you mute a lane reads as a bug, and this
+   says the selection is empty. */
+.can-drag-out .loop-region:hover .loop-grip.disabled {
+  opacity: 0.3;
+  background: var(--muted, #6b7280);
+  cursor: not-allowed;
+}
+
+/* One nugget per lane, so which track a drag produces is something you look at
+   rather than remember. Positioned from --loop-right on .waves-column, which
+   updateLoopRegionVisual writes once per loop change.
+
+   The waveform layer is pointer-events: none so the waveforms never swallow a
+   click meant for the loop underneath; the nugget puts its own back. */
+.lane-drag-nugget {
+  display: none;
+}
+
+.can-drag-out .loop-armed .lane-drag-nugget {
+  display: block;
+  position: absolute;
+  /* Along the bottom edge of the lane rather than over the middle of it: the
+     waveform is the thing being read, and a handle sitting on top of the loudest
+     part of it hides exactly what the user is aiming at. The 1px lane divider
+     is at 0, so this clears it. */
+  bottom: 3px;
+  /* Tucked inside the right edge of the selection. The 6px backs it off the
+     end resize handle, which reaches 5px into the region (.loop-handle-end),
+     so the two never sit on top of each other. */
+  /* Flush against the inside of the loop's right border, with the right
+     corners square and no right edge of its own, so it reads as a tab on the
+     selection rather than a marker floating near it. The end resize handle
+     reaches 5px in and is overlapped here, but it also extends 7px outside the
+     region, which is the half people grab anyway. */
+  left: var(--loop-right, 50%);
+  transform: translateX(-100%);
+  width: 24px;
+  height: 14px;
+  border-radius: 4px 0 0 4px;
+  /* A grip, not a slab. A solid gold block this size reads as a bug in the
+     waveform; three bars on a recessed plate is the shape every drag handle
+     in every DAW already uses, so it needs no explaining. Drawn with a
+     gradient rather than child elements, since the nugget is rebuilt on every
+     redraw. */
+  background-color: rgba(8, 13, 18, 0.88);
+  /* Its own lane's colour, the one its waveform is drawn in. The row carries
+     it as --stem-color (renderOverviewWaveformPath in player.js), so which
+     track a grip belongs to is the same signal as the waveform above it. Gold
+     is the fallback, and what the mix grip keeps. */
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--stem-color, var(--gold)) 0 2px,
+    transparent 2px 5px
+  );
+  background-size: 11px 7px;
+  background-repeat: no-repeat;
+  background-position: center;
+  border: 1px solid rgba(216, 168, 74, 0.55);
+  /* Declared after the fallback, so a renderer without color-mix keeps the
+     line above rather than losing the border entirely. */
+  border-color: color-mix(in srgb, var(--stem-color, #d8a84a) 60%, transparent);
+  border-right: 0;
+  opacity: 0;
+  cursor: grab;
+  pointer-events: auto;
+  z-index: 6;
+  transition:
+    opacity 0.12s ease,
+    border-color 0.12s ease;
+}
+
+/* Revealed together on hover anywhere over the waveforms, so the whole set
+   reads as one column of handles rather than something that appears per lane. */
+.can-drag-out .loop-armed:hover .lane-drag-nugget {
+  opacity: 0.9;
+}
+
+.can-drag-out .loop-armed .lane-drag-nugget:hover {
+  opacity: 1;
+  border-color: var(--stem-color, var(--gold));
+}
+
+.can-drag-out .loop-armed .lane-drag-nugget:active {
+  cursor: grabbing;
 }
 
 /* Wider than the 2px border they sit on: an edge you cannot reliably grab is

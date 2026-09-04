@@ -39,10 +39,51 @@ use std::path::{Path, PathBuf};
 
 use drag::{DragItem, DragMode, DragResult, Image, Options};
 
-/// Embedded rather than read from disk: the icon's path differs between a dev
-/// run, the portable zip and an installed bundle, and a drag with no preview
-/// looks broken. 96px, which is what the platforms draw it at.
+/// The fallback drag preview: StemDeck's own icon.
+///
+/// Embedded rather than read from disk, because the icon's path differs between
+/// a dev run, the portable zip and an installed bundle, and a drag with no
+/// preview looks broken. Used for the mix and whenever a lane's own icon is
+/// unavailable.
 const DRAG_IMAGE: &[u8] = include_bytes!("../icons/drag.png");
+
+/// Ceiling on a caller-supplied preview. It is a small label on a plate; a
+/// megabyte of one is a mistake or an attempt at one, and the app icon is a
+/// better answer than either.
+const MAX_ICON_BYTES: usize = 512 * 1024;
+
+/// Decode the preview the UI rendered for this lane, or fall back.
+///
+/// The picture in flight should say which track is coming, and the UI is where
+/// the lane's name and colour already live, so it draws the label to a canvas
+/// and sends the PNG rather than this module keeping a second set of assets
+/// that would drift from the mixer.
+///
+/// Nothing here is trusted: a malformed, empty or oversized payload silently
+/// becomes the app icon, because a drag carrying the wrong picture is still a
+/// working drag and refusing one would cost the user the gesture.
+fn decode_icon(icon: Option<String>) -> Vec<u8> {
+    use base64::Engine;
+
+    let Some(encoded) = icon else {
+        return DRAG_IMAGE.to_vec();
+    };
+    match base64::engine::general_purpose::STANDARD.decode(encoded.as_bytes()) {
+        Ok(bytes) if !bytes.is_empty() && bytes.len() <= MAX_ICON_BYTES => bytes,
+        Ok(bytes) => {
+            log_icon_rejected(bytes.len());
+            DRAG_IMAGE.to_vec()
+        }
+        Err(_) => {
+            log_icon_rejected(0);
+            DRAG_IMAGE.to_vec()
+        }
+    }
+}
+
+fn log_icon_rejected(len: usize) {
+    eprintln!("[stemdeck] ignoring a drag preview of {len} bytes; using the app icon");
+}
 
 /// Characters no Windows filename may contain, plus the separators every
 /// platform uses. `:` also matters on macOS, where Finder still shows it as a
@@ -154,7 +195,11 @@ pub fn default_exports_dir(jobs_dir: &Path, data_dir: &Path) -> PathBuf {
 /// Must be called on the main thread: all three backends talk to UI toolkit
 /// state (OLE on Windows, AppKit on macOS, GTK on Linux) that is not
 /// thread-safe. The caller is responsible for that; see `start_audio_drag`.
-pub fn begin_drag(window: &tauri::WebviewWindow, path: PathBuf) -> Result<(), String> {
+pub fn begin_drag(
+    window: &tauri::WebviewWindow,
+    path: PathBuf,
+    icon: Option<String>,
+) -> Result<(), String> {
     let options = Options {
         // Copy, never Move: the exports folder is the user's copy and a DAW
         // must not relocate it out from under them.
@@ -162,7 +207,7 @@ pub fn begin_drag(window: &tauri::WebviewWindow, path: PathBuf) -> Result<(), St
         skip_animatation_on_cancel_or_failure: false,
     };
     let item = DragItem::Files(vec![path]);
-    let image = Image::Raw(DRAG_IMAGE.to_vec());
+    let image = Image::Raw(decode_icon(icon));
     let on_drop = |result: DragResult, _: drag::CursorPosition| {
         // Nothing to undo either way. The file stays in the exports folder
         // whether it was dropped or the drag was abandoned, which is what a
@@ -252,6 +297,36 @@ mod tests {
         assert!(got.ends_with(".wav"));
         // Round-trips, so no partial code unit survived.
         assert_eq!(got, String::from_utf8(got.clone().into_bytes()).unwrap());
+    }
+
+    #[test]
+    fn no_icon_falls_back_to_the_app_icon() {
+        assert_eq!(decode_icon(None), DRAG_IMAGE);
+    }
+
+    #[test]
+    fn a_valid_icon_is_decoded() {
+        use base64::Engine;
+        // Contents are never inspected here; the platform decides whether
+        // it is a usable image and tolerates one that is not.
+        let png = b"pretend this is a PNG";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+        assert_eq!(decode_icon(Some(encoded)), png);
+    }
+
+    #[test]
+    fn a_broken_icon_falls_back_rather_than_failing_the_drag() {
+        // Wrong picture beats no drag.
+        assert_eq!(decode_icon(Some("not base64 at all!!".into())), DRAG_IMAGE);
+        assert_eq!(decode_icon(Some(String::new())), DRAG_IMAGE);
+    }
+
+    #[test]
+    fn an_oversized_icon_falls_back() {
+        use base64::Engine;
+        let huge = vec![0u8; MAX_ICON_BYTES + 1];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&huge);
+        assert_eq!(decode_icon(Some(encoded)), DRAG_IMAGE);
     }
 
     #[test]

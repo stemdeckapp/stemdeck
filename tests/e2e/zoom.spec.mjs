@@ -131,13 +131,13 @@ test.describe("waveform zoom", () => {
     expect(zoomed.bars / base.bars).toBeCloseTo(zoomed.content / base.content, 1);
   });
 
-  test("zoom stops at 5x and never goes below the fitted view", async ({ page }) => {
+  test("zoom stops at 10x and never goes below the fitted view", async ({ page }) => {
     await openStudio(page, { tauri: true });
     const fitted = await zoomState(page);
 
     for (let i = 0; i < 40; i++) await wheel(page, -240);
     const maxed = await zoomState(page);
-    expect(maxed.content / fitted.content).toBeCloseTo(5, 1);
+    expect(maxed.content / fitted.content).toBeCloseTo(10, 1);
 
     for (let i = 0; i < 60; i++) await wheel(page, 240);
     const floored = await zoomState(page);

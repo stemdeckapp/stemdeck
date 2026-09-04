@@ -85,6 +85,25 @@ test.describe("dragging audio out", () => {
     expect(await loopBounds(page)).toEqual(before);
   });
 
+  test("grabbing a lane nugget does not redraw the loop", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    const before = await loopBounds(page);
+
+    // wireLoopDrag turns a drag anywhere on the waves column into a new
+    // selection, and calls preventDefault, which kills the HTML5 drag before
+    // dragstart fires. The nuggets live in the waveform overlay inside that
+    // column, so without an explicit exclusion grabbing one silently
+    // redefines the loop instead of dragging the stem out.
+    const nugget = await page.locator("[data-lane-drag-out]").first().boundingBox();
+    await page.mouse.move(nugget.x + nugget.width / 2, nugget.y + nugget.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(nugget.x + 200, nugget.y, { steps: 10 });
+    await page.mouse.up();
+
+    expect(await loopBounds(page)).toEqual(before);
+  });
+
   test("the region drag carries the loop bounds in its filename", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await markLoop(page, 0.2, 0.6);
@@ -93,6 +112,11 @@ test.describe("dragging audio out", () => {
     const calls = await dragCalls(page);
     expect(calls).toHaveLength(1);
     const { url, filename } = calls[0].args;
+    // Absolute, not a bare path. validate_download_url on the Rust side takes
+    // only http/https, so a relative URL rejects every region drag and the
+    // gesture does nothing at all, with the error going only to a console
+    // nobody can see in a release build.
+    expect(url).toMatch(/^https?:\/\//);
     expect(url).toContain("/mixdown.wav");
     expect(url).toMatch(/[?&]start=/);
     expect(url).toMatch(/[?&]end=/);
@@ -128,6 +152,7 @@ test.describe("dragging audio out", () => {
     // The name the click path saves under, not a second one derived here.
     // Deriving it again once prefixed the song title twice.
     expect(calls[0].args.filename).toBe(expected);
+    expect(calls[0].args.url).toMatch(/^https?:\/\//);
     expect(calls[0].args.url).toContain("/stems/");
   });
 
@@ -141,6 +166,153 @@ test.describe("dragging audio out", () => {
     await fireDragStart(page, placeholder);
 
     expect(await dragCalls(page)).toHaveLength(0);
+  });
+
+  // One nugget per lane. The grip above them carries the mix, which is not
+  // something a single bar could ever say on its own.
+
+  test("every lane that drew something gets its own nugget", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    // A lane with no audio draws no waveform and has nothing to hand over.
+    const drawn = await page.locator(".stem-waveform-row[data-stem] svg").count();
+    expect(drawn).toBeGreaterThan(1);
+    await expect(page.locator("[data-lane-drag-out]")).toHaveCount(drawn);
+
+    // Present from the first draw, but nothing to drag until a loop exists.
+    await expect(page.locator("[data-lane-drag-out]").first()).toBeHidden();
+    await markLoop(page);
+    await expect(page.locator("[data-lane-drag-out]").first()).toBeVisible();
+  });
+
+  // The first version of this gated the nuggets on the selection being wider
+  // than 2% of the track, which hides them for exactly the short loops people
+  // work with and does it silently. Note that the fixture is 6 seconds and
+  // MIN_LOOP_SEC is 0.2s, so every loop it can make is already over 3% -- this
+  // suite could not have caught that, and the gate is gone rather than tuned.
+  test("the nuggets come back after the loop is redrawn several times", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    for (const [from, to] of [[0.1, 0.8], [0.2, 0.3], [0.6, 0.95], [0.4, 0.44]]) {
+      await markLoop(page, from, to);
+      await expect(page.locator("[data-lane-drag-out]").first()).toBeVisible();
+    }
+  });
+
+  test("the nuggets survive a zoom, which redraws every row", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    const before = await page.locator("[data-lane-drag-out]").count();
+
+    // A redraw rewrites each row's innerHTML. Anything living in there is gone
+    // unless it is put back, and the second wheel notch is where that shows.
+    for (let i = 0; i < 6; i++) {
+      await page.mouse.move(900, 400);
+      await page.mouse.wheel(0, -240);
+    }
+
+    await expect(page.locator("[data-lane-drag-out]")).toHaveCount(before);
+    await expect(page.locator("[data-lane-drag-out]").first()).toBeVisible();
+  });
+
+  test("a lane nugget drags that stem alone, at unity gain", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+
+    const nugget = page.locator("[data-lane-drag-out]").first();
+    const stem = await nugget.getAttribute("data-lane-drag-out");
+    await fireDragStart(page, "[data-lane-drag-out]");
+
+    const calls = await dragCalls(page);
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0].args.url);
+    expect(url.searchParams.get("stems")).toBe(stem);
+    // Its own stem, not the balance: the lane download gives the stem, and so
+    // does this. The mix is the grip's job.
+    expect(url.searchParams.get("gains")).toBe("1.000");
+    expect(url.searchParams.get("start")).toBeTruthy();
+    expect(url.searchParams.get("end")).toBeTruthy();
+    expect(calls[0].args.filename).toContain(stem);
+    expect(calls[0].args.filename).toMatch(/_region_[\d_]+-[\d_]+\.wav$/);
+  });
+
+  test("the drag carries a preview naming the lane", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, "[data-lane-drag-out]");
+
+    const { icon } = (await dragCalls(page))[0].args;
+    // A null icon is not an error in Rust: it falls back to the app badge and
+    // the drag still works, which is exactly why it has to be asserted here.
+    // An earlier version rendered the lane's SVG glyph without an xmlns, so
+    // the image never loaded and every drag silently carried the app badge.
+    expect(typeof icon).toBe("string");
+    expect(icon.length).toBeGreaterThan(100);
+    // base64 of a PNG: every one of them starts with this signature.
+    expect(icon.startsWith("iVBORw0KGgo")).toBe(true);
+  });
+
+  test("the mix grip keeps the app icon, so the two drags differ in flight", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, GRIP);
+
+    expect((await dragCalls(page))[0].args.icon).toBeNull();
+  });
+
+  test("a muted lane still drags its own stem", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    const stem = await page.locator("[data-lane-drag-out]").first().getAttribute("data-lane-drag-out");
+    await page.locator(`.lane-header[data-stem="${stem}"] .mute`).click();
+
+    await fireDragStart(page, "[data-lane-drag-out]");
+
+    // Muting is a monitoring choice. Asking for that stem explicitly is not
+    // the same as asking for a mix it happens to be silent in.
+    const url = new URL((await dragCalls(page))[0].args.url);
+    expect(url.searchParams.get("stems")).toBe(stem);
+  });
+
+  // Mute and solo are not re-implemented for the drag: it goes through the same
+  // _effectiveMixGains the Export menu uses, which drops a silent lane from the
+  // stem list rather than summing it at zero. These guard that it stays wired
+  // to that and does not drift into exporting whatever happens to be loaded.
+
+  const laneNames = (url) => new URL(url).searchParams.get("stems").split(",");
+
+  const clickLane = async (page, stem, control) =>
+    page.locator(`.lane-header[data-stem="${stem}"] .${control}`).click();
+
+  test("a muted lane is left out of the region entirely", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, GRIP);
+    const before = laneNames((await dragCalls(page))[0].args.url);
+    expect(before.length).toBeGreaterThan(1);
+
+    const victim = before[0];
+    await clickLane(page, victim, "mute");
+    await fireDragStart(page, GRIP);
+
+    const after = laneNames((await dragCalls(page))[1].args.url);
+    // Absent, not present at gain 0. Summing silence is still summing.
+    expect(after).not.toContain(victim);
+    expect(after).toEqual(before.filter((n) => n !== victim));
+  });
+
+  test("soloing one lane drags only that lane", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, GRIP);
+    const all = laneNames((await dragCalls(page))[0].args.url);
+    expect(all.length).toBeGreaterThan(1);
+
+    const chosen = all[1];
+    await clickLane(page, chosen, "solo");
+    await fireDragStart(page, GRIP);
+
+    expect(laneNames((await dragCalls(page))[1].args.url)).toEqual([chosen]);
   });
 
   test("no loop, no drag", async ({ page }) => {

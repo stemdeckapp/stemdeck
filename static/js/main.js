@@ -5,13 +5,13 @@ import {
   setAutoSectionsResetFn,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, prewarmRegionMix } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, stemRegionDragPayload, prewarmRegionMix } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime } from "./transport.js";
-import { wireStemListControls, wireMixerToolbar } from "./mixer.js";
+import { wireStemListControls, wireMixerToolbar, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
@@ -702,17 +702,26 @@ function exportFormat() {
 if (canDragOut) {
   document.addEventListener("dragstart", (e) => {
     const grip = e.target.closest("[data-loop-drag-out]");
+    const nugget = e.target.closest("[data-lane-drag-out]");
     const lane = e.target.closest("a.lane-dl");
-    if (!grip && !lane) return;
+    if (!grip && !nugget && !lane) return;
 
-    // The lane anchor already carries the song-prefixed filename the click
-    // path saves under, set in player.js. Reuse it rather than deriving a
-    // second one. Placeholder rows for absent stems keep href="#".
-    const payload = grip
-      ? regionDragPayload(exportFormat())
-      : lane.download && !lane.getAttribute("href").endsWith("#")
-        ? { url: lane.href, filename: lane.download }
-        : null;
+    let payload = null;
+    if (grip) {
+      payload = regionDragPayload(exportFormat());
+    } else if (nugget) {
+      const stem = nugget.dataset.laneDragOut;
+      payload = stemRegionDragPayload(stem, exportFormat());
+      // The instrument, so what is in flight says which track it is. A miss
+      // falls back to the app icon in Rust rather than blocking the drag.
+      if (payload) payload.icon = laneDragIcon(stem);
+    } else if (lane.download && !lane.getAttribute("href").endsWith("#")) {
+      // The anchor already carries the song-prefixed filename the click path
+      // saves under, set in player.js, and an href the browser has made
+      // absolute. Reuse both rather than deriving a second copy of either.
+      // Placeholder rows for absent stems keep href="#".
+      payload = { url: lane.href, filename: lane.download };
+    }
 
     // Always cancel: an HTML5 drag of a lane anchor would otherwise offer the
     // page's own URL to the drop target, which is worse than doing nothing.
@@ -722,9 +731,46 @@ if (canDragOut) {
   });
 }
 
-function invokeDrag({ url, filename }) {
+// Render a lane's slice before it is grabbed.
+//
+// The mix is warmed on pointerup, but a lane's region is a different render
+// with its own cache key, and warming all six on every loop change would be
+// six ffmpeg runs for the one the user might want. Hovering a grip is the
+// cheapest honest signal of which that is, and it always precedes the grab.
+const warmedLanes = new Set();
+
+function warmLaneRegion(stem) {
+  const payload = stemRegionDragPayload(stem, exportFormat());
+  if (!payload || warmedLanes.has(payload.url)) return;
+  warmedLanes.add(payload.url);
+  // Range so this costs the render, which is the point, and not the transfer.
+  fetch(payload.url, { headers: { Range: "bytes=0-0" } }).catch(() => {
+    // Let it be retried; a failed warm just means the drag renders instead.
+    warmedLanes.delete(payload.url);
+  });
+}
+
+if (canDragOut) {
+  document.addEventListener(
+    "pointerover",
+    (e) => {
+      const stem = e.target.closest?.("[data-lane-drag-out]")?.dataset.laneDragOut;
+      if (stem) warmLaneRegion(stem);
+    },
+    true,
+  );
+}
+
+function refreshDragGrip(enabled) {
+  const grip = document.querySelector("[data-loop-drag-out]");
+  if (!grip) return;
+  grip.draggable = enabled;
+  grip.classList.toggle("disabled", !enabled);
+}
+
+function invokeDrag({ url, filename, icon = null }) {
   const invoke = window.__TAURI__?.core?.invoke;
-  invoke?.("start_audio_drag", { url, filename }).catch((err) => {
+  invoke?.("start_audio_drag", { url, filename, icon }).catch((err) => {
     console.warn("[stemdeck] drag failed:", err);
   });
 }
@@ -744,6 +790,11 @@ if (canDragOut) {
       clearTimeout(prewarmTimer);
       prewarmTimer = setTimeout(() => {
         const payload = regionDragPayload(exportFormat());
+        // Mute every lane and there is nothing to export. The menu says so;
+        // a drag has nowhere to say it, so the grip stops being draggable
+        // instead of starting a gesture that silently produces nothing.
+        // pointerup is the right moment: muting and soloing are both clicks.
+        refreshDragGrip(Boolean(payload));
         if (!payload || payload.url === lastWarmed) return;
         lastWarmed = payload.url;
         prewarmRegionMix(exportFormat());

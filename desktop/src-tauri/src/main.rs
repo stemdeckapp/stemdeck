@@ -2832,6 +2832,7 @@ async fn start_audio_drag(
     window: tauri::WebviewWindow,
     url: String,
     filename: String,
+    icon: Option<String>,
 ) -> Result<(), String> {
     validate_download_url(&url)?;
     let name = dragout::sanitize_filename(&filename)?;
@@ -2856,7 +2857,7 @@ async fn start_audio_drag(
     // then either: the gesture is over. Everything that can fail in a way JS
     // can act on (a bad name, a failed render) has already happened above.
     app.run_on_main_thread(move || {
-        if let Err(e) = dragout::begin_drag(&window, dest) {
+        if let Err(e) = dragout::begin_drag(&window, dest, icon) {
             eprintln!("[stemdeck] could not start the drag: {e}");
         }
     })

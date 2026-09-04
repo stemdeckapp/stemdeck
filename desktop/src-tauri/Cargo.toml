@@ -22,6 +22,9 @@ local-ip-address = "0.6"
 # worse than plain http because it looks secure. See src/certs.rs.
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+# Decoding the drag preview the UI renders for a lane. Already in the tree via
+# reqwest; named here because dragout.rs uses it directly.
+base64 = "0.22"
 # Native drag-out of a rendered file to the OS (a DAW, Explorer, Finder).
 # The crate tauri-plugin-drag wraps; taken directly because the plugin exposes
 # start_drag only as a #[command], which would mean JavaScript naming the file

@@ -421,6 +421,27 @@ function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount, orde
       ${barsWaveformSvg(peaks, norm, bars)}
     </svg>
   `;
+  addLaneDragNugget(row, stemName);
+}
+
+// The handle for dragging this lane's slice of the loop out. One per lane, so
+// which track a drag produces is a matter of looking at it rather than
+// remembering.
+//
+// Added after the art, not with the row: the row's innerHTML is rewritten on
+// every redraw and a zoom step is a redraw, so anything placed inside it when
+// the row was created is gone by the second wheel notch. Only lanes that drew
+// something get one; a lane with no audio has nothing to hand over.
+//
+// The waveform layer is pointer-events: none so it never swallows a click
+// meant for the loop underneath. The nugget puts its own back, in CSS.
+function addLaneDragNugget(row, stemName) {
+  const nugget = document.createElement("div");
+  nugget.className = "lane-drag-nugget";
+  nugget.dataset.laneDragOut = stemName;
+  nugget.draggable = true;
+  nugget.title = t("loop.dragOutStem", { name: t(`stem.${stemName}`) });
+  row.appendChild(nugget);
 }
 
 // The lane set must mirror the mixer/multitrack lanes (orderedNames in
@@ -1735,8 +1756,16 @@ export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}
 // the button read "Exporting…" for however long the save dialog sat open, when
 // nothing was being exported yet (#338). Callers enter their busy state here
 // rather than on click.
+// The Rust side only accepts an absolute localhost URL: a bare path would be
+// resolved against nothing there, so validate_download_url rejects it. Lane
+// links get this for free because href is a DOM property; anything built as a
+// string has to be absolutised here.
+function _absolute(url) {
+  return url.startsWith("http") ? url : `${location.origin}${url}`;
+}
+
 function _triggerDownload(url, filename, onTransferStart) {
-  const fullUrl = url.startsWith("http") ? url : `${location.origin}${url}`;
+  const fullUrl = _absolute(url);
   const invoke = window.__TAURI__?.core?.invoke;
   if (invoke) {
     // Two commands: the dialog, then the transfer. A cancelled dialog resolves
@@ -1931,15 +1960,48 @@ function _regionDragFilename(ext) {
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
-  const span = `${loopStart.toFixed(1)}-${loopEnd.toFixed(1)}`.replace(/\./g, "_");
-  return `${safe || "region"}_region_${span}.${ext}`;
+  return `${safe || "region"}_region_${_loopSpan()}.${ext}`;
+}
+
+// The bounds, as a filename fragment. Both region drags carry it, because the
+// exports folder is never cleaned up and the Rust side reuses a file already
+// sitting there.
+function _loopSpan() {
+  return `${loopStart.toFixed(1)}-${loopEnd.toFixed(1)}`.replace(/\./g, "_");
+}
+
+// One lane's slice of the loop.
+//
+// At unity gain, and regardless of mute or solo: this is the stem, the way the
+// lane's own download button gives you the stem, just trimmed to the loop. The
+// mix, with the balance you set, is what the grip above the lanes carries. No
+// click track or count-in either, for the same reason -- those belong to a
+// mixdown, not to a single stem.
+export function stemRegionDragPayload(name, ext = "wav") {
+  if (!currentJobId || !loopEnabled || loopStart >= loopEnd) return null;
+  const q = new URLSearchParams({
+    stems: name,
+    gains: "1.000",
+    start: loopStart.toFixed(3),
+    end: loopEnd.toFixed(3),
+  });
+  const safe = _currentTitle
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 80)
+    .replace(/^_+|_+$/g, "");
+  const stem = safe ? `${safe}_${name}` : name;
+  return {
+    url: _absolute(`/api/jobs/${currentJobId}/mixdown.${ext}?${q}`),
+    filename: `${stem}_region_${_loopSpan()}.${ext}`,
+  };
 }
 
 export function regionDragPayload(ext = "wav") {
   if (!loopEnabled || loopStart >= loopEnd) return null;
   const url = _mixdownUrl(ext, true);
   if (!url) return null;
-  return { url, filename: _regionDragFilename(ext) };
+  return { url: _absolute(url), filename: _regionDragFilename(ext) };
 }
 
 // Render the region before the user reaches for it.

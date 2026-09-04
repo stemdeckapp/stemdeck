@@ -182,7 +182,11 @@ def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | Non
     return out if _run_ffmpeg(job, cmd) else None
 
 
-_PEAK_POINTS = 1500  # matches OVERVIEW_WAVE_POINTS in player.js
+# Enough points to back the deepest zoom, not the 1x bar count: a full-width
+# panel draws about 2400 bars at WAVE_ZOOM_MAX (10x, transport.js), and past
+# the point count the bars repeat their neighbours instead of revealing
+# anything. Raise this and WAVE_ZOOM_MAX together.
+_PEAK_POINTS = 3000
 
 
 def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> dict[str, float]:

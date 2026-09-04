@@ -452,6 +452,61 @@ function stemIconMarkup(stemName) {
   return icons[stemName] || icons.other;
 }
 
+// ─── Drag preview ───
+//
+// What follows the cursor when a lane is dragged out to the OS.
+//
+// The lane's instrument glyph was the obvious choice and was wrong: these are
+// 24px line icons, and at the size a drag image is drawn they stop reading as
+// instruments -- the bass turns into a key, the kit into a face. A word cannot
+// be misread. It is also the same word the lane is labelled with, so nothing
+// has to be recognised at all.
+//
+// Built on demand rather than cached: it is a few canvas calls with no image
+// decode, so there is nothing to save, and a cache would go stale the moment
+// the language changed.
+
+const PREVIEW_H = 64;
+const PREVIEW_FONT = '700 30px system-ui, -apple-system, "Segoe UI", sans-serif';
+
+export function laneDragIcon(stemName) {
+  try {
+    const label = t(`stem.${stemName}`) || stemName;
+    const canvas = document.createElement("canvas");
+    let ctx = canvas.getContext("2d");
+    ctx.font = PREVIEW_FONT;
+    // Sizing the canvas resets every context property, so the font is set
+    // once to measure and again to draw.
+    canvas.width = Math.ceil(ctx.measureText(label).width) + 52;
+    canvas.height = PREVIEW_H;
+    ctx = canvas.getContext("2d");
+    ctx.font = PREVIEW_FONT;
+
+    // An opaque plate: a drag image that is transparent except for the letters
+    // is close to unreadable over a DAW timeline.
+    ctx.fillStyle = "rgba(10, 16, 22, 0.94)";
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(0, 0, canvas.width, PREVIEW_H, 14);
+      ctx.fill();
+    } else {
+      ctx.fillRect(0, 0, canvas.width, PREVIEW_H);
+    }
+
+    ctx.fillStyle = STEM_COLORS[stemName] || "#d8a84a";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, canvas.width / 2, PREVIEW_H / 2 + 1);
+
+    return canvas.toDataURL("image/png").split(",")[1];
+  } catch (e) {
+    // Rust falls back to the app icon, which is a worse picture and a working
+    // drag.
+    console.warn("[stemdeck] could not build a drag preview for", stemName, e);
+    return null;
+  }
+}
+
 export function renderMixerRow(stem) {
   const state = mixerState[stem.name];
   const color = STEM_COLORS[stem.name] || "#a0a0a0";
