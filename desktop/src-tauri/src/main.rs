@@ -2212,51 +2212,41 @@ fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
 
 /// Wheel tags to try for this GPU, best first.
 ///
-/// A list rather than one answer because the right wheel for a given
-/// card/driver pairing is not reliably knowable from here. Blackwell on a
-/// CUDA 13 driver is the case that prompted this: cu128 is the only tag it was
-/// ever offered, and when that pairing does not work the user got no GPU and no
-/// explanation (#502). Trying the newer build first and keeping the proven one
-/// as a fallback turns a wrong guess into a slower success instead of a dead
-/// install.
+/// A list rather than one answer so a tag that installs but does not verify
+/// falls through to the next instead of dropping straight to CPU, and so the
+/// setup log names every tag that was tried. #502 had no such record: the user
+/// got no GPU and no explanation.
 ///
 /// Blackwell (sm_100 / sm_120, major >= 10) has no kernels at all in the stock
 /// torch 2.6 cu12x wheels (#217), which is why it never falls through to the
-/// driver heuristic.
+/// driver heuristic. It stays on cu128 even under a CUDA 13 driver, which is
+/// backward compatible and runs a cu12x build. cu130 is deliberately not
+/// offered: it carries torch/torchaudio 2.9+ only, and torchaudio dropped its
+/// soundfile backend in 2.9 -- `torchaudio.save()` there routes through
+/// torchcodec, which StemDeck does not ship. demucs 4.0.1 writes every stem
+/// with `ta.save()` (`demucs/audio.py:260`), so a cu130 install would verify
+/// on the GPU and then fail at separation time.
 #[cfg(any(not(target_os = "macos"), test))]
 fn wheel_candidates(compute_cap: Option<&str>, cuda_version: &str) -> Vec<&'static str> {
     let blackwell = compute_cap
         .and_then(|cap| cap.split('.').next()?.parse::<u32>().ok())
         .is_some_and(|major| major >= 10);
-    if !blackwell {
-        return vec![cuda_tag(cuda_version)];
-    }
-    let driver_major = cuda_version
-        .split('.')
-        .next()
-        .and_then(|m| m.parse::<u32>().ok())
-        .unwrap_or(12);
-    if driver_major >= 13 {
-        // The driver is new enough for either; prefer the build that matches it.
-        vec!["cu130", "cu128"]
-    } else {
+    if blackwell {
         vec!["cu128"]
+    } else {
+        vec![cuda_tag(cuda_version)]
     }
 }
 
 /// The torch/torchaudio line that goes with a wheel tag.
 ///
 /// Blackwell needs 2.7+ for sm_120 kernels at all, and 2.8.0 specifically
-/// because 2.7.1 shipped them incomplete (#239). cu130 only carries 2.9+, and
-/// 2.11.0 is the newest release with a matching torchaudio on that index.
-///
-/// A torchaudio newer than the 2.6 the project otherwise pins is safe here
-/// because demucs' torchaudio.save() dispatches through soundfile, a hard
-/// dependency, rather than torchaudio's own codecs.
+/// because 2.7.1 shipped them incomplete (#239). 2.8.0 is also the last line
+/// that still carries torchaudio's soundfile backend, which is what demucs'
+/// `ta.save()` needs -- see `wheel_candidates` for why that rules out cu130.
 #[cfg(any(not(target_os = "macos"), test))]
 fn torch_version_for_tag(tag: &str) -> &'static str {
     match tag {
-        "cu130" => "2.11.0",
         "cu128" => "2.8.0",
         _ => "2.6.0",
     }
@@ -5047,21 +5037,26 @@ mod tests {
     }
 
     #[test]
-    fn blackwell_on_a_cuda_13_driver_gets_a_matching_wheel_and_a_fallback() {
-        // The #502 case: an RTX 5070Ti on Debian Sid. cu128 was the only tag
-        // Blackwell was ever offered, so when that pairing did not work the
-        // user got no GPU and no explanation.
-        let candidates = super::wheel_candidates(Some("12.0"), "13.0");
-        assert_eq!(candidates, vec!["cu130", "cu128"]);
-        assert_eq!(super::torch_version_for_tag("cu130"), "2.11.0");
-        assert_eq!(super::torch_version_for_tag("cu128"), "2.8.0");
+    fn blackwell_stays_on_cu128_whatever_the_driver_reports() {
+        // The #502 case is an RTX 5070Ti on a CUDA 13 driver. cu130 exists and
+        // matches that driver, but every cu130 torchaudio is 2.9+, which routes
+        // save() through torchcodec instead of soundfile and would break
+        // demucs' stem writing after the GPU had already verified.
+        assert_eq!(super::wheel_candidates(Some("12.0"), "13.0"), vec!["cu128"]);
+        assert_eq!(super::wheel_candidates(Some("12.0"), "12.8"), vec!["cu128"]);
+        assert_eq!(super::wheel_candidates(Some("10.0"), "12.4"), vec!["cu128"]);
     }
 
     #[test]
-    fn blackwell_on_a_cuda_12_driver_keeps_the_proven_wheel_only() {
-        // Do not offer cu130 to a driver that predates it.
-        assert_eq!(super::wheel_candidates(Some("12.0"), "12.8"), vec!["cu128"]);
-        assert_eq!(super::wheel_candidates(Some("10.0"), "12.4"), vec!["cu128"]);
+    fn no_wheel_tag_pulls_a_torchaudio_that_dropped_soundfile() {
+        // torchaudio 2.9 removed the soundfile backend. Any tag this maps to
+        // 2.9+ ships a torchaudio whose save() needs torchcodec, which is not
+        // a StemDeck dependency, so demucs' ta.save() would fail at runtime.
+        for tag in ["cu128", "cu124", "cu121", "cu118"] {
+            let v = super::torch_version_for_tag(tag);
+            let minor: u32 = v.split('.').nth(1).unwrap().parse().unwrap();
+            assert!(minor < 9, "{tag} maps to torch {v}, which is 2.9+");
+        }
     }
 
     #[test]
