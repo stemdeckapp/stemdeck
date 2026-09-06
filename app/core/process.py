@@ -32,12 +32,33 @@ def process_exists(pid: int) -> bool:
 
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     ERROR_INVALID_PARAMETER = 87
+    STILL_ACTIVE = 259
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if handle:
+    if not handle:
+        return ctypes.get_last_error() != ERROR_INVALID_PARAMETER
+
+    # Opening it is not proof it is running. A Windows process object outlives
+    # the process and is destroyed only once the last handle to it closes, so
+    # OpenProcess keeps succeeding on the pid of something that exited minutes
+    # ago while anyone still holds a handle -- and someone almost always does,
+    # namely whoever spawned it and has not reaped it. That is precisely the
+    # case this watchdog exists for: a parent killed by Force Quit or Task
+    # Manager runs no cleanup, so nothing is ever reaped and the worker would
+    # keep its GPU forever (#579).
+    #
+    # GetExitCodeProcess is the call that separates the two states. Its one
+    # documented ambiguity is a process that genuinely exits with code 259,
+    # which is indistinguishable from a running one -- and that error lands on
+    # the "alive" side, which is the side this function must fail towards.
+    try:
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+    finally:
         kernel32.CloseHandle(handle)
+    if not ok:
         return True
-    return ctypes.get_last_error() != ERROR_INVALID_PARAMETER
+    return code.value == STILL_ACTIVE
 
 
 _PARENT_POLL_SECONDS = 1.0

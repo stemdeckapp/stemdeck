@@ -73,36 +73,81 @@ def test_posix_signal_zero_is_a_probe_not_a_kill(monkeypatch):
 # ── the Windows branch ───────────────────────────────────────────────
 
 
+STILL_ACTIVE = 259
+
+
 class _Kernel32:
     """Stands in for kernel32, so the Windows path runs anywhere."""
 
-    def __init__(self, handle: int, last_error: int = 0):
+    def __init__(
+        self,
+        handle: int,
+        last_error: int = 0,
+        exit_code: int = STILL_ACTIVE,
+        exit_code_ok: bool = True,
+    ):
         self._handle = handle
+        self._exit_code = exit_code
+        self._exit_code_ok = exit_code_ok
         self.last_error = last_error
         self.closed: list[int] = []
 
     def OpenProcess(self, _access, _inherit, _pid):  # noqa: N802 - Win32 name
         return self._handle
 
+    def GetExitCodeProcess(self, _handle, out):  # noqa: N802 - Win32 name
+        # `out` is what ctypes.byref produced; _obj is the c_ulong behind it.
+        out._obj.value = self._exit_code
+        return self._exit_code_ok
+
     def CloseHandle(self, handle):  # noqa: N802 - Win32 name
         self.closed.append(handle)
         return True
 
 
-def _run_windows_branch(monkeypatch, handle: int, last_error: int = 0):
+def _run_windows_branch(
+    monkeypatch,
+    handle: int,
+    last_error: int = 0,
+    exit_code: int = STILL_ACTIVE,
+    exit_code_ok: bool = True,
+):
     import ctypes
 
     monkeypatch.setattr(os, "name", "nt")
-    fake = _Kernel32(handle, last_error)
+    fake = _Kernel32(handle, last_error, exit_code, exit_code_ok)
     monkeypatch.setattr(ctypes, "WinDLL", lambda *_a, **_k: fake, raising=False)
     monkeypatch.setattr(ctypes, "get_last_error", lambda: fake.last_error, raising=False)
     return fake, process_exists(1234)
 
 
-def test_windows_an_open_handle_means_alive(monkeypatch):
+def test_windows_a_still_active_process_is_alive(monkeypatch):
     fake, alive = _run_windows_branch(monkeypatch, handle=42)
     assert alive is True
     assert fake.closed == [42], "the handle leaked; this runs on a watchdog timer"
+
+
+def test_windows_an_open_handle_is_not_enough_to_mean_alive(monkeypatch):
+    """The bug this file previously asserted as correct (#579).
+
+    A Windows process object outlives the process and dies only with the last
+    handle to it, so OpenProcess keeps succeeding on something that exited
+    while anyone still holds one -- and the un-reaped parent of a Force-Quit is
+    exactly that. Treating the open handle as proof of life meant the watchdog
+    never fired and the worker kept its GPU.
+    """
+    fake, alive = _run_windows_branch(monkeypatch, handle=42, exit_code=0)
+    assert alive is False
+    assert fake.closed == [42], "the handle leaked; this runs on a watchdog timer"
+
+
+def test_windows_an_unreadable_exit_code_means_alive(monkeypatch):
+    """Same ambiguity rule as everywhere else here: if the call that would
+    settle it fails, the answer is "alive". A watchdog must not shoot on a
+    question it could not ask."""
+    fake, alive = _run_windows_branch(monkeypatch, handle=42, exit_code=0, exit_code_ok=False)
+    assert alive is True
+    assert fake.closed == [42]
 
 
 def test_windows_invalid_parameter_means_dead(monkeypatch):

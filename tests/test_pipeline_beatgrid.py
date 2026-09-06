@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import wave
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import ffmpeg_executable
 from app.core.models import Job
 from app.core.registry import _jobs
 from app.pipeline.beatgrid import (
@@ -26,9 +28,33 @@ def _isolate_registry():
     _jobs.clear()
 
 
+# Resolved the way the app resolves it, so a portable install or a
+# STEMDECK_FFMPEG_DIR pointing at a bundled build counts as present. Computed
+# once: every test below would otherwise ask the filesystem the same question.
+_FFMPEG = shutil.which(ffmpeg_executable())
+
+
 @pytest.fixture
 def stems_dir(tmp_path, monkeypatch):
-    """A stems dir that `_load_audio_ffmpeg`'s JOBS_DIR containment check accepts."""
+    """A stems dir that `_load_audio_ffmpeg`'s JOBS_DIR containment check accepts.
+
+    Skips the whole test when ffmpeg is missing rather than letting it fail
+    downstream. `_decode_mono` is deliberately forgiving -- everything it feeds
+    is a display field, so it logs and returns None instead of raising -- which
+    means a missing binary and an undetectable beat grid arrive here as the same
+    `assert grid is not None`, and the real cause is only in a log record
+    nothing asserts on (#581).
+
+    The guard covers every test taking this fixture, not only the ones that go
+    red. The four `test_returns_none_*` cases passed without ffmpeg for the
+    wrong reason: they got their None from the decode failing, not from the
+    audio, so they could not have caught a regression in what they test.
+    """
+    if _FFMPEG is None:
+        pytest.skip(
+            "ffmpeg not found: install it, or point STEMDECK_FFMPEG_DIR at a "
+            "directory containing an ffmpeg binary"
+        )
     from app.pipeline import analyze as analyze_mod
 
     monkeypatch.setattr(analyze_mod, "JOBS_DIR", tmp_path)
