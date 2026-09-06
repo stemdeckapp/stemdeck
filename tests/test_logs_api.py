@@ -87,7 +87,12 @@ def test_zip_bundles_every_present_log(client, logs_dir):
 
 
 def test_zip_preserves_contents(client, logs_dir):
-    (logs_dir / "stemdeck.log").write_text("line one\nline two\n", encoding="utf-8")
+    # newline="" so the bytes on disk are the bytes written. Text mode
+    # translates \n to \r\n on Windows, and this test is about whether the
+    # endpoint preserves a file byte for byte -- a fixture that quietly rewrites
+    # itself cannot answer that, and made the assertion fail there for a reason
+    # having nothing to do with the endpoint (#580).
+    (logs_dir / "stemdeck.log").write_text("line one\nline two\n", encoding="utf-8", newline="")
     with zipfile.ZipFile(io.BytesIO(client.get("/api/logs.zip").content)) as z:
         assert z.read("stemdeck.log").decode() == "line one\nline two\n"
 
