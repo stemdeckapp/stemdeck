@@ -84,6 +84,51 @@ function startProgressStatus(messages) {
   return () => window.clearInterval(timer);
 }
 
+/**
+ * Real progress for the pip passes that install CUDA acceleration.
+ *
+ * Those passes move several GB, and until the backend streamed pip's output
+ * there was nothing to show but a timer counting up, which reads exactly like
+ * the freeze it replaced (#502). The timed messages stay as the opening line
+ * and as the fallback for a machine that has everything cached and never
+ * downloads anything; the first real byte count takes over from them.
+ *
+ * Returns a stop function that unregisters the listener and hides the bar.
+ */
+async function startPipProgress(stopTimedMessages) {
+  const progressWrap = document.getElementById("progress-wrap");
+  const progressFill = document.getElementById("progress-fill");
+  let tookOver = false;
+
+  const unlisten = await window.__TAURI__.event.listen("setup-progress", (event) => {
+    const { detail, received, total } = event.payload ?? {};
+    // Only now is there something truthful to show, so this is where the
+    // elapsed-time messages are retired rather than up front.
+    if (!tookOver) {
+      tookOver = true;
+      stopTimedMessages();
+      progressWrap.classList.remove("hidden");
+    }
+    if (Number.isFinite(received) && Number.isFinite(total) && total > 0) {
+      const pct = Math.min(100, Math.round((received / total) * 100));
+      progressFill.style.width = `${pct}%`;
+      progressFill.classList.remove("indeterminate");
+      setStatus(`${detail}... ${(received / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB`);
+    } else {
+      // Resolving, or installing what it already fetched. Real work with no
+      // measurable size, which is what indeterminate is for.
+      progressFill.classList.add("indeterminate");
+      setStatus(`${detail}...`);
+    }
+  });
+
+  return () => {
+    unlisten();
+    progressWrap.classList.add("hidden");
+    progressFill.classList.remove("indeterminate");
+  };
+}
+
 function isMac() {
   return /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
 }
@@ -362,6 +407,8 @@ async function runSetup() {
               },
             ]
       );
+      // macOS never runs a pip pass here, so there is nothing to listen for.
+      const stopPipProgress = macGPU ? null : await startPipProgress(stopProgress);
 
       try {
         const gpu = await invoke("ensure_torch_device");
@@ -385,6 +432,7 @@ async function runSetup() {
         return gpu;
       } finally {
         stopProgress();
+        stopPipProgress?.();
       }
     });
 

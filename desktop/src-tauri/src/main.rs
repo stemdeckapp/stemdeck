@@ -8,7 +8,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
     env, fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -1820,7 +1820,12 @@ fn local_ip() -> Option<String> {
 
 /// Detects GPU hardware, installs CUDA torch if needed, and persists the chosen device.
 #[tauri::command]
-fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, String> {
+fn ensure_torch_device(
+    state: tauri::State<BackendState>,
+    // Carried so the pip passes below can report progress to the setup screen.
+    // macOS never runs them, hence the explicit discard in that branch.
+    app: tauri::AppHandle,
+) -> Result<GpuSetup, String> {
     log_setup_step("gpu-setup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1849,6 +1854,8 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
 
     #[cfg(target_os = "macos")]
     {
+        // No pip pass on this platform: MPS ships in the bundled wheel.
+        let _ = &app;
         let mps_available = verify_mps_torch(&python);
         let (device, reason) = if mps_available {
             ("mps", "mps")
@@ -1889,7 +1896,7 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
                         ),
                     );
                     let index_url = format!("https://download.pytorch.org/whl/{tag}");
-                    if let Err(e) = install_cuda_torch(&python, &index_url, &state) {
+                    if let Err(e) = install_cuda_torch(&python, &index_url, &state, &app) {
                         append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
                         continue;
                     }
@@ -1908,7 +1915,7 @@ fn ensure_torch_device(state: tauri::State<BackendState>) -> Result<GpuSetup, St
                     // module scope, so a wheel that cannot load keeps the
                     // backend from starting at all. Put the CPU wheels back
                     // (#324).
-                    match restore_cpu_torch(&python, &state) {
+                    match restore_cpu_torch(&python, &state, &app) {
                         Ok(()) => "cuda-verify-failed",
                         Err(e) => {
                             append_to_setup_log(
@@ -2201,11 +2208,13 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
     }
 }
 
-/// Pick the PyTorch wheel tag. Keyed primarily on the GPU's compute capability:
-/// Blackwell (sm_100 / sm_120, major >= 10) has no kernels in the stock torch
-/// 2.6 cu12x wheels and needs a cu128 / torch 2.7 build (#217). Everything else
-/// falls back to the driver-CUDA-version heuristic.
-#[cfg(any(not(target_os = "macos"), test))]
+/// The tag `wheel_candidates` would try first.
+///
+/// Test-only since the candidates loop replaced the single-answer call site:
+/// setup now walks the whole list, so nothing in the app asks for just the
+/// head of it. Kept because the per-architecture expectations below are
+/// clearer read one tag at a time than as one-element vectors.
+#[cfg(test)]
 fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
     wheel_candidates(compute_cap, cuda_version)[0]
 }
@@ -2250,14 +2259,6 @@ fn torch_version_for_tag(tag: &str) -> &'static str {
         "cu128" => "2.8.0",
         _ => "2.6.0",
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn cuda_index_url(compute_cap: Option<&str>, cuda_version: &str) -> String {
-    format!(
-        "https://download.pytorch.org/whl/{}",
-        wheel_tag(compute_cap, cuda_version)
-    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2469,6 +2470,73 @@ fn classify_cuda_install_error(stderr: &str) -> String {
 #[cfg(not(target_os = "macos"))]
 const CPU_TORCH_VERSION: &str = "2.6.0";
 
+/// What a line of pip's output means, for the setup screen.
+///
+/// `--progress-bar raw` exists for exactly this: with stdout on a pipe pip
+/// draws no bar, and instead emits plain `Progress <done> of <total>` lines
+/// alongside the human-readable ones. Parsing that is the difference between
+/// telling someone "downloading nvidia-cublas, 210 of 566 MB" and showing them
+/// a spinner for forty minutes (#502).
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, PartialEq)]
+enum PipLine {
+    /// `Downloading nvidia_cublas_cu12-12.8.4.1-...whl (566.0 MB)`
+    Downloading { file: String },
+    /// `Progress 262144 of 12464674`
+    Progress { received: u64, total: u64 },
+    /// `Installing collected packages: nvidia-cublas-cu12, torch`
+    Installing,
+    /// Anything else worth putting in setup.log but not on screen.
+    Other,
+}
+
+/// Classifies one line of pip output. Pure, so the formats above are pinned by
+/// tests against strings captured from a real `pip install` rather than from
+/// memory of what pip prints.
+#[cfg(not(target_os = "macos"))]
+fn parse_pip_line(line: &str) -> PipLine {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("Progress ") {
+        // "<received> of <total>". Both must parse: a partial match here would
+        // report a nonsense byte count rather than no byte count.
+        if let Some((done, total)) = rest.split_once(" of ") {
+            if let (Ok(received), Ok(total)) = (done.trim().parse(), total.trim().parse()) {
+                return PipLine::Progress { received, total };
+            }
+        }
+        return PipLine::Other;
+    }
+    if let Some(rest) = line.strip_prefix("Downloading ") {
+        // The size in parentheses is dropped: `Progress` lines carry the real
+        // total, and pip omits the size entirely for a cached wheel.
+        let file = rest.split_whitespace().next().unwrap_or(rest);
+        if !file.is_empty() {
+            return PipLine::Downloading {
+                file: file.to_string(),
+            };
+        }
+        return PipLine::Other;
+    }
+    if line.starts_with("Installing collected packages") {
+        return PipLine::Installing;
+    }
+    PipLine::Other
+}
+
+/// Progress for the setup screen while pip runs.
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupProgress {
+    /// Which pip pass this is, e.g. "CUDA torch install".
+    label: String,
+    /// Human-readable current activity.
+    detail: String,
+    /// Bytes of the file in flight, when one is downloading.
+    received: Option<u64>,
+    total: Option<u64>,
+}
+
 /// Whether the CUDA torch wheel needs its `nvidia-*` runtime dependencies
 /// installed separately. Linux CUDA wheels do not bundle the CUDA runtime —
 /// they dlopen libcublas/libcudnn/... out of the `nvidia-*` PyPI packages at
@@ -2479,6 +2547,73 @@ fn cuda_wheel_needs_runtime_deps() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Builds the per-line callback `run_pip_install` hands to the reader thread.
+///
+/// Emits a `setup-progress` event for the setup screen and writes the readable
+/// lines to setup.log. Progress lines are throttled to the same 150 ms the
+/// runtime download uses, because pip emits them far faster than a WebView can
+/// paint and every one of them crosses an IPC boundary. The file currently
+/// downloading is remembered between lines: pip names it once, then reports
+/// bytes against it without repeating the name.
+#[cfg(not(target_os = "macos"))]
+fn pip_line_reporter(app: tauri::AppHandle, label: String) -> impl FnMut(&str) + Send + 'static {
+    let mut current_file: Option<String> = None;
+    let mut last_emit: Option<Instant> = None;
+    move |line: &str| {
+        let parsed = parse_pip_line(line);
+        // The log gets the readable lines only. Byte progress would bury the
+        // one line that matters when someone sends the log in.
+        if matches!(parsed, PipLine::Downloading { .. } | PipLine::Installing) {
+            if let Ok(data_dir) = local_data_dir() {
+                append_to_setup_log(&data_dir, &format!("{label}: {}", line.trim()));
+            }
+        }
+        let progress = match &parsed {
+            PipLine::Downloading { file } => {
+                current_file = Some(file.clone());
+                Some(SetupProgress {
+                    label: label.clone(),
+                    detail: format!("Downloading {file}"),
+                    received: None,
+                    total: None,
+                })
+            }
+            PipLine::Progress { received, total } => {
+                // Always let the final byte through, so a finished file is not
+                // left showing a stale count because the throttle ate it.
+                let done = received >= total;
+                let due = last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(150));
+                if !done && !due {
+                    return;
+                }
+                last_emit = Some(Instant::now());
+                Some(SetupProgress {
+                    label: label.clone(),
+                    detail: match &current_file {
+                        Some(file) => format!("Downloading {file}"),
+                        None => "Downloading".to_string(),
+                    },
+                    received: Some(*received),
+                    total: Some(*total),
+                })
+            }
+            PipLine::Installing => {
+                current_file = None;
+                Some(SetupProgress {
+                    label: label.clone(),
+                    detail: "Installing downloaded packages".to_string(),
+                    received: None,
+                    total: None,
+                })
+            }
+            PipLine::Other => None,
+        };
+        if let Some(progress) = progress {
+            let _ = app.emit("setup-progress", progress);
+        }
+    }
+}
+
 /// Runs `python -m pip install <args>`, tracking the pip PID so stop_backend can
 /// kill it if the window is closed mid-install (#140), bounding it at 20 minutes,
 /// and logging raw stderr to setup.log before mapping it to a user-facing message.
@@ -2487,27 +2622,32 @@ fn run_pip_install(
     python: &Path,
     args: &[&str],
     state: &BackendState,
+    app: &tauri::AppHandle,
     label: &str,
 ) -> Result<(), String> {
-    let mut command = Command::new(python);
-    command
-        .args(["-m", "pip", "install"])
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+    // Not --quiet, and not a null stdout. Both were why this step looked
+    // identical to the hang it replaced: several GB of downloads with no output
+    // of any kind for up to twenty minutes (#502). `raw` is pip's
+    // machine-readable progress, which is what it emits when stdout is a pipe
+    // rather than a terminal.
+    let mut output = spawn_pip(python, &["--progress-bar", "raw"], args, state, app, label)?;
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start {label}: {e}"))?;
-
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
+    // The packaging script installs whatever pip is current at build time and
+    // pins nothing, and `raw` has only existed since pip 24.1. A pip that does
+    // not take the flag rejects it while parsing arguments, before any network
+    // work, so retrying without it costs nothing. Losing the progress bar is a
+    // far better outcome than failing the CUDA install over it.
+    if !output.status.success()
+        && pip_rejected_progress_flag(&String::from_utf8_lossy(&output.stderr))
+    {
+        if let Ok(data_dir) = local_data_dir() {
+            append_to_setup_log(
+                &data_dir,
+                &format!("{label}: pip does not support --progress-bar raw, retrying without it"),
+            );
+        }
+        output = spawn_pip(python, &[], args, state, app, label)?;
     }
-    let output = child_output_with_timeout(child, Duration::from_secs(20 * 60), label);
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
-    }
-    let output = output?;
 
     if output.status.success() {
         return Ok(());
@@ -2526,13 +2666,65 @@ fn run_pip_install(
     Err(classify_cuda_install_error(&stderr))
 }
 
+/// One `python -m pip install` run, streamed. Split out of `run_pip_install`
+/// only so the progress flag can be dropped and the whole thing retried.
+#[cfg(not(target_os = "macos"))]
+fn spawn_pip(
+    python: &Path,
+    progress_args: &[&str],
+    args: &[&str],
+    state: &BackendState,
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<Output, String> {
+    let mut command = Command::new(python);
+    command
+        .args(["-m", "pip", "install"])
+        .args(progress_args)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console_window(&mut command);
+
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to start {label}: {e}"))?;
+
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = Some(child.id());
+    }
+    let output = child_output_streaming(
+        child,
+        Duration::from_secs(20 * 60),
+        label,
+        pip_line_reporter(app.clone(), label.to_string()),
+    );
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = None;
+    }
+    output
+}
+
+/// Whether pip refused `--progress-bar raw` itself, as opposed to failing at
+/// the install. Both spellings are what pip's own argument parser prints: the
+/// first when the option is unknown, the second when the value is not offered.
+#[cfg(not(target_os = "macos"))]
+fn pip_rejected_progress_flag(stderr: &str) -> bool {
+    stderr.contains("no such option: --progress-bar")
+        || (stderr.contains("option --progress-bar") && stderr.contains("invalid choice"))
+}
+
 /// Puts the bundled CPU wheels back after CUDA torch turns out to be unusable.
 /// The backend imports torch at module scope, so a CUDA wheel that cannot load
 /// (missing CUDA runtime, driver too old, no kernels for the device) does not
 /// merely disable the GPU — it stops the backend from starting at all, and the
 /// broken install persists across launches (#324).
 #[cfg(not(target_os = "macos"))]
-fn restore_cpu_torch(python: &Path, state: &BackendState) -> Result<(), String> {
+fn restore_cpu_torch(
+    python: &Path,
+    state: &BackendState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
     let torch_spec = format!("torch=={CPU_TORCH_VERSION}+cpu");
     let torchaudio_spec = format!("torchaudio=={CPU_TORCH_VERSION}+cpu");
     run_pip_install(
@@ -2544,15 +2736,20 @@ fn restore_cpu_torch(python: &Path, state: &BackendState) -> Result<(), String> 
             "https://download.pytorch.org/whl/cpu",
             "--ignore-installed",
             "--no-deps",
-            "--quiet",
         ],
         state,
+        app,
         "CPU torch restore",
     )
 }
 
 #[cfg(not(target_os = "macos"))]
-fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> Result<(), String> {
+fn install_cuda_torch(
+    python: &Path,
+    index_url: &str,
+    state: &BackendState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
     // Skip only when CUDA torch is already active — torch.version.cuda is
     // None for CPU-only wheels, so this correctly re-installs when needed.
     if verify_cuda_torch(python) {
@@ -2582,7 +2779,7 @@ fn install_cuda_torch(python: &Path, index_url: &str, state: &BackendState) -> R
         index_url,
         cuda_wheel_needs_runtime_deps(),
     ) {
-        run_pip_install(python, &args, state, label)?;
+        run_pip_install(python, &args, state, app, label)?;
     }
 
     Ok(())
@@ -2617,19 +2814,12 @@ fn cuda_install_passes<'a>(
             index_url,
             "--ignore-installed",
             "--no-deps",
-            "--quiet",
         ],
     )];
     if needs_runtime_deps {
         passes.push((
             "CUDA runtime dependency install",
-            vec![
-                torch_spec,
-                torchaudio_spec,
-                "--index-url",
-                index_url,
-                "--quiet",
-            ],
+            vec![torch_spec, torchaudio_spec, "--index-url", index_url],
         ));
     }
     passes
@@ -4732,6 +4922,48 @@ fn update_setup_config<const N: usize>(
 /// Each stream gets its own thread because both must drain concurrently;
 /// draining one and then the other reintroduces the deadlock on whichever is
 /// second.
+/// Same contract as `child_output_with_timeout`, but stdout is handed to
+/// `on_stdout_line` a line at a time as it arrives instead of only at the end.
+///
+/// A pip install of CUDA torch moves several GB, and collecting its output and
+/// reporting it once the process exits is indistinguishable from a hang for as
+/// long as it runs (#502). The callback runs on the reader thread, so it must
+/// not block: emitting a Tauri event or appending a line to a log is fine,
+/// anything slower would stall the very pipe this exists to drain.
+///
+/// stderr is still read to EOF rather than streamed. It carries the failure
+/// text used to classify an error, which is only wanted once, at the end.
+fn child_output_streaming<F>(
+    mut child: Child,
+    timeout: Duration,
+    label: &str,
+    mut on_stdout_line: F,
+) -> Result<Output, String>
+where
+    F: FnMut(&str) + Send + 'static,
+{
+    let stdout_reader = child.stdout.take().map(|pipe| {
+        thread::spawn(move || {
+            let mut collected = Vec::new();
+            for line in BufReader::new(pipe).lines() {
+                let Ok(line) = line else { break };
+                on_stdout_line(&line);
+                collected.extend_from_slice(line.as_bytes());
+                collected.push(b'\n');
+            }
+            collected
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+    wait_for_child(child, timeout, label, stdout_reader, stderr_reader)
+}
+
 fn child_output_with_timeout(
     mut child: Child,
     timeout: Duration,
@@ -4752,6 +4984,18 @@ fn child_output_with_timeout(
         })
     });
 
+    wait_for_child(child, timeout, label, stdout_reader, stderr_reader)
+}
+
+/// The wait half both readers above share: poll for exit, kill at the deadline,
+/// and join the reader threads either way so neither is leaked.
+fn wait_for_child(
+    mut child: Child,
+    timeout: Duration,
+    label: &str,
+    stdout_reader: Option<thread::JoinHandle<Vec<u8>>>,
+    stderr_reader: Option<thread::JoinHandle<Vec<u8>>>,
+) -> Result<Output, String> {
     let collect = |reader: Option<thread::JoinHandle<Vec<u8>>>| {
         reader.and_then(|h| h.join().ok()).unwrap_or_default()
     };
@@ -5034,6 +5278,79 @@ mod tests {
         // whole first launch.
         assert!(super::GPU_VERIFY_TIMEOUT >= Duration::from_secs(60));
         assert!(super::GPU_VERIFY_TIMEOUT <= Duration::from_secs(300));
+    }
+
+    // Captured verbatim from `pip install --progress-bar raw`. The parser is
+    // the whole reason the setup screen can say anything during the CUDA
+    // install, so the formats it depends on are pinned here rather than
+    // remembered (#502).
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn pip_progress_lines_are_read_as_bytes_not_prose() {
+        use super::PipLine;
+        assert_eq!(
+            super::parse_pip_line("Progress 262144 of 12464674"),
+            PipLine::Progress {
+                received: 262144,
+                total: 12464674
+            }
+        );
+        // pip indents the line it prints under "Collecting".
+        assert_eq!(
+            super::parse_pip_line("  Downloading numpy-2.5.2-cp312-cp312-win_amd64.whl (12.5 MB)"),
+            PipLine::Downloading {
+                file: "numpy-2.5.2-cp312-cp312-win_amd64.whl".to_string()
+            }
+        );
+        assert_eq!(
+            super::parse_pip_line("Installing collected packages: urllib3, idna"),
+            PipLine::Installing
+        );
+        for line in [
+            "Collecting numpy",
+            "Successfully downloaded numpy",
+            "Requirement already satisfied: requests in /x/y (2.34.2)",
+        ] {
+            assert_eq!(super::parse_pip_line(line), PipLine::Other, "{line}");
+        }
+    }
+
+    // Captured from pip's own argument parser. If this predicate stopped
+    // matching, a pip too old for `--progress-bar raw` would fail the CUDA
+    // install outright rather than losing only the progress bar.
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn a_pip_that_will_not_take_the_progress_flag_is_recognised() {
+        assert!(super::pip_rejected_progress_flag(
+            "no such option: --progress-bar"
+        ));
+        assert!(super::pip_rejected_progress_flag(
+            "option --progress-bar: invalid choice: 'raw' (choose from 'on', 'off')"
+        ));
+        // A genuine install failure must not be mistaken for one, or the whole
+        // multi-GB download would be run a second time before reporting it.
+        for line in [
+            "ERROR: Could not find a version that satisfies the requirement torch==2.8.0+cu128",
+            "ERROR: No space left on device",
+            "no such option: --dry-run",
+        ] {
+            assert!(!super::pip_rejected_progress_flag(line), "{line}");
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn a_malformed_progress_line_reports_nothing_rather_than_nonsense() {
+        // Reporting half a pair would put a wrong byte count on screen, which
+        // is worse than showing none: it looks like real progress.
+        for line in [
+            "Progress 262144",
+            "Progress abc of 12464674",
+            "Progress 262144 of many",
+            "Progress",
+        ] {
+            assert_eq!(super::parse_pip_line(line), super::PipLine::Other, "{line}");
+        }
     }
 
     #[test]
