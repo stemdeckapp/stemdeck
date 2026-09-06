@@ -198,6 +198,25 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // as which bus it is connected to, so several lanes can sit in different
   // keys at once while still sharing the worklet's single tempo stage.
   const buses = Array.from({ length: INPUT_COUNT }, () => ctx.createGain());
+  // How many lanes sit on each bus. A pitch bus is wired into the worklet only
+  // while this is non-zero; the unpitched bus is wired for good.
+  //
+  // The processor decides whether a semitone is in use by whether its input has
+  // any channels, and takes its bypass path (a straight copy) only when none
+  // do. Wiring every bus up front defeated that: a bus with nothing playing
+  // into it still arrives as one channel of silence in Chrome, so the processor
+  // built a pitch chain for all twelve semitones and ran WSOLA, the anti-alias
+  // cascade and the resampler on silence for the whole track, at zero transpose
+  // (#576).
+  //
+  // The windows are set in milliseconds, so the wasted work per second of audio
+  // scales with the AudioContext's rate, which follows the system output device.
+  // Measured offline, seven stems, no transpose: 0.2% of real time with only
+  // the unpitched input wired against 17.8% with all thirteen at 44.1 kHz, 0.8%
+  // against 78% at 96 kHz, and over real time at 192 kHz. That is the crackle
+  // on a laptop and the silence at 192 kHz in #575. Connecting a bus only while
+  // a lane is on it hands the processor the empty input its contract describes.
+  const busLanes = new Array(INPUT_COUNT).fill(0);
   master.connect(ctx.destination);
 
   let stNode = null;
@@ -218,7 +237,12 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
         // The worklet loads asynchronously, so anything set before it arrived
         // would otherwise be dropped. Re-apply the current value now.
         stNode.parameters.get('tempo').value = _playbackRate;
-        for (let k = 0; k < INPUT_COUNT; k++) buses[k].connect(stNode, 0, k);
+        // Lanes were routed before the worklet arrived (see the stem loop
+        // below), so wire whichever pitch buses they already occupy.
+        buses[ZERO_INPUT].connect(stNode, 0, ZERO_INPUT);
+        for (let k = 0; k < INPUT_COUNT; k++) {
+          if (k !== ZERO_INPUT && busLanes[k] > 0) buses[k].connect(stNode, 0, k);
+        }
         stNode.connect(master);
       }).catch((err) => {
         console.warn('[chunkedEngine] SoundTouch worklet failed, tape-effect fallback:', err);
@@ -320,15 +344,41 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   const ROUTE_FADE = 0.006;
   const ROUTE_HOLD = 0.02;
 
+  // A lane arriving on, or leaving, a bus. Only the first arrival and the last
+  // departure touch the worklet: the bus is wired in while occupied and taken
+  // out again once empty, so the processor sees exactly the inputs that carry a
+  // lane. The unpitched bus stays wired whatever its count, because the click is
+  // scheduled onto it directly. In the tape-effect fallback there is no worklet
+  // and every bus already feeds master, so there is nothing to do.
+  //
+  // Arrival is announced before the lane connects, so a bus is live in the
+  // worklet by the time anything reaches it, and a lane never lands on a bus
+  // that leads nowhere. A chain whose input goes empty is fed silence and kept
+  // for CHAIN_LINGER_BLOCKS by the processor, which is how its tail drains.
+  function _laneArriving(bus) {
+    const k = buses.indexOf(bus);
+    if (busLanes[k]++ === 0 && k !== ZERO_INPUT && stNode) buses[k].connect(stNode, 0, k);
+  }
+  function _laneLeft(bus) {
+    if (!bus) return;
+    const k = buses.indexOf(bus);
+    if (--busLanes[k] === 0 && k !== ZERO_INPUT && stNode) {
+      try { buses[k].disconnect(stNode, 0, k); } catch { /* worklet already gone */ }
+    }
+  }
+
   /** Connect a stem to the bus for its current transpose. */
   function routeStem(stem, immediate = false) {
     const target = buses[inputForPitch(effectivePitch(stem.name, stem.pitch, stem.pitchable))];
     if (stem.bus === target) return;
     const swap = () => {
       if (destroyed) return;
+      const previous = stem.bus;
+      _laneArriving(target);
       try { stem.analyser.disconnect(); } catch { /* was not connected yet */ }
       stem.analyser.connect(target);
       stem.bus = target;
+      _laneLeft(previous);
     };
     if (immediate || !playing) { swap(); return; }
     const g = stem.gain.gain;

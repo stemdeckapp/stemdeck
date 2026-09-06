@@ -78,7 +78,18 @@ class FakeNode {
     return destination;
   }
 
-  disconnect() { this.connections = []; }
+  // Matches the real overloads closely enough to tell them apart: the engines
+  // drop a whole lane with `disconnect()` and take a single bus back out of the
+  // worklet with `disconnect(node, output, input)`. A mock that cleared
+  // everything either way would pass whichever one the code used.
+  disconnect(destination, output = 0, input = 0) {
+    if (destination === undefined) { this.connections = []; return; }
+    const before = this.connections.length;
+    this.connections = this.connections.filter((edge) =>
+      !(edge.destination === destination && edge.output === output && edge.input === input));
+    // The real API throws when asked to remove a connection that is not there.
+    if (this.connections.length === before) throw new Error('InvalidAccessError');
+  }
 }
 
 class FakeGain extends FakeNode {
@@ -243,6 +254,18 @@ async function verifyEngine(name, create) {
   };
   check(`${name} exposes the unpitched bus for the metronome`, engine.getMasterNode() === bus(ZERO_INPUT));
 
+  // Wiring a bus into the worklet is what tells the processor that semitone is
+  // in use, and a wired bus with nothing on it still reaches the processor as a
+  // channel of silence, which it builds a pitch chain for (#576). So at start
+  // only the unpitched bus may be wired, and the checks below watch pitch buses
+  // come and go with the lanes on them.
+  const wired = () => {
+    const out = [];
+    for (let k = 0; k < INPUT_COUNT; k++) if (bus(k)) out.push(k - ZERO_INPUT);
+    return out.join(',');
+  };
+  check(`${name} wires only the unpitched bus while nothing is transposed`, wired() === '0', `wired ${wired()}`);
+
   const originalAnalysers = engine.getAnalysers('original');
   check(`${name} groups all complement analysers under original`, originalAnalysers.length === 2);
   const drumAnalyser = originalAnalysers[0];
@@ -266,6 +289,7 @@ async function verifyEngine(name, create) {
   check(`${name} puts a lane in the key it was given`, vocalBus === -2, `landed on ${vocalBus}`);
   check(`${name} reports the key it was given`, engine.getStemPitch('vocals') === -2);
   check(`${name} leaves other lanes where they were`, busOf(melodicAnalyser) === 0);
+  check(`${name} wires a bus when a lane arrives on it`, wired() === '-2,0', `wired ${wired()}`);
 
   // A key past the range the DSP is measured over stops at the edge rather
   // than landing somewhere unusable.
@@ -274,6 +298,7 @@ async function verifyEngine(name, create) {
     `${name} clamps a lane to the offered range`,
     busOf(engine.getAnalysers('vocals')[0]) === 6,
   );
+  check(`${name} unwires a bus once its last lane has left`, wired() === '0,6', `wired ${wired()}`);
 
   // One control drives both sources in the `original` group, and only one of
   // them is allowed to move. This is the whole reason the unpitched input
@@ -290,6 +315,17 @@ async function verifyEngine(name, create) {
     `landed on ${busOf(drumAnalyser)}`,
   );
   check(`${name} reports drums as not pitchable`, engine.isStemPitchable('drums') === false);
+
+  // Two lanes share the +3 bus, so it must survive one of them leaving and go
+  // only when the other does too. The unpitched bus is never unwired: the click
+  // is scheduled onto it whether or not any lane sits there.
+  engine.setStemPitch('vocals', 3);
+  check(`${name} shares one bus between lanes in the same key`, wired() === '0,3', `wired ${wired()}`);
+  engine.setStemPitch('vocals', 0);
+  check(`${name} keeps a bus wired while another lane is still on it`, wired() === '0,3', `wired ${wired()}`);
+  engine.setStemPitch('original', 0);
+  check(`${name} unwires a shared bus only when it empties`, wired() === '0', `wired ${wired()}`);
+  engine.setStemPitch('original', 3);
 
   engine.setStemPitch('vocals', 3);
 
