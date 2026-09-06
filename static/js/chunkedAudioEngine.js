@@ -188,10 +188,11 @@ function _pcmToAudioBuffer(ctx, pcmData, header) {
 import {
   INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
 } from "./pitchBus.js";
+import { createPlaybackContext } from "./audioContext.js";
 
 export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ctx = context || new AC();
+  const ctx = context || createPlaybackContext(AC);
   const ownsCtx = !context;
   const master = ctx.createGain();
   // One bus per semitone the worklet offers. A lane's transpose is expressed

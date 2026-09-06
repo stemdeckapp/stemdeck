@@ -22,12 +22,13 @@ const AudioCtx = window.AudioContext || window.webkitAudioContext;
 import {
   INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
 } from "./pitchBus.js";
+import { createPlaybackContext } from "./audioContext.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
   // Callers can pass a shared, gesture-unlocked `context` (the mobile UI does);
   // desktop passes none and we own a fresh one. We only close contexts we own.
-  const ctx = context || new AudioCtx();
+  const ctx = context || createPlaybackContext(AudioCtx);
   const ownsCtx = !context;
   const master = ctx.createGain();
   // One bus per semitone the worklet offers. A lane's transpose is expressed
