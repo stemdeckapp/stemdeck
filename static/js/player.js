@@ -29,6 +29,7 @@ import {
 } from "./state.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
+import { createPlaybackContext } from "./audioContext.js";
 import { addVisualOnlyStems, buildPlaybackStems } from "./playbackStems.js";
 import { vuLevel } from "./vuScale.js";
 import { createMetronome } from "./metronome.js";
@@ -1701,7 +1702,10 @@ async function initFooterWaveform(stemUrl) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return;
   try {
-    visualAudioContext ??= new AudioCtx();
+    // Decode-only, for the footer's peaks. It never plays anything, so a
+    // 192 kHz device would cost it four times the buffer for four times the
+    // samples per peak bar and not one pixel of extra detail (#578).
+    visualAudioContext ??= createPlaybackContext(AudioCtx);
     const res = await fetch(stemUrl, { cache: "force-cache" });
     if (!res.ok) return;
     const buf = await visualAudioContext.decodeAudioData(await res.arrayBuffer());

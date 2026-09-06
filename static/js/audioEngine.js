@@ -22,18 +22,26 @@ const AudioCtx = window.AudioContext || window.webkitAudioContext;
 import {
   INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
 } from "./pitchBus.js";
+import { createPlaybackContext } from "./audioContext.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
   // Callers can pass a shared, gesture-unlocked `context` (the mobile UI does);
   // desktop passes none and we own a fresh one. We only close contexts we own.
-  const ctx = context || new AudioCtx();
+  const ctx = context || createPlaybackContext(AudioCtx);
   const ownsCtx = !context;
   const master = ctx.createGain();
   // One bus per semitone the worklet offers. A lane's transpose is expressed
   // as which bus it is connected to, so several lanes can sit in different
   // keys at once while still sharing the worklet's single tempo stage.
   const buses = Array.from({ length: INPUT_COUNT }, () => ctx.createGain());
+  // How many tracks sit on each bus. A pitch bus is wired into the worklet only
+  // while this is non-zero; the unpitched bus is wired for good. See the same
+  // field in chunkedAudioEngine.js for why: a bus wired with nothing playing
+  // into it still reaches the processor as a channel of silence, which it took
+  // as a lane to transpose, so twelve pitch chains ran on silence for every
+  // track at zero transpose (#576, #575).
+  const busLanes = new Array(INPUT_COUNT).fill(0);
   master.connect(ctx.destination);
 
   let _playbackRate = 1.0;
@@ -57,7 +65,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
         // The worklet loads asynchronously, so anything set before it arrived
         // would otherwise be dropped. Re-apply the current value now.
         stNode.parameters.get('tempo').value = _playbackRate;
-        for (let k = 0; k < INPUT_COUNT; k++) buses[k].connect(stNode, 0, k);
+        // Tracks decoded before the worklet arrived are already routed, so
+        // wire whichever pitch buses they occupy.
+        buses[ZERO_INPUT].connect(stNode, 0, ZERO_INPUT);
+        for (let k = 0; k < INPUT_COUNT; k++) {
+          if (k !== ZERO_INPUT && busLanes[k] > 0) buses[k].connect(stNode, 0, k);
+        }
         stNode.connect(master);
       }).catch((err) => {
         console.warn('[audioEngine] SoundTouch worklet load failed, using tape-effect fallback:', err);
@@ -314,6 +327,24 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const ROUTE_FADE = 0.006;
   const ROUTE_HOLD = 0.02;
 
+  // A track arriving on, or leaving, a bus. Mirrors chunkedAudioEngine.js:
+  // only the first arrival and the last departure touch the worklet, the
+  // unpitched bus stays wired whatever its count because the click is
+  // scheduled onto it directly, and arrival is announced before the track
+  // connects so the bus is live by the time anything reaches it. No worklet
+  // means the tape-effect fallback, where every bus already feeds master.
+  function _laneArriving(bus) {
+    const k = buses.indexOf(bus);
+    if (busLanes[k]++ === 0 && k !== ZERO_INPUT && stNode) buses[k].connect(stNode, 0, k);
+  }
+  function _laneLeft(bus) {
+    if (!bus) return;
+    const k = buses.indexOf(bus);
+    if (--busLanes[k] === 0 && k !== ZERO_INPUT && stNode) {
+      try { buses[k].disconnect(stNode, 0, k); } catch { /* worklet already gone */ }
+    }
+  }
+
   /** Connect a track to the bus for its current transpose. */
   function routeTrack(t, immediate = false) {
     if (t.visualOnly) return;
@@ -321,9 +352,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     if (t.bus === target) return;
     const swap = () => {
       if (destroyed) return;
+      const previous = t.bus;
+      _laneArriving(target);
       try { t.analyser.disconnect(); } catch { /* was not connected yet */ }
       t.analyser.connect(target);
       t.bus = target;
+      _laneLeft(previous);
     };
     if (immediate || !playing) { swap(); return; }
     const g = t.gain.gain;
