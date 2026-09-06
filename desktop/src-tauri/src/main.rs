@@ -5017,11 +5017,20 @@ fn wait_for_child(
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            // Joined rather than detached: killing the child closes its ends,
-            // so the readers finish, and dropping the handles without joining
-            // would leak two threads per timeout.
-            let _ = collect(stdout_reader);
-            let _ = collect(stderr_reader);
+            // Detached, not joined. Killing the child closes only the pipe ends
+            // the child itself held: a grandchild inherited the same write ends,
+            // so the pipe stays open and the reader stays blocked in
+            // read_to_end. Joining it here would be waiting on a process whose
+            // lifetime we do not control, which is not a timeout at all -- with
+            // `sh -c "sleep 300"`, which forks rather than execs, it waited the
+            // full 300 seconds against a 2 second deadline (#583).
+            //
+            // The threads are not leaked in any way that matters. Each ends by
+            // itself the moment the last writer closes the pipe, which is the
+            // same instant a join would have returned, minus the part where the
+            // caller is held there too.
+            drop(stdout_reader);
+            drop(stderr_reader);
             return Err(format!(
                 "{label} timed out after {} seconds",
                 timeout.as_secs()
