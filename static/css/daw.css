@@ -2859,6 +2859,10 @@ input, textarea { font-family: inherit; }
 .metro-group:hover { background: var(--panel-3); }
 .metro-group:focus { border-color: var(--accent); }
 .metro-group::placeholder { color: var(--muted); }
+.metro-group-label {
+  color: var(--muted); font-size: 11px; font-weight: 500;
+  letter-spacing: .02em; flex-shrink: 0; align-self: center;
+}
 
 /* Detection confidence / unavailability note: its own line under the
    waveform, where it reads as a caption on the timeline it describes (design

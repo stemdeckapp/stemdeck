@@ -1148,11 +1148,14 @@ function _applyCustomBeatsPerBar() {
 function _renderMetroGrouping() {
   if (!metroGroupEl) return;
   const n = metronomeBeatsPerBar;
+  const label = document.getElementById("t-metro-group-label");
   if (!(n >= 5)) {
     metroGroupEl.classList.add("hidden");
+    label?.classList.add("hidden");
     return;
   }
   metroGroupEl.classList.remove("hidden");
+  label?.classList.remove("hidden");
   metroGroupEl.value = normaliseGrouping(metronomeGrouping, n).join("+");
   metroGroupEl.placeholder = defaultGrouping(n).join("+");
 }
@@ -1243,7 +1246,25 @@ function _renderMetroNote(grid) {
     } else if (metronomeBeatsPerBar < 0 && nBars > 1) {
       text = t("metro.note.detectedMultiBar", { bpm: bpmStr, conf, count: nBars });
     } else if (metronomeBeatsPerBar > 0) {
-      text = t("metro.note.full", { bpm: bpmStr, conf, accent: metronomeBeatsPerBar });
+      // A grouped bar accents more than the 1, so "accenting every N beats"
+      // would describe a click that is not being played (#595). Say the
+      // grouping and name the beats it stresses, which is also the only place
+      // the panel explains what "3+2" in the grouping box means.
+      const g = normaliseGrouping(metronomeGrouping, metronomeBeatsPerBar);
+      if (g.length > 1) {
+        const stressed = [];
+        let at = 1;
+        for (const n of g) { stressed.push(at); at += n; }
+        text = t("metro.note.grouped", {
+          bpm: bpmStr,
+          conf,
+          accent: metronomeBeatsPerBar,
+          groups: g.join("+"),
+          stress: t("metro.note.stress", { beats: stressed.join(", ") }),
+        });
+      } else {
+        text = t("metro.note.full", { bpm: bpmStr, conf, accent: metronomeBeatsPerBar });
+      }
     } else {
       text = t("metro.note.noAccent", { bpm: bpmStr, conf });
     }

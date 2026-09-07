@@ -77,10 +77,11 @@ test.describe("click track", () => {
     const ui = metro(page);
     const custom = page.locator("#t-metro-bar-custom");
 
-    // Presets leave the free-entry box hidden.
+    // Presets leave the free-entry box hidden. 5 carries a grouping, so the
+    // note describes the 3+2 it is actually playing rather than a flat accent.
     await ui.accent.selectOption("5");
     await expect(custom).toBeHidden();
-    await expect(ui.note).toContainText("accenting every 5 beats");
+    await expect(ui.note).toContainText("counting 5 in 3+2");
 
     // "Custom..." reveals it, and a typed value is what actually applies.
     await ui.accent.selectOption("custom");
@@ -110,11 +111,17 @@ test.describe("click track", () => {
     await ui.accent.selectOption("7");
     await expect(group).toBeVisible();
     await expect(group).toHaveValue("3+2+2");
+    // The box is labelled and the note spells out what "3+2+2" does, so the
+    // grouping is not a bare number the user has to decode.
+    await expect(page.locator("#t-metro-group-label")).toBeVisible();
+    await expect(ui.note).toContainText("counting 7 in 3+2+2");
+    await expect(ui.note).toContainText("stress on 1, 4, 6");
 
     // A grouping that fits the bar is taken.
     await group.fill("2+2+3");
     await group.blur();
     await expect(group).toHaveValue("2+2+3");
+    await expect(ui.note).toContainText("stress on 1, 3, 5");
 
     // One that does not is refused rather than repaired, and the box snaps back
     // to what is actually being played.
@@ -122,9 +129,12 @@ test.describe("click track", () => {
     await group.blur();
     await expect(group).toHaveValue("3+2+2");
 
-    // Leaving the odd meter puts the control away again.
+    // Leaving the odd meter puts the control away again, and the note goes back
+    // to describing a plain accent rather than a grouping that is not playing.
     await ui.accent.selectOption("4");
     await expect(group).toBeHidden();
+    await expect(page.locator("#t-metro-group-label")).toBeHidden();
+    await expect(ui.note).toContainText("accenting every 4 beats");
   });
 
   test("the rate control reports the tempo it is actually clicking", async ({ page }) => {
