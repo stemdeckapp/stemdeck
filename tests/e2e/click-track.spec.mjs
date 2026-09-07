@@ -71,6 +71,31 @@ test.describe("click track", () => {
     await expect(page.locator("#t-metro-countin").locator("xpath=..")).not.toHaveClass(/active/);
   });
 
+  test("a custom meter can be typed and drives the accent note", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await waitForClickTrack(page);
+    const ui = metro(page);
+    const custom = page.locator("#t-metro-bar-custom");
+
+    // Presets leave the free-entry box hidden.
+    await ui.accent.selectOption("5");
+    await expect(custom).toBeHidden();
+    await expect(ui.note).toContainText("accenting every 5 beats");
+
+    // "Custom..." reveals it, and a typed value is what actually applies.
+    await ui.accent.selectOption("custom");
+    await expect(custom).toBeVisible();
+    await custom.fill("11");
+    await custom.blur();
+    await expect(ui.note).toContainText("accenting every 11 beats");
+
+    // Out of range is clamped to what the backend accepts, never rejected.
+    await custom.fill("99");
+    await custom.blur();
+    await expect(custom).toHaveValue("32");
+    await expect(ui.note).toContainText("accenting every 32 beats");
+  });
+
   test("the rate control reports the tempo it is actually clicking", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page);

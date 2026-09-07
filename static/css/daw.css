@@ -2835,6 +2835,17 @@ input, textarea { font-family: inherit; }
   color: var(--accent);
 }
 
+/* Free-entry meter, revealed by the "Custom..." option. Sized to three digits
+   so it sits next to the select rather than stretching the footer row. */
+.metro-custom-beats {
+  width: 58px; height: 34px; padding: 0 6px 0 8px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 8px; color: var(--fg);
+  font-family: inherit; font-size: 12px; font-weight: 500; outline: none;
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+.metro-custom-beats:hover { background: var(--panel-3); }
+.metro-custom-beats:focus { border-color: var(--accent); }
 
 /* Detection confidence / unavailability note: its own line under the
    waveform, where it reads as a caption on the timeline it describes (design

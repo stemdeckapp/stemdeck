@@ -15,7 +15,7 @@ import {
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
   loopStartInput, loopEndInput,
-  metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroNoteEl,
+  metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroBarCustomEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
   metronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar, metronomeHasBars,
   metronomeCountInBars, setMetronomeCountInBars,
@@ -1095,6 +1095,40 @@ function _renderMetroVolume() {
   if (metroVolLabel) metroVolLabel.textContent = pct;
 }
 
+// Show the meter in the select when it is one of the presets, otherwise select
+// "Custom..." and reveal the number input holding the actual value. Keeping the
+// two in sync in one place means a value restored from prefs, a preset pick and
+// a typed number all land the same way.
+function _renderMetroBar() {
+  if (!metroBarEl) return;
+  const n = metronomeBeatsPerBar;
+  const preset = [...metroBarEl.options].some((o) => o.value === String(n));
+  if (preset) {
+    metroBarEl.value = String(n);
+    metroBarCustomEl?.classList.add("hidden");
+  } else {
+    metroBarEl.value = "custom";
+    if (metroBarCustomEl) {
+      metroBarCustomEl.value = String(n);
+      metroBarCustomEl.classList.remove("hidden");
+    }
+  }
+}
+// Clamp a typed meter into the range the backend already validates
+// (beats_per_bar is ge=1, le=32 in app/api/jobs.py) and apply it. Anything
+// unparseable falls back to 4 rather than to Auto: the user explicitly asked
+// for a custom meter, so dropping them back to detection would be surprising.
+function _applyCustomBeatsPerBar() {
+  if (!metroBarCustomEl) return;
+  const raw = parseInt(metroBarCustomEl.value, 10);
+  const n = Number.isFinite(raw) ? Math.max(1, Math.min(32, raw)) : 4;
+  metroBarCustomEl.value = String(n);
+  setMetronomeBeatsPerBar(n);
+  applyMetronomeAccent();
+  _renderMetroNote(_lastGrid);
+  _saveMetroPrefs();
+}
+
 // Count-in is a length select rather than the press-to-arm toggle it used to
 // be (#587): once "how many bars" is a question, on/off is just the zero case,
 // and a separate toggle beside a length would be two widgets for one setting.
@@ -1200,7 +1234,7 @@ export function updateMetronomeAvailability(grid, reason = "") {
     autoOpt.disabled = !metronomeHasBars;
     autoOpt.textContent = metronomeHasBars ? t("click.auto") : t("click.autoNone");
   }
-  if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
+  _renderMetroBar();
   _renderMetroMultiplier();
   _renderMetroNote(grid);
 }
@@ -1222,7 +1256,7 @@ function wireMetronomeControl() {
       else if (typeof prefs.countIn === "boolean") setMetronomeCountInBars(prefs.countIn ? 1 : 0);
     }
     _renderMetroVolume();
-    if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
+    _renderMetroBar();
     _renderCountIn();
     if (metronomeEnabled && !metroBtn.disabled) {
       metroBtn.classList.add("active");
@@ -1258,10 +1292,21 @@ function wireMetronomeControl() {
   });
 
   metroBarEl?.addEventListener("change", () => {
+    if (metroBarEl.value === "custom") {
+      // Seed from whatever the box already holds so picking "Custom..." does
+      // not silently jump the meter to something the user never chose.
+      metroBarCustomEl?.classList.remove("hidden");
+      _applyCustomBeatsPerBar();
+      metroBarCustomEl?.focus();
+      return;
+    }
+    metroBarCustomEl?.classList.add("hidden");
     const raw = parseInt(metroBarEl.value, 10);
     setMetronomeBeatsPerBar(Number.isFinite(raw) ? raw : -1);
     applyMetronomeAccent();
     _renderMetroNote(_lastGrid);
     _saveMetroPrefs();
   });
+
+  metroBarCustomEl?.addEventListener("change", _applyCustomBeatsPerBar);
 }

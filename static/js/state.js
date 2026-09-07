@@ -64,6 +64,7 @@ export const metroHalfBtn = $("t-metro-half");
 export const metroOneBtn = $("t-metro-one");
 export const metroDoubleBtn = $("t-metro-double");
 export const metroCountInEl = $("t-metro-countin");
+export const metroBarCustomEl = $("t-metro-bar-custom");
 export const metroEditBtn = $("t-metro-edit");
 export const exportClickEl = $("t-export-click");
 export const exportClickWrap = $("t-export-click-wrap");
