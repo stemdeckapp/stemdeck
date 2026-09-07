@@ -1164,6 +1164,8 @@ function _renderMetroGrouping() {
 // A grouping that does not sum to the bar length is rejected rather than
 // repaired -- a half-understood one would accent beats the user never asked
 // for -- and the box snaps back to what is actually being played.
+let _groupWarnTimer = null;
+
 function _applyGrouping() {
   if (!metroGroupEl) return;
   const n = metronomeBeatsPerBar;
@@ -1172,11 +1174,28 @@ function _applyGrouping() {
     .filter(Boolean)
     .map((x) => parseInt(x, 10));
   const sum = parts.reduce((a, b) => a + b, 0);
-  setMetronomeGrouping(parts.length && sum === n ? parts : null);
+  const ok = parts.length > 0 && sum === n;
+  setMetronomeGrouping(ok ? parts : null);
   _renderMetroGrouping();
   applyMetronomeAccent();
   _renderMetroNote(_lastGrid);
   _saveMetroPrefs();
+  // Snapping back to the default without saying why reads as the box being
+  // broken rather than as the input being refused. An empty box is a
+  // deliberate "use the default", so only a non-empty one that does not fit
+  // is worth complaining about.
+  if (!ok && parts.length) {
+    metroGroupEl.classList.add("invalid");
+    if (metroNoteEl) {
+      metroNoteEl.textContent = t("click.groupMustSum", { beats: n });
+      metroNoteEl.className = "metro-note warn";
+    }
+    clearTimeout(_groupWarnTimer);
+    _groupWarnTimer = setTimeout(() => {
+      metroGroupEl.classList.remove("invalid");
+      _renderMetroNote(_lastGrid);
+    }, 2600);
+  }
 }
 
 // Count-in is a length select rather than the press-to-arm toggle it used to

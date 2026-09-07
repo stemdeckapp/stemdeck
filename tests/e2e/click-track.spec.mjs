@@ -123,11 +123,20 @@ test.describe("click track", () => {
     await expect(group).toHaveValue("2+2+3");
     await expect(ui.note).toContainText("stress on 1, 3, 5");
 
-    // One that does not is refused rather than repaired, and the box snaps back
-    // to what is actually being played.
+    // One that does not is refused rather than repaired -- and says so, because
+    // a box that snaps back on its own reads as broken rather than as refused.
     await group.fill("3+3");
     await group.blur();
     await expect(group).toHaveValue("3+2+2");
+    await expect(group).toHaveClass(/invalid/);
+    await expect(ui.note).toContainText("add up to 7");
+
+    // Clearing the box is a deliberate "use the default", not a mistake, so it
+    // must not be scolded.
+    await group.fill("");
+    await group.blur();
+    await expect(group).toHaveValue("3+2+2");
+    await expect(group).not.toHaveClass(/invalid/);
 
     // Leaving the odd meter puts the control away again, and the note goes back
     // to describing a plain accent rather than a grouping that is not playing.
