@@ -24,6 +24,7 @@ import {
   footerTitle, footerMeta, footerThumb,
   setFooterWaveDrawFn, setOverviewRerenderFn, autoSectionsResetFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
+  metronomeCountInBars,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
   setMetronomeHasBars,
 } from "./state.js";
@@ -1828,12 +1829,17 @@ function _clickParams(q) {
 }
 
 // Count-in export param (issue #269). Independent of the running click track:
-// a clean backing track can still be counted in. One bar of the detected meter,
+// a clean backing track can still be counted in. Bars of the detected meter,
 // prepended ahead of the audio by the backend. Audio exports only -- the MP4
 // video path leaves it off, since prepending it would desync the picture.
+//
+// Length follows the transport's count-in setting (#587), so an export counts
+// the user in for as long as playback does. When the transport count-in is off
+// but the export box is ticked, one bar -- the behaviour before the setting
+// existed, and the only sensible reading of "count me in" with no length given.
 function _countInParam(q) {
   if (!exportCountInEl?.checked || exportCountInEl.disabled) return;
-  q.set("count_in", "1");
+  q.set("count_in", String(metronomeCountInBars > 0 ? metronomeCountInBars : 1));
   // The count-in's tempo/meter follow the same rate and accent the click uses,
   // so pass them even when the click itself is not being baked in.
   q.set("click_mult", String(metronome?.getMultiplier?.() ?? 1));

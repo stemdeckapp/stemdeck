@@ -18,7 +18,7 @@ import {
   metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
   metronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar, metronomeHasBars,
-  metronomeCountIn, setMetronomeCountIn,
+  metronomeCountInBars, setMetronomeCountInBars,
   setMetronomeHasBars,
   setMetronomeEnabled, setMetronomeVolume, setMetronomeBeatsPerBar,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
@@ -487,11 +487,11 @@ function _currentGrid() {
 // the gap, whether or not the running click is on. Returns true when it took
 // over starting playback, so the caller does not also start it immediately.
 function _armCountIn(eng, startPos) {
-  if (!metronomeCountIn || !eng?.supportsCountIn || !metronome) return false;
+  if (metronomeCountInBars < 1 || !eng?.supportsCountIn || !metronome) return false;
   const grid = _currentGrid();
   if (!grid) return false;
   const { leadIn, clicks } = computeCountIn(grid.beats, grid.bars, {
-    countBars: 1,
+    countBars: metronomeCountInBars,
     multiplier: metronome.getMultiplier?.() ?? 1,
     accentMode: metronomeBeatsPerBar,
     start: startPos,
@@ -1065,7 +1065,7 @@ function _saveMetroPrefs() {
     enabled: metronomeEnabled,
     volume: metronomeVolume,
     beatsPerBar: metronomeBeatsPerBar,
-    countIn: metronomeCountIn,
+    countInBars: metronomeCountInBars,
   }).catch((e) => console.warn("[transport] failed to save metronome prefs:", e));
 }
 
@@ -1095,13 +1095,17 @@ function _renderMetroVolume() {
   if (metroVolLabel) metroVolLabel.textContent = pct;
 }
 
-// Count-in is a press-to-arm toggle like the click on/off beside it, not a
-// switch: both are "is this on for the next play?", and two different widgets
-// for the same question read as two different kinds of setting.
+// Count-in is a length select rather than the press-to-arm toggle it used to
+// be (#587): once "how many bars" is a question, on/off is just the zero case,
+// and a separate toggle beside a length would be two widgets for one setting.
+// "Armed" therefore reads as a non-zero value, and the tint lives on the
+// wrapper because a styled <select> cannot carry it.
 function _renderCountIn() {
   if (!metroCountInEl) return;
-  metroCountInEl.classList.toggle("active", metronomeCountIn);
-  metroCountInEl.setAttribute("aria-pressed", metronomeCountIn ? "true" : "false");
+  metroCountInEl.value = String(metronomeCountInBars);
+  // The wrap carries the "on" tint the toggle button used to, so the panel
+  // still shows at a glance that a count-in is armed.
+  metroCountInEl.parentElement?.classList.toggle("active", metronomeCountInBars > 0);
 }
 
 export function toggleMetronome(force) {
@@ -1211,7 +1215,11 @@ function wireMetronomeControl() {
       if (typeof prefs.volume === "number") setMetronomeVolume(Math.max(0, Math.min(1, prefs.volume)));
       if (typeof prefs.beatsPerBar === "number") setMetronomeBeatsPerBar(prefs.beatsPerBar);
       if (typeof prefs.enabled === "boolean") setMetronomeEnabled(prefs.enabled);
-      if (typeof prefs.countIn === "boolean") setMetronomeCountIn(prefs.countIn);
+      // countInBars superseded the countIn boolean (#587). Read the old key
+      // when the new one is absent so an upgrade keeps the count-in armed
+      // rather than silently turning it off.
+      if (typeof prefs.countInBars === "number") setMetronomeCountInBars(prefs.countInBars);
+      else if (typeof prefs.countIn === "boolean") setMetronomeCountInBars(prefs.countIn ? 1 : 0);
     }
     _renderMetroVolume();
     if (metroBarEl) metroBarEl.value = String(metronomeBeatsPerBar);
@@ -1243,8 +1251,8 @@ function wireMetronomeControl() {
     });
   }
 
-  metroCountInEl?.addEventListener("click", () => {
-    setMetronomeCountIn(!metronomeCountIn);
+  metroCountInEl?.addEventListener("change", () => {
+    setMetronomeCountInBars(parseInt(metroCountInEl.value, 10));
     _renderCountIn();
     _saveMetroPrefs();
   });

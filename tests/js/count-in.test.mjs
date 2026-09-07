@@ -102,5 +102,38 @@ const STEADY = Array.from({ length: 16 }, (_, i) => 0.5 + i * 0.5);
   check("empty when disabled", disabled.leadIn === 0 && disabled.clicks.length === 0);
 }
 
+{
+  // #587: the panel now offers 1-4 bars, so every length the select can reach
+  // has to produce a whole number of bars with an accent on each downbeat.
+  // Python's count_in_beats is held to the same shape in
+  // tests/test_click_render.py::test_longer_count_in_lengthens_the_lead_in.
+  const bars = [{ beat: 0, beats_per_bar: 4 }];
+  for (const n of [1, 2, 3, 4]) {
+    const { leadIn, clicks } = computeCountIn(STEADY, bars, { countBars: n });
+    check(`${n}-bar count-in: lead-in is ${n} bars`, approx(leadIn, 2.0 * n), `got ${leadIn}`);
+    check(`${n}-bar count-in: ${4 * n} clicks`, clicks.length === 4 * n, `got ${clicks.length}`);
+    const accents = clicks.filter((c) => c.accent).length;
+    check(`${n}-bar count-in: one accent per bar`, accents === n, `got ${accents}`);
+    check(
+      `${n}-bar count-in: accents land on downbeats`,
+      clicks.every((c, i) => c.accent === (i % 4 === 0)),
+    );
+  }
+}
+
+{
+  // A count-in in 7/8 is 7 clicks a bar, not 4 -- the custom meter the click
+  // panel now accepts has to reach the count-in too, not just the accents.
+  const { leadIn, clicks } = computeCountIn(STEADY, [{ beat: 0, beats_per_bar: 7 }], {
+    countBars: 2,
+  });
+  check("7/8 x2: 14 clicks", clicks.length === 14, `got ${clicks.length}`);
+  check("7/8 x2: lead-in is 7.0 s", approx(leadIn, 7.0), `got ${leadIn}`);
+  check(
+    "7/8 x2: accents only on the two downbeats",
+    clicks.filter((c) => c.accent).length === 2 && clicks[0].accent && clicks[7].accent,
+  );
+}
+
 console.log(`\n${pass}/${pass + fail} checks passed`);
 process.exit(fail ? 1 : 0);

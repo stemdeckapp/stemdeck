@@ -245,7 +245,18 @@ export function setMetronomeBeatsPerBar(v) { metronomeBeatsPerBar = v; }
 // them "Auto" has nothing to follow and behaves as no accent.
 export let metronomeHasBars = false;
 export function setMetronomeHasBars(v) { metronomeHasBars = !!v; }
-// Count me in on play: one bar of click before the audio (issue #269).
-// Independent of the running click track above.
-export let metronomeCountIn = false;
-export function setMetronomeCountIn(v) { metronomeCountIn = !!v; }
+// Count me in on play: N bars of click before the audio (issue #269).
+// 0 = off; 1..MAX_COUNT_IN_BARS = that many bars. Independent of the running
+// click track above.
+//
+// Bars rather than a raw click count (#587 asked for "more clicks"): the
+// count-in has to land the song on a downbeat, and computeCountIn derives its
+// clicks as countBars * beatsPerBar. A literal click count would break that
+// alignment in any meter, and in 4/4 the bar counts already give 4, 8, 12 and
+// 16 clicks, which is the span the request was actually about.
+export const MAX_COUNT_IN_BARS = 4;
+export let metronomeCountInBars = 0;
+export function setMetronomeCountInBars(v) {
+  const n = Math.round(Number(v));
+  metronomeCountInBars = Number.isFinite(n) ? Math.max(0, Math.min(MAX_COUNT_IN_BARS, n)) : 0;
+}

@@ -753,12 +753,15 @@
                 <span data-i18n="click.on">ON</span>
               </button>
               <div class="footer-metro-panel hidden" id="t-metro-panel" role="group" aria-label="Click track options" data-i18n-aria-label="click.optionsAria">
-                <button class="click-toggle-btn" id="t-metro-countin" type="button" title="Count one bar of click before the song starts when you press play" data-i18n-title="click.countInTitle" aria-pressed="false">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                    <path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/>
-                  </svg>
-                  <span data-i18n="click.countIn">Count-in</span>
-                </button>
+                <span class="metro-select-wrap">
+                  <select id="t-metro-countin" class="metro-select" title="Bars of click before the song starts when you press play" data-i18n-title="click.countInTitle" aria-label="Count-in" data-i18n-aria-label="click.countIn">
+                    <option value="0" selected data-i18n="click.countInOff">Count-in: off</option>
+                    <option value="1" data-i18n="click.countIn1">Count-in: 1 bar</option>
+                    <option value="2" data-i18n="click.countIn2">Count-in: 2 bars</option>
+                    <option value="3" data-i18n="click.countIn3">Count-in: 3 bars</option>
+                    <option value="4" data-i18n="click.countIn4">Count-in: 4 bars</option>
+                  </select>
+                </span>
                 <span class="metro-select-wrap">
                   <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats" data-i18n-aria-label="click.barAccentAria">
                     <option value="-1" selected data-i18n="click.auto">Auto (detected)</option>

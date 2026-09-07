@@ -2828,6 +2828,14 @@ input, textarea { font-family: inherit; }
 .metro-select:hover { background: var(--panel-3); }
 .metro-select:focus { border-color: var(--accent); }
 
+/* An armed count-in tints its select the way the toggle button it replaced
+   used to tint itself (#587), so the panel still reads at a glance. */
+.metro-select-wrap.active .metro-select {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+
 /* Detection confidence / unavailability note: its own line under the
    waveform, where it reads as a caption on the timeline it describes (design
    1b). Hidden until it has text, clipped to one line with the full text as a

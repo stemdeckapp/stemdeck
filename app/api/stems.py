@@ -805,7 +805,15 @@ async def get_mixdown(
     click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
     click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
     count_in: int = Query(
-        default=0, ge=0, le=2, description="Count-in bars before the audio (0 off)"
+        # Ceiling matches MAX_COUNT_IN_BARS in static/js/state.js, the longest
+        # count-in the UI can ask for (#587). The lead-in it prepends is
+        # count_in * beats_per_bar * beat_interval seconds of extra render, and
+        # beats_per_bar is itself capped at 32, so this bounds the allocation
+        # the same way `end` is bounded by _validate_trim_range.
+        default=0,
+        ge=0,
+        le=4,
+        description="Count-in bars before the audio (0 off)",
     ),
 ) -> FileResponse | StreamingResponse:
     """Render a mixdown of the given lanes at the given gains, streamed as WAV,

@@ -500,12 +500,36 @@ def test_mixdown_cache_key_separates_click_from_clean(client, tmp_path):
     assert clean != clicked, "a click export must never reuse a clean render"
 
 
-@pytest.mark.parametrize("bad", ["click_accent=99", "click_accent=-2", "count_in=3", "count_in=-1"])
+@pytest.mark.parametrize("bad", ["click_accent=99", "click_accent=-2", "count_in=5", "count_in=-1"])
 def test_mixdown_rejects_out_of_range_click_params(client, tmp_path, bad):
     _setup_job(tmp_path)
     (tmp_path / JOB / "stems" / "drums.wav").write_bytes(b"RIFF")
     r = client.get(f"/api/jobs/{JOB}/mixdown.wav?stems=drums&gains=1.0&click=1&{bad}")
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("bars", [1, 2, 3, 4])
+def test_mixdown_accepts_every_count_in_length_the_ui_offers(client, tmp_path, bars):
+    """The count-in select goes up to MAX_COUNT_IN_BARS (4) in
+    static/js/state.js. The query cap used to be 2, so picking 3 or 4 in the
+    panel would have 422'd the export while playback counted in fine (#587)."""
+    _setup_job(tmp_path)
+    (tmp_path / JOB / "stems" / "drums.wav").write_bytes(b"RIFF")
+    r = client.get(f"/api/jobs/{JOB}/mixdown.wav?stems=drums&gains=1.0&click=1&count_in={bars}")
+    assert r.status_code != 422, f"count_in={bars} must be accepted"
+
+
+def test_longer_count_in_lengthens_the_lead_in(client, tmp_path):
+    """Each extra bar adds a bar of lead-in, so a 4-bar count-in is four times
+    the 1-bar one. Guards the arithmetic the UI now depends on for 2, 3 and 4."""
+    from app.api import stems as stems_mod
+
+    _setup_job(tmp_path)  # beats 0.5..2.0 at 0.5 s, 4/4
+    one = stems_mod._click_lane(JOB, True, 1.0, ACCENT_AUTO, 0.6, count_in_bars=1)
+    four = stems_mod._click_lane(JOB, True, 1.0, ACCENT_AUTO, 0.6, count_in_bars=4)
+    assert one is not None and four is not None
+    assert four.lead_in == pytest.approx(one.lead_in * 4)
+    assert four.path != one.path, "each length needs its own cache entry"
 
 
 def test_click_lane_count_in_bakes_the_lead_in(client, tmp_path):
