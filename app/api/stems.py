@@ -216,6 +216,26 @@ class _ClickLane(NamedTuple):
     count_in: bool
 
 
+def _parse_groups(raw: str, accent_mode: int) -> list[int] | None:
+    """Parse a "3+2+2" grouping, or None to use the default.
+
+    Rejected wholesale rather than repaired, and never a 422: a grouping that
+    does not fit the bar would put accents on beats the user never asked for,
+    and an export is better served with the default grouping than refused. The
+    same rule the browser applies in transport.js::_applyGrouping, so a URL a
+    user cannot produce from the UI degrades to what the UI would have sent.
+
+    Only meaningful with an explicit meter -- under Auto each detected bar is
+    grouped by its own length, so one grouping cannot be assumed to fit.
+    """
+    if not raw or accent_mode <= 0:
+        return None
+    parts = [int(p) for p in re.findall(r"\d+", raw)[:32]]
+    if not parts or any(p < 1 for p in parts) or sum(parts) != accent_mode:
+        return None
+    return parts
+
+
 def _click_lane(
     job_id: str,
     enabled: bool,
@@ -225,6 +245,7 @@ def _click_lane(
     count_in_bars: int = 0,
     start: float | None = None,
     end: float | None = None,
+    groups: list[int] | None = None,
 ) -> _ClickLane | None:
     """Render (or reuse) the click / count-in track for this job as an extra
     ffmpeg input, or None when both are off or the job has no beat grid.
@@ -260,6 +281,7 @@ def _click_lane(
         include_click=enabled,
         start=start,
         end=end,
+        groups=groups,
     )
     path = _CLICK_CACHE_DIR / f"{key}.wav"
 
@@ -267,7 +289,7 @@ def _click_lane(
         # lead_in is a pure function of the grid; recompute it even on a cache
         # hit so the caller can delay the stems without re-reading the WAV.
         lead_in, _ = count_in_beats(
-            beats, bars, count_in_bars, multiplier, accent_mode, start=start or 0.0
+            beats, bars, count_in_bars, multiplier, accent_mode, start=start or 0.0, groups=groups
         )
         if not path.is_file():
             try:
@@ -283,6 +305,7 @@ def _click_lane(
                     include_click=enabled,
                     start=start or 0.0,
                     end=end,
+                    groups=groups,
                 )
             except Exception:
                 logger.exception("count-in render failed for %s", job_id)
@@ -305,6 +328,7 @@ def _click_lane(
                 sample_rate=sample_rate,
                 multiplier=multiplier,
                 accent_mode=accent_mode,
+                groups=groups,
             )
         except Exception:
             logger.exception("click render failed for %s", job_id)
@@ -804,6 +828,11 @@ async def get_mixdown(
     click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
     click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
     click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
+    click_groups: str = Query(
+        default="",
+        max_length=64,
+        description='Beat grouping for an explicit meter, e.g. "3+2+2". Blank uses the default.',
+    ),
     count_in: int = Query(
         # Ceiling matches MAX_COUNT_IN_BARS in static/js/state.js, the longest
         # count-in the UI can ask for (#587). The lead-in it prepends is
@@ -858,6 +887,7 @@ async def get_mixdown(
         count_in_bars=count_in,
         start=start,
         end=end,
+        groups=_parse_groups(click_groups, click_accent),
     )
     cache_key = _mixdown_cache_key(job_id, ext, names, parsed_gains, start, end, click_lane)
     cache_path = _MIXDOWN_CACHE_DIR / f"{cache_key}.{ext}"

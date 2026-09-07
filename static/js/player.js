@@ -24,7 +24,7 @@ import {
   footerTitle, footerMeta, footerThumb,
   setFooterWaveDrawFn, setOverviewRerenderFn, autoSectionsResetFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
-  metronomeCountInBars,
+  metronomeCountInBars, metronomeGrouping,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
   setMetronomeHasBars,
 } from "./state.js";
@@ -1826,6 +1826,7 @@ function _clickParams(q) {
   q.set("click_mult", String(metronome?.getMultiplier?.() ?? 1));
   q.set("click_accent", String(metronomeBeatsPerBar));
   q.set("click_gain", metronomeVolume.toFixed(3));
+  if (metronomeGrouping) q.set("click_groups", metronomeGrouping.join("+"));
 }
 
 // Count-in export param (issue #269). Independent of the running click track:
@@ -1845,6 +1846,7 @@ function _countInParam(q) {
   q.set("click_mult", String(metronome?.getMultiplier?.() ?? 1));
   q.set("click_accent", String(metronomeBeatsPerBar));
   q.set("click_gain", metronomeVolume.toFixed(3));
+  if (metronomeGrouping) q.set("click_groups", metronomeGrouping.join("+"));
 }
 
 /** Whether this track can export a click / count-in at all (needs a beat grid). */

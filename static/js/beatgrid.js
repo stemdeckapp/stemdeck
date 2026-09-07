@@ -418,6 +418,23 @@ export function isDownbeatIndex(i) {
   return _isDownbeat(i);
 }
 
+/**
+ * Where a beat sits inside its bar, as `[offset, barLength]`, or null when no
+ * bar mark applies. The metronome needs the position rather than a downbeat
+ * yes/no so it can group an odd or compound bar (#595); `_bar_position` in
+ * app/pipeline/click_render.py is the same lookup on the export side.
+ */
+export function barPositionIndex(i) {
+  if (!_bars.length) return null;
+  let mark = null;
+  for (const b of _bars) {
+    if (b.beat <= i) mark = b;
+    else break;
+  }
+  if (!mark || !Number.isInteger(mark.beats_per_bar) || mark.beats_per_bar < 1) return null;
+  return [(i - mark.beat) % mark.beats_per_bar, mark.beats_per_bar];
+}
+
 // ─── hit testing + pointer handling ─────────────────────────
 
 function _nearestBeat(clientX) {

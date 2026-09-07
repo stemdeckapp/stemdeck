@@ -14,10 +14,16 @@ from app.pipeline.click_render import (
     ACCENT_FREQ,
     ACCENT_OFF,
     CLICK_FREQ,
+    LEVEL_DOWNBEAT,
+    LEVEL_GROUP,
+    LEVEL_WEAK,
+    beat_level,
     cache_key,
     count_in_beats,
     count_in_beats_per_bar,
+    default_grouping,
     is_downbeat,
+    normalise_grouping,
     render_click_wav,
     render_count_in_wav,
     rescale_beats,
@@ -145,14 +151,14 @@ def test_count_in_one_bar_of_four():
     the audio so the song enters on the next downbeat."""
     lead_in, clicks = count_in_beats(_STEADY, [{"beat": 0, "beats_per_bar": 4}])
     assert lead_in == pytest.approx(2.0)
-    assert [a for _, a in clicks] == [True, False, False, False]
+    assert [lv for _, lv in clicks] == [LEVEL_DOWNBEAT, LEVEL_WEAK, LEVEL_WEAK, LEVEL_WEAK]
     assert [round(o, 3) for o, _ in clicks] == [0.0, 0.5, 1.0, 1.5]
 
 
 def test_count_in_follows_detected_meter():
     lead_in, clicks = count_in_beats(_STEADY, [{"beat": 0, "beats_per_bar": 3}])
     assert lead_in == pytest.approx(1.5)
-    assert [a for _, a in clicks] == [True, False, False]
+    assert [lv for _, lv in clicks] == [LEVEL_DOWNBEAT, LEVEL_WEAK, LEVEL_WEAK]
 
 
 def test_count_in_explicit_accent_sets_bar_length():
@@ -168,14 +174,23 @@ def test_count_in_defaults_to_four_without_marks():
 def test_count_in_two_bars_accents_each_downbeat():
     lead_in, clicks = count_in_beats(_STEADY, [{"beat": 0, "beats_per_bar": 4}], count_bars=2)
     assert lead_in == pytest.approx(4.0)
-    assert [a for _, a in clicks] == [True, False, False, False, True, False, False, False]
+    assert [lv for _, lv in clicks] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
 
 
 def test_count_in_still_marks_the_downbeat_when_click_accents_are_off():
     """A count-in without a '1' is useless, so it accents its downbeat even when
     the running click has accents switched off."""
     _, clicks = count_in_beats(_STEADY, [{"beat": 0, "beats_per_bar": 4}], accent_mode=ACCENT_OFF)
-    assert clicks[0][1] is True
+    assert clicks[0][1] == LEVEL_DOWNBEAT
 
 
 def test_count_in_follows_the_rate_multiplier():
@@ -570,3 +585,169 @@ def test_mixdown_cache_key_separates_count_in_from_plain_click(client, tmp_path)
     a = stems_mod._mixdown_cache_key(JOB, "wav", ["drums"], [1.0], None, None, plain)
     b = stems_mod._mixdown_cache_key(JOB, "wav", ["drums"], [1.0], None, None, counted)
     assert a != b, "a count-in export must never reuse a plain click render"
+
+
+# ─── Meter grouping (#595) ───────────────────────────────────────────────
+
+
+def test_default_grouping_leaves_simple_meters_alone():
+    """2, 3 and 4 must sound exactly as they did. 4/4 carries a real secondary
+    stress on beat 3, but turning it on by default would change the commonest
+    meter in the app for every existing user."""
+    for n in (1, 2, 3, 4):
+        assert default_grouping(n) == [n]
+
+
+def test_default_grouping_splits_odd_and_compound_meters():
+    assert default_grouping(5) == [3, 2]
+    assert default_grouping(7) == [3, 2, 2]
+    assert default_grouping(6) == [3, 3]
+    assert default_grouping(9) == [3, 3, 3]
+    assert default_grouping(12) == [3, 3, 3, 3]
+    # A prime with no conventional reading stays flat rather than being guessed.
+    assert default_grouping(11) == [11]
+
+
+def test_a_grouping_that_does_not_fit_the_bar_is_refused_not_repaired():
+    """Half-understood grouping would accent beats the user never asked for."""
+    assert normalise_grouping([3, 3], 7) == [3, 2, 2]
+    assert normalise_grouping([0, 7], 7) == [3, 2, 2]
+    assert normalise_grouping([], 7) == [3, 2, 2]
+    assert normalise_grouping([2, 2, 3], 7) == [2, 2, 3]
+
+
+def test_seven_eight_is_clicked_in_groups_not_flat():
+    """The bug: seven even clicks give a player nothing to lock onto."""
+    levels = [beat_level(i, [], 7) for i in range(7)]
+    assert levels == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+    ]
+
+
+def test_a_user_grouping_moves_the_group_accents():
+    assert [beat_level(i, [], 7, [2, 2, 3]) for i in range(7)] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
+
+
+def test_four_four_is_unchanged_by_grouping():
+    assert [beat_level(i, [], 4) for i in range(8)] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
+
+
+def test_detected_bars_group_by_their_own_length_under_auto():
+    """Auto has no single meter to group: a detected 6/8 passage must group in
+    threes without the user configuring anything, and a user grouping must not
+    be forced onto a bar length it does not fit."""
+    bars = [{"beat": 0, "beats_per_bar": 6}]
+    assert [beat_level(i, bars, ACCENT_AUTO) for i in range(6)] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
+    # A 7-beat grouping is ignored rather than applied to a 6-beat bar.
+    assert [beat_level(i, bars, ACCENT_AUTO, [2, 2, 3]) for i in range(6)] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
+
+
+def test_accents_off_stays_silent_of_accents_even_with_a_grouping():
+    assert [beat_level(i, [], ACCENT_OFF, [3, 2, 2]) for i in range(7)] == [LEVEL_WEAK] * 7
+
+
+def test_the_count_in_is_grouped_like_the_click_it_leads_into():
+    """Counting a player into 7/8 has to give them the 3+2+2 pulse they are
+    about to play, not seven flat clicks."""
+    _, clicks = count_in_beats(_STEADY, [], accent_mode=7)
+    assert [lv for _, lv in clicks] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+    ]
+
+
+def test_the_count_in_follows_a_user_grouping():
+    _, clicks = count_in_beats(_STEADY, [], accent_mode=7, groups=[2, 2, 3])
+    assert [lv for _, lv in clicks] == [
+        LEVEL_DOWNBEAT,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_GROUP,
+        LEVEL_WEAK,
+        LEVEL_WEAK,
+    ]
+
+
+def test_grouping_changes_the_cache_key_but_absence_keeps_the_old_one():
+    """A re-grouped render must not serve the flat file, and every export made
+    before grouping existed must keep hitting its existing cache entry."""
+    args = (JOB, [0.5, 1.0], [], 10.0, SR, 1.0, 7)
+    assert cache_key(*args) == cache_key(*args, groups=None)
+    assert cache_key(*args) != cache_key(*args, groups=[2, 2, 3])
+    assert cache_key(*args, groups=[3, 2, 2]) != cache_key(*args, groups=[2, 2, 3])
+
+
+def test_export_parses_a_grouping_the_same_way_the_browser_does():
+    from app.api.stems import _parse_groups
+
+    assert _parse_groups("3+2+2", 7) == [3, 2, 2]
+    assert _parse_groups("3,2,2", 7) == [3, 2, 2]
+    # Does not fit the bar, is not for an explicit meter, or is not a grouping
+    # at all: fall back to the default rather than 422 an otherwise fine export.
+    assert _parse_groups("3+3", 7) is None
+    assert _parse_groups("3+2+2", ACCENT_AUTO) is None
+    assert _parse_groups("nonsense", 7) is None
+
+
+def test_a_grouped_export_is_accepted_end_to_end(client, tmp_path):
+    _setup_job(tmp_path)
+    (tmp_path / JOB / "stems" / "drums.wav").write_bytes(b"RIFF")
+    r = client.get(
+        f"/api/jobs/{JOB}/mixdown.wav?stems=drums&gains=1.0&click=1"
+        "&click_accent=7&click_groups=3%2B2%2B2"
+    )
+    assert r.status_code != 422
+
+
+def test_a_nonsense_grouping_does_not_fail_the_export(client, tmp_path):
+    """An export is better served with the default grouping than refused."""
+    _setup_job(tmp_path)
+    (tmp_path / JOB / "stems" / "drums.wav").write_bytes(b"RIFF")
+    r = client.get(
+        f"/api/jobs/{JOB}/mixdown.wav?stems=drums&gains=1.0&click=1"
+        "&click_accent=7&click_groups=99%2B99"
+    )
+    assert r.status_code != 422

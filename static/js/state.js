@@ -65,6 +65,7 @@ export const metroOneBtn = $("t-metro-one");
 export const metroDoubleBtn = $("t-metro-double");
 export const metroCountInEl = $("t-metro-countin");
 export const metroBarCustomEl = $("t-metro-bar-custom");
+export const metroGroupEl = $("t-metro-group");
 export const metroEditBtn = $("t-metro-edit");
 export const exportClickEl = $("t-export-click");
 export const exportClickWrap = $("t-export-click-wrap");
@@ -242,6 +243,14 @@ export function setMetronomeVolume(v) { metronomeVolume = v; }
 // every N beats from the top of the track.
 export let metronomeBeatsPerBar = -1;
 export function setMetronomeBeatsPerBar(v) { metronomeBeatsPerBar = v; }
+// How the bar subdivides, e.g. [3,2,2] for a 7 played 3+2+2 (issue #595). null
+// means "use the default for this bar length". Only meaningful with an explicit
+// meter: under Auto the bar length can change bar to bar, so each detected bar
+// is grouped by its own default instead.
+export let metronomeGrouping = null;
+export function setMetronomeGrouping(v) {
+  metronomeGrouping = Array.isArray(v) && v.length ? v.slice() : null;
+}
 // Whether the current track's grid carries detected bar marks at all. Without
 // them "Auto" has nothing to follow and behaves as no accent.
 export let metronomeHasBars = false;

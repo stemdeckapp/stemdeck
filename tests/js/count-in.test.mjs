@@ -9,7 +9,15 @@
 //
 // Run:  node tests/js/count-in.test.mjs
 
-import { computeCountIn } from "../../static/js/metronome.js";
+import {
+  computeCountIn,
+  defaultGrouping,
+  normaliseGrouping,
+  levelAt,
+  LEVEL_WEAK,
+  LEVEL_GROUP,
+  LEVEL_DOWNBEAT,
+} from "../../static/js/metronome.js";
 
 let pass = 0,
   fail = 0;
@@ -133,6 +141,53 @@ const STEADY = Array.from({ length: 16 }, (_, i) => 0.5 + i * 0.5);
     "7/8 x2: accents only on the two downbeats",
     clicks.filter((c) => c.accent).length === 2 && clicks[0].accent && clicks[7].accent,
   );
+}
+
+{
+  // #595 grouping. These expectations are the same spec Python is held to in
+  // tests/test_click_render.py -- default_grouping, beat_level and
+  // count_in_beats there must produce identical numbers, or a player monitors
+  // one thing and exports another.
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  check("simple meters keep one group", eq(
+    [1, 2, 3, 4].map(defaultGrouping), [[1], [2], [3], [4]]));
+  check("odd and compound meters split", eq(
+    [5, 6, 7, 9, 12].map(defaultGrouping),
+    [[3, 2], [3, 3], [3, 2, 2], [3, 3, 3], [3, 3, 3, 3]]));
+  check("a prime with no conventional reading stays flat", eq(defaultGrouping(11), [11]));
+
+  check("a grouping that does not fit the bar is refused", eq(normaliseGrouping([3, 3], 7), [3, 2, 2]));
+  check("a grouping that fits is kept", eq(normaliseGrouping([2, 2, 3], 7), [2, 2, 3]));
+
+  const W = LEVEL_WEAK, G = LEVEL_GROUP, D = LEVEL_DOWNBEAT;
+  check("7/8 is clicked 3+2+2, not flat",
+    eq([...Array(7).keys()].map((i) => levelAt(i, 7, null)), [D, W, W, G, W, G, W]));
+  check("a user grouping moves the group accents",
+    eq([...Array(7).keys()].map((i) => levelAt(i, 7, [2, 2, 3])), [D, W, G, W, G, W, W]));
+  check("4/4 is unchanged",
+    eq([...Array(4).keys()].map((i) => levelAt(i, 4, null)), [D, W, W, W]));
+  check("6/8 is felt in two groups of three",
+    eq([...Array(6).keys()].map((i) => levelAt(i, 6, null)), [D, W, W, G, W, W]));
+}
+
+{
+  // The count-in has to carry the same pulse the click is about to play.
+  const W = LEVEL_WEAK, G = LEVEL_GROUP, D = LEVEL_DOWNBEAT;
+  const { clicks } = computeCountIn(STEADY, [], { accentMode: 7 });
+  check("count-in into 7/8 is grouped",
+    JSON.stringify(clicks.map((c) => c.level)) === JSON.stringify([D, W, W, G, W, G, W]),
+    JSON.stringify(clicks.map((c) => c.level)));
+
+  const custom = computeCountIn(STEADY, [], { accentMode: 7, groups: [2, 2, 3] });
+  check("count-in follows a user grouping",
+    JSON.stringify(custom.clicks.map((c) => c.level)) === JSON.stringify([D, W, G, W, G, W, W]));
+
+  // The old boolean is still exposed, so anything that only asks "is this the
+  // 1" keeps working across the level change.
+  check("accent stays a downbeat-only boolean",
+    JSON.stringify(clicks.map((c) => c.accent)) ===
+      JSON.stringify([true, false, false, false, false, false, false]));
 }
 
 console.log(`\n${pass}/${pass + fail} checks passed`);

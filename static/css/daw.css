@@ -2847,6 +2847,19 @@ input, textarea { font-family: inherit; }
 .metro-custom-beats:hover { background: var(--panel-3); }
 .metro-custom-beats:focus { border-color: var(--accent); }
 
+/* Beat grouping for the current meter, e.g. 3+2+2 (#595). Shown only when the
+   meter has more than one sensible reading. */
+.metro-group {
+  width: 74px; height: 34px; padding: 0 8px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 8px; color: var(--fg);
+  font-family: inherit; font-size: 12px; font-weight: 500; outline: none;
+  font-variant-numeric: tabular-nums; flex-shrink: 0; text-align: center;
+}
+.metro-group:hover { background: var(--panel-3); }
+.metro-group:focus { border-color: var(--accent); }
+.metro-group::placeholder { color: var(--muted); }
+
 /* Detection confidence / unavailability note: its own line under the
    waveform, where it reads as a caption on the timeline it describes (design
    1b). Hidden until it has text, clipped to one line with the full text as a

@@ -96,6 +96,37 @@ test.describe("click track", () => {
     await expect(ui.note).toContainText("accenting every 32 beats");
   });
 
+  test("an odd meter exposes its grouping, and a bad one is refused", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await waitForClickTrack(page);
+    const ui = metro(page);
+    const group = page.locator("#t-metro-group");
+
+    // Simple meters have one sensible reading, so there is nothing to show.
+    await ui.accent.selectOption("4");
+    await expect(group).toBeHidden();
+
+    // 7 is played 3+2+2, and the box says so before the user touches it (#595).
+    await ui.accent.selectOption("7");
+    await expect(group).toBeVisible();
+    await expect(group).toHaveValue("3+2+2");
+
+    // A grouping that fits the bar is taken.
+    await group.fill("2+2+3");
+    await group.blur();
+    await expect(group).toHaveValue("2+2+3");
+
+    // One that does not is refused rather than repaired, and the box snaps back
+    // to what is actually being played.
+    await group.fill("3+3");
+    await group.blur();
+    await expect(group).toHaveValue("3+2+2");
+
+    // Leaving the odd meter puts the control away again.
+    await ui.accent.selectOption("4");
+    await expect(group).toBeHidden();
+  });
+
   test("the rate control reports the tempo it is actually clicking", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page);

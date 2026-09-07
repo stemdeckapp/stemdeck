@@ -28,9 +28,76 @@ const TICK_MS = 50;
 // file; the short exponential decay keeps the transient tight so it reads as
 // percussive rather than tonal.
 const CLICK_FREQ = 1000;
+// Group starts sit between the downbeat and a plain beat in pitch and level, so
+// a grouped bar reads as strong/medium/weak rather than as identical accents
+// (#595). Geometric middle of the two: the ear hears pitch ratios, so the
+// midpoint of 1000 and 1500 is 1225, not 1250. Mirrored in click_render.py.
+const GROUP_FREQ = 1225;
 const ACCENT_FREQ = 1500;
 const CLICK_DECAY = 0.035;
 const CLICK_ATTACK = 0.001;
+
+// Click strength at one beat. click_render.py defines the same three.
+export const LEVEL_WEAK = 0;
+export const LEVEL_GROUP = 1;
+export const LEVEL_DOWNBEAT = 2;
+
+/**
+ * How a bar of `beatsPerBar` divides when the user has not said.
+ *
+ * Mirror of default_grouping() in app/pipeline/click_render.py -- keep both in
+ * step. 2, 3 and 4 deliberately return one group so they sound exactly as they
+ * did; 4/4's real secondary stress on beat 3 is a choice for the user, not a
+ * default that changes the commonest meter for everyone.
+ * @param {number} beatsPerBar
+ * @returns {number[]}
+ */
+export function defaultGrouping(beatsPerBar) {
+  if (!Number.isInteger(beatsPerBar) || beatsPerBar < 1) return [];
+  if (beatsPerBar === 5 || beatsPerBar === 7) {
+    // Long group first: Take Five is 3+2, and 7/8 is more often 3+2+2.
+    return [3, ...Array((beatsPerBar - 3) >> 1).fill(2)];
+  }
+  // Compound: 6, 9 and 12 are felt in dotted-quarter groups of three.
+  if (beatsPerBar >= 6 && beatsPerBar % 3 === 0) return Array(beatsPerBar / 3).fill(3);
+  return [beatsPerBar];
+}
+
+/**
+ * A grouping safe to index a bar with, or the default. Anything that is not a
+ * list of positive integers summing to the bar length is rejected wholesale
+ * rather than repaired: a half-understood grouping would accent beats the user
+ * never asked for, so falling back to the default is the honest failure.
+ * @param {number[]|null|undefined} groups
+ * @param {number} beatsPerBar
+ * @returns {number[]}
+ */
+export function normaliseGrouping(groups, beatsPerBar) {
+  if (!Number.isInteger(beatsPerBar) || beatsPerBar < 1) return [];
+  if (!Array.isArray(groups) || !groups.length) return defaultGrouping(beatsPerBar);
+  if (!groups.every((g) => Number.isInteger(g) && g >= 1)) return defaultGrouping(beatsPerBar);
+  if (groups.reduce((a, b) => a + b, 0) !== beatsPerBar) return defaultGrouping(beatsPerBar);
+  return groups.slice();
+}
+
+/** Beat offsets inside a bar that start a group, excluding the downbeat. */
+export function groupOffsets(groups) {
+  const out = new Set();
+  let at = 0;
+  for (let i = 0; i < groups.length - 1; i++) {
+    at += groups[i];
+    out.add(at);
+  }
+  return out;
+}
+
+/** The click level for a beat `offset` into a bar of `beatsPerBar`. */
+export function levelAt(offset, beatsPerBar, groups) {
+  if (offset === 0) return LEVEL_DOWNBEAT;
+  return groupOffsets(normaliseGrouping(groups, beatsPerBar)).has(offset)
+    ? LEVEL_GROUP
+    : LEVEL_WEAK;
+}
 
 // ─── Count-in (issue #269) ───────────────────────────────────────────────
 //
@@ -84,13 +151,15 @@ function _intervalNear(grid, start, span) {
 
 /**
  * The count-in that leads into playback at `start`.
- * @returns {{leadIn:number, clicks:{offset:number, accent:boolean}[]}}
+ * @returns {{leadIn:number, clicks:{offset:number, level:number, accent:boolean}[]}}
  *   `leadIn` seconds of pre-roll, and clicks at offsets in `[0, leadIn)`.
+ *   `level` is LEVEL_WEAK/GROUP/DOWNBEAT; `accent` stays as the downbeat-only
+ *   boolean so callers that only care about "is this the 1" keep working.
  */
 export function computeCountIn(
   beats,
   bars,
-  { countBars = 1, multiplier = 1, accentMode = -1, start = 0 } = {},
+  { countBars = 1, multiplier = 1, accentMode = -1, start = 0, groups = null } = {},
 ) {
   if (countBars < 1) return { leadIn: 0, clicks: [] };
   const clean = Array.isArray(beats) ? beats.filter((b) => Number.isFinite(b)) : [];
@@ -104,8 +173,17 @@ export function computeCountIn(
   const interval = _intervalNear(grid, start, bpb);
   if (interval === null) return { leadIn: 0, clicks: [] };
   const n = countBars * bpb;
+  // The count-in is its own run of bars, so the grouping comes from bpb rather
+  // than from the bar marks: there is no detected bar in front of the audio.
+  // A user grouping only applies to an explicit meter, matching count_in_beats.
+  const barGroups = accentMode > 0 ? normaliseGrouping(groups, bpb) : defaultGrouping(bpb);
+  const starts = groupOffsets(barGroups);
   const clicks = [];
-  for (let j = 0; j < n; j++) clicks.push({ offset: j * interval, accent: j % bpb === 0 });
+  for (let j = 0; j < n; j++) {
+    const offset = j % bpb;
+    const level = offset === 0 ? LEVEL_DOWNBEAT : starts.has(offset) ? LEVEL_GROUP : LEVEL_WEAK;
+    clicks.push({ offset: j * interval, level, accent: offset === 0 });
+  }
   return { leadIn: n * interval, clicks };
 }
 
@@ -144,6 +222,10 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
   // into the *current* grid, is it a downbeat? When null, accents fall back to
   // a fixed beats-per-bar count from the start of the track.
   let _isDownbeat = null;
+  // Bar-position lookup (offset, barLength) so bar marks can be grouped, not
+  // merely accented on the 1. Falls back to _isDownbeat when absent (#595).
+  let _barPosition = null;
+  let _groups = null;
 
   // Map an index in the rescaled grid back to the original beat it came from.
   // Bar marks are recorded against the *detected* beats, so accents have to be
@@ -225,17 +307,23 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
   // Schedule one click to sound at AudioContext time `when`. `sink` is the list
   // it registers itself in so the right batch can be torn down independently
   // (the running click's `queued`, or the count-in's `countInQueued`).
-  function _scheduleClick(when, accent, sink = queued) {
+  function _scheduleClick(when, level, sink = queued) {
+    // Booleans still arrive from callers that only distinguish the downbeat.
+    const lv = level === true ? LEVEL_DOWNBEAT : level === false ? LEVEL_WEAK : Number(level) || 0;
     const osc = ctx.createOscillator();
     const env = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.value = accent ? ACCENT_FREQ : CLICK_FREQ;
+    osc.frequency.value =
+      lv === LEVEL_DOWNBEAT ? ACCENT_FREQ : lv === LEVEL_GROUP ? GROUP_FREQ : CLICK_FREQ;
 
     // Ramp from near-silence rather than 0: setValueAtTime(0) followed by an
     // exponential ramp is a no-op in the spec (exponential ramps cannot start
     // at zero), which would leave the click at full level and click twice.
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(accent ? 1.0 : 0.7, when + CLICK_ATTACK);
+    env.gain.exponentialRampToValueAtTime(
+      lv === LEVEL_DOWNBEAT ? 1.0 : lv === LEVEL_GROUP ? 0.85 : 0.7,
+      when + CLICK_ATTACK,
+    );
     env.gain.exponentialRampToValueAtTime(0.0001, when + CLICK_DECAY);
 
     osc.connect(env);
@@ -291,10 +379,22 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
         // Bar marks from the editor win over the fixed beats-per-bar count:
         // on a track whose meter changes, a fixed count is meaningless.
         const src = _sourceIndex(cursor);
-        const accent = _isDownbeat
-          ? src !== null && !!_isDownbeat(src)
-          : (_beatsPerBar > 0 && src !== null && src % _beatsPerBar === 0);
-        _scheduleClick(when, accent);
+        let level = LEVEL_WEAK;
+        if (src !== null) {
+          const pos = _barPosition ? _barPosition(src) : null;
+          if (pos) {
+            // Bar marks: each bar is grouped by its own length, so a detected
+            // 6/8 passage groups in threes with nothing configured. A user
+            // grouping is not applied here -- under bar marks the length can
+            // change bar to bar, so one grouping cannot be assumed to fit.
+            level = levelAt(pos[0], pos[1], null);
+          } else if (_isDownbeat) {
+            level = _isDownbeat(src) ? LEVEL_DOWNBEAT : LEVEL_WEAK;
+          } else if (_beatsPerBar > 0) {
+            level = levelAt(src % _beatsPerBar, _beatsPerBar, _groups);
+          }
+        }
+        _scheduleClick(when, level);
       }
       cursor++;
     }
@@ -339,12 +439,20 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
       _cancelCountIn();
       for (const c of clicks) {
         const when = engine.sourceTimeToCtxTime(c.time);
-        if (when > ctx.currentTime) _scheduleClick(when, !!c.accent, countInQueued);
+        if (when > ctx.currentTime) _scheduleClick(when, c.level ?? (c.accent ? LEVEL_DOWNBEAT : LEVEL_WEAK), countInQueued);
       }
     },
     /** Tear down a count-in already handed to the audio clock (pause/stop). */
     cancelCountIn() {
       if (!destroyed) _cancelCountIn();
+    },
+    /** Bar-position lookup used to group bar-marked bars; null to drop it. */
+    setBarPositionFn(fn) {
+      _barPosition = typeof fn === "function" ? fn : null;
+    },
+    /** Grouping for the explicit meter, e.g. [3,2,2]; null for the default. */
+    setGrouping(groups) {
+      _groups = Array.isArray(groups) && groups.length ? groups.slice() : null;
     },
     /** 0 disables accents; otherwise accent every Nth beat from the grid start. */
     setBeatsPerBar(n) {
