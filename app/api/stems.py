@@ -438,7 +438,14 @@ def _rubberband_available() -> bool:
             )
             _rubberband_cached = bool(re.search(r"\brubberband\b", probe.stdout))
         except (OSError, subprocess.SubprocessError):
-            pass
+            # Treated as "no pitch support", which is the safe answer, but the
+            # two cases are not the same: a build genuinely without the filter
+            # and an ffmpeg that would not run at all both surface to the user
+            # as "this build cannot transpose". Log which one it was, or that
+            # message is the only thing anybody has to go on.
+            logger.debug(
+                "rubberband probe failed; treating transpose as unavailable", exc_info=True
+            )
     return _rubberband_cached
 
 
