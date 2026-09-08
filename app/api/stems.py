@@ -119,6 +119,7 @@ def _mixdown_cache_key(
     start: float | None,
     end: float | None,
     click_lane: tuple[Path, float] | None = None,
+    pitches: list[int] | None = None,
 ) -> str:
     """Every render input is in the key, so a different mixer state, region,
     or a Settings change (export sample rate) misses cleanly -- never a stale
@@ -139,6 +140,10 @@ def _mixdown_cache_key(
             # The click's own cache key already encodes the grid, rate and
             # accent mode, so its filename plus gain fully identifies it.
             "" if click_lane is None else f"{click_lane[0].name}:{click_lane[1]:.6f}",
+            # Appended only when something is actually transposed, so every
+            # export made before #592 keeps the exact key it already had and
+            # the cache survives the change.
+            "" if not (pitches and any(pitches)) else "p" + ",".join(str(p) for p in pitches),
         ]
     )
     # Cache key, not a security context -- usedforsecurity=False documents
@@ -394,6 +399,97 @@ def _read_beat_grid(job_id: str) -> dict | None:
     return grid
 
 
+# Transpose on export (#592). The studio shifts pitch in the browser with a
+# SoundTouch AudioWorklet; the server has no such stage, so an export came out
+# in the original key however the mixer was set.
+#
+# PITCH_MIN/MAX mirror static/js/pitchBus.js. Keep them in step: a UI that can
+# ask for a shift the export rejects is worse than one that cannot ask.
+PITCH_MIN = -6
+PITCH_MAX = 6
+
+# Probed once per process; the ffmpeg binary cannot change mid-run. None until
+# the first export needs to know.
+_rubberband_cached: bool | None = None
+
+
+def _rubberband_available() -> bool:
+    """Whether this ffmpeg can pitch-shift.
+
+    librubberband is GPL and plenty of builds omit it -- the Homebrew ffmpeg on
+    a dev machine does, while the bundled macOS build does not -- so this is
+    probed rather than assumed. Any probe problem reads as "no": an export that
+    silently used a different algorithm would be worse than one that says it
+    cannot transpose.
+
+    rubberband specifically, not asetrate/atempo. Measured on the bundled build:
+    rubberband holds duration to the microsecond across -6..+6 and lands within
+    1 Hz of the target, and a lane whose length moved would desync the mix.
+    """
+    global _rubberband_cached
+    if _rubberband_cached is None:
+        _rubberband_cached = False
+        try:
+            probe = subprocess.run(
+                [ffmpeg_executable(), "-hide_banner", "-filters"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            _rubberband_cached = bool(re.search(r"\brubberband\b", probe.stdout))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _rubberband_cached
+
+
+def effective_pitch(name: str, semitones: int) -> int:
+    """The shift a lane actually gets, mirroring effectivePitch in
+    static/js/pitchBus.js.
+
+    Drums are never transposed, whatever the request says: resampling a snare
+    does not move it to another key, it makes it a different drum. The client
+    refuses this too, so honouring a drums pitch here would export something the
+    studio will not play.
+    """
+    if name == "drums":
+        return 0
+    return max(PITCH_MIN, min(PITCH_MAX, int(semitones)))
+
+
+def _parse_pitches(pitches: str, names: list[str]) -> list[int]:
+    """Parse semitone shifts parallel to `names`, or all zeros when absent.
+
+    Empty means "no transpose", which is what every client that predates #592
+    sends by omitting the parameter -- so an old caller keeps its exact
+    behaviour rather than needing to opt out.
+    """
+    if not pitches:
+        return [0] * len(names)
+    raw = [p for p in pitches.split(",") if p != ""]
+    if len(raw) != len(names):
+        raise HTTPException(status_code=422, detail="pitches must be the same length as stems")
+    try:
+        parsed = [int(p) for p in raw]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="pitches must be whole semitones") from None
+    if any(p < PITCH_MIN or p > PITCH_MAX for p in parsed):
+        raise HTTPException(
+            status_code=422, detail=f"pitch out of range ({PITCH_MIN}..{PITCH_MAX})"
+        )
+    return [effective_pitch(n, p) for n, p in zip(names, parsed, strict=True)]
+
+
+def _pitch_filter(semitones: int) -> str:
+    """The rubberband stage for a lane, or "" when it is not being shifted.
+
+    Trailing comma so it composes into the existing per-lane chain. Pitch is a
+    frequency ratio, hence the twelfth root of two.
+    """
+    if semitones == 0:
+        return ""
+    return f"rubberband=pitch={2 ** (semitones / 12):.9f},"
+
+
 def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
     """Parse and validate parallel comma-separated lane names and linear gains.
     Shared by the audio mixdown and the MP4 video mux. Raises HTTPException
@@ -418,6 +514,70 @@ def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
             detail="vocals cannot be combined with lead_vocals/backing_vocals (same signal)",
         )
     return names, parsed_gains
+
+
+class _RenderLane(NamedTuple):
+    """One ffmpeg input in the mixdown graph: a file, its gain, its shift."""
+
+    path: Path
+    gain: float
+    pitch: int
+
+
+def _expand_render_lanes(
+    job_id: str,
+    names: list[str],
+    gains: list[float],
+    pitches: list[int],
+) -> tuple[list[_RenderLane], list[str]]:
+    """Lanes to render, with "original" rebuilt from its parts when it is
+    transposed. Returns the lanes and the names of any lane left unpitched.
+
+    "original" is the complement lane: whatever the user did not select, already
+    summed into one file -- which means it usually contains drums. Shifting that
+    file would resample the drums, so playback never does it. buildPlaybackStems
+    in static/js/playbackStems.js rebuilds the lane from the component stems
+    instead, routing drums around the pitch stage, and this is the same move on
+    the export side.
+
+    When a component is missing -- an older job that kept only the rendered mix
+    -- the lane cannot be taken apart, so it stays at its original key. That is
+    deliberately the same conservative choice playback makes: melodic content
+    stays in the old key rather than the drums being resampled.
+    """
+    lanes: list[_RenderLane] = []
+    unpitched: list[str] = []
+    selected = set(names)
+    # A completed lead/backing split stands in for the base vocals source, so
+    # vocals is not also part of the complement (mirrors buildPlaybackStems).
+    if {"lead_vocals", "backing_vocals"} <= selected:
+        selected.add("vocals")
+
+    for name, gain, pitch in zip(names, gains, pitches, strict=True):
+        if name != "original" or pitch == 0:
+            lanes.append(_RenderLane(_validate_stem_path(job_id, name), gain, pitch))
+            continue
+
+        components = [n for n in STEM_NAMES if n not in selected]
+        paths: list[Path] = []
+        for comp in components:
+            path = (JOBS_DIR / job_id / "stems" / f"{comp}.wav").resolve()
+            if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+                paths = []
+                break
+            paths.append(path)
+
+        if not paths:
+            lanes.append(_RenderLane(_validate_stem_path(job_id, name), gain, 0))
+            unpitched.append(name)
+            continue
+
+        # Each component carries the lane's own gain; amix sums them back to
+        # what the single file would have been. effective_pitch keeps drums at 0.
+        for comp, path in zip(components, paths, strict=True):
+            lanes.append(_RenderLane(path, gain, effective_pitch(comp, pitch)))
+
+    return lanes, unpitched
 
 
 async def _drain_stderr(stream: asyncio.StreamReader, sink: deque[str]) -> None:
@@ -822,6 +982,14 @@ async def get_mixdown(
     ext: str,
     stems: str = Query(..., description="Comma-separated lane names to sum"),
     gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
+    pitches: str = Query(
+        default="",
+        max_length=128,
+        description=(
+            "Comma-separated semitone shifts parallel to stems (-6..6). "
+            "Empty means no transpose, which is what a client that predates this sends."
+        ),
+    ),
     start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
     click: bool = Query(default=False, description="Mix the click track into the export"),
@@ -863,6 +1031,7 @@ async def get_mixdown(
         raise HTTPException(status_code=404, detail="not found")
 
     names, parsed_gains = _parse_lane_gains(stems, gains)
+    parsed_pitches = _parse_pitches(pitches, names)
     if (start is None) != (end is None) or (start is not None and start >= end):
         raise HTTPException(
             status_code=422,
@@ -870,11 +1039,21 @@ async def get_mixdown(
         )
     _validate_trim_range(job_id, start, end)
 
+    # Refuse rather than export in the wrong key. A build without librubberband
+    # cannot pitch-shift at all, and quietly returning the original key would
+    # look like the bug this feature exists to fix (#592).
+    if any(parsed_pitches) and not await asyncio.to_thread(_rubberband_available):
+        raise HTTPException(
+            status_code=422,
+            detail="this ffmpeg build cannot transpose (no rubberband filter)",
+        )
+
     # Validates job_id (404), job done (404), and path traversal (404) per
     # stem -- deliberately before the cache lookup below, so a deleted or
     # not-yet-done job 404s the same way it always has instead of serving a
     # stale cache entry from before the job was removed.
-    paths = [_validate_stem_path(job_id, name) for name in names]
+    render_lanes, unpitched = _expand_render_lanes(job_id, names, parsed_gains, parsed_pitches)
+    paths = [lane.path for lane in render_lanes]
 
     media_type = MIXDOWN_MEDIA_TYPES[ext]
     click_lane = await asyncio.to_thread(
@@ -889,7 +1068,9 @@ async def get_mixdown(
         end=end,
         groups=_parse_groups(click_groups, click_accent),
     )
-    cache_key = _mixdown_cache_key(job_id, ext, names, parsed_gains, start, end, click_lane)
+    cache_key = _mixdown_cache_key(
+        job_id, ext, names, parsed_gains, start, end, click_lane, parsed_pitches
+    )
     cache_path = _MIXDOWN_CACHE_DIR / f"{cache_key}.{ext}"
     if cache_path.is_file():
         return FileResponse(
@@ -929,9 +1110,11 @@ async def get_mixdown(
     # click lane is never delayed -- its lead-in is baked in. A single audible
     # lane skips amix (a 1-input amix is a no-op).
     filters = []
-    for i, g in enumerate(parsed_gains):
+    for i, lane in enumerate(render_lanes):
         delay = f"adelay={delay_ms}:all=1," if delay_ms > 0 else ""
-        filters.append(f"[{i}:a]{delay}volume={g:.6f}[a{i}]")
+        # Shift before the delay: rubberband would otherwise chew through the
+        # silent lead-in padding for nothing.
+        filters.append(f"[{i}:a]{_pitch_filter(lane.pitch)}{delay}volume={lane.gain:.6f}[a{i}]")
     if click_lane is not None:
         filters.append(f"[{stem_count}:a]volume={click_lane.gain:.6f}[a{stem_count}]")
     n = stem_count + (1 if click_lane is not None else 0)
@@ -1000,6 +1183,11 @@ async def get_video_mixdown(
     job_id: str,
     stems: str = Query(..., description="Comma-separated lane names to sum"),
     gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
+    pitches: str = Query(
+        default="",
+        max_length=128,
+        description="Comma-separated semitone shifts parallel to stems (-6..6). Empty = none.",
+    ),
     click: bool = Query(default=False, description="Mix the click track into the export"),
     click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
     click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
@@ -1025,8 +1213,18 @@ async def get_video_mixdown(
         raise HTTPException(status_code=404, detail="no video track for this job")
 
     names, parsed_gains = _parse_lane_gains(stems, gains)
-    # Validates job_id (404), job done (404), and path traversal (404) per stem.
-    paths = [_validate_stem_path(job_id, name) for name in names]
+    parsed_pitches = _parse_pitches(pitches, names)
+    # Same refusal as the audio export: a video whose audio came back in the
+    # original key would be the same complaint reported again (#592).
+    if any(parsed_pitches) and not await asyncio.to_thread(_rubberband_available):
+        raise HTTPException(
+            status_code=422,
+            detail="this ffmpeg build cannot transpose (no rubberband filter)",
+        )
+    # Validates job_id (404), job done (404), and path traversal (404) per stem,
+    # and rebuilds a transposed "original" lane from its parts.
+    render_lanes, _unpitched = _expand_render_lanes(job_id, names, parsed_gains, parsed_pitches)
+    paths = [lane.path for lane in render_lanes]
 
     # Click is one more audio input. It must be appended before the video input
     # so the audio indices the filter graph references stay contiguous from 0.
@@ -1035,7 +1233,7 @@ async def get_video_mixdown(
     )
     if click_lane is not None:
         paths = [*paths, click_lane[0]]
-        parsed_gains = [*parsed_gains, click_lane[1]]
+        render_lanes = [*render_lanes, _RenderLane(click_lane[0], click_lane[1], 0)]
 
     cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
     for p in paths:
@@ -1044,7 +1242,10 @@ async def get_video_mixdown(
     video_idx = len(paths)
     # Per-lane gain then amix (normalize=0 keeps levels faithful). A single audible
     # lane skips amix (a 1-input amix is a no-op), matching get_mixdown.
-    filters = [f"[{i}:a]volume={g:.6f}[a{i}]" for i, g in enumerate(parsed_gains)]
+    filters = [
+        f"[{i}:a]{_pitch_filter(lane.pitch)}volume={lane.gain:.6f}[a{i}]"
+        for i, lane in enumerate(render_lanes)
+    ]
     n = len(paths)
     if n > 1:
         labels = "".join(f"[a{i}]" for i in range(n))

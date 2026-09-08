@@ -31,6 +31,7 @@ import {
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
 import { createPlaybackContext } from "./audioContext.js";
+import { effectivePitch } from "./pitchBus.js";
 import { addVisualOnlyStems, buildPlaybackStems } from "./playbackStems.js";
 import { vuLevel } from "./vuScale.js";
 import { createMetronome } from "./metronome.js";
@@ -1804,6 +1805,7 @@ function _effectiveMixGains() {
   const anySolo = _currentStems.some((s) => mixerState[s.name]?.soloed);
   const names = [];
   const gains = [];
+  const pitches = [];
   for (const s of _currentStems) {
     if (s.name === "mix") continue;
     const m = mixerState[s.name];
@@ -1812,8 +1814,12 @@ function _effectiveMixGains() {
     if (g <= 0) continue;
     names.push(s.name);
     gains.push(Math.max(0, Math.min(LANE_VOLUME_MAX, g)));
+    // The lane's own key, the same number the stepper shows. The server
+    // re-applies effectivePitch, so drums are refused there too rather than
+    // this being the only thing standing between a snare and a resampler.
+    pitches.push(effectivePitch(s.name, m.pitch ?? 0, undefined));
   }
-  return { names, gains };
+  return { names, gains, pitches };
 }
 
 // Click-track export params. The click is synthesised in the browser during
@@ -1866,11 +1872,12 @@ export function setExportClickAvailable(on) {
 // when every lane is silenced; `region` appends the loop bounds.
 function _mixdownUrl(ext, region) {
   if (!currentJobId) return null;
-  const { names, gains } = _effectiveMixGains();
+  const { names, gains, pitches } = _effectiveMixGains();
   if (!names.length) return null;
   const q = new URLSearchParams({
     stems: names.join(","),
     gains: gains.map((g) => g.toFixed(3)).join(","),
+    ...(pitches.some((p) => p !== 0) ? { pitches: pitches.join(",") } : {}),
   });
   if (region) {
     q.set("start", loopStart.toFixed(3));
@@ -1916,11 +1923,12 @@ export function downloadCurrentMix(ext = "wav", onTransferStart) {
 // there's no video track or every lane is muted.
 export function downloadCurrentVideo(onTransferStart) {
   if (!currentJobId || !_currentHasVideo) return false;
-  const { names, gains } = _effectiveMixGains();
+  const { names, gains, pitches } = _effectiveMixGains();
   if (!names.length) return false;
   const q = new URLSearchParams({
     stems: names.join(","),
     gains: gains.map((g) => g.toFixed(3)).join(","),
+    ...(pitches.some((p) => p !== 0) ? { pitches: pitches.join(",") } : {}),
   });
   _clickParams(q);
   const safe = _currentTitle
