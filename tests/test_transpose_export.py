@@ -110,6 +110,9 @@ def test_the_original_lane_is_rebuilt_from_parts_so_its_drums_survive(tmp_path):
     components for exactly this reason (static/js/playbackStems.js); the export
     has to do the same or a transposed mix comes back with pitched drums."""
     _setup_job(tmp_path)
+    # A job that shows an "original" lane has the rendered file too; the
+    # reconstruction is about not *shifting* that file, not about its absence.
+    (tmp_path / JOB / "stems" / "original.wav").write_bytes(b"RIFF")
     from app.api import stems as stems_mod
 
     stems_mod.JOBS_DIR = tmp_path
@@ -137,6 +140,24 @@ def test_an_unshifted_original_lane_is_left_as_one_file(tmp_path):
     lanes, unpitched = _expand_render_lanes(JOB, ["vocals", "original"], [1.0, 1.0], [0, 0])
     assert len(lanes) == 2
     assert unpitched == []
+
+
+def test_a_lane_the_job_never_produced_is_refused_whether_or_not_it_is_shifted(tmp_path):
+    """Whether a lane exists is a property of the job, not of the request.
+
+    Found by exporting against a real library: "original" only exists when the
+    user picked a strict subset, and the reconstruction path was happy to
+    synthesise one from components. So the same URL 404'd untransposed and
+    rendered when transposed -- validity depending on the pitch attached to it.
+    """
+    _setup_job(tmp_path)  # no original.wav
+    from app.api import stems as stems_mod
+
+    stems_mod.JOBS_DIR = tmp_path
+    for pitch in (0, 2):
+        with pytest.raises(Exception) as e:
+            _expand_render_lanes(JOB, ["vocals", "original"], [1.0, 1.0], [0, pitch])
+        assert e.value.status_code == 404, f"pitch={pitch} disagreed with the other"
 
 
 def test_an_original_lane_that_cannot_be_taken_apart_keeps_its_key(tmp_path):

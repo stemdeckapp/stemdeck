@@ -554,21 +554,30 @@ def _expand_render_lanes(
         selected.add("vocals")
 
     for name, gain, pitch in zip(names, gains, pitches, strict=True):
+        # Validate first, always. Whether a lane exists is a property of the
+        # job, not of the request: without this an "original" lane the job
+        # never produced would 404 untransposed and be synthesised from
+        # components when transposed, so the same URL was valid or not
+        # depending on the pitch attached to it.
+        path = _validate_stem_path(job_id, name)
         if name != "original" or pitch == 0:
-            lanes.append(_RenderLane(_validate_stem_path(job_id, name), gain, pitch))
+            lanes.append(_RenderLane(path, gain, pitch))
             continue
 
         components = [n for n in STEM_NAMES if n not in selected]
+        # Deliberately not `path`: that name holds the validated "original.wav"
+        # this lane falls back to, and reusing it here left the fallback
+        # pointing at whichever component was tried last.
         paths: list[Path] = []
         for comp in components:
-            path = (JOBS_DIR / job_id / "stems" / f"{comp}.wav").resolve()
-            if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+            comp_path = (JOBS_DIR / job_id / "stems" / f"{comp}.wav").resolve()
+            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
                 paths = []
                 break
-            paths.append(path)
+            paths.append(comp_path)
 
         if not paths:
-            lanes.append(_RenderLane(_validate_stem_path(job_id, name), gain, 0))
+            lanes.append(_RenderLane(path, gain, 0))
             unpitched.append(name)
             continue
 
