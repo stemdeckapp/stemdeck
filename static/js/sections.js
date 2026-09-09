@@ -338,7 +338,32 @@ function _addSection() {
 
   // Open rename immediately
   const el = _container?.querySelector(`[data-id="${section.id}"]`);
-  if (el) _openRename(section.id, el.querySelector(".section-label"));
+  if (el) {
+    _scrollIntoView(section);
+    _openRename(section.id, el.querySelector(".section-label"));
+  }
+}
+
+/**
+ * Bring a section into view by scrolling the timeline, not the ribbon.
+ *
+ * Add always places the new section in the first gap from t=0, which while
+ * zoomed and scrolled is usually off to the left, and the rename input opens on
+ * it focused. The ribbon is `overflow: clip` and deliberately cannot scroll, so
+ * without this the user would be typing into a field they cannot see.
+ *
+ * Scrolling the wave is the right lever anyway: the ribbon is positioned from
+ * the wave's scrollLeft, so moving the wave moves the ribbon with it and keeps
+ * the two in step. Read from the DOM rather than imported, because sections.js
+ * deliberately depends on nothing but i18n (see syncRulerScroll in
+ * transport.js for what importing across that line breaks).
+ */
+function _scrollIntoView(section) {
+  const wave = document.getElementById("wave-scroll");
+  if (!wave || !_duration || wave.scrollWidth <= wave.clientWidth) return;
+  const mid = ((section.start + section.end) / 2 / _duration) * wave.scrollWidth;
+  const target = mid - wave.clientWidth / 2;
+  wave.scrollLeft = Math.max(0, Math.min(target, wave.scrollWidth - wave.clientWidth));
 }
 
 // Removing every marker at once cannot be undone, and an automatic set costs

@@ -28,6 +28,13 @@ async function seedSections(page) {
   expect(res.ok(), "seeding sections").toBe(true);
 }
 
+// The fixture job is on disk and shared, and playwright.config reuses a running
+// server, so without this the sections written here outlive the run and turn up
+// in every later spec and every later local run.
+test.afterEach(async ({ page }) => {
+  await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections: [] } });
+});
+
 /** How far each block's left edge is from where that time lands on the ruler. */
 const alignment = (page) =>
   page.evaluate(() => {
@@ -126,20 +133,37 @@ test.describe("sections and zoom", () => {
     await openStudio(page, { tauri: true });
     await page.waitForSelector(".section-block", { timeout: 20000 });
     await zoomIn(page, 5);
+    // Park at the start so the last section is genuinely off to the right.
+    // Zooming keeps the cursor anchored, which left it on screen and made the
+    // probe below prove nothing.
+    await page.evaluate(() => {
+      const s = document.getElementById("wave-scroll");
+      s.scrollLeft = 0;
+      s.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(250);
 
     const base = await alignment(page);
-    const scrolled = await page.evaluate(() => {
+    const probe = await page.evaluate(() => {
       const area = document.querySelector(".daw-sections-area");
+      const box = area.getBoundingClientRect();
       const last = [...document.querySelectorAll(".section-block")].pop();
+      const lastBox = last.getBoundingClientRect();
       const input = document.createElement("input");
       last.appendChild(input);
       input.focus();
       const left = area.scrollLeft;
       input.remove();
-      return left;
+      return {
+        left,
+        // Only an element the browser cannot already see gives it a reason to
+        // scroll. Without this the test would pass on any CSS at all.
+        offScreen: lastBox.left > box.right || lastBox.right < box.left,
+      };
     });
 
-    expect(scrolled, "the ribbon must not be scrollable").toBe(0);
+    expect(probe.offScreen, "the focused block must be outside the ribbon, or nothing is being tested").toBe(true);
+    expect(probe.left, "the ribbon must not be scrollable").toBe(0);
     const after = await alignment(page);
     after.forEach((off, i) => {
       expect(Math.abs(off - base[i]), `boundary ${i} drifted after a focus`).toBeLessThanOrEqual(1);
