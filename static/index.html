@@ -50,6 +50,11 @@
               spellcheck="false"
               autocomplete="off"
             />
+            <!-- Why a dropped file was refused, in the box the file was aimed
+                 at. The full error panel is for a job that failed; a file the
+                 importer declined before anything started is answered where
+                 the gesture happened, and clears itself on the next one. -->
+            <span class="url-drop-error hidden" id="urlDropError" role="status" aria-live="polite"></span>
             <!-- File pill (shown when file selected) -->
             <div class="file-pill hidden" id="filePill">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

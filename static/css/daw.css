@@ -183,6 +183,25 @@ input, textarea { font-family: inherit; }
 }
 .daw-url-zone.has-file #url { display: none; }
 
+/* Why a dropped file was refused, said in the box it was aimed at.
+   The full error panel is for a job that failed: it takes a region and carries
+   a retry button, and a file declined before anything started has nothing to
+   retry. Sits where the input text does, and hides it, so the box says one
+   thing at a time (#584). */
+.url-drop-error {
+  flex: 1;
+  min-width: 0;
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* :has(), not a sibling combinator: the message follows the input in the
+   markup, so `~` points the wrong way. */
+.daw-url-zone:has(.url-drop-error:not(.hidden)) #url { display: none; }
+
 /* Composer vertical divider */
 .daw-composer-sep {
   width: 1px;

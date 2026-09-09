@@ -540,7 +540,32 @@ function wireFileDrop() {
   const fileName = document.getElementById("fileName");
   const fileSize = document.getElementById("fileSize");
   const fileClear = document.getElementById("fileClear");
+  const dropError = document.getElementById("urlDropError");
   if (!urlWrap || !urlInput || !fileInput || !filePill) return;
+
+  // Why a dropped file was refused, said in the box it was aimed at.
+  //
+  // showError() is the panel for a job that failed: it takes over a region and
+  // carries a retry button. A file the importer declined before anything
+  // started has nothing to retry and does not deserve that much room, and the
+  // reason belongs next to the gesture rather than somewhere else on screen.
+  //
+  // Cleared on the next drop, on typing, and on a timer, so it can never be
+  // mistaken for the state of a file that is currently armed.
+  let dropErrorTimer = null;
+  function showDropError(message) {
+    if (!dropError) return;
+    dropError.textContent = message;
+    dropError.classList.remove("hidden");
+    clearTimeout(dropErrorTimer);
+    dropErrorTimer = setTimeout(clearDropError, 6000);
+  }
+  function clearDropError() {
+    clearTimeout(dropErrorTimer);
+    dropError?.classList.add("hidden");
+    if (dropError) dropError.textContent = "";
+  }
+  urlInput.addEventListener("input", clearDropError);
 
   function formatBytes(n) {
     return n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -560,13 +585,13 @@ function wireFileDrop() {
     // stray file. Only complain if nothing usable came through.
     const audio = all.filter(isAudioFile);
     if (!audio.length) {
-      showError(t("upload.unsupportedFormat"));
+      showDropError(t("upload.unsupportedFormat"));
       return;
     }
     const files = audio.filter((f) => f.size <= MAX_UPLOAD_BYTES);
     const oversized = audio.length - files.length;
     if (!files.length) {
-      showError(t("upload.fileTooLarge", { size: formatBytes(audio[0].size), max: formatBytes(MAX_UPLOAD_BYTES) }));
+      showDropError(t("upload.fileTooLarge", { size: formatBytes(audio[0].size), max: formatBytes(MAX_UPLOAD_BYTES) }));
       return;
     }
 
@@ -579,6 +604,7 @@ function wireFileDrop() {
       const bytes = files.reduce((sum, f) => sum + f.size, 0);
       fileSize.textContent = formatBytes(bytes);
     }
+    clearDropError();
     filePill.classList.remove("hidden");
     urlWrap.classList.add("has-file");
     // Cache the File objects directly on the element so job.js can always
@@ -617,16 +643,43 @@ function wireFileDrop() {
   // happily import the same file twice.
   fileInput._clear = clearFile;
 
+  const draggingFiles = (e) => !!e.dataTransfer?.types?.includes("Files");
+
+  // The URL zone keeps its own hover affordance. It is no longer the only place
+  // a file can land, so this is now about showing where it will go rather than
+  // about being the only target that works.
   urlWrap.addEventListener("dragover", (e) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
+    if (!draggingFiles(e)) return;
     urlWrap.classList.add("drag-over");
   });
   urlWrap.addEventListener("dragleave", (e) => {
     if (!urlWrap.contains(e.relatedTarget)) urlWrap.classList.remove("drag-over");
   });
-  urlWrap.addEventListener("drop", (e) => {
+
+  // A file dropped anywhere in the window is treated as a drop on the URL zone.
+  //
+  // Not a convenience. Everywhere else was previously left to the browser,
+  // which navigates to the file: in a tab that is merely surprising, but the
+  // desktop shell has no address bar and no back button, so the window is
+  // replaced by the webview's bare media player and the only way out is to
+  // quit the app (#584). Preventing the default is what fixes that; routing it
+  // to applyFiles is what makes the gesture do the obvious thing instead of
+  // nothing.
+  //
+  // Both handlers are guarded on "Files" so the library's own drags -- tracks
+  // between folders, into the lanes, onto the trash -- are untouched. Those
+  // carry no file list, and their handlers bail before preventDefault for the
+  // same reason, so the two never see each other's gestures.
+  //
+  // dragover must preventDefault too: without it the browser refuses the drop
+  // and no drop event is ever delivered to cancel.
+  document.addEventListener("dragover", (e) => {
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  document.addEventListener("drop", (e) => {
+    if (!draggingFiles(e)) return;
     e.preventDefault();
     urlWrap.classList.remove("drag-over");
     applyFiles(e.dataTransfer.files);
