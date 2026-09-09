@@ -1320,9 +1320,18 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       `[player] canplay — ${stems.length} stems, ctx=${ctx?.state}, audios:`,
       mt.audios?.map((a, i) => `${orderedNames[i]}:${a?.constructor?.name}`),
     );
-    // Log load errors only for stems that actually have a source URL
+    // Log load errors only for stems that actually have a source URL.
+    //
+    // `useEngine` has to be part of that test, not just the stem descriptor.
+    // When the engine owns playback every multitrack stem is handed url: null
+    // above, so all of these elements have an empty src by design, while
+    // stemsByName still holds the real URL the engine is streaming from. Testing
+    // only the descriptor therefore passed, attached an error listener to an
+    // element that was never given a source, and logged six MEDIA_ELEMENT_ERROR
+    // "Empty src attribute" lines on every engine-backed track load. Harmless to
+    // playback, and noisy enough to bury a real error in a bug report.
     mt.audios?.forEach((a, i) => {
-      if (a instanceof HTMLMediaElement && stemsByName[orderedNames[i]]?.url) {
+      if (!useEngine && a instanceof HTMLMediaElement && stemsByName[orderedNames[i]]?.url) {
         a.addEventListener("error", () =>
           console.error(`[player] audio error stem[${i}] ${orderedNames[i]}:`, a.error?.message, a.error?.code),
         { once: true });
