@@ -1571,8 +1571,31 @@ input, textarea { font-family: inherit; }
   position: relative;
   height: 36px;
   background: var(--bg-2);
-  overflow: hidden;
+  /* clip, not hidden. `hidden` is a scroll container, and the inner track now
+     overflows it, so anything that focuses an element off to the right -- the
+     rename input on a block past the viewport is the easy one -- makes the
+     browser scroll this box to reveal it. The ribbon is positioned by
+     transform, nothing ever resets scrollLeft, and the strip is then offset
+     from the waveform for good. `clip` clips identically and cannot scroll.
+     .daw-ruler-area is clip for the same reason. */
+  overflow: clip;
   user-select: none;
+}
+/* Carries the section blocks at the zoomed timeline's width, so a block placed
+   at a percentage of it lines up with the same moment on the waveform below.
+   Without this the ribbon stayed the width of the window while the waveform
+   grew, and every boundary drifted: at 2.7x the first one sat 775px from the
+   audio it marked, and the drag maths, which measures this element, moved a
+   block 2.7x too far for the same gesture (#573).
+
+   Left-anchored so width drives the size, exactly like .lanes-ruler-time.
+   transport.js translates both by the same scrollLeft; .daw-sections-area
+   already clips the spill. */
+.daw-sections-track {
+  position: absolute;
+  inset: 0;
+  right: auto;
+  width: calc(100% * var(--zoom, 1));
 }
 
 /* Section blocks (sections.js populates) */
@@ -2796,6 +2819,50 @@ input, textarea { font-family: inherit; }
   display: contents;
 }
 .footer-metro-panel.hidden { display: none; }
+
+/* Narrow windows only. The options stay exactly where #269 put them and stay
+   visible: nothing is hidden, moved behind a disclosure, or put in a popover.
+   They just stop being one long line and start being a block, which is what
+   the row has room for. See footerFit.js for why the threshold is measured
+   rather than written as a breakpoint.
+
+   `display: contents` above promotes the options to be peers of the on/off
+   pill, which is what makes them one wide line. Giving the panel its own box
+   back is the whole mechanism: it becomes a single flex item the row can size,
+   and its contents wrap inside it.
+
+   .daw-footer is min-height rather than a fixed height precisely so a taller
+   row is accommodated instead of clipped. */
+.footer-clusters.collapse-click .footer-metro-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  /* Measured, not chosen. The click cluster is 679px of the strip inline, and
+     everything else on the row plus its gaps is about 700px, so the width left
+     for the options is what decides where the row stops fitting. Against the
+     e2e fixture, capping the panel here takes the cluster to 258px and the
+     whole row to 971px, which is exactly the space a 1536px window has: the
+     4K-at-250%-scaling geometry from the report. 300px left it 100px short.
+
+     Wider would drop that window back into a sideways scroll. Much narrower
+     buys another window size at the cost of a taller and taller stack of
+     one-control rows. */
+  max-width: 190px;
+}
+/* Still nothing to show when the track has no beat grid. `.hidden` carries
+   !important, so it already wins over the rule above; this is belt and braces
+   against that changing. */
+.footer-clusters.collapse-click .footer-metro-panel.hidden { display: none !important; }
+
+/* Last resort before the strip would scroll: close up the spacing. Nothing is
+   hidden or moved, so it costs the user nothing but density. */
+/* Only the gaps between clusters. Reaching into .footer-group-body as well was
+   worth a few pixels and cost more than it saved: at (0,3,0) it outranked
+   `.footer-group-position .footer-group-body { gap: 4px }` at (0,2,0), so the
+   widest cluster on the row got 2px roomier at the exact moment this is trying
+   to reclaim width. Eight gaps at 8px instead of 16px is the win here. */
+.footer-clusters.collapse-tight { gap: 8px; }
 .metro-row { display: flex; align-items: center; gap: 9px; }
 .metro-vol-row { width: 140px; }
 .metro-vol-icon { color: var(--muted); flex-shrink: 0; }

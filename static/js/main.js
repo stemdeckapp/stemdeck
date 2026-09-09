@@ -16,6 +16,7 @@ import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
 import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
+import { initFooterFit, refitFooter } from "./footerFit.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -232,6 +233,14 @@ wireVocalModeToggle();
 wireAutoSectionsToggle();
 wireFileDrop();
 wireAppShellControls();
+initFooterFit();
+// Re-measure after a language switch. Measured across en/fr/de/pl the strip
+// came out the same width in all four, because the group labels are 10px
+// uppercase and narrower than the controls under them, so this is not the
+// reason the fit is computed rather than written as a breakpoint (that is the
+// sidebar, see footerFit.js). It is here because select options and button
+// text do vary, and re-measuring costs one frame.
+onLanguageChange(refitFooter);
 
 (async () => {
   await i18nReady;

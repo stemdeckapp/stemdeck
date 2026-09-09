@@ -30,6 +30,7 @@ import { isDownbeatIndex, barPositionIndex, getBeats as getGridBeats, getBars as
 import { computeCountIn, defaultGrouping, normaliseGrouping } from "./metronome.js";
 import { t } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
+import { refitFooter } from "./footerFit.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
 // it to show, so it is the floor rather than a soft default.
@@ -736,9 +737,17 @@ function wireLoopDrag() {
 // same scrollLeft; .daw-ruler-area uses overflow-x: clip to hide the spill while
 // leaving the vertical playhead line (overflow-y: visible) intact.
 export function syncRulerScroll() {
-  if (rulerTime && waveScroll) {
-    rulerTime.style.transform = `translateX(${-waveScroll.scrollLeft}px)`;
-  }
+  if (!waveScroll) return;
+  const shift = `translateX(${-waveScroll.scrollLeft}px)`;
+  if (rulerTime) rulerTime.style.transform = shift;
+  // The section ribbon is the same kind of strip and needs the same treatment:
+  // it sits outside .wave-scroll, is widened by the same --zoom, and is clipped
+  // by its own area. Queried here rather than imported from sections.js, which
+  // deliberately depends on nothing but i18n -- adding transport to its imports
+  // breaks tests/js/sections.test.mjs at import time, because state.js touches
+  // document at module scope and that test installs its stub afterwards.
+  const sectionsTrack = document.getElementById("daw-sections-track");
+  if (sectionsTrack) sectionsTrack.style.transform = shift;
 }
 
 export function applyWaveZoom() {
@@ -1122,7 +1131,7 @@ function _renderMetroBar() {
       metroBarCustomEl.classList.remove("hidden");
     }
   }
-  _renderMetroGrouping();
+  _renderMetroGrouping(); // refits, covering the custom box shown/hidden above
 }
 // Clamp a typed meter into the range the backend already validates
 // (beats_per_bar is ge=1, le=32 in app/api/jobs.py) and apply it. Anything
@@ -1152,12 +1161,19 @@ function _renderMetroGrouping() {
   if (!(n >= 5)) {
     metroGroupEl.classList.add("hidden");
     label?.classList.add("hidden");
+    // Showing or hiding these changes how wide the row wants to be by 120-160px
+    // and the ResizeObserver cannot see it: the strip's own box is flex-sized
+    // and its height does not move, since everything on the row is one line of
+    // 34px controls. Without this, picking a 7/8 meter puts the strip back into
+    // the silent sideways scroll of #586.
+    refitFooter();
     return;
   }
   metroGroupEl.classList.remove("hidden");
   label?.classList.remove("hidden");
   metroGroupEl.value = normaliseGrouping(metronomeGrouping, n).join("+");
   metroGroupEl.placeholder = defaultGrouping(n).join("+");
+  refitFooter(); // see the matching call on the hidden path above
 }
 
 // Parse "3+2+2" (or "3 2 2", or "3,2,2") into a grouping for the current meter.
@@ -1309,12 +1325,16 @@ export function updateMetronomeAvailability(grid, reason = "") {
     metroBtn.setAttribute("aria-pressed", "false");
     metroPanel?.classList.add("hidden");
     if (metroNoteEl) { metroNoteEl.textContent = reason || ""; metroNoteEl.className = "metro-note"; }
+    // The options are worth ~700px of the control strip, about half of it, so
+    // them appearing or going away changes whether the rest of the row fits.
+    refitFooter();
     return;
   }
 
   metroBtn.classList.toggle("active", metronomeEnabled);
   metroBtn.setAttribute("aria-pressed", metronomeEnabled ? "true" : "false");
   metroPanel?.classList.remove("hidden"); // undo a previous track's "unavailable" hide
+  refitFooter(); // see the matching call on the unavailable path above
   setMetronomeHasBars(Array.isArray(grid.bars) && grid.bars.length > 0);
   const autoOpt = metroBarEl?.querySelector('option[value="-1"]');
   if (autoOpt) {
