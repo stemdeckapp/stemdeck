@@ -557,12 +557,14 @@ function wireFileDrop() {
     if (!dropError) return;
     dropError.textContent = message;
     dropError.classList.remove("hidden");
+    urlWrap.classList.add("has-drop-error");
     clearTimeout(dropErrorTimer);
     dropErrorTimer = setTimeout(clearDropError, 6000);
   }
   function clearDropError() {
     clearTimeout(dropErrorTimer);
     dropError?.classList.add("hidden");
+    urlWrap.classList.remove("has-drop-error");
     if (dropError) dropError.textContent = "";
   }
   urlInput.addEventListener("input", clearDropError);

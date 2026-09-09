@@ -198,9 +198,13 @@ input, textarea { font-family: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* :has(), not a sibling combinator: the message follows the input in the
-   markup, so `~` points the wrong way. */
-.daw-url-zone:has(.url-drop-error:not(.hidden)) #url { display: none; }
+/* A plain class, toggled from JS alongside the message.
+   `:has()` reads better here, and a sibling combinator cannot work at all
+   because the message follows the input in the markup. But this ships in three
+   webviews, and the oldest of them is the one that matters: WebKitGTK only
+   grew :has() in 2.38, and Linux is where this bug was reported from. A class
+   costs one line in the handler and works in every engine. */
+.daw-url-zone.has-drop-error #url { display: none; }
 
 /* Composer vertical divider */
 .daw-composer-sep {
