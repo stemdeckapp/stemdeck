@@ -1571,7 +1571,14 @@ input, textarea { font-family: inherit; }
   position: relative;
   height: 36px;
   background: var(--bg-2);
-  overflow: hidden;
+  /* clip, not hidden. `hidden` is a scroll container, and the inner track now
+     overflows it, so anything that focuses an element off to the right -- the
+     rename input on a block past the viewport is the easy one -- makes the
+     browser scroll this box to reveal it. The ribbon is positioned by
+     transform, nothing ever resets scrollLeft, and the strip is then offset
+     from the waveform for good. `clip` clips identically and cannot scroll.
+     .daw-ruler-area is clip for the same reason. */
+  overflow: clip;
   user-select: none;
 }
 /* Carries the section blocks at the zoomed timeline's width, so a block placed

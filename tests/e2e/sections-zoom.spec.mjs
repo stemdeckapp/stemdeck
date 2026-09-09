@@ -113,6 +113,39 @@ test.describe("sections and zoom", () => {
     });
   });
 
+  test("focusing a control cannot scroll the ribbon out of alignment", async ({ page }) => {
+    // The ribbon is positioned by transform and nothing resets scrollLeft, so
+    // if its container is scrollable at all, one focus is enough to offset it
+    // from the waveform permanently. Renaming a section past the right edge
+    // does exactly that: the browser scrolls the box to reveal the input.
+    //
+    // Caught in review of this change, where the container was `overflow:
+    // hidden`, which is a scroll container. It scrolled 521px.
+    await page.setViewportSize({ width: 1500, height: 620 });
+    await seedSections(page);
+    await openStudio(page, { tauri: true });
+    await page.waitForSelector(".section-block", { timeout: 20000 });
+    await zoomIn(page, 5);
+
+    const base = await alignment(page);
+    const scrolled = await page.evaluate(() => {
+      const area = document.querySelector(".daw-sections-area");
+      const last = [...document.querySelectorAll(".section-block")].pop();
+      const input = document.createElement("input");
+      last.appendChild(input);
+      input.focus();
+      const left = area.scrollLeft;
+      input.remove();
+      return left;
+    });
+
+    expect(scrolled, "the ribbon must not be scrollable").toBe(0);
+    const after = await alignment(page);
+    after.forEach((off, i) => {
+      expect(Math.abs(off - base[i]), `boundary ${i} drifted after a focus`).toBeLessThanOrEqual(1);
+    });
+  });
+
   test("dragging a section moves it by what the cursor travelled", async ({ page }) => {
     // The other half of the bug. The drag converts pixels to seconds using the
     // width of the element the blocks live in, so before the fix a zoomed drag
