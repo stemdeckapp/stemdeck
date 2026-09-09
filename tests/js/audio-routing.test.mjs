@@ -150,6 +150,21 @@ class FakeContext {
   }
   async resume() {}
   async close() {}
+
+  // A real AudioContext is an EventTarget. The engine listens for statechange
+  // on it so it can ask for the context back when a backgrounded tab has it
+  // suspended (#600), and removes the listener again on teardown.
+  addEventListener(type, fn) {
+    if (!this.listeners) this.listeners = new Map();
+    if (!this.listeners.has(type)) this.listeners.set(type, []);
+    this.listeners.get(type).push(fn);
+  }
+
+  removeEventListener(type, fn) {
+    const l = this.listeners?.get(type) || [];
+    const i = l.indexOf(fn);
+    if (i >= 0) l.splice(i, 1);
+  }
 }
 
 class FakeWorkletNode extends FakeNode {

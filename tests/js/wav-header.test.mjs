@@ -110,6 +110,10 @@ const node = () => ({
 });
 class FakeCtx {
   constructor() { this.currentTime = 0; this.destination = {}; this.state = "running"; this.audioWorklet = null; }
+  // A real AudioContext is an EventTarget. The engine listens for statechange
+  // on it to recover from a backgrounded tab suspending it (#600).
+  addEventListener() {}
+  removeEventListener() {}
   createGain() { return node(); }
   createAnalyser() { return { fftSize: 0, connect() {}, disconnect() {} }; }
   createBuffer(ch, len, rate) {

@@ -23,6 +23,7 @@ import {
   INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
 } from "./pitchBus.js";
 import { createPlaybackContext } from "./audioContext.js";
+import { createTickLoop } from "./tickLoop.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -86,9 +87,26 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let playing = false;
   let startCtxTime = 0; // ctx.currentTime at playback start
   let startOffset = 0; // media offset at that moment
-  let rafId = null;
+  // `tick` is a hoisted function declaration below. Driving it through a tick
+  // loop rather than requestAnimationFrame directly keeps loop ends and
+  // end-of-track firing while the tab is hidden; see tickLoop.js (#600).
+  const tickLoop = createTickLoop(tick);
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
+
+  // A backgrounded tab can have its context suspended out from under it. The
+  // sources stay scheduled, so nothing here notices; the audio just stops. Ask
+  // for it back whenever that happens mid-playback.
+  //
+  // Held in a named function because the listener has to come off again in
+  // destroy(): when the caller passed a shared context (the mobile UI does),
+  // that context outlives this engine and would otherwise accumulate one dead
+  // listener per track the user opens.
+  const onCtxStateChange = () => {
+    if (playing && ctx.state === "suspended") ctx.resume().catch(() => {});
+  };
+  ctx.addEventListener("statechange", onCtxStateChange);
+
   // Bumped whenever the media-time -> ctx-time mapping below changes (start,
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
@@ -267,7 +285,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       return;
     }
     onTime?.(t);
-    rafId = requestAnimationFrame(tick);
+    tickLoop.schedule();
   }
 
   // `leadIn` (source seconds, default 0) delays the moment the stems begin so a
@@ -285,7 +303,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     const when = ctx.currentTime + (lead > 0 ? (lead + COUNT_IN_MARGIN) / srcRate() : 0);
     startSources(off, when);
     playing = true;
-    rafId = requestAnimationFrame(tick);
+    tickLoop.schedule();
   }
 
   function pause() {
@@ -296,7 +314,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     playing = false;
     startOffset = Math.max(0, Math.min(t, duration));
     _epoch++;
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    tickLoop.cancel();
   }
 
   function seek(t) {
@@ -378,7 +396,13 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     destroyed = true;
     stopSources();
     resetProcessor();
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    // destroyPlayer() tears the engine down without pausing first, so an engine
+    // destroyed mid-playback used to leave `playing` true forever. isPlaying()
+    // then lied about a dead engine, and anything still holding a reference to
+    // the tick would have kept it alive on that stale flag.
+    playing = false;
+    tickLoop.dispose();
+    ctx.removeEventListener("statechange", onCtxStateChange);
     tracks.clear();
     if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
     if (ownsCtx) ctx.close().catch(() => {});

@@ -189,6 +189,7 @@ import {
   INPUT_COUNT, ZERO_INPUT, clampPitch, effectivePitch, inputForPitch,
 } from "./pitchBus.js";
 import { createPlaybackContext } from "./audioContext.js";
+import { createTickLoop } from "./tickLoop.js";
 
 export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -288,7 +289,23 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   }
 
   let _duration = 0;
-  let rafId = null;
+  // `_tick` is a hoisted function declaration below. It is the only caller of
+  // _maybeSchedule(), so this loop stopping means chunk scheduling stops: the
+  // LOOKAHEAD_SEC already queued plays out and then the track goes silent with
+  // no error. requestAnimationFrame does exactly that to a hidden tab, which is
+  // the whole of #600. See tickLoop.js.
+  const tickLoop = createTickLoop(_tick);
+
+  // A backgrounded tab can have its context suspended out from under it. Ask
+  // for it back whenever that happens mid-playback. Named so destroy() can take
+  // the listener off again: a caller-supplied context (the mobile UI passes
+  // one) outlives this engine and would otherwise collect one dead listener per
+  // track the user opens.
+  const onCtxStateChange = () => {
+    if (playing && ctx.state === "suspended") ctx.resume().catch(() => {});
+  };
+  ctx.addEventListener("statechange", onCtxStateChange);
+
   // Why ready() resolved false, in words fit to show a user. Read via
   // getLoadError() by the caller that decides what to put on screen.
   let _loadError = null;
@@ -609,14 +626,14 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       playing = false;
       _audioStarted = false;
       _startOffset = _duration;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      tickLoop.cancel();
       onTime?.(_duration);
       onEnded?.();
       return;
     }
     _maybeSchedule();
     onTime?.(t);
-    rafId = requestAnimationFrame(_tick);
+    tickLoop.schedule();
   }
 
   // --- public API ---
@@ -650,7 +667,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _audioStarted = true;
       _epoch++; // mapping is valid from here; see isClockReady
       _fetchChunk(chunkIdx + 1); // pre-fetch next chunk
-      rafId = requestAnimationFrame(_tick);
+      tickLoop.schedule();
     };
 
     // chunk 0 is pre-decoded during ready(), so the sync path is the hot path.
@@ -677,7 +694,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     _audioStarted = false;
     _epoch++;
     _scheduledTo = _startOffset;
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    tickLoop.cancel();
   }
 
   function seek(t) {
@@ -687,7 +704,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _stopNodes();
       playing = false;
       _audioStarted = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      tickLoop.cancel();
     }
     _resetProcessor();
     _startOffset = clamped;
@@ -852,6 +869,11 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       destroyed = true;
       if (playing) pause();
       else _resetProcessor();
+      // pause() already cancelled the loop, but only on the playing path, and
+      // cancel is not what teardown needs anyway: a loop left registered keeps
+      // its closure reachable, and that closure holds every decoded chunk.
+      tickLoop.dispose();
+      ctx.removeEventListener("statechange", onCtxStateChange);
       if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
       _cache.clear();
       stemMap.clear();
