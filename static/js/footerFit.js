@@ -20,10 +20,12 @@
 // uncollapsed state rather than added on top of the last one, so the strip can
 // open back up as room returns and there is no hysteresis to tune.
 
-// Least destructive first. "click" moves the click-track options into a
-// popover behind their own disclosure, which is worth 706px of the 1443px
-// strip, about half of it. "tight" only closes up the gaps, and exists for the
-// narrow windows where losing the options still is not enough.
+// Least destructive first. "click" stops the click-track options being one
+// long line and lets them wrap into a block, taking that cluster from 679px to
+// about 258px of the 1443px strip. Nothing is hidden and nothing moves behind a
+// disclosure: #269 decided those controls stay visible, and a narrow window is
+// not a reason to walk that back. "tight" only closes up the spacing, and
+// exists for the windows where wrapping alone is still not enough.
 const LEVELS = ["click", "tight"];
 
 let strip = null;

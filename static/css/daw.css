@@ -2834,8 +2834,12 @@ input, textarea { font-family: inherit; }
 
 /* Last resort before the strip would scroll: close up the spacing. Nothing is
    hidden or moved, so it costs the user nothing but density. */
+/* Only the gaps between clusters. Reaching into .footer-group-body as well was
+   worth a few pixels and cost more than it saved: at (0,3,0) it outranked
+   `.footer-group-position .footer-group-body { gap: 4px }` at (0,2,0), so the
+   widest cluster on the row got 2px roomier at the exact moment this is trying
+   to reclaim width. Eight gaps at 8px instead of 16px is the win here. */
 .footer-clusters.collapse-tight { gap: 8px; }
-.footer-clusters.collapse-tight .footer-group-body { gap: 6px; }
 .metro-row { display: flex; align-items: center; gap: 9px; }
 .metro-vol-row { width: 140px; }
 .metro-vol-icon { color: var(--muted); flex-shrink: 0; }

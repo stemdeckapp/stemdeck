@@ -1123,7 +1123,7 @@ function _renderMetroBar() {
       metroBarCustomEl.classList.remove("hidden");
     }
   }
-  _renderMetroGrouping();
+  _renderMetroGrouping(); // refits, covering the custom box shown/hidden above
 }
 // Clamp a typed meter into the range the backend already validates
 // (beats_per_bar is ge=1, le=32 in app/api/jobs.py) and apply it. Anything
@@ -1153,12 +1153,19 @@ function _renderMetroGrouping() {
   if (!(n >= 5)) {
     metroGroupEl.classList.add("hidden");
     label?.classList.add("hidden");
+    // Showing or hiding these changes how wide the row wants to be by 120-160px
+    // and the ResizeObserver cannot see it: the strip's own box is flex-sized
+    // and its height does not move, since everything on the row is one line of
+    // 34px controls. Without this, picking a 7/8 meter puts the strip back into
+    // the silent sideways scroll of #586.
+    refitFooter();
     return;
   }
   metroGroupEl.classList.remove("hidden");
   label?.classList.remove("hidden");
   metroGroupEl.value = normaliseGrouping(metronomeGrouping, n).join("+");
   metroGroupEl.placeholder = defaultGrouping(n).join("+");
+  refitFooter(); // see the matching call on the hidden path above
 }
 
 // Parse "3+2+2" (or "3 2 2", or "3,2,2") into a grouping for the current meter.

@@ -86,15 +86,15 @@ test.describe("footer fit", () => {
     expect(await stripFits(page)).toBe(true);
   });
 
-  test("the page itself never scrolls sideways", async ({ page }) => {
-    for (const width of [2200, 1920, 1536, 1280]) {
-      await page.setViewportSize({ width, height: 800 });
-      await openStudio(page, { tauri: true });
-      await waitForClickTrack(page);
-      const overflows = await page.evaluate(
-        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      );
-      expect(overflows, `body scrolls sideways at ${width}px`).toBe(false);
-    }
-  });
+  // Deleted: "the page itself never scrolls sideways".
+  //
+  // It could not fail. `html, body { overflow: hidden }` (daw.css:7) means the
+  // document has no horizontal scroll to report whatever the footer does, and
+  // .footer-clusters is its own `overflow-x: auto` box so its overflow never
+  // reaches an ancestor's scrollWidth either. Verified by disabling the fix
+  // entirely: it still passed, at the cost of four full openStudio loads.
+  //
+  // "the reporter's geometry no longer overflows" above is the one that
+  // actually fails without the fix, and it is the same property measured
+  // where it is observable.
 });
