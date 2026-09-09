@@ -458,10 +458,16 @@ async function runSetup() {
         // an individual model failure; this catch is only for the whole
         // subprocess failing to run at all, e.g. a missing Python).
         //
-        // The per-model result is still worth saying out loud. It used to be
-        // thrown away here, so a user whose beat model never arrived saw a
-        // clean setup and then a permanently worse beat grid with nothing
-        // anywhere connecting the two (#502).
+        // The per-model result was thrown away here, so a user whose beat
+        // model never arrived saw a clean setup and then a permanently worse
+        // beat grid, with nothing anywhere connecting the two (#502). Naming
+        // it at least puts it in the log that gets attached to bug reports.
+        //
+        // Deliberately not setStatus: the next step overwrites the status line
+        // immediately and then navigates away to the backend, so anything
+        // written here is invisible. Telling the user properly belongs in the
+        // main UI, where the affected feature actually lives, and is its own
+        // piece of work.
         const status = await invoke("warmup_models");
         const missing = [
           [status?.demucs_ready, "stem separation"],
@@ -473,9 +479,6 @@ async function runSetup() {
           .map(([, label]) => label);
         if (missing.length) {
           console.warn("models not downloaded during setup:", missing.join(", "));
-          setStatus(
-            `Setup finished. ${missing.join(", ")} will download when first used.`,
-          );
         }
       } catch (err) {
         console.warn("model warmup failed (will download lazily on first use):", err);
