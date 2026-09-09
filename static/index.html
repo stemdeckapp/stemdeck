@@ -434,7 +434,14 @@
                 </button>
               </span>
             </div>
-            <div class="daw-sections-area" id="daw-sections"></div>
+            <!-- The inner track is what carries the sections. It is the width
+                 of the zoomed waveform rather than the width of the window, so
+                 a boundary drawn at a percentage of the track lands on the
+                 same pixel column as the audio it marks. Mirrors the ruler,
+                 which solves the same problem the same way. -->
+            <div class="daw-sections-area" id="daw-sections">
+              <div class="daw-sections-track" id="daw-sections-track"></div>
+            </div>
           </div>
 
           <!-- Waveform header / ruler -->

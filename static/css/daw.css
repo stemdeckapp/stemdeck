@@ -1571,8 +1571,31 @@ input, textarea { font-family: inherit; }
   position: relative;
   height: 36px;
   background: var(--bg-2);
-  overflow: hidden;
+  /* clip, not hidden. `hidden` is a scroll container, and the inner track now
+     overflows it, so anything that focuses an element off to the right -- the
+     rename input on a block past the viewport is the easy one -- makes the
+     browser scroll this box to reveal it. The ribbon is positioned by
+     transform, nothing ever resets scrollLeft, and the strip is then offset
+     from the waveform for good. `clip` clips identically and cannot scroll.
+     .daw-ruler-area is clip for the same reason. */
+  overflow: clip;
   user-select: none;
+}
+/* Carries the section blocks at the zoomed timeline's width, so a block placed
+   at a percentage of it lines up with the same moment on the waveform below.
+   Without this the ribbon stayed the width of the window while the waveform
+   grew, and every boundary drifted: at 2.7x the first one sat 775px from the
+   audio it marked, and the drag maths, which measures this element, moved a
+   block 2.7x too far for the same gesture (#573).
+
+   Left-anchored so width drives the size, exactly like .lanes-ruler-time.
+   transport.js translates both by the same scrollLeft; .daw-sections-area
+   already clips the spill. */
+.daw-sections-track {
+  position: absolute;
+  inset: 0;
+  right: auto;
+  width: calc(100% * var(--zoom, 1));
 }
 
 /* Section blocks (sections.js populates) */
