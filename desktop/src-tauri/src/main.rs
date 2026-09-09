@@ -2277,6 +2277,26 @@ fn torch_version_for_tag(tag: &str) -> &'static str {
     }
 }
 
+/// The torchvision that goes with that torch line.
+///
+/// torchvision ships compiled ops registered against a specific torch ABI. Load
+/// one built for a different torch and the registration silently does not
+/// happen, so the failure arrives much later as "operator torchvision::nms does
+/// not exist" from whatever first calls it (#502). Here that is the karaoke
+/// split: audio-separator pulls onnx2torch, which needs torchvision.
+///
+/// It has to be installed explicitly because the passes below use --no-deps, so
+/// nothing updates it on our behalf. The lockfile pins 0.21.0 against torch
+/// 2.6.0, which is why only the cu128 line, the one that moves torch to 2.8.0,
+/// ever broke.
+#[cfg(any(not(target_os = "macos"), test))]
+fn torchvision_version_for_tag(tag: &str) -> &'static str {
+    match tag {
+        "cu128" => "0.23.0",
+        _ => CPU_TORCHVISION_VERSION,
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn cuda_tag_from_url(index_url: &str) -> &str {
     index_url.rsplit('/').next().unwrap_or("cu124")
@@ -2485,6 +2505,10 @@ fn classify_cuda_install_error(stderr: &str) -> String {
 /// with scripts/windows/make-portable.ps1 and scripts/linux/make-portable.sh.
 #[cfg(not(target_os = "macos"))]
 const CPU_TORCH_VERSION: &str = "2.6.0";
+/// Matches CPU_TORCH_VERSION and the version uv.lock resolves. Move the two
+/// together or the ops registration breaks; see torchvision_version_for_tag.
+#[cfg(not(target_os = "macos"))]
+const CPU_TORCHVISION_VERSION: &str = "0.21.0";
 
 /// What a line of pip's output means, for the setup screen.
 ///
@@ -2783,11 +2807,13 @@ fn restore_cpu_torch(
 ) -> Result<(), String> {
     let torch_spec = format!("torch=={CPU_TORCH_VERSION}+cpu");
     let torchaudio_spec = format!("torchaudio=={CPU_TORCH_VERSION}+cpu");
+    let torchvision_spec = format!("torchvision=={CPU_TORCHVISION_VERSION}+cpu");
     run_pip_install(
         python,
         &[
             &torch_spec,
             &torchaudio_spec,
+            &torchvision_spec,
             "--index-url",
             "https://download.pytorch.org/whl/cpu",
             "--ignore-installed",
@@ -2829,9 +2855,11 @@ fn install_cuda_torch(
     let torch_version = torch_version_for_tag(tag);
     let torch_spec = format!("torch=={torch_version}+{tag}");
     let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
+    let torchvision_spec = format!("torchvision=={}+{tag}", torchvision_version_for_tag(tag));
     for (label, args) in cuda_install_passes(
         &torch_spec,
         &torchaudio_spec,
+        &torchvision_spec,
         index_url,
         cuda_wheel_needs_runtime_deps(),
     ) {
@@ -2858,6 +2886,7 @@ fn install_cuda_torch(
 fn cuda_install_passes<'a>(
     torch_spec: &'a str,
     torchaudio_spec: &'a str,
+    torchvision_spec: &'a str,
     index_url: &'a str,
     needs_runtime_deps: bool,
 ) -> Vec<(&'static str, Vec<&'a str>)> {
@@ -2866,6 +2895,10 @@ fn cuda_install_passes<'a>(
         vec![
             torch_spec,
             torchaudio_spec,
+            // Pinned to this torch line rather than left where the lockfile put
+            // it. --no-deps means nothing else will move it, and a torchvision
+            // built for another torch registers none of its ops (#502).
+            torchvision_spec,
             "--index-url",
             index_url,
             "--ignore-installed",
@@ -2875,7 +2908,13 @@ fn cuda_install_passes<'a>(
     if needs_runtime_deps {
         passes.push((
             "CUDA runtime dependency install",
-            vec![torch_spec, torchaudio_spec, "--index-url", index_url],
+            vec![
+                torch_spec,
+                torchaudio_spec,
+                torchvision_spec,
+                "--index-url",
+                index_url,
+            ],
         ));
     }
     passes
@@ -6207,13 +6246,59 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
 
     #[cfg(not(target_os = "macos"))]
     #[test]
+    fn torchvision_is_pinned_to_the_torch_line_it_ships_with() {
+        // torchvision registers its compiled ops against one torch ABI. Paired
+        // wrongly it registers none of them, and the failure surfaces far away
+        // as "operator torchvision::nms does not exist" from the karaoke split
+        // (#502). Only cu128 moves torch off the locked 2.6.0, so only cu128
+        // needs a different torchvision.
+        assert_eq!(super::torch_version_for_tag("cu128"), "2.8.0");
+        assert_eq!(super::torchvision_version_for_tag("cu128"), "0.23.0");
+
+        for tag in ["cu124", "cu121", "cu118"] {
+            assert_eq!(super::torch_version_for_tag(tag), super::CPU_TORCH_VERSION);
+            assert_eq!(
+                super::torchvision_version_for_tag(tag),
+                super::CPU_TORCHVISION_VERSION,
+                "{tag} stays on the locked pair",
+            );
+        }
+    }
+
+    #[test]
+    fn every_cuda_pass_carries_torchvision() {
+        // The bug was not a wrong version, it was torchvision never being named
+        // at all: --no-deps means pip touches only what is listed.
+        for needs_deps in [false, true] {
+            let passes = super::cuda_install_passes(
+                "torch==2.8.0+cu128",
+                "torchaudio==2.8.0+cu128",
+                "torchvision==0.23.0+cu128",
+                "https://download.pytorch.org/whl/cu128",
+                needs_deps,
+            );
+            for (label, args) in &passes {
+                assert!(
+                    args.contains(&"torchvision==0.23.0+cu128"),
+                    "{label} left torchvision behind",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cuda_install_passes_adds_dependency_pass_only_when_needed() {
         let url = "https://download.pytorch.org/whl/cu124";
 
         // Windows: the CUDA DLLs live inside torch/lib, so the single
         // --no-deps swap is the whole install.
-        let passes =
-            super::cuda_install_passes("torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", url, false);
+        let passes = super::cuda_install_passes(
+            "torch==2.6.0+cu124",
+            "torchaudio==2.6.0+cu124",
+            "torchvision==0.21.0+cu124",
+            url,
+            false,
+        );
         assert_eq!(passes.len(), 1);
         assert!(passes[0].1.contains(&"--no-deps"));
         assert!(passes[0].1.contains(&"--ignore-installed"));
@@ -6221,8 +6306,13 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // Linux: a second pass resolves the nvidia-* CUDA runtime wheels that
         // the --no-deps swap skipped. It must NOT carry --no-deps (that is the
         // whole point) nor --ignore-installed (which would rebuild every dep).
-        let passes =
-            super::cuda_install_passes("torch==2.6.0+cu124", "torchaudio==2.6.0+cu124", url, true);
+        let passes = super::cuda_install_passes(
+            "torch==2.6.0+cu124",
+            "torchaudio==2.6.0+cu124",
+            "torchvision==0.21.0+cu124",
+            url,
+            true,
+        );
         assert_eq!(passes.len(), 2);
         let (label, args) = &passes[1];
         assert_eq!(*label, "CUDA runtime dependency install");
