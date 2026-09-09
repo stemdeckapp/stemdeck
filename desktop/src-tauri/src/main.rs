@@ -14,7 +14,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -1887,6 +1887,12 @@ fn ensure_torch_device(
                 // #502, where cu128 was the only thing ever offered.
                 let candidates = wheel_candidates(compute_cap.as_deref(), &cuda_version);
                 let mut cuda_verified = false;
+                // Whether any candidate got far enough to be verified at all.
+                // Without this the reason below says "cuda-verify-failed" for a
+                // run that never reached verify, which is the first line anyone
+                // reads in a bug report and sends them after the wrong thing
+                // (#502: the install had been killed mid-download).
+                let mut cuda_installed = false;
                 for tag in &candidates {
                     append_to_setup_log(
                         &data_dir,
@@ -1900,6 +1906,7 @@ fn ensure_torch_device(
                         append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
                         continue;
                     }
+                    cuda_installed = true;
                     if verify_cuda_torch(&python) {
                         append_to_setup_log(&data_dir, &format!("{tag} verified"));
                         cuda_verified = true;
@@ -1915,14 +1922,23 @@ fn ensure_torch_device(
                     // module scope, so a wheel that cannot load keeps the
                     // backend from starting at all. Put the CPU wheels back
                     // (#324).
+                    let stage = if cuda_installed {
+                        "cuda-verify-failed"
+                    } else {
+                        "cuda-install-failed"
+                    };
                     match restore_cpu_torch(&python, &state, &app) {
-                        Ok(()) => "cuda-verify-failed",
+                        Ok(()) => stage,
                         Err(e) => {
                             append_to_setup_log(
                                 &data_dir,
                                 &format!("CPU torch restore failed: {e}"),
                             );
-                            "cuda-verify-failed-cpu-restore-failed"
+                            if cuda_installed {
+                                "cuda-verify-failed-cpu-restore-failed"
+                            } else {
+                                "cuda-install-failed-cpu-restore-failed"
+                            }
                         }
                     }
                 };
@@ -2666,6 +2682,22 @@ fn run_pip_install(
     Err(classify_cuda_install_error(&stderr))
 }
 
+/// How long pip may go completely silent before it is considered wedged.
+///
+/// pip emits a `Progress` line continuously while bytes are moving, so a gap
+/// this long means nothing is arriving. Generous enough to cover the pauses
+/// that are not stalls: resolving the index, and the decompress-and-write at
+/// the end of a large wheel, which produces no output at all.
+#[cfg(not(target_os = "macos"))]
+const PIP_STALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Backstop for a pip that never goes quiet but never finishes either. Nothing
+/// legitimate approaches this: the reporter whose install prompted the change
+/// took about 17 minutes for the whole 3 GB pass on a slow link. The window
+/// close handler kills the child through `setup_child_pid` long before here.
+#[cfg(not(target_os = "macos"))]
+const PIP_HARD_CAP: Duration = Duration::from_secs(4 * 60 * 60);
+
 /// One `python -m pip install` run, streamed. Split out of `run_pip_install`
 /// only so the progress flag can be dropped and the whole thing retried.
 #[cfg(not(target_os = "macos"))]
@@ -2695,7 +2727,8 @@ fn spawn_pip(
     }
     let output = child_output_streaming(
         child,
-        Duration::from_secs(20 * 60),
+        PIP_STALL_TIMEOUT,
+        PIP_HARD_CAP,
         label,
         pip_line_reporter(app.clone(), label.to_string()),
     );
@@ -4935,18 +4968,27 @@ fn update_setup_config<const N: usize>(
 /// text used to classify an error, which is only wanted once, at the end.
 fn child_output_streaming<F>(
     mut child: Child,
-    timeout: Duration,
+    stall: Duration,
+    cap: Duration,
     label: &str,
     mut on_stdout_line: F,
 ) -> Result<Output, String>
 where
     F: FnMut(&str) + Send + 'static,
 {
+    // Every line stamps this, and the wait loop reads it. Only stdout counts as
+    // activity: pip writes its progress there, and stderr is read to EOF in one
+    // go rather than line by line, so it has nothing per-line to stamp with.
+    let last_line = Arc::new(Mutex::new(Instant::now()));
+    let stamp = Arc::clone(&last_line);
     let stdout_reader = child.stdout.take().map(|pipe| {
         thread::spawn(move || {
             let mut collected = Vec::new();
             for line in BufReader::new(pipe).lines() {
                 let Ok(line) = line else { break };
+                if let Ok(mut at) = stamp.lock() {
+                    *at = Instant::now();
+                }
                 on_stdout_line(&line);
                 collected.extend_from_slice(line.as_bytes());
                 collected.push(b'\n');
@@ -4961,7 +5003,12 @@ where
             buf
         })
     });
-    wait_for_child(child, timeout, label, stdout_reader, stderr_reader)
+    let deadline = Deadline::Stall {
+        stall,
+        cap,
+        last: last_line,
+    };
+    wait_for_child(child, deadline, label, stdout_reader, stderr_reader)
 }
 
 fn child_output_with_timeout(
@@ -4984,14 +5031,41 @@ fn child_output_with_timeout(
         })
     });
 
-    wait_for_child(child, timeout, label, stdout_reader, stderr_reader)
+    wait_for_child(
+        child,
+        Deadline::Fixed(timeout),
+        label,
+        stdout_reader,
+        stderr_reader,
+    )
+}
+
+/// How long a child gets, and measured from what.
+enum Deadline {
+    /// A fixed budget from spawn. Right when the work should take a bounded
+    /// time whatever machine it runs on.
+    Fixed(Duration),
+    /// Give up only once nothing has been heard for `stall`, bounded by a hard
+    /// `cap` so a child that chatters forever still ends.
+    ///
+    /// Right when the duration is set by the user's connection rather than by
+    /// us. A fixed budget on a download is really an undeclared bandwidth
+    /// requirement: the Linux CUDA runtime pass moves about 3 GB, so the 20
+    /// minutes it used to get demanded a sustained 2.5 MB/s, and a reporter on
+    /// 0.77 MB/s had a perfectly healthy install killed at 1200 seconds while
+    /// bytes were still arriving (#502). Silence is the only honest signal.
+    Stall {
+        stall: Duration,
+        cap: Duration,
+        last: Arc<Mutex<Instant>>,
+    },
 }
 
 /// The wait half both readers above share: poll for exit, kill at the deadline,
 /// and join the reader threads either way so neither is leaked.
 fn wait_for_child(
     mut child: Child,
-    timeout: Duration,
+    deadline: Deadline,
     label: &str,
     stdout_reader: Option<thread::JoinHandle<Vec<u8>>>,
     stderr_reader: Option<thread::JoinHandle<Vec<u8>>>,
@@ -5000,7 +5074,7 @@ fn wait_for_child(
         reader.and_then(|h| h.join().ok()).unwrap_or_default()
     };
 
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
     loop {
         if let Some(status) = child
             .try_wait()
@@ -5014,7 +5088,25 @@ fn wait_for_child(
                 stderr: collect(stderr_reader),
             });
         }
-        if Instant::now() >= deadline {
+        // What "out of time" means depends on which kind of deadline this is,
+        // and the message has to say which one actually fired: "timed out after
+        // 1200 seconds" on a download that was still moving sent the last
+        // reporter looking for a hang that was never there.
+        let expired: Option<String> = match &deadline {
+            Deadline::Fixed(budget) => (started.elapsed() >= *budget)
+                .then(|| format!("after {} seconds", budget.as_secs())),
+            Deadline::Stall { stall, cap, last } => {
+                let quiet = last.lock().map(|t| t.elapsed()).unwrap_or(Duration::ZERO);
+                if quiet >= *stall {
+                    Some(format!("after {} seconds with no output", stall.as_secs()))
+                } else if started.elapsed() >= *cap {
+                    Some(format!("after {} seconds", cap.as_secs()))
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(why) = expired {
             let _ = child.kill();
             let _ = child.wait();
             // Detached, not joined. Killing the child closes only the pipe ends
@@ -5031,10 +5123,7 @@ fn wait_for_child(
             // caller is held there too.
             drop(stdout_reader);
             drop(stderr_reader);
-            return Err(format!(
-                "{label} timed out after {} seconds",
-                timeout.as_secs()
-            ));
+            return Err(format!("{label} timed out {why}"));
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -5278,6 +5367,89 @@ mod tests {
             "gave up after {:?}; the timeout is what stops setup hanging forever",
             started.elapsed()
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_slow_but_moving_download_is_not_killed() {
+        // The #502 regression. A 3 GB pip pass used to get a flat 20 minutes
+        // from spawn, which is an undeclared 2.5 MB/s requirement: a reporter
+        // downloading at 0.77 MB/s was killed at 1200 seconds with bytes still
+        // arriving, and their next run succeeded only because their connection
+        // happened to be 4.7x faster that time.
+        //
+        // Ten seconds of steady output against a two second stall budget. Under
+        // the old fixed deadline this child is killed; under a stall budget it
+        // must be left alone, because it was never quiet.
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg("for i in $(seq 20); do echo \"Progress $i of 20\"; sleep 0.5; done")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn().expect("spawn");
+
+        let output = super::child_output_streaming(
+            child,
+            Duration::from_secs(2),
+            Duration::from_secs(120),
+            "slow but moving",
+            |_line| {},
+        )
+        .expect("a child that keeps producing output must be left to finish");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).lines().count(),
+            20,
+            "every line must still be collected"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_download_that_goes_quiet_is_given_up_on() {
+        // The other half: silence is what a genuine stall looks like, and it
+        // still has to end. One line, then nothing.
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg("echo 'Progress 1 of 100'; sleep 300")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn().expect("spawn");
+
+        let started = std::time::Instant::now();
+        let result = super::child_output_streaming(
+            child,
+            Duration::from_secs(2),
+            Duration::from_secs(600),
+            "wedged download",
+            |_line| {},
+        );
+
+        assert!(result.is_err(), "a silent child must not be waited on");
+        assert!(
+            result.unwrap_err().contains("no output"),
+            "the message must say it went quiet, not that it ran long"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "gave up after {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn the_pip_stall_budget_outlasts_a_quiet_wheel_install() {
+        // A large wheel decompresses and writes with no output at all, so the
+        // budget has to clear that pause comfortably. It is a stall budget, not
+        // a total budget, so being generous costs nothing on a healthy run.
+        assert!(super::PIP_STALL_TIMEOUT >= Duration::from_secs(60));
+        assert!(super::PIP_STALL_TIMEOUT <= Duration::from_secs(15 * 60));
+        // And the backstop must still be a backstop.
+        assert!(super::PIP_HARD_CAP > super::PIP_STALL_TIMEOUT);
     }
 
     #[test]
@@ -5729,7 +5901,13 @@ mod tests {
 
     #[test]
     fn other_device_reasons_pass_through_unchanged() {
-        for reason in ["verified", "no-gpu-detected", "cuda-verify-failed", "mps"] {
+        for reason in [
+            "verified",
+            "no-gpu-detected",
+            "cuda-verify-failed",
+            "cuda-install-failed",
+            "mps",
+        ] {
             assert_eq!(
                 super::effective_device_reason(Some(reason.to_string()), false).as_deref(),
                 Some(reason),
