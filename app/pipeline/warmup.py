@@ -17,9 +17,16 @@ download later) rather than blocking the app from starting.
 
 "Until it can download later" depends on the cache being empty rather than
 wrong. A checkpoint truncated by a dropped connection is still a file, and
-both loaders here take a file's existence as proof it is good, so the retry
-never fires and the feature stays dead. Every load below therefore goes
-through app/core/model_cache.load_or_heal (#502).
+the loader takes a file's existence as proof it is good, so the retry never
+fires and the feature stays dead (#502).
+
+The two that reported that failure in the wild, beat_this and the vocal-split
+model, therefore load through app/core/model_cache.load_or_heal. Demucs and
+the section model do not: they cache through their own libraries rather than
+torch.hub, and neither has been seen to poison itself this way. Adding them
+would mean naming their cache layouts here and keeping those names correct
+from a distance, which is the mistake that made the first version of
+vocal_split_artifacts point at a file audio-separator never writes.
 """
 
 from __future__ import annotations

@@ -34,6 +34,11 @@ from typing import TypeVar
 
 logger = logging.getLogger("stemdeck.modelcache")
 
+# Artifacts already discarded once in this process. Healing is for a file that
+# arrived damaged, which a single re-fetch settles either way; repeating it
+# turns a permanently failing load into a ~100 MB download on every attempt.
+_healed: set[Path] = set()
+
 T = TypeVar("T")
 
 
@@ -74,10 +79,20 @@ def load_or_heal(load: Callable[[], T], stale: Callable[[], Iterable[Path]]) -> 
         raise
     except Exception as first:
         try:
-            removed = [p for p in stale() if _remove(p)]
+            paths = list(stale())
         except Exception:
             logger.warning("could not resolve model cache paths", exc_info=True)
             raise first from None
+        # Once per artifact per process. beat_this collapses every failure into
+        # one ValueError, so a load that is broken for some reason a fresh copy
+        # cannot fix looks exactly like a truncated one, and without this it
+        # would delete and re-fetch ~100 MB on every attempt for as long as the
+        # process lives.
+        fresh = [p for p in paths if p not in _healed]
+        if not fresh:
+            raise
+        removed = [p for p in fresh if _remove(p)]
+        _healed.update(fresh)
         if not removed:
             raise
         logger.warning(
@@ -102,11 +117,18 @@ def beat_this_artifacts(checkpoint: str) -> list[Path]:
 
 
 def vocal_split_artifacts(models_dir: Path, model_file: str) -> list[Path]:
-    """The audio-separator model file, and the metadata index that names it.
+    """The audio-separator model file, and the metadata indexes that name it.
 
-    The index is listed too because audio-separator reports a truncated model
-    as an unknown MD5, which is a lookup against that index rather than against
-    the file itself.
+    The indexes are listed too because audio-separator reports a truncated
+    model as an unknown MD5, and that is a lookup against them rather than
+    against the file itself. There are two, one per architecture family, and
+    they are the names audio-separator actually writes: a single
+    "model_data.json" is not one of them, so listing that instead heals the
+    checkpoint and leaves the index that produced the error in place.
     """
     root = models_dir / "audio-separator"
-    return [root / model_file, root / "model_data.json"]
+    return [
+        root / model_file,
+        root / "vr_model_data.json",
+        root / "mdx_model_data.json",
+    ]

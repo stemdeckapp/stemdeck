@@ -10,7 +10,16 @@ from __future__ import annotations
 
 import pytest
 
+import app.core.model_cache as model_cache
 from app.core.model_cache import load_or_heal
+
+
+@pytest.fixture(autouse=True)
+def _reset_healed():
+    """The once-per-process guard is module state and would leak between tests."""
+    model_cache._healed.clear()
+    yield
+    model_cache._healed.clear()
 
 
 def test_a_good_load_is_left_alone(tmp_path):
@@ -117,3 +126,26 @@ def test_an_unresolvable_cache_path_reports_the_original_failure(tmp_path):
 
     with pytest.raises(RuntimeError, match="the real problem"):
         load_or_heal(lambda: (_ for _ in ()).throw(RuntimeError("the real problem")), stale)
+
+
+def test_a_permanently_broken_load_is_only_healed_once(tmp_path):
+    """beat_this reports every failure as the same ValueError, so a load that a
+    fresh copy cannot fix is indistinguishable from a truncated one. Without a
+    guard that would re-fetch ~100 MB on every attempt for the life of the
+    process."""
+    artifact = tmp_path / "model.ckpt"
+    artifact.write_bytes(b"bad")
+    attempts = []
+
+    def load():
+        attempts.append(1)
+        raise RuntimeError("Could not load the checkpoint given the provided name")
+
+    for _ in range(3):
+        artifact.write_bytes(b"bad")  # as if a re-download landed damaged again
+        with pytest.raises(RuntimeError):
+            load_or_heal(load, lambda: [artifact])
+
+    # 2 for the first call (try, heal, retry), then 1 each for the two after it.
+    assert len(attempts) == 4
+    assert artifact.exists(), "later attempts must not keep deleting it"

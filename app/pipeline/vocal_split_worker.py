@@ -38,6 +38,7 @@ def _run(device: str, vocals_path: str, out_dir: str) -> None:
     from audio_separator.separator import Separator
 
     from app.core.config import MODELS_DIR
+    from app.core.model_cache import load_or_heal, vocal_split_artifacts
 
     separator = Separator(
         log_level=40,  # logging.ERROR -- only the lines we emit ourselves matter
@@ -45,7 +46,14 @@ def _run(device: str, vocals_path: str, out_dir: str) -> None:
         output_dir=out_dir,
         output_format="WAV",
     )
-    separator.load_model(model_filename=VOCAL_SPLIT_MODEL)
+    # This is the only path Docker ever takes: there is no warmup step there, so
+    # the model is fetched here on first use. A download cut short leaves a file
+    # that audio-separator will keep accepting as present and keep failing to
+    # load, which is #502 with no setup step to have caught it earlier.
+    load_or_heal(
+        lambda: separator.load_model(model_filename=VOCAL_SPLIT_MODEL),
+        lambda: vocal_split_artifacts(MODELS_DIR, VOCAL_SPLIT_MODEL),
+    )
     # Karaoke-family models label their two outputs "Vocals" (the lead vocal
     # that survived a second isolation pass) and "Instrumental" (everything in
     # the input that wasn't lead vocal -- since the input here is already an

@@ -2631,8 +2631,9 @@ fn pip_line_reporter(app: tauri::AppHandle, label: String) -> impl FnMut(&str) +
 }
 
 /// Runs `python -m pip install <args>`, tracking the pip PID so stop_backend can
-/// kill it if the window is closed mid-install (#140), bounding it at 20 minutes,
-/// and logging raw stderr to setup.log before mapping it to a user-facing message.
+/// kill it if the window is closed mid-install (#140), giving up once it has
+/// been silent for PIP_STALL_TIMEOUT rather than after a fixed time (#502), and
+/// logging raw stderr to setup.log before mapping it to a user-facing message.
 #[cfg(not(target_os = "macos"))]
 fn run_pip_install(
     python: &Path,
@@ -2698,6 +2699,17 @@ const PIP_STALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 #[cfg(not(target_os = "macos"))]
 const PIP_HARD_CAP: Duration = Duration::from_secs(4 * 60 * 60);
 
+/// The budget for a pip that cannot report progress at all.
+///
+/// pip before 24.1 has no `--progress-bar raw`, and the retry that drops the
+/// flag writes nothing to a pipe until it finishes. There is no activity to
+/// measure, so this is a plain deadline. Generous, because the thing it is
+/// bounding is the same 3 GB download, and a fixed budget on a download is
+/// exactly what #502 was about: it only exists here because that path gives us
+/// nothing better to go on.
+#[cfg(not(target_os = "macos"))]
+const PIP_SILENT_TIMEOUT: Duration = Duration::from_secs(90 * 60);
+
 /// One `python -m pip install` run, streamed. Split out of `run_pip_install`
 /// only so the progress flag can be dropped and the whole thing retried.
 #[cfg(not(target_os = "macos"))]
@@ -2709,6 +2721,17 @@ fn spawn_pip(
     app: &tauri::AppHandle,
     label: &str,
 ) -> Result<Output, String> {
+    // A stall budget only means anything when the child says something while it
+    // works. Without `--progress-bar raw` pip writes nothing to a pipe for the
+    // whole download, so silence is its normal state and PIP_STALL_TIMEOUT
+    // would kill a perfectly healthy 3 GB transfer five minutes in -- worse
+    // than the fixed cap this replaced. On that path the stall budget is set to
+    // the cap, which makes it a plain deadline again.
+    let stall = if progress_args.is_empty() {
+        PIP_SILENT_TIMEOUT
+    } else {
+        PIP_STALL_TIMEOUT
+    };
     let mut command = Command::new(python);
     command
         .args(["-m", "pip", "install"])
@@ -2727,7 +2750,7 @@ fn spawn_pip(
     }
     let output = child_output_streaming(
         child,
-        PIP_STALL_TIMEOUT,
+        stall,
         PIP_HARD_CAP,
         label,
         pip_line_reporter(app.clone(), label.to_string()),

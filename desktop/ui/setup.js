@@ -468,12 +468,15 @@ async function runSetup() {
         // written here is invisible. Telling the user properly belongs in the
         // main UI, where the affected feature actually lives, and is its own
         // piece of work.
+        // camelCase, because ModelWarmupStatus is #[serde(rename_all =
+        // "camelCase")]. Reading the Rust field names instead gives four
+        // undefineds, `missing` is empty every time, and this says nothing.
         const status = await invoke("warmup_models");
         const missing = [
-          [status?.demucs_ready, "stem separation"],
-          [status?.beat_this_ready, "beat detection"],
-          [status?.sections_ready, "song sections"],
-          [status?.vocal_split_ready, "karaoke split"],
+          [status?.demucsReady, "stem separation"],
+          [status?.beatThisReady, "beat detection"],
+          [status?.sectionsReady, "song sections"],
+          [status?.vocalSplitReady, "karaoke split"],
         ]
           .filter(([ready]) => ready === false)
           .map(([, label]) => label);
