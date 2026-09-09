@@ -30,6 +30,7 @@ import { isDownbeatIndex, barPositionIndex, getBeats as getGridBeats, getBars as
 import { computeCountIn, defaultGrouping, normaliseGrouping } from "./metronome.js";
 import { t } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
+import { refitFooter } from "./footerFit.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
 // it to show, so it is the floor rather than a soft default.
@@ -1309,12 +1310,16 @@ export function updateMetronomeAvailability(grid, reason = "") {
     metroBtn.setAttribute("aria-pressed", "false");
     metroPanel?.classList.add("hidden");
     if (metroNoteEl) { metroNoteEl.textContent = reason || ""; metroNoteEl.className = "metro-note"; }
+    // The options are worth ~700px of the control strip, about half of it, so
+    // them appearing or going away changes whether the rest of the row fits.
+    refitFooter();
     return;
   }
 
   metroBtn.classList.toggle("active", metronomeEnabled);
   metroBtn.setAttribute("aria-pressed", metronomeEnabled ? "true" : "false");
   metroPanel?.classList.remove("hidden"); // undo a previous track's "unavailable" hide
+  refitFooter(); // see the matching call on the unavailable path above
   setMetronomeHasBars(Array.isArray(grid.bars) && grid.bars.length > 0);
   const autoOpt = metroBarEl?.querySelector('option[value="-1"]');
   if (autoOpt) {

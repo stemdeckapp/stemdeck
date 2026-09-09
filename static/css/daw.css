@@ -2796,6 +2796,46 @@ input, textarea { font-family: inherit; }
   display: contents;
 }
 .footer-metro-panel.hidden { display: none; }
+
+/* Narrow windows only. The options stay exactly where #269 put them and stay
+   visible: nothing is hidden, moved behind a disclosure, or put in a popover.
+   They just stop being one long line and start being a block, which is what
+   the row has room for. See footerFit.js for why the threshold is measured
+   rather than written as a breakpoint.
+
+   `display: contents` above promotes the options to be peers of the on/off
+   pill, which is what makes them one wide line. Giving the panel its own box
+   back is the whole mechanism: it becomes a single flex item the row can size,
+   and its contents wrap inside it.
+
+   .daw-footer is min-height rather than a fixed height precisely so a taller
+   row is accommodated instead of clipped. */
+.footer-clusters.collapse-click .footer-metro-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  /* Measured, not chosen. The click cluster is 679px of the strip inline, and
+     everything else on the row plus its gaps is about 700px, so the width left
+     for the options is what decides where the row stops fitting. Against the
+     e2e fixture, capping the panel here takes the cluster to 258px and the
+     whole row to 971px, which is exactly the space a 1536px window has: the
+     4K-at-250%-scaling geometry from the report. 300px left it 100px short.
+
+     Wider would drop that window back into a sideways scroll. Much narrower
+     buys another window size at the cost of a taller and taller stack of
+     one-control rows. */
+  max-width: 190px;
+}
+/* Still nothing to show when the track has no beat grid. `.hidden` carries
+   !important, so it already wins over the rule above; this is belt and braces
+   against that changing. */
+.footer-clusters.collapse-click .footer-metro-panel.hidden { display: none !important; }
+
+/* Last resort before the strip would scroll: close up the spacing. Nothing is
+   hidden or moved, so it costs the user nothing but density. */
+.footer-clusters.collapse-tight { gap: 8px; }
+.footer-clusters.collapse-tight .footer-group-body { gap: 6px; }
 .metro-row { display: flex; align-items: center; gap: 9px; }
 .metro-vol-row { width: 140px; }
 .metro-vol-icon { color: var(--muted); flex-shrink: 0; }
