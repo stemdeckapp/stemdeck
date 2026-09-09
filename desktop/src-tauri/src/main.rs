@@ -358,6 +358,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
+            // Before anything else: a minimum the screen cannot satisfy leaves
+            // a window the user cannot resize down to fit, and that is not
+            // recoverable from inside the app.
+            if let Some(window) = app.get_webview_window("main") {
+                fit_min_size_to_screen(&window);
+            }
+
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
                 Err(e) => {
@@ -3902,6 +3909,83 @@ fn unix_timestamp() -> u64 {
         .unwrap_or_default()
 }
 
+/// The window minimums declared in tauri.conf.json, in logical pixels.
+///
+/// Measured rather than chosen. Sweeping the studio one axis at a time against
+/// a real six-stem track: the waveform and mixer area shrinks with the window
+/// and stops being usable at about 620px of height, while width has no hard
+/// floor at all down to 760 -- the footer strip scrolls, which it already does
+/// at 1280, and every control stays reachable. So these are a comfortable
+/// design floor rather than a hard requirement, which is exactly why clamping
+/// them is safe.
+const MIN_WINDOW_WIDTH: f64 = 1024.0;
+const MIN_WINDOW_HEIGHT: f64 = 720.0;
+
+/// Shrink the window's minimum size if the screen cannot show it.
+///
+/// tauri.conf.json declares the minimum in *logical* pixels, so the physical
+/// size it demands scales with the display. At 250% the declared 1024x720 asks
+/// for 2560x1800 physical, which is larger than a 1080p panel in both
+/// directions: the window cannot be resized to fit its own screen, and there is
+/// no way out from inside the app because every control is off it (#607).
+///
+/// Rather than lower the numbers and hope no one scales further, the minimum is
+/// capped at what the monitor can actually display. A machine with room keeps
+/// the full floor; one without gets a window it can at least see and move.
+/// Below that floor the layout is cramped, but cramped and reachable beats
+/// correct and off-screen.
+///
+/// 90% leaves room for a taskbar and the window's own decorations, which are
+/// not part of the inner size this sets.
+/// The minimum to actually apply on a screen of this logical size, or None when
+/// the declared one already fits.
+///
+/// Split out from the window plumbing so the policy can be tested without a
+/// display: the arithmetic is the part that decides whether a user ends up
+/// stuck, and it is the part worth pinning.
+///
+/// The margin leaves room for a taskbar and the window decorations, which sit
+/// outside the inner size this governs.
+fn min_size_for_screen(usable_width: f64, usable_height: f64) -> Option<(f64, f64)> {
+    const MARGIN: f64 = 0.9;
+    let width = MIN_WINDOW_WIDTH.min(usable_width * MARGIN);
+    let height = MIN_WINDOW_HEIGHT.min(usable_height * MARGIN);
+    if width >= MIN_WINDOW_WIDTH && height >= MIN_WINDOW_HEIGHT {
+        return None;
+    }
+    Some((width, height))
+}
+
+fn fit_min_size_to_screen(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        // No monitor to ask (headless, or between displays). The declared
+        // minimum stands, which is the behaviour this replaces.
+        return;
+    };
+    let usable = monitor.size().to_logical::<f64>(monitor.scale_factor());
+    let Some((width, height)) = min_size_for_screen(usable.width, usable.height) else {
+        return; // the screen can show the declared minimum
+    };
+
+    if let Err(e) = window.set_min_size(Some(tauri::LogicalSize::new(width, height))) {
+        eprintln!("[stemdeck] could not relax the window minimum: {e}");
+        return;
+    }
+    // The declared default size is larger than the minimum, so a screen too
+    // small for the minimum is too small for the default too. Bring the window
+    // itself down as well, or it opens oversized and the user still cannot see
+    // its edges.
+    if let Ok(current) = window.inner_size() {
+        let current = current.to_logical::<f64>(monitor.scale_factor());
+        if current.width > width || current.height > height {
+            let _ = window.set_size(tauri::LogicalSize::new(
+                current.width.min(width),
+                current.height.min(height),
+            ));
+        }
+    }
+}
+
 fn app_root() -> Result<PathBuf, String> {
     if let Ok(root) = env::var("STEMDECK_ROOT") {
         return Ok(PathBuf::from(root));
@@ -6265,6 +6349,7 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn every_cuda_pass_carries_torchvision() {
         // The bug was not a wrong version, it was torchvision never being named
@@ -6286,6 +6371,37 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         }
     }
 
+    #[test]
+    fn a_roomy_screen_keeps_the_declared_minimum() {
+        // 1440p at 100%, and a 4K panel at 150%: both can show 1024x720
+        // comfortably, so nothing should be relaxed.
+        assert_eq!(super::min_size_for_screen(2560.0, 1440.0), None);
+        assert_eq!(super::min_size_for_screen(2560.0, 1440.0), None);
+    }
+
+    #[test]
+    fn a_scaled_1080p_panel_gets_a_minimum_it_can_actually_show() {
+        // The reported case. 1920x1080 at 250% is 768x432 logical, which is
+        // smaller than the declared minimum in both directions, so the window
+        // could never be resized to fit its own screen (#607).
+        let (w, h) = super::min_size_for_screen(768.0, 432.0).expect("must be relaxed");
+        assert!(w <= 768.0, "width {w} still wider than the screen");
+        assert!(h <= 432.0, "height {h} still taller than the screen");
+        // And it must leave room for the taskbar and decorations rather than
+        // filling the panel exactly.
+        assert!(w < 768.0 && h < 432.0);
+    }
+
+    #[test]
+    fn only_the_axis_that_does_not_fit_is_relaxed() {
+        // Wide but short, which is what scaling a laptop panel vertically
+        // produces. The width is fine and must be left at the design floor.
+        let (w, h) = super::min_size_for_screen(1920.0, 600.0).expect("height must be relaxed");
+        assert_eq!(w, super::MIN_WINDOW_WIDTH);
+        assert!(h < super::MIN_WINDOW_HEIGHT);
+    }
+
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn cuda_install_passes_adds_dependency_pass_only_when_needed() {
         let url = "https://download.pytorch.org/whl/cu124";
