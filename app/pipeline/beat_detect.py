@@ -62,7 +62,17 @@ def _get_model():
         try:
             from beat_this.inference import Audio2Beats
 
-            _model = Audio2Beats(checkpoint_path=BEAT_MODEL_CHECKPOINT, device="cpu", dbn=False)
+            from app.core.model_cache import beat_this_artifacts, load_or_heal
+
+            # A checkpoint that downloaded incompletely is still a file on
+            # disk, and torch.hub will keep handing it back forever. Without
+            # this, one dropped connection costs the user the neural beat grid
+            # permanently and silently, because the librosa fallback below
+            # looks exactly like a machine that never had the model (#502).
+            _model = load_or_heal(
+                lambda: Audio2Beats(checkpoint_path=BEAT_MODEL_CHECKPOINT, device="cpu", dbn=False),
+                lambda: beat_this_artifacts(BEAT_MODEL_CHECKPOINT),
+            )
             logger.info("beat model loaded (checkpoint=%s)", BEAT_MODEL_CHECKPOINT)
         except ImportError:
             logger.info("beat_this not installed -- using librosa beat tracking")

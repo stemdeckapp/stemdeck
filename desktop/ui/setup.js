@@ -457,7 +457,26 @@ async function runSetup() {
         // never fails setup over this (warmup_models itself never throws for
         // an individual model failure; this catch is only for the whole
         // subprocess failing to run at all, e.g. a missing Python).
-        await invoke("warmup_models");
+        //
+        // The per-model result is still worth saying out loud. It used to be
+        // thrown away here, so a user whose beat model never arrived saw a
+        // clean setup and then a permanently worse beat grid with nothing
+        // anywhere connecting the two (#502).
+        const status = await invoke("warmup_models");
+        const missing = [
+          [status?.demucs_ready, "stem separation"],
+          [status?.beat_this_ready, "beat detection"],
+          [status?.sections_ready, "song sections"],
+          [status?.vocal_split_ready, "karaoke split"],
+        ]
+          .filter(([ready]) => ready === false)
+          .map(([, label]) => label);
+        if (missing.length) {
+          console.warn("models not downloaded during setup:", missing.join(", "));
+          setStatus(
+            `Setup finished. ${missing.join(", ")} will download when first used.`,
+          );
+        }
       } catch (err) {
         console.warn("model warmup failed (will download lazily on first use):", err);
       } finally {

@@ -14,6 +14,12 @@ failure. A model failing to download here is never fatal to setup -- exactly
 like the lazy path it replaces, a missing model degrades only that one
 feature (e.g. no beat grid, or the karaoke split unavailable until it can
 download later) rather than blocking the app from starting.
+
+"Until it can download later" depends on the cache being empty rather than
+wrong. A checkpoint truncated by a dropped connection is still a file, and
+both loaders here take a file's existence as proof it is good, so the retry
+never fires and the feature stays dead. Every load below therefore goes
+through app/core/model_cache.load_or_heal (#502).
 """
 
 from __future__ import annotations
@@ -39,17 +45,27 @@ def _warm_demucs() -> None:
 def _warm_beat_this() -> None:
     from beat_this.inference import Audio2Beats
 
-    Audio2Beats(checkpoint_path=BEAT_MODEL_CHECKPOINT, device="cpu", dbn=False)
+    from app.core.model_cache import beat_this_artifacts, load_or_heal
+
+    load_or_heal(
+        lambda: Audio2Beats(checkpoint_path=BEAT_MODEL_CHECKPOINT, device="cpu", dbn=False),
+        lambda: beat_this_artifacts(BEAT_MODEL_CHECKPOINT),
+    )
 
 
 def _warm_vocal_split() -> None:
     from audio_separator.separator import Separator
 
-    separator = Separator(
-        log_level=40,  # logging.ERROR -- this is a one-shot download, not a job
-        model_file_dir=str(MODELS_DIR / "audio-separator"),
-    )
-    separator.load_model(model_filename=VOCAL_SPLIT_MODEL)
+    from app.core.model_cache import load_or_heal, vocal_split_artifacts
+
+    def load() -> None:
+        separator = Separator(
+            log_level=40,  # logging.ERROR -- this is a one-shot download, not a job
+            model_file_dir=str(MODELS_DIR / "audio-separator"),
+        )
+        separator.load_model(model_filename=VOCAL_SPLIT_MODEL)
+
+    load_or_heal(load, lambda: vocal_split_artifacts(MODELS_DIR, VOCAL_SPLIT_MODEL))
 
 
 def _warm_sections() -> None:
