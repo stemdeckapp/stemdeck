@@ -3967,6 +3967,23 @@ fn fit_min_size_to_screen(window: &tauri::WebviewWindow) {
         return; // the screen can show the declared minimum
     };
 
+    // Recorded because the alternative is a window that silently behaves
+    // differently on one machine than another, with nothing anywhere saying
+    // why. This is the line that explains it in a bug report.
+    if let Ok(data_dir) = local_data_dir() {
+        append_to_setup_log(
+            &data_dir,
+            &format!(
+                "window minimum relaxed to {width:.0}x{height:.0}; screen is {:.0}x{:.0} logical ({}x{} physical at {:.2}x), too small for the declared {MIN_WINDOW_WIDTH:.0}x{MIN_WINDOW_HEIGHT:.0}",
+                usable.width,
+                usable.height,
+                monitor.size().width,
+                monitor.size().height,
+                monitor.scale_factor(),
+            ),
+        );
+    }
+
     if let Err(e) = window.set_min_size(Some(tauri::LogicalSize::new(width, height))) {
         eprintln!("[stemdeck] could not relax the window minimum: {e}");
         return;
