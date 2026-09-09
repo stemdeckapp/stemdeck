@@ -736,9 +736,17 @@ function wireLoopDrag() {
 // same scrollLeft; .daw-ruler-area uses overflow-x: clip to hide the spill while
 // leaving the vertical playhead line (overflow-y: visible) intact.
 export function syncRulerScroll() {
-  if (rulerTime && waveScroll) {
-    rulerTime.style.transform = `translateX(${-waveScroll.scrollLeft}px)`;
-  }
+  if (!waveScroll) return;
+  const shift = `translateX(${-waveScroll.scrollLeft}px)`;
+  if (rulerTime) rulerTime.style.transform = shift;
+  // The section ribbon is the same kind of strip and needs the same treatment:
+  // it sits outside .wave-scroll, is widened by the same --zoom, and is clipped
+  // by its own area. Queried here rather than imported from sections.js, which
+  // deliberately depends on nothing but i18n -- adding transport to its imports
+  // breaks tests/js/sections.test.mjs at import time, because state.js touches
+  // document at module scope and that test installs its stub afterwards.
+  const sectionsTrack = document.getElementById("daw-sections-track");
+  if (sectionsTrack) sectionsTrack.style.transform = shift;
 }
 
 export function applyWaveZoom() {

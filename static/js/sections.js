@@ -37,7 +37,10 @@ export function initSections(trackId, sections, duration) {
   // Clear lives in the header rather than the ribbon, so it has to be correct
   // even when the ribbon is absent and the render below never runs.
   _refreshClearVisibility();
-  _container = document.getElementById("daw-sections");
+  // The inner track, not the visible area. Everything here is a percentage of
+  // this element and the drag maths measures it, so pointing at the zoomed
+  // track is what keeps both the drawing and the gesture honest (#573).
+  _container = document.getElementById("daw-sections-track");
   if (!_container) return;
 
   // Wire the static "Add" button in the label area (may already be wired)
