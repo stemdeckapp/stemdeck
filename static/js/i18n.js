@@ -348,7 +348,7 @@ const en = {
 
   "panels.collapse": "Collapse",
 
-  "panels.allTitle": "Show or hide every panel and the library",
+  "panels.allTitle": "Show or hide every panel",
   "mixer.hint": "Drag fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -962,7 +962,7 @@ const pl = {
 
   "panels.collapse": "Zwiń",
 
-  "panels.allTitle": "Pokaż lub ukryj wszystkie panele i bibliotekę",
+  "panels.allTitle": "Pokaż lub ukryj wszystkie panele",
   "mixer.hint": "Przeciągnij suwak · M/S",
   "stemsPanel.ariaLabel": "Ścieżki",
 
@@ -1566,7 +1566,7 @@ const ja = {
 
   "panels.collapse": "折りたたむ",
 
-  "panels.allTitle": "すべてのパネルとライブラリの表示を切り替えます",
+  "panels.allTitle": "すべてのパネルの表示を切り替えます",
   "mixer.hint": "フェーダーをドラッグ · M/S",
   "stemsPanel.ariaLabel": "パート",
 
@@ -2145,7 +2145,7 @@ const zhHans = {
 
   "panels.collapse": "折叠",
 
-  "panels.allTitle": "显示或隐藏所有面板和音乐库",
+  "panels.allTitle": "显示或隐藏所有面板",
   "mixer.hint": "拖动推子 · M/S",
   "stemsPanel.ariaLabel": "音轨",
 
@@ -2724,7 +2724,7 @@ const de = {
 
   "panels.collapse": "Einklappen",
 
-  "panels.allTitle": "Alle Bereiche und die Bibliothek ein- oder ausblenden",
+  "panels.allTitle": "Alle Bereiche ein- oder ausblenden",
   "mixer.hint": "Fader ziehen · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3314,7 +3314,7 @@ const pt = {
 
   "panels.collapse": "Recolher",
 
-  "panels.allTitle": "Mostrar ou ocultar todos os painéis e a biblioteca",
+  "panels.allTitle": "Mostrar ou ocultar todos os painéis",
   "mixer.hint": "Arraste o fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3906,7 +3906,7 @@ const id = {
 
   "panels.collapse": "Ciutkan",
 
-  "panels.allTitle": "Tampilkan atau sembunyikan semua panel dan pustaka",
+  "panels.allTitle": "Tampilkan atau sembunyikan semua panel",
   "mixer.hint": "Seret fader · M/S",
   "stemsPanel.ariaLabel": "Stem",
 
@@ -4485,7 +4485,7 @@ const fr = {
 
   "panels.collapse": "Réduire",
 
-  "panels.allTitle": "Afficher ou masquer tous les panneaux et la bibliothèque",
+  "panels.allTitle": "Afficher ou masquer tous les panneaux",
   "mixer.hint": "Glissez le fader · M/S",
   "stemsPanel.ariaLabel": "Pistes",
 
@@ -5193,7 +5193,7 @@ const es = {
 
   "panels.collapse": "Contraer",
 
-  "panels.allTitle": "Mostrar u ocultar todos los paneles y la biblioteca",
+  "panels.allTitle": "Mostrar u ocultar todos los paneles",
   "mixer.hint": "Arrastra el fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -5806,7 +5806,7 @@ const ko = {
 
   "panels.collapse": "접기",
 
-  "panels.allTitle": "모든 패널과 라이브러리 표시하거나 숨기기",
+  "panels.allTitle": "모든 패널 표시하거나 숨기기",
   "mixer.hint": "페이더 드래그 · M/S",
   "stemsPanel.ariaLabel": "스템",
 

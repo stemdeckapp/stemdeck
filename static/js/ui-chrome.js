@@ -2,8 +2,6 @@
 // attributes so the Content-Security-Policy can forbid inline script (#171).
 // Loaded as a module (deferred), so the DOM is parsed before this runs.
 
-import { setSidebarCollapsed, isSidebarCollapsed } from "./catalog.js";
-
 // Upload button → trigger the hidden file input.
 document.getElementById("uploadFileBtn")?.addEventListener("click", () => {
   document.getElementById("fileInput")?.click();
@@ -82,16 +80,21 @@ function wirePanelToggles() {
   wireAllToggle(app, toggles.map((btn) => btn.dataset.panel), apply, persist);
 }
 
-// "All" clears the studio down to the mixer in one press, and brings it back
-// in one more. Clearing the three panels while the library still holds its
-// column barely changes what you see, which is what made a fourth button worth
-// having rather than three presses.
+// "All" clears the three panels in one press and brings them back in one more.
 //
-// It greys and strikes through like the other three once everything is away.
+// Deliberately not the library. It used to take that too, and the row could
+// not put it back: the three buttons beside it only know about their own
+// panels, so after an "All" press you could turn Analysis, Sections and
+// Timeline back on, watch "All" light up as though everything had returned,
+// and still be looking at a collapsed library with nothing in this row able to
+// reach it (#588). The library has its own control in the rail, which is where
+// a reader of this row would not think to look for it.
+//
+// It greys and strikes through like the other three once all three are away.
 // The threshold is the whole trick. Read as "is anything hidden", it struck
 // itself through the moment Analysis was hidden on its own, which looks exactly
-// like you pressed it. It is off only when all four are off, so it describes
-// the row rather than the loudest thing in it.
+// like you pressed it. It is off only when every panel it governs is off, so it
+// describes the row rather than the loudest thing in it.
 //
 // It stores nothing. The state is derived from .app either way, so there is no
 // fourth flag to disagree with the other three.
@@ -100,24 +103,23 @@ function wireAllToggle(app, names, apply, persist) {
   if (!btn) return;
 
   const hiddenCount = () =>
-    names.filter((name) => app.classList.contains(`panel-${name}-off`)).length +
-    (isSidebarCollapsed() ? 1 : 0);
+    names.filter((name) => app.classList.contains(`panel-${name}-off`)).length;
 
-  const sync = () => btn.setAttribute("aria-pressed", String(hiddenCount() < names.length + 1));
+  const sync = () => btn.setAttribute("aria-pressed", String(hiddenCount() < names.length));
 
   btn.addEventListener("click", () => {
     // Anything still on screen means the press is asking to clear it away.
-    const show = hiddenCount() === names.length + 1;
+    const show = hiddenCount() === names.length;
     for (const name of names) {
       apply(name, show);
       persist(name, show);
     }
-    setSidebarCollapsed(!show);
   });
 
-  // The panels and the sidebar can each be moved from their own controls, and
-  // both land as a class on .app, so watching that one attribute keeps this
-  // button honest without every other handler having to remember it exists.
+  // Each panel can also be moved from its own button, and they all land as a
+  // class on .app, so watching that one attribute keeps this button honest
+  // without every other handler having to remember it exists. The library's
+  // class lands there too and is ignored, which is the point.
   new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ["class"] });
   sync();
 }
