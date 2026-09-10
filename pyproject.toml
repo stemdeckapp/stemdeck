@@ -140,3 +140,24 @@ split-on-trailing-comma = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+# Coverage is measured on Python 3.12+ with COVERAGE_CORE=sysmon. The default
+# C tracer under-reports async function bodies -- on 3.11 it records only the
+# suspend/resume points of an `async def` FastAPI handler, so a fully exercised
+# endpoint shows as untraced and the number measures the tracer rather than the
+# suite. sys.monitoring (3.12+) has no such gap.
+[tool.coverage.run]
+source = ["app"]
+# app/_vendor is a third-party payload copied verbatim from PyPI, for the same
+# reason it is excluded from ruff: its tests live upstream, and holding it to
+# this project's coverage bar would mean writing tests against code the refresh
+# script overwrites.
+omit = ["app/_vendor/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    # Process entry points. Every one of these is exercised, but through a real
+    # subprocess (the workers speak a stderr protocol that only exists across a
+    # process boundary), which the parent's coverage run cannot see.
+    'if __name__ == "__main__":',
+]

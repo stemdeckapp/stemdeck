@@ -132,7 +132,8 @@ def _nearest_beat(value: float, beats: list[float]) -> float | None:
         return None
     index = bisect.bisect_left(beats, value)
     choices = beats[max(0, index - 1) : min(len(beats), index + 1)]
-    if not choices:
+    if not choices:  # pragma: no cover -- unreachable: `beats` is non-empty above,
+        # and bisect_left returns 0..len, so the slice always spans at least one beat.
         return None
     nearest = min(choices, key=lambda beat: abs(beat - value))
     return nearest if abs(nearest - value) <= SECTION_REFINEMENT_BEAT_SNAP_SECONDS else None
@@ -310,8 +311,12 @@ def refine_segments(
         boundaries.append(position)
 
     boundaries = sorted(set(boundaries))
+    # pragma below -- unreachable as written: set() already collapses equal
+    # positions, so the sorted list is strictly increasing. Kept because it is
+    # the statement of what a caller may not produce; the min-separation rule
+    # above is what actually enforces it today.
     if any(right - left <= 0 for left, right in zip(boundaries, boundaries[1:], strict=False)):
-        return fallback
+        return fallback  # pragma: no cover
 
     records: list[dict[str, object]] = []
     for start, end in zip(boundaries, boundaries[1:], strict=False):
