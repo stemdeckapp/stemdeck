@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from app.pipeline import analyze as az
@@ -446,3 +447,20 @@ def test_a_silent_track_yields_no_key(job, jobs_dir):
     bpm, key = az.analyze(job, src)
     assert key is None or key.split()[0] in PITCHES
     assert bpm is None or bpm > 0
+
+
+def test_a_degenerate_beat_grid_reports_no_stability_rather_than_dividing_by_zero(
+    job, jobs_dir, monkeypatch
+):
+    """Stability is std/mean of the inter-beat intervals, so a grid whose beats
+    all land at one instant divides by zero. librosa does not produce that
+    today; the guard is what keeps a future change there from failing a job
+    whose only remaining work is filling in a display field."""
+    skip_without_ffmpeg()
+    librosa = pytest.importorskip("librosa")
+    monkeypatch.setattr(librosa, "frames_to_time", lambda frames, sr=None: np.zeros(8))
+
+    az.analyze(job, _click_wav(jobs_dir / "degenerate.wav", bpm=120.0))
+
+    assert job.tempo_stability is None
+    assert job.stage_message == "Analysis complete", "the rest of the analysis still landed"

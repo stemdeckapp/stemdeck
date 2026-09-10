@@ -63,7 +63,9 @@ def _with_retries(job: Job, fn, *, what: str):
     immediately on non-retriable ones. A cancel arriving mid-attempt is
     surfaced as JobCancelled. Shared by the metadata probe and the download
     itself so both survive the same network blips."""
-    for attempt in range(_MAX_RETRIES + 1):
+    # no branch: the final attempt either returns or re-raises, so the loop
+    # never runs to completion.
+    for attempt in range(_MAX_RETRIES + 1):  # pragma: no branch
         try:
             return fn()
         except Exception as exc:

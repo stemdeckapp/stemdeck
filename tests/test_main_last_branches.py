@@ -136,3 +136,43 @@ def test_a_cookies_path_the_filesystem_rejects_is_a_422_not_a_500(monkeypatch):
 
     assert r.status_code == 422
     assert r.json()["detail"] == "invalid cookies file"
+
+
+# --------------------------------------------------------------------------
+# the vendored solver path
+# --------------------------------------------------------------------------
+
+
+def test_a_build_without_the_vendored_solver_imports_cleanly():
+    """app/_vendor carries yt-dlp's YouTube challenge solver, and the package
+    puts it on sys.path before anything else -- yt_dlp resolves its optional
+    dependencies at import time, so this is the only place it can work.
+
+    A source checkout always has the directory. A build that stripped it (or a
+    partial extraction) must still import: the solver's absence costs the
+    cookie-free path on bot-checked videos, and nothing else. Adding a
+    nonexistent directory to sys.path would be harmless in itself, but the
+    guard is what keeps the import honest about what is actually there.
+    """
+    import pathlib
+
+    import app as app_pkg
+
+    vendor = str(pathlib.Path(app_pkg.__file__).resolve().parent / "_vendor")
+    real_is_dir = pathlib.Path.is_dir
+
+    def _nothing_is_a_directory(self):
+        return False if str(self).endswith("_vendor") else real_is_dir(self)
+
+    saved = list(sys.path)
+    pathlib.Path.is_dir = _nothing_is_a_directory
+    try:
+        sys.path[:] = [p for p in sys.path if p != vendor]
+        importlib.reload(app_pkg)
+        assert vendor not in sys.path, "a directory that is not there was added to sys.path"
+    finally:
+        pathlib.Path.is_dir = real_is_dir
+        sys.path[:] = saved
+        importlib.reload(app_pkg)
+
+    assert vendor in sys.path, "the ordinary import no longer stages the solver"

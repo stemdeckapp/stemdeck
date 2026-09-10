@@ -114,3 +114,68 @@ def test_the_vocal_split_watchdog_stands_down_when_the_worker_already_exited(
 
     assert "vocal split failed" in caplog.text
     assert "stalled" not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# the startup timing, recorded on the first progress line
+# --------------------------------------------------------------------------
+
+
+_REPORTS_PROGRESS = (
+    "import sys; sys.stdin.readline(); "
+    "sys.stderr.write(' 42%|#### |\\n@@DONE@@\\n'); sys.stderr.flush()"
+)
+
+
+def test_the_startup_timing_is_added_to_the_laps_already_on_the_job(tmp_path, monkeypatch):
+    """stage_timings already holds the download and analyze laps by the time
+    separation reports its first percentage. Replacing the map rather than
+    adding to it would drop them from the job record, which is the only place
+    a slow import can be attributed to a stage afterwards."""
+    from app.pipeline import separate as sep
+
+    sep._worker.clear()
+    monkeypatch.setattr(sep, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(sep, "get_separation_quality", lambda: "standard")
+    monkeypatch.setattr(
+        sep, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _REPORTS_PROGRESS]
+    )
+    (tmp_path / "source.wav").write_bytes(b"RIFF")
+
+    job = Job(id=JOB)
+    job.stage_timings = {"download": 3.2, "analyze": 1.1}
+
+    try:
+        code, _tail = sep._run_demucs(job, tmp_path / "source.wav", tmp_path, "cpu")
+    finally:
+        sep._kill_worker()
+
+    assert code == 0
+    assert job.stage_timings["download"] == 3.2, "the earlier laps were thrown away"
+    assert job.stage_timings["analyze"] == 1.1
+    assert "separate_startup" in job.stage_timings
+
+
+def test_the_startup_timing_creates_the_map_when_there_is_none(tmp_path, monkeypatch):
+    """The other arm: a job whose earlier stages recorded nothing (a resumed
+    job, or a local upload that skipped the download) starts with no map at
+    all."""
+    from app.pipeline import separate as sep
+
+    sep._worker.clear()
+    monkeypatch.setattr(sep, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(sep, "get_separation_quality", lambda: "standard")
+    monkeypatch.setattr(
+        sep, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _REPORTS_PROGRESS]
+    )
+    (tmp_path / "source.wav").write_bytes(b"RIFF")
+
+    job = Job(id=JOB)
+    assert job.stage_timings is None
+
+    try:
+        sep._run_demucs(job, tmp_path / "source.wav", tmp_path, "cpu")
+    finally:
+        sep._kill_worker()
+
+    assert list(job.stage_timings) == ["separate_startup"]

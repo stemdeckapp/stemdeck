@@ -96,7 +96,10 @@ async def test_a_transcode_that_overruns_its_timeout_is_a_504(tmp_path, monkeypa
 
     src = _wav(tmp_path / "vocals.wav")
 
-    async def _slow(*a, **kw):
+    async def _slow(awaitable, timeout=None):
+        # Close what we are refusing to await; leaving the communicate()
+        # coroutine unstarted is a RuntimeWarning at the next collection.
+        awaitable.close()
         raise TimeoutError
 
     monkeypatch.setattr(asyncio, "wait_for", _slow)

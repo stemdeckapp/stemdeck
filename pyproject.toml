@@ -148,6 +148,10 @@ asyncio_mode = "auto"
 # suite. sys.monitoring (3.12+) has no such gap.
 [tool.coverage.run]
 source = ["app"]
+# Branch coverage, not just statements: most of what these tests pin is the
+# arm that does not run on the happy path -- the header that is absent, the
+# lookup that finds nothing, the guard whose condition holds.
+branch = true
 # app/_vendor is a third-party payload copied verbatim from PyPI, for the same
 # reason it is excluded from ruff: its tests live upstream, and holding it to
 # this project's coverage bar would mean writing tests against code the refresh

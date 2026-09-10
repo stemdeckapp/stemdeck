@@ -212,7 +212,10 @@ def restore(jobs_dir: Path) -> None:
                     to_add[job.id] = job
                 elif job.status in _RESUMABLE:
                     recovered = _resume_or_recover(job, jobs_dir / job.id)
-                    if recovered is not None:
+                    # no branch: it either recovers the job or re-queues it,
+                    # and both are a Job. The check is against its signature,
+                    # which allows None, rather than against what it does now.
+                    if recovered is not None:  # pragma: no branch
                         to_add[recovered.id] = recovered
                         # The bumped resume_attempts has to reach disk here. The
                         # next persist is whenever the job finishes, so without
