@@ -5,6 +5,7 @@ import functools
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import signal
@@ -1087,6 +1088,38 @@ app.add_middleware(
     minimum_size=MINIMUM_SIZE,
     compresslevel=COMPRESS_LEVEL,
 )
+
+
+def _pin_static_mime_types() -> None:
+    """Serve the frontend with correct content types regardless of the host.
+
+    StaticFiles asks `mimetypes` for a type, and on Windows `mimetypes` reads
+    HKEY_CLASSES_ROOT. Any program that ever registered `.js` as `text/plain`
+    leaves it that way for everyone, so StemDeck would serve its own modules as
+    plain text on that machine and nowhere else.
+
+    Browsers enforce strict MIME checking on ES modules and refuse to execute
+    one served as `text/plain`. Every module is then blocked, no listener is
+    ever attached, and the app renders fully but responds to nothing: hover and
+    typing still work because the engine does those itself (#617).
+
+    Nothing in the response is wrong on a healthy machine, which is why this
+    survives CI and every developer box. Pinning the handful of types the app
+    actually serves costs nothing and removes the dependency on a registry
+    StemDeck does not control.
+    """
+    for ext, ctype in (
+        (".js", "text/javascript"),
+        (".mjs", "text/javascript"),
+        (".css", "text/css"),
+        (".json", "application/json"),
+        (".svg", "image/svg+xml"),
+        (".wasm", "application/wasm"),
+    ):
+        mimetypes.add_type(ctype, ext)
+
+
+_pin_static_mime_types()
 
 app.include_router(router, prefix="/api")
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
