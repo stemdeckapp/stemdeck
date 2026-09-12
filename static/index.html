@@ -1087,6 +1087,9 @@
       </div>
     </div>
 
+    <!-- First, so its handlers are installed before main.js is evaluated and
+         can report a failure to parse, resolve an import, or wire the UI. -->
+    <script type="module" src="/js/boot-diagnostics.js"></script>
     <script type="module" src="/js/main.js"></script>
     <script type="module" src="/js/ui-chrome.js"></script>
   </body>
