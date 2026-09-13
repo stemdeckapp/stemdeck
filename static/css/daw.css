@@ -2665,7 +2665,9 @@ input, textarea { font-family: inherit; }
 }
 .loop-times-sep { font-size: 12px; color: var(--muted); flex-shrink: 0; }
 .loop-time-input {
-  width: 8ch; box-sizing: content-box;
+  /* 7ch holds "105.100" -- the widest value a track under 1000 s produces now
+     that the minutes field is gone. */
+  width: 7ch; box-sizing: content-box;
   padding: 2px 6px;
   background: var(--panel); border: 1px solid var(--border-strong);
   border-radius: 5px; outline: none;
@@ -2884,40 +2886,103 @@ input, textarea { font-family: inherit; }
 }
 .footer-metro-panel.hidden { display: none; }
 
-/* Narrow windows only. The options stay exactly where #269 put them and stay
-   visible: nothing is hidden, moved behind a disclosure, or put in a popover.
-   They just stop being one long line and start being a block, which is what
-   the row has room for. See footerFit.js for why the threshold is measured
-   rather than written as a breakpoint.
+/* First answer to a row that has run out of width: the options stay exactly
+   where #269 put them and stay visible, they just stop being one long line.
+
+   The width is set by footerFit.js, not written here, and that is the point.
+   A constant cannot be right: the row is short by a different number of pixels
+   at every window size and with the library open or shut, so a fixed cap
+   either leaves the options in a tall column when a shallow wrap would have
+   done, or frees far more width than the row needed and leaves the surplus
+   standing as a hole between the last cluster and Export Mix. The fallback
+   here is only for the frame before the first measurement lands.
 
    `display: contents` above promotes the options to be peers of the on/off
    pill, which is what makes them one wide line. Giving the panel its own box
-   back is the whole mechanism: it becomes a single flex item the row can size,
-   and its contents wrap inside it.
+   back is the whole mechanism: it becomes a single flex item of the measured
+   width, and its contents wrap inside it.
 
    .daw-footer is min-height rather than a fixed height precisely so a taller
    row is accommodated instead of clipped. */
+.footer-clusters.collapse-wrap .footer-metro-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  width: var(--metro-wrap-w, 380px);
+}
+/* Nothing to wrap when the track has no beat grid. `.hidden` carries
+   !important, so it already wins; this is belt and braces against that
+   changing. */
+.footer-clusters.collapse-wrap .footer-metro-panel.hidden { display: none !important; }
+
+/* Narrow windows only, and only once wrapping to half the panel's inline width
+   is still too wide. See footerFit.js for why the threshold is measured rather
+   than written as a breakpoint.
+
+   This used to cap the panel at 190px and let it wrap in place. That kept
+   every option on screen without a click, which is what #269 asked for, but on
+   a 15" laptop with the library open it wrapped into a five-row column: six
+   controls stacked under a one-line footer, roughly 150px tall, with the rest
+   of the row sitting beside a wall of them. Wrapping is the right answer for a
+   couple of controls and the wrong one for six.
+
+   So at this size only, the options move into a popover, opened from a
+   disclosure beside the on/off pill.
+   Nothing is removed and nothing changes behaviour -- the same panel, one
+   click away, and back inline the moment the row has room for it again.
+
+   Fixed, not absolute: .footer-clusters is overflow-x: auto, which computes
+   overflow-y to auto as well, so an absolutely positioned panel would be
+   clipped by the strip it belongs to. Fixed escapes that (no ancestor here
+   creates a containing block), and transport.js sets left/top from the
+   trigger's rect -- the same shape as .search-panel below. */
 .footer-clusters.collapse-click .footer-metro-panel {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 9px;
-  /* Measured, not chosen. The click cluster is 679px of the strip inline, and
-     everything else on the row plus its gaps is about 700px, so the width left
-     for the options is what decides where the row stops fitting. Against the
-     e2e fixture, capping the panel here takes the cluster to 258px and the
-     whole row to 971px, which is exactly the space a 1536px window has: the
-     4K-at-250%-scaling geometry from the report. 300px left it 100px short.
-
-     Wider would drop that window back into a sideways scroll. Much narrower
-     buys another window size at the cost of a taller and taller stack of
-     one-control rows. */
-  max-width: 190px;
+  position: fixed;
+  z-index: 300;
+  /* 260px takes the count-in and meter selects side by side on the first row,
+     so the popover is two short rows rather than one control per line. */
+  width: 260px;
+  padding: 10px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.42);
 }
-/* Still nothing to show when the track has no beat grid. `.hidden` carries
-   !important, so it already wins over the rule above; this is belt and braces
-   against that changing. */
+/* Shut until the trigger opens it. `.hidden` (no beat grid at all) carries
+   !important and still wins over both. */
+.footer-clusters.collapse-click .footer-metro-panel:not(.open) { display: none; }
 .footer-clusters.collapse-click .footer-metro-panel.hidden { display: none !important; }
+
+/* The popover frees more width than the row was short -- the click cluster
+   goes from about 450px to about 140px in one step, and there is no smaller
+   step to take. Left-aligned, the surplus pools as a hole between the last
+   cluster and Export Mix. Spread, it reads as a band of controls across the
+   footer instead. Only at this level: with the options inline the clusters
+   already fill the row, and an overflowing flex row falls back to flex-start
+   on its own, so the scrolling case is untouched. */
+.footer-clusters.collapse-click { justify-content: space-between; }
+
+/* The trigger itself only exists at this size: inline, the options are already
+   on screen and a disclosure for them would be a button that does nothing. */
+.click-more-btn { display: none; }
+.footer-clusters.collapse-click .click-more-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 34px; padding: 0;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 8px; color: var(--fg-2); cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.footer-clusters.collapse-click .click-more-btn:hover { background: var(--panel-3); color: var(--fg); }
+.footer-clusters.collapse-click .click-more-btn[aria-expanded="true"] {
+  border-color: var(--accent); color: var(--accent);
+}
+.footer-clusters.collapse-click .click-more-btn svg { transition: transform var(--t-fast); }
+.footer-clusters.collapse-click .click-more-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* No grid, no options, nothing to disclose. */
+.footer-clusters.collapse-click .footer-metro-panel.hidden + .click-more-btn { display: none; }
 
 /* Last resort before the strip would scroll: close up the spacing. Nothing is
    hidden or moved, so it costs the user nothing but density. */
@@ -2927,14 +2992,51 @@ input, textarea { font-family: inherit; }
    widest cluster on the row got 2px roomier at the exact moment this is trying
    to reclaim width. Eight gaps at 8px instead of 16px is the win here. */
 .footer-clusters.collapse-tight { gap: 8px; }
-.metro-row { display: flex; align-items: center; gap: 9px; }
-.metro-vol-row { width: 140px; }
-.metro-vol-icon { color: var(--muted); flex-shrink: 0; }
-.metro-label {
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
-  color: var(--muted); flex-shrink: 0;
+
+/* Click volume: a pill like everything else on the row, opening a vertical
+   fader. It was a 116px slider with a percentage after it -- the only control
+   on a row of 34px pills that was neither, so nothing lined up with it, and
+   the widest single item in the cluster that runs out of room first. A fader
+   is also the shape a level actually has.
+
+   It sits beside the on/off pill rather than among the options, so it stays on
+   the row at the widths where the rest goes behind the disclosure. */
+.metro-vol-wrap { display: inline-flex; flex: none; }
+.metro-vol-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 8px; color: var(--fg-2); cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
-.metro-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.metro-vol-btn:hover { background: var(--panel-3); color: var(--fg); }
+.metro-vol-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.metro-vol-icon { flex-shrink: 0; }
+
+/* Fixed rather than absolute for the same reason the options popover is:
+   .footer-clusters is overflow-x: auto, which computes overflow-y to auto as
+   well, so an absolutely positioned panel would be clipped by the strip its
+   button sits in. transport.js sets left/top from that button's rect. */
+.metro-vol-panel {
+  position: fixed; z-index: 320;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 10px 8px;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.42);
+}
+.metro-vol-panel.hidden { display: none !important; }
+.metro-vol-slider {
+  /* The standard vertical range (Chrome 121, Safari 17.4, Firefox 129) with
+     the older WebKit/Blink keyword behind it. On a browser that honours
+     neither, the input stays a horizontal slider inside the popover: smaller
+     than it should be, but still a working volume control. */
+  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-rl;
+  direction: rtl;
+  width: 20px; height: 92px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 .metro-val {
   font-family: var(--font-mono); font-size: 11px; color: var(--muted);
   width: 4ch; text-align: right;
@@ -2993,11 +3095,6 @@ input, textarea { font-family: inherit; }
 /* A refused grouping: the box snapping back on its own reads as a bug unless
    something says the numbers did not add up. */
 .metro-group.invalid { border-color: var(--danger); color: var(--danger); }
-.metro-group-label {
-  color: var(--muted); font-size: 11px; font-weight: 500;
-  letter-spacing: .02em; flex-shrink: 0; align-self: center;
-}
-
 /* Detection confidence / unavailability note: its own line under the
    waveform, where it reads as a caption on the timeline it describes (design
    1b). Hidden until it has text, clipped to one line with the full text as a

@@ -34,7 +34,7 @@ test.describe("click track", () => {
 
     // Bar marks present, so the detected-meter accent mode is live rather than
     // silently degrading to "none found".
-    await expect(page.locator('#t-metro-bar option[value="-1"]')).toHaveText("Auto (detected)");
+    await expect(page.locator('#t-metro-bar option[value="-1"]')).toHaveText("Auto");
     await expect(page.locator('#t-metro-bar option[value="-1"]')).toBeEnabled();
   });
 
@@ -111,9 +111,12 @@ test.describe("click track", () => {
     await ui.accent.selectOption("7");
     await expect(group).toBeVisible();
     await expect(group).toHaveValue("3+2+2");
-    // The box is labelled and the note spells out what "3+2+2" does, so the
-    // grouping is not a bare number the user has to decode.
-    await expect(page.locator("#t-metro-group-label")).toBeVisible();
+    // The standing "Groups" label went when the footer ran out of width. What
+    // said the box is not a bare number has to still say it, so assert on what
+    // replaced the label rather than dropping the check: the box's own
+    // placeholder and title, and the note under the waveform.
+    await expect(group).toHaveAttribute("placeholder", "3+2+2");
+    await expect(group).toHaveAttribute("title", /grouping|divides/i);
     await expect(ui.note).toContainText("counting 7 in 3+2+2");
     await expect(ui.note).toContainText("stress on 1, 4, 6");
 
@@ -142,7 +145,6 @@ test.describe("click track", () => {
     // to describing a plain accent rather than a grouping that is not playing.
     await ui.accent.selectOption("4");
     await expect(group).toBeHidden();
-    await expect(page.locator("#t-metro-group-label")).toBeHidden();
     await expect(ui.note).toContainText("accenting every 4 beats");
   });
 

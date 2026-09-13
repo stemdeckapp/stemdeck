@@ -249,12 +249,34 @@ export async function openStudio(page, { tauri = false, updateAvailable = false 
  * been fetched. Acting before then hits a null metronome, where the rate and
  * accent controls silently no-op: the click looks present and does nothing.
  */
-export async function waitForClickTrack(page) {
+export async function waitForClickTrack(page, { revealOptions = true } = {}) {
   await page.waitForFunction(
     () => document.querySelector("#t-metro") && !document.querySelector("#t-metro").disabled,
     null,
     { timeout: 20000 },
   );
+  if (revealOptions) await openClickOptions(page);
+}
+
+/**
+ * Put the click-track options where a test can click them.
+ *
+ * Below a width footerFit measures for itself, the options move into a popover
+ * behind a disclosure beside the on/off pill, instead of sitting inline. A spec that goes straight for
+ * #t-metro-bar then finds a control that exists, is enabled, and cannot be
+ * clicked -- and times out saying nothing about why. Opening it here keeps
+ * those specs about the click track rather than about the footer's width, and
+ * it is a no-op at any width that still has room for the options.
+ *
+ * Pass revealOptions: false to waitForClickTrack when the popover itself is
+ * what is under test.
+ */
+export async function openClickOptions(page) {
+  const more = page.locator("#t-metro-more");
+  if (!(await more.isVisible())) return;
+  if ((await more.getAttribute("aria-expanded")) === "true") return;
+  await more.click();
+  await page.locator("#t-metro-panel.open").waitFor({ timeout: 5000 });
 }
 
 export const exportUi = (page) => ({

@@ -723,9 +723,9 @@
                      not a control, so nothing here looks pressable. -->
                 <span class="footer-loop-hint" data-i18n="position.loopScrollHint">Scroll up/down to adjust</span>
                 <div class="footer-loop-times" title="Exact loop start / end (mm:ss.mmm or seconds)" data-i18n-title="position.loopExactTitle">
-                  <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" data-i18n-aria-label="position.loopStartAria" value="00:00.000">
+                  <input type="text" id="t-loop-start" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop start" data-i18n-aria-label="position.loopStartAria" value="00.000">
                   <span class="loop-times-sep" aria-hidden="true">-</span>
-                  <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" data-i18n-aria-label="position.loopEndAria" value="00:00.000">
+                  <input type="text" id="t-loop-end" class="loop-time-input num" inputmode="decimal" spellcheck="false" autocomplete="off" aria-label="Loop end" data-i18n-aria-label="position.loopEndAria" value="00.000">
                 </div>
               </div>
             </div>
@@ -768,6 +768,24 @@
                 </svg>
                 <span data-i18n="click.on">ON</span>
               </button>
+              <!-- Beside the on/off pill rather than among the options: how
+                   loud the click is belongs with whether it is running, and it
+                   stays reachable at the widths where the rest goes behind the
+                   disclosure. A pill like its neighbours, opening a vertical
+                   fader -- inline it was a 116px slider with a percentage after
+                   it, the one control on a row of 34px pills that was neither,
+                   so nothing lined up with it. -->
+              <div class="metro-vol-wrap">
+                <button class="metro-vol-btn" id="t-metro-vol-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="t-metro-vol-panel" title="Click volume" aria-label="Click volume" data-i18n-aria-label="click.volumeAria">
+                  <svg class="metro-vol-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>
+                  </svg>
+                </button>
+                <div class="metro-vol-panel hidden" id="t-metro-vol-panel">
+                  <span class="metro-val num" id="t-metro-vol-label">60%</span>
+                  <input type="range" id="t-metro-vol" class="metro-vol-slider" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume" data-i18n-aria-label="click.volumeAria">
+                </div>
+              </div>
               <div class="footer-metro-panel hidden" id="t-metro-panel" role="group" aria-label="Click track options" data-i18n-aria-label="click.optionsAria">
                 <span class="metro-select-wrap">
                   <select id="t-metro-countin" class="metro-select" title="Bars of click before the song starts when you press play" data-i18n-title="click.countInTitle" aria-label="Count-in" data-i18n-aria-label="click.countIn">
@@ -794,7 +812,6 @@
                   </select>
                 </span>
                 <input type="number" id="t-metro-bar-custom" class="metro-custom-beats hidden" min="1" max="32" step="1" value="4" title="Beats per bar" data-i18n-title="click.barCustomTitle" aria-label="Beats per bar" data-i18n-aria-label="click.barCustomTitle">
-                <span class="metro-group-label hidden" id="t-metro-group-label" data-i18n="click.groupLabel">Groups</span>
                 <input type="text" id="t-metro-group" class="metro-group hidden" inputmode="numeric" size="7" placeholder="3+2+2" title="How the bar divides, e.g. 3+2+2. Blank uses the usual grouping for the meter." data-i18n-title="click.groupTitle" aria-label="Beat grouping" data-i18n-aria-label="click.groupAria">
                 <button class="click-toggle-btn" id="t-metro-edit" type="button" title="Edit the beat grid" data-i18n-title="click.editTitle" aria-pressed="false">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -807,14 +824,14 @@
                   <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo" data-i18n-title="click.detected">1x</button>
                   <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time" data-i18n-title="click.double">x2</button>
                 </div>
-                <div class="metro-row metro-vol-row">
-                  <svg class="metro-vol-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                    <path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>
-                  </svg>
-                  <input type="range" id="t-metro-vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume" data-i18n-aria-label="click.volumeAria">
-                  <span class="metro-val num" id="t-metro-vol-label">60%</span>
-                </div>
               </div>
+              <!-- Only ever visible once footerFit has decided the options do
+                   not fit inline; see .collapse-click in daw.css. -->
+              <button class="click-more-btn" id="t-metro-more" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="t-metro-panel" title="Click track options" data-i18n-title="click.optionsAria" aria-label="Click track options" data-i18n-aria-label="click.optionsAria">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <polyline points="6 15 12 9 18 15"/>
+                </svg>
+              </button>
             </div>
           </div>
           </div><!-- /.footer-clusters -->

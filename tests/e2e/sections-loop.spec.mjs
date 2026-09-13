@@ -19,12 +19,11 @@ test.afterEach(async ({ page }) => {
   await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections: [] } });
 });
 
-/** "00:02.000", the format fmtTimeMs writes into the loop fields. */
+/** "02.000", the format fmtTimeMs writes into the loop fields. */
 const tc = (seconds) => {
   const ms = Math.round(seconds * 1000);
-  const m = String(Math.floor(ms / 60000)).padStart(2, "0");
-  const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, "0");
-  return `${m}:${s}.${String(ms % 1000).padStart(3, "0")}`;
+  const s = String(Math.floor(ms / 1000)).padStart(2, "0");
+  return `${s}.${String(ms % 1000).padStart(3, "0")}`;
 };
 
 /** Arm the loop the way a user does: type both bounds, blur to commit. */

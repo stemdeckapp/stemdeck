@@ -15,7 +15,7 @@ import {
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
   loopStartInput, loopEndInput,
-  metroBtn, metroPanel, metroVolEl, metroVolLabel, metroBarEl, metroBarCustomEl, metroGroupEl, metroNoteEl,
+  metroBtn, metroPanel, metroMoreBtn, metroVolEl, metroVolBtn, metroVolPanel, metroVolLabel, metroBarEl, metroBarCustomEl, metroGroupEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
   metronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar, metronomeHasBars,
   metronomeCountInBars, setMetronomeCountInBars,
@@ -28,7 +28,7 @@ import {
 import { applyMix, nudgeAllLanePitches, resetAllLanePitches } from "./mixer.js";
 import { isDownbeatIndex, barPositionIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn, defaultGrouping, normaliseGrouping } from "./metronome.js";
-import { t } from "./i18n.js";
+import { t, onLanguageChange } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
 import { refitFooter } from "./footerFit.js";
 
@@ -1114,10 +1114,16 @@ export function applyMetronomeAccent() {
 
 function _renderMetroVolume() {
   const pct = `${Math.round(metronomeVolume * 100)}%`;
-  if (metroVolEl) { metroVolEl.value = String(metronomeVolume); metroVolEl.title = t("click.volumeTitle", { pct }); }
-  // Readout sits next to the slider (design 1b): a click level you can only
-  // learn by hovering is one you cannot match between sessions.
+  if (metroVolEl) metroVolEl.value = String(metronomeVolume);
+  // Readout sits with the fader, and on the button that opens it. A click
+  // level you can only learn by moving the fader is one you cannot match
+  // between sessions, and the button is the part that is always on screen.
   if (metroVolLabel) metroVolLabel.textContent = pct;
+  // No data-i18n-title on the button: this title carries the live level, and
+  // the generic translation pass would flatten it back to a static string on a
+  // language switch. Re-derived from the same listener pattern main.js uses
+  // for the export label.
+  if (metroVolBtn) metroVolBtn.title = t("click.volumeTitle", { pct });
 }
 
 // Show the meter in the select when it is one of the presets, otherwise select
@@ -1164,11 +1170,9 @@ function _applyCustomBeatsPerBar() {
 function _renderMetroGrouping() {
   if (!metroGroupEl) return;
   const n = metronomeBeatsPerBar;
-  const label = document.getElementById("t-metro-group-label");
   if (!(n >= 5)) {
     metroGroupEl.classList.add("hidden");
-    label?.classList.add("hidden");
-    // Showing or hiding these changes how wide the row wants to be by 120-160px
+    // Showing or hiding it changes how wide the row wants to be by ~80px
     // and the ResizeObserver cannot see it: the strip's own box is flex-sized
     // and its height does not move, since everything on the row is one line of
     // 34px controls. Without this, picking a 7/8 meter puts the strip back into
@@ -1177,7 +1181,6 @@ function _renderMetroGrouping() {
     return;
   }
   metroGroupEl.classList.remove("hidden");
-  label?.classList.remove("hidden");
   metroGroupEl.value = normaliseGrouping(metronomeGrouping, n).join("+");
   metroGroupEl.placeholder = defaultGrouping(n).join("+");
   refitFooter(); // see the matching call on the hidden path above
@@ -1353,8 +1356,119 @@ export function updateMetronomeAvailability(grid, reason = "") {
   _renderMetroNote(grid);
 }
 
+// ── Footer popovers ──────────────────────────────────────────────────────
+//
+// Two of them, side by side in the click-track cluster: the options panel,
+// which only exists once footerFit decides the options do not fit inline, and
+// the volume fader, which is there at every width.
+//
+// Both are position:fixed. .footer-clusters is overflow-x: auto, which computes
+// overflow-y to auto as well, so an absolutely positioned panel would be
+// clipped by the strip it belongs to. Fixed escapes that, at the price of
+// placing them from the trigger's rect by hand.
+
+/**
+ * Put `panel` directly above `btn`.
+ *
+ * Upward because these triggers sit in the footer, so there is nothing below
+ * them to open into, and measured while the panel is shown: a display:none
+ * panel has no height to subtract.
+ */
+function _placeAbove(btn, panel) {
+  const r = btn.getBoundingClientRect();
+  const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - panel.offsetWidth - 8));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${Math.max(8, Math.round(r.top - panel.offsetHeight - 8))}px`;
+}
+
+/**
+ * Wire one trigger/panel pair.
+ *
+ * `shownClass` is what the panel's own CSS keys off: the options panel is shut
+ * by default and opts in with .open, the volume panel ships .hidden and opts
+ * out of it. `onOpen` runs before this one is shown, which is how the two take
+ * turns.
+ */
+function _wirePopover(btn, panel, { shownClass = "open", onOpen } = {}) {
+  const isOpen = () => btn.getAttribute("aria-expanded") === "true";
+  const place = () => _placeAbove(btn, panel);
+
+  const close = () => {
+    if (!isOpen()) return;
+    if (shownClass === "hidden") panel.classList.add("hidden");
+    else panel.classList.remove(shownClass);
+    btn.setAttribute("aria-expanded", "false");
+  };
+
+  const open = () => {
+    onOpen?.();
+    if (shownClass === "hidden") panel.classList.remove("hidden");
+    else panel.classList.add(shownClass);
+    btn.setAttribute("aria-expanded", "true");
+    place();
+  };
+
+  btn.addEventListener("click", (e) => {
+    // Stops the document handler below from treating the press that opened a
+    // panel as the click away that shuts it -- and, for a trigger sitting
+    // inside another panel, stops that outer one closing underneath it.
+    e.stopPropagation();
+    if (isOpen()) close();
+    else open();
+  });
+
+  // A click inside is a click on a control, not a click away from it.
+  panel.addEventListener("click", (e) => e.stopPropagation());
+
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isOpen()) {
+      close();
+      btn.focus();
+    }
+  });
+
+  // Anything that moves the trigger moves the panel with it, and a refit that
+  // puts the options back inline leaves nothing for its panel to hang off.
+  window.addEventListener("resize", close);
+  window.addEventListener("footerfit", close);
+
+  return { close, place, isOpen };
+}
+
+function wireFooterPopovers() {
+  // Each trigger stops the click that opened it from reaching the document,
+  // which is what keeps that press from being read as the click away that
+  // shuts the panel -- but it also means neither panel would ever see the
+  // other open. They sit side by side in the same cluster, so only one of them
+  // should be over the footer at a time.
+  const other = {};
+
+  if (metroVolBtn && metroVolPanel) {
+    // The fader is a drag, not a click: a pointerdown that leaves the panel
+    // still ends on the document, and without this the panel would shut
+    // mid-drag.
+    metroVolPanel.addEventListener("pointerdown", (e) => e.stopPropagation());
+    const volume = _wirePopover(metroVolBtn, metroVolPanel, {
+      shownClass: "hidden",
+      onOpen: () => other.options?.(),
+    });
+    other.volume = volume.close;
+  }
+
+  if (metroMoreBtn && metroPanel) {
+    const options = _wirePopover(metroMoreBtn, metroPanel, { onOpen: () => other.volume?.() });
+    other.options = options.close;
+    // Revealing the grouping box or picking a longer meter changes the panel's
+    // height, which for an upward-opening popover changes where its top belongs.
+    metroPanel.addEventListener("change", () => { if (options.isOpen()) options.place(); });
+  }
+}
+
 function wireMetronomeControl() {
   if (!metroBtn) return;
+  wireFooterPopovers();
+  onLanguageChange(_renderMetroVolume);
 
   // Restore preferences before the first track loads so the click comes back
   // on exactly as the user left it.
