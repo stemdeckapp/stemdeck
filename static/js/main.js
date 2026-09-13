@@ -10,7 +10,8 @@ import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
-import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime } from "./transport.js";
+import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange } from "./transport.js";
+import { setSectionsLoopBridge } from "./sections.js";
 import { wireStemListControls, wireMixerToolbar, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -222,6 +223,12 @@ initSearch((item) => {
   urlInput.setSelectionRange(urlInput.value.length, urlInput.value.length);
 });
 wireTransportButtons();
+// Sections deliberately does not import the transport, so that it stays
+// loadable without a DOM. This is the one place that owns both.
+setSectionsLoopBridge({
+  getLoop: () => ({ enabled: loopEnabled, start: loopStart, end: loopEnd }),
+  setLoopRange,
+});
 wireBeatGridUi();
 wireFooterControls();
 requestAnimationFrame(drawFooterPlaceholder);

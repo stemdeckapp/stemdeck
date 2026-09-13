@@ -340,6 +340,47 @@ def test_sections_accepts_neutral_part_kind(client, done_job):
     assert response.json()["sections"][0]["kind"] == "part"
 
 
+def test_sections_round_trip_the_locked_flag(client, done_job, tmp_path):
+    """A locked section must still be locked after a reload.
+
+    This model takes Pydantic's default extra="ignore", so before `locked` was
+    declared the editor's flag was dropped here and answered 200. Locking
+    looked like it worked and came back false on the next load, with nothing in
+    the response, the logs or the file saying otherwise (#573).
+    """
+    payload = {
+        "sections": [
+            {
+                "id": "sec1",
+                "name": "Chorus",
+                "start": 0.0,
+                "end": 30.0,
+                "color": "#ff0000",
+                "locked": True,
+            }
+        ]
+    }
+
+    response = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["sections"][0]["locked"] is True
+    meta = json.loads((tmp_path / done_job.id / "metadata.json").read_text())
+    assert meta["sections"][0]["locked"] is True
+
+
+def test_sections_default_to_unlocked(client, done_job):
+    """Every section saved before this feature existed omits the field."""
+    payload = {
+        "sections": [{"id": "sec1", "name": "Verse", "start": 0.0, "end": 30.0, "color": "#ff0000"}]
+    }
+
+    response = client.patch(f"/api/jobs/{done_job.id}/sections", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["sections"][0]["locked"] is False
+
+
 def _section(index: int) -> dict:
     return {
         "id": f"sec{index}",
