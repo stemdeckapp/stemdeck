@@ -499,6 +499,12 @@ class SectionItem(BaseModel):
         Literal["intro", "outro", "break", "bridge", "inst", "solo", "verse", "chorus", "part"]
         | None
     ) = None
+    # Pins a section against drag and resize in the timeline editor (#573).
+    # It must be declared here to exist at all: this model takes Pydantic's
+    # default extra="ignore", so an undeclared field sent by the editor is
+    # dropped on save and answered 200, and the flag comes back false on the
+    # next load with nothing anywhere saying why.
+    locked: bool = False
 
     @field_validator("id")
     @classmethod

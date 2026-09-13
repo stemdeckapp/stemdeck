@@ -94,16 +94,23 @@ function _makeSectionEl(section) {
   const pctWidth = ((section.end - section.start) / _duration) * 100;
 
   const el = document.createElement("div");
-  el.className = "section-block";
+  el.className = section.locked ? "section-block sec-locked" : "section-block";
   el.dataset.id = section.id;
   el.style.cssText = `left:${pctStart.toFixed(4)}%;width:${pctWidth.toFixed(4)}%;--sc:${section.color}`;
 
+  const lockAria = section.locked ? t("sections.unlockAria") : t("sections.lockAria");
   el.innerHTML = `
     <div class="section-handle section-handle-l" data-edge="left"></div>
     <span class="section-label">${_esc(sectionDisplayName(section, _sections))}</span>
+    <button class="section-lock" type="button" aria-label="${lockAria}" title="${lockAria}" aria-pressed="${section.locked ? "true" : "false"}" tabindex="-1">${_lockIcon(section.locked)}</button>
     <button class="section-del" type="button" aria-label="${t("sections.deleteAria")}" tabindex="-1">×</button>
     <div class="section-handle section-handle-r" data-edge="right"></div>
   `;
+
+  el.querySelector(".section-lock").addEventListener("click", (e) => {
+    e.stopPropagation();
+    _toggleLock(section.id);
+  });
 
   el.querySelector(".section-del").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -149,6 +156,20 @@ function _esc(str) {
     .replace(/"/g, "&quot;");
 }
 
+// Closed or open padlock, in the same stroked 24x24 shape as the rest of the
+// app's icons so it inherits --sc through currentColor. Drawn rather than
+// written as an emoji: this ships on three platforms and the emoji padlock is
+// a different colour and weight on each of them.
+function _lockIcon(locked) {
+  const shackle = locked ? "M7 11V7a5 5 0 0 1 10 0v4" : "M7 11V7a5 5 0 0 1 9.9-1";
+  return (
+    '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"' +
+    ' stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>' +
+    `<path d="${shackle}"></path></svg>`
+  );
+}
+
 // ─── Drag to move ─────────────────────────────────────────
 
 function _wireDrag(el, section) {
@@ -159,7 +180,11 @@ function _wireDrag(el, section) {
   let changed = false;
 
   el.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".section-handle,.section-del")) return;
+    if (e.target.closest(".section-handle,.section-del,.section-lock")) return;
+    // Read the flag here, not at wire time: the block is rebuilt on every
+    // render, but a stale closure would still be the kind of bug that only
+    // shows after a toggle and before the next redraw.
+    if (section.locked) return;
     active = true;
     startX = e.clientX;
     origStart = section.start;
@@ -214,6 +239,7 @@ function _wireResize(handle, el, section) {
   let changed = false;
 
   handle.addEventListener("pointerdown", (e) => {
+    if (section.locked) return;
     active = true;
     startX = e.clientX;
     origTime = edge === "left" ? section.start : section.end;
@@ -419,6 +445,18 @@ export function clearAllSections() {
 
 function _deleteSection(id) {
   _sections = _sections.filter((s) => s.id !== id);
+  _render();
+  _scheduleSave();
+}
+
+// Lock covers position only: drag and resize. Delete and rename stay available
+// on a locked section, because both are deliberate acts on one named target,
+// and the ask was to stop a section sliding when the pointer was aimed at
+// something else (#573).
+function _toggleLock(id) {
+  const section = _sections.find((s) => s.id === id);
+  if (!section) return;
+  section.locked = !section.locked;
   _render();
   _scheduleSave();
 }

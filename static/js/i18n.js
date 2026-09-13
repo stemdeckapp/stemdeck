@@ -788,6 +788,8 @@ const en = {
   "sections.saving": "Saving",
   "sections.saved": "Saved",
   "sections.deleteAria": "Delete section",
+  "sections.lockAria": "Lock position",
+  "sections.unlockAria": "Unlock position",
   "sections.defaultName": "Section",
 
   // ── Playlist import confirm (static/js/playlist.js) ──
@@ -1394,6 +1396,8 @@ const pl = {
   "sections.saving": "Zapisywanie",
   "sections.saved": "Zapisano",
   "sections.deleteAria": "Usuń sekcję",
+  "sections.lockAria": "Zablokuj pozycję",
+  "sections.unlockAria": "Odblokuj pozycję",
   "sections.defaultName": "Sekcja",
 
   "playlist.skip.unavailable.one": "{count} niedostępny",
@@ -1983,6 +1987,8 @@ const ja = {
   "sections.saving": "保存中",
   "sections.saved": "保存済み",
   "sections.deleteAria": "セクションを削除",
+  "sections.lockAria": "位置をロック",
+  "sections.unlockAria": "位置のロックを解除",
   "sections.defaultName": "セクション",
 
   "playlist.skip.unavailable.other": "利用不可 {count}件",
@@ -2562,6 +2568,8 @@ const zhHans = {
   "sections.saving": "正在保存",
   "sections.saved": "已保存",
   "sections.deleteAria": "删除段落",
+  "sections.lockAria": "锁定位置",
+  "sections.unlockAria": "解锁位置",
   "sections.defaultName": "段落",
 
   "playlist.skip.unavailable.other": "{count} 首不可用",
@@ -3149,6 +3157,8 @@ const de = {
   "sections.saving": "Wird gespeichert",
   "sections.saved": "Gespeichert",
   "sections.deleteAria": "Abschnitt löschen",
+  "sections.lockAria": "Position sperren",
+  "sections.unlockAria": "Position entsperren",
   "sections.defaultName": "Abschnitt",
 
   "playlist.skip.unavailable.other": "{count} nicht verfügbar",
@@ -3739,6 +3749,8 @@ const pt = {
   "sections.saving": "Salvando",
   "sections.saved": "Salvo",
   "sections.deleteAria": "Excluir seção",
+  "sections.lockAria": "Bloquear posição",
+  "sections.unlockAria": "Desbloquear posição",
   "sections.defaultName": "Seção",
 
   "playlist.skip.unavailable.one": "{count} indisponível",
@@ -4323,6 +4335,8 @@ const id = {
   "sections.saving": "Menyimpan",
   "sections.saved": "Tersimpan",
   "sections.deleteAria": "Hapus bagian",
+  "sections.lockAria": "Kunci posisi",
+  "sections.unlockAria": "Buka kunci posisi",
   "sections.defaultName": "Bagian",
 
   "playlist.skip.unavailable.other": "{count} tidak tersedia",
@@ -4910,6 +4924,8 @@ const fr = {
   "sections.saving": "Enregistrement",
   "sections.saved": "Enregistré",
   "sections.deleteAria": "Supprimer la section",
+  "sections.lockAria": "Verrouiller la position",
+  "sections.unlockAria": "Déverrouiller la position",
   "sections.defaultName": "Section",
 
   "playlist.skip.unavailable.one": "{count} indisponible",
@@ -5627,6 +5643,8 @@ const es = {
   "sections.saving": "Guardando",
   "sections.saved": "Guardado",
   "sections.deleteAria": "Eliminar sección",
+  "sections.lockAria": "Bloquear posición",
+  "sections.unlockAria": "Desbloquear posición",
   "sections.defaultName": "Sección",
 
   // ── Playlist import confirm (static/js/playlist.js) ──
@@ -6223,6 +6241,8 @@ const ko = {
   "sections.saving": "저장 중",
   "sections.saved": "저장됨",
   "sections.deleteAria": "구간 삭제",
+  "sections.lockAria": "위치 잠금",
+  "sections.unlockAria": "위치 잠금 해제",
   "sections.defaultName": "구간",
 
   "playlist.skip.unavailable.other": "사용할 수 없는 {count}개",

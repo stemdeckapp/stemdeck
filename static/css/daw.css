@@ -1667,6 +1667,30 @@ input, textarea { font-family: inherit; }
 .section-del:hover { opacity: 1; background: rgba(0,0,0,0.3); }
 .section-block:hover .section-del { display: flex; }
 
+.section-lock {
+  display: none;
+  flex-shrink: 0;
+  width: 16px; height: 16px;
+  margin-right: 2px;
+  border: none; background: none;
+  color: var(--sc, #4a7fff);
+  cursor: pointer; border-radius: 3px;
+  align-items: center; justify-content: center;
+  opacity: 0.7;
+  padding: 0;
+}
+.section-lock:hover { opacity: 1; background: rgba(0,0,0,0.3); }
+.section-block:hover .section-lock { display: flex; }
+/* A locked section shows its padlock without being hovered. Hiding it would
+   make locked and unlocked look identical at rest, and the only way to find a
+   locked one would be to try to drag it. */
+.section-block.sec-locked .section-lock { display: flex; opacity: 1; }
+
+/* The grab and col-resize cursors promise a drag that cannot happen. */
+.section-block.sec-locked,
+.section-block.sec-locked .section-handle { cursor: default; }
+.section-block.sec-locked .section-handle:hover { background: none; }
+
 .section-handle {
   position: absolute;
   top: 0; bottom: 0;
