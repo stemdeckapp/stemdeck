@@ -1681,10 +1681,16 @@ input, textarea { font-family: inherit; }
 }
 .section-lock:hover { opacity: 1; background: rgba(0,0,0,0.3); }
 .section-block:hover .section-lock { display: flex; }
-/* A locked section shows its padlock without being hovered. Hiding it would
-   make locked and unlocked look identical at rest, and the only way to find a
-   locked one would be to try to drag it. */
-.section-block.sec-locked .section-lock { display: flex; opacity: 1; }
+/* A locked section shows its padlock without being hovered, and in red. Hiding
+   it would make locked and unlocked look identical at rest, and the only way to
+   find a locked one would be to try to drag it. Red because the padlock is the
+   one control that is saying no to the others. */
+.section-block.sec-locked .section-lock {
+  display: flex;
+  opacity: 1;
+  color: var(--danger);
+}
+.section-block.sec-locked .section-lock:hover { opacity: 1; }
 
 /* The grab and col-resize cursors promise a drag that cannot happen. */
 .section-block.sec-locked,
@@ -1731,6 +1737,9 @@ input, textarea { font-family: inherit; }
 }
 .sections-save-indicator.hidden { display: none; }
 .sections-save-indicator.saved { color: #4caf7d; }
+/* A refusal, not a failure of something already in flight. It borrows this
+   element because it belongs beside the button that was pressed. */
+.sections-save-indicator.notice { color: var(--warn, #e6a23c); white-space: normal; }
 .sections-save-indicator::before {
   content: "";
   display: block;
@@ -1739,6 +1748,14 @@ input, textarea { font-family: inherit; }
   border: 1.5px solid currentColor;
   border-top-color: transparent;
   animation: sections-spin 600ms linear infinite;
+}
+.sections-save-indicator.notice::before {
+  animation: none;
+  border: none;
+  width: auto; height: auto;
+  content: "!";
+  font-weight: 700;
+  font-size: 11px;
 }
 .sections-save-indicator.saved::before {
   animation: none;

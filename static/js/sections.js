@@ -26,6 +26,26 @@ let _container = null;
 let _saveTimer = null;
 let _saveChain = Promise.resolve();
 
+// The loop lives in transport.js, which reaches the DOM at import time through
+// state.js. Importing it here would drag a document into every Node test that
+// loads this module, so the two functions sections needs are handed in instead.
+// Same reason loopRegion.js is its own module: the testable part stays
+// reachable without a browser.
+let _loopBridge = null;
+
+/// Wire sections to the transport's loop. Called once, from the module that
+/// already owns both. Unset, the loop features are inert rather than broken.
+export function setSectionsLoopBridge(bridge) {
+  _loopBridge = bridge;
+}
+
+function _armedLoop() {
+  const loop = _loopBridge?.getLoop?.();
+  if (!loop || !loop.enabled) return null;
+  if (!(loop.end > loop.start)) return null;
+  return loop;
+}
+
 onLanguageChange(() => _render());
 
 // ─── Public API ───────────────────────────────────────────
@@ -117,9 +137,18 @@ function _makeSectionEl(section) {
     _deleteSection(section.id);
   });
 
-  el.querySelector(".section-label").addEventListener("dblclick", (e) => {
+  // Bound to the block, not to the label inside it. The drag calls
+  // setPointerCapture, which retargets the rest of the gesture to the capturing
+  // element, so the dblclick that ends a real double-click is delivered to the
+  // block and a listener on the child label never runs. Synthetic events do not
+  // capture, which is why this looked fine in a console and failed for every
+  // actual user.
+  el.addEventListener("dblclick", (e) => {
+    if (e.target.closest(".section-handle,.section-del,.section-lock")) return;
     e.stopPropagation();
-    _openRename(section.id, el.querySelector(".section-label"));
+    if (section.locked) return;
+    const labelEl = el.querySelector(".section-label");
+    if (labelEl) _openRename(section.id, labelEl);
   });
 
   _wireDrag(el, section);
@@ -179,8 +208,16 @@ function _wireDrag(el, section) {
   let origEnd = 0;
   let changed = false;
 
+  // A press that never moves is a click, and a click loops the section. That is
+  // tracked separately from `active` so a locked section can still be looped:
+  // lock is about position, and refusing to loop one would be a second rule
+  // nobody asked for.
+  let pressed = false;
+
   el.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".section-handle,.section-del,.section-lock")) return;
+    pressed = true;
+    changed = false;
     // Read the flag here, not at wire time: the block is rebuilt on every
     // render, but a stale closure would still be the kind of bug that only
     // shows after a toggle and before the next redraw.
@@ -189,7 +226,6 @@ function _wireDrag(el, section) {
     startX = e.clientX;
     origStart = section.start;
     origEnd = section.end;
-    changed = false;
     el.setPointerCapture(e.pointerId);
     el.classList.add("sec-dragging");
     e.preventDefault();
@@ -210,10 +246,20 @@ function _wireDrag(el, section) {
   });
 
   el.addEventListener("pointerup", () => {
-    if (!active) return;
-    active = false;
-    el.classList.remove("sec-dragging");
-    if (changed) _scheduleSave();
+    const wasPressed = pressed;
+    pressed = false;
+    if (active) {
+      active = false;
+      el.classList.remove("sec-dragging");
+      if (changed) {
+        _scheduleSave();
+        return;
+      }
+    }
+    // Nothing moved, so this was a click: loop over what it covers. MIN_SEC is
+    // 0.5 s and MIN_LOOP_SEC is 0.2 s, so any section that exists can be a
+    // loop and setLoopRange cannot refuse one.
+    if (wasPressed && !changed) _loopBridge?.setLoopRange?.(section.start, section.end);
   });
 
   el.addEventListener("pointercancel", () => {
@@ -223,6 +269,7 @@ function _wireDrag(el, section) {
       _render();
     }
     active = false;
+    pressed = false;
     el.classList.remove("sec-dragging");
   });
 }
@@ -336,7 +383,28 @@ function _rightNeighborStart(id) {
 
 // ─── CRUD ─────────────────────────────────────────────────
 
-function _addSection() {
+// Where a new section goes.
+//
+// With a loop armed, Add means "make this selection a section", which is the
+// direct route from hearing a part to naming it (#573, and #474 asked for the
+// same thing). Without one it falls back to the first gap that fits.
+//
+// Returns null when a loop is armed but cannot become a section, so the caller
+// can say why rather than silently building one somewhere else. That silent
+// fallback is the whole complaint: you select a region, press Add, and a
+// section appears at the start of the track instead.
+function _newSectionBounds() {
+  const loop = _armedLoop();
+  if (loop && loop.end - loop.start >= MIN_SEC) {
+    const start = Math.max(0, loop.start);
+    const end = Math.min(_duration, loop.end);
+    if (end - start < MIN_SEC) return null;
+    // Sections cannot overlap, so a loop drawn across one cannot become a
+    // section without moving something the user did not ask to move.
+    if (_sections.some((s) => start < s.end && end > s.start)) return null;
+    return { start, end };
+  }
+
   const defW = _duration * DEFAULT_WIDTH_FRAC;
   const sorted = [..._sections].sort((a, b) => a.start - b.start);
 
@@ -349,12 +417,24 @@ function _addSection() {
 
   // Clamp and verify room
   start = Math.min(start, _duration - MIN_SEC);
-  if (start < 0) return;
+  if (start < 0) return null;
   const end = Math.min(start + defW, _duration);
-  if (end - start < MIN_SEC) return;
+  if (end - start < MIN_SEC) return null;
 
   // Verify no overlap
-  if (_sections.some((s) => start < s.end && end > s.start)) return;
+  if (_sections.some((s) => start < s.end && end > s.start)) return null;
+  return { start, end };
+}
+
+function _addSection() {
+  const bounds = _newSectionBounds();
+  if (!bounds) {
+    // Only worth explaining when a loop was the thing that failed. A full
+    // track with no gap left is visible on its own.
+    if (_armedLoop()) _showNotice(t("sections.loopOverlaps"));
+    return;
+  }
+  const { start, end } = bounds;
 
   const color = _nextColor();
   const section = { id: _nextId(), name: t("sections.defaultName"), start, end, color };
@@ -449,10 +529,15 @@ function _deleteSection(id) {
   _scheduleSave();
 }
 
-// Lock covers position only: drag and resize. Delete and rename stay available
-// on a locked section, because both are deliberate acts on one named target,
-// and the ask was to stop a section sliding when the pointer was aimed at
-// something else (#573).
+// Lock covers editing: drag, resize and rename all refuse while it is set, and
+// the padlock turns red so a locked section is obvious at rest (#573).
+//
+// Looping over a locked section still works. That reads the section without
+// changing it, and it is the gesture most likely to be wanted on one pinned
+// precisely because it matters.
+//
+// Delete is still allowed: the cross is an explicit press on one named target,
+// not something a pointer does on the way to somewhere else.
 function _toggleLock(id) {
   const section = _sections.find((s) => s.id === id);
   if (!section) return;
@@ -465,6 +550,10 @@ function _openRename(id, labelEl) {
   if (!labelEl) return;
   const section = _sections.find((s) => s.id === id);
   if (!section) return;
+  // Also checked here, not only at the gesture. _addSection opens a rename on
+  // the block it just made, and a future caller has no reason to know that a
+  // locked section must not get an editable field.
+  if (section.locked) return;
 
   const input = document.createElement("input");
   input.className = "section-rename-input";
@@ -518,6 +607,21 @@ function _showSaved() {
   _savedTimer = setTimeout(() => {
     el.className = "sections-save-indicator hidden";
   }, 1800);
+}
+
+// A refusal, shown where the save state already appears. That element is
+// aria-live="polite", so this reaches a screen reader without stealing focus,
+// and it is beside the button that was just pressed rather than in the import
+// panel at the other end of the page.
+function _showNotice(message) {
+  const el = document.getElementById("sectionsSaveIndicator");
+  if (!el) return;
+  clearTimeout(_savedTimer);
+  el.textContent = message;
+  el.className = "sections-save-indicator notice";
+  _savedTimer = setTimeout(() => {
+    el.className = "sections-save-indicator hidden";
+  }, 3200);
 }
 
 function _hideSaveIndicator() {

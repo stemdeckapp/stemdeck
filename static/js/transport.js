@@ -338,11 +338,23 @@ function commitLoopInput(which) {
     revert();
     return;
   }
+  setLoopRange(start, end);
+}
+
+/// Arm the loop over an explicit span, and show it.
+///
+/// Callers that already know both bounds all need the same five steps, and the
+/// button class and the overlay redraw are the two that are silent when
+/// forgotten: the loop plays correctly and nothing on screen says it is on.
+/// Returns false when the span is too short to loop, so a caller can say why.
+export function setLoopRange(start, end) {
+  if (!(end - start >= MIN_LOOP_SEC)) return false;
   setLoopStart(start);
   setLoopEnd(end);
   setLoopEnabled(true);
   loopBtn.classList.add("active");
   updateLoopRegionVisual();
+  return true;
 }
 
 // Wheel over a loop field nudges it, in seconds on the left of the decimal
@@ -390,12 +402,7 @@ function nudgeLoopInput(which, direction, unit) {
   if (next < 0 || next > totalDuration) return;
   const start = which === "start" ? next : loopStart;
   const end = which === "end" ? next : loopEnd;
-  if (end - start < MIN_LOOP_SEC) return;
-  setLoopStart(start);
-  setLoopEnd(end);
-  setLoopEnabled(true);
-  loopBtn.classList.add("active");
-  updateLoopRegionVisual();
+  setLoopRange(start, end);
 }
 
 function wireLoopInputs() {

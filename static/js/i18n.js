@@ -790,6 +790,7 @@ const en = {
   "sections.deleteAria": "Delete section",
   "sections.lockAria": "Lock position",
   "sections.unlockAria": "Unlock position",
+  "sections.loopOverlaps": "Loop overlaps a section",
   "sections.defaultName": "Section",
 
   // ── Playlist import confirm (static/js/playlist.js) ──
@@ -1398,6 +1399,7 @@ const pl = {
   "sections.deleteAria": "Usuń sekcję",
   "sections.lockAria": "Zablokuj pozycję",
   "sections.unlockAria": "Odblokuj pozycję",
+  "sections.loopOverlaps": "Pętla nachodzi na sekcję",
   "sections.defaultName": "Sekcja",
 
   "playlist.skip.unavailable.one": "{count} niedostępny",
@@ -1989,6 +1991,7 @@ const ja = {
   "sections.deleteAria": "セクションを削除",
   "sections.lockAria": "位置をロック",
   "sections.unlockAria": "位置のロックを解除",
+  "sections.loopOverlaps": "ループが既存のセクションと重なっています",
   "sections.defaultName": "セクション",
 
   "playlist.skip.unavailable.other": "利用不可 {count}件",
@@ -2570,6 +2573,7 @@ const zhHans = {
   "sections.deleteAria": "删除段落",
   "sections.lockAria": "锁定位置",
   "sections.unlockAria": "解锁位置",
+  "sections.loopOverlaps": "循环区域与已有段落重叠",
   "sections.defaultName": "段落",
 
   "playlist.skip.unavailable.other": "{count} 首不可用",
@@ -3159,6 +3163,7 @@ const de = {
   "sections.deleteAria": "Abschnitt löschen",
   "sections.lockAria": "Position sperren",
   "sections.unlockAria": "Position entsperren",
+  "sections.loopOverlaps": "Loop überschneidet einen Abschnitt",
   "sections.defaultName": "Abschnitt",
 
   "playlist.skip.unavailable.other": "{count} nicht verfügbar",
@@ -3751,6 +3756,7 @@ const pt = {
   "sections.deleteAria": "Excluir seção",
   "sections.lockAria": "Bloquear posição",
   "sections.unlockAria": "Desbloquear posição",
+  "sections.loopOverlaps": "O loop sobrepõe uma seção",
   "sections.defaultName": "Seção",
 
   "playlist.skip.unavailable.one": "{count} indisponível",
@@ -4337,6 +4343,7 @@ const id = {
   "sections.deleteAria": "Hapus bagian",
   "sections.lockAria": "Kunci posisi",
   "sections.unlockAria": "Buka kunci posisi",
+  "sections.loopOverlaps": "Loop bertumpang tindih dengan bagian",
   "sections.defaultName": "Bagian",
 
   "playlist.skip.unavailable.other": "{count} tidak tersedia",
@@ -4926,6 +4933,7 @@ const fr = {
   "sections.deleteAria": "Supprimer la section",
   "sections.lockAria": "Verrouiller la position",
   "sections.unlockAria": "Déverrouiller la position",
+  "sections.loopOverlaps": "La boucle chevauche une section",
   "sections.defaultName": "Section",
 
   "playlist.skip.unavailable.one": "{count} indisponible",
@@ -5645,6 +5653,7 @@ const es = {
   "sections.deleteAria": "Eliminar sección",
   "sections.lockAria": "Bloquear posición",
   "sections.unlockAria": "Desbloquear posición",
+  "sections.loopOverlaps": "El bucle se superpone a una sección",
   "sections.defaultName": "Sección",
 
   // ── Playlist import confirm (static/js/playlist.js) ──
@@ -6243,6 +6252,7 @@ const ko = {
   "sections.deleteAria": "구간 삭제",
   "sections.lockAria": "위치 잠금",
   "sections.unlockAria": "위치 잠금 해제",
+  "sections.loopOverlaps": "루프가 기존 구간과 겹칩니다",
   "sections.defaultName": "구간",
 
   "playlist.skip.unavailable.other": "사용할 수 없는 {count}개",
