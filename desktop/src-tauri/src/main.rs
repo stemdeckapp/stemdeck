@@ -2296,7 +2296,14 @@ fn torch_version_for_tag(tag: &str) -> &'static str {
 /// nothing updates it on our behalf. The lockfile pins 0.21.0 against torch
 /// 2.6.0, which is why only the cu128 line, the one that moves torch to 2.8.0,
 /// ever broke.
-#[cfg(any(not(target_os = "macos"), test))]
+// Not `any(not(macos), test)` like torch_version_for_tag above. That one is
+// reached by a test which itself runs everywhere, and returns literals. This
+// one returns CPU_TORCHVISION_VERSION, a `not(macos)` constant, and both tests
+// that call it are `not(macos)` too -- so compiling it into a macOS test build
+// asked for a constant that is not there, and `cargo test` could not build on
+// macOS at all. The workflow that would have caught it had been cancelled on
+// every recent run rather than failing, so it went unseen (#643).
+#[cfg(not(target_os = "macos"))]
 fn torchvision_version_for_tag(tag: &str) -> &'static str {
     match tag {
         "cu128" => "0.23.0",
