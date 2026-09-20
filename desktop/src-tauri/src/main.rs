@@ -4113,13 +4113,34 @@ fn ffmpeg_path(data_dir: &Path) -> Option<PathBuf> {
     Some(data_dir.join("ffmpeg").join(file))
 }
 
-fn ffprobe_path(data_dir: &Path) -> PathBuf {
-    let file = if cfg!(windows) {
+fn ffprobe_file_name() -> &'static str {
+    if cfg!(windows) {
         "ffprobe.exe"
     } else {
         "ffprobe"
-    };
-    data_dir.join("ffmpeg").join(file)
+    }
+}
+
+/// The ffprobe that goes with a resolved ffmpeg.
+///
+/// ffprobe sits beside ffmpeg in every layout we accept (flat, `bin/`, a
+/// system install), so the answer is always "same directory, other name". The
+/// case worth naming is the PATH short-circuit in `ensure_ffmpeg`, which
+/// returns a bare `ffmpeg` with no directory at all: the matching answer is a
+/// bare `ffprobe`, resolved through PATH the same way.
+///
+/// Written out rather than as `.parent().map(join).unwrap_or_else(fallback)`,
+/// because `Path::parent()` on a bare file name returns `Some("")` and not
+/// `None`. That idiom reads as though it handles the directory-less case and
+/// never reaches its fallback. Here it happened to land on the right answer
+/// anyway, since `Path::new("").join(x)` is `x`, but only by accident: the
+/// fallback it named was the data directory, which is the wrong answer for a
+/// binary found on PATH. Saying it directly removes the accident.
+fn ffprobe_beside(ffmpeg: &Path) -> PathBuf {
+    match ffmpeg.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.join(ffprobe_file_name()),
+        _ => PathBuf::from(ffprobe_file_name()),
+    }
 }
 
 // Locate an FFmpeg binary that already exists on disk. Honors the STEMDECK_FFMPEG
@@ -4440,9 +4461,27 @@ fn parse_health_identity(response: &str) -> Option<HealthIdentity> {
 fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // Use an already-present binary (flat, bin/, or STEMDECK_FFMPEG override) before
     // downloading, so a manually-placed FFmpeg is honored (#248).
+    //
+    // A present-but-unusable binary used to end the search here, because the
+    // failure propagated instead of being recovered from. resolve_existing_ffmpeg
+    // only asks whether the file exists, so a download that produced the wrong
+    // CPU architecture failed identically on every launch afterwards, forever,
+    // with nothing to do but delete the folder by hand (#637). Fall through
+    // instead: the paths below can find a working system FFmpeg or fetch a fresh
+    // copy over this one.
+    //
+    // An explicit STEMDECK_FFMPEG override is exempt. It names a file the user
+    // chose, usually outside the data directory, and replacing that is not ours
+    // to do -- say what is wrong with it and stop.
     if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
-        verify_ffmpeg(&existing)?;
-        return Ok(existing);
+        match verify_ffmpeg_pair(&existing) {
+            Ok(()) => return Ok(existing),
+            Err(err) if env_path_override("STEMDECK_FFMPEG").is_some() => return Err(err),
+            Err(err) => eprintln!(
+                "FFmpeg at {} is present but unusable, looking for a replacement: {err}",
+                existing.display()
+            ),
+        }
     }
 
     // Prefer a system FFmpeg on PATH -- a Homebrew/apt/choco install, or a dev
@@ -4454,7 +4493,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // users on an older OS than our downloaded build assumes (#414): if they
     // already have a working system FFmpeg, we no longer force a potentially
     // incompatible download on top of it.
-    if verify_ffmpeg(Path::new("ffmpeg")).is_ok() {
+    if verify_ffmpeg_pair(Path::new("ffmpeg")).is_ok() {
         return Ok(PathBuf::from("ffmpeg"));
     }
 
@@ -4463,7 +4502,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         download_windows_ffmpeg(data_dir)?;
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-        verify_ffmpeg(&portable)?;
+        verify_ffmpeg_pair(&portable)?;
         Ok(portable)
     }
 
@@ -4472,7 +4511,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         download_macos_ffmpeg(data_dir)?;
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-        verify_ffmpeg(&portable)?;
+        verify_ffmpeg_pair(&portable)?;
         Ok(portable)
     }
 
@@ -4484,7 +4523,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         download_linux_ffmpeg(data_dir)?;
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-        verify_ffmpeg(&portable)?;
+        verify_ffmpeg_pair(&portable)?;
         Ok(portable)
     }
 }
@@ -4707,8 +4746,13 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     // what we expect, not that the binary actually launches on this machine's
     // macOS version or has every encoder StemDeck needs -- verify both before
     // accepting it over the fallback (#414).
+    //
+    // Both halves, not just ffmpeg. The primary publishes them as two separate
+    // downloads, so "ffmpeg arrived and runs" says nothing about ffprobe, and
+    // accepting the pair on half the evidence is how a working ffmpeg came to
+    // sit beside an ffprobe that could not run at all (#637).
     let primary_result = download_macos_ffmpeg_primary(&ffmpeg_dir)
-        .and_then(|()| verify_ffmpeg(&ffmpeg_dir.join("ffmpeg")));
+        .and_then(|()| verify_ffmpeg_pair(&ffmpeg_dir.join("ffmpeg")));
     if let Err(primary_err) = primary_result {
         eprintln!("primary FFmpeg source failed, trying the evermeet.cx fallback: {primary_err}");
         return download_macos_ffmpeg_zip_source(
@@ -5015,18 +5059,45 @@ fn verify_ffmpeg(path: &Path) -> Result<(), String> {
     verify_ffmpeg_encoders(path)
 }
 
+// ffprobe gets the same run check ffmpeg does.
+//
+// It did not, and that is the whole of #637: verification executed ffmpeg and
+// only stat()'d ffprobe, so a pair that disagreed about CPU architecture passed
+// setup and failed later inside the Python pipeline, as "Could not read file
+// duration: [Errno 86] Bad CPU type in executable". Worse, the data directory is
+// prepended to every child's PATH (see apply_ffmpeg_path), so a stale wrong-arch
+// ffprobe there shadows a working system one.
+//
+// No encoder check: ffprobe does not encode. Running it is the whole test.
+fn verify_ffprobe(path: &Path) -> Result<(), String> {
+    let mut command = Command::new(path);
+    command
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    hide_console_window(&mut command);
+    let output = command_output_with_timeout(command, Duration::from_secs(15), "ffprobe check")
+        .map_err(|e| format!("failed to run ffprobe at {}: {e}", path.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ffprobe at {} failed verification: {}",
+            path.display(),
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+// Both halves, which is the only useful question: StemDeck needs ffmpeg *and*
+// ffprobe, and nothing downloads or ships one without the other.
+fn verify_ffmpeg_pair(ffmpeg: &Path) -> Result<(), String> {
+    verify_ffmpeg(ffmpeg)?;
+    verify_ffprobe(&ffprobe_beside(ffmpeg))
+}
+
 fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
-    // ffprobe always sits next to the resolved ffmpeg (flat or bin/); fall back to
-    // the canonical flat location if ffmpeg has no parent.
-    let ffprobe_file = if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    };
-    let ffprobe = ffmpeg
-        .parent()
-        .map(|dir| dir.join(ffprobe_file))
-        .unwrap_or_else(|| ffprobe_path(data_dir));
+    let ffprobe = ffprobe_beside(ffmpeg);
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -5040,7 +5111,13 @@ fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
                 "ffmpegPath",
                 serde_json::json!(ffmpeg.display().to_string()),
             ),
-            ("ffprobeReady", serde_json::json!(ffprobe.is_file())),
+            // Whether it runs, not whether it exists. is_file() called a
+            // wrong-architecture binary ready, and a bare "ffprobe" from the
+            // PATH short-circuit not ready, getting both cases backwards (#637).
+            (
+                "ffprobeReady",
+                serde_json::json!(verify_ffprobe(&ffprobe).is_ok()),
+            ),
             (
                 "ffprobePath",
                 serde_json::json!(ffprobe.display().to_string()),
@@ -6185,6 +6262,55 @@ mod tests {
         ] {
             assert_eq!(super::parse_sha256_line(text), None, "input: {text:?}");
         }
+    }
+
+    // --- ffprobe path resolution (#637) ---
+
+    #[test]
+    fn ffprobe_is_found_beside_ffmpeg_in_every_layout() {
+        let probe = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        for dir in ["/data/ffmpeg", "/data/ffmpeg/bin", "/opt/homebrew/bin"] {
+            let ffmpeg = Path::new(dir).join(if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            });
+            assert_eq!(
+                super::ffprobe_beside(&ffmpeg),
+                Path::new(dir).join(probe),
+                "layout: {dir}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_ffmpeg_resolves_to_a_bare_ffprobe() {
+        // The PATH short-circuit in ensure_ffmpeg returns a bare "ffmpeg" with
+        // no directory, and the matching answer is a bare "ffprobe" that PATH
+        // resolves the same way.
+        //
+        // This pins behaviour rather than fixing a past bug: the previous
+        // `.parent().map(join).unwrap_or_else(fallback)` reached the same
+        // answer, because parent() is Some("") here and joining onto "" is a
+        // no-op. It is worth a test because the obvious "cleanup" -- making the
+        // unreachable fallback reachable, pointing at the data directory --
+        // would break exactly this case and nothing would notice.
+        let probe = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        let bare = PathBuf::from(if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        });
+        assert_eq!(bare.parent(), Some(Path::new("")), "the trap itself");
+        assert_eq!(super::ffprobe_beside(&bare), PathBuf::from(probe));
     }
 
     // --- FFmpeg checksum verification (#172), macOS and Linux ---

@@ -255,6 +255,40 @@ async function installRuntimePack(appRoot) {
   }
 }
 
+// What to tell someone whose FFmpeg step just failed.
+//
+// This used to be one sentence about networks and firewalls, attached to every
+// failure of the step. That is right for a download that did not arrive, and
+// actively misleading for a download that arrived and then would not run: a
+// reporter on an Apple Silicon Mac was told to check their firewall when the
+// binary they had was built for Intel (#637).
+//
+// macOS reports that case as EBADARCH, "Bad CPU type in executable (os error
+// 86)". It happens when the per-architecture primary source is unreachable and
+// the fallback, which publishes Intel builds only, is used instead. Rosetta
+// normally papers over it, but a bare exec() never triggers Rosetta's
+// install-on-demand prompt, so a Mac without it just fails.
+function ffmpegFailureHint(message) {
+  const wrongArchitecture = /bad cpu type|os error 86|EBADARCH/i.test(message);
+  if (wrongArchitecture) {
+    return (
+      "The FFmpeg that was downloaded is built for a different kind of Mac than yours, " +
+      "so it cannot run. This happens when the Apple Silicon download source is " +
+      "unreachable and StemDeck falls back to an Intel-only build. Two ways out: " +
+      'install Rosetta with "softwareupdate --install-rosetta" in Terminal, which lets ' +
+      "Intel builds run, or point StemDeck at a matching build by setting the " +
+      "STEMDECK_FFMPEG_URL environment variable before launching. Deleting the ffmpeg " +
+      "folder in StemDeck's data directory before retrying lets it fetch a fresh copy."
+    );
+  }
+  return (
+    "If this keeps failing, your network or firewall may be blocking the FFmpeg " +
+    "download server. You can point StemDeck at a different FFmpeg build by " +
+    "setting the STEMDECK_FFMPEG_URL environment variable before launching, then " +
+    "retrying."
+  );
+}
+
 async function runSetup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
@@ -361,12 +395,9 @@ async function runSetup() {
           // here rather than only in the generic path -- a network/firewall
           // block on the FFmpeg host is common enough (and retrying alone
           // won't fix it) to deserve a specific next step, not just "retry".
-          const wrapped = new Error(String(err?.message ?? err));
-          wrapped.hint =
-            "If this keeps failing, your network or firewall may be blocking the FFmpeg " +
-            "download server. You can point StemDeck at a different FFmpeg build by " +
-            "setting the STEMDECK_FFMPEG_URL environment variable before launching, then " +
-            "retrying.";
+          const message = String(err?.message ?? err);
+          const wrapped = new Error(message);
+          wrapped.hint = ffmpegFailureHint(message);
           throw wrapped;
         } finally {
           stopProgress();
