@@ -766,6 +766,21 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
         patch_pyvenv_cfg(path);
     }
     let ffmpeg = resolve_existing_ffmpeg(&data_dir);
+    // Whether the pair runs, not whether a file is there.
+    //
+    // is_file() on ffmpeg alone is what let #637 survive its own fix. A
+    // wrong-architecture pair is a pair that exists, so this reported ready,
+    // setup.js short-circuited straight to the studio, and ensure_ffmpeg --
+    // which does verify, fall through and recover -- was never reached. The
+    // failure then surfaced inside a job as "Could not read file duration:
+    // [Errno 86]", which is where the reporter met it.
+    //
+    // Reached once per launch, and only when a binary is actually present, so
+    // the cost is two -version calls on a path that otherwise skips setup
+    // entirely.
+    let ffmpeg_ready = ffmpeg
+        .as_deref()
+        .is_some_and(|path| verify_ffmpeg_pair(path).is_ok());
     let torch_device = read_config_str(&data_dir, "torchDevice");
     let torch_device_reason = effective_device_reason(
         read_config_str(&data_dir, "torchDeviceReason"),
@@ -776,7 +791,9 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
         data_dir: data_dir.display().to_string(),
         python_ready: python.as_ref().is_some_and(|p| python_stdlib_ok(p)),
         python_path: python.map(|p| p.display().to_string()),
-        ffmpeg_ready: ffmpeg.is_some(),
+        ffmpeg_ready,
+        // Still the path that was found, ready or not: the setup screen names
+        // it when reporting what is wrong with it.
         ffmpeg_path: ffmpeg.map(|p| p.display().to_string()),
         torch_device,
         torch_device_reason,
@@ -4175,7 +4192,59 @@ fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
     path.parent().map(Path::to_path_buf)
 }
 
-/// Prepend the bundled FFmpeg directory to `cmd`'s PATH.
+/// First file named `name` on PATH, as an absolute path.
+///
+/// Only ever asked about `ffmpeg`/`ffprobe`, and only to turn the bare name
+/// ensure_ffmpeg returns for a system install into something that can be handed
+/// to another process. No executable-bit check: the only caller is naming a
+/// binary setup has already run.
+///
+/// The `.exe` arm is not optional. ensure_ffmpeg's system-FFmpeg branch is not
+/// platform-gated, so a Windows machine with FFmpeg on PATH records a bare
+/// "ffmpeg" too -- and a bare name is the one spelling that never exists on
+/// disk there.
+fn resolve_on_path(name: &str) -> Option<PathBuf> {
+    let candidates: Vec<String> = if cfg!(windows) {
+        vec![format!("{name}.exe"), name.to_string()]
+    } else {
+        vec![name.to_string()]
+    };
+    env::split_paths(&env::var_os("PATH")?).find_map(|dir| {
+        candidates
+            .iter()
+            .map(|file| dir.join(file))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+/// The FFmpeg pair setup last verified, as two absolute paths.
+///
+/// None when setup has not run yet or recorded a failure, in which case the
+/// caller keeps the behaviour it had before this existed.
+fn verified_ffmpeg_pair(data_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let text = fs::read_to_string(data_dir.join("config.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if value.get("ffmpegReady")?.as_bool() != Some(true)
+        || value.get("ffprobeReady")?.as_bool() != Some(true)
+    {
+        return None;
+    }
+    // ensure_ffmpeg returns a bare "ffmpeg" when it settles on a system
+    // install, and a bare name means nothing to a child with a different PATH.
+    let absolute = |recorded: &str| {
+        let path = PathBuf::from(recorded);
+        if path.is_absolute() {
+            path.is_file().then_some(path)
+        } else {
+            resolve_on_path(recorded)
+        }
+    };
+    let ffmpeg = absolute(value.get("ffmpegPath")?.as_str()?)?;
+    let ffprobe = absolute(value.get("ffprobePath")?.as_str()?)?;
+    Some((ffmpeg, ffprobe))
+}
+
+/// Point `cmd` at the FFmpeg StemDeck actually verified.
 ///
 /// Every child process that may shell out to `ffmpeg`/`ffprobe` needs this, not
 /// just the backend: a Finder-launched `.app` inherits a bare
@@ -4184,8 +4253,29 @@ fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
 /// ourselves. Warmup grew its own command without this and silently lost the
 /// karaoke vocal-split model to `FileNotFoundError` (#505), so it lives in one
 /// place now.
+///
+/// PATH alone is not enough to say which one to use. The backend looks in the
+/// data directory first and asks only whether a file is there
+/// (`ffprobe_executable` in app/core/config.py), so once setup has rejected a
+/// binary and settled on another, the rejected one is still what the backend
+/// execs -- by absolute path, where there is no PATH search to fall past it.
+/// That is how #637 outlived the verification added to fix it. Naming both
+/// halves outright is what makes setup's answer the one that counts.
 fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
-    let Some(ffmpeg_dir) = ffmpeg_dir_if_present(data_dir) else {
+    let verified = verified_ffmpeg_pair(data_dir);
+    if let Some((ffmpeg, ffprobe)) = &verified {
+        cmd.env("STEMDECK_FFMPEG", ffmpeg);
+        cmd.env("STEMDECK_FFPROBE", ffprobe);
+    }
+
+    // The verified binary's own directory, falling back to the data directory
+    // when setup has not recorded one yet. Either way this is only PATH: what
+    // the backend uses is settled above.
+    let Some(ffmpeg_dir) = verified
+        .as_ref()
+        .and_then(|(ffmpeg, _)| ffmpeg.parent().map(Path::to_path_buf))
+        .or_else(|| ffmpeg_dir_if_present(data_dir))
+    else {
         return Ok(());
     };
     let existing = env::var_os("PATH").unwrap_or_default();
@@ -6343,6 +6433,90 @@ mod tests {
         let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
         assert!(super::verify_pinned_sha256(&f, Some(wrong), "test").is_err());
         assert!(!f.exists(), "a tampered/corrupt download must be removed");
+    }
+
+    /// Setup's answer is the one the backend must use, so a recorded pair only
+    /// counts when both halves ran and both still exist.
+    #[cfg(unix)]
+    #[test]
+    fn a_verified_pair_is_read_back_only_when_setup_recorded_one() {
+        let dir = make_tmp();
+        let config = dir.path().join("config.json");
+        let ffmpeg = dir.path().join("ffmpeg");
+        let ffprobe = dir.path().join("ffprobe");
+        fs::write(&ffmpeg, b"x").unwrap();
+        fs::write(&ffprobe, b"x").unwrap();
+        let record = |ready: bool, probe_ready: bool| {
+            fs::write(
+                &config,
+                serde_json::json!({
+                    "ffmpegReady": ready,
+                    "ffprobeReady": probe_ready,
+                    "ffmpegPath": ffmpeg.display().to_string(),
+                    "ffprobePath": ffprobe.display().to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        };
+
+        // No config at all: the caller keeps its old behaviour.
+        assert!(super::verified_ffmpeg_pair(dir.path()).is_none());
+
+        record(true, true);
+        assert_eq!(
+            super::verified_ffmpeg_pair(dir.path()),
+            Some((ffmpeg.clone(), ffprobe.clone())),
+        );
+
+        // ffprobe is half the pair. A pair that failed its run check must not
+        // be handed to a child as though it had passed -- that is #637.
+        record(true, false);
+        assert!(super::verified_ffmpeg_pair(dir.path()).is_none());
+
+        // Recorded as ready, then deleted from under us.
+        record(true, true);
+        fs::remove_file(&ffprobe).unwrap();
+        assert!(super::verified_ffmpeg_pair(dir.path()).is_none());
+    }
+
+    /// ensure_ffmpeg returns a bare "ffmpeg" when it settles on a system
+    /// install. A bare name means nothing to a child with a different PATH, so
+    /// it has to be resolved before it is passed on.
+    #[cfg(unix)]
+    #[test]
+    fn a_system_pair_is_recorded_by_name_and_handed_over_absolute() {
+        let dir = make_tmp();
+        let bin = dir.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("ffmpeg"), b"x").unwrap();
+        fs::write(bin.join("ffprobe"), b"x").unwrap();
+        fs::write(
+            dir.path().join("config.json"),
+            serde_json::json!({
+                "ffmpegReady": true,
+                "ffprobeReady": true,
+                "ffmpegPath": "ffmpeg",
+                "ffprobePath": "ffprobe",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        // resolve_on_path reads the real PATH, so point it at the fixture.
+        let restore = env::var_os("PATH");
+        unsafe { env::set_var("PATH", &bin) };
+        let resolved = super::verified_ffmpeg_pair(dir.path());
+        match restore {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(
+            resolved,
+            Some((bin.join("ffmpeg"), bin.join("ffprobe"))),
+            "a bare name must come back as the file it resolves to",
+        );
     }
 
     #[cfg(unix)]
