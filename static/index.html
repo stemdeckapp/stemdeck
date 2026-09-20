@@ -81,7 +81,7 @@
             <div class="daw-stem-chips">
               <button class="stem-choice stem-choice-all" type="button" id="stemAllBtn" aria-pressed="true" data-i18n="extract.all">All</button>
               <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
-                <span class="stem-dot"></span><span data-i18n="stem.vocals">Vocals</span>
+                <span data-i18n="stem.vocals">Vocals</span>
               </button>
               <!-- On-demand lead/backing vocal split (#275). Shown only while
                    Vocals is selected above; toggling "Lead + Backing" auto-runs
@@ -91,19 +91,19 @@
                 <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
               </div>
               <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
-                <span class="stem-dot"></span><span data-i18n="stem.drums">Drums</span>
+                <span data-i18n="stem.drums">Drums</span>
               </button>
               <button class="stem-choice" type="button" data-stem="bass" aria-pressed="true" style="--color:var(--bass)">
-                <span class="stem-dot"></span><span data-i18n="stem.bass">Bass</span>
+                <span data-i18n="stem.bass">Bass</span>
               </button>
               <button class="stem-choice" type="button" data-stem="guitar" aria-pressed="true" style="--color:var(--guitar)">
-                <span class="stem-dot"></span><span data-i18n="stem.guitar">Guitar</span>
+                <span data-i18n="stem.guitar">Guitar</span>
               </button>
               <button class="stem-choice" type="button" data-stem="piano" aria-pressed="true" style="--color:var(--piano)">
-                <span class="stem-dot"></span><span data-i18n="stem.piano">Piano</span>
+                <span data-i18n="stem.piano">Piano</span>
               </button>
               <button class="stem-choice" type="button" data-stem="other" aria-pressed="false" style="--color:var(--other)">
-                <span class="stem-dot"></span><span data-i18n="stem.other">Other</span>
+                <span data-i18n="stem.other">Other</span>
               </button>
             </div>
           </div>
@@ -114,7 +114,7 @@
                without a restart. -->
           <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental Song Structure Extraction" aria-label="Experimental Song Structure Extraction" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleTitle">
             <span class="structure-toggle-main">
-              <span class="stem-dot"></span><span data-i18n="structure.toggle">Song structure</span>
+              <span data-i18n="structure.toggle">Song structure</span>
             </span>
             <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
           </button>
@@ -175,41 +175,6 @@
           </button>
         </div>
         </div><!-- /.daw-composer-stack -->
-
-        <!-- Notification bell -->
-        <div class="daw-notif-wrap" style="position:relative;flex-shrink:0;">
-          <button class="daw-iconbtn daw-notif-btn" id="notifBtn" title="Notifications" type="button" aria-label="Notifications" aria-expanded="false" data-i18n-title="notif.bell" data-i18n-aria-label="notif.bell">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0"/>
-            </svg>
-            <span class="daw-notif-badge hidden" id="notifBadge" aria-hidden="true"></span>
-          </button>
-          <div class="daw-notif-panel" role="menu" aria-label="Notifications" data-i18n-aria-label="notif.title">
-            <div class="daw-notif-header">
-              <span class="uplabel" data-i18n="notif.title">Notifications</span>
-              <button class="daw-notif-clear" id="notifClearAll" type="button" data-i18n="notif.clearAll">Clear all</button>
-              <button class="daw-notif-close" type="button" aria-label="Close notifications" data-i18n-aria-label="notif.close">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div class="daw-notif-list" id="notifList">
-              <div class="daw-notif-card daw-notif-release hidden" id="notifReleaseCard">
-                <div class="daw-notif-card-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
-                </div>
-                <div class="daw-notif-card-body">
-                  <div class="daw-notif-card-title" data-i18n="notif.newRelease">New release available</div>
-                  <div class="daw-notif-card-desc" id="notifReleaseDesc"></div>
-                </div>
-                <button class="daw-notif-dismiss" id="notifReleaseDismiss" type="button" aria-label="Dismiss notification" data-i18n-aria-label="notif.dismiss">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-              </div>
-              <p class="daw-notif-empty" id="notifEmpty" data-i18n="notif.empty">No new notifications</p>
-            </div>
-          </div>
-        </div>
-
         <!-- Hidden collapsed strip (JS compatibility) -->
         <div class="hidden" id="appbarStrip" aria-hidden="true" style="display:none!important">
           <div><div class="strip-sq-stems" id="appbarStripStems"></div></div>
@@ -255,18 +220,56 @@
               <span data-i18n="nav.trash">Trash</span>
             </button>
             <div style="flex:1"></div>
+            <!-- Notifications (#636). In the rail rather than at the end
+                 of the top bar: that row is the import and split controls, so
+                 a bell parked on it read as part of that job. Everything else
+                 here is app-wide rather than track-wide, which is what a
+                 notification is. -->
+            <div class="daw-notif-wrap">
+              <button class="rail-btn" id="notifBtn" title="Notifications" type="button" aria-label="Notifications" aria-expanded="false" data-i18n-title="notif.bell" data-i18n-aria-label="notif.bell">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.7 21a2 2 0 0 1-3.4 0"/>
+                </svg>
+                <span data-i18n="notif.title">Notifications</span>
+                <span class="daw-notif-badge hidden" id="notifBadge" aria-hidden="true"></span>
+              </button>
+              <div class="daw-notif-panel" role="menu" aria-label="Notifications" data-i18n-aria-label="notif.title">
+                <div class="daw-notif-header">
+                  <span class="uplabel" data-i18n="notif.title">Notifications</span>
+                  <button class="daw-notif-clear" id="notifClearAll" type="button" data-i18n="notif.clearAll">Clear all</button>
+                  <button class="daw-notif-close" type="button" aria-label="Close notifications" data-i18n-aria-label="notif.close">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+                <div class="daw-notif-list" id="notifList">
+                  <div class="daw-notif-card daw-notif-release hidden" id="notifReleaseCard">
+                    <div class="daw-notif-card-icon">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+                    </div>
+                    <div class="daw-notif-card-body">
+                      <div class="daw-notif-card-title" data-i18n="notif.newRelease">New release available</div>
+                      <div class="daw-notif-card-desc" id="notifReleaseDesc"></div>
+                    </div>
+                    <button class="daw-notif-dismiss" id="notifReleaseDismiss" type="button" aria-label="Dismiss notification" data-i18n-aria-label="notif.dismiss">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                  <p class="daw-notif-empty" id="notifEmpty" data-i18n="notif.empty">No new notifications</p>
+                </div>
+              </div>
+            </div>
+            <button class="rail-btn rail-recommend" id="friendsBtn" type="button" title="We Recommend" aria-label="We Recommend" aria-haspopup="dialog" data-i18n-title="nav.weRecommend" data-i18n-aria-label="nav.weRecommend">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+              </svg>
+              <span><span data-i18n="nav.weRecommendLine1">We</span><br><span data-i18n="nav.weRecommendLine2">Recommend</span></span>
+            </button>
             <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog" data-i18n-aria-label="nav.settings">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M12 2v2 M12 20v2 M4 12H2 M22 12h-2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5"/>
               </svg>
               <span data-i18n="nav.settings">Settings</span>
-            </button>
-            <button class="rail-btn rail-recommend" id="friendsBtn" type="button" title="We Recommend" aria-label="We Recommend" aria-haspopup="dialog" data-i18n-title="nav.weRecommend" data-i18n-aria-label="nav.weRecommend">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
-              </svg>
-              <span><span data-i18n="nav.weRecommendLine1">We</span><br><span data-i18n="nav.weRecommendLine2">Recommend</span></span>
             </button>
             <button class="rail-btn" id="aboutBtn" type="button" title="Help" aria-label="Help" data-i18n-title="nav.help" data-i18n-aria-label="nav.help">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">

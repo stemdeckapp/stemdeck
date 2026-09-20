@@ -130,4 +130,52 @@ test.describe("failure notifications", () => {
     await expect(page.locator("#notifBadge")).toHaveClass(/hidden/);
     await expect(page.locator("#notifEmpty")).not.toHaveClass(/hidden/);
   });
+
+  test("the panel opens level with the bell, clear of the rail", async ({ page }) => {
+    // The bell lives in the library rail (#636), and .sidebar is
+    // overflow:hidden and narrows to the rail's 66px when the library is
+    // collapsed. An absolutely positioned panel is clipped to nothing in that
+    // state, which is why this one is fixed and placed from JS. Both states,
+    // because the expanded sidebar is wide enough to hide the clipping.
+    //
+    // Level with the bell is the point: pinned to the bottom of the window
+    // instead, the panel sat beside Settings and read as belonging to it.
+    await openStudio(page, { tauri: true });
+
+    for (const collapsed of [false, true]) {
+      if (collapsed) {
+        await page.locator("#sidebarCollapseBtn").click();
+        // Width is transitioned, so measuring too early reads the old value.
+        await expect(page.locator(".sidebar")).toHaveCSS("width", "66px");
+      }
+      await openBell(page);
+      const box = await page.locator(".daw-notif-panel").boundingBox();
+      const bell = await page.locator("#notifBtn").boundingBox();
+      const rail = await page.locator(".sidebar-rail").boundingBox();
+      const view = page.viewportSize();
+      const where = `collapsed=${collapsed}`;
+      expect(box.width, `panel width, ${where}`).toBeGreaterThan(200);
+      // Clear of the rail, not merely of the button: the button is 40px
+      // centred in a 66px column, so the two edges are not the same place.
+      expect(box.x, `clear of the rail, ${where}`).toBeGreaterThanOrEqual(rail.x + rail.width);
+      expect(Math.abs(box.y - bell.y), `level with the bell, ${where}`).toBeLessThanOrEqual(2);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height, `fits the window, ${where}`).toBeLessThanOrEqual(view.height);
+      await page.keyboard.press("Escape");
+      await page.locator(".daw-notif-close").click({ force: true }).catch(() => {});
+    }
+  });
+
+  test("a window too short to hang it off the bell still fits it", async ({ page }) => {
+    // The clamp. Level with the bell is the intent, not a promise that can
+    // always be kept: the bell sits low in the rail, so on a short window a
+    // panel starting at its top edge would hang off the bottom.
+    await openStudio(page, { tauri: true });
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await openBell(page);
+
+    const box = await page.locator(".daw-notif-panel").boundingBox();
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(520);
+  });
 });
