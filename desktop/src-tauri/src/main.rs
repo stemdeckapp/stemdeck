@@ -4204,12 +4204,21 @@ fn ffmpeg_dir_if_present(data_dir: &Path) -> Option<PathBuf> {
 /// "ffmpeg" too -- and a bare name is the one spelling that never exists on
 /// disk there.
 fn resolve_on_path(name: &str) -> Option<PathBuf> {
+    resolve_in_paths(name, &env::var_os("PATH")?)
+}
+
+/// The half of `resolve_on_path` that does not read the environment.
+///
+/// Split out to be testable. Reaching into the process-wide PATH from a test
+/// means mutating it, and `cargo test` runs tests on threads, so that races
+/// with every other test that spawns anything.
+fn resolve_in_paths(name: &str, path_var: &std::ffi::OsStr) -> Option<PathBuf> {
     let candidates: Vec<String> = if cfg!(windows) {
         vec![format!("{name}.exe"), name.to_string()]
     } else {
         vec![name.to_string()]
     };
-    env::split_paths(&env::var_os("PATH")?).find_map(|dir| {
+    env::split_paths(path_var).find_map(|dir| {
         candidates
             .iter()
             .map(|file| dir.join(file))
@@ -6483,40 +6492,30 @@ mod tests {
     /// ensure_ffmpeg returns a bare "ffmpeg" when it settles on a system
     /// install. A bare name means nothing to a child with a different PATH, so
     /// it has to be resolved before it is passed on.
-    #[cfg(unix)]
     #[test]
-    fn a_system_pair_is_recorded_by_name_and_handed_over_absolute() {
+    fn a_bare_name_is_resolved_against_the_paths_it_is_given() {
         let dir = make_tmp();
+        let empty = dir.path().join("empty");
         let bin = dir.path().join("bin");
+        fs::create_dir_all(&empty).unwrap();
         fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("ffmpeg"), b"x").unwrap();
-        fs::write(bin.join("ffprobe"), b"x").unwrap();
-        fs::write(
-            dir.path().join("config.json"),
-            serde_json::json!({
-                "ffmpegReady": true,
-                "ffprobeReady": true,
-                "ffmpegPath": "ffmpeg",
-                "ffprobePath": "ffprobe",
-            })
-            .to_string(),
-        )
-        .unwrap();
+        // Whatever this platform would actually look for.
+        let file = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        fs::write(bin.join(file), b"x").unwrap();
 
-        // resolve_on_path reads the real PATH, so point it at the fixture.
-        let restore = env::var_os("PATH");
-        unsafe { env::set_var("PATH", &bin) };
-        let resolved = super::verified_ffmpeg_pair(dir.path());
-        match restore {
-            Some(value) => unsafe { env::set_var("PATH", value) },
-            None => unsafe { env::remove_var("PATH") },
-        }
+        let paths = std::env::join_paths([empty, bin.clone()]).unwrap();
 
+        // Earlier entries that do not have it are skipped, not given up on.
         assert_eq!(
-            resolved,
-            Some((bin.join("ffmpeg"), bin.join("ffprobe"))),
-            "a bare name must come back as the file it resolves to",
+            super::resolve_in_paths("ffmpeg", &paths),
+            Some(bin.join(file)),
         );
+        // Absent everywhere is None, not the bare name handed back.
+        assert_eq!(super::resolve_in_paths("ffprobe", &paths), None);
     }
 
     #[cfg(unix)]
