@@ -16,3 +16,22 @@ CVE-2025-32434
 # executes. Trivy's check does not account for the gosu privilege-drop
 # pattern.
 DS-0002
+
+# CVE-2026-63374: anyio's TLSStream encodes host names with IDNA 2003, which
+# can be made to disagree with IDNA 2008 and spoof a TLS certificate. Fixed in
+# anyio 4.14.2; the lock pins 4.13.0.
+#
+# StemDeck never opens a TLSStream. anyio is here transitively: starlette uses
+# it for task groups and thread offloading, not for sockets, and httpx (which
+# does use it for TLS) is a dev-only dependency, present for FastAPI's
+# TestClient. The server itself speaks plain HTTP on localhost, and the two
+# things that do fetch over TLS, yt-dlp and audio-separator, bring their own
+# HTTP stacks.
+#
+# Not fixed in place because the fix is not a one-line bump: regenerating the
+# lock for it also rewrites platform markers across a dozen packages, including
+# the Intel macOS paths that pyproject gates by hand, and any uv.lock change
+# sends every existing desktop install to a full download instead of an in-app
+# update. Take the bump the next time the lock moves for another reason, and
+# drop this entry then.
+CVE-2026-63374
