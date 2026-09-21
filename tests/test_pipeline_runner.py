@@ -450,6 +450,50 @@ def _common_stage_patches(job_dir: Path, sections):
     )
 
 
+@pytest.mark.parametrize(
+    ("source_url", "kept"),
+    [
+        ("local:my song.mp3", True),
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", False),
+        # No source recorded at all is not an upload, so it is reclaimed as
+        # before. Nothing depends on holding it.
+        (None, False),
+    ],
+)
+def test_only_a_source_that_can_be_fetched_again_is_deleted(
+    tmp_path: Path, source_url: str | None, kept: bool
+):
+    """An upload's source is the only copy StemDeck will ever have.
+
+    Deleting it is the bulk of disk reclaim per job, which is why it happens
+    at all, but a link can be downloaded again and an upload cannot. Throwing
+    an upload's source away means the track can never be separated again, with
+    any model, and the person who imported it may no longer have the file.
+    """
+    job = Job(id="abcdefabc120", duration_sec=60.0, source_url=source_url)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    source = job_dir / "source.mp3"
+    source.write_bytes(b"ID3")
+
+    patches = _common_stage_patches(job_dir, [])
+    # Index 3 is the cleanup_source patch; let the real one run so this
+    # asserts on the file rather than on a call count.
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8],
+    ):
+        _run_common(job, source, job_dir)
+
+    assert source.exists() is kept
+
+
 def test_common_pipeline_stores_automatic_section_suggestions(tmp_path: Path):
     job = Job(id="abcdefabc111", duration_sec=60.0, auto_sections=True)
     job_dir = tmp_path / job.id

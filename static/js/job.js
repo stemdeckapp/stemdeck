@@ -107,7 +107,13 @@ function setSubmitProcessing(processing) {
   submitBtn.classList.toggle("loading", processing);
   document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
-  if (label) label.textContent = processing ? t("job.processing") : t("job.process");
+  // Back to the label the markup ships, not a second one that only exists
+  // here. This restored t("job.process") -- "Process" -- while index.html
+  // starts the button as t("process.splitStems") -- "Split stems" -- so the
+  // first submit of a session renamed the button for good, on success as much
+  // as on failure, and nothing put it back short of a reload or a language
+  // switch (#635).
+  if (label) label.textContent = processing ? t("job.processing") : t("process.splitStems");
 }
 
 /** True when audio is loaded in the studio. Either engine counts: the Web Audio
@@ -756,9 +762,22 @@ export function wireJobForm() {
       return;
     }
 
+    // Re-splitting a finished upload. The composer is empty for one by
+    // design -- there is no URL to put in it -- so the button acts on the open
+    // track and the server separates the source it kept beside it. A staged
+    // file or a typed URL is a new import and wins, which is what lets the
+    // composer still be used while such a track is open.
+    const resplitJob = !file && !urlInput.value.trim() ? submitBtn.dataset.resplitJob : "";
+
     const sanitized = file ? sanitizeFilename(file.name) : null;
-    const sourceUrl = file ? `local:${sanitized}` : urlInput.value;
-    const displayTitle = sanitized ?? (urlInput.value || t("job.processingTrackTitle"));
+    const sourceUrl = resplitJob
+      ? submitBtn.dataset.resplitSource
+      : file
+        ? `local:${sanitized}`
+        : urlInput.value;
+    const displayTitle = resplitJob
+      ? submitBtn.dataset.resplitTitle || t("job.processingTrackTitle")
+      : (sanitized ?? (urlInput.value || t("job.processingTrackTitle")));
 
     const postUrlText = document.getElementById("post-url-text");
     if (postUrlText) postUrlText.textContent = displayTitle;
@@ -774,8 +793,16 @@ export function wireJobForm() {
       }
     }
 
+    let endpoint = "/api/jobs";
     let fetchInit;
-    if (file) {
+    if (resplitJob) {
+      endpoint = `/api/jobs/${encodeURIComponent(resplitJob)}/resplit`;
+      fetchInit = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stems: [...selectedStems] }),
+      };
+    } else if (file) {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("stems", JSON.stringify([...selectedStems]));
@@ -794,11 +821,17 @@ export function wireJobForm() {
     }
 
     let jobId;
+    // A re-split's source is deliberately not the one it was asked with: the
+    // library replaces any existing track sharing a sourceUrl, so reusing it
+    // would delete the track this was made from. The server decides the new
+    // one and says so here, because nothing on this side can derive it.
+    let newSourceUrl = sourceUrl;
     try {
-      const res = await fetch("/api/jobs", fetchInit);
+      const res = await fetch(endpoint, fetchInit);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || res.statusText);
       jobId = data.job_id;
+      if (data.source_url) newSourceUrl = data.source_url;
     } catch (err) {
       if (file) jobBox.classList.add("hidden");
       showError(t("job.startFailed", { message: err.message }));
@@ -812,7 +845,7 @@ export function wireJobForm() {
     // The server has the upload; disarm the picker so the next click cannot
     // silently import the same file a second time.
     if (file) fileInput._clear?.();
-    jobSources.set(jobId, sourceUrl);
+    jobSources.set(jobId, newSourceUrl);
     jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? vocalSplitMode : "all");
     addTrackToLibrary({
       id: jobId,
@@ -829,7 +862,7 @@ export function wireJobForm() {
       keyConfidence: null,
       lufs: null,
       peakDb: null,
-      sourceUrl,
+      sourceUrl: newSourceUrl,
     });
 
     if (background) {

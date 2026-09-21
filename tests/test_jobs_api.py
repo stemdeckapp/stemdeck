@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS
+from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS, STEM_NAMES
 from app.core.models import Job
 from app.core.registry import _jobs
 
@@ -821,3 +821,142 @@ def test_submit_captures_the_song_structure_setting_on_the_job(client, monkeypat
     r = client.post("/api/jobs", json={"url": "https://youtu.be/oHg5SJYRHA0"})
     assert r.status_code == 200
     assert registry.get(r.json()["job_id"]).auto_sections is False
+
+
+# --- POST /api/jobs/{id}/resplit (#635) -------------------------------------
+#
+# Re-separating a finished upload from the source kept beside it. A
+# link-sourced track never needed this -- re-importing its URL does the same
+# thing -- but an upload had no equivalent: the file was handed over once, and
+# the composer has nothing to submit for it.
+
+
+@pytest.fixture
+def resplit_client(tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "JOBS_DIR", tmp_path)
+    with patch("app.api.jobs.jobqueue.enqueue", lambda job_id: None):
+        from app.main import app
+
+        with TestClient(app) as c:
+            yield c
+
+
+def _finished_upload(tmp_path, job_id="aaaaaaaaaaaa", *, source="source.mp3"):
+    """A done upload with its source still beside it, as the runner now leaves it."""
+    job = Job(id=job_id, status="done", title="Demo", duration_sec=60.0)
+    job.source_url = "local:Demo.mp3"
+    _jobs[job.id] = job
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    if source:
+        (job_dir / source).write_bytes(b"ID3")
+    return job
+
+
+def test_resplit_starts_a_new_job_from_the_retained_source(resplit_client, tmp_path):
+    job = _finished_upload(tmp_path)
+
+    r = resplit_client.post(f"/api/jobs/{job.id}/resplit", json={"stems": ["vocals", "drums"]})
+
+    assert r.status_code == 200
+    new_id = r.json()["job_id"]
+    assert new_id != job.id, "re-split produces a new job, the way re-importing a link does"
+    assert _jobs[new_id].selected_stems == ["vocals", "drums"]
+    # Still a local: source, so its own copy is kept and it can be re-split in
+    # turn -- but distinct, or the library would replace the track it came from
+    # and leave that job on disk with nothing referencing it.
+    assert _jobs[new_id].source_url != job.source_url
+    assert _jobs[new_id].source_url.startswith("local:")
+    assert _jobs[new_id].source_url.endswith(".mp3"), "deriveQuality reads the suffix"
+    assert (tmp_path / new_id / "source.mp3").is_file()
+    # The original is untouched: its stems, sections and beat grid survive.
+    assert (tmp_path / job.id / "source.mp3").is_file()
+    assert (tmp_path / job.id / "stems").is_dir()
+
+
+@pytest.mark.parametrize(
+    ("source_url", "expected"),
+    [
+        ("local:My Song.mp3", "local:My Song (abc123).mp3"),
+        ("local:no extension", "local:no extension (abc123)"),
+        ("local:dotted.name.wav", "local:dotted.name (abc123).wav"),
+        (None, "local:track (abc123)"),
+    ],
+)
+def test_resplit_source_names_the_same_file_without_colliding(source_url, expected):
+    """The marker goes before the extension: deriveQuality reads the suffix to
+    tell a lossless WAV from a compressed MP3, so appending after it would
+    relabel the track."""
+    from app.api.jobs import _resplit_source_url
+
+    assert _resplit_source_url(source_url, "abc123def456") == expected
+
+
+def test_resplit_falls_back_to_every_stem_when_the_list_is_unusable(resplit_client, tmp_path):
+    """Unknown names are dropped rather than trusted, matching the importer."""
+    job = _finished_upload(tmp_path)
+
+    r = resplit_client.post(f"/api/jobs/{job.id}/resplit", json={"stems": ["../etc", "nope"]})
+
+    assert r.status_code == 200
+    assert _jobs[r.json()["job_id"]].selected_stems == list(STEM_NAMES)
+
+
+def test_resplit_rejects_an_over_long_stem_list(resplit_client, tmp_path):
+    job = _finished_upload(tmp_path)
+
+    r = resplit_client.post(f"/api/jobs/{job.id}/resplit", json={"stems": ["vocals"] * 50})
+
+    assert r.status_code == 422
+
+
+def test_resplit_404s_for_an_unknown_job(resplit_client):
+    r = resplit_client.post("/api/jobs/bbbbbbbbbbbb/resplit", json={"stems": []})
+    assert r.status_code == 404
+
+
+def test_resplit_409s_when_no_source_was_kept(resplit_client, tmp_path):
+    """Every job finished before the source was retained is in this state, as
+    is any link-sourced track. It is an ordinary answer, not a failure."""
+    job = _finished_upload(tmp_path, source=None)
+
+    r = resplit_client.post(f"/api/jobs/{job.id}/resplit", json={"stems": []})
+
+    assert r.status_code == 409
+    assert "source" in r.json()["detail"]
+
+
+def test_resplit_ignores_a_source_with_an_extension_we_never_accept(resplit_client, tmp_path):
+    """source.* is a glob, and the job directory is not a trusted input just
+    because we created it. Only the extensions the importer accepts may be fed
+    back into the pipeline."""
+    job = _finished_upload(tmp_path, source="source.sh")
+
+    r = resplit_client.post(f"/api/jobs/{job.id}/resplit", json={"stems": []})
+
+    assert r.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "job_id",
+    [
+        "../../etc/passwd",  # normalised away by the client, never routed here
+        "..%2F..%2Fetc",  # escaped, so it arrives as a job id and must be refused
+        "aaaa..aaaaaa",  # right length, wrong alphabet
+        "aaaa/../aaaa",
+        "a" * 200,
+    ],
+)
+def test_resplit_never_lets_a_crafted_id_reach_the_filesystem(resplit_client, job_id):
+    """JOB_ID_RE is the gate, and it runs before any I/O.
+
+    The first case never reaches the handler at all -- the client collapses it
+    and nothing answers POST at that path -- which is why this asserts on a
+    refusal rather than on one status. The rest do arrive, and must be turned
+    away as a missing job rather than a 500 from something touching a path.
+    """
+    r = resplit_client.post(f"/api/jobs/{job_id}/resplit", json={"stems": []})
+    assert r.status_code in (404, 405, 422), r.status_code
+    assert r.status_code != 500

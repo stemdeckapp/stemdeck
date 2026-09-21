@@ -132,4 +132,19 @@ export function parseTimecode(str) {
   return null;
 }
 
+// Can this track be fetched again from where it came from?
+//
+// "local:" is the scheme the importer gives an uploaded file: a name for
+// something that was handed over once and is not reachable a second time.
+// Everything else is a link the importer can act on.
+//
+// One predicate rather than three spellings of it. The composer arming the
+// Split stems button and the re-import of an unavailable track are asking the
+// same question, and the answer stopped agreeing between them: the composer
+// showed an uploaded file's bare filename as though it were a link, and the
+// button then submitted it (#635).
+export function isReimportableSource(sourceUrl) {
+  return !!sourceUrl && !sourceUrl.startsWith("local:");
+}
+
 export const $ = (id) => document.getElementById(id);

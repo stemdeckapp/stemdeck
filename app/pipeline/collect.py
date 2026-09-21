@@ -74,8 +74,9 @@ _TERMINAL = frozenset(("done", "error", "cancelled"))
 def collect(job: Job, stems_root: Path, job_dir: Path) -> list[str]:
     """Move Demucs-emitted stems into the job's stems/ dir and clean up
     the demucs intermediate dir. Does NOT delete the source download --
-    cleanup_source() is called by the runner after any post-processing
-    that needs to re-encode the source (e.g. building original.wav)."""
+    cleanup_source() is called by the runner, for the jobs whose source
+    can be fetched again, after any post-processing that needs to
+    re-encode it (e.g. building original.wav)."""
     target_dir = job_dir / "stems"
     target_dir.mkdir(exist_ok=True)
     found: list[str] = []
@@ -94,7 +95,11 @@ def cleanup_source(job_dir: Path) -> None:
     """Delete the source audio file. Called after collect AND after any
     post-processing that re-encodes the source (make_original_track).
     The source is 100-300 MB, so getting rid of it is the bulk of disk
-    reclaim per job; only the stems remain."""
+    reclaim per job; only the stems remain.
+
+    Not called for uploads. The runner decides: a link can be fetched
+    again, an upload cannot, and deleting an upload's source destroys
+    the only copy StemDeck has of it."""
     for f in job_dir.glob("source.*"):
         f.unlink(missing_ok=True)
 

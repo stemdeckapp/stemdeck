@@ -9,7 +9,7 @@ import {
   queueCount, queueRowStates, reorderQueuedJob, runningLabel, startQueue,
   startQueueStream,
 } from "./queue.js";
-import { fmtTime, storeGet, storeSet } from "./utils.js";
+import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
 import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailuresByKind } from "./notifications.js";
 // Aliased (not the bare "t") -- this file already uses "t"/"tr" as local
 // variable names for track objects and table rows in several scopes.
@@ -696,7 +696,7 @@ function applyStoredStemSelection(track) {
 // only path back is a fresh re-upload.
 function reimportUnavailableTrack(trackId, track) {
   updateTrackStatus(trackId, "unavailable");
-  if (track.sourceUrl && !track.sourceUrl.startsWith("local:")) {
+  if (isReimportableSource(track.sourceUrl)) {
     importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems });
     return;
   }
@@ -759,16 +759,71 @@ async function loadTrackIntoStudio(trackId) {
   applyStoredStemSelection(track);
   setCurrentTrack(trackId);
 
+  // The composer is an input the Split stems button submits, not a caption for
+  // the open track, so it may only ever hold something that can actually be
+  // imported. A `local:` source is a file that was uploaded once and is not
+  // reachable again; putting its bare filename here armed the button with a
+  // string that can never resolve, and pressing it POSTed "my song.mp3" as
+  // though it were a link (#635). Non-empty is also what let it through the
+  // browser's own required check.
+  //
+  // Cleared rather than left alone: whatever the previously opened track put
+  // there is still a live URL, and re-importing *that* on a click meant for
+  // this track is worse than doing nothing.
+  const importable = isReimportableSource(track.sourceUrl);
+  // A link-sourced track needs nothing new: its URL goes in the box and the
+  // button imports it again, which is what re-splitting one has always meant.
+  // An upload has no URL, so the button acts on the track itself and the
+  // server separates the source it kept beside it.
+  const resplittable = !importable && track.status === "done";
   const urlInput = document.getElementById("url");
-  if (urlInput && track.sourceUrl) {
-    urlInput.value = track.sourceUrl.startsWith("local:")
-      ? track.sourceUrl.slice(6)
-      : track.sourceUrl;
+  if (urlInput) {
+    urlInput.value = importable ? track.sourceUrl : "";
+    // `required` is the guard for "the button has nothing to act on", and it
+    // is a blunt one: the browser refuses the submit before any handler runs,
+    // so it must not be set while the button has a track to re-split. Setting
+    // it there made pressing Split stems on an upload answer "please fill out
+    // this field" instead of separating it.
+    if (importable || resplittable) urlInput.removeAttribute("required");
+    else urlInput.setAttribute("required", "");
   }
+  setResplitTarget(resplittable ? track : null);
 
   applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
+}
+
+/**
+ * Aim the Split stems button at a track rather than at the composer.
+ *
+ * Carried on the button itself rather than in a module variable so job.js can
+ * read it at submit time without the two files having to agree on an import
+ * order. Cleared with null whenever the open track is one the composer can
+ * handle on its own.
+ *
+ * The button's label does not change. What it does is the same thing it has
+ * always done -- split this track into stems -- and only where it reads the
+ * track from differs.
+ */
+export function setResplitTarget(track) {
+  const submitBtn = document.getElementById("submit");
+  if (!submitBtn) return;
+  submitBtn.dataset.resplitJob = track?.id ?? "";
+  submitBtn.dataset.resplitTitle = track?.title ?? "";
+  submitBtn.dataset.resplitSource = track?.sourceUrl ?? "";
+
+  // Say which audio the button will split. A link-sourced track answers that
+  // with the URL in the box; an upload has nothing submittable to put there,
+  // so without this the composer sat empty and there was no way to tell what
+  // pressing the button would act on.
+  const pill = document.getElementById("trackPill");
+  const pillName = document.getElementById("trackPillName");
+  if (pill && pillName) {
+    pillName.textContent = track?.title ?? "";
+    pillName.title = track?.title ?? "";
+    pill.classList.toggle("hidden", !track);
+  }
 }
 
 export function setCurrentTrack(trackId) {

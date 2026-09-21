@@ -163,6 +163,15 @@ input, textarea { font-family: inherit; }
   overflow: hidden;
 }
 .file-pill.hidden { display: none !important; }
+/* The loaded-track pill reports state rather than staging input, so it reads a
+   step quieter than the file pill it borrows its shape from. */
+.track-pill { opacity: 0.82; }
+/* A staged file is what the button will act on next, so it speaks for itself
+   and the loaded track stands down. Keyed off the same has-file class the file
+   pill uses, so clearing the file brings this back without any JS agreeing to
+   it. */
+.url-wrap.has-file .track-pill { display: none !important; }
+.track-pill .file-name { max-width: 220px; }
 .file-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 .file-size { color: var(--muted); flex-shrink: 0; }
 .file-clear {

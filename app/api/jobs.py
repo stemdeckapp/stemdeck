@@ -419,6 +419,133 @@ def _write_vocal_split_error(stems_dir: Path, cause: str, tail: list[str]) -> No
         logger.warning("could not write vocal_split_error.txt in %s", stems_dir, exc_info=True)
 
 
+class ResplitBody(BaseModel):
+    """Which stems the new run should mix down to. Same shape the importer
+    takes, and bounded the same way: unknown names are dropped rather than
+    trusted, and an empty result falls back to every stem."""
+
+    stems: list[str] = Field(default_factory=list, max_length=len(STEM_NAMES))
+
+
+def _retained_source(job_id: str) -> Path | None:
+    """The upload kept beside a finished job, if there is one.
+
+    Only uploads have this. A link's source is deleted once its stems exist,
+    because it can be fetched again; an upload's cannot, so the runner keeps
+    it (see cleanup_source). Jobs finished before that change kept nothing,
+    which is why absence is an ordinary answer here rather than an error.
+    """
+    job_dir = (JOBS_DIR / job_id).resolve()
+    if not job_dir.is_dir() or not job_dir.is_relative_to(JOBS_DIR.resolve()):
+        return None
+    for candidate in sorted(job_dir.glob("source.*")):
+        resolved = candidate.resolve()
+        if (
+            resolved.is_file()
+            and resolved.suffix.lower() in _ALLOWED_EXTS
+            and resolved.is_relative_to(JOBS_DIR.resolve())
+        ):
+            return resolved
+    return None
+
+
+def _resplit_source_url(source_url: str | None, new_id: str) -> str:
+    """A source that names the same file without colliding with it.
+
+    The library replaces any existing track that shares a sourceUrl -- that is
+    how re-importing a link supersedes its old entry -- so a re-split reusing
+    the original's source deleted the very track it came from. Worse than
+    losing the row: the job directory stayed on disk with nothing referencing
+    it, and syncWithServer re-adopted it on the next launch as a duplicate.
+
+    Reusing the row is not an option either. Two jobs that share a source are
+    collapsed again on every launch, so the pair has to differ on disk, not
+    just in this session.
+
+    The marker goes before the extension, never after: deriveQuality reads the
+    suffix to tell a lossless WAV from a compressed MP3.
+    """
+    base = source_url or "local:track"
+    head, dot, ext = base.rpartition(".")
+    marker = new_id[:6]
+    return f"{head} ({marker}){dot}{ext}" if dot else f"{base} ({marker})"
+
+
+def _link_or_copy(src: Path, dest: Path) -> None:
+    """Hard-link the source into the new job, copying only if that fails.
+
+    A re-split of a 300 MB upload should not cost another 300 MB. Both paths
+    are inside JOBS_DIR so a link is normally available; os.link raises
+    EXDEV across filesystems and EPERM on some mounts, and a copy is correct
+    in every case, just larger.
+    """
+    try:
+        os.link(src, dest)
+    except OSError:
+        shutil.copy2(src, dest)
+
+
+@router.post("/{job_id}/resplit")
+async def resplit_job(job_id: str, body: ResplitBody) -> dict:
+    """Separate a finished upload again, from the source kept beside it.
+
+    A link-sourced track has never needed this: re-importing its URL does the
+    same thing. An upload had no equivalent -- the file was handed over once,
+    and the composer has nothing to submit for it -- so changing which stems
+    you wanted meant finding the original file and uploading it a second time
+    (#635).
+
+    Produces a new job rather than mutating this one, which is exactly what
+    re-importing a link already does. The old track keeps its stems, its
+    sections and its beat grid until the person who asked for this decides
+    otherwise.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not found")
+
+    source = _retained_source(job_id)
+    if source is None:
+        # Not a failure of this request: the track simply has nothing to
+        # re-separate from. The UI offers re-import for anything with a URL.
+        raise HTTPException(status_code=409, detail="no source kept for this track")
+
+    selected = [s for s in body.stems if s in STEM_NAMES] or list(STEM_NAMES)
+
+    new_id = uuid.uuid4().hex[:12]
+    new_dir = JOBS_DIR / new_id
+    new_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        await asyncio.to_thread(_link_or_copy, source, new_dir / f"source{source.suffix}")
+    except OSError:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        logger.exception("[%s] resplit could not stage the source", job_id)
+        raise HTTPException(status_code=500, detail="could not start re-split") from None
+
+    new_job = Job(
+        id=new_id,
+        selected_stems=selected,
+        title=job.title,
+        duration_sec=job.duration_sec,
+        # Still a local: source, so this job keeps its own copy and can be
+        # re-split in turn -- but distinct, so the library shows it beside the
+        # track it came from instead of replacing it.
+        source_url=_resplit_source_url(job.source_url, new_id),
+        auto_sections=get_auto_sections(),
+    )
+    if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
+    jobqueue.enqueue(new_job.id)
+    registry_persist(JOBS_DIR)
+    # source_url comes back because the client cannot derive it: it is
+    # deliberately not the one it asked with, and the library keys its
+    # dedup on exactly this string.
+    return {"job_id": new_job.id, "source_url": new_job.source_url}
+
+
 @router.post("/{job_id}/vocal-split")
 async def start_vocal_split(job_id: str) -> Response:
     """Trigger the on-demand lead/backing vocal split (#275) for a completed

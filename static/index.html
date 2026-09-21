@@ -64,6 +64,18 @@
               <span class="file-size" id="fileSize"></span>
               <button class="file-clear" id="fileClear" type="button" aria-label="Remove file" data-i18n-aria-label="topbar.removeFile">×</button>
             </div>
+            <!-- The open track, when it is one the button acts on directly.
+                 A YouTube track shows its URL in the box because that URL is
+                 what gets submitted. An upload has nothing submittable to put
+                 there, but it still needs to say which audio the button will
+                 split, so it says it here instead of in the input. No clear
+                 button: this reports what is loaded, it does not stage it. -->
+            <div class="file-pill track-pill hidden" id="trackPill">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+              </svg>
+              <span class="file-name" id="trackPillName"></span>
+            </div>
             <button class="daw-upload-btn" type="button" title="Upload audio file" id="uploadFileBtn" aria-label="Upload audio file" data-i18n-title="topbar.uploadFile" data-i18n-aria-label="topbar.uploadFile">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M12 3v12 M7 8l5-5 5 5 M5 21h14"/>

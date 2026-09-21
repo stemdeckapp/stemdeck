@@ -13,8 +13,8 @@ from pathlib import Path
 from app.core.config import DEMUCS_MODEL, TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
+from app.core.registry import is_upload, set_proc
 from app.core.registry import persist as persist_registry
-from app.core.registry import set_proc
 from app.pipeline.analyze import analyze
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
@@ -197,10 +197,16 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     mark = _lap(job, "separate", mark)
     found = collect(job, stems_root, job_dir)
     stems_dir = job_dir / "stems"
-    # Source (100-300 MB or the local upload) is no longer needed after
-    # collect; delete it before the ffmpeg amix steps in case scratch space
-    # is tight.
-    cleanup_source(job_dir)
+    # Deleting the source is the bulk of disk reclaim per job, and it happens
+    # before the ffmpeg amix steps below in case scratch space is tight. But
+    # only a job that can fetch its source again is allowed to give it up.
+    #
+    # An upload is the one copy StemDeck will ever have. Throwing it away means
+    # the track can never be separated again -- not with a different model, not
+    # at all -- and the person who imported it may no longer have the file
+    # either. A link costs a re-download; an upload costs the recording.
+    if not is_upload(job):
+        cleanup_source(job_dir)
     job.stems = [{"name": name, "url": f"/api/jobs/{job.id}/stems/{name}.wav"} for name in found]
     _check_cancel(job)
     _set(job, stage="Mixing tracks...")
