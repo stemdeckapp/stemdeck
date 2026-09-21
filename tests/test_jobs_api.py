@@ -889,9 +889,9 @@ def test_resplit_source_names_the_same_file_without_colliding(source_url, expect
     """The marker goes before the extension: deriveQuality reads the suffix to
     tell a lossless WAV from a compressed MP3, so appending after it would
     relabel the track."""
-    from app.api.jobs import _resplit_source_url
+    import app.api.jobs as jobs_mod
 
-    assert _resplit_source_url(source_url, "abc123def456") == expected
+    assert jobs_mod._resplit_source_url(source_url, "abc123def456") == expected
 
 
 def test_resplit_falls_back_to_every_stem_when_the_list_is_unusable(resplit_client, tmp_path):
