@@ -65,6 +65,11 @@ STEM_NAMES: tuple[str, ...] = ("vocals", "drums", "bass", "guitar", "piano", "ot
 # GET /api/config contract all assume "the 6 Demucs stems" and must not change
 # just because a job happened to request this extra pass.
 EXTRA_STEM_NAMES: tuple[str, ...] = ("lead_vocals", "backing_vocals")
+# The on-demand duet split's two stems. Deliberately a separate tuple rather
+# than more EXTRA_STEM_NAMES: the two splits are alternatives, and the lane
+# ordering swaps "vocals" for a pair only when every name in a pair is
+# present, which a single four-name tuple would never satisfy.
+DUET_STEM_NAMES: tuple[str, ...] = ("voice_1", "voice_2")
 JOB_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 
 
@@ -312,6 +317,28 @@ VOCAL_SPLIT_MODEL = os.environ.get("STEMDECK_KARAOKE_MODEL", "").strip() or "UVR
 # A first run downloads the checkpoint (hundreds of MB); generous default so a
 # slow connection isn't mistaken for a stall.
 TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
+# On-demand duet split. BS-Roformer trained on male/female vocal separation:
+# it splits a duet by vocal weight/register, which works when the two singers
+# sit in different registers and does nothing when they do not. Measured on
+# "Shallow": 30-40 dB rejection of the idle stem. Measured on two sopranos
+# ("What Is This Feeling"): 93/7 energy, no split. STEMDECK_DUET_MODEL lets a
+# deployment swap the checkpoint without a code change; see docs/models.md.
+DUET_SPLIT_MODEL = (
+    os.environ.get("STEMDECK_DUET_MODEL", "").strip()
+    or "model_chorus_bs_roformer_ep_267_sdr_24.1275.ckpt"
+)
+# Same rationale as TIMEOUT_VOCAL_SPLIT, and this checkpoint is larger (527 MB).
+TIMEOUT_DUET_SPLIT = _env_int("STEMDECK_TIMEOUT_DUET_SPLIT", 1800)
+# Force the same-register duet path (app/pipeline/duet_medleyvox.py) instead of
+# letting the register model try first. The register model is the better answer
+# when the two singers sit in different ranges, and produces a confident, wrong
+# one when they do not -- and which of those happened cannot be measured without
+# knowing the right answer, so it is offered as a choice rather than guessed.
+DUET_SAME_REGISTER = os.environ.get("STEMDECK_DUET_SAME_REGISTER", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # Beat-grid stage decodes the whole drums stem (not the 180 s analyze window),
 # so it gets its own, larger budget.
 TIMEOUT_BEATGRID = _env_int("STEMDECK_TIMEOUT_BEATGRID", 300)

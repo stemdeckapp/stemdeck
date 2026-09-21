@@ -158,20 +158,22 @@ export function setStemSelected(name, selected) {
   saveSelectedStems();
 }
 
-// On-demand lead/backing vocal split (#275): "all" (default, plain Vocals
-// lane) or "split" (auto-run the split once the next import finishes).
-// A page-level setting like selectedStems, applied at whatever moment the
-// user submits -- not stored per-job.
+// On-demand vocal decomposition (#275): "all" (default, plain Vocals lane),
+// "split" (lead + backing) or "duet" (two voices by register). The last two
+// are alternatives -- one extra model pass, not both. A page-level setting
+// like selectedStems, applied at whatever moment the user submits -- not
+// stored per-job.
 const _VOCAL_SPLIT_MODE_KEY = "stemdeck:vocal-split-mode";
+const _VOCAL_SPLIT_MODES = ["split", "duet"];
 export let vocalSplitMode = "all";
 export const vocalSplitModeReady = (async () => {
   try {
     const v = await storeGet(_VOCAL_SPLIT_MODE_KEY, null);
-    if (v === "split") vocalSplitMode = v;
+    if (_VOCAL_SPLIT_MODES.includes(v)) vocalSplitMode = v;
   } catch (e) { console.warn("[state] failed to load vocal split mode:", e); }
 })();
 export function setVocalSplitMode(mode) {
-  vocalSplitMode = mode === "split" ? "split" : "all";
+  vocalSplitMode = _VOCAL_SPLIT_MODES.includes(mode) ? mode : "all";
   storeSet(_VOCAL_SPLIT_MODE_KEY, vocalSplitMode).catch((e) =>
     console.warn("[state] failed to save vocal split mode:", e)
   );

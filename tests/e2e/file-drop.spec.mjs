@@ -170,6 +170,37 @@ test.describe("file drop", () => {
     await expect(page.locator("#url")).toBeVisible();
   });
 
+  test("the refusal still has room to show on a small window", async ({ page }) => {
+    // The composer is one fixed-height row sharing a hard width budget, and the
+    // URL zone is the only item in it that flexes, so every pixel the stem
+    // controls ask for comes out of the zone. Adding a third vocal mode button
+    // took it to nothing but its own padding at 1280px: the input had no room,
+    // and neither did the message that sits in its place, so refusing a file
+    // answered into a zero-width box. Asserted at the narrowest width the
+    // desktop shell allows rather than at Playwright's default, because the
+    // default is what made this visible by luck.
+    await seedLibrary(page);
+    await stubTauri(page);
+    await stubUpdateCheck(page);
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".url-wrap");
+
+    await dropOn(page, "body", "notes.txt", Buffer.from("hello"));
+    const err = page.locator("#urlDropError");
+    await expect(err).toBeVisible();
+    expect((await err.boundingBox()).width).toBeGreaterThan(40);
+
+    // And nothing was pushed out of the pill to pay for it: the button that
+    // starts the job is the one thing that must never be unreachable.
+    const fits = await page.evaluate(() => {
+      const c = document.querySelector(".daw-composer").getBoundingClientRect();
+      const b = document.querySelector(".daw-process-btn").getBoundingClientRect();
+      return b.right <= c.right + 1 && b.width > 0;
+    });
+    expect(fits, "the process button is inside the composer").toBe(true);
+  });
+
   test("a library drag is not mistaken for a file drop", async ({ page }) => {
     // The library's own drags carry no file list. If the document handler
     // stopped guarding on that, dragging a track would arm the importer.

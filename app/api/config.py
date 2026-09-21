@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.core.config import EXTRA_STEM_NAMES, STEM_NAMES
+from app.core.config import DUET_STEM_NAMES, EXTRA_STEM_NAMES, STEM_NAMES
 
 router = APIRouter()
 
@@ -14,4 +14,8 @@ def get_config() -> dict:
     # existing clients that assume "every job produces exactly these stems"
     # are unaffected; new clients merge it into their lane vocab (see
     # syncStemNamesFromAPI in static/js/constants.js).
-    return {"stem_names": list(STEM_NAMES), "extra_stem_names": list(EXTRA_STEM_NAMES)}
+    return {
+        "stem_names": list(STEM_NAMES),
+        "extra_stem_names": list(EXTRA_STEM_NAMES),
+        "duet_stem_names": list(DUET_STEM_NAMES),
+    }

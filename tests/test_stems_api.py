@@ -183,8 +183,48 @@ def test_peaks_returns_json_for_done_job(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/peaks.json")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
-    assert "immutable" in r.headers.get("cache-control", "")
     assert r.json() == payload
+
+
+def test_peaks_are_never_served_immutable(client, tmp_path):
+    """The browser must always ask whether this file changed.
+
+    It used to be sent `immutable` for a year, which was true when a finished
+    job's stems never changed again. The on-demand splits broke that: both add
+    stems to a done job and rewrite peaks.json. `immutable` is taken literally,
+    so the browser would not revalidate even on a hard reload, and the user got
+    the new audio under the old waveform.
+    """
+    job = Job(id="abcdefabcde1")
+    job.status = "done"
+    _jobs[job.id] = job
+    _make_peaks_file(tmp_path, job.id, {"vocals": [[-0.1, 0.2]]})
+
+    cc = client.get(f"/api/jobs/{job.id}/stems/peaks.json").headers.get("cache-control", "")
+    assert "immutable" not in cc, f"peaks.json must stay revalidatable, got {cc!r}"
+    assert "must-revalidate" in cc or "no-cache" in cc
+
+
+def test_peaks_reflect_a_split_that_added_stems(client, tmp_path):
+    """A split rewrites peaks.json, and the next request must show the new stems."""
+    job = Job(id="abcdefabcde2")
+    job.status = "done"
+    _jobs[job.id] = job
+    _make_peaks_file(tmp_path, job.id, {"vocals": [[-0.1, 0.2]]})
+
+    first = client.get(f"/api/jobs/{job.id}/stems/peaks.json").json()
+    assert "voice_1" not in first
+
+    # what the duet split does to this file
+    _make_peaks_file(
+        tmp_path,
+        job.id,
+        {"vocals": [[-0.1, 0.2]], "voice_1": [[-0.3, 0.3]], "voice_2": [[-0.4, 0.4]]},
+    )
+
+    second = client.get(f"/api/jobs/{job.id}/stems/peaks.json").json()
+    assert "voice_1" in second and "voice_2" in second
+    assert second["voice_1"] == [[-0.3, 0.3]]
 
 
 def test_peaks_404_when_file_missing(client, tmp_path):

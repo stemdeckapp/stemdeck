@@ -1,16 +1,18 @@
 import {
-  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, STEM_COLORS, STEM_DISPLAY, LANE_VOLUME_MAX,
+  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, DUET_STEM_NAMES, STEM_COLORS, STEM_DISPLAY,
+  LANE_VOLUME_MAX,
 } from "./constants.js";
 
 // Every lane name this session might ever need mixer state for, including
-// the on-demand lead/backing vocal split (#275). Safe to iterate broadly:
+// both on-demand vocal splits (#275 lead/backing, and the duet pair). Safe
+// to iterate broadly:
 // callers below all guard on the row/trackIndex entry actually existing, so
 // touching state for a lane a given job doesn't have is a no-op. A function
 // (not a snapshot) because STEM_NAMES/EXTRA_STEM_NAMES are reassigned once
 // syncStemNamesFromAPI() resolves -- a const array here would freeze the
 // fallback values from before that happens.
 function allTrackNames() {
-  return [...TRACK_NAMES, ...EXTRA_STEM_NAMES];
+  return [...TRACK_NAMES, ...EXTRA_STEM_NAMES, ...DUET_STEM_NAMES];
 }
 import {
   mixerState, mixerEl, stemListEl, currentJobId, multitrack, trackIndex,

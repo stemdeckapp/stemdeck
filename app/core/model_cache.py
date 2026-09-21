@@ -132,3 +132,20 @@ def vocal_split_artifacts(models_dir: Path, model_file: str) -> list[Path]:
         root / "vr_model_data.json",
         root / "mdx_model_data.json",
     ]
+
+
+def duet_split_artifacts(models_dir: Path, model_file: str) -> list[Path]:
+    """The duet-split checkpoint, its yaml config, and the metadata indexes.
+
+    Same reasoning as vocal_split_artifacts, plus one extra file: the MDXC
+    roformer family is distributed as a checkpoint *and* a separate yaml
+    config, and audio-separator needs both. A truncated yaml fails the same way
+    a truncated checkpoint does, so healing has to be able to remove either.
+    """
+    root = models_dir / "audio-separator"
+    return [
+        root / model_file,
+        root / "config_chorus_male_female_bs_roformer.yaml",
+        root / "vr_model_data.json",
+        root / "mdx_model_data.json",
+    ]

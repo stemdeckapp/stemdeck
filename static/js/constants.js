@@ -10,6 +10,11 @@ export let TRACK_NAMES = ["original", ...STEM_NAMES];
 // never run this split -- but the player/mixer render them as real lanes,
 // swapped in for "vocals", via effectiveStemOrder() below.
 export let EXTRA_STEM_NAMES = ["lead_vocals", "backing_vocals"];
+// Stems from the on-demand duet split (DUET_STEM_NAMES in
+// app/core/config.py). A separate pair, not more EXTRA_STEM_NAMES: the two
+// splits are alternatives and effectiveStemOrder() swaps "vocals" for a pair
+// only when every name in that pair is present.
+export let DUET_STEM_NAMES = ["voice_1", "voice_2"];
 
 export async function syncStemNamesFromAPI() {
   try {
@@ -23,6 +28,9 @@ export async function syncStemNamesFromAPI() {
     if (Array.isArray(data.extra_stem_names) && data.extra_stem_names.length > 0) {
       EXTRA_STEM_NAMES = data.extra_stem_names;
     }
+    if (Array.isArray(data.duet_stem_names) && data.duet_stem_names.length > 0) {
+      DUET_STEM_NAMES = data.duet_stem_names;
+    }
   } catch (e) {
     console.warn("[constants] failed to sync stem names from API:", e);
   }
@@ -34,8 +42,14 @@ export async function syncStemNamesFromAPI() {
 // has (typically from job.stems). Order matters -- callers use this both to
 // decide what to render and in what sequence (waveform stacking, mixer rows).
 export function effectiveStemOrder(presentNames) {
-  const splitDone = presentNames.has("lead_vocals") && presentNames.has("backing_vocals");
-  return STEM_NAMES.flatMap((n) => (n === "vocals" && splitDone ? EXTRA_STEM_NAMES : [n]));
+  // Only one decomposition can be in play for a job, but check both: a job
+  // that ran the lead/backing split and was later re-run as a duet has all
+  // four on disk, and lead/backing keeps precedence so the lane order does
+  // not silently change under a user who never asked for the duet split.
+  const pair = [EXTRA_STEM_NAMES, DUET_STEM_NAMES].find((names) =>
+    names.every((n) => presentNames.has(n))
+  );
+  return STEM_NAMES.flatMap((n) => (n === "vocals" && pair ? pair : [n]));
 }
 
 // A Proxy, not a plain object, so every lookup resolves through the CURRENT
@@ -65,6 +79,8 @@ export const STEM_COLORS = {
   original: "#a8b0bd",
   lead_vocals: "#e8748a",
   backing_vocals: "#c98fe0",
+  voice_1: "#e8748a",
+  voice_2: "#7fc7e8",
 };
 
 export const PROGRESS_COLOR = "#3a3a3a";

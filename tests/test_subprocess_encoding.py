@@ -22,7 +22,8 @@ import pytest
 
 SITES = [
     ("app/pipeline/separate.py", "the Demucs worker"),
-    ("app/pipeline/vocal_split.py", "the vocal-split worker"),
+    # Both on-demand splits (lead/backing, duet) share one supervisor.
+    ("app/pipeline/split_runner.py", "the on-demand split workers"),
     ("app/api/jobs.py", "ffprobe on upload"),
 ]
 
@@ -35,7 +36,7 @@ def test_decoding_is_pinned_not_left_to_the_locale(path: str, what: str):
     assert 'errors="replace"' in src, f"{what} would still raise on an undecodable byte"
 
 
-@pytest.mark.parametrize("path", ["app/pipeline/separate.py", "app/pipeline/vocal_split.py"])
+@pytest.mark.parametrize("path", ["app/pipeline/separate.py", "app/pipeline/split_runner.py"])
 def test_children_are_told_to_write_utf8(path: str):
     """The parent reading utf-8 is only half of it."""
     src = Path(path).read_text(encoding="utf-8")

@@ -88,6 +88,12 @@ dependencies = [
     # today, but pin it explicitly so this survives an eventual librosa 1.x move
     # (#407) -- same platform gate as audio-separator itself.
     "audioread>=3.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # STFT encoder/decoder for the same-register duet split
+    # (app/pipeline/duet_medleyvox.py). MIT, and unlike the full `asteroid`
+    # package it has no dependencies of its own -- that one costs 23 transitive
+    # packages including pytorch-lightning and pandas, so the handful of model
+    # classes needed from it are vendored in app/pipeline/_convtasnet.py.
+    "asteroid-filterbanks>=0.4",
 ]
 
 [project.optional-dependencies]
@@ -124,7 +130,18 @@ line-length = 100
 # app/_vendor is a third-party payload copied verbatim from PyPI. Linting or
 # reformatting it would create a diff against upstream that the refresh script
 # would then fight every time it runs.
-exclude = ["jobs", ".run", "static/vendor", "app/_version.py", "app/_vendor"]
+# app/pipeline/_convtasnet.py is the same deal: model classes copied from
+# asteroid (MIT) so the published checkpoint keeps loading. Modernising the
+# annotations there would be harmless today and a silent trap the next time it
+# is regenerated.
+exclude = [
+    "jobs",
+    ".run",
+    "static/vendor",
+    "app/_version.py",
+    "app/_vendor",
+    "app/pipeline/_convtasnet.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]

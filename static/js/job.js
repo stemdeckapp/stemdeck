@@ -45,14 +45,21 @@ const splitAutoTriggered = new Set();
 // than assuming their own `state` is still current.
 export async function runVocalSplitIfWanted(state) {
   if (state.status !== "done" || splitAutoTriggered.has(state.job_id)) return state;
-  const wantsSplit = jobVocalSplitModes.get(state.job_id) === "split";
+  const mode = jobVocalSplitModes.get(state.job_id);
+  // The two decompositions are alternatives, so one table drives both: which
+  // endpoint to call, which job field says it already ran, and what to show
+  // while it runs.
+  const SPLITS = {
+    split: { path: "vocal-split", done: state.vocal_split, busy: t("job.splittingVocals") },
+    duet: { path: "duet-split", done: state.duet_split, busy: t("job.splittingDuet") },
+  };
+  const split = SPLITS[mode];
   const hasVocals = (state.stems || []).some((s) => s.name === "vocals");
-  const alreadySplit = state.vocal_split === "done";
-  if (!wantsSplit || !hasVocals || alreadySplit) return state;
+  if (!split || !hasVocals || split.done === "done") return state;
   splitAutoTriggered.add(state.job_id);
-  if (state.job_id === foregroundJobId) setWaveformLoading(true, "Splitting lead/backing vocals…");
+  if (state.job_id === foregroundJobId) setWaveformLoading(true, split.busy);
   try {
-    const res = await fetch(`/api/jobs/${state.job_id}/vocal-split`, { method: "POST" });
+    const res = await fetch(`/api/jobs/${state.job_id}/${split.path}`, { method: "POST" });
     if (!(res.ok || res.status === 202)) return state;
     const r2 = await fetch(`/api/jobs/${state.job_id}`);
     if (!r2.ok) return state;

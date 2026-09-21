@@ -5,6 +5,8 @@
 // any drums inside it. Current jobs retain the individual Demucs stems, so the
 // engine can rebuild that lane as a control group and route drums separately.
 
+import { EXTRA_STEM_NAMES, DUET_STEM_NAMES } from "./constants.js";
+
 function playable(stem) {
   return !!stem?.name && !!stem?.url;
 }
@@ -36,10 +38,11 @@ export function buildPlaybackStems(rawStems, visibleStems, baseStemNames) {
   if (!visible.some((stem) => stem.name === "original")) return result;
 
   const dedicatedNames = new Set(dedicated.map((stem) => stem.name));
-  // A completed lead/backing split replaces the base vocals source. Treat the
-  // base stem as selected so it is not added to the complement as well.
-  if (dedicatedNames.has("lead_vocals") && dedicatedNames.has("backing_vocals")) {
-    dedicatedNames.add("vocals");
+  // A completed split (lead/backing, or the duet pair) replaces the base
+  // vocals source. Treat the base stem as selected so it is not added to the
+  // complement as well and counted twice.
+  for (const pair of [EXTRA_STEM_NAMES, DUET_STEM_NAMES]) {
+    if (pair.every((name) => dedicatedNames.has(name))) dedicatedNames.add("vocals");
   }
 
   const complementNames = baseStemNames.filter((name) => !dedicatedNames.has(name));

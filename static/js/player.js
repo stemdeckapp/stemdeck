@@ -6,7 +6,7 @@ import { fmtTime } from "./utils.js";
 // job.js state.
 import { showPlaybackError, clearPlaybackError, resolvePlaybackSuccess } from "./job.js";
 import {
-  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, STEM_COLORS, PROGRESS_COLOR,
+  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, DUET_STEM_NAMES, STEM_COLORS, PROGRESS_COLOR,
   LOOP_DEFAULT_START_FRAC, LOOP_DEFAULT_END_FRAC, LANE_VOLUME_MAX,
   effectiveStemOrder,
 } from "./constants.js";
@@ -95,14 +95,18 @@ const _STEM_ROW_SELECTORS = [
 ];
 
 function applyStemSelectionFilter(presentNames) {
-  // The order for THIS job: STEM_NAMES, with "vocals" swapped for
-  // lead_vocals + backing_vocals when the on-demand split (#275) produced
-  // both. Rows for a name outside `order` (the vocals-family row not in
-  // play for this job) are hidden outright, not just grayed "unavailable" --
-  // unlike the base 6, lead_vocals/backing_vocals aren't part of every job's
-  // contract, so there's no "not selected this time" state for them to be in.
+  // The order for THIS job: STEM_NAMES, with "vocals" swapped for whichever
+  // on-demand split produced a complete pair -- lead_vocals + backing_vocals
+  // (#275), or the duet pair. Rows for a name outside `order` (the
+  // vocals-family rows not in play for this job) are hidden outright, not
+  // just grayed "unavailable" -- unlike the base 6, the split stems aren't
+  // part of every job's contract, so there's no "not selected this time"
+  // state for them to be in. Derived from the constants rather than listed
+  // here, so a new split pair does not silently render as an always-visible
+  // "unavailable" lane on every job.
   const order = effectiveStemOrder(presentNames);
-  const isVocalFamily = (s) => s === "vocals" || s === "lead_vocals" || s === "backing_vocals";
+  const vocalFamily = new Set(["vocals", ...EXTRA_STEM_NAMES, ...DUET_STEM_NAMES]);
+  const isVocalFamily = (s) => vocalFamily.has(s);
 
   // Waveform rows: original hides if absent; order rows always show, grayed if absent
   for (const el of document.querySelectorAll(".stem-waveform-row[data-stem]")) {
@@ -904,10 +908,11 @@ export function renderEmptyShell() {
   stopStemVuLoop();
   ensureMixerStateDefaults();
   mixerEl.innerHTML = "";
-  // lead_vocals/backing_vocals (#275) get rows too, built once here like the
-  // base 6 -- applyStemSelectionFilter (below) hides them by default since no
-  // job is loaded yet, and shows them in place of "vocals" once one is.
-  for (const name of ["original", ...STEM_NAMES, ...EXTRA_STEM_NAMES]) {
+  // The split lanes (#275 lead/backing, and the duet pair) get rows too,
+  // built once here like the base 6 -- applyStemSelectionFilter (below) hides
+  // them by default since no job is loaded yet, and shows them in place of
+  // "vocals" once one is.
+  for (const name of ["original", ...STEM_NAMES, ...EXTRA_STEM_NAMES, ...DUET_STEM_NAMES]) {
     const { row } = renderMixerRow({ name, url: "#" });
     mixerEl.appendChild(row);
   }
@@ -1118,17 +1123,24 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // original.wav, so it's simply not in `stems` and the mixer/sidebar
   // rows for it stay hidden.)
   //
-  // vocals/lead_vocals/backing_vocals are mutually exclusive (#275): once a
-  // job's on-demand split has produced both, show those two in place of the
-  // plain Vocals lane rather than all three -- vocals.wav is never deleted by
-  // the split, so it would otherwise still show up here too.
+  // The vocals family is mutually exclusive (#275): once an on-demand split
+  // has produced a complete pair, show that pair in place of the plain Vocals
+  // lane rather than all of them -- vocals.wav is never deleted by a split, so
+  // it would otherwise still show up here too. The pair is whichever split
+  // ran, so it has to be looked up rather than named: a duet job's stems are
+  // not in selectedStems (which holds "vocals") and would be dropped by the
+  // final clause otherwise.
   const rawPresent = new Set(stems.map((s) => s.name));
-  const splitDone = rawPresent.has("lead_vocals") && rawPresent.has("backing_vocals");
+  const splitPair = [EXTRA_STEM_NAMES, DUET_STEM_NAMES].find((names) =>
+    names.every((n) => rawPresent.has(n))
+  );
   const wantsVocals = selectedStems.has("vocals");
   stems = stems.filter((s) => {
     if (s.name === "original") return true;
-    if (s.name === "vocals") return wantsVocals && !splitDone;
-    if (s.name === "lead_vocals" || s.name === "backing_vocals") return wantsVocals && splitDone;
+    if (s.name === "vocals") return wantsVocals && !splitPair;
+    if (EXTRA_STEM_NAMES.includes(s.name) || DUET_STEM_NAMES.includes(s.name)) {
+      return wantsVocals && !!splitPair && splitPair.includes(s.name);
+    }
     return selectedStems.has(s.name);
   });
   const playbackStems = buildPlaybackStems(rawStems, stems, STEM_NAMES);

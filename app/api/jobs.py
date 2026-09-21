@@ -40,6 +40,7 @@ from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
+from app.pipeline.duet_split import split_duet
 from app.pipeline.errors import classify_failure
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.vocal_split import split_vocals
@@ -408,15 +409,15 @@ def cancel_job(job_id: str) -> dict:
     return job.to_state()
 
 
-def _write_vocal_split_error(stems_dir: Path, cause: str, tail: list[str]) -> None:
-    """Best-effort error record for the on-demand vocal split (#275). The job
-    itself stays "done" -- this is diagnostic-only, not the quarantine path
-    (which would delete the job's base stems)."""
+def _write_split_error(stems_dir: Path, filename: str, cause: str, tail: list[str]) -> None:
+    """Best-effort error record for an on-demand split (#275 and the duet
+    split). The job itself stays "done" -- this is diagnostic-only, not the
+    quarantine path (which would delete the job's base stems)."""
     try:
         lines = [f"cause: {cause}", "", "--- stderr tail ---", *tail]
-        (stems_dir / "vocal_split_error.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (stems_dir / filename).write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError:
-        logger.warning("could not write vocal_split_error.txt in %s", stems_dir, exc_info=True)
+        logger.warning("could not write %s in %s", filename, stems_dir, exc_info=True)
 
 
 @router.post("/{job_id}/vocal-split")
@@ -448,7 +449,9 @@ async def start_vocal_split(job_id: str) -> Response:
     except Exception as e:
         cause = classify_failure("\n".join([*(getattr(e, "tail", None) or []), str(e)]))
         logger.warning("[%s] vocal split failed: %s", job_id, e, exc_info=True)
-        _write_vocal_split_error(stems_dir, cause, getattr(e, "tail", None) or [str(e)])
+        _write_split_error(
+            stems_dir, "vocal_split_error.txt", cause, getattr(e, "tail", None) or [str(e)]
+        )
         job.vocal_split = "error"
         _set(job, stage="Done")
         registry_persist(JOBS_DIR)
@@ -466,6 +469,61 @@ async def start_vocal_split(job_id: str) -> Response:
     if extra_presence:
         job.stem_presence = {**(job.stem_presence or {}), **extra_presence}
     job.vocal_split = "done"
+    _set(job, stage="Done")
+    registry_persist(JOBS_DIR)
+    return JSONResponse(_job_state(job))
+
+
+@router.post("/{job_id}/duet-split")
+async def start_duet_split(job_id: str) -> Response:
+    """Trigger the on-demand duet split for a completed job: a second model
+    pass over the existing vocals.wav, producing voice_1.wav +
+    voice_2.wav. Idempotent once done -- calling again returns 202 with the
+    existing result rather than re-running the (expensive) model.
+
+    Mirrors start_vocal_split above; the two are alternatives, so a job that
+    already ran one can still run the other."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.duet_split == "running":
+        raise HTTPException(status_code=409, detail="duet split already running")
+    if job.duet_split == "done":
+        return JSONResponse(_job_state(job), status_code=202)
+
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+
+    job.duet_split = "running"
+    _set(job, stage="Splitting duet voices...")
+    try:
+        async with _pipeline_lock:
+            new_names = await asyncio.to_thread(split_duet, job, stems_dir)
+    except Exception as e:
+        cause = classify_failure("\n".join([*(getattr(e, "tail", None) or []), str(e)]))
+        logger.warning("[%s] duet split failed: %s", job_id, e, exc_info=True)
+        _write_split_error(
+            stems_dir, "duet_split_error.txt", cause, getattr(e, "tail", None) or [str(e)]
+        )
+        job.duet_split = "error"
+        _set(job, stage="Done")
+        registry_persist(JOBS_DIR)
+        raise HTTPException(status_code=500, detail="duet split failed") from e
+
+    existing = {s["name"] for s in job.stems}
+    for name in new_names:
+        if name not in existing:
+            job.stems.append({"name": name, "url": f"/api/jobs/{job_id}/stems/{name}.wav"})
+    # "vocals" rides along so presence_for_split can recover the scale the base
+    # stems were normalised against (see start_vocal_split).
+    rms_values = merge_stem_peaks(stems_dir, ["vocals", *new_names])
+    extra_presence = presence_for_split(rms_values, job.stem_presence)
+    if extra_presence:
+        job.stem_presence = {**(job.stem_presence or {}), **extra_presence}
+    job.duet_split = "done"
     _set(job, stage="Done")
     registry_persist(JOBS_DIR)
     return JSONResponse(_job_state(job))

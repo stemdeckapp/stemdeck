@@ -103,7 +103,8 @@ def test_every_worker_spawn_exports_the_parent_pid():
 
     for path in (
         "app/pipeline/separate.py",
-        "app/pipeline/vocal_split.py",
+        # The on-demand splits (lead/backing, duet) share one supervisor.
+        "app/pipeline/split_runner.py",
         "app/pipeline/sections.py",
     ):
         src = pathlib.Path(path).read_text()
@@ -116,6 +117,7 @@ def test_every_worker_arms_the_watchdog():
     for path in (
         "app/pipeline/demucs_worker.py",
         "app/pipeline/vocal_split_worker.py",
+        "app/pipeline/duet_split_worker.py",
         "app/pipeline/section_worker.py",
     ):
         src = pathlib.Path(path).read_text()

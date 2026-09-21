@@ -98,6 +98,10 @@ class Job:
     # app/pipeline/vocal_split.py) and is recorded in stems/vocal_split_error.txt,
     # not job.error_detail, since the job itself did not fail.
     vocal_split: Literal["none", "running", "done", "error"] = "none"
+    # On-demand duet split -- the same shape of post-hoc action as vocal_split
+    # above, and mutually exclusive with it in the UI, but tracked separately
+    # so a job can have run one, the other, or neither.
+    duet_split: Literal["none", "running", "done", "error"] = "none"
     # When the user put this job in the Trash, or None if they have not.
     #
     # Server-side on purpose. The Trash used to live only in the browser's
@@ -162,6 +166,7 @@ class Job:
             "gpu_fallback": self.gpu_fallback,
             "stage_timings": self.stage_timings,
             "vocal_split": self.vocal_split,
+            "duet_split": self.duet_split,
             "trashed_at": self.trashed_at,
             "created_at": self.created_at,
         }

@@ -821,3 +821,116 @@ def test_submit_captures_the_song_structure_setting_on_the_job(client, monkeypat
     r = client.post("/api/jobs", json={"url": "https://youtu.be/oHg5SJYRHA0"})
     assert r.status_code == 200
     assert registry.get(r.json()["job_id"]).auto_sections is False
+
+
+# ─── POST /jobs/{id}/duet-split ──────────────────────────────────────────────
+#
+# Mirrors the vocal-split cases above. The two splits are alternatives, so the
+# last test here is the one that matters most: running one must not make the
+# other unavailable.
+
+
+def test_duet_split_404_unknown_job(client):
+    r = client.post("/api/jobs/000000000000/duet-split")
+    assert r.status_code == 404
+
+
+def test_duet_split_404_job_not_done(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "JOBS_DIR", tmp_path)
+    job = Job(id="abcdefabc630", status="separating", title="In progress")
+    _jobs[job.id] = job
+
+    r = client.post(f"/api/jobs/{job.id}/duet-split")
+    assert r.status_code == 404
+
+
+def _fake_duet(job_arg, stems_dir_arg):
+    (stems_dir_arg / "voice_1.wav").write_bytes(b"RIFF")
+    (stems_dir_arg / "voice_2.wav").write_bytes(b"RIFF")
+    return ["voice_1", "voice_2"]
+
+
+def test_duet_split_success(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc630")
+    monkeypatch.setattr(jobs_mod, "split_duet", _fake_duet)
+
+    r = client.post(f"/api/jobs/{job.id}/duet-split")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["duet_split"] == "done"
+    names = {s["name"] for s in body["stems"]}
+    assert {"voice_1", "voice_2"} <= names
+    assert job.duet_split == "done"
+
+
+def test_duet_split_409_when_already_running(client, tmp_path, monkeypatch):
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc630")
+    job.duet_split = "running"
+
+    r = client.post(f"/api/jobs/{job.id}/duet-split")
+    assert r.status_code == 409
+
+
+def test_duet_split_202_idempotent_when_already_done(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc630")
+    job.duet_split = "done"
+    calls = []
+
+    def should_not_run(job_arg, stems_dir_arg):
+        calls.append(1)
+        return ["voice_1", "voice_2"]
+
+    monkeypatch.setattr(jobs_mod, "split_duet", should_not_run)
+
+    r = client.post(f"/api/jobs/{job.id}/duet-split")
+    assert r.status_code == 202
+    assert calls == [], "the expensive model must not re-run once the split is done"
+
+
+def test_duet_split_failure_keeps_job_done_with_base_stems(client, tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+    from app.pipeline.errors import SeparationError
+
+    job, stems_dir = _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc630")
+
+    def boom(job_arg, stems_dir_arg):
+        raise SeparationError("duet split failed: model download failed")
+
+    monkeypatch.setattr(jobs_mod, "split_duet", boom)
+
+    r = client.post(f"/api/jobs/{job.id}/duet-split")
+    assert r.status_code == 500
+    assert job.status == "done", "a failed split must not fail the job"
+    assert job.duet_split == "error"
+    assert (stems_dir / "duet_split_error.txt").is_file()
+    assert (stems_dir / "vocals.wav").is_file(), "base stems must be untouched"
+
+
+def test_duet_split_and_vocal_split_are_independent(client, tmp_path, monkeypatch):
+    """Running one split must not block or overwrite the other."""
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch, job_id="abcdefabc630")
+
+    def fake_vocals(job_arg, stems_dir_arg):
+        (stems_dir_arg / "lead_vocals.wav").write_bytes(b"RIFF")
+        (stems_dir_arg / "backing_vocals.wav").write_bytes(b"RIFF")
+        return ["lead_vocals", "backing_vocals"]
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_vocals)
+    monkeypatch.setattr(jobs_mod, "split_duet", _fake_duet)
+
+    assert client.post(f"/api/jobs/{job.id}/vocal-split").status_code == 200
+    assert client.post(f"/api/jobs/{job.id}/duet-split").status_code == 200
+
+    body = client.get(f"/api/jobs/{job.id}").json()
+    names = {s["name"] for s in body["stems"]}
+    assert {"lead_vocals", "backing_vocals", "voice_1", "voice_2"} <= names
+    assert body["vocal_split"] == "done"
+    assert body["duet_split"] == "done"

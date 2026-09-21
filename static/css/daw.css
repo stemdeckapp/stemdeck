@@ -107,7 +107,10 @@ input, textarea { font-family: inherit; }
   gap: 10px;
   padding: 0 14px;
   flex: 1;
-  min-width: 0;
+  /* A floor, not 0: below about 140px the input holds no visible text and the
+     drop-refusal message renders at zero width, which reads as no answer at
+     all. */
+  min-width: 168px;
   cursor: text;
 }
 /* Hide decorative SVG icons in the topbar */
@@ -216,13 +219,34 @@ input, textarea { font-family: inherit; }
 }
 
 /* Stem section */
+/* Shrinks, and the URL zone does not below its floor. The composer is one
+   fixed-height row with a hard width budget, and everything the controls ask
+   for used to come out of the URL zone, which is the only flexible item in the
+   row. A third vocal mode button took the zone to nothing but its own padding
+   at 1280px: no room for the input, and none for the refusal message #584 puts
+   in the same place, so dropping an unsupported file explained itself to a
+   zero-width box. The stem chips give the space up instead, by ellipsising
+   their labels next to a colour dot that already identifies them. */
 .daw-stem-section {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
+.daw-stem-chips { min-width: 0; }
+.stem-choice { min-width: 0; }
+/* The dot keeps its size; only the word gives way. */
+.stem-choice > span:not(.stem-dot) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Exempt: its buttons are a mode each, and truncating "Lead + Backing" to
+   "Lead" would name a different thing. The experimental ribbon also overhangs
+   the last button, so this must not become a clipping context. */
+.vocal-mode-toggle { flex-shrink: 0; }
 .daw-extract-label {
   font-size: 10px;
   font-weight: 600;
@@ -296,13 +320,15 @@ input, textarea { font-family: inherit; }
   color: var(--accent);
 }
 
-/* Vocals: All / Lead + Backing (on-demand split, #275) */
+/* Vocals: All / Lead + Backing / Duets (on-demand splits, #275) */
 .vocal-mode-toggle {
   display: inline-flex;
   height: 30px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  /* Not overflow:hidden. The experimental ribbon on the last button has to
+     reach outside this box to fit its word, so the rounded ends are clipped by
+     the buttons themselves below. */
 }
 .vocal-mode-toggle.hidden { display: none; }
 .vocal-mode-btn {
@@ -318,9 +344,66 @@ input, textarea { font-family: inherit; }
   transition: background var(--t-fast), color var(--t-fast);
 }
 .vocal-mode-btn + .vocal-mode-btn { border-left: 1px solid var(--border); }
+.vocal-mode-btn:first-child { border-radius: 5px 0 0 5px; }
+.vocal-mode-btn:last-child { border-radius: 0 5px 5px 0; }
 .vocal-mode-btn[aria-pressed="true"] {
   background: color-mix(in srgb, var(--vocals) 16%, transparent);
   color: var(--vocals);
+}
+/* Diagonal tag marking a mode as experimental.
+
+   The text comes from data-badge, which applyTranslations fills from
+   data-i18n-badge. It cannot be a child element: the button carries data-i18n,
+   and that assigns textContent, so any child inside it is destroyed on every
+   language change.
+
+   Fitting the word is the whole difficulty. The control is 30px tall, and three
+   layouts were tried against it: a corner ribbon has a 42px chord at 45 degrees
+   and rendered "RIMEN"; running the word along the button's diagonal fitted it
+   but laid it over the label so neither could be read; letting a 45-degree
+   ribbon escape the control put it across the neighbouring stem button.
+
+   What works is a shallow angle. At 9 degrees the word needs almost no vertical
+   room, so it sits on the button's top edge, inside the button's own width, in
+   the spare height .daw-composer has above the toggle. */
+.vocal-mode-btn[data-badge] {
+  position: relative;
+}
+.vocal-mode-btn[data-badge]::after {
+  content: attr(data-badge);
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-9deg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vocals) 80%, transparent);
+  color: #0d1016;
+  font-size: 6px;
+  font-weight: 800;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* Sits over the button, so it must never swallow the click. */
+  pointer-events: none;
+}
+.vocal-mode-btn[data-badge][aria-pressed="true"]::after,
+.vocal-mode-btn[data-badge]:hover::after,
+.vocal-mode-btn[data-badge]:focus-visible::after {
+  background: var(--vocals);
+}
+/* Pointing at it lifts the ribbon slightly, so the warning registers before the
+   tooltip has appeared. Suppressed where motion is unwelcome. */
+.vocal-mode-btn[data-badge]:hover::after {
+  transform: translateX(-50%) rotate(-9deg) translateY(-1px) scale(1.06);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+@media (prefers-reduced-motion: reduce) {
+  .vocal-mode-btn[data-badge]:hover::after {
+    transform: translateX(-50%) rotate(-9deg);
+    transition: background var(--t-fast);
+  }
 }
 
 /* Process button */

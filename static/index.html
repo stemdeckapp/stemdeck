@@ -83,12 +83,18 @@
               <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
                 <span data-i18n="stem.vocals">Vocals</span>
               </button>
-              <!-- On-demand lead/backing vocal split (#275). Shown only while
-                   Vocals is selected above; toggling "Lead + Backing" auto-runs
-                   the split once the import finishes (see main.js/job.js). -->
+              <!-- On-demand vocal decompositions (#275). Shown only while
+                   Vocals is selected above; picking one auto-runs that split
+                   once the import finishes (see main.js/job.js). The two
+                   splits are alternatives, so this is one exclusive group.
+                   "Duets" is marked experimental in both the ribbon and the
+                   tooltip, and the tooltip says where it is weak rather than
+                   only what it does: it holds up while the singers take turns
+                   and leaves some bleed wherever they sing together. -->
               <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
                 <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true" data-i18n="vocalMode.all">All</button>
                 <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
+                <button type="button" class="vocal-mode-btn" data-mode="duet" aria-pressed="false" data-i18n="vocalMode.duet" data-i18n-badge="common.experimental" title="EXPERIMENTAL. Splits the vocals into two singers. Works best when they trade lines and their voices differ. Where both sing at once, some of the other voice remains." data-i18n-title="vocalMode.duetTitle">Duets</button>
               </div>
               <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
                 <span data-i18n="stem.drums">Drums</span>
@@ -116,7 +122,7 @@
             <span class="structure-toggle-main">
               <span data-i18n="structure.toggle">Song structure</span>
             </span>
-            <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
+            <span class="structure-toggle-note" data-i18n="common.experimental">EXPERIMENTAL</span>
           </button>
 
           <!-- Process button -->

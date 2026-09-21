@@ -721,7 +721,14 @@ async function loadTrackIntoStudio(trackId) {
   // Start peaks fetch immediately — runs in parallel with job-data fetch so it
   // resolves before wireUpAudio calls Multitrack.create. This prevents peaks.json
   // from competing with stem WAV fetches for Safari's 6-connection-per-origin limit.
-  const peaksPromise = fetch(`/api/jobs/${trackId}/stems/peaks.json`)
+  // The cache buster is not belt-and-braces. This file used to be served
+  // `immutable` for a year, which a browser takes at its word and will not
+  // revalidate even on a hard reload. The header is fixed, but any browser that
+  // cached it under the old one keeps serving that copy until the year is up,
+  // and an on-demand split rewrites this file: the new stems play under the old
+  // waveform with no way for the user to refresh out of it. A changing URL is
+  // the only thing that reaches an entry already poisoned.
+  const peaksPromise = fetch(`/api/jobs/${trackId}/stems/peaks.json?v=${Date.now()}`)
     .then((r) => (r.ok ? r.json() : {}))
     .catch(() => ({}));
 

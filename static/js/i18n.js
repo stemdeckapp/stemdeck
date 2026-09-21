@@ -189,6 +189,13 @@ export function applyTranslations(root) {
   scope.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     el.placeholder = t(el.getAttribute("data-i18n-placeholder"));
   });
+  // Text a pseudo-element draws, via content: attr(data-badge). An element
+  // carrying data-i18n has its textContent rewritten above, so a real child
+  // element inside one is wiped on every language change; this is how such an
+  // element gets a second translated string.
+  scope.querySelectorAll("[data-i18n-badge]").forEach((el) => {
+    el.dataset.badge = t(el.getAttribute("data-i18n-badge"));
+  });
   const titleKey = document.documentElement.getAttribute("data-i18n-doctitle");
   if (titleKey) document.title = t(titleKey);
   applyStemRowAriaLabels(scope);
@@ -233,7 +240,7 @@ const en = {
   "sections.clearConfirm": "Confirm?",
   "structure.toggle": "Song structure",
   "structure.toggleTitle": "Experimental Song Structure Extraction: automatically label intro, verse and chorus after a split",
-  "structure.experimental": "Experimental",
+  "common.experimental": "EXPERIMENTAL",
   "doc.title": "StemDeck — split any track into stems",
 
   "topbar.urlPlaceholder": "Search or drop an audio file…",
@@ -247,6 +254,8 @@ const en = {
   "stem.vocals": "Vocals",
   "stem.lead_vocals": "Lead Vocals",
   "stem.backing_vocals": "Backing Vocals",
+  "stem.voice_1": "Voice 1",
+  "stem.voice_2": "Voice 2",
   "stem.drums": "Drums",
   "stem.bass": "Bass",
   "stem.guitar": "Guitar",
@@ -257,6 +266,8 @@ const en = {
   "vocalMode.groupAria": "Vocals mode",
   "vocalMode.all": "All",
   "vocalMode.split": "Lead + Backing",
+  "vocalMode.duet": "Duets",
+  "vocalMode.duetTitle": "EXPERIMENTAL. Splits the vocals into two singers. Works best when they trade lines and their voices differ. Where both sing at once, some of the other voice remains.",
 
   "aria.mute": "Mute {name}",
   "aria.solo": "Solo {name}",
@@ -379,6 +390,8 @@ const en = {
   "wave.loadingAria": "Loading waveform",
   "job.cancelAria": "Cancel job",
   "job.cancel": "Cancel",
+  "job.splittingVocals": "Splitting lead/backing vocals…",
+  "job.splittingDuet": "Splitting duet voices…",
 
   "footer.stemsPlaceholder": "— Stems",
   "footer.stemsCount": "{count} stems",
@@ -850,7 +863,7 @@ const pl = {
   "sections.clearConfirm": "Potwierdzić?",
   "structure.toggle": "Struktura utworu",
   "structure.toggleTitle": "Eksperymentalne wykrywanie struktury utworu: automatycznie oznacza intro, zwrotkę i refren po podziale",
-  "structure.experimental": "Eksperymentalne",
+  "common.experimental": "EKSPERYMENTALNE",
   "doc.title": "StemDeck — rozdziel dowolny utwór na ścieżki",
 
   "topbar.urlPlaceholder": "Szukaj albo upuść plik audio…",
@@ -864,6 +877,8 @@ const pl = {
   "stem.vocals": "Wokal",
   "stem.lead_vocals": "Wokal główny",
   "stem.backing_vocals": "Chórki",
+  "stem.voice_1": "Głos 1",
+  "stem.voice_2": "Głos 2",
   "stem.drums": "Perkusja",
   "stem.bass": "Bas",
   "stem.guitar": "Gitara",
@@ -874,6 +889,8 @@ const pl = {
   "vocalMode.groupAria": "Tryb wokalu",
   "vocalMode.all": "Wszystko",
   "vocalMode.split": "Wokal + Chórki",
+  "vocalMode.duet": "Duety",
+  "vocalMode.duetTitle": "EKSPERYMENTALNE. Dzieli wokal na dwoje śpiewaków. Działa najlepiej, gdy śpiewają na zmianę i mają różne głosy. Gdy śpiewają razem, słychać część drugiego głosu.",
 
   "aria.mute": "Wycisz: {name}",
   "aria.solo": "Solo: {name}",
@@ -996,6 +1013,8 @@ const pl = {
   "wave.loadingAria": "Wczytywanie przebiegu fali",
   "job.cancelAria": "Anuluj zadanie",
   "job.cancel": "Anuluj",
+  "job.splittingVocals": "Dzielenie wokalu i chórków…",
+  "job.splittingDuet": "Dzielenie głosów duetu…",
 
   "footer.stemsPlaceholder": "— Ścieżek",
   "footer.stemsCount.one": "{count} ścieżka",
@@ -1457,7 +1476,7 @@ const ja = {
   "sections.clearConfirm": "確認?",
   "structure.toggle": "曲の構成",
   "structure.toggleTitle": "実験的な楽曲構造抽出: 分離後にイントロ、Aメロ、サビを自動でラベル付けします",
-  "structure.experimental": "試験的",
+  "common.experimental": "試験的",
   "doc.title": "StemDeck — トラックをパートごとに分離",
 
   "topbar.urlPlaceholder": "検索するか、音声ファイルをドロップ…",
@@ -1471,6 +1490,8 @@ const ja = {
   "stem.vocals": "ボーカル",
   "stem.lead_vocals": "リードボーカル",
   "stem.backing_vocals": "コーラス",
+  "stem.voice_1": "ボイス 1",
+  "stem.voice_2": "ボイス 2",
   "stem.drums": "ドラム",
   "stem.bass": "ベース",
   "stem.guitar": "ギター",
@@ -1481,6 +1502,8 @@ const ja = {
   "vocalMode.groupAria": "ボーカルモード",
   "vocalMode.all": "すべて",
   "vocalMode.split": "リード+コーラス",
+  "vocalMode.duet": "デュエット",
+  "vocalMode.duetTitle": "実験的な機能です。ボーカルを2人の歌手に分割します。交互に歌い、声質が異なるときに最も有効です。同時に歌う部分では、もう一方の声が残ります。",
 
   "aria.mute": "{name}をミュート",
   "aria.solo": "{name}をソロ",
@@ -1603,6 +1626,8 @@ const ja = {
   "wave.loadingAria": "波形を読み込み中",
   "job.cancelAria": "ジョブをキャンセル",
   "job.cancel": "キャンセル",
+  "job.splittingVocals": "リードとコーラスを分離中…",
+  "job.splittingDuet": "デュエットの声を分離中…",
 
   "footer.stemsPlaceholder": "— パート",
   "footer.stemsCount.other": "{count}パート",
@@ -2039,7 +2064,7 @@ const zhHans = {
   "sections.clearConfirm": "确认?",
   "structure.toggle": "歌曲结构",
   "structure.toggleTitle": "实验性歌曲结构提取: 分离后自动标记前奏、主歌和副歌",
-  "structure.experimental": "实验性",
+  "common.experimental": "实验性",
   "doc.title": "StemDeck — 将任意曲目分离为音轨",
 
   "topbar.urlPlaceholder": "搜索，或拖放音频文件…",
@@ -2053,6 +2078,8 @@ const zhHans = {
   "stem.vocals": "人声",
   "stem.lead_vocals": "主唱",
   "stem.backing_vocals": "和声",
+  "stem.voice_1": "声部 1",
+  "stem.voice_2": "声部 2",
   "stem.drums": "鼓组",
   "stem.bass": "贝斯",
   "stem.guitar": "吉他",
@@ -2063,6 +2090,8 @@ const zhHans = {
   "vocalMode.groupAria": "人声模式",
   "vocalMode.all": "全部",
   "vocalMode.split": "主唱+和声",
+  "vocalMode.duet": "二重唱",
+  "vocalMode.duetTitle": "实验性功能。将人声分成两位歌手。当他们轮流演唱且音色不同时效果最佳。两人同时演唱时，仍会听到另一个声音。",
 
   "aria.mute": "静音{name}",
   "aria.solo": "独奏{name}",
@@ -2185,6 +2214,8 @@ const zhHans = {
   "wave.loadingAria": "正在加载波形",
   "job.cancelAria": "取消任务",
   "job.cancel": "取消",
+  "job.splittingVocals": "正在分离主唱与和声…",
+  "job.splittingDuet": "正在分离二重唱声部…",
 
   "footer.stemsPlaceholder": "— 音轨",
   "footer.stemsCount.other": "{count} 条音轨",
@@ -2621,7 +2652,7 @@ const de = {
   "sections.clearConfirm": "Sicher?",
   "structure.toggle": "Songstruktur",
   "structure.toggleTitle": "Experimentelle Songstruktur-Erkennung: beschriftet Intro, Strophe und Refrain nach dem Trennen automatisch",
-  "structure.experimental": "Experimentell",
+  "common.experimental": "EXPERIMENTELL",
   "doc.title": "StemDeck — jeden Track in Stems zerlegen",
 
   "topbar.urlPlaceholder": "Suchen oder eine Audiodatei ablegen…",
@@ -2635,6 +2666,8 @@ const de = {
   "stem.vocals": "Gesang",
   "stem.lead_vocals": "Lead-Gesang",
   "stem.backing_vocals": "Backing-Gesang",
+  "stem.voice_1": "Stimme 1",
+  "stem.voice_2": "Stimme 2",
   "stem.drums": "Schlagzeug",
   "stem.bass": "Bass",
   "stem.guitar": "Gitarre",
@@ -2645,6 +2678,8 @@ const de = {
   "vocalMode.groupAria": "Gesangsmodus",
   "vocalMode.all": "Alle",
   "vocalMode.split": "Lead + Backing",
+  "vocalMode.duet": "Duette",
+  "vocalMode.duetTitle": "EXPERIMENTELL. Teilt den Gesang in zwei Stimmen auf. Funktioniert am besten, wenn sie sich abwechseln und unterschiedlich klingen. Wo beide gleichzeitig singen, bleibt etwas der anderen Stimme.",
 
   "aria.mute": "{name} stummschalten",
   "aria.solo": "{name} solo",
@@ -2767,6 +2802,8 @@ const de = {
   "wave.loadingAria": "Wellenform wird geladen",
   "job.cancelAria": "Auftrag abbrechen",
   "job.cancel": "Abbrechen",
+  "job.splittingVocals": "Lead/Backing werden getrennt…",
+  "job.splittingDuet": "Duett-Stimmen werden getrennt…",
 
   "footer.stemsPlaceholder": "— Stems",
   "footer.stemsCount": "{count} Stems",
@@ -3214,7 +3251,7 @@ const pt = {
   "sections.clearConfirm": "Confirmar?",
   "structure.toggle": "Estrutura da música",
   "structure.toggleTitle": "Extração experimental da estrutura da música: marca intro, verso e refrão automaticamente após a separação",
-  "structure.experimental": "Experimental",
+  "common.experimental": "EXPERIMENTAL",
   "doc.title": "StemDeck — separe qualquer faixa em stems",
 
   "topbar.urlPlaceholder": "Pesquise ou solte um arquivo de áudio…",
@@ -3228,6 +3265,8 @@ const pt = {
   "stem.vocals": "Vocais",
   "stem.lead_vocals": "Vocal principal",
   "stem.backing_vocals": "Vocal de apoio",
+  "stem.voice_1": "Voz 1",
+  "stem.voice_2": "Voz 2",
   "stem.drums": "Bateria",
   "stem.bass": "Baixo",
   "stem.guitar": "Guitarra",
@@ -3238,6 +3277,8 @@ const pt = {
   "vocalMode.groupAria": "Modo de vocais",
   "vocalMode.all": "Todos",
   "vocalMode.split": "Principal + Apoio",
+  "vocalMode.duet": "Duetos",
+  "vocalMode.duetTitle": "EXPERIMENTAL. Divide as vozes em dois cantores. Funciona melhor quando alternam e têm vozes diferentes. Onde cantam ao mesmo tempo, fica alguma da outra voz.",
 
   "aria.mute": "Mudo {name}",
   "aria.solo": "Solo {name}",
@@ -3360,6 +3401,8 @@ const pt = {
   "wave.loadingAria": "Carregando forma de onda",
   "job.cancelAria": "Cancelar tarefa",
   "job.cancel": "Cancelar",
+  "job.splittingVocals": "A separar vocal principal e apoio…",
+  "job.splittingDuet": "A separar as vozes do dueto…",
 
   "footer.stemsPlaceholder": "— Stems",
   "footer.stemsCount": "{count} stems",
@@ -3809,7 +3852,7 @@ const id = {
   "sections.clearConfirm": "Yakin?",
   "structure.toggle": "Struktur lagu",
   "structure.toggleTitle": "Ekstraksi struktur lagu eksperimental: menandai intro, bait, dan refrein secara otomatis setelah pemisahan",
-  "structure.experimental": "Eksperimental",
+  "common.experimental": "EKSPERIMENTAL",
   "doc.title": "StemDeck — pisahkan trek apa pun menjadi stem",
 
   "topbar.urlPlaceholder": "Cari atau seret file audio…",
@@ -3823,6 +3866,8 @@ const id = {
   "stem.vocals": "Vokal",
   "stem.lead_vocals": "Vokal Utama",
   "stem.backing_vocals": "Vokal Latar",
+  "stem.voice_1": "Suara 1",
+  "stem.voice_2": "Suara 2",
   "stem.drums": "Drum",
   "stem.bass": "Bass",
   "stem.guitar": "Gitar",
@@ -3833,6 +3878,8 @@ const id = {
   "vocalMode.groupAria": "Mode vokal",
   "vocalMode.all": "Semua",
   "vocalMode.split": "Utama + Latar",
+  "vocalMode.duet": "Duet",
+  "vocalMode.duetTitle": "EKSPERIMENTAL. Memisahkan vokal menjadi dua penyanyi. Paling baik bila mereka bergantian dan suaranya berbeda. Bila keduanya bernyanyi bersamaan, sebagian suara lain tetap terdengar.",
 
   "aria.mute": "Bisukan {name}",
   "aria.solo": "Solo {name}",
@@ -3955,6 +4002,8 @@ const id = {
   "wave.loadingAria": "Memuat gelombang",
   "job.cancelAria": "Batalkan tugas",
   "job.cancel": "Batal",
+  "job.splittingVocals": "Memisahkan vokal utama/latar…",
+  "job.splittingDuet": "Memisahkan suara duet…",
 
   "footer.stemsPlaceholder": "— Stem",
   "footer.stemsCount": "{count} stem",
@@ -4391,7 +4440,7 @@ const fr = {
   "sections.clearConfirm": "Confirmer ?",
   "structure.toggle": "Structure du morceau",
   "structure.toggleTitle": "Extraction expérimentale de la structure: étiquette automatiquement intro, couplet et refrain après la séparation",
-  "structure.experimental": "Expérimental",
+  "common.experimental": "EXPÉRIMENTAL",
   "doc.title": "StemDeck — séparez n'importe quel morceau en pistes",
 
   "topbar.urlPlaceholder": "Recherchez ou déposez un fichier audio…",
@@ -4405,6 +4454,8 @@ const fr = {
   "stem.vocals": "Voix",
   "stem.lead_vocals": "Voix principale",
   "stem.backing_vocals": "Chœurs",
+  "stem.voice_1": "Voix 1",
+  "stem.voice_2": "Voix 2",
   "stem.drums": "Batterie",
   "stem.bass": "Basse",
   "stem.guitar": "Guitare",
@@ -4415,6 +4466,8 @@ const fr = {
   "vocalMode.groupAria": "Mode voix",
   "vocalMode.all": "Tout",
   "vocalMode.split": "Principale + chœurs",
+  "vocalMode.duet": "Duos",
+  "vocalMode.duetTitle": "EXPÉRIMENTAL. Sépare le chant en deux interprètes. Fonctionne mieux quand ils alternent et que leurs voix diffèrent. Là où ils chantent ensemble, une partie de l'autre voix subsiste.",
 
   "aria.mute": "Couper {name}",
   "aria.solo": "Solo {name}",
@@ -4537,6 +4590,8 @@ const fr = {
   "wave.loadingAria": "Chargement de la forme d'onde",
   "job.cancelAria": "Annuler la tâche",
   "job.cancel": "Annuler",
+  "job.splittingVocals": "Séparation voix principale/chœurs…",
+  "job.splittingDuet": "Séparation des voix du duo…",
 
   "footer.stemsPlaceholder": "— Pistes",
   "footer.stemsCount": "{count} pistes",
@@ -5102,7 +5157,7 @@ const es = {
   "sections.clearConfirm": "¿Confirmar?",
   "structure.toggle": "Estructura de la canción",
   "structure.toggleTitle": "Extracción experimental de la estructura: etiqueta automáticamente intro, verso y estribillo tras la separación",
-  "structure.experimental": "Experimental",
+  "common.experimental": "EXPERIMENTAL",
   "doc.title": "StemDeck — separa cualquier pista en stems",
 
   "topbar.urlPlaceholder": "Busca o suelta un archivo de audio…",
@@ -5116,6 +5171,8 @@ const es = {
   "stem.vocals": "Voces",
   "stem.lead_vocals": "Voz principal",
   "stem.backing_vocals": "Coros",
+  "stem.voice_1": "Voz 1",
+  "stem.voice_2": "Voz 2",
   "stem.drums": "Batería",
   "stem.bass": "Bajo",
   "stem.guitar": "Guitarra",
@@ -5126,6 +5183,8 @@ const es = {
   "vocalMode.groupAria": "Modo de voces",
   "vocalMode.all": "Todo",
   "vocalMode.split": "Principal + coros",
+  "vocalMode.duet": "Dúos",
+  "vocalMode.duetTitle": "EXPERIMENTAL. Divide la voz en dos cantantes. Funciona mejor cuando se alternan y sus voces son distintas. Donde cantan a la vez, queda algo de la otra voz.",
 
   "aria.mute": "Mute {name}",
   "aria.solo": "Solo {name}",
@@ -5248,6 +5307,8 @@ const es = {
   "wave.loadingAria": "Cargando forma de onda",
   "job.cancelAria": "Cancelar tarea",
   "job.cancel": "Cancelar",
+  "job.splittingVocals": "Separando voz principal y coros…",
+  "job.splittingDuet": "Separando las voces del dúo…",
 
   "footer.stemsPlaceholder": "— Stems",
   "footer.stemsCount": "{count} stems",
@@ -5718,7 +5779,7 @@ const ko = {
   "sections.clearConfirm": "정말요?",
   "structure.toggle": "곡 구조",
   "structure.toggleTitle": "실험적 곡 구조 분석: 분리한 뒤 인트로, 벌스, 코러스를 자동으로 표시해요",
-  "structure.experimental": "실험적",
+  "common.experimental": "실험적",
   "doc.title": "StemDeck, 어떤 곡이든 스템으로 분리",
 
   "topbar.urlPlaceholder": "검색하거나 오디오 파일을 끌어다 놓으세요…",
@@ -5732,6 +5793,8 @@ const ko = {
   "stem.vocals": "보컬",
   "stem.lead_vocals": "리드 보컬",
   "stem.backing_vocals": "백 보컬",
+  "stem.voice_1": "목소리 1",
+  "stem.voice_2": "목소리 2",
   "stem.drums": "드럼",
   "stem.bass": "베이스",
   "stem.guitar": "기타",
@@ -5742,6 +5805,8 @@ const ko = {
   "vocalMode.groupAria": "보컬 모드",
   "vocalMode.all": "전체",
   "vocalMode.split": "리드 + 백",
+  "vocalMode.duet": "듀엣",
+  "vocalMode.duetTitle": "실험적 기능입니다. 보컬을 두 명의 가수로 나눕니다. 번갈아 부르고 목소리가 다를 때 가장 잘 작동합니다. 함께 부르는 부분에서는 다른 목소리가 일부 남습니다.",
 
   "aria.mute": "{name} 음소거",
   "aria.solo": "{name} 솔로",
@@ -5864,6 +5929,8 @@ const ko = {
   "wave.loadingAria": "파형 불러오는 중",
   "job.cancelAria": "작업 취소",
   "job.cancel": "취소",
+  "job.splittingVocals": "리드/백 보컬 분리 중…",
+  "job.splittingDuet": "듀엣 목소리 분리 중…",
 
   "footer.stemsPlaceholder": "— 스템",
   "footer.stemsCount.other": "스템 {count}개",

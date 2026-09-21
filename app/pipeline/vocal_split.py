@@ -8,29 +8,31 @@ deliberately not a persistent worker like demucs_worker.py, since this is an
 occasional user-triggered action, not the hot path every job takes (the
 persistent-worker pattern in ml-pipeline.md exists specifically to amortize a
 cost every job pays; that reasoning doesn't apply here, #309).
+
+The subprocess lifecycle, stall watchdog and error hygiene live in
+split_runner.py, shared with the duet split.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
 from app.core.config import TIMEOUT_VOCAL_SPLIT
 from app.core.models import Job
-from app.core.registry import set_proc
 from app.core.settings import get_demucs_device
 from app.pipeline.errors import SeparationError
+from app.pipeline.split_runner import run_split
 
 logger = logging.getLogger("stemdeck.pipeline")
 
+VOCAL_SPLIT_STEMS = ["lead_vocals", "backing_vocals"]
+
 
 def _spawn_cmd(device: str, vocals_path: Path, out_dir: Path) -> list[str]:
+    """The worker argv. Kept as its own function so tests can swap in a stub
+    worker and still exercise the real subprocess machinery."""
     return [
         sys.executable,
         "-m",
@@ -55,102 +57,12 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
         raise SeparationError("vocals.wav not found -- job has no vocals stem to split")
 
     device = get_demucs_device()
-    env = os.environ.copy()
-    # Pin the child's stdio encoding to match what the parent now decodes with.
-    # Without it a Windows child writes cp1252 while the parent reads utf-8, so
-    # the mismatch simply moves rather than being fixed. Demucs and audio-
-    # separator both emit progress bars and can echo track metadata, neither of
-    # which is guaranteed to be cp1252-safe.
-    # The worker arms a watchdog on this and hard-exits when we disappear, so a
-    # kill that runs no cleanup (SIGKILL, Force Quit, Task Manager, a crash)
-    # cannot leave it running with nobody to collect the result (#519).
-    env["STEMDECK_PARENT_PID"] = str(os.getpid())
-    env["PYTHONIOENCODING"] = "utf-8:replace"
-    try:
-        import certifi
-
-        env.setdefault("SSL_CERT_FILE", certifi.where())
-        env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except ModuleNotFoundError:
-        pass
-
-    proc = subprocess.Popen(
-        _spawn_cmd(device, vocals_path, stems_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        # utf-8/replace explicitly. text=True alone decodes with the locale
-        # encoding, which on Windows is cp1252, and a single byte outside it
-        # in a child's output kills the whole job with a UnicodeDecodeError
-        # ("'charmap' codec can't decode byte 0x8f"). This is diagnostic text:
-        # a byte we cannot read is never a reason to fail a separation.
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        env=env,
+    return run_split(
+        job,
+        argv=_spawn_cmd(device, vocals_path, stems_dir),
+        device=device,
+        timeout=TIMEOUT_VOCAL_SPLIT,
+        label="vocal split",
+        produces=VOCAL_SPLIT_STEMS,
+        out_dir=stems_dir,
     )
-    set_proc(job.id, proc)
-
-    tail: list[str] = []
-    last_output = [time.monotonic()]
-    done_evt = threading.Event()
-
-    def _watchdog() -> None:
-        while not done_evt.wait(timeout=30):
-            if proc.poll() is not None:
-                return
-            if time.monotonic() - last_output[0] > TIMEOUT_VOCAL_SPLIT:
-                logger.warning(
-                    "vocal split stalled for %ss with no output, terminating job %s",
-                    TIMEOUT_VOCAL_SPLIT,
-                    job.id,
-                )
-                proc.terminate()
-                return
-
-    wt = threading.Thread(target=_watchdog, daemon=True)
-    wt.start()
-    job_ok = False
-    try:
-        assert proc.stderr is not None
-        for raw_line in proc.stderr:
-            last_output[0] = time.monotonic()
-            line = raw_line.strip()
-            if not line:
-                continue
-            if line == "@@DONE@@":
-                job_ok = True
-                break
-            if line.startswith("@@ERROR@@"):
-                msg = line[len("@@ERROR@@") :]
-                try:
-                    msg = json.loads(msg)
-                except json.JSONDecodeError:
-                    pass
-                tail.append(str(msg))
-                break
-            tail.append(line)
-            if len(tail) > 40:
-                tail.pop(0)
-    finally:
-        done_evt.set()
-        set_proc(job.id, None)
-        wt.join(timeout=2)
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.communicate()
-
-    if not job_ok:
-        detail = "\n".join(tail[-15:]) if tail else "(no stderr captured)"
-        logger.warning("[%s] vocal split failed: %s", job.id, detail)
-        last = tail[-1] if tail else "vocal split failed"
-        raise SeparationError(f"vocal split failed: {last}", tail=tail[-40:], device=device)
-
-    for name in ("lead_vocals", "backing_vocals"):
-        if not (stems_dir / f"{name}.wav").is_file():
-            raise SeparationError(f"vocal split did not produce {name}.wav", device=device)
-    return ["lead_vocals", "backing_vocals"]

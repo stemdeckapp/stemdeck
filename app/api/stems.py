@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 
 from app.core.config import (
     CACHE_DIR,
+    DUET_STEM_NAMES,
     EXTRA_STEM_NAMES,
     JOB_ID_RE,
     JOBS_DIR,
@@ -41,19 +42,26 @@ router = APIRouter(tags=["stems"])
 # (#275, EXTRA_STEM_NAMES) when a job has requested it. "original" is the
 # re-encoded source song (added when the user picked a strict subset), "mix"
 # is the ffmpeg amix of the user's selected stems.
-_ALLOWED_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"original", "mix"}
+_ALLOWED_NAMES = (
+    frozenset(STEM_NAMES)
+    | frozenset(EXTRA_STEM_NAMES)
+    | frozenset(DUET_STEM_NAMES)
+    | {"original", "mix"}
+)
 
 # Lanes the dynamic mixdown may sum: the 6 stems plus "original" (the complement
 # track shown when the user picked a subset) plus lead/backing vocals when a
 # job has split them. "mix" is excluded -- it is the static pre-render this
 # endpoint replaces. Gains are linear; the studio caps a lane at 2.0, so this
 # generous bound just rejects abusive values.
-_MIXDOWN_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"original"}
+_MIXDOWN_NAMES = (
+    frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | frozenset(DUET_STEM_NAMES) | {"original"}
+)
 _MIXDOWN_MAX_GAIN = 4.0
 # lead_vocals/backing_vocals are a decomposition of vocals, not an independent
 # signal -- summing vocals alongside either would double-count the vocal
 # energy in the mix (#275).
-_VOCAL_DECOMPOSITION_NAMES = frozenset(EXTRA_STEM_NAMES)
+_VOCAL_DECOMPOSITION_NAMES = frozenset(EXTRA_STEM_NAMES) | frozenset(DUET_STEM_NAMES)
 
 # Output encoders by container/extension, shared by the dynamic mixdown and the
 # stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps,
@@ -811,7 +819,23 @@ async def _ensure_cached_mp3(src: Path) -> Path:
 
 @router.get("/jobs/{job_id}/stems/peaks.json")
 async def get_stem_peaks(job_id: str) -> Response:
-    """Return pre-computed waveform peaks for all stems."""
+    """Return pre-computed waveform peaks for all stems.
+
+    This used to be served `immutable` for a year, on the reasoning that a job's
+    stems never change once it is done. That stopped being true when the
+    on-demand splits arrived: both the lead/backing split and the duet split add
+    stems to a finished job and rewrite this file through `merge_stem_peaks`.
+
+    `immutable` is a promise the browser takes literally. It will not revalidate,
+    not on a reload and not on a hard reload, so a user who ran a split saw the
+    waveform from before it for as long as the entry survived. The audio has no
+    such header, so the two disagreed: the right stems playing under the wrong
+    picture.
+
+    `must-revalidate` with `max-age=0` keeps the file out of the response body on
+    a repeat visit -- FileResponse's ETag still answers 304 -- while guaranteeing
+    the browser asks.
+    """
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_get(job_id)
@@ -823,7 +847,7 @@ async def get_stem_peaks(job_id: str) -> Response:
     return FileResponse(
         path,
         media_type="application/json",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={"Cache-Control": "public, max-age=0, must-revalidate"},
     )
 
 
@@ -1364,7 +1388,7 @@ async def get_all_stems_zip(
         raise HTTPException(status_code=404, detail="job not ready")
 
     # Resolve the requested subset (whitelisted) or fall back to all stems.
-    all_names = (*STEM_NAMES, *EXTRA_STEM_NAMES)
+    all_names = (*STEM_NAMES, *EXTRA_STEM_NAMES, *DUET_STEM_NAMES)
     if stems:
         requested = {s for s in stems.split(",") if s}
         if not requested <= set(all_names):
