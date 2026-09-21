@@ -123,10 +123,17 @@
           <!-- Experimental automatic song-structure detection. Off makes the
                pipeline skip the inference stage entirely; the backend reads
                the setting once per job, so a change applies to the next import
-               without a restart. -->
-          <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental Song Structure Extraction" aria-label="Experimental Song Structure Extraction" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleTitle">
+               without a restart.
+
+               It is named for the work it does at import time, not for the
+               sections bar. Called "Song structure" it read as the switch that
+               shows and hides that bar, so clicking it on an open track looked
+               broken: nothing moved, because nothing it controls belongs to a
+               track that has already been separated (#634). The bar has its
+               own control, "Sections" in the Collapse row. -->
+          <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental. Labels intro, verse and chorus while a track is imported. Applies to the next import, not to a track that is already open. To hide the sections bar, use Collapse > Sections." aria-label="Detect song structure on import (experimental)" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleAria">
             <span class="structure-toggle-main">
-              <span data-i18n="structure.toggle">Song structure</span>
+              <span data-i18n="structure.toggle">Detect structure</span>
             </span>
             <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
           </button>

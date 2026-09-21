@@ -57,4 +57,43 @@ test.describe("song structure toggle", () => {
     await expect(button(page)).toHaveAttribute("aria-pressed", "false");
     await expect.poll(() => setting(page)).toBe(false);
   });
+
+  // Two controls, one word between them. This one runs a pass at import time;
+  // the sections bar is shown and hidden by "Sections" in the Collapse row. A
+  // reporter read the first as the second, clicked it on an open track, and saw
+  // a button change colour while nothing else moved (#634).
+  test("it does not show or hide the sections bar, which has its own control", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    const app = page.locator(".app");
+    const ribbon = page.locator(".daw-section-ribbon");
+    const panelToggle = page.locator('.daw-panel-toggle[data-panel="sections"]');
+
+    await expect(ribbon).toBeVisible();
+
+    // Both directions: the bar is still there whether the toggle goes on or off.
+    await button(page).click();
+    await expect(button(page)).toHaveAttribute("aria-pressed", "true");
+    await expect(ribbon).toBeVisible();
+    await button(page).click();
+    await expect(button(page)).toHaveAttribute("aria-pressed", "false");
+    await expect(ribbon).toBeVisible();
+
+    // And the control that does own the bar still owns it.
+    await panelToggle.click();
+    await expect(app).toHaveClass(/panel-sections-off/);
+    await panelToggle.click();
+    await expect(app).not.toHaveClass(/panel-sections-off/);
+    await expect(ribbon).toBeVisible();
+  });
+
+  // The label is the fix for #634. Naming the work it does at import time is
+  // what stops it reading as the switch for the sections bar, so it is pinned
+  // rather than left to the next person tidying up wording.
+  test("the button names the import, not the sections bar", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    await expect(button(page)).toContainText(/detect/i);
+    await expect(button(page)).toHaveAttribute("aria-label", /import/i);
+    await expect(button(page)).toHaveAttribute("title", /next import/i);
+  });
 });
