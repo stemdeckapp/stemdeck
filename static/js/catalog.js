@@ -80,6 +80,13 @@ const FRIEND_GROUPS = [
         logo: "/img/friends/killah-trakz.jpg",
         avatar: true,
       },
+      {
+        name: "NIHIL",
+        roleKey: "friends.role.nihil",
+        url: "https://www.instagram.com/somosnihil/",
+        logo: "/img/friends/nihil.jpg",
+        avatar: true,
+      },
     ],
   },
   {

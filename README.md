@@ -58,6 +58,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
 | Artists & Creators | Analog4Lyfe | Analog gear specialist | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Artists & Creators | Dead röses | Cork-based punk rock band | [@dead_rosesband](https://www.instagram.com/dead_rosesband) |
+| Artists & Creators | NIHIL | Modern alternative metal from Argentina. Fueled by emotionally charged vocals, anger and emptiness | [@somosnihil](https://www.instagram.com/somosnihil/) |
 | Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
 | Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
