@@ -2241,8 +2241,14 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
         // not just Blackwell (#502). CUDA is backward compatible, so cu128 is
         // the right floor for a 13.x driver.
         [major, _] if *major >= 13 => "cu128",
-        [12, minor] if *minor >= 4 => "cu124",
-        [12, _] => "cu121",
+        // Every CUDA 12 driver, not just 12.4 and newer. A 12.0-12.3 driver
+        // used to be handed cu121, whose index stops at torch 2.5.1 -- so the
+        // 2.6.0 line this app installs was asked for at a tag that has never
+        // published it, pip answered "No matching distribution found", and an
+        // RTX 4060 dropped to CPU with a GPU sitting right there (#644).
+        // cu124 is the right answer for all of them: CUDA 12 is minor-version
+        // compatible, so a cu124 build runs on any 12.x driver.
+        [12, _] => "cu124",
         [11, _] => "cu118",
         _ => "cu124",
     }
@@ -2281,9 +2287,17 @@ fn wheel_candidates(compute_cap: Option<&str>, cuda_version: &str) -> Vec<&'stat
         .and_then(|cap| cap.split('.').next()?.parse::<u32>().ok())
         .is_some_and(|major| major >= 10);
     if blackwell {
-        vec!["cu128"]
-    } else {
-        vec![cuda_tag(cuda_version)]
+        return vec!["cu128"];
+    }
+    match cuda_tag(cuda_version) {
+        // cu118 as a second chance for a CUDA 12 driver. cu124 is the right
+        // first answer for all of them (see cuda_tag), but minor-version
+        // compatibility is the thing being relied on there, and when it does
+        // not hold the alternative used to be CPU. cu118 runs on every 12.x
+        // driver and publishes the same torch 2.6.0 line, so the fallthrough
+        // this list was built for (#502) finally has somewhere to go (#644).
+        "cu124" => vec!["cu124", "cu118"],
+        tag => vec![tag],
     }
 }
 
@@ -5896,7 +5910,7 @@ mod tests {
         // torchaudio 2.9 removed the soundfile backend. Any tag this maps to
         // 2.9+ ships a torchaudio whose save() needs torchcodec, which is not
         // a StemDeck dependency, so demucs' ta.save() would fail at runtime.
-        for tag in ["cu128", "cu124", "cu121", "cu118"] {
+        for tag in ["cu128", "cu124", "cu118"] {
             let v = super::torch_version_for_tag(tag);
             let minor: u32 = v.split('.').nth(1).unwrap().parse().unwrap();
             assert!(minor < 9, "{tag} maps to torch {v}, which is 2.9+");
@@ -5909,16 +5923,84 @@ mod tests {
         // catch-all and got cu124 -- two major versions behind, on every card.
         assert_eq!(super::cuda_tag("13.0"), "cu128");
         assert_eq!(super::cuda_tag("14.2"), "cu128");
-        // Older drivers keep their existing mapping.
+        // A CUDA 12 driver gets cu124 whatever its minor version: 12.1 used
+        // to get cu121, whose index has no torch 2.6.0 to install (#644).
         assert_eq!(super::cuda_tag("12.8"), "cu124");
-        assert_eq!(super::cuda_tag("12.1"), "cu121");
+        assert_eq!(super::cuda_tag("12.1"), "cu124");
+        // An 11.x driver keeps its existing mapping.
         assert_eq!(super::cuda_tag("11.8"), "cu118");
     }
 
     #[test]
     fn a_non_blackwell_card_still_follows_the_driver() {
-        assert_eq!(super::wheel_candidates(Some("8.9"), "12.4"), vec!["cu124"]);
+        assert_eq!(
+            super::wheel_candidates(Some("8.9"), "12.4"),
+            vec!["cu124", "cu118"]
+        );
         assert_eq!(super::wheel_candidates(None, "11.8"), vec!["cu118"]);
+    }
+
+    /// Every wheel tag setup can offer publishes the torch line it installs.
+    ///
+    /// The tag comes from the driver and the version from a table, and nothing
+    /// held the two together. A CUDA 12.0-12.3 driver was handed cu121, whose
+    /// index stops at torch 2.5.1, so setup asked pip for torch==2.6.0+cu121 --
+    /// never published, on any platform -- and an RTX 4060 dropped to CPU with
+    /// "No matching distribution found" (#644).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn every_wheel_tag_offered_has_a_published_torch_wheel() {
+        // Checked against download.pytorch.org/whl/<tag>/ on 2026-09-21, for
+        // torch, torchaudio and torchvision, cp312, win_amd64 and
+        // linux_x86_64. A tag with no row here is one nobody confirmed
+        // publishes what setup is about to ask it for, so add the row before
+        // offering the tag.
+        const PUBLISHED: [(&str, &str); 3] =
+            [("cu128", "2.8.0"), ("cu124", "2.6.0"), ("cu118", "2.6.0")];
+
+        let drivers = [
+            "11.8", "12.0", "12.1", "12.3", "12.4", "12.8", "13.0", "14.2", "unknown",
+        ];
+        let caps = [
+            None,
+            Some("7.5"),
+            Some("8.6"),
+            Some("8.9"),
+            Some("10.0"),
+            Some("12.0"),
+            Some("N/A"),
+        ];
+        for driver in drivers {
+            for cap in caps {
+                for tag in super::wheel_candidates(cap, driver) {
+                    let published = PUBLISHED
+                        .iter()
+                        .find(|(t, _)| *t == tag)
+                        .map(|(_, version)| *version);
+                    let Some(published) = published else {
+                        panic!("{tag} (driver {driver}, cap {cap:?}) has no verified torch line");
+                    };
+                    assert_eq!(
+                        super::torch_version_for_tag(tag),
+                        published,
+                        "{tag} installs a torch its index does not publish",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The reporter's machine: an RTX 4060 behind a pre-12.4 driver (#644).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_pre_12_4_driver_gets_a_gpu_wheel_and_a_second_chance() {
+        for driver in ["12.0", "12.1", "12.2", "12.3"] {
+            assert_eq!(
+                super::wheel_candidates(Some("8.9"), driver),
+                vec!["cu124", "cu118"],
+                "driver {driver}",
+            );
+        }
     }
 
     #[test]
@@ -6642,10 +6724,10 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert_eq!(super::wheel_tag(Some("10.0"), "12.4"), "cu128");
         // Non-Blackwell cards fall back to the CUDA-version heuristic.
         assert_eq!(super::wheel_tag(Some("8.9"), "12.4"), "cu124");
-        assert_eq!(super::wheel_tag(Some("8.6"), "12.1"), "cu121");
+        assert_eq!(super::wheel_tag(Some("8.6"), "12.1"), "cu124");
         assert_eq!(super::wheel_tag(Some("7.5"), "11.8"), "cu118");
         // Missing / unparseable compute capability also falls back.
-        assert_eq!(super::wheel_tag(None, "12.1"), "cu121");
+        assert_eq!(super::wheel_tag(None, "12.1"), "cu124");
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
     }
 
@@ -6662,7 +6744,7 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert_eq!(super::torch_version_for_tag("cu128"), "2.8.0");
         assert_eq!(super::torchvision_version_for_tag("cu128"), "0.23.0");
 
-        for tag in ["cu124", "cu121", "cu118"] {
+        for tag in ["cu124", "cu118"] {
             assert_eq!(super::torch_version_for_tag(tag), super::CPU_TORCH_VERSION);
             assert_eq!(
                 super::torchvision_version_for_tag(tag),
