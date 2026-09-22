@@ -46,14 +46,19 @@ input, textarea { font-family: inherit; }
      line, and auto height means a translation that wraps grows the bar rather
      than being clipped. */
   min-height: 77px;
-  padding-top: 10px;
-  padding-bottom: 10px;
   flex-shrink: 0;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  /* One shorthand, not a shorthand after two longhands. padding-top and
+     padding-bottom were set above and then reset to zero by `padding: 0 16px`
+     a few lines later, so the bar has had no vertical padding at all whatever
+     the comment above it claimed. Invisible while the composer is a fixed 50px
+     inside a 77px bar, because align-items: center hides the gap; make the
+     composer any taller and the box fills the bar edge to edge and touches the
+     top of the window. */
+  padding: 10px 16px;
   gap: 14px;
 }
 
