@@ -5,6 +5,7 @@ import {
   setAutoSectionsResetFn,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
+import { refreshStemChoiceVisuals } from "./stemChoice.js";
 import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, stemRegionDragPayload, prewarmRegionMix } from "./player.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
@@ -38,23 +39,17 @@ import { initFooterFit, refitFooter } from "./footerFit.js";
 //
 // Persisted across reloads so the next song honors the user's last
 // chosen subset, but a 0-selection state is normalized to all 6.
-function refreshStemChoiceVisuals() {
-  for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
-    btn.setAttribute(
-      "aria-pressed",
-      String(selectedStems.has(btn.dataset.stem)),
-    );
-  }
-}
+//
+// What the row looks like at any moment lives in stemChoice.js, so the chips,
+// the All button and the toggle below cannot disagree about it. Only the
+// rules above are here.
 
 // ─── Vocals: All / Lead + Backing toggle (on-demand split, #275) ───
 //
 // Only meaningful while Vocals is actually selected above -- hidden
-// otherwise so it can't imply a choice that has nothing to act on.
-
-function refreshVocalModeToggleVisibility() {
-  document.getElementById("vocalModeToggle")?.classList.toggle("hidden", !selectedStems.has("vocals"));
-}
+// otherwise so it can't imply a choice that has nothing to act on. Its
+// visibility rides along with the stem chips in refreshStemChoiceVisuals,
+// since it describes the same selection they do.
 
 function wireVocalModeToggle() {
   const wrap = document.getElementById("vocalModeToggle");
@@ -155,13 +150,11 @@ function handleStemChoiceClick(stem) {
   }
   saveSelectedStems();
   refreshStemChoiceVisuals();
-  refreshVocalModeToggleVisibility();
   buildStripStems();
 }
 
 function wireStemChoiceButtons() {
   refreshStemChoiceVisuals();
-  refreshVocalModeToggleVisibility();
   for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
     btn.addEventListener("click", () => handleStemChoiceClick(btn.dataset.stem));
   }
@@ -170,10 +163,6 @@ function wireStemChoiceButtons() {
 function wireAllButton() {
   const allBtn = document.getElementById("stemAllBtn");
   if (!allBtn) return;
-
-  function syncAllBtn() {
-    allBtn.setAttribute("aria-pressed", String(selectedStems.size === STEM_NAMES.length));
-  }
 
   allBtn.addEventListener("click", () => {
     const allSelected = selectedStems.size === STEM_NAMES.length;
@@ -184,17 +173,15 @@ function wireAllButton() {
     }
     saveSelectedStems();
     refreshStemChoiceVisuals();
-    refreshVocalModeToggleVisibility();
     buildStripStems();
-    syncAllBtn();
   });
 
-  /* Keep All in sync when individual stems are toggled */
-  for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
-    btn.addEventListener("click", syncAllBtn);
-  }
-
-  syncAllBtn();
+  // No second listener on the stem chips, and no sync of its own. The button
+  // is painted from the selection like everything else in the row, by the one
+  // function every path goes through. A private syncAllBtn here was reachable
+  // only from a click, which is how two stems could sit selected under a lit
+  // All on every page load (#658).
+  refreshStemChoiceVisuals();
 }
 
 // ─── Wire everything up ───
@@ -259,7 +246,6 @@ onLanguageChange(refitFooter);
   await runStoreMigrationIfNeeded();
   await stemSelectionReady;
   refreshStemChoiceVisuals();
-  refreshVocalModeToggleVisibility();
   await vocalSplitModeReady;
   for (const b of document.querySelectorAll(".vocal-mode-btn")) {
     b.setAttribute("aria-pressed", String(b.dataset.mode === vocalSplitMode));

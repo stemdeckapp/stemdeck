@@ -3,6 +3,7 @@ import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
+import { refreshStemChoiceVisuals } from "./stemChoice.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
   cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -690,9 +691,11 @@ function applyStoredStemSelection(track) {
   selectedStems.clear();
   for (const name of next) selectedStems.add(name);
   saveSelectedStems();
-  for (const btn of document.querySelectorAll(".stem-choice[data-stem]")) {
-    btn.setAttribute("aria-pressed", String(selectedStems.has(btn.dataset.stem)));
-  }
+  // The whole row, not just the chips. Setting aria-pressed on each chip by
+  // hand here left the All button beside them claiming every stem was
+  // selected, and the Lead + Backing toggle on screen for a track with no
+  // vocals (#658).
+  refreshStemChoiceVisuals();
 }
 
 // A track's files went missing (folder deleted or moved outside the app).
