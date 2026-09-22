@@ -238,9 +238,21 @@ function resetAnalysisCards() {
   if (loudnessCard) loudnessCard.classList.add("hidden");
 }
 
+/**
+ * The empty studio's lanes: one flat line per stem, where its waveform will be.
+ *
+ * STEM_NAMES only, deliberately. "original" used to be in this list, giving
+ * seven lanes against the six rows the mixer shows with no job loaded, because
+ * the mixer hides its original row until one is: `applyStemSelectionFilter` is
+ * called here with STEM_NAMES, and original is not in that set. Seven lines
+ * beside six faders drifted apart down the stack, and the last of them had no
+ * fader at all.
+ *
+ * The set the mixer shows is the set to draw, so the two are the same list.
+ */
 function renderPlaceholderTracks() {
   multitrackContainer.innerHTML = "";
-  for (const name of ["original", ...STEM_NAMES]) {
+  for (const name of STEM_NAMES) {
     const ph = document.createElement("div");
     ph.className = "lane-placeholder";
     ph.dataset.stem = name;

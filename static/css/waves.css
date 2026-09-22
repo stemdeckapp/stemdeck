@@ -955,8 +955,16 @@
   border-radius: 2px;
 }
 
+/* One row of the stack, the same row the mixer draws beside it.
+ *
+ * Was a flat 48px while every mixer row is sized from --lane-h, which is 77px
+ * on an empty studio: the two columns ran at different pitches from the first
+ * row, so a stem's name and the line for its waveform were on different lines
+ * by the third one. --lane-h is the row, and the row is a lane plus its 2px
+ * separator, so the lane is the variable less the separator. */
 .lane-placeholder {
-  height: 48px;
+  height: calc(var(--lane-h, 72px) - 2px);
+  margin-bottom: 2px;
   position: relative;
 }
 
