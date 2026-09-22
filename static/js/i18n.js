@@ -345,11 +345,7 @@ const en = {
 
   "panels.timelineTitle": "Show or hide the timeline",
 
-  "panels.all": "All",
-
   "panels.collapse": "Collapse",
-
-  "panels.allTitle": "Show or hide every panel",
   "mixer.hint": "Drag fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -964,11 +960,7 @@ const pl = {
 
   "panels.timelineTitle": "Pokaż lub ukryj oś czasu",
 
-  "panels.all": "Wszystko",
-
   "panels.collapse": "Zwiń",
-
-  "panels.allTitle": "Pokaż lub ukryj wszystkie panele",
   "mixer.hint": "Przeciągnij suwak · M/S",
   "stemsPanel.ariaLabel": "Ścieżki",
 
@@ -1573,11 +1565,7 @@ const ja = {
 
   "panels.timelineTitle": "タイムラインの表示を切り替えます",
 
-  "panels.all": "すべて",
-
   "panels.collapse": "折りたたむ",
-
-  "panels.allTitle": "すべてのパネルの表示を切り替えます",
   "mixer.hint": "フェーダーをドラッグ · M/S",
   "stemsPanel.ariaLabel": "パート",
 
@@ -2157,11 +2145,7 @@ const zhHans = {
 
   "panels.timelineTitle": "显示或隐藏时间轴",
 
-  "panels.all": "全部",
-
   "panels.collapse": "折叠",
-
-  "panels.allTitle": "显示或隐藏所有面板",
   "mixer.hint": "拖动推子 · M/S",
   "stemsPanel.ariaLabel": "音轨",
 
@@ -2741,11 +2725,7 @@ const de = {
 
   "panels.timelineTitle": "Zeitleiste ein- oder ausblenden",
 
-  "panels.all": "Alle",
-
   "panels.collapse": "Einklappen",
-
-  "panels.allTitle": "Alle Bereiche ein- oder ausblenden",
   "mixer.hint": "Fader ziehen · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3336,11 +3316,7 @@ const pt = {
 
   "panels.timelineTitle": "Mostrar ou ocultar a linha do tempo",
 
-  "panels.all": "Tudo",
-
   "panels.collapse": "Recolher",
-
-  "panels.allTitle": "Mostrar ou ocultar todos os painéis",
   "mixer.hint": "Arraste o fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -3933,11 +3909,7 @@ const id = {
 
   "panels.timelineTitle": "Tampilkan atau sembunyikan lini masa",
 
-  "panels.all": "Semua",
-
   "panels.collapse": "Ciutkan",
-
-  "panels.allTitle": "Tampilkan atau sembunyikan semua panel",
   "mixer.hint": "Seret fader · M/S",
   "stemsPanel.ariaLabel": "Stem",
 
@@ -4517,11 +4489,7 @@ const fr = {
 
   "panels.timelineTitle": "Afficher ou masquer la chronologie",
 
-  "panels.all": "Tout",
-
   "panels.collapse": "Réduire",
-
-  "panels.allTitle": "Afficher ou masquer tous les panneaux",
   "mixer.hint": "Glissez le fader · M/S",
   "stemsPanel.ariaLabel": "Pistes",
 
@@ -5230,11 +5198,7 @@ const es = {
 
   "panels.timelineTitle": "Mostrar u ocultar la línea de tiempo",
 
-  "panels.all": "Todo",
-
   "panels.collapse": "Contraer",
-
-  "panels.allTitle": "Mostrar u ocultar todos los paneles",
   "mixer.hint": "Arrastra el fader · M/S",
   "stemsPanel.ariaLabel": "Stems",
 
@@ -5848,11 +5812,7 @@ const ko = {
 
   "panels.timelineTitle": "타임라인 표시하거나 숨기기",
 
-  "panels.all": "전체",
-
   "panels.collapse": "접기",
-
-  "panels.allTitle": "모든 패널 표시하거나 숨기기",
   "mixer.hint": "페이더 드래그 · M/S",
   "stemsPanel.ariaLabel": "스템",
 

@@ -193,26 +193,20 @@
              stub costs most of what collapsing the smaller ones returns. -->
         <div class="daw-panel-toggles">
           <!-- "Collapse" labels the row and is not a control, so the rule sits
-               after it: everything to its right is a button. "All" belongs with
-               the three panel names rather than with the label, because it is
-               the same kind of thing, one press that puts something away.
-               The label is one word because the row has no width for a sentence.
+               after it: everything to its right is a button. The label is one
+               word because the row has no width for a sentence.
 
-               Its pressed state means what the row's state means, greyed and
-               struck once everything is away. The trap is the threshold: read
-               as "is anything hidden" it struck itself through the moment you
-               hid Analysis on its own, which looks like you pressed it. It is
-               off only when all three are.
+               There was an "All" here, one press to put every panel away. It
+               governed two panels by the end, so it saved a single press, and
+               it was another control in this bar wearing a word that already
+               means something else two rows up. The panels it governed each
+               have their own button, which is the only way back from a
+               collapsed one.
 
-               The library is not one of them, and not by omission: "All" used
-               to collapse it too, and nothing in this row could put it back
-               (#588). Its control lives in the rail. -->
+               The library was never among them, and not by omission: it used to
+               be, and nothing in this row could put it back (#588). Its control
+               lives in the rail. -->
           <span class="daw-panel-toggles-label" data-i18n="panels.collapse">Collapse</span>
-          <button class="daw-panel-toggle daw-panel-toggle-all" type="button" data-panel-all aria-pressed="true"
-                  title="Show or hide every panel" data-i18n-title="panels.allTitle" data-i18n-aria-label="panels.allTitle">
-            <span data-i18n="panels.all">All</span>
-          </button>
-          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
           <button class="daw-panel-toggle" type="button" data-panel="analysis" aria-pressed="true"
                   title="Show or hide the track analysis" data-i18n-title="panels.analysisTitle" data-i18n-aria-label="panels.analysisTitle">
             <span data-i18n="panels.analysis">Analysis</span>

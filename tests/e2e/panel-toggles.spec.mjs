@@ -1,15 +1,17 @@
 // The Collapse row governs the panels beside it. Not the library.
 //
-// "All" used to take the library with it, and nothing in the row could put it
-// back: the buttons beside it only know about their own panels. So the
-// reported sequence was press All, then turn each panel back on one at a time,
-// and watch All light up as though everything had returned while the library
-// stayed collapsed with no way to reach it from there (#588). The library has
-// its own control in the rail.
+// It used to carry an "All" as well, one press to put every panel away. That
+// button is gone: it governed two panels by the end, so it saved a single
+// press, and it wore a word the Extract row already uses for something else.
+// What survives it is the rule it existed to prove, which is still the thing
+// worth guarding: whatever this row collapses, it can also bring back, and the
+// library is not one of the things it touches.
 //
-// Two panels now, not three. Timeline went with the footer's waveform strip:
-// it governed a region that no longer has anything visible in it, so the
-// button named something that was not there.
+// "All" used to take the library with it, and nothing in the row could put it
+// back: the buttons beside it only know about their own panels, so you could
+// turn each panel on again, see the row looking complete, and still be staring
+// at a collapsed library with no way to reach it from here (#588). The library
+// has its own control in the rail.
 import { test, expect } from "@playwright/test";
 import { openStudio } from "./helpers.mjs";
 
@@ -18,75 +20,69 @@ const PANELS = ["analysis", "sections"];
 const state = (page) =>
   page.evaluate((panels) => {
     const app = document.querySelector(".app");
-    const all = document.querySelector(".daw-panel-toggle[data-panel-all]");
     return {
       hidden: panels.filter((n) => app.classList.contains(`panel-${n}-off`)),
       libraryCollapsed: app.classList.contains("cat-collapsed"),
-      allPressed: all.getAttribute("aria-pressed") === "true",
+      buttons: [...document.querySelectorAll(".daw-panel-toggle")].map((b) => b.textContent.trim()),
     };
   }, PANELS);
 
-const clickAll = (page) => page.locator(".daw-panel-toggle[data-panel-all]").click();
-const clickPanel = (page, name) => page.locator(`.daw-panel-toggle[data-panel="${name}"]`).click();
+const clickPanel = (page, name) =>
+  page.locator(`.daw-panel-toggle[data-panel="${name}"]`).click();
 
 test.describe("collapse row", () => {
-  test("All leaves the library alone in both directions", async ({ page }) => {
+  test("the row is the panels it governs, and nothing else", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    const s = await state(page);
+    expect(s.buttons).toEqual(["Analysis", "Sections"]);
+    // No "All": one press saved is not worth a third control called All in a
+    // bar that already has one.
+    expect(s.buttons).not.toContain("All");
+  });
+
+  test("every panel it puts away, it can bring back", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    expect((await state(page)).hidden).toEqual([]);
+
+    for (const name of PANELS) await clickPanel(page, name);
+    expect((await state(page)).hidden).toEqual(PANELS);
+
+    // The way back is the same button. Collapsing to nothing is only safe
+    // because of this.
+    for (const name of PANELS) await clickPanel(page, name);
+    expect((await state(page)).hidden).toEqual([]);
+  });
+
+  test("it leaves the library alone in both directions", async ({ page }) => {
     await openStudio(page, { tauri: true });
     expect((await state(page)).libraryCollapsed).toBe(false);
 
-    await clickAll(page);
-    let s = await state(page);
-    expect(s.hidden, "every panel it governs is away").toEqual(PANELS);
-    expect(s.libraryCollapsed, "the library is not one of them").toBe(false);
-
-    await clickAll(page);
-    s = await state(page);
-    expect(s.hidden).toEqual([]);
-    expect(s.libraryCollapsed).toBe(false);
-  });
-
-  test("the reporter's sequence leaves nothing stranded", async ({ page }) => {
-    await openStudio(page, { tauri: true });
-
-    // Press All, then bring each panel back from its own button.
-    await clickAll(page);
     for (const name of PANELS) await clickPanel(page, name);
-
-    const s = await state(page);
-    // The bug was that All read as fully on here while the library was still
-    // collapsed and unreachable from this row.
-    expect(s.allPressed, "All reflects the row").toBe(true);
-    expect(s.hidden).toEqual([]);
-    expect(s.libraryCollapsed, "nothing was left collapsed behind it").toBe(false);
+    // The bug was that the library went with them and this row could not
+    // return it (#588).
+    expect((await state(page)).libraryCollapsed).toBe(false);
   });
 
-  test("All still greys out only when every panel it governs is away", async ({ page }) => {
+  test("collapsing the library does not disturb the panels", async ({ page }) => {
+    // The library's class lands on the same element the panels' classes do, so
+    // this is the check that the two are genuinely independent rather than
+    // accidentally not colliding.
     await openStudio(page, { tauri: true });
-
-    // One panel hidden must not read as "you pressed All".
     await clickPanel(page, "analysis");
-    expect((await state(page)).allPressed).toBe(true);
 
-    await clickPanel(page, "sections");
-    expect((await state(page)).allPressed, "both away, so the row is away").toBe(false);
+    await page.locator("#sidebarCollapseBtn").click();
+    await expect.poll(async () => (await state(page)).libraryCollapsed).toBe(true);
+
+    expect((await state(page)).hidden).toEqual(["analysis"]);
   });
 
-  test("collapsing the library does not change what All reports", async ({ page }) => {
-    // The library's class lands on the same element the observer watches, so
-    // this is the check that it is genuinely ignored rather than accidentally
-    // absent from the count.
+  test("a collapsed panel survives a reload", async ({ page }) => {
     await openStudio(page, { tauri: true });
-    await page.locator("#sidebarCollapseBtn").click();
-    await expect
-      .poll(async () => (await state(page)).libraryCollapsed, { timeout: 5000 })
-      .toBe(true);
+    await clickPanel(page, "sections");
+    expect((await state(page)).hidden).toEqual(["sections"]);
 
-    expect((await state(page)).allPressed, "the library is not part of the row").toBe(true);
-
-    // And All must not resurrect it on the way past.
-    await clickAll(page);
-    expect((await state(page)).libraryCollapsed).toBe(true);
-    await clickAll(page);
-    expect((await state(page)).libraryCollapsed).toBe(true);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect.poll(async () => (await state(page)).hidden).toEqual(["sections"]);
   });
 });
