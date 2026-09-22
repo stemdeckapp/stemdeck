@@ -3126,7 +3126,31 @@ input, textarea { font-family: inherit; }
   font-size: 11px; line-height: 1.3; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.metro-note:empty { display: none; }
+/* Holds its line even while it has nothing to say.
+ *
+ * This text arrives with the beat analysis, a second or so after a track opens,
+ * and it used to arrive as a layout change: `display: none` while empty, then
+ * 14px of text plus its margin, which took 22px off the wave panel underneath.
+ *
+ * That matters because the lane heights are decided from the panel's height
+ * and then baked into the multitrack when its tracks are built. On the first
+ * track of a session the lanes are built before this line appears, so they
+ * keep the taller row while the mixer, sized in CSS from --lane-h, follows the
+ * shorter one. The two columns then drift by 3px a row, all the way down the
+ * stack, and a stem's name ends up on a different line from its own waveform.
+ * Every later track is built after this line already exists, which is exactly
+ * why the fault only ever showed on the first one.
+ *
+ * Reserving the line removes the change rather than reacting to it. The
+ * alternative was re-measuring after the fact, and that does not work: a
+ * lane's height reaches the DOM through the multitrack's own render, and
+ * setOptions on the wavesurfer afterwards does not move the row it built.
+ */
+.metro-note:empty {
+  display: block;
+  visibility: hidden;
+}
+.metro-note:empty::before { content: " a0"; }
 .metro-note.warn { color: var(--danger); }
 
 /* Export chip button */

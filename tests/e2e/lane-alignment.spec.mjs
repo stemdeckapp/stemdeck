@@ -98,4 +98,42 @@ test.describe("lane alignment", () => {
       expect(Math.abs(nameMid - g.waveMids[i])).toBeLessThanOrEqual(2);
     }
   });
+  // The first track of a session is the one whose lanes are built before the
+  // click-track hint has arrived under the footer. That hint is text from the
+  // beat analysis: it used to be display: none until it had something to say,
+  // and then take 22px off the wave panel when it did. The lanes had already
+  // baked in the taller row by then, while the mixer follows --lane-h and moved
+  // to the shorter one, so the two drifted 3px a row down the stack.
+  //
+  // Reserving its line is the fix, so this asserts the thing that made the
+  // difference: the wave panel is the same height before and after the hint
+  // arrives, and the first track lines up like any other.
+  test("the first track of a session lines up like the second", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openStudio(page, { tauri: true });
+    await waitForClickTrack(page, { revealOptions: false });
+
+    const first = await geometry(page);
+    expect(first.waveTops).toEqual(first.mixTops);
+  });
+
+  test("the click-track hint holds its line while it is empty", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openStudio(page, { tauri: true });
+
+    // Whatever it says, and whether it says anything at all, it occupies the
+    // same space. An empty one that collapses is a layout change arriving a
+    // second after the track opens, which is what the lanes cannot survive.
+    const { empty, filled } = await page.evaluate(() => {
+      const note = document.querySelector(".metro-note");
+      const was = note.textContent;
+      note.textContent = "";
+      const empty = Math.round(note.getBoundingClientRect().height);
+      note.textContent = was || "Clicking 120.0 BPM";
+      const filled = Math.round(note.getBoundingClientRect().height);
+      note.textContent = was;
+      return { empty, filled };
+    });
+    expect(empty).toBe(filled);
+  });
 });
