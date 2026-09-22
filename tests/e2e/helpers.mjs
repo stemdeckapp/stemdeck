@@ -200,18 +200,22 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
           demucs_device: "cpu",
         }),
       }));
+    // A single object, not an array: the app asks for /releases/latest, which
+    // is GitHub's own answer to "which release is the latest one". A release
+    // published as a pre-release, or as neither latest nor pre-release, is not
+    // returned by that endpoint at all, so it cannot be offered (#666).
     await page.route("https://api.github.com/**", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        // An ARRAY: the app polls /releases (the list), not /releases/latest.
-        // The unpromoted pre-release in front of the stable one is deliberate:
-        // it must be skipped, because a release is only offered once it has
-        // been promoted to the latest release.
-        body: JSON.stringify([
-          { tag_name: "v9.9.10", draft: false, prerelease: true, body: "unpromoted", html_url: "https://example.invalid", assets: [] },
-          { tag_name: "v9.9.9", draft: false, prerelease: false, body: "notes", html_url: "https://example.invalid", assets: [] },
-        ]),
+        body: JSON.stringify({
+          tag_name: "v9.9.9",
+          draft: false,
+          prerelease: false,
+          body: "notes",
+          html_url: "https://example.invalid",
+          assets: [],
+        }),
       }));
     return;
   }
