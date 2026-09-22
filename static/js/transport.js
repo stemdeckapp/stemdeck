@@ -919,6 +919,11 @@ function wireLaneScrollSync() {
 // ─── Wire transport buttons ───
 
 export function wireTransportButtons() {
+  // Inert until a track with a beat grid arrives. The markup ships the panel
+  // greyed so there is no flash of live-looking controls before this runs, but
+  // greyed is only a look: this is what actually makes them unusable, and what
+  // a screen reader is told.
+  setMetroOptionsAvailable(false);
   playBtn.addEventListener("click", togglePlayPause);
   playMiniBtn?.addEventListener("click", togglePlayPause);
   stopBtn.addEventListener("click", stopTransport);
@@ -1321,6 +1326,31 @@ function _renderMetroNote(grid) {
   metroNoteEl.className = Number.isFinite(conf) && conf < 60 ? "metro-note warn" : "metro-note";
 }
 
+/**
+ * Show the click-track options whether or not there is a grid to act on.
+ *
+ * They used to be hidden outright when a track had no beat grid, and with no
+ * track at all, so the footer lost Count-in, the bar selector, Grid and the
+ * rate buttons and then got them back. Half the strip appearing and vanishing
+ * reads as a fault rather than as a state, and it is the one thing in that row
+ * that does not behave like the rest: the metronome button beside them, and
+ * every unavailable lane in the mixer, grey out rather than leave.
+ *
+ * So the panel stays and its controls go inert, which is also what the
+ * disabled attribute already tells a screen reader.
+ */
+function setMetroOptionsAvailable(available) {
+  if (!metroPanel) return;
+  // "hidden" is the collapse levels' own word for this panel, and it shipped in
+  // the markup as the starting state. Availability no longer uses it, so clear
+  // it once and let footerFit be the only thing that sets it.
+  metroPanel.classList.remove("hidden");
+  metroPanel.classList.toggle("unavailable", !available);
+  for (const el of metroPanel.querySelectorAll("button, select, input")) {
+    el.disabled = !available;
+  }
+}
+
 export function updateMetronomeAvailability(grid, reason = "") {
   if (!metroBtn) return;
   _lastGrid = grid || null;
@@ -1333,17 +1363,18 @@ export function updateMetronomeAvailability(grid, reason = "") {
     // does have a grid; only the live toggle goes off.
     metroBtn.classList.remove("active");
     metroBtn.setAttribute("aria-pressed", "false");
-    metroPanel?.classList.add("hidden");
+    setMetroOptionsAvailable(false);
     if (metroNoteEl) { metroNoteEl.textContent = reason || ""; metroNoteEl.className = "metro-note"; }
-    // The options are worth ~700px of the control strip, about half of it, so
-    // them appearing or going away changes whether the rest of the row fits.
+    // Still re-fits: the options keep their width now rather than leaving, so
+    // the row is wider in this state than it used to be and may need to
+    // collapse a level it did not before.
     refitFooter();
     return;
   }
 
   metroBtn.classList.toggle("active", metronomeEnabled);
   metroBtn.setAttribute("aria-pressed", metronomeEnabled ? "true" : "false");
-  metroPanel?.classList.remove("hidden"); // undo a previous track's "unavailable" hide
+  setMetroOptionsAvailable(true);
   refitFooter(); // see the matching call on the unavailable path above
   setMetronomeHasBars(Array.isArray(grid.bars) && grid.bars.length > 0);
   const autoOpt = metroBarEl?.querySelector('option[value="-1"]');

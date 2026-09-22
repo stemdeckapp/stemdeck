@@ -4664,3 +4664,13 @@ input, textarea { font-family: inherit; }
     justify-self: end;
   }
 }
+
+/* The click-track options with nothing to act on.
+ *
+ * They stay on the row and go quiet rather than leaving it, which is how the
+ * metronome button beside them and every unavailable lane in the mixer already
+ * behave. Half a control strip appearing and vanishing reads as a fault. */
+.footer-metro-panel.unavailable {
+  opacity: 0.4;
+  pointer-events: none;
+}
