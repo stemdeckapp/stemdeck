@@ -166,6 +166,13 @@ const FRIEND_GROUPS = [
         roleKey: "friends.role.rbass",
         url: "https://www.reddit.com/r/Bass/",
       },
+      {
+        name: "Not Another Audio Podcast",
+        roleKey: "friends.role.notAnotherAudioPodcast",
+        url: "https://directory.libsyn.com/shows/view/id/20f5a1e3-6fea-4d41-8cdf-451ce6fc6cda",
+        logo: "/img/friends/not-another-audio-podcast.jpg",
+        avatar: true,
+      },
     ],
   },
   {

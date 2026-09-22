@@ -68,6 +68,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Music & Karaoke Technology | Seratone | TV-based karaoke system | [seratone.audio](https://seratone.audio/) |
 | Media & Community | slashCAM | Camera, video, and post-production media | [@slashcam.de](https://www.instagram.com/slashcam.de) |
 | Media & Community | r/bass | Bass-player community | [r/Bass](https://www.reddit.com/r/Bass) |
+| Media & Community | Not Another Audio Podcast | Audio, music and tech industry podcast by working professionals | [Libsyn](https://directory.libsyn.com/shows/view/id/20f5a1e3-6fea-4d41-8cdf-451ce6fc6cda) |
 | Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
 

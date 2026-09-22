@@ -503,6 +503,7 @@ const en = {
   "friends.role.seratone": "TV-based karaoke system",
   "friends.role.slashcam": "Camera, video, and post-production media",
   "friends.role.rbass": "Bass-player community",
+  "friends.role.notAnotherAudioPodcast": "Audio, music and tech industry podcast by working professionals",
 
   "release.title": "New release available",
   "release.closeAria": "Close release dialog",
@@ -1117,6 +1118,7 @@ const pl = {
   "friends.role.seratone": "System karaoke na telewizor",
   "friends.role.slashcam": "Media o kamerach, wideo i postprodukcji",
   "friends.role.rbass": "Społeczność basistów",
+  "friends.role.notAnotherAudioPodcast": "Podcast o branży audio, muzycznej i technologicznej, prowadzony przez praktyków",
 
   "release.title": "Dostępna nowa wersja",
   "release.closeAria": "Zamknij okno wydania",
@@ -1722,6 +1724,7 @@ const ja = {
   "friends.role.seratone": "テレビで使えるカラオケシステム",
   "friends.role.slashcam": "カメラ、映像、ポストプロダクションのメディア",
   "friends.role.rbass": "ベーシストのコミュニティ",
+  "friends.role.notAnotherAudioPodcast": "オーディオ、音楽、テック業界のポッドキャスト。現役のプロが語る",
 
   "release.title": "新しいリリースがあります",
   "release.closeAria": "リリースダイアログを閉じる",
@@ -2303,6 +2306,7 @@ const zhHans = {
   "friends.role.seratone": "基于电视的卡拉OK系统",
   "friends.role.slashcam": "相机、视频与后期制作媒体",
   "friends.role.rbass": "贝斯手社区",
+  "friends.role.notAnotherAudioPodcast": "关于音频、音乐与科技行业的播客。由一线从业者主持",
 
   "release.title": "有新版本可用",
   "release.closeAria": "关闭版本对话框",
@@ -2885,6 +2889,7 @@ const de = {
   "friends.role.seratone": "Karaoke-System für den Fernseher",
   "friends.role.slashcam": "Medien zu Kamera, Video und Postproduktion",
   "friends.role.rbass": "Community für Bassistinnen und Bassisten",
+  "friends.role.notAnotherAudioPodcast": "Podcast über die Audio-, Musik- und Tech-Branche von Profis aus der Praxis",
 
   "release.title": "Neue Version verfügbar",
   "release.closeAria": "Versionsdialog schließen",
@@ -3477,6 +3482,7 @@ const pt = {
   "friends.role.seratone": "Sistema de karaokê para TV",
   "friends.role.slashcam": "Mídia sobre câmera, vídeo e pós-produção",
   "friends.role.rbass": "Comunidade de baixistas",
+  "friends.role.notAnotherAudioPodcast": "Podcast sobre a indústria de áudio, música e tecnologia, feito por profissionais da área",
 
   "release.title": "Nova versão disponível",
   "release.closeAria": "Fechar diálogo de versão",
@@ -4070,6 +4076,7 @@ const id = {
   "friends.role.seratone": "Sistem karaoke berbasis TV",
   "friends.role.slashcam": "Media seputar kamera, video, dan pascaproduksi",
   "friends.role.rbass": "Komunitas pemain bas",
+  "friends.role.notAnotherAudioPodcast": "Podcast tentang industri audio, musik, dan teknologi oleh para profesional aktif",
 
   "release.title": "Versi baru tersedia",
   "release.closeAria": "Tutup dialog versi",
@@ -4652,6 +4659,7 @@ const fr = {
   "friends.role.seratone": "Système de karaoké sur téléviseur",
   "friends.role.slashcam": "Médias sur la caméra, la vidéo et la postproduction",
   "friends.role.rbass": "Communauté de bassistes",
+  "friends.role.notAnotherAudioPodcast": "Podcast sur les industries de l'audio, de la musique et de la tech, par des professionnels en activité",
 
   "release.title": "Nouvelle version disponible",
   "release.closeAria": "Fermer la fenêtre de version",
@@ -5362,6 +5370,7 @@ const es = {
   "friends.role.seratone": "Sistema de karaoke para televisión",
   "friends.role.slashcam": "Medios sobre cámara, vídeo y posproducción",
   "friends.role.rbass": "Comunidad de bajistas",
+  "friends.role.notAnotherAudioPodcast": "Podcast sobre la industria del audio, la música y la tecnología, hecho por profesionales en activo",
 
   "release.title": "Nueva versión disponible",
   "release.closeAria": "Cerrar el diálogo de la versión",
@@ -5976,6 +5985,7 @@ const ko = {
   "friends.role.seratone": "TV 기반 노래방 시스템",
   "friends.role.slashcam": "카메라, 영상, 후반 작업 미디어",
   "friends.role.rbass": "베이시스트 커뮤니티",
+  "friends.role.notAnotherAudioPodcast": "현업 전문가들이 전하는 오디오, 음악, 테크 업계 팟캐스트",
 
   "release.title": "새 버전이 나왔어요",
   "release.closeAria": "릴리스 창 닫기",
