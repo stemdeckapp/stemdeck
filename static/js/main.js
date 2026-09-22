@@ -160,6 +160,144 @@ function wireStemChoiceButtons() {
   }
 }
 
+// ─── Extract chips: what happens when they stop fitting ───
+//
+// The row never wraps. Whichever chips no longer fit move into a panel behind
+// a three-dot button, one at a time, from the end of the row.
+//
+// Wrapping was the alternative and it is the wrong one: the bar went from 96px
+// tall to 168 and then 236 as the chips spilled onto further lines, growing
+// exactly as the window shrank, and leaving the controls on the right stranded
+// at the top of a column stretched by chips they have nothing to do with.
+//
+// The order is fixed once, at wiring time, because the measuring below puts
+// everything back inline before it decides and the DOM order is the only
+// record of where each chip belongs.
+
+let _stemChipOrder = null;
+
+/**
+ * Move whatever does not fit into the overflow panel, and nothing more.
+ *
+ * Measured from the row's own clientWidth rather than from a breakpoint: the
+ * chips are seven different widths in ten languages, so the width at which the
+ * fifth one stops fitting is not a number anyone can write down.
+ *
+ * Everything goes back inline first. Deciding from the current, already
+ * collapsed state would mean the row could only ever lose chips and never get
+ * them back as the window grew, which is the same trap the footer's own fit
+ * logic documents.
+ */
+function fitStemChips() {
+  const row = document.getElementById("stemChips");
+  const panel = document.getElementById("stemOverflow");
+  const btn = document.getElementById("stemMoreBtn");
+  if (!row || !panel || !btn || !_stemChipOrder) return;
+
+  for (const el of _stemChipOrder) row.appendChild(el);
+
+  // Measured after everything is back, so the number is what the row can have
+  // rather than what it was left with. A hidden row has no width to fit
+  // anything into, and measuring one would move every chip for nothing.
+  const budget = row.clientWidth;
+  if (!budget) return;
+
+  const gap = parseFloat(getComputedStyle(row).gap) || 0;
+  const widths = _stemChipOrder.map((el) => el.getBoundingClientRect().width);
+
+  let used = 0;
+  let keep = _stemChipOrder.length;
+  for (let i = 0; i < _stemChipOrder.length; i++) {
+    used += widths[i] + (i ? gap : 0);
+    // Half a pixel of rounding is not an overflow; the row is overflow: hidden
+    // and a chip that fits within a pixel is drawn whole.
+    if (used > budget + 0.5) {
+      keep = i;
+      break;
+    }
+  }
+
+  for (let i = keep; i < _stemChipOrder.length; i++) panel.appendChild(_stemChipOrder[i]);
+  btn.hidden = keep === _stemChipOrder.length;
+  if (btn.hidden) closeStemOverflow();
+}
+
+function closeStemOverflow() {
+  const panel = document.getElementById("stemOverflow");
+  const btn = document.getElementById("stemMoreBtn");
+  if (!panel || !btn) return;
+  panel.classList.remove("open");
+  btn.setAttribute("aria-expanded", "false");
+}
+
+// Fixed positioning, placed from the button's own rect, because the panel has
+// to escape the bar it is anchored in.
+function wireStemChipsPopover() {
+  const row = document.getElementById("stemChips");
+  const panel = document.getElementById("stemOverflow");
+  const btn = document.getElementById("stemMoreBtn");
+  if (!row || !panel || !btn) return;
+
+  _stemChipOrder = [...row.children];
+
+  const isOpen = () => btn.getAttribute("aria-expanded") === "true";
+
+  btn.addEventListener("click", (e) => {
+    // Stops the document handler below reading the press that opened the panel
+    // as the click away that shuts it.
+    e.stopPropagation();
+    if (isOpen()) return closeStemOverflow();
+    panel.classList.add("open");
+    btn.setAttribute("aria-expanded", "true");
+    const r = btn.getBoundingClientRect();
+    panel.style.left = `${Math.max(8, Math.min(Math.round(r.left), window.innerWidth - panel.offsetWidth - 8))}px`;
+    panel.style.top = `${Math.round(r.bottom + 6)}px`;
+  });
+
+  // A click on a chip is a click on a control, not a click away from it: the
+  // selection is meant to be changed several times with the panel open.
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", closeStemOverflow);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isOpen()) {
+      closeStemOverflow();
+      btn.focus();
+    }
+  });
+
+  // Watch the composer, not the chip row.
+  //
+  // The row is what this function moves things out of, and the column it sits
+  // in is sized by its content, so emptying it shrinks it: at a narrow window
+  // the row collapsed to 127px, and widening the window never widened it back
+  // because the chips that would have done so were in the panel. The observer
+  // then had nothing to report and the chips never came home. Measuring the
+  // thing you are changing.
+  //
+  // The composer's width tracks the window and the sidebar without depending
+  // on where any chip currently lives, so it is the honest trigger. The window
+  // resize below is a belt-and-braces second one.
+  //
+  // Coalesced because a drag on the window edge fires this every frame.
+  let queued = false;
+  const refit = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      fitStemChips();
+    });
+  };
+  const composer = row.closest(".daw-composer") || row;
+  if (typeof ResizeObserver === "function") new ResizeObserver(refit).observe(composer);
+  window.addEventListener("resize", () => {
+    closeStemOverflow();
+    refit();
+  });
+
+  fitStemChips();
+}
+
 function wireAllButton() {
   const allBtn = document.getElementById("stemAllBtn");
   if (!allBtn) return;
@@ -224,6 +362,7 @@ wireMixerToolbar();
 wireStemChoiceButtons();
 wireAllButton();
 wireVocalModeToggle();
+wireStemChipsPopover();
 wireAutoSectionsToggle();
 wireFileDrop();
 wireAppShellControls();
@@ -235,6 +374,9 @@ initFooterFit();
 // sidebar, see footerFit.js). It is here because select options and button
 // text do vary, and re-measuring costs one frame.
 onLanguageChange(refitFooter);
+// Every chip's label changes width with the language, so the count that fits
+// changes with it too.
+onLanguageChange(fitStemChips);
 
 (async () => {
   await i18nReady;

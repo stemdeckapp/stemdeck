@@ -242,6 +242,7 @@ const en = {
   "topbar.uploadFile": "Upload audio file",
   "extract.label": "Extract",
   "extract.all": "All",
+  "extract.moreAria": "Choose stems",
   "process.splitStems": "Split stems",
 
   "stem.original": "Original",
@@ -857,6 +858,7 @@ const pl = {
   "topbar.uploadFile": "Wgraj plik audio",
   "extract.label": "Wyodrębnij",
   "extract.all": "Wszystko",
+  "extract.moreAria": "Wybierz ścieżki",
   "process.splitStems": "Rozdziel ścieżki",
 
   "stem.original": "Oryginał",
@@ -1462,6 +1464,7 @@ const ja = {
   "topbar.uploadFile": "音声ファイルをアップロード",
   "extract.label": "抽出",
   "extract.all": "すべて",
+  "extract.moreAria": "抽出するパートを選ぶ",
   "process.splitStems": "パートを分離",
 
   "stem.original": "オリジナル",
@@ -2042,6 +2045,7 @@ const zhHans = {
   "topbar.uploadFile": "上传音频文件",
   "extract.label": "提取",
   "extract.all": "全部",
+  "extract.moreAria": "选择要提取的音轨",
   "process.splitStems": "分离音轨",
 
   "stem.original": "原始",
@@ -2622,6 +2626,7 @@ const de = {
   "topbar.uploadFile": "Audiodatei hochladen",
   "extract.label": "Extrahieren",
   "extract.all": "Alle",
+  "extract.moreAria": "Stems auswählen",
   "process.splitStems": "Stems trennen",
 
   "stem.original": "Original",
@@ -3213,6 +3218,7 @@ const pt = {
   "topbar.uploadFile": "Enviar arquivo de áudio",
   "extract.label": "Extrair",
   "extract.all": "Todos",
+  "extract.moreAria": "Escolher as faixas",
   "process.splitStems": "Separar stems",
 
   "stem.original": "Original",
@@ -3806,6 +3812,7 @@ const id = {
   "topbar.uploadFile": "Unggah file audio",
   "extract.label": "Ekstrak",
   "extract.all": "Semua",
+  "extract.moreAria": "Pilih stem",
   "process.splitStems": "Pisahkan stem",
 
   "stem.original": "Asli",
@@ -4386,6 +4393,7 @@ const fr = {
   "topbar.uploadFile": "Importer un fichier audio",
   "extract.label": "Extraire",
   "extract.all": "Tout",
+  "extract.moreAria": "Choisir les pistes",
   "process.splitStems": "Séparer les pistes",
 
   "stem.original": "Original",
@@ -5095,6 +5103,7 @@ const es = {
   "topbar.uploadFile": "Subir archivo de audio",
   "extract.label": "Extraer",
   "extract.all": "Todo",
+  "extract.moreAria": "Elegir las pistas",
   "process.splitStems": "Separar stems",
 
   "stem.original": "Original",
@@ -5709,6 +5718,7 @@ const ko = {
   "topbar.uploadFile": "오디오 파일 업로드",
   "extract.label": "추출",
   "extract.all": "전체",
+  "extract.moreAria": "추출할 스템 선택",
   "process.splitStems": "스템 분리",
 
   "stem.original": "원본",

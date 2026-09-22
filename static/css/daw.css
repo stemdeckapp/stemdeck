@@ -4467,7 +4467,18 @@ input, textarea { font-family: inherit; }
   position: relative;
   grid-column: 2;
   grid-row: 1 / 3;
-  justify-self: stretch;
+  /* As wide as the track it is naming, not as wide as the window.
+     It was stretched to fill its column, so a spare 400px of bar became 400px
+     of card with the same text sitting in it. It sizes to its content now and
+     stops; a long title clips with an ellipsis at the cap rather than dragging
+     the card out to meet it. */
+  justify-self: start;
+  /* A real ceiling, not a percentage of the column: 100% just meant "as wide
+     as the bar allows", so the card was 422px at 1600 and 460 at 1920 with the
+     same text in it. 460 is what the meta line needs at its longest, duration
+     through to the extracted date, so the card is the same size at every
+     window width and a long title clips rather than pushing it wider. */
+  max-width: min(100%, 460px);
   align-self: stretch;
   /* .footer-track-slot is `width: var(--daw-col-w)`, which is the gutter width
      it was built to fill in the footer. Here the column decides the width, so
@@ -4678,13 +4689,6 @@ input, textarea { font-family: inherit; }
 @media (max-width: 1460px) {
   .daw-composer > #nowPlayingPanel { display: none; }
 }
-@media (max-width: 1320px) {
-  .daw-composer > .daw-panel-toggles {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    justify-self: end;
-  }
-}
 
 /* The click-track options with nothing to act on.
  *
@@ -4695,3 +4699,119 @@ input, textarea { font-family: inherit; }
   opacity: 0.4;
   pointer-events: none;
 }
+
+/* Vocals and its two mode buttons, as one thing.
+ *
+ * Grouped by proximity, not by a box. A frame around them needed padding and
+ * borders of its own, which made the group 38px tall in a row of 30px chips:
+ * it hung 8px below everything beside it. Joining them instead costs no height
+ * at all, and a segmented control is what this is.
+ *
+ * So the chip and the toggle touch, their facing corners square off, and the
+ * gap that used to sit between them moves to the outside of the pair. */
+.stem-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 5px;
+}
+.stem-group:not(:has(.vocal-mode-toggle:not(.hidden))) {
+  margin-right: 0;
+}
+/* Facing edges square, and only one border between them. */
+.stem-group:has(.vocal-mode-toggle:not(.hidden)) .stem-choice[data-stem="vocals"] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.stem-group .vocal-mode-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+}
+/* The mode buttons take the Vocals chip's border, and only its border, so one
+   outline runs round the three of them.
+ *
+ * The outline is the grouping cue; the fill is not available for it. Tinting
+ * the whole toggle made "Lead + Backing" look selected when it is not, and
+ * left the active mode barely distinguishable from the inactive one, because
+ * that mode's own 16% was sitting on top of the group's 14%. Inside the
+ * outline the three states stay readable: Vocals is tinted because the stem is
+ * selected, the active mode is tinted because it is the mode, and the other
+ * one is plain.
+ *
+ * Keyed off the chip's pressed state, because the toggle is only on screen
+ * while Vocals is selected and should not be left as the one thing still
+ * wearing the colour if that ever changes. */
+.stem-group:has(.stem-choice[data-stem="vocals"][aria-pressed="true"]) .vocal-mode-toggle {
+  --color: var(--vocals);
+  border-color: color-mix(in srgb, var(--color) 60%, transparent);
+}
+/* The divider between All and Lead + Backing comes from the same colour, so it
+   reads as an internal seam rather than a second frame. */
+.stem-group:has(.stem-choice[data-stem="vocals"][aria-pressed="true"]) .vocal-mode-btn + .vocal-mode-btn {
+  border-left: 1px solid color-mix(in srgb, var(--color) 60%, transparent);
+}
+
+/* ── The Extract chips, and what happens when they stop fitting ───────────
+   The row never wraps and the bar never gets taller. As the window narrows,
+   whichever chips no longer fit move into a panel behind a three-dot button,
+   one at a time, from the end of the row. The button sits after the row, on the
+   side the chips are leaving from, and is hidden entirely while everything
+   fits.
+
+   Wrapping was the alternative and it is the wrong one here: the composer went
+   from 96px tall to 168 and then 236 as the chips spilled onto further lines,
+   so the bar grew exactly as the window shrank, and the controls on the right
+   were left stranded at the top of a column stretched by chips they have
+   nothing to do with.
+
+   The measuring is in fitStemChips in main.js; this is only what it looks
+   like.
+   ───────────────────────────────────────────────────────────────────────── */
+.stem-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 30px;
+  margin-left: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-2);
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.stem-more-btn[hidden] { display: none; }
+.stem-more-btn:hover { background: var(--panel-2); color: var(--fg); }
+.stem-more-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+
+/* One line, always. Overflow hidden so a chip mid-move is never half drawn,
+   and so this element's clientWidth is the honest budget fitStemChips
+   measures against. */
+.daw-composer .daw-stem-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+/* Fixed rather than absolute, for the same reason the footer's options panel
+   is: it has to escape the bar it is anchored in. JS sets left/top from the
+   button's own rect. */
+.stem-overflow {
+  position: fixed;
+  z-index: 320;
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+}
+.stem-overflow.open { display: flex; }

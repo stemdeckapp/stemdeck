@@ -90,17 +90,22 @@
           <!-- Stem selection -->
           <div class="daw-stem-section">
             <span class="daw-extract-label" data-i18n="extract.label">Extract</span>
-            <div class="daw-stem-chips">
+            <div class="daw-stem-chips" id="stemChips">
               <button class="stem-choice stem-choice-all" type="button" id="stemAllBtn" aria-pressed="true" data-i18n="extract.all">All</button>
-              <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
-                <span data-i18n="stem.vocals">Vocals</span>
-              </button>
-              <!-- On-demand lead/backing vocal split (#275). Shown only while
-                   Vocals is selected above; toggling "Lead + Backing" auto-runs
-                   the split once the import finishes (see main.js/job.js). -->
-              <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
-                <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true" data-i18n="vocalMode.all">All</button>
-                <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
+              <!-- Vocals and the two things that describe it, in one group.
+                   Loose in the row, the mode buttons read as peers of Drums and
+                   Bass rather than as a choice about the chip beside them. -->
+              <div class="stem-group stem-group-vocals">
+                <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
+                  <span data-i18n="stem.vocals">Vocals</span>
+                </button>
+                <!-- On-demand lead/backing vocal split (#275). Shown only while
+                     Vocals is selected above; toggling "Lead + Backing" auto-runs
+                     the split once the import finishes (see main.js/job.js). -->
+                <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
+                  <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true" data-i18n="vocalMode.all">All</button>
+                  <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
+                </div>
               </div>
               <button class="stem-choice" type="button" data-stem="drums" aria-pressed="true" style="--color:var(--drums)">
                 <span data-i18n="stem.drums">Drums</span>
@@ -118,6 +123,18 @@
                 <span data-i18n="stem.other">Other</span>
               </button>
             </div>
+            <button class="stem-more-btn" id="stemMoreBtn" type="button" aria-haspopup="true" aria-expanded="false"
+                    aria-controls="stemOverflow" title="More stems" data-i18n-title="extract.moreAria"
+                    aria-label="More stems" data-i18n-aria-label="extract.moreAria" hidden>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>
+              </svg>
+            </button>
+            <!-- Holds whichever chips no longer fit, and nothing else. It
+                 appears the moment the first one has to move and grows as the
+                 window narrows, so the row never wraps and the bar never gets
+                 taller. See fitStemChips in main.js. -->
+            <div class="stem-overflow" id="stemOverflow" role="group" aria-label="More stems" data-i18n-aria-label="extract.moreAria"></div>
           </div>
 
           <!-- Experimental automatic song-structure detection. Off makes the
