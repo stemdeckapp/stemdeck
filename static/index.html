@@ -138,14 +138,49 @@
             <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
           </button>
 
-          <!-- Process button -->
-          <button id="submit" class="daw-process-btn" type="submit">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M13 2 3 14h7l-1 8 10-12h-7z"/>
-            </svg>
-            <span data-i18n="process.splitStems">Split stems</span>
-          </button>
-        </form>
+          <!-- The loaded track, named where the two rows leave room for it.
+               It used to fill the gutter beside the footer timeline. That
+               timeline is gone, and this row had empty space in the middle. -->
+          <div class="footer-track-slot" id="nowPlayingPanel">
+          <div class="track-panel-head">
+            <div class="daw-cover track-panel-cover" id="np-art">
+              <div class="np-art-placeholder" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                </svg>
+              </div>
+              <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
+            </div>
+            <div class="track-panel-info">
+              <div class="daw-track-title track-panel-title" id="title">—</div>
+            </div>
+            <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="daw-track-meta-line">
+            <span class="num" id="t-meta-duration">—</span>
+            <span class="daw-track-sep" aria-hidden="true">·</span>
+            <span id="t-stems-chip">— stems</span>
+            <span class="daw-track-sep" aria-hidden="true">·</span>
+            <span id="track-source">—</span>
+            <span class="daw-track-sep" aria-hidden="true">·</span>
+            <span id="track-quality">—</span>
+            <span class="daw-track-sep" aria-hidden="true">·</span>
+            <span><span data-i18n="footer.extractedLabel">Extracted</span> <span id="track-extracted">—</span></span>
+          </div>
+
+          <!-- Hidden spans for JS compat: not shown, but still written to
+               (t-time is superseded here by the Position group in the
+               controls row -- keeping it live would just duplicate that
+               readout next to the title). -->
+          <div style="display:none" aria-hidden="true">
+            <span id="t-time"></span><span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
+          </div>
+          </div>
 
         <!-- Panel toggles (#480). Every panel around the mixer is useful and
              none of them is useful all the time, so the fix is a way to put one
@@ -187,12 +222,18 @@
                   title="Show or hide the sections bar" data-i18n-title="panels.sectionsTitle" data-i18n-aria-label="panels.sectionsTitle">
             <span data-i18n="sections.title">Sections</span>
           </button>
-          <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
-          <button class="daw-panel-toggle" type="button" data-panel="timeline" aria-pressed="true"
-                  title="Show or hide the timeline" data-i18n-title="panels.timelineTitle" data-i18n-aria-label="panels.timelineTitle">
-            <span data-i18n="panels.timeline">Timeline</span>
-          </button>
         </div>
+
+          <!-- Process button -->
+          <button id="submit" class="daw-process-btn" type="submit">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M13 2 3 14h7l-1 8 10-12h-7z"/>
+            </svg>
+            <span data-i18n="process.splitStems">Split stems</span>
+          </button>
+        </form>
+
+
         </div><!-- /.daw-composer-stack -->
         <!-- Hidden collapsed strip (JS compatibility) -->
         <div class="hidden" id="appbarStrip" aria-hidden="true" style="display:none!important">
@@ -932,46 +973,7 @@
                It exists because the timeline's left edge has to land on the
                lane waveforms' left edge; the loaded track's identity fills it
                rather than leaving 300px of nothing under the controls. -->
-          <div class="footer-track-slot" id="nowPlayingPanel">
-          <div class="track-panel-head">
-            <div class="daw-cover track-panel-cover" id="np-art">
-              <div class="np-art-placeholder" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                </svg>
-              </div>
-              <img id="np-thumb" class="np-art-img" alt="" referrerpolicy="no-referrer" />
-            </div>
-            <div class="track-panel-info">
-              <div class="daw-track-title track-panel-title" id="title">—</div>
-            </div>
-            <button class="daw-fav-btn" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-              </svg>
-            </button>
-          </div>
 
-          <div class="daw-track-meta-line">
-            <span class="num" id="t-meta-duration">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="t-stems-chip">— stems</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="track-source">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span id="track-quality">—</span>
-            <span class="daw-track-sep" aria-hidden="true">·</span>
-            <span><span data-i18n="footer.extractedLabel">Extracted</span> <span id="track-extracted">—</span></span>
-          </div>
-
-          <!-- Hidden spans for JS compat: not shown, but still written to
-               (t-time is superseded here by the Position group in the
-               controls row -- keeping it live would just duplicate that
-               readout next to the title). -->
-          <div style="display:none" aria-hidden="true">
-            <span id="t-time"></span><span id="t-bpm"></span><span id="t-key"></span><span id="track-artist"></span>
-          </div>
-          </div>
 
           <div class="footer-wave-col">
           <div class="footer-wave-panel">

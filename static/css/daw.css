@@ -53,11 +53,11 @@ input, textarea { font-family: inherit; }
   align-items: center;
   /* One shorthand, not a shorthand after two longhands. padding-top and
      padding-bottom were set above and then reset to zero by `padding: 0 16px`
-     a few lines later, so the bar has had no vertical padding at all whatever
-     the comment above it claimed. Invisible while the composer is a fixed 50px
-     inside a 77px bar, because align-items: center hides the gap; make the
-     composer any taller and the box fills the bar edge to edge and touches the
-     top of the window. */
+     a few lines later, so the bar had no vertical padding at all whatever the
+     comment above claimed. Invisible while the composer was a fixed 50px
+     inside a 77px bar, because align-items: center hid the gap; give the
+     composer a second row and the box fills the bar edge to edge and touches
+     the top of the window. */
   padding: 10px 16px;
   gap: 14px;
 }
@@ -4118,3 +4118,525 @@ input, textarea { font-family: inherit; }
 .lane-key.unsupported { opacity: 0.35; }
 .lane-key.locked .lane-key-step,
 .lane-key.unsupported .lane-key-step { cursor: not-allowed; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   The composer, in two rows.
+
+   It was one row: the search, the Extract chips and the two actions all
+   competing for the same horizontal space, with the Collapse row on a line of
+   its own underneath. Three lines of bar for two lines of content, and on a
+   narrow window the search and the chips squeezed each other.
+
+   It is a grid now. Row one is the import gesture, left to right: upload, the
+   search field, the loaded track, then the two things that act on it. Row two
+   is Extract and its chips, with the Collapse row sharing that line at the
+   right-hand end.
+
+   The search and the chips share column one, which is what makes them exactly
+   the same width. As a flex row the search grew into whatever was left over
+   and ran past the last chip; sharing a track means the chips size the column
+   and the search follows, in any language.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* 1. Two rows, arranged as in the mockup.
+
+   Row one is the whole import gesture, left to right: upload, the search
+   field, then the two things that act on it, Detect structure and Split
+   stems. Row two is Extract and its chips, on their own full-width line.
+
+   Done with order and flex-basis rather than by moving markup. The stem
+   section is the only child pushed to a second line, so it is the only one
+   that needs a basis of 100%, and everything else stays on line one in DOM
+   order. Nothing here restyles a control: same pills, same buttons, same
+   colours, only where they sit.
+
+   The style in the mockup that is deliberately NOT copied: Detect structure
+   as a switch with a help icon, and the search field boxed separately from
+   upload. Those are a restyle, and you asked for the organisation only. */
+.daw-composer {
+  /* A grid, not a wrapping row, so the search and the chips share one column
+     and are therefore exactly the same width. As a flex row the search grew to
+     whatever was left over, which is why it ran past the last chip.
+
+     Columns: content | spacer | rule | detect | split. Row one is the import
+     gesture, row two is what to extract. */
+  height: auto;
+  display: grid;
+  /* minmax(0, 1fr), not 1fr: a grid track's automatic minimum is its
+     min-content, so a plain 1fr refuses to shrink below the widest thing in
+     it. The card sat at its natural width and pushed Split stems off the right
+     edge of its own container. Zero as the floor lets the column give way, and
+     the card's own text clips with an ellipsis rather than forcing the row. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  row-gap: 8px;
+  column-gap: 10px;
+  padding: 8px 10px;
+  overflow: visible;
+}
+
+/* Row one, column one. Starts on the EXTRACT label rather than on the All
+   chip, so the row has no indent to pay for, and stretches to end where the
+   chips end. 14px is the stem section's own left padding, not a measured
+   English width, so this alignment holds in every language. */
+.daw-composer > .daw-url-zone {
+  --row1-indent: 14px;
+  grid-column: 1;
+  grid-row: 1;
+  /* Both sides, not just the left. The column is sized by the stem section,
+     which carries 14px of padding at each end, so a margin only on the left
+     left the search running 14px past the Other chip. Matching it on the right
+     puts the two edges on the same pixel. */
+  margin-left: var(--row1-indent);
+  margin-right: var(--row1-indent);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px 0 6px;
+  gap: 6px;
+}
+/* Inside the box, flat against it, not a box of its own. order rather than
+   markup: the button keeps its place in the DOM, so tab order and the drop
+   handlers bound to .url-wrap are untouched. */
+.daw-url-zone > .daw-upload-btn {
+  order: -1;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+}
+.daw-url-zone #url {
+  background: none;
+  border: none;
+  padding: 0;
+  height: auto;
+}
+
+/* Row two, column one. This is what sizes the column, and therefore the search
+   box above it. The chips wrap rather than forcing the row wider than the bar:
+   at max-content they are 655px, which on their own overflow a 1100px window
+   once the two actions have been paid for. */
+.daw-composer > .daw-stem-section {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+}
+.daw-composer > .daw-stem-section .daw-stem-chips {
+  flex-wrap: wrap;
+}
+
+/* The rule stays, but it now separates the search from the two actions on the
+   same line, which is what it does in the mockup. It used to divide the row
+   from the Extract chips, which are on their own line now. */
+/* One rule, down both rows.
+ *
+ * There were two: this one beside the actions, and the Collapse label's own
+ * left border under it. Two rules drawn by different elements have to be kept
+ * level by hand, and they were a pixel apart, which is exactly the kind of gap
+ * that reads as broken without being nameable. Spanning the rows makes it one
+ * line that cannot drift from itself. */
+.daw-composer > .daw-composer-sep {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  display: block;
+  justify-self: center;
+  align-self: stretch;
+  width: 1px;
+  height: auto;
+  margin: 6px 4px;
+  background: var(--border-strong);
+}
+
+/* Detect structure reads as a switch rather than a word you press. The button
+   keeps its markup and its aria-pressed, so nothing about how it works
+   changes; the pill and its knob are drawn from the two pseudo elements.
+   Grid because the switch sits left of the label and spans both the label and
+   the EXPERIMENTAL note under it. */
+.daw-composer > .structure-toggle {
+  grid-column: 4;
+  grid-row: 1;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 9px;
+  padding: 0 14px;
+  text-align: left;
+}
+.daw-composer > .structure-toggle::before {
+  content: "";
+  grid-row: 1 / 3;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  border: 1px solid var(--border-strong);
+  transition: background var(--t-fast);
+}
+.daw-composer > .structure-toggle::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--fg-2);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+.daw-composer > .structure-toggle[aria-pressed="true"]::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.daw-composer > .structure-toggle[aria-pressed="true"]::after {
+  transform: translateX(15px);
+  background: #1a1a1a;
+}
+.daw-composer > .structure-toggle .structure-toggle-main { grid-column: 2; }
+.daw-composer > .structure-toggle .structure-toggle-note {
+  grid-column: 2;
+  text-align: left;
+}
+
+/* Row two, and the only thing on it. A 100% basis is what forces the wrap. */
+.daw-composer > .daw-stem-section {
+  order: 1;
+  flex: 1 0 100%;
+  min-width: 0;
+}
+
+/* The two actions keep their shared width and stop being full-bleed. */
+.daw-composer > .structure-toggle,
+.daw-composer > .daw-process-btn {
+  align-self: center;
+  min-height: 40px;
+  border-radius: 8px;
+  border-left: none;
+}
+.daw-composer > .daw-process-btn {
+  grid-column: 5;
+  grid-row: 1;
+}
+
+/* 2. Ten percent off the waveform: REMOVED.
+
+   It did what was asked, 910px down to 819px, and it read as a fault rather
+   than as breathing room: the lanes stopped short while the analysis strip
+   above and the footer below still ran to the window edge, so the waveform
+   looked truncated rather than inset.
+
+   To put it back, the rule was:
+
+     .daw-wave-panel {
+       flex: 1 1 0;
+       max-width: calc((100% - 300px) * 0.9);
+     }
+
+   and it would need the strip and the footer inset to match, or something
+   given the freed space. */
+
+/* Row two, right-hand end: on the chips' line rather than below it.
+
+   Columns 4 to 6, not 3: a spanning item's minimum lands in the first track it
+   covers, so starting at the separator's column handed that 1px column the
+   toggles' whole width and took it out of the card's. The two action columns
+   are already as wide as Detect structure and Split stems, which is more than
+   the toggles need, so spanning only those costs the row nothing.
+
+   A grid item rather than absolutely positioned: out of flow it sat on the
+   right line and would have landed on top of the Extract chips the moment a
+   window was narrow enough for the two to meet. */
+.daw-composer > .daw-panel-toggles {
+  grid-column: 4 / 6;
+  grid-row: 2;
+  justify-self: end;
+  align-self: center;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  /* The wrapper stops being a box of its own: each toggle is a chip now, so a
+     frame around the group would be a box inside a box. */
+  padding: 0;
+  background: none;
+  border: none;
+  gap: 6px;
+}
+
+/* 4. The toggles become chips, the same size as the Extract ones.
+   Everything below is the .stem-choice geometry, nothing else: same height,
+   padding, radius, border and type size, so the two rows read as one family.
+   The colours stay theirs, including the strike-through that means a panel is
+   put away. */
+.daw-composer-stack .daw-panel-toggle {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: -0.005em;
+  text-transform: none;
+  display: inline-flex;
+  align-items: center;
+}
+/* The label and the separators were sized for an 8px row; at chip size the
+   dots between them are noise, so only the label survives. */
+/* No border of its own any more: the rule beside it spans both rows now, so a
+   second one drawn here would be the thing it used to be kept level with. */
+.daw-composer-stack .daw-panel-toggles-label {
+  font-size: 12px;
+  letter-spacing: -0.005em;
+  text-transform: none;
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+}
+.daw-composer-stack .daw-panel-toggles-sep { display: none; }
+
+/* 5. The dashed rectangles on empty lanes.
+
+   Not ours. The vendored multitrack plugin draws one on any track with no
+   audio: an absolutely positioned div at z-index 10 with dragover and drop
+   handlers, so a file can be dragged onto an empty lane. In StemDeck an empty
+   lane is a stem that was not extracted, and dropping audio onto one is not a
+   thing the app does, so it is an affordance for a feature that does not
+   exist.
+
+   Hidden rather than patched out of the vendor file: that file is refreshed
+   from upstream, and an edit to it would be lost on the next update. The
+   selector matches on the inline style because the plugin gives these divs no
+   class of their own. */
+.daw .wave-scroll div[style*="2px dashed"] {
+  display: none !important;
+}
+
+/* 6. The loaded track, named in the composer.
+
+   It was in the footer, filling the gutter beside the timeline, which existed
+   because that timeline's left edge had to line up with the lane waveforms.
+   The timeline is gone, and this row had empty space in the middle of it, so
+   the block moved in the markup rather than being pinned here: it is a cell in
+   the grid, column two, spanning both rows. That is the column the search and
+   the chips do not use, between them and the actions on the right. */
+#nowPlayingPanel {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  justify-self: stretch;
+  align-self: stretch;
+  /* .footer-track-slot is `width: var(--daw-col-w)`, which is the gutter width
+     it was built to fill in the footer. Here the column decides the width, so
+     the fixed one has to go or the card never shrinks and pushes Split stems
+     out of the composer on a narrow window. */
+  width: auto;
+  min-width: 0;
+  margin: 0 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
+  background: var(--panel-2, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* The footer clamps the title to two lines, because its gutter is narrow and
+   a long name would otherwise be cut after three or four words. This card is
+   wide and short, so two lines is what makes it look cramped: the title grows
+   downwards and shoves the meta line onto the bottom edge. One line with an
+   ellipsis instead, which is what .daw-track-title does everywhere else. */
+#nowPlayingPanel .track-panel-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+
+/* A quieter frame. At --border-strong on --bg-2 the card was the loudest box
+   in the bar, competing with the search field beside it for a thing you read
+   rather than use. */
+#nowPlayingPanel {
+  background: var(--panel-2, var(--panel));
+  border-color: var(--border);
+}
+
+/* The footer's own 40px cover, untouched. */
+#nowPlayingPanel .track-panel-head {
+  gap: 11px;
+  align-items: center;
+  justify-content: flex-start;
+}
+#nowPlayingPanel .track-panel-info { flex: 1 1 auto; min-width: 0; }
+/* A flex item's automatic minimum is its content, all the way down, so one
+   missing min-width anywhere in this chain gives the card a floor it will not
+   go below and the row overflows instead. The title and the meta line both
+   clip with an ellipsis, so there is nothing to protect by refusing. */
+#nowPlayingPanel .track-panel-head,
+#nowPlayingPanel .daw-track-meta-line { min-width: 0; }
+/* Part of the card's structure rather than a button placed on top of it.
+ *
+ * It has been tried two ways and both read as dropped in: on the title's line
+ * it sat at the right edge with a gap in front of it, and centred on the card
+ * it lined up with neither row. The trouble was never the height, it was that
+ * a bordered button inside a bordered card is a box in a box, floating in
+ * whatever space is left over.
+ *
+ * So it gets a segment of its own, full height, separated by the same hairline
+ * the composer uses between its clusters. The icon then has a place rather than
+ * a position, and the card reads as two parts: what the track is, and the one
+ * thing you can do to it from here. */
+#nowPlayingPanel .track-panel-head .daw-fav-btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  transform: none;
+  margin: 0;
+  width: 46px;
+  height: auto;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0 8px 8px 0;
+  background: none;
+  color: var(--muted);
+}
+#nowPlayingPanel .track-panel-head .daw-fav-btn:hover {
+  background: var(--panel-3);
+  color: var(--fg);
+}
+#nowPlayingPanel .track-panel-head .daw-fav-btn svg {
+  width: 17px;
+  height: 17px;
+}
+/* The text stops where the segment starts. */
+#nowPlayingPanel .track-panel-info,
+#nowPlayingPanel .daw-track-meta-line { padding-right: 56px; }
+
+/* Source and quality keep their footer colours, which up here is four accents
+   in one short line. Muted to one voice; the stems dot keeps its colour,
+   because that one means ready rather than merely saying a word. */
+#nowPlayingPanel .daw-track-meta-line #track-source,
+#nowPlayingPanel .daw-track-meta-line #track-quality,
+#nowPlayingPanel .daw-track-meta-line #t-stems-chip {
+  color: var(--muted);
+}
+#nowPlayingPanel .daw-track-meta-line {
+  /* Indented to start under the title rather than under the artwork, and kept
+     to one line so the card holds its shape whatever the track is called. The
+     footer lets it wrap, because its gutter is narrow and tall; this one is
+     wide and short.
+
+     Not indented under the title either: the 51px that would cost is the
+     difference between the line fitting and ending in an ellipsis. */
+  margin: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 7. The whole waveform strip in the bottom bar.
+
+   Read this before keeping it. The strip is three things in one: the waveform
+   drawing, the time ticks, and the scrub, which is the footer's seek control
+   and its only progress indicator. All three go together here, so after this
+   the only way to move through a track is the lanes above, and the footer no
+   longer shows where you are.
+
+   If that turns out to be too much, hiding #footer-waveform alone removes the
+   drawing and leaves the ticks and the seek working. */
+.footer-wave-panel {
+  display: none !important;
+}
+
+/* 8. The Timeline toggle.
+
+   It hides .footer-wave-region, which wraps two things: the waveform strip,
+   now hidden outright by 7, and the now-playing block, now pinned into the top
+   bar by 6. A fixed-position element is still hidden when an ancestor is
+   display: none, so the only thing pressing Timeline would do now is make the
+   card in the top bar disappear. A control whose label names something that is
+   not there, doing something the label does not describe.
+
+   Two parts, and the second matters as much as the first. The button is hidden
+   here, but it stays in the DOM, so wireAllToggle still counts "timeline"
+   among the panels All governs: pressing All would set panel-timeline-off and
+   take the card with it. Neutralising the rule is what stops that. Doing this
+   properly means dropping the button from the markup and letting the All row
+   govern two panels rather than three. */
+.daw-panel-toggle[data-panel="timeline"],
+.daw-panel-toggle[data-panel="timeline"] + .daw-panel-toggles-sep,
+.daw-panel-toggles-sep:has(+ .daw-panel-toggle[data-panel="timeline"]) {
+  display: none !important;
+}
+.app.panel-timeline-off .footer-wave-region {
+  display: block;
+}
+
+/* 9. A file extension where a track has no artwork.
+
+   Paired with extLabel() in catalog.js, which decides when there is one to
+   show. Sized in ch so WAV and FLAC both sit inside the same square without
+   the label being measured for the longest case. */
+.thumb-ext {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-family: var(--font-mono, inherit);
+}
+.np-art-placeholder[data-ext]:not([data-ext=""]) svg { display: none; }
+.np-art-placeholder[data-ext]:not([data-ext=""])::after {
+  content: attr(data-ext);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-family: var(--font-mono, inherit);
+}
+
+/* 10. The empty state's lanes, lined up with the mixer beside them.
+
+   Two things were out. The placeholder lane is a hard 48px in waves.css while
+   every mixer row is sized from --lane-h, which is 77px on an empty studio, so
+   the two columns ran at different pitches from the first row. And there are
+   seven placeholders, one per stem plus "original", against six visible mixer
+   rows, because the original row is hidden until a job is actually loaded.
+
+   So: take the height from the same variable the mixer uses, minus the 2px
+   separator that makes up the rest of the row, and drop the original
+   placeholder while its mixer row is hidden. */
+.lane-placeholder {
+  height: calc(var(--lane-h, 72px) - 2px);
+  margin-bottom: 2px;
+}
+.app.no-track .lane-placeholder[data-stem="original"] {
+  display: none;
+}
+
+/* Below about 1450px the two rows cannot hold everything.
+ *
+ * Measured rather than picked: the chips need 655px at their widest, the
+ * toggles 280, Detect structure 164 and Split stems 140. With gaps and the
+ * bar's own padding that is 1299px of composer before the card gets a pixel,
+ * which is a window of roughly 1450 once the rail and the margins are paid
+ * for.
+ *
+ * So the two things that were moved up here give way, in the order they can be
+ * done without: the card first, since the track is also named in the library
+ * and the mixer, then the toggles drop to a line of their own, which is where
+ * they lived before. Nothing is lost at any width, it just stops being one
+ * line.
+ */
+@media (max-width: 1460px) {
+  .daw-composer > #nowPlayingPanel { display: none; }
+}
+@media (max-width: 1320px) {
+  .daw-composer > .daw-panel-toggles {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: end;
+  }
+}

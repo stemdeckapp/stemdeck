@@ -1,15 +1,19 @@
-// The Collapse row governs three panels. Not the library.
+// The Collapse row governs the panels beside it. Not the library.
 //
 // "All" used to take the library with it, and nothing in the row could put it
-// back: the three buttons beside it only know about their own panels. So the
-// reported sequence was press All, then turn Analysis, Sections and Timeline
-// back on one at a time, and watch All light up as though everything had
-// returned while the library stayed collapsed with no way to reach it from
-// there (#588). The library has its own control in the rail.
+// back: the buttons beside it only know about their own panels. So the
+// reported sequence was press All, then turn each panel back on one at a time,
+// and watch All light up as though everything had returned while the library
+// stayed collapsed with no way to reach it from there (#588). The library has
+// its own control in the rail.
+//
+// Two panels now, not three. Timeline went with the footer's waveform strip:
+// it governed a region that no longer has anything visible in it, so the
+// button named something that was not there.
 import { test, expect } from "@playwright/test";
 import { openStudio } from "./helpers.mjs";
 
-const PANELS = ["analysis", "sections", "timeline"];
+const PANELS = ["analysis", "sections"];
 
 const state = (page) =>
   page.evaluate((panels) => {
@@ -64,10 +68,7 @@ test.describe("collapse row", () => {
     expect((await state(page)).allPressed).toBe(true);
 
     await clickPanel(page, "sections");
-    expect((await state(page)).allPressed).toBe(true);
-
-    await clickPanel(page, "timeline");
-    expect((await state(page)).allPressed, "all three away, so the row is away").toBe(false);
+    expect((await state(page)).allPressed, "both away, so the row is away").toBe(false);
   });
 
   test("collapsing the library does not change what All reports", async ({ page }) => {
