@@ -60,7 +60,6 @@ export async function runVocalSplitIfWanted(state) {
     addTrackToLibrary({
       id: finalState.job_id,
       title: finalState.title || "",
-      channel: t("footer.extractedLabel"),
       thumb: finalState.thumbnail,
       stems: finalState.selected_stems || [...selectedStems],
       selectedStems: finalState.selected_stems || [...selectedStems],
@@ -361,7 +360,6 @@ function applyState(state) {
       // runs the user may already be typing the next URL in there, and it must
       // not end up as some other track's title or source.
       title: state.title || (isForeground ? urlInput.value : "") || t("job.processingTrackTitle"),
-      channel: state.status === "done" ? t("footer.extractedLabel") : t("job.processing"),
       thumb: state.thumbnail,
       stems: state.selected_stems || state.stems?.map((stem) => stem.name) || [...selectedStems],
       selectedStems: state.selected_stems || [...selectedStems],
@@ -594,7 +592,6 @@ function registerUploadRow(jobId, file) {
   addTrackToLibrary({
     id: jobId,
     title,
-    channel: "Processing",
     thumb: "",
     stems: [...selectedStems],
     selectedStems: [...selectedStems],
@@ -656,7 +653,6 @@ export async function importFromUrl(url, { title, stems } = {}) {
   addTrackToLibrary({
     id: jobId,
     title: title || url || t("job.processingTrackTitle"),
-    channel: "Processing",
     thumb: "",
     stems: stemSel,
     selectedStems: stemSel,
@@ -854,7 +850,6 @@ export function wireJobForm() {
     addTrackToLibrary({
       id: jobId,
       title: displayTitle,
-      channel: t("job.processing"),
       thumb: "",
       stems: [...selectedStems],
       selectedStems: [...selectedStems],

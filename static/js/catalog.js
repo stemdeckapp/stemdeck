@@ -289,9 +289,10 @@ function trackMatchesSearch(track) {
     if (!tag) return true;
     return (track?.tags ?? []).some((t) => String(t).toLowerCase().includes(tag));
   }
+  // Not `channel`: it was a stored status label, not something a person would
+  // search by, and old tracks still carry it (#656).
   return [
     track?.title,
-    track?.channel,
     track?.sourceUrl,
     ...(track?.stems || []),
     ...(track?.tags || []),
@@ -398,7 +399,7 @@ function saveState() {
 // ─── Track management ───
 
 export function addTrackToLibrary(track) {
-  // track: { id, title, channel, thumb, stems, status, sourceUrl }
+  // track: { id, title, thumb, stems, status, sourceUrl }
   const existingId = findTrackBySource(track.sourceUrl, track.id);
   // A match already in the Trash is left exactly where it is. It is a distinct
   // job with its own files on disk, and the user is the only one who decides
@@ -571,7 +572,7 @@ function applyTrackInfoToPanel(track) {
     thumbnail: track.thumb,
     key: track.key,
     bpm: track.bpm,
-    stemCount: (track.audioStems || track.stems || []).filter((s) => (s.name ?? s) !== "original").length || null,
+    stemCount: stemCountOf(track) || null,
   });
   applyStemPresenceCards(track.stemPresence);
 
@@ -883,7 +884,6 @@ export function addPlaylistToLibrary(playlistTitle, jobs) {
     addTrackToLibrary({
       id: job.job_id,
       title: job.title || job.source_url || i18nT("job.queuedTrack"),
-      channel: i18nT("job.processing"),
       thumb: "",
       stems: [...selectedStems],
       selectedStems: [...selectedStems],
@@ -1276,6 +1276,53 @@ function unavailableWarningHtml(track) {
   return `<span class="cat-unavailable-warning">${esc(label)}</span>`;
 }
 
+/**
+ * How many stems a track has: the stem files that exist once it is done, and
+ * the ones asked for before then. The mix itself ("original") is not a stem.
+ */
+function stemCountOf(track) {
+  const stems = track?.audioStems?.length ? track.audioStems : track?.stems || [];
+  return stems.filter((s) => (s?.name ?? s) !== "original").length;
+}
+
+/**
+ * The line under a track's title, built from what is true of the track now.
+ *
+ * It used to read a `channel` field that was never a channel: six code paths
+ * stored a status label in it, as text in whatever language was active at the
+ * time, and the path that adopts a server job the library did not know about
+ * stored nothing. So two copies of the same song could read "Extracted ·
+ * 6 stems" and " · 6 stems" side by side (#656), and a label written in one
+ * language stayed in it after the user switched. Nothing is stored now, and
+ * every path that creates a track gets the same line.
+ *
+ * Returns HTML: an unavailable track's line is a warning, not plain text.
+ */
+function trackSublineHtml(track, { inTrash = false } = {}) {
+  if (track.status === "unavailable") return unavailableWarningHtml(track);
+  let parts;
+  if (PROCESSING_STATUSES.has(track.status)) {
+    parts = [i18nT("job.processing")];
+  } else if (track.status === "error") {
+    parts = [i18nT("notifKind.importFailed")];
+  } else {
+    const stems = stemCountOf(track);
+    // A done track that knows neither its length nor its stems says nothing
+    // rather than "0 stems", which would be a claim and a wrong one.
+    parts = [
+      track.duration ? fmtTime(track.duration) : "",
+      stems ? i18nPlural("footer.stemsCount", stems) : "",
+    ];
+  }
+  if (inTrash) parts.push(i18nT("track.removed"));
+  // Spaced as text as well as by the row's flex gap, so what a screen reader
+  // or a copy gets reads "05:57 · 6 stems" rather than "05:57·6 stems".
+  return parts
+    .filter(Boolean)
+    .map((part) => `<span>${esc(part)}</span>`)
+    .join(' <span class="dot">·</span> ');
+}
+
 function renderRecentItem(trackId) {
   const track = tracks[trackId];
   if (!track) return null;
@@ -1283,14 +1330,11 @@ function renderRecentItem(trackId) {
   const isUnavailable = track.status === "unavailable";
   el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}`;
   el.dataset.id = trackId;
-  const duration = track.duration ? fmtTime(track.duration) : "";
-  const stemCount = track.stems?.length ?? 0;
-  const sub = [duration, i18nPlural("footer.stemsCount", stemCount)].filter(Boolean).join(" · ");
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
       <div class="cat-title">${esc(displayTitle(track.title))}</div>
-      <div class="cat-sub">${isUnavailable ? unavailableWarningHtml(track) : `<span>${esc(sub)}</span>`}</div>
+      <div class="cat-sub">${trackSublineHtml(track)}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
   `;
@@ -1378,17 +1422,11 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}`;
   el.dataset.id = trackId;
 
-  const stemCount = track.stems?.length ?? 0;
-  const subHtml = isUnavailable
-    ? unavailableWarningHtml(track)
-    : `<span>${esc(track.channel ?? "")}</span>
-        <span class="dot">·</span>
-        <span>${inTrash ? esc(i18nT("track.removed")) : esc(i18nPlural("footer.stemsCount", stemCount))}</span>`;
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
       <div class="cat-title">${esc(displayTitle(track.title))}</div>
-      <div class="cat-sub">${subHtml}</div>
+      <div class="cat-sub">${trackSublineHtml(track, { inTrash })}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
     ${inTrash ? "" : `<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
@@ -1861,7 +1899,6 @@ async function completeSettledJob(jobId) {
     const finalState = state.status === "done" ? await runVocalSplitIfWanted(state) : state;
     const track = stateMetadataToTrack(finalState, { ...existing, id: jobId });
     track.id = jobId;
-    track.channel = finalState.status === "done" ? i18nT("footer.extractedLabel") : existing.channel;
     addTrackToLibrary(track);
   } catch (e) {
     console.warn("[catalog] could not finish background job", jobId, e);
