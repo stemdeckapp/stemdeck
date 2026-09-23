@@ -293,8 +293,13 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // ctx time; the count-in clicks (negative source time) map into `[now, when]`
   // through the same sourceTimeToCtxTime the metronome uses, so they stay locked
   // to the audio. See transport.togglePlayPause + metronome.playCountIn.
+  //
+  // Resolves true once that mapping describes this start, false if nothing was
+  // started. Here that is always before play() returns, but the streaming
+  // engine can only say so after a fetch, and callers are written against the
+  // promise so the two engines keep one contract.
   function play(leadIn = 0) {
-    if (playing || destroyed || !tracks.size) return;
+    if (playing || destroyed || !tracks.size) return Promise.resolve(false);
     // Safari: resume the context fire-and-forget within the user-gesture tick.
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     let off = startOffset;
@@ -304,6 +309,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     startSources(off, when);
     playing = true;
     tickLoop.schedule();
+    return Promise.resolve(true);
   }
 
   function pause() {

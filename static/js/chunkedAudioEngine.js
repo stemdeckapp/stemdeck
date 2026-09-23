@@ -644,9 +644,27 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // (see the sync/async branch below); by the time count-in can even be
   // armed the track has been loaded long enough that chunk 0 is virtually
   // always already cached.
+  //
+  // That last assumption held for the first play and not after it. Chunks
+  // behind the playhead are evicted, so Stop and play again goes back to a
+  // chunk that is gone and takes the fetch path, where the mapping is only
+  // set once the fetch lands. The count-in was being scheduled straight after
+  // play() returned, against the previous start's mapping, which put every
+  // click in the past, and Web Audio drops those silently (#655).
+  //
+  // So play() resolves true once sourceTimeToCtxTime describes this start,
+  // and false if the start was abandoned (paused first, or the fetch failed).
+  // The count-in waits for it, and a count-in lead is honoured on either path.
   function play(leadIn = 0) {
-    if (playing || destroyed) return;
+    if (playing || destroyed) return Promise.resolve(false);
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    // Play from the end starts again from the top, as the buffered engine's
+    // play() does. The transport places a count-in on that assumption; without
+    // this the count-in led into 0 while the audio started at the end.
+    if (_startOffset >= _duration) {
+      _startOffset = 0;
+      _scheduledTo = 0;
+    }
     playing = true;
 
     const chunkIdx = Math.floor(_startOffset / CHUNK_SEC);
@@ -658,7 +676,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     // keeps 50 ms headroom since a fetch/decode just finished. A count-in's
     // lead overrides either when it asks for more room than that.
     const startWith = (buffers, lead) => {
-      if (!playing || destroyed) return;
+      if (!playing || destroyed) return false;
       _resetProcessor();
       const when = ctx.currentTime + Math.max(lead, countInLead);
       _startCtxTime = when;
@@ -668,21 +686,22 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _epoch++; // mapping is valid from here; see isClockReady
       _fetchChunk(chunkIdx + 1); // pre-fetch next chunk
       tickLoop.schedule();
+      return true;
     };
 
     // chunk 0 is pre-decoded during ready(), so the sync path is the hot path.
     const hit = _cache.get(chunkIdx);
     if (hit?.result) {
-      startWith(hit.result, 0.01);
-    } else {
-      _fetchChunk(chunkIdx)
-        .then((buffers) => startWith(buffers, 0.05))
-        .catch((e) => {
-          console.warn("[chunked] play fetch failed:", e);
-          playing = false;
-          _audioStarted = false;
-        });
+      return Promise.resolve(startWith(hit.result, 0.01));
     }
+    return _fetchChunk(chunkIdx)
+      .then((buffers) => startWith(buffers, 0.05))
+      .catch((e) => {
+        console.warn("[chunked] play fetch failed:", e);
+        playing = false;
+        _audioStarted = false;
+        return false;
+      });
   }
 
   function pause() {
