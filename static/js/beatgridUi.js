@@ -13,7 +13,7 @@ import {
   undoBeatGrid, redoBeatGrid, resetBeatGrid, canUndo, canRedo,
   barLengthAt, setBarLengthAt, getBeats,
 } from "./beatgrid.js";
-import { applyMetronomeAccent } from "./transport.js";
+import { applyMetronomeAccent, toggleMetronome, onMetronomeToggle } from "./transport.js";
 
 const TOOL_BTNS = [
   ["bg-tool-move", "move", "Drag a beat to retime the region. Alt-drag moves one beat."],
@@ -56,6 +56,12 @@ export function toggleBeatGridEditor(force) {
   if (!bgToolbar) return;
   const next = force === undefined ? !isBeatGridEditing() : !!force;
   if (next && !_available) return;
+  // The editor is a click-track tool: it edits the beats the click plays, and
+  // the way to check an edit is to hear it. So opening it switches the click
+  // on, the same way choosing a vocal mode switches vocals on, and switching
+  // the click off closes it (see wireBeatGridUi). Otherwise Grid could stay
+  // lit inside the panel of a feature that is off (#655).
+  if (next) toggleMetronome(true);
   setBeatGridEditing(next);
   bgToolbar.classList.toggle("hidden", !next);
   // The Grid button is a press-to-open toggle like the click and count-in
@@ -101,6 +107,9 @@ export function wireBeatGridUi() {
   });
 
   metroEditBtn?.addEventListener("click", () => toggleBeatGridEditor());
+  onMetronomeToggle((on) => {
+    if (!on && isBeatGridEditing()) toggleBeatGridEditor(false);
+  });
 
   bgUndoBtn?.addEventListener("click", () => { undoBeatGrid(); syncBeatGridButtons(); });
   bgRedoBtn?.addEventListener("click", () => { redoBeatGrid(); syncBeatGridButtons(); });

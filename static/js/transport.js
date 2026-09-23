@@ -1239,7 +1239,25 @@ function _renderCountIn() {
   metroCountInEl.value = String(metronomeCountInBars);
   // The wrap carries the "on" tint the toggle button used to, so the panel
   // still shows at a glance that a count-in is armed.
-  metroCountInEl.parentElement?.classList.toggle("active", metronomeCountInBars > 0);
+  //
+  // Armed means it will play, and a count-in counts into the click, so with
+  // the click off it will not (#655). The length the user chose stays in the
+  // select, so switching the click back on brings the count-in back as it was;
+  // only the tint that claims it is live follows the click.
+  metroCountInEl.parentElement?.classList.toggle(
+    "active",
+    metronomeEnabled && metronomeCountInBars > 0,
+  );
+}
+
+// Things that have to follow the click on and off but live in modules this
+// one cannot import without a cycle: the beat grid editor imports from here.
+const _metronomeListeners = new Set();
+
+/** Calls `fn(on)` whenever the click track is switched on or off. */
+export function onMetronomeToggle(fn) {
+  _metronomeListeners.add(fn);
+  return () => _metronomeListeners.delete(fn);
 }
 
 export function toggleMetronome(force) {
@@ -1250,6 +1268,16 @@ export function toggleMetronome(force) {
   metroBtn.setAttribute("aria-pressed", on ? "true" : "false");
   metronome?.setEnabled(on);
   _saveMetroPrefs();
+  // Everything in the click's own panel that shows a live state has to agree
+  // with the click. The count-in is here; the grid editor listens.
+  _renderCountIn();
+  for (const fn of _metronomeListeners) {
+    try {
+      fn(on);
+    } catch (e) {
+      console.warn("[metronome] toggle listener failed:", e);
+    }
+  }
 }
 
 /**
