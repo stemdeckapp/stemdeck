@@ -101,13 +101,19 @@
                    Loose in the row, the mode buttons read as peers of Drums and
                    Bass rather than as a choice about the chip beside them. -->
               <div class="stem-group stem-group-vocals">
+                <!-- Switching vocals on from here rather than from a mode button
+                     says nothing about how they should come out, so it takes
+                     Combined. The two buttons beside it can do the same thing and
+                     name the mode in one press. -->
                 <button class="stem-choice" type="button" data-stem="vocals" aria-pressed="true" style="--color:var(--vocals)">
                   <span data-i18n="stem.vocals">Vocals</span>
                 </button>
-                <!-- On-demand lead/backing vocal split (#275). Shown only while
-                     Vocals is selected above; toggling "Lead + Backing" auto-runs
+                <!-- On-demand lead/backing vocal split (#275). Always on screen,
+                     and dimmed to "unavailable" by refreshStemChoiceVisuals while
+                     Vocals is not selected above, rather than leaving the row and
+                     changing the group's shape. Toggling "Lead + Backing" auto-runs
                      the split once the import finishes (see main.js/job.js). -->
-                <div class="vocal-mode-toggle hidden" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
+                <div class="vocal-mode-toggle" id="vocalModeToggle" role="group" aria-label="Vocals mode" data-i18n-aria-label="vocalMode.groupAria">
                   <button type="button" class="vocal-mode-btn" data-mode="all" aria-pressed="true" data-i18n="vocalMode.all">Combined</button>
                   <button type="button" class="vocal-mode-btn" data-mode="split" aria-pressed="false" data-i18n="vocalMode.split">Lead + Backing</button>
                 </div>

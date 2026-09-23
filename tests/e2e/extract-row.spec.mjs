@@ -22,7 +22,11 @@ const row = (page) =>
       ]),
     ),
     all: document.getElementById("stemAllBtn")?.getAttribute("aria-pressed") === "true",
-    vocalToggleShown: !document.getElementById("vocalModeToggle")?.classList.contains("hidden"),
+    submitDisabled: !!document.getElementById("submit")?.disabled,
+    vocalToggleShown: !!document.getElementById("vocalModeToggle")?.offsetParent,
+    vocalModePressed: [...document.querySelectorAll(".vocal-mode-btn")]
+      .filter((b) => b.getAttribute("aria-pressed") === "true")
+      .map((b) => b.dataset.mode),
   }));
 
 // Puts a selection in the store the way an earlier session would have left it,
@@ -60,15 +64,136 @@ test.describe("extract row", () => {
     expect((await row(page)).all).toBe(true);
   });
 
-  test("Lead + Backing is hidden when the restored selection has no vocals", async ({ page }) => {
-    // Same staleness, other control: it used to stay on screen offering a
-    // choice about vocals that were not being extracted.
+  test("with no vocals selected, neither mode is lit", async ({ page }) => {
+    // The pair carries three states, not two, and this is the third. Both dark
+    // is what "vocals are not being extracted" looks like.
     await openWithStoredSelection(page, ["drums", "bass"]);
 
     const state = await row(page);
     expect(state.chips.vocals).toBe(false);
-    expect(state.vocalToggleShown).toBe(false);
+    expect(state.vocalToggleShown).toBe(true);
+    expect(state.vocalModePressed).toEqual([]);
     expect(state.all).toBe(false);
+  });
+
+  test("pressing a mode switches the vocals on", async ({ page }) => {
+    await openWithStoredSelection(page, ["drums", "bass"]);
+    expect((await row(page)).chips.vocals).toBe(false);
+
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(true);
+    expect(state.vocalModePressed).toEqual(["split"]);
+    // And it takes nothing else with it.
+    expect(state.chips.drums).toBe(true);
+    expect(state.chips.bass).toBe(true);
+    expect(state.chips.piano).toBe(false);
+  });
+
+  test("pressing the mode that is already on switches the vocals off", async ({ page }) => {
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+    expect((await row(page)).vocalModePressed).toEqual(["all"]);
+
+    await page.locator('.vocal-mode-btn[data-mode="all"]').click();
+
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(false);
+    expect(state.vocalModePressed).toEqual([]);
+    expect(state.chips.drums).toBe(true);
+  });
+
+  test("switching between the two modes keeps the vocals on", async ({ page }) => {
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+    let state = await row(page);
+    expect(state.chips.vocals).toBe(true);
+    expect(state.vocalModePressed).toEqual(["split"]);
+
+    await page.locator('.vocal-mode-btn[data-mode="all"]').click();
+    state = await row(page);
+    expect(state.chips.vocals).toBe(true);
+    expect(state.vocalModePressed).toEqual(["all"]);
+  });
+
+  test("the mode is remembered while the vocals are off", async ({ page }) => {
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+
+    // Off, then on again, through the same button.
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+    expect((await row(page)).chips.vocals).toBe(false);
+
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(true);
+    expect(state.vocalModePressed).toEqual(["split"]);
+  });
+
+  test("the Vocals chip switches them on as Combined", async ({ page }) => {
+    // The short way in. A press here says nothing about how the vocals should
+    // come out, so it takes the mode that means "leave them alone".
+    await openWithStoredSelection(page, ["drums", "bass"]);
+    expect((await row(page)).vocalModePressed).toEqual([]);
+
+    await page.locator('.stem-choice[data-stem="vocals"]').click();
+
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(true);
+    expect(state.vocalModePressed).toEqual(["all"]);
+  });
+
+  test("the Vocals chip switches them off again", async ({ page }) => {
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+
+    await page.locator('.stem-choice[data-stem="vocals"]').click();
+
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(false);
+    expect(state.vocalModePressed).toEqual([]);
+    expect(state.chips.drums).toBe(true);
+  });
+
+  test("Combined is what the chip means, even after Lead + Backing", async ({ page }) => {
+    // The mode buttons remember their choice across an off and on of their own.
+    // The chip does not restore it, because pressing the chip is not asking for
+    // it: it is the press that does not name a mode.
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+    await page.locator('.vocal-mode-btn[data-mode="split"]').click();
+    expect((await row(page)).chips.vocals).toBe(false);
+
+    await page.locator('.stem-choice[data-stem="vocals"]').click();
+    expect((await row(page)).vocalModePressed).toEqual(["all"]);
+  });
+
+  test("the last remaining stem can still be switched off", async ({ page }) => {
+    // Narrowing to one stem and pressing it again used to turn all six back
+    // on: the set emptied, and an "if nothing is selected, select everything"
+    // guard caught it. The press asked for less and got the most there is.
+    await openWithStoredSelection(page, ["vocals"]);
+
+    await page.locator('.vocal-mode-btn[data-mode="all"]').click();
+
+    const state = await row(page);
+    expect(state.chips.vocals).toBe(false);
+    expect(Object.values(state.chips).filter(Boolean)).toHaveLength(0);
+    expect(state.all).toBe(false);
+  });
+
+  test("an empty row cannot be submitted", async ({ page }) => {
+    // The server reads an empty stems list as every stem, so a submit from
+    // here would extract six of them while the row showed none. The row is
+    // allowed to be empty; it just cannot be acted on.
+    await openWithStoredSelection(page, ["vocals"]);
+    expect((await row(page)).submitDisabled).toBe(false);
+
+    await page.locator('.vocal-mode-btn[data-mode="all"]').click();
+    expect((await row(page)).submitDisabled).toBe(true);
+
+    await page.locator('.stem-choice[data-stem="drums"]').click();
+    expect((await row(page)).submitDisabled).toBe(false);
   });
 
   test("pressing All still fills and empties the row", async ({ page }) => {

@@ -340,7 +340,6 @@ input, textarea { font-family: inherit; }
   border-radius: 6px;
   overflow: hidden;
 }
-.vocal-mode-toggle.hidden { display: none; }
 .vocal-mode-btn {
   height: 100%;
   padding: 0 10px;
@@ -4740,11 +4739,8 @@ input, textarea { font-family: inherit; }
   gap: 0;
   margin-right: 5px;
 }
-.stem-group:not(:has(.vocal-mode-toggle:not(.hidden))) {
-  margin-right: 0;
-}
 /* Facing edges square, and only one border between them. */
-.stem-group:has(.vocal-mode-toggle:not(.hidden)) .stem-choice[data-stem="vocals"] {
+.stem-group .stem-choice[data-stem="vocals"] {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
@@ -4764,9 +4760,9 @@ input, textarea { font-family: inherit; }
  * selected, the active mode is tinted because it is the mode, and the other
  * one is plain.
  *
- * Keyed off the chip's pressed state, because the toggle is only on screen
- * while Vocals is selected and should not be left as the one thing still
- * wearing the colour if that ever changes. */
+ * Keyed off the chip's pressed state rather than on the toggle being present,
+ * because it is always present: with Vocals off, the group drops back to the
+ * plain border and the toggle dims beside it. */
 .stem-group:has(.stem-choice[data-stem="vocals"][aria-pressed="true"]) .vocal-mode-toggle {
   --color: var(--vocals);
   border-color: color-mix(in srgb, var(--color) 60%, transparent);

@@ -46,20 +46,42 @@ import { initFooterFit, refitFooter } from "./footerFit.js";
 
 // ─── Vocals: Combined / Lead + Backing toggle (on-demand split, #275) ───
 //
-// Only meaningful while Vocals is actually selected above -- hidden
-// otherwise so it can't imply a choice that has nothing to act on. Its
-// visibility rides along with the stem chips in refreshStemChoiceVisuals,
-// since it describes the same selection they do.
+// Two buttons, three states, and either of them can switch the vocals on.
+//
+// Vocals is the one stem with something to say about how it comes out, so the
+// pair carries a state the other chips do not have: as one track, split into
+// lead and backing, or not extracted at all. Neither button lit is that third
+// state, and the chip beside them agrees with it. Pressing the mode already in
+// force switches vocals off; pressing the other switches mode and leaves them
+// on; pressing either from cold switches them on in that mode.
+//
+// The chip is a way in as well, and the shorter one: it switches vocals on as
+// Combined without a second press. The modes were hidden, and later dimmed,
+// until that chip had been pressed, which made saying how you want the vocals
+// split something you could only do after asking for them.
+//
+// Which of the two is lit is decided in refreshStemChoiceVisuals, along with
+// the chips. Painting from here as well is what put the All button a state
+// behind its own chips once already (#658): two painters for one fact, and the
+// one reachable by a click is never the one that is wrong.
 
 function wireVocalModeToggle() {
   const wrap = document.getElementById("vocalModeToggle");
   if (!wrap) return;
   for (const btn of wrap.querySelectorAll(".vocal-mode-btn")) {
     btn.addEventListener("click", () => {
-      setVocalSplitMode(btn.dataset.mode);
-      for (const b of wrap.querySelectorAll(".vocal-mode-btn")) {
-        b.setAttribute("aria-pressed", String(b.dataset.mode === btn.dataset.mode));
+      const mode = btn.dataset.mode;
+      if (selectedStems.has("vocals") && vocalSplitMode === mode) {
+        // Pressing the mode that is already in force is how vocals are turned
+        // off, the same way pressing any other lit chip switches that stem off.
+        selectedStems.delete("vocals");
+      } else {
+        setVocalSplitMode(mode);
+        selectedStems.add("vocals");
       }
+      saveSelectedStems();
+      refreshStemChoiceVisuals();
+      buildStripStems();
     });
   }
 }
@@ -135,19 +157,34 @@ function wireAutoSectionsToggle() {
 
 function handleStemChoiceClick(stem) {
   const allSelected = selectedStems.size === STEM_NAMES.length;
+  const hadVocals = selectedStems.has("vocals");
   if (allSelected) {
     // Default state -> switch to "only this stem".
     selectedStems.clear();
     selectedStems.add(stem);
   } else if (selectedStems.has(stem)) {
+    // A press that says "not this one" is answered with exactly that, even
+    // when it is the last one lit.
+    //
+    // Emptying the set used to refill it with all six, so narrowing down to
+    // Vocals and pressing it once more turned everything back on: the opposite
+    // of what was asked, and no way to switch that stem off at all. Refusing
+    // the press instead is no better, because then the last stem cannot be
+    // turned off either.
+    //
+    // An empty row is not a state that needs preventing here. All already
+    // reaches it, in one press, and it is the control whose job that is.
     selectedStems.delete(stem);
-    if (selectedStems.size === 0) {
-      // Empty out wraps back to "all" so the user is never stuck.
-      for (const n of STEM_NAMES) selectedStems.add(n);
-    }
   } else {
     selectedStems.add(stem);
   }
+
+  // Vocals switched on from its own chip has not been told which of the two
+  // ways it should come out, so it takes Combined. Only on the transition: a
+  // press that narrows an already-selected set down to Vocals is not a change
+  // of mind about the mode, and the mode buttons set their own.
+  if (!hadVocals && selectedStems.has("vocals")) setVocalSplitMode("all");
+
   saveSelectedStems();
   refreshStemChoiceVisuals();
   buildStripStems();
@@ -436,10 +473,10 @@ onLanguageChange(fitStemChips);
   await runStoreMigrationIfNeeded();
   await stemSelectionReady;
   refreshStemChoiceVisuals();
+  // Both halves of the Extract row's state arrive asynchronously, so the row is
+  // painted once more when the second of them lands.
   await vocalSplitModeReady;
-  for (const b of document.querySelectorAll(".vocal-mode-btn")) {
-    b.setAttribute("aria-pressed", String(b.dataset.mode === vocalSplitMode));
-  }
+  refreshStemChoiceVisuals();
   // Before initCatalog: it runs the update check, which can itself notify.
   // collectDiagnostics is injected rather than imported by notifications.js,
   // which would make the two modules import each other.
