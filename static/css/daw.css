@@ -2877,6 +2877,13 @@ input, textarea { font-family: inherit; }
   background: rgba(232,200,64,0.18); border-color: rgba(232,200,64,0.55); color: var(--accent);
 }
 .click-metro-icon { flex-shrink: 0; }
+/* The on/off toggle is the icon alone (#681), square like the volume button
+   beside it. The Grid button shares the class above and keeps its label. */
+.click-toggle-btn.click-toggle-icon {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
 
 /* Beat grid editor: canvas overlay + toolbar */
 .beatgrid-canvas {

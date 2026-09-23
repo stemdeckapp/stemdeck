@@ -851,11 +851,14 @@
           <div class="footer-group footer-group-click" id="t-metro-wrap">
             <span class="footer-group-label" data-i18n="click.group">Click track</span>
             <div class="footer-group-body">
-              <button class="click-toggle-btn" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" data-i18n-title="click.toggleTitle" data-i18n-aria-label="click.toggleAria" aria-pressed="false" disabled>
+              <!-- The icon alone (#681). It used to carry the word ON, which never
+                   changed, so with the click off it still said ON. The gold
+                   highlight is the state; the name is in the aria-label and the
+                   tooltip. -->
+              <button class="click-toggle-btn click-toggle-icon" id="t-metro" type="button" title="Click track (K)" aria-label="Click track" data-i18n-title="click.toggleTitle" data-i18n-aria-label="click.toggleAria" aria-pressed="false" disabled>
                 <svg class="click-metro-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                   <path d="M9 3h6l4 18H5z"/><path d="M15.5 9 8 15"/>
                 </svg>
-                <span data-i18n="click.on">ON</span>
               </button>
               <!-- Beside the on/off pill rather than among the options: how
                    loud the click is belongs with whether it is running, and it

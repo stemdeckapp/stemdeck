@@ -52,6 +52,27 @@ test.describe("click track", () => {
     await expect(ui.toggle).toHaveAttribute("aria-pressed", "false");
   });
 
+  test("the on/off button is the icon alone, and still says what it is", async ({ page }) => {
+    // It used to carry the word ON, which never changed, so with the click off
+    // it still read ON (#681). The highlight is the state now. The name moved
+    // nowhere: it was always in aria-label and the tooltip, which is what a
+    // screen reader and a hover use.
+    await openStudio(page, { tauri: true });
+    await waitForClickTrack(page);
+    const ui = metro(page);
+
+    await expect(ui.toggle).toHaveText("");
+    await expect(ui.toggle).toHaveAccessibleName("Click track");
+    await expect(ui.toggle).toHaveAttribute("title", "Click track (K)");
+
+    // Square, and the same size as the volume button beside it.
+    const box = await ui.toggle.boundingBox();
+    const vol = await page.locator("#t-metro-vol-btn").boundingBox();
+    expect(Math.round(box.width)).toBe(Math.round(box.height));
+    expect(Math.round(box.width)).toBe(Math.round(vol.width));
+    expect(Math.round(box.height)).toBe(Math.round(vol.height));
+  });
+
   test("the count-in length is chosen from the select and survives a reload", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page);
