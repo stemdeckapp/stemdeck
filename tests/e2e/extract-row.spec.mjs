@@ -196,6 +196,22 @@ test.describe("extract row", () => {
     expect((await row(page)).submitDisabled).toBe(false);
   });
 
+  test("a chip pressed during a submit does not reopen the button", async ({ page }) => {
+    // setSubmitProcessing holds Split shut while a submit is in flight, which
+    // for a large upload is the whole upload. The row repaints the same button
+    // on every chip press, and used to reopen it, allowing a second submit.
+    await openWithStoredSelection(page, ["vocals", "drums"]);
+
+    await page.evaluate(() => {
+      const b = document.getElementById("submit");
+      b.disabled = true;
+      b.classList.add("loading");
+    });
+    await page.locator('.stem-choice[data-stem="bass"]').click();
+
+    expect((await row(page)).submitDisabled).toBe(true);
+  });
+
   test("pressing All still fills and empties the row", async ({ page }) => {
     await openWithStoredSelection(page, ["vocals", "drums"]);
 

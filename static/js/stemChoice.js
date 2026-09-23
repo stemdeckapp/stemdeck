@@ -44,8 +44,16 @@ export function refreshStemChoiceVisuals() {
   // reads an empty list as "all of them" (app/api/jobs.py). Submitting from
   // here would therefore extract six stems the row says it is not extracting,
   // so the button is closed rather than the selection quietly rewritten.
+  //
+  // It is not the only thing that closes it. setSubmitProcessing in job.js
+  // holds it shut while a submit is in flight, which for a large upload is the
+  // whole upload, and a chip pressed in that window must not reopen it and
+  // allow a second submit. "loading" is set alongside that disabled, so it is
+  // the record of which of the two reasons applies.
   const submit = document.getElementById("submit");
-  if (submit) submit.disabled = selectedStems.size === 0;
+  if (submit) {
+    submit.disabled = selectedStems.size === 0 || submit.classList.contains("loading");
+  }
 
   // Combined / Lead + Backing carries the whole of the vocals decision, so
   // between them they have three states and not two: one of them lit, the

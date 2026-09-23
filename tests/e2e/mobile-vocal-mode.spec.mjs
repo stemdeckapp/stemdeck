@@ -90,17 +90,26 @@ test.describe("phone: the vocal mode", () => {
     expect(await on(modeBtn(page, "all"))).toBe(true);
   });
 
-  test("an empty screen cannot be submitted", async ({ page }) => {
-    // The server reads an empty stems list as every stem, so this would have
-    // extracted six stems the screen was showing as off.
+  test("an empty screen is refused with a reason, not silently", async ({ page }) => {
+    // The server reads an empty stems list as every stem. This screen already
+    // refused that with a toast saying why; a disabled attribute here would
+    // have looked identical to an enabled button (the CTA has no disabled
+    // style) and swallowed the press with no explanation at all.
+    let posted = false;
+    await page.route("**/api/jobs**", (route) => {
+      if (route.request().method() === "POST") posted = true;
+      return route.continue();
+    });
     await openExtract(page);
-    await expect(cta(page)).toBeEnabled();
 
     for (const id of ["drums", "bass", "guitar", "piano", "other"]) {
       if (await on(chip(page, id))) await chip(page, id).click();
     }
     await modeBtn(page, "all").click();
 
-    await expect(cta(page)).toBeDisabled();
+    await expect(cta(page)).toBeEnabled();
+    await cta(page).click();
+    await expect(page.getByText("Pick at least one stem.")).toBeVisible();
+    expect(posted).toBe(false);
   });
 });

@@ -100,16 +100,6 @@ const state = {
   vocalSplitMode: "all",
 };
 
-/**
- * Is anything going to come out of a split.
- *
- * The server reads an empty stems list as every stem (app/api/jobs.py), so
- * submitting from an empty Extract screen would extract the six stems the
- * screen is showing as off. The button is closed rather than the selection
- * being rewritten underneath.
- */
-const anyStemSelected = () => Object.values(state.selected).some(Boolean);
-
 let extractES = null; // EventSource for the active extraction
 let extractPoll = null; // REST poll fallback timer
 
@@ -630,7 +620,7 @@ function extractScreen() {
           <button class="${state.selected.vocals && state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
         </div>
       </div>
-      <button class="cta" style="margin-top:22px" data-action="split"${anyStemSelected() ? "" : " disabled"}>${ICON.scissors}Split stems</button>
+      <button class="cta" style="margin-top:22px" data-action="split">${ICON.scissors}Split stems</button>
       ${extractProgressCard()}
     </div>
   </div>`;

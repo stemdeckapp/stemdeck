@@ -103,7 +103,11 @@ function libraryRowKey(state) {
 // With a queue the form has to come back the instant the job is accepted, so
 // the user can queue the next one.
 function setSubmitProcessing(processing) {
-  submitBtn.disabled = processing;
+  // Coming back from a submit is not a reason to open the button if the row
+  // was emptied while the upload ran: an empty stems list is read by the
+  // server as every stem. refreshStemChoiceVisuals applies the same two
+  // conditions from the other side.
+  submitBtn.disabled = processing || selectedStems.size === 0;
   submitBtn.classList.toggle("loading", processing);
   document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
