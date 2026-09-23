@@ -605,6 +605,8 @@ function applyTrackInfoToPanel(track) {
   if (trackExtracted) trackExtracted.textContent = fmtExtracted(track.createdAt);
   if (trackSource) trackSource.textContent = deriveSource(track.sourceUrl);
   if (trackQuality) trackQuality.textContent = deriveQuality(track.sourceUrl);
+  // The now-playing square shows the same extension the library row does.
+  document.querySelector("#np-art .np-art-placeholder")?.setAttribute("data-ext", extLabel(track));
   if (favBtn) {
     favBtn.classList.toggle("active", Boolean(track.favorite));
     favBtn.setAttribute("aria-pressed", String(Boolean(track.favorite)));
@@ -1326,8 +1328,34 @@ export function displayTitle(title) {
   }
 }
 
+/**
+ * The file extension to show in place of artwork, or "" for none.
+ *
+ * Only an uploaded file has one worth showing. A URL import either brings its
+ * own thumbnail or has no filename at all, and "local:<name>" is where the
+ * name survives (deriveQuality reads the same field). Validated rather than
+ * trusted: it is interpolated into markup, and a name with no dot, a trailing
+ * dot or something that is not an extension falls back to the note icon.
+ *
+ * Styled by .thumb-ext and .np-art-placeholder[data-ext] in daw.css. Those
+ * rules shipped in #665 without this function, so every file-only track still
+ * showed the generic note (#678).
+ */
+export function extLabel(track) {
+  if (!track || track.thumb) return "";
+  const src = track.sourceUrl || "";
+  if (!src.startsWith("local:")) return "";
+  const name = src.slice("local:".length);
+  const dot = name.lastIndexOf(".");
+  if (dot < 1) return "";
+  const ext = name.slice(dot + 1);
+  return /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toUpperCase() : "";
+}
+
 function thumbHtml(track) {
   if (track.thumb) return `<img src="${esc(track.thumb)}" alt="" loading="lazy" />`;
+  const ext = extLabel(track);
+  if (ext) return `<span class="thumb-ext">${ext}</span>`;
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
 }
 
