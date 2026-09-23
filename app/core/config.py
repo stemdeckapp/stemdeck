@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import re
 import shutil
 import sys
 from pathlib import Path
+
+logger = logging.getLogger("stemdeck.config")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -456,17 +459,74 @@ def ffprobe_executable() -> str:
     return str(FFPROBE_BIN) if FFPROBE_BIN.is_file() else "ffprobe"
 
 
+def ffmpeg_dir() -> Path | None:
+    """The directory holding the FFmpeg this process actually runs, or None.
+
+    PATH and yt-dlp both need a directory, and they used to be given
+    FFMPEG_DIR: in a desktop install always data/ffmpeg, whatever setup had
+    concluded about what lives there. Setup can reject that copy and settle on
+    another -- an Intel pair on Apple Silicon (#637), a build missing an
+    encoder -- and tell the backend through STEMDECK_FFMPEG/STEMDECK_FFPROBE,
+    which ffmpeg_executable() honours. PATH and yt-dlp never got the message,
+    so separation used the verified binary while every YouTube import ran the
+    rejected one (#651).
+
+    So the directory is derived from the binary, which makes it one answer
+    everywhere. It also covers data/ffmpeg/bin/, the nested layout setup
+    accepts (#248): yt-dlp was handed data/ffmpeg there, which holds no binary
+    at all, and yt-dlp does not fall back to PATH from a directory it was
+    given.
+
+    None when there is no single directory to hand over: no binaries (Docker,
+    or a source checkout with FFmpeg on PATH, where PATH is already right), or
+    ffmpeg and ffprobe in different places. yt-dlp takes one directory and
+    looks for both in it, so a split pair is left to PATH, where the desktop
+    shell has already put the verified directory first.
+
+    A hand-set STEMDECK_FFMPEG_DIR is still honoured: FFMPEG_BIN defaults to a
+    file inside it.
+
+    Evaluated per call, not bound at import, so nothing has to agree with a
+    value captured before the environment was final.
+    """
+    if not (FFMPEG_BIN.is_file() and FFPROBE_BIN.is_file()):
+        return None
+    directory = FFMPEG_BIN.resolve().parent
+    if FFPROBE_BIN.resolve().parent != directory:
+        return None
+    return directory
+
+
 def configure_portable_environment() -> None:
     """Keep generated caches inside the portable data folder when requested.
 
     This is intentionally best-effort. It only sets variables that are still
     unset, so explicit caller/env choices win.
     """
-    if FFMPEG_DIR.is_dir():
+    # FFmpeg first on PATH for anything that runs a bare `ffmpeg`, Demucs
+    # decoding a compressed source among them. See ffmpeg_dir() for why this is
+    # the verified binary's directory and not FFMPEG_DIR.
+    directory = ffmpeg_dir()
+    if directory is not None:
         path = os.environ.get("PATH", "")
-        ffmpeg_path = str(FFMPEG_DIR)
+        ffmpeg_path = str(directory)
         if ffmpeg_path not in path.split(os.pathsep):
             os.environ["PATH"] = ffmpeg_path + (os.pathsep + path if path else "")
+        logger.info("FFmpeg directory: %s", directory)
+    else:
+        logger.info("FFmpeg directory: none of our own, resolving from PATH")
+    # Said out loud because the failure it prevents was silent: a data-directory
+    # FFmpeg that is not the one in use is the copy setup rejected, and the
+    # error a user sees if it is ever run names that binary (#651). Not said
+    # for data/ffmpeg/bin/, which is the same install in its nested layout.
+    if FFMPEG_DIR.is_dir() and (
+        directory is None or not directory.is_relative_to(FFMPEG_DIR.resolve())
+    ):
+        logger.info(
+            "Not using %s: the FFmpeg in use is %s",
+            FFMPEG_DIR,
+            directory or "whatever PATH resolves",
+        )
 
     if PORTABLE_DATA_DIR_ENABLED:
         os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_DIR))

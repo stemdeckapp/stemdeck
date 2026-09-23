@@ -8,7 +8,7 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from app.core.config import FFMPEG_DIR, bundled_js_runtime, js_solver_available
+from app.core.config import bundled_js_runtime, ffmpeg_dir, js_solver_available
 from app.core.models import Job, JobCancelled, _set
 from app.core.settings import get_cookies_file, get_max_duration_sec, get_video_max_height
 
@@ -212,9 +212,11 @@ def _base_ydl_opts(extractors: list[str], *, use_cookies: bool = False) -> dict:
         "socket_timeout": _SOCKET_TIMEOUT_SEC,
     }
     # Portable builds have no ffmpeg on PATH; needed wherever a DASH stream
-    # might be remuxed. Inert for the metadata-only calls.
-    if FFMPEG_DIR.is_dir():
-        opts["ffmpeg_location"] = str(FFMPEG_DIR)
+    # might be remuxed. Inert for the metadata-only calls. The directory of the
+    # FFmpeg the backend verified, not FFMPEG_DIR, which can be the copy setup
+    # rejected (#651); yt-dlp runs whatever it finds there and never falls back.
+    if (directory := ffmpeg_dir()) is not None:
+        opts["ffmpeg_location"] = str(directory)
     # YouTube's n-challenge solver needs a JS runtime. Absent outside portable
     # builds, where yt-dlp resolves its own from PATH instead (#432).
     if (runtime := bundled_js_runtime()) is not None:
