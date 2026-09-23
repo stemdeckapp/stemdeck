@@ -1336,7 +1336,9 @@ input, textarea { font-family: inherit; }
    window (#480), and a third text row here cost more height than it carried
    information. */
 .daw-meta-card {
-  padding: 4px 16px;
+  /* Horizontal padding shrinks with the window. Seven columns at 950px are
+     ~135px each, and a fixed 16px a side spent a quarter of that on nothing. */
+  padding: 4px clamp(8px, 1vw, 16px);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1346,33 +1348,49 @@ input, textarea { font-family: inherit; }
 }
 .daw-meta-card:last-child { border-right: none; }
 .meta-card-label {
-  font-size: 10px;
+  /* Never two lines. The card centres its content, so a wrapped "DYNAMIC
+     RANGE" did not push the value down, it painted over it. Ellipsis is the
+     floor here; the fluid size is what keeps it from being reached. */
+  font-size: clamp(9px, 0.72vw, 10px);
   line-height: 1;
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .meta-card-main {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: clamp(4px, 0.5vw, 8px);
   min-width: 0;
 }
 .meta-card-value {
-  font-size: 17px;
+  /* "Natural Minor" at a fixed 17px is 133px of mono, wider than the card it
+     sits in below ~1250px, and flex-shrink:0 let it paint straight over the
+     next card's value. It shrinks now, and clips as a last resort. */
+  font-size: clamp(13px, 1.15vw, 17px);
   font-weight: 700;
   color: var(--fg);
   line-height: 1;
   font-family: var(--font-mono);
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .meta-card-value.accent { color: var(--accent); }
 .meta-card-value.stability-high { color: #4caf7d; }
 .meta-card-sub {
-  font-size: 11px;
+  font-size: clamp(9px, 0.75vw, 11px);
   line-height: 1;
   color: var(--muted);
+  /* Shrinks four times as fast as the value beside it: the qualifier is the
+     part worth losing first, the number is the reason the card exists. */
+  flex-shrink: 4;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1528,18 +1546,20 @@ input, textarea { font-family: inherit; }
 }
 .stem-card[data-stem="vocals"] { grid-column: span 2; }
 .stem-card {
-  padding: 8px 12px;
+  padding: 8px clamp(6px, 0.8vw, 12px);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: row;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: clamp(4px, 0.5vw, 8px);
   min-width: 0;
 }
 .stem-card:last-child { border-right: none; }
 .stem-card-label {
-  font-size: 10px;
+  /* Fluid for the same reason as the labels above: at 950px these truncated to
+     "LE..." and "BA...", which name nothing. */
+  font-size: clamp(8px, 0.66vw, 10px);
   line-height: 1;
   font-weight: 600;
   /* Tighter than the metadata labels above: on a side-by-side row these
@@ -1554,7 +1574,7 @@ input, textarea { font-family: inherit; }
   white-space: nowrap;
 }
 .stem-card-pct {
-  font-size: 18px;
+  font-size: clamp(14px, 1.2vw, 18px);
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1;
