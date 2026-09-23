@@ -4282,16 +4282,19 @@ input, textarea { font-family: inherit; }
 }
 
 /* Row two, column one. This is what sizes the column, and therefore the search
-   box above it. The chips wrap rather than forcing the row wider than the bar:
-   at max-content they are 655px, which on their own overflow a 1100px window
-   once the two actions have been paid for. */
+   box above it. min-width: 0 is what lets it be narrower than the chips inside
+   it: at max-content they are 655px, which on their own overflow a 1100px
+   window once the two actions have been paid for.
+
+   The chips used to be allowed to wrap here, which is how that overflow was
+   absorbed before the row could fold. It cannot be allowed now: the rule was
+   three classes deep and quietly outranked the two-class `flex-wrap: nowrap`
+   the folding row declares for itself, so the row kept wrapping to a second
+   line in any language whose words are longer than English (#673). */
 .daw-composer > .daw-stem-section {
   grid-column: 1;
   grid-row: 2;
   min-width: 0;
-}
-.daw-composer > .daw-stem-section .daw-stem-chips {
-  flex-wrap: wrap;
 }
 
 /* The rule stays, but it now separates the search from the two actions on the

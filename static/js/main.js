@@ -195,29 +195,77 @@ function fitStemChips() {
   if (!row || !panel || !btn || !_stemChipOrder) return;
 
   for (const el of _stemChipOrder) row.appendChild(el);
+  // Both measurements below are taken against a row that is not paying for the
+  // button yet, so it starts hidden and is revealed only once the answer is
+  // known to need it.
+  btn.hidden = true;
 
   // Measured after everything is back, so the number is what the row can have
   // rather than what it was left with. A hidden row has no width to fit
   // anything into, and measuring one would move every chip for nothing.
-  const budget = row.clientWidth;
+  let budget = row.clientWidth;
   if (!budget) return;
 
   const gap = parseFloat(getComputedStyle(row).gap) || 0;
-  const widths = _stemChipOrder.map((el) => el.getBoundingClientRect().width);
+  // A margin is part of what a chip costs the row. The Vocals group carries a
+  // right margin to set it apart from Drums, and a rect is measured without
+  // it, so the sum came up short by exactly that margin and the last chip sat
+  // a pixel past the edge with the fitter reporting everything fitted (#673).
+  const widths = _stemChipOrder.map((el) => {
+    const cs = getComputedStyle(el);
+    return (
+      el.getBoundingClientRect().width +
+      (parseFloat(cs.marginLeft) || 0) +
+      (parseFloat(cs.marginRight) || 0)
+    );
+  });
+  const total = widths.reduce((a, w, i) => a + w + (i ? gap : 0), 0);
 
-  let used = 0;
+  // Half a pixel of rounding is not an overflow; the row is overflow: hidden
+  // and a chip that fits within a pixel is drawn whole.
+  const fits = (used) => used <= budget + 0.5;
+
   let keep = _stemChipOrder.length;
-  for (let i = 0; i < _stemChipOrder.length; i++) {
-    used += widths[i] + (i ? gap : 0);
-    // Half a pixel of rounding is not an overflow; the row is overflow: hidden
-    // and a chip that fits within a pixel is drawn whole.
-    if (used > budget + 0.5) {
-      keep = i;
-      break;
+  if (!fits(total)) {
+    // Something has to fold, so the button is going to be on screen, and it
+    // takes its width out of this row rather than out of the bar. Deciding
+    // against a budget measured without it is what made the fold stop one chip
+    // short every time it folded at all: the row lost the button's width the
+    // moment the answer was applied, and the chip that had just been measured
+    // as fitting no longer did (#673).
+    btn.hidden = false;
+    budget = row.clientWidth;
+
+    let used = 0;
+    keep = 0;
+    for (let i = 0; i < _stemChipOrder.length; i++) {
+      used += widths[i] + (i ? gap : 0);
+      if (!fits(used)) break;
+      keep = i + 1;
     }
   }
 
   for (let i = keep; i < _stemChipOrder.length; i++) panel.appendChild(_stemChipOrder[i]);
+  btn.hidden = keep === _stemChipOrder.length;
+
+  // Then look at what that did, because the answer can invalidate itself.
+  //
+  // The row sits in a grid track sized from its own content, so the width it
+  // is given depends on what is in it. Folding a chip out shrinks the column,
+  // which can leave the chips that stayed overflowing a row that genuinely had
+  // room for them when they were measured. A single pass cannot see that, and
+  // Chinese at 1024 is where it showed: five chips folded, and the two left
+  // over hung 4px past an edge that had moved underneath them (#673).
+  //
+  // So fold, look again, fold again. Each turn only removes a chip, and the
+  // counter is the belt to the loop's braces.
+  let guard = _stemChipOrder.length;
+  while (keep > 0 && row.scrollWidth > row.clientWidth + 1 && guard-- > 0) {
+    keep -= 1;
+    btn.hidden = false;
+    panel.insertBefore(_stemChipOrder[keep], panel.firstChild);
+  }
+
   btn.hidden = keep === _stemChipOrder.length;
   if (btn.hidden) closeStemOverflow();
 }
