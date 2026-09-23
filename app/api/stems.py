@@ -14,7 +14,7 @@ from collections import deque
 from pathlib import Path
 from typing import NamedTuple
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -809,9 +809,20 @@ async def _ensure_cached_mp3(src: Path) -> Path:
     return dest
 
 
-@router.get("/jobs/{job_id}/stems/peaks.json")
-async def get_stem_peaks(job_id: str) -> Response:
-    """Return pre-computed waveform peaks for all stems."""
+def _peaks_response(job_id: str, request: Request) -> Response:
+    """Pre-computed waveform peaks for every stem, revalidated on each use.
+
+    Not cacheable forever, because it is not fixed once a job is done. The
+    on-demand splits add stems to a finished job and rewrite this file through
+    merge_stem_peaks. It used to be served `immutable`, which a browser takes
+    literally, so after a lead/backing split the new stems played under the
+    waveform from before it, and neither a reload nor a hard reload could fix
+    it (#639).
+
+    `no-cache` keeps a copy but asks before using it. The ETag makes asking
+    cheap: an unchanged file is a 304 with no body, which FileResponse does not
+    do by itself.
+    """
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_get(job_id)
@@ -820,11 +831,43 @@ async def get_stem_peaks(job_id: str) -> Response:
     path = (JOBS_DIR / job_id / "stems" / "peaks.json").resolve()
     if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="peaks not found")
-    return FileResponse(
-        path,
-        media_type="application/json",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
+    st = path.stat()
+    # Changes whenever the file is rewritten: the rewrite is a new file moved
+    # into place, so its mtime moves even when the size happens not to.
+    etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+    headers = {"Cache-Control": "no-cache", "ETag": etag}
+    offered = request.headers.get("if-none-match", "")
+    # A list, possibly weak-prefixed, or "*". Weak comparison is the right one
+    # for If-None-Match (RFC 9110 13.1.2).
+    if offered.strip() == "*" or etag in {
+        tag.strip().removeprefix("W/") for tag in offered.split(",")
+    }:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type="application/json", headers=headers)
+
+
+@router.get("/jobs/{job_id}/peaks")
+async def get_peaks(job_id: str, request: Request) -> Response:
+    """Waveform peaks for all stems. The URL the frontend uses.
+
+    A separate URL from stems/peaks.json on purpose, the way /jobs/{id}/beats
+    sits beside stems/beats.json. Browsers that already hold peaks.json under
+    the old `immutable` header will keep serving that copy for up to a year
+    without asking, whatever the server says now. Only a different URL reaches
+    them, and this one is known before the job's state is, so the peaks fetch
+    can still start in parallel with it.
+    """
+    return _peaks_response(job_id, request)
+
+
+@router.get("/jobs/{job_id}/stems/peaks.json")
+async def get_stem_peaks(job_id: str, request: Request) -> Response:
+    """Waveform peaks, at the URL they were first served from.
+
+    Kept for anything that still asks here. It no longer claims to be
+    immutable, since that was never true once splits could rewrite it.
+    """
+    return _peaks_response(job_id, request)
 
 
 @router.get("/jobs/{job_id}/stems/beats.json")

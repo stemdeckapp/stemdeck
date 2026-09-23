@@ -183,7 +183,8 @@ def test_peaks_returns_json_for_done_job(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/peaks.json")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
-    assert "immutable" in r.headers.get("cache-control", "")
+    # It changes after a split, so it must never be promised immutable (#639).
+    assert "immutable" not in r.headers.get("cache-control", "")
     assert r.json() == payload
 
 
@@ -1021,3 +1022,92 @@ def test_prune_still_evicts_older_entries_around_a_kept_render(tmp_path, monkeyp
     remaining = {p.name for p in cache_dir.iterdir()}
     assert "fresh.wav" in remaining
     assert len(remaining) < 5, "nothing was evicted"
+
+
+# --- peaks after an on-demand split (#639) ---
+#
+# The on-demand splits rewrite peaks.json on a finished job. It was served
+# immutable, so a browser kept the old waveform under the new stems and no
+# reload could fix it. It is now revalidated on every use, cheaply, and served
+# from /jobs/{id}/peaks as well, a URL no browser has cached under the old
+# header.
+
+
+def _done_job_with_peaks(tmp_path, job_id: str, payload: dict) -> Job:
+    job = Job(id=job_id)
+    job.status = "done"
+    _jobs[job.id] = job
+    _make_peaks_file(tmp_path, job.id, payload)
+    return job
+
+
+def _rewrite_peaks(tmp_path, job_id: str, payload: dict) -> None:
+    """Replace peaks.json the way the pipeline does: a new file moved into place."""
+    stems_dir = tmp_path / job_id / "stems"
+    tmp = stems_dir / "peaks.json.tmp"
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(stems_dir / "peaks.json")
+    # A filesystem with coarse timestamps could otherwise report the same mtime
+    # for a rewrite in the same tick; the real rewrite follows a model pass.
+    later = (stems_dir / "peaks.json").stat().st_mtime + 5
+    os.utime(stems_dir / "peaks.json", (later, later))
+
+
+@pytest.mark.parametrize("url", ["/api/jobs/{id}/peaks", "/api/jobs/{id}/stems/peaks.json"])
+def test_peaks_are_revalidated_not_cached_forever(client, tmp_path, url):
+    job = _done_job_with_peaks(tmp_path, "abcdefabce01", {"vocals": [[-0.1, 0.1]]})
+
+    r = client.get(url.format(id=job.id))
+
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+    assert r.headers["etag"]
+
+
+def test_an_unchanged_peaks_file_is_a_304(client, tmp_path):
+    job = _done_job_with_peaks(tmp_path, "abcdefabce02", {"vocals": [[-0.1, 0.1]]})
+    etag = client.get(f"/api/jobs/{job.id}/peaks").headers["etag"]
+
+    for offered in (etag, f"W/{etag}", f'"stale", {etag}', "*"):
+        r = client.get(f"/api/jobs/{job.id}/peaks", headers={"If-None-Match": offered})
+        assert r.status_code == 304, offered
+        assert r.content == b""
+        assert r.headers["etag"] == etag
+
+
+def test_a_split_reaches_a_browser_that_had_the_old_peaks(client, tmp_path):
+    before = {"vocals": [[-0.1, 0.1]]}
+    after = {**before, "lead_vocals": [[-0.2, 0.2]], "backing_vocals": [[-0.3, 0.3]]}
+    job = _done_job_with_peaks(tmp_path, "abcdefabce03", before)
+    old = client.get(f"/api/jobs/{job.id}/peaks").headers["etag"]
+
+    _rewrite_peaks(tmp_path, job.id, after)
+    r = client.get(f"/api/jobs/{job.id}/peaks", headers={"If-None-Match": old})
+
+    assert r.status_code == 200
+    assert r.json() == after
+    assert r.headers["etag"] != old
+
+
+def test_a_stale_etag_is_not_answered_with_304(client, tmp_path):
+    job = _done_job_with_peaks(tmp_path, "abcdefabce04", {"vocals": [[-0.1, 0.1]]})
+
+    r = client.get(f"/api/jobs/{job.id}/peaks", headers={"If-None-Match": '"nope"'})
+
+    assert r.status_code == 200
+
+
+def test_the_peaks_route_guards_like_the_old_one(client, tmp_path):
+    missing = Job(id="abcdefabce05")
+    missing.status = "done"
+    _jobs[missing.id] = missing
+    (tmp_path / missing.id / "stems").mkdir(parents=True, exist_ok=True)
+    assert client.get(f"/api/jobs/{missing.id}/peaks").status_code == 404
+
+    running = Job(id="abcdefabce06")
+    running.status = "separating"
+    _jobs[running.id] = running
+    assert client.get(f"/api/jobs/{running.id}/peaks").status_code == 404
+
+    for bad_id in ("../etc", "ABC", "abcdefabcdef0", "abcdefabcde"):
+        assert client.get(f"/api/jobs/{bad_id}/peaks").status_code == 404, bad_id

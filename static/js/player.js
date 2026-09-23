@@ -1176,7 +1176,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     ? (() => {
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 3000);
-        return fetch(`/api/jobs/${jobId}/stems/peaks.json`, { signal: ac.signal })
+        return fetch(`/api/jobs/${jobId}/peaks`, { signal: ac.signal })
           .then((r) => (r.ok ? r.json() : {}))
           .catch(() => ({}))
           .finally(() => clearTimeout(timer));

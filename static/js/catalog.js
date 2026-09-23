@@ -741,7 +741,8 @@ async function loadTrackIntoStudio(trackId) {
   // Start peaks fetch immediately — runs in parallel with job-data fetch so it
   // resolves before wireUpAudio calls Multitrack.create. This prevents peaks.json
   // from competing with stem WAV fetches for Safari's 6-connection-per-origin limit.
-  const peaksPromise = fetch(`/api/jobs/${trackId}/stems/peaks.json`)
+  // /peaks rather than stems/peaks.json: see get_peaks in app/api/stems.py.
+  const peaksPromise = fetch(`/api/jobs/${trackId}/peaks`)
     .then((r) => (r.ok ? r.json() : {}))
     .catch(() => ({}));
 
