@@ -257,7 +257,7 @@ const en = {
   "stem.others": "Others",
 
   "vocalMode.groupAria": "Vocals mode",
-  "vocalMode.all": "All",
+  "vocalMode.all": "Combined",
   "vocalMode.split": "Lead + Backing",
 
   "aria.mute": "Mute {name}",
@@ -874,7 +874,7 @@ const pl = {
   "stem.others": "Inne",
 
   "vocalMode.groupAria": "Tryb wokalu",
-  "vocalMode.all": "Wszystko",
+  "vocalMode.all": "Połączone",
   "vocalMode.split": "Wokal + Chórki",
 
   "aria.mute": "Wycisz: {name}",
@@ -1481,7 +1481,7 @@ const ja = {
   "stem.others": "その他",
 
   "vocalMode.groupAria": "ボーカルモード",
-  "vocalMode.all": "すべて",
+  "vocalMode.all": "結合",
   "vocalMode.split": "リード+コーラス",
 
   "aria.mute": "{name}をミュート",
@@ -2063,7 +2063,7 @@ const zhHans = {
   "stem.others": "其他",
 
   "vocalMode.groupAria": "人声模式",
-  "vocalMode.all": "全部",
+  "vocalMode.all": "合并",
   "vocalMode.split": "主唱+和声",
 
   "aria.mute": "静音{name}",
@@ -2645,7 +2645,7 @@ const de = {
   "stem.others": "Sonstiges",
 
   "vocalMode.groupAria": "Gesangsmodus",
-  "vocalMode.all": "Alle",
+  "vocalMode.all": "Kombiniert",
   "vocalMode.split": "Lead + Backing",
 
   "aria.mute": "{name} stummschalten",
@@ -3238,7 +3238,7 @@ const pt = {
   "stem.others": "Outros",
 
   "vocalMode.groupAria": "Modo de vocais",
-  "vocalMode.all": "Todos",
+  "vocalMode.all": "Combinados",
   "vocalMode.split": "Principal + Apoio",
 
   "aria.mute": "Mudo {name}",
@@ -3833,7 +3833,7 @@ const id = {
   "stem.others": "Lainnya",
 
   "vocalMode.groupAria": "Mode vokal",
-  "vocalMode.all": "Semua",
+  "vocalMode.all": "Gabungan",
   "vocalMode.split": "Utama + Latar",
 
   "aria.mute": "Bisukan {name}",
@@ -4415,7 +4415,7 @@ const fr = {
   "stem.others": "Autres",
 
   "vocalMode.groupAria": "Mode voix",
-  "vocalMode.all": "Tout",
+  "vocalMode.all": "Combinée",
   "vocalMode.split": "Principale + chœurs",
 
   "aria.mute": "Couper {name}",
@@ -5126,7 +5126,7 @@ const es = {
   "stem.others": "Otros",
 
   "vocalMode.groupAria": "Modo de voces",
-  "vocalMode.all": "Todo",
+  "vocalMode.all": "Combinadas",
   "vocalMode.split": "Principal + coros",
 
   "aria.mute": "Mute {name}",
@@ -5742,7 +5742,7 @@ const ko = {
   "stem.others": "기타 소리",
 
   "vocalMode.groupAria": "보컬 모드",
-  "vocalMode.all": "전체",
+  "vocalMode.all": "통합",
   "vocalMode.split": "리드 + 백",
 
   "aria.mute": "{name} 음소거",

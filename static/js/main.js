@@ -44,7 +44,7 @@ import { initFooterFit, refitFooter } from "./footerFit.js";
 // the All button and the toggle below cannot disagree about it. Only the
 // rules above are here.
 
-// ─── Vocals: All / Lead + Backing toggle (on-demand split, #275) ───
+// ─── Vocals: Combined / Lead + Backing toggle (on-demand split, #275) ───
 //
 // Only meaningful while Vocals is actually selected above -- hidden
 // otherwise so it can't imply a choice that has nothing to act on. Its

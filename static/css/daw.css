@@ -310,7 +310,7 @@ input, textarea { font-family: inherit; }
   color: var(--accent);
 }
 
-/* Vocals: All / Lead + Backing (on-demand split, #275) */
+/* Vocals: Combined / Lead + Backing (on-demand split, #275) */
 .vocal-mode-toggle {
   display: inline-flex;
   height: 30px;

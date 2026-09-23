@@ -24,7 +24,7 @@ let jobPollTimerId = null;
 const renderedJobs = new Set();
 const jobSources = new Map();
 // On-demand lead/backing vocal split (#275): which jobs asked for it at
-// submit time (via the Extract bar's Vocals "All / Lead + Backing" toggle).
+// submit time (via the Extract bar's Vocals "Combined / Lead + Backing" toggle).
 // Exported so catalog.js's completeSettledJob (the background-job path --
 // there is no per-job SSE stream for those) can trigger it too, via
 // runVocalSplitIfWanted below. Only covers the primary single-file/single-URL

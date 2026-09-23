@@ -617,7 +617,7 @@ function extractScreen() {
       <div class="vocal-mode-row">
         <span class="vocal-mode-label">Vocals</span>
         <div class="segmented sm">
-          <button class="${state.vocalSplitMode !== "split" ? "on" : ""}" data-action="vocalmode" data-mode="all">All</button>
+          <button class="${state.vocalSplitMode !== "split" ? "on" : ""}" data-action="vocalmode" data-mode="all">Combined</button>
           <button class="${state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
         </div>
       </div>` : ""}
