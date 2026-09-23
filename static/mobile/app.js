@@ -100,6 +100,16 @@ const state = {
   vocalSplitMode: "all",
 };
 
+/**
+ * Is anything going to come out of a split.
+ *
+ * The server reads an empty stems list as every stem (app/api/jobs.py), so
+ * submitting from an empty Extract screen would extract the six stems the
+ * screen is showing as off. The button is closed rather than the selection
+ * being rewritten underneath.
+ */
+const anyStemSelected = () => Object.values(state.selected).some(Boolean);
+
 let extractES = null; // EventSource for the active extraction
 let extractPoll = null; // REST poll fallback timer
 
@@ -613,15 +623,14 @@ function extractScreen() {
         const onStyle = on ? `border-color:${s.color};background:${s.color}1c;` : "";
         return `<button class="chip-btn ${on ? "on" : ""}" style="${onStyle}" data-action="chip" data-id="${s.id}"><div class="dot" style="background:${s.color}"></div><span class="nm">${s.name}</span>${on ? ICON.check : ""}</button>`;
       }).join("")}</div>
-      ${state.selected.vocals ? `
       <div class="vocal-mode-row">
         <span class="vocal-mode-label">Vocals</span>
         <div class="segmented sm">
-          <button class="${state.vocalSplitMode !== "split" ? "on" : ""}" data-action="vocalmode" data-mode="all">Combined</button>
-          <button class="${state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
+          <button class="${state.selected.vocals && state.vocalSplitMode !== "split" ? "on" : ""}" data-action="vocalmode" data-mode="all">Combined</button>
+          <button class="${state.selected.vocals && state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
         </div>
-      </div>` : ""}
-      <button class="cta" style="margin-top:22px" data-action="split">${ICON.scissors}Split stems</button>
+      </div>
+      <button class="cta" style="margin-top:22px" data-action="split"${anyStemSelected() ? "" : " disabled"}>${ICON.scissors}Split stems</button>
       ${extractProgressCard()}
     </div>
   </div>`;
@@ -990,9 +999,21 @@ app.addEventListener("click", (e) => {
       break;
     case "chip":
       state.selected[t.dataset.id] = !state.selected[t.dataset.id];
+      // Vocals switched on from its own chip has not been told which of the
+      // two ways it should come out, so it takes Combined, as on the desktop.
+      if (t.dataset.id === "vocals" && state.selected.vocals) state.vocalSplitMode = "all";
       break;
     case "vocalmode":
-      state.vocalSplitMode = t.dataset.mode;
+      // The pair is the vocals control, not a setting that waits for the chip.
+      // Pressing the mode already in force switches vocals off; pressing the
+      // other switches mode and leaves them on; either one from cold switches
+      // them on in that mode.
+      if (state.selected.vocals && state.vocalSplitMode === t.dataset.mode) {
+        state.selected.vocals = false;
+      } else {
+        state.vocalSplitMode = t.dataset.mode;
+        state.selected.vocals = true;
+      }
       break;
     case "qual":
       state.quality = t.dataset.q;
