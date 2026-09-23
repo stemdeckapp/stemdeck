@@ -7,7 +7,7 @@
 // though it covered them. The first test is the one that would have caught it.
 
 import { test, expect } from "@playwright/test";
-import { openStudio, waitForClickTrack, openClickOptions } from "./helpers.mjs";
+import { openStudio, waitForClickTrack } from "./helpers.mjs";
 
 const metro = (page) => ({
   toggle: page.locator("#t-metro"),
@@ -81,8 +81,6 @@ test.describe("click track", () => {
     // moved to the wrapper with it.
     await metro(page).countIn.selectOption("3");
     await expect(metro(page).countIn).toHaveValue("3");
-    // Armed means it will play, and it only plays into the click (#655).
-    await metro(page).toggle.click();
     await expect(page.locator("#t-metro-countin").locator("xpath=..")).toHaveClass(/active/);
 
     await openStudio(page, { tauri: true });
@@ -197,30 +195,21 @@ test.describe("click track", () => {
     await expect(ui.note).toContainText("accenting 4/4 from the detected downbeat");
   });
 
-  // #655: with the click off, nothing in its panel may look live. The count-in
-  // and the grid editor were both still lit after the click was switched off,
-  // which read as though they would do something they would not.
-  test("the count-in stops looking armed while the click is off", async ({ page }) => {
+  // #655: the grid editor was still open and lit after the click was switched
+  // off. It is a click tool, so it follows the click. The count-in does not:
+  // it plays with the click off, so it stays armed (count-in-replay.spec.mjs).
+  test("the count-in stays armed when the click is switched off", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page);
     const ui = metro(page);
     const wrap = page.locator("#t-metro-countin").locator("xpath=..");
 
-    // The toggle sits outside the options popover, so pressing it closes the
-    // popover when the options are folded; open it again before reaching in.
-    await ui.toggle.click();
-    await openClickOptions(page);
     await ui.countIn.selectOption("2");
-    await expect(wrap).toHaveClass(/active/);
-
     await ui.toggle.click();
-    await expect(wrap).not.toHaveClass(/active/);
-    // Only the tint follows the click. The length is a setting and stays, so
-    // switching the click back on brings the count-in back as it was.
+    await ui.toggle.click();
+    await expect(ui.toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(wrap).toHaveClass(/active/);
     await expect(ui.countIn).toHaveValue("2");
-
-    await ui.toggle.click();
-    await expect(wrap).toHaveClass(/active/);
   });
 
   test("switching the click off closes the grid editor", async ({ page }) => {
