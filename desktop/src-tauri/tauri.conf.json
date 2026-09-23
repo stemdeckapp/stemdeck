@@ -12,6 +12,8 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "StemDeck",
         "width": 1280,
         "height": 820,

@@ -1,5 +1,6 @@
 mod certs;
 mod dragout;
+mod dropin;
 
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
@@ -358,12 +359,30 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
+            // The main window is built here rather than by Tauri from
+            // tauri.conf.json, because one of its settings has to differ by
+            // platform and the config file has no way to say so. The config
+            // entry is still the only description of the window (it is marked
+            // "create": false); this takes it as it is and changes that one
+            // field. A per-platform config file would have meant a second copy
+            // of the whole window to keep in step, since its merge replaces
+            // arrays rather than patching them.
+            let mut main_window = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .ok_or("tauri.conf.json describes no main window")?;
+            main_window.drag_drop_enabled = dropin::NATIVE_FILE_DROP;
+            let window =
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?.build()?;
+
             // Before anything else: a minimum the screen cannot satisfy leaves
             // a window the user cannot resize down to fit, and that is not
             // recoverable from inside the app.
-            if let Some(window) = app.get_webview_window("main") {
-                fit_min_size_to_screen(&window);
-            }
+            fit_min_size_to_screen(&window);
 
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
@@ -442,6 +461,22 @@ fn main() {
             Ok(())
         })
         .manage(BackendState::default())
+        .manage(dropin::DropInbox::default())
+        // Only ever fires where the native drop handler is on, which is Linux
+        // (see dropin::NATIVE_FILE_DROP). Elsewhere the page handles drops.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drop) = event {
+                let inbox = window.state::<dropin::DropInbox>();
+                match drop {
+                    tauri::DragDropEvent::Enter { .. } => inbox.enter(),
+                    tauri::DragDropEvent::Drop { paths, .. } => {
+                        inbox.drop_paths(paths);
+                    }
+                    tauri::DragDropEvent::Leave => inbox.leave(),
+                    _ => {}
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             probe_runtime,
             ensure_workspace,
@@ -460,6 +495,9 @@ fn main() {
             local_ip,
             build_target,
             open_url,
+            native_file_drop,
+            next_drop_signal,
+            read_dropped_file,
             save_audio_file,
             pick_export_destination,
             download_to_path,
@@ -3032,6 +3070,47 @@ fn verify_cuda_torch(python: &Path) -> bool {
             false
         }
     }
+}
+
+/// Whether OS file drops arrive here rather than in the page. See `dropin`.
+#[tauri::command]
+fn native_file_drop() -> bool {
+    dropin::NATIVE_FILE_DROP
+}
+
+/// The first drag signal after `after`, waiting for one if there is none yet.
+/// `after` is the `seq` of the previous answer, or absent for "from now".
+#[tauri::command]
+async fn next_drop_signal(
+    app: tauri::AppHandle,
+    after: Option<u64>,
+) -> Result<dropin::NextSignal, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<dropin::DropInbox>()
+            .next_signal(after, dropin::WAIT)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// The bytes of one file from the latest drop, by the id the drop reported.
+///
+/// Takes an id, never a path: see "Paths stay on this side" in `dropin`. Each
+/// id can be read once, and only the latest drop's ids are readable at all.
+/// The bytes go back raw rather than as JSON, so a 400 MB file is not also
+/// turned into a 1.4 GB array of numbers on the way.
+#[tauri::command]
+async fn read_dropped_file(app: tauri::AppHandle, id: u64) -> Result<tauri::ipc::Response, String> {
+    let path = app
+        .state::<dropin::DropInbox>()
+        .take(id)
+        .ok_or("that file is no longer available")?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        dropin::read_dropped(&path, dropin::MAX_DROPPED_FILE_BYTES)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Opens an http/https URL in the system browser. Rejects non-http schemes.

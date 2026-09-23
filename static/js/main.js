@@ -798,9 +798,18 @@ function wireFileDrop() {
   const AUDIO_EXTS = [".mp3", ".wav", ".flac", ".mp4", ".m4a", ".ogg", ".opus"];
   const isAudioFile = (file) => AUDIO_EXTS.some((ext) => file.name.toLowerCase().endsWith(ext));
 
-  function applyFiles(fileList) {
-    const all = [...(fileList || [])];
-    if (!all.length) return;
+  /**
+   * Which of a set of picked or dropped files can be staged, and why the rest
+   * cannot.
+   *
+   * Works on anything with a name and a size rather than on File objects, so a
+   * native drop can be screened before any of its bytes are read: a file that
+   * is going to be refused should not be loaded into memory to find that out.
+   * Returns null, having said why, when nothing can be staged.
+   */
+  function screenFiles(list) {
+    const all = [...(list || [])];
+    if (!all.length) return null;
 
     // Filter here rather than letting the server reject each one: dropping a
     // folder, or a folder of mixed content, would otherwise mean one 422 per
@@ -808,16 +817,24 @@ function wireFileDrop() {
     const audio = all.filter(isAudioFile);
     if (!audio.length) {
       showDropError(t("upload.unsupportedFormat"));
-      return;
+      return null;
     }
     const files = audio.filter((f) => f.size <= MAX_UPLOAD_BYTES);
     const oversized = audio.length - files.length;
     if (!files.length) {
       showDropError(t("upload.fileTooLarge", { size: formatBytes(audio[0].size), max: formatBytes(MAX_UPLOAD_BYTES) }));
-      return;
+      return null;
     }
+    return { files, skipped: all.length - files.length, oversized };
+  }
 
-    const skipped = all.length - files.length;
+  function applyFiles(fileList) {
+    const screened = screenFiles(fileList);
+    if (screened) stageFiles(screened);
+  }
+
+  /** Arms the import with files that have already passed screenFiles. */
+  function stageFiles({ files, skipped, oversized }) {
     if (fileName) {
       fileName.textContent =
         files.length === 1 ? files[0].name : `${files.length} files`;
@@ -895,6 +912,10 @@ function wireFileDrop() {
   //
   // dragover must preventDefault too: without it the browser refuses the drop
   // and no drop event is ever delivered to cancel.
+  //
+  // This is the whole story on Windows, macOS and in a browser, where the drag
+  // carries "Files". It is not on Linux, where it never does: see
+  // watchNativeDrops below.
   document.addEventListener("dragover", (e) => {
     if (!draggingFiles(e)) return;
     e.preventDefault();
@@ -910,6 +931,85 @@ function wireFileDrop() {
   fileInput.addEventListener("change", () => {
     applyFiles(fileInput.files);
   });
+
+  watchNativeDrops();
+
+  // ── Files dropped where the WebView cannot see them (#672) ──
+  //
+  // On Linux the WebView never hands the page a dropped file. WebKitGTK
+  // reports a drag from the file manager as text/uri-list, never as "Files",
+  // so the guard above does not recognise it, and at drop time there is no
+  // File to take even if it did. Left alone, WebKit navigates the window to
+  // the file, or types its file:// URI into the URL box.
+  //
+  // So on that platform the shell takes the drop instead (dropin.rs) and this
+  // asks it what arrived. The drop reaches applyFiles's own screening and
+  // staging, so a file dropped here is refused, sized, named and armed exactly
+  // as one from the picker is. Elsewhere the HTML5 path above already works
+  // and the shell says so, and this returns at once.
+  async function watchNativeDrops() {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) return;
+    try {
+      if (!(await invoke("native_file_drop"))) return;
+    } catch (e) {
+      console.warn("[drop] could not ask the shell about native drops:", e);
+      return;
+    }
+
+    // The shell answers each call with the next signal after `after`, or with
+    // nothing once it has waited a while. `after` starts empty, meaning "from
+    // now", and is then whatever the last answer's seq was.
+    let after = null;
+    let failures = 0;
+    for (;;) {
+      let next;
+      try {
+        next = await invoke("next_drop_signal", { after });
+        failures = 0;
+      } catch (e) {
+        // A command that keeps failing must not become a tight loop. It never
+        // should fail, so this is a pause rather than a strategy.
+        failures += 1;
+        console.warn("[drop] waiting for a drop failed:", e);
+        await new Promise((r) => setTimeout(r, Math.min(30_000, 1000 * failures)));
+        continue;
+      }
+      after = next.seq;
+      const signal = next.signal;
+      if (!signal) continue;
+      if (signal.kind === "enter") {
+        urlWrap.classList.add("drag-over");
+      } else if (signal.kind === "leave") {
+        urlWrap.classList.remove("drag-over");
+      } else if (signal.kind === "drop") {
+        urlWrap.classList.remove("drag-over");
+        await applyNativeDrop(invoke, signal.files);
+      }
+    }
+  }
+
+  // `dropped` is [{ id, name, size }]: descriptions, not files. They are
+  // screened as they are, and only what is accepted is read.
+  async function applyNativeDrop(invoke, dropped) {
+    const screened = screenFiles(dropped);
+    if (!screened) return;
+    const files = [];
+    // One at a time, so a single transfer of up to MAX_UPLOAD_BYTES is in
+    // flight rather than one per file. Every accepted file is still held until
+    // staging, as a picked one is: parallel reads would only raise the peak.
+    for (const d of screened.files) {
+      try {
+        const bytes = await invoke("read_dropped_file", { id: d.id });
+        files.push(new File([bytes], d.name));
+      } catch (e) {
+        console.warn("[drop] could not read a dropped file:", e);
+        showDropError(t("upload.dropReadFailed", { name: d.name }));
+        return;
+      }
+    }
+    stageFiles({ ...screened, files });
+  }
 }
 
 // ─── App shell controls ───
