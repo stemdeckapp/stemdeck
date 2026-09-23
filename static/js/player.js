@@ -53,6 +53,7 @@ import {
 import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
 import { t, plural, onLanguageChange } from "./i18n.js";
+import { paintNowPlayingArt } from "./formatIcon.js";
 
 // Playback-engine selection. All engines play decoded AudioBuffers off a single
 // AudioContext clock (no N streaming <audio> elements — that was the source of
@@ -865,8 +866,8 @@ export function destroyPlayer() {
   applyStemSelectionFilter(new Set(STEM_NAMES));
   npThumb.classList.remove("loaded");
   npThumb.removeAttribute("src");
-  // Otherwise the empty studio keeps the last track's extension in the square.
-  document.querySelector("#np-art .np-art-placeholder")?.setAttribute("data-ext", "");
+  // Otherwise the empty studio keeps the last track's format in the square.
+  paintNowPlayingArt("");
 
   rulerTime.innerHTML = '<div class="playhead-marker" aria-hidden="true"><svg viewBox="0 0 10 10" width="10" height="10"><polygon points="0,0 10,0 5,8" fill="#e54e4e"></polygon></svg></div>';
   wavesGrid.innerHTML = "";

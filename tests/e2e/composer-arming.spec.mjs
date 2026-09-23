@@ -24,7 +24,7 @@ test.describe("composer arming", () => {
   test("an uploaded track puts no filename in the box, and aims the button at itself", async ({
     page,
   }) => {
-    // seed.py's fixture is sourceUrl "local:e2e-fixture.wav", which is exactly
+    // seed.py's fixture is sourceUrl "local:e2e-fixture", which is exactly
     // the case that broke.
     await openStudio(page);
 
@@ -97,7 +97,7 @@ test.describe("composer arming", () => {
         // not the one this job was made from.
         body: JSON.stringify({
           job_id: "cafebabe0003",
-          source_url: "local:E2E Fixture Track (cafeba).wav",
+          source_url: "local:E2E Fixture Track (cafeba)",
         }),
       }),
     );

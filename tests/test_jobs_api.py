@@ -846,7 +846,7 @@ def resplit_client(tmp_path, monkeypatch):
 def _finished_upload(tmp_path, job_id="aaaaaaaaaaaa", *, source="source.mp3"):
     """A done upload with its source still beside it, as the runner now leaves it."""
     job = Job(id=job_id, status="done", title="Demo", duration_sec=60.0)
-    job.source_url = "local:Demo.mp3"
+    job.source_url = "local:Demo"
     _jobs[job.id] = job
     job_dir = tmp_path / job.id
     (job_dir / "stems").mkdir(parents=True)
@@ -869,7 +869,7 @@ def test_resplit_starts_a_new_job_from_the_retained_source(resplit_client, tmp_p
     # and leave that job on disk with nothing referencing it.
     assert _jobs[new_id].source_url != job.source_url
     assert _jobs[new_id].source_url.startswith("local:")
-    assert _jobs[new_id].source_url.endswith(".mp3"), "deriveQuality reads the suffix"
+    assert _jobs[new_id].source_format == "mp3", "the format comes from the kept source"
     assert (tmp_path / new_id / "source.mp3").is_file()
     # The original is untouched: its stems, sections and beat grid survive.
     assert (tmp_path / job.id / "source.mp3").is_file()
@@ -879,16 +879,14 @@ def test_resplit_starts_a_new_job_from_the_retained_source(resplit_client, tmp_p
 @pytest.mark.parametrize(
     ("source_url", "expected"),
     [
-        ("local:My Song.mp3", "local:My Song (abc123).mp3"),
-        ("local:no extension", "local:no extension (abc123)"),
-        ("local:dotted.name.wav", "local:dotted.name (abc123).wav"),
+        ("local:My Song", "local:My Song (abc123)"),
+        ("local:Mr. Brightside", "local:Mr. Brightside (abc123)"),
         (None, "local:track (abc123)"),
     ],
 )
 def test_resplit_source_names_the_same_file_without_colliding(source_url, expected):
-    """The marker goes before the extension: deriveQuality reads the suffix to
-    tell a lossless WAV from a compressed MP3, so appending after it would
-    relabel the track."""
+    """The marker goes on the end. An upload's title has no extension, so a
+    dot in it belongs to the title and must survive (#690)."""
     import app.api.jobs as jobs_mod
 
     assert jobs_mod._resplit_source_url(source_url, "abc123def456") == expected
@@ -960,3 +958,44 @@ def test_resplit_never_lets_a_crafted_id_reach_the_filesystem(resplit_client, jo
     r = resplit_client.post(f"/api/jobs/{job_id}/resplit", json={"stems": []})
     assert r.status_code in (404, 405, 422), r.status_code
     assert r.status_code != 500
+
+
+# ── source_format (#690) ─────────────────────────────────────────────────────
+# An upload's source_url is "local:<title>", and the title has its extension
+# removed, so nothing can read the format out of it. The server records it.
+
+
+def test_upload_records_its_format_apart_from_the_title(upload_client):
+    data = io.BytesIO(b"fLaC" + b"\x00" * 128)
+    r = upload_client.post(
+        "/api/jobs",
+        files={"file": ("Mr. Brightside.FLAC", data, "audio/flac")},
+    )
+    assert r.status_code == 200
+    state = upload_client.get(f"/api/jobs/{r.json()['job_id']}").json()
+    assert state["source_url"] == "local:Mr. Brightside"
+    assert state["source_format"] == "flac"
+
+
+def test_an_older_upload_learns_its_format_from_the_kept_source(resplit_client, tmp_path):
+    job = _finished_upload(tmp_path)
+    assert job.source_format is None, "recorded before the field existed"
+
+    state = resplit_client.get(f"/api/jobs/{job.id}").json()
+
+    assert state["source_format"] == "mp3"
+    assert job.source_format == "mp3", "kept on the job, so it is persisted"
+
+
+def test_an_older_upload_with_nothing_kept_has_no_format(resplit_client, tmp_path):
+    job = _finished_upload(tmp_path, source=None)
+
+    assert resplit_client.get(f"/api/jobs/{job.id}").json()["source_format"] is None
+
+
+def test_a_link_has_no_format_even_with_a_source_on_disk(resplit_client, tmp_path):
+    """A link's source is its download, not a file anyone chose a format for."""
+    job = _finished_upload(tmp_path)
+    job.source_url = "https://youtu.be/dQw4w9WgXcQ"
+
+    assert resplit_client.get(f"/api/jobs/{job.id}").json()["source_format"] is None

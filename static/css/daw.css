@@ -4682,27 +4682,34 @@ input, textarea { font-family: inherit; }
   display: block;
 }
 
-/* 9. A file extension where a track has no artwork.
+/* 9. An upload's format where it has no artwork (#690).
 
-   Paired with extLabel() in catalog.js, which decides when there is one to
-   show. Sized in ch so WAV and FLAC both sit inside the same square without
-   the label being measured for the longest case. */
-.thumb-ext {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  font-family: var(--font-mono, inherit);
+   Drawn by formatIcon.js: a file on the note icon's grid, with the format on
+   a band. One colour per format, so a library of uploads can be read at a
+   glance. Chosen clear of the stem colours, so a band never reads as a stem. */
+.format-icon-page {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
-.np-art-placeholder[data-ext]:not([data-ext=""]) svg { display: none; }
-.np-art-placeholder[data-ext]:not([data-ext=""])::after {
-  content: attr(data-ext);
-  font-size: 12px;
+.format-icon-band { fill: var(--format-colour, currentColor); }
+.format-icon-label {
+  fill: var(--panel);
+  font-family: inherit;
+  font-size: 5.6px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  font-family: var(--font-mono, inherit);
+  letter-spacing: 0.2px;
 }
+.format-icon[data-format="wav"]  { --format-colour: var(--accent); }
+.format-icon[data-format="flac"] { --format-colour: #f28c6b; }
+.format-icon[data-format="mp3"]  { --format-colour: #5b9cf5; }
+.format-icon[data-format="m4a"]  { --format-colour: #2ec4b6; }
+.format-icon[data-format="ogg"]  { --format-colour: #a78bfa; }
+.format-icon[data-format="opus"] { --format-colour: #67d4ef; }
+.format-icon[data-format="mp4"]  { --format-colour: #f472b6; }
+/* The square beside the title: the size the note there is drawn at. */
+.np-art-placeholder .format-icon { width: 24px; height: 24px; }
 
 /* 10. The empty state's lanes, lined up with the mixer beside them.
 

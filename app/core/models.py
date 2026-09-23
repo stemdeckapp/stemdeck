@@ -65,6 +65,13 @@ class Job:
     selected_stems: list[str] = field(default_factory=list)
     mix_url: str | None = None  # populated when a strict subset was selected
     source_url: str | None = None  # original URL or "local:<filename>" for file uploads
+    # An upload's file format ("wav", "mp3", ...), recorded from the extension
+    # the upload was validated against. source_url cannot carry it: its title
+    # has the extension removed, so "Hollow Veins.wav" is "local:Hollow Veins"
+    # and anything that read the format out of it found nothing (#690). None
+    # for a link, and for an upload older than this field until its state is
+    # first served (see _job_state).
+    source_format: str | None = None
     # True when a silent video track (video.mp4) was preserved from an .mp4
     # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
@@ -154,6 +161,7 @@ class Job:
             "selected_stems": self.selected_stems,
             "mix_url": self.mix_url,
             "source_url": self.source_url,
+            "source_format": self.source_format,
             "has_video": self.has_video,
             "video_status": self.video_status,
             "error": self.error,

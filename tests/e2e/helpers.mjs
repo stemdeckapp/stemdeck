@@ -20,7 +20,7 @@ export const TRACK_TITLE = "E2E Fixture Track";
 // catalog's dedup-by-source branch reachable (#542).
 export const SIBLING_JOB_ID = "e2e0cafebabe";
 export const SIBLING_TITLE = "E2E Fixture Track (again)";
-export const SOURCE_URL = "local:e2e-fixture.wav";
+export const SOURCE_URL = "local:e2e-fixture";
 
 const STORAGE_KEY = "stemdeck.folders";
 const STORAGE_VERSION = 2;

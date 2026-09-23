@@ -30,7 +30,7 @@ for (const url of [
 // Uploaded files. Not reachable a second time, whatever the name looks like.
 for (const source of [
   "local:my song.mp3",
-  "local:e2e-fixture.wav",
+  "local:e2e-fixture",
   // A filename that happens to read like a URL is still a filename.
   "local:https___youtube.com.mp3",
 ]) {

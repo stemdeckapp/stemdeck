@@ -155,6 +155,16 @@ def _job_state(job: Job) -> dict:
     old approach of the frontend guessing from a 404 or a disappearance from
     the job list, neither of which caught a job whose registry entry survived
     but whose stems folder did not."""
+    if job.source_format is None and (job.source_url or "").startswith("local:"):
+        # Uploads made before the format was recorded still have it on disk:
+        # the kept source is source.<ext>, the extension it was validated
+        # against. Kept on the job once found, so the disk is asked once per
+        # job rather than on every state, and persisted with it next time.
+        # Uploads finished before sources were kept have nothing to find and
+        # stay None, which the client shows as the plain note.
+        source = _retained_source(job.id)
+        if source is not None:
+            job.source_format = source.suffix.lower().removeprefix(".")
     state = job.to_state()
     if job.status == "done" and _job_files_missing(job):
         state["status"] = "unavailable"
@@ -307,6 +317,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         title=title,
         duration_sec=duration,
         source_url=local_source_url,
+        source_format=ext.removeprefix("."),
         auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
@@ -462,13 +473,12 @@ def _resplit_source_url(source_url: str | None, new_id: str) -> str:
     collapsed again on every launch, so the pair has to differ on disk, not
     just in this session.
 
-    The marker goes before the extension, never after: deriveQuality reads the
-    suffix to tell a lossless WAV from a compressed MP3.
+    The marker goes on the end. It once went before the last dot, to keep an
+    extension that the client read the format from, but an upload's title has
+    no extension (#690): the dot it found was in the title, so "Mr. Brightside"
+    became "Mr (abc123). Brightside". The format is source_format now.
     """
-    base = source_url or "local:track"
-    head, dot, ext = base.rpartition(".")
-    marker = new_id[:6]
-    return f"{head} ({marker}){dot}{ext}" if dot else f"{base} ({marker})"
+    return f"{source_url or 'local:track'} ({new_id[:6]})"
 
 
 def _link_or_copy(src: Path, dest: Path) -> None:
@@ -533,6 +543,7 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         # re-split in turn -- but distinct, so the library shows it beside the
         # track it came from instead of replacing it.
         source_url=_resplit_source_url(job.source_url, new_id),
+        source_format=source.suffix.lower().removeprefix("."),
         auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):

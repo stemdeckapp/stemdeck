@@ -52,7 +52,11 @@ SIBLING_JOB_ID = "e2e0cafebabe"
 SIBLING_TITLE = "E2E Fixture Track (again)"
 SIBLING_DURATION_SEC = 2
 
-SOURCE_URL = "local:e2e-fixture.wav"
+# The shape a real upload has: "local:" and the title, which the server has
+# already stripped of its extension. This once read "local:e2e-fixture.wav",
+# which no upload ever produces, and the format icon passed against it while
+# never appearing for a real file (#690).
+SOURCE_URL = "local:e2e-fixture"
 STEMS = ["vocals", "drums", "bass", "other"]
 SAMPLE_RATE = 44100
 CHANNELS = 2
@@ -92,6 +96,10 @@ def _build_job(jobs_dir: Path, job_id: str, title: str, seconds: int) -> dict:
     """Write one finished job's files and return its registry record."""
     stems_dir = jobs_dir / job_id / "stems"
     stems_dir.mkdir(parents=True, exist_ok=True)
+    # The upload the runner keeps beside a finished job. Its extension is where
+    # the server finds the format of a job recorded before source_format
+    # existed, which the registry below deliberately is.
+    (jobs_dir / job_id / "source.wav").write_bytes(_wav_bytes(220.0, 1))
 
     for index, name in enumerate(STEMS):
         (stems_dir / f"{name}.wav").write_bytes(_wav_bytes(220.0 * (index + 1), seconds))

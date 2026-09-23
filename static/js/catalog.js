@@ -4,6 +4,7 @@ import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
+import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
   cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -490,6 +491,7 @@ function stateMetadataToTrack(state, fallbackTrack) {
     sections: state.sections ?? fallbackTrack.sections ?? null,
     sectionsSource: state.sections_source ?? fallbackTrack.sectionsSource ?? null,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
+    sourceFormat: state.source_format ?? fallbackTrack.sourceFormat ?? null,
     mixUrl: state.mix_url ?? fallbackTrack.mixUrl ?? null,
     hasVideo: state.has_video ?? fallbackTrack.hasVideo ?? false,
     videoStatus: state.video_status ?? fallbackTrack.videoStatus ?? null,
@@ -517,12 +519,17 @@ function deriveSource(sourceUrl) {
   return i18nT("track.web");
 }
 
-function deriveQuality(sourceUrl) {
+function deriveQuality(track) {
+  const sourceUrl = track?.sourceUrl;
   if (!sourceUrl) return "—";
   if (sourceUrl.startsWith("local:")) {
-    const ext = sourceUrl.split(".").pop()?.toLowerCase();
-    if (ext === "wav") return i18nT("track.losslessWav");
-    if (ext === "mp3") return i18nT("track.compressedMp3");
+    // From the format the server reports, not from sourceUrl: that is
+    // "local:<title>" with the extension removed, so "Lossless (WAV)" never
+    // appeared for a real upload, and a title with a dot in it was misread
+    // (#690).
+    const format = track.sourceFormat;
+    if (format === "wav") return i18nT("track.losslessWav");
+    if (format === "mp3") return i18nT("track.compressedMp3");
     return i18nT("track.localFile");
   }
   if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return i18nT("track.qualityHigh");
@@ -605,9 +612,9 @@ function applyTrackInfoToPanel(track) {
   if (metaDuration) metaDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
   if (trackExtracted) trackExtracted.textContent = fmtExtracted(track.createdAt);
   if (trackSource) trackSource.textContent = deriveSource(track.sourceUrl);
-  if (trackQuality) trackQuality.textContent = deriveQuality(track.sourceUrl);
-  // The now-playing square shows the same extension the library row does.
-  document.querySelector("#np-art .np-art-placeholder")?.setAttribute("data-ext", extLabel(track));
+  if (trackQuality) trackQuality.textContent = deriveQuality(track);
+  // The now-playing square shows the same format icon the library row does.
+  paintNowPlayingArt(trackFormat(track));
   if (favBtn) {
     favBtn.classList.toggle("active", Boolean(track.favorite));
     favBtn.setAttribute("aria-pressed", String(Boolean(track.favorite)));
@@ -1365,34 +1372,10 @@ export function displayTitle(title) {
   }
 }
 
-/**
- * The file extension to show in place of artwork, or "" for none.
- *
- * Only an uploaded file has one worth showing. A URL import either brings its
- * own thumbnail or has no filename at all, and "local:<name>" is where the
- * name survives (deriveQuality reads the same field). Validated rather than
- * trusted: it is interpolated into markup, and a name with no dot, a trailing
- * dot or something that is not an extension falls back to the note icon.
- *
- * Styled by .thumb-ext and .np-art-placeholder[data-ext] in daw.css. Those
- * rules shipped in #665 without this function, so every file-only track still
- * showed the generic note (#678).
- */
-export function extLabel(track) {
-  if (!track || track.thumb) return "";
-  const src = track.sourceUrl || "";
-  if (!src.startsWith("local:")) return "";
-  const name = src.slice("local:".length);
-  const dot = name.lastIndexOf(".");
-  if (dot < 1) return "";
-  const ext = name.slice(dot + 1);
-  return /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toUpperCase() : "";
-}
-
 function thumbHtml(track) {
   if (track.thumb) return `<img src="${esc(track.thumb)}" alt="" loading="lazy" />`;
-  const ext = extLabel(track);
-  if (ext) return `<span class="thumb-ext">${ext}</span>`;
+  const format = trackFormat(track);
+  if (format) return formatIconSvg(format);
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
 }
 
@@ -3094,13 +3077,28 @@ async function syncWithServer() {
     const trashIds = new Set(getTrashFolder()?.items || []);
     const deletedIds = getDeletedJobIds();
     reconcileTrashWithServer(jobs, trashIds);
+    let backfilled = false;
     for (const state of jobs) {
-      if (tracks[state.job_id]) continue;
+      const known = tracks[state.job_id];
+      if (known) {
+        // Tracks saved before the server reported a format (#690) only learn
+        // it when they are opened. Taking it from here instead means the
+        // whole library shows its icons at startup.
+        if (!known.sourceFormat && state.source_format) {
+          known.sourceFormat = state.source_format;
+          backfilled = true;
+        }
+        continue;
+      }
       if (trashIds.has(state.job_id)) continue;   // soft-deleted, skip
       if (deletedIds.has(state.job_id)) continue; // hard-deleted, skip
       const track = stateMetadataToTrack(state, { id: state.job_id, status: state.status });
       track.id = state.job_id;
       addTrackToLibrary(track);
+    }
+    if (backfilled) {
+      saveState();
+      render();
     }
     reconcileAvailability(jobs);
   } catch (e) { console.warn("[catalog] failed to load jobs from backend:", e); }
