@@ -3171,7 +3171,7 @@ input, textarea { font-family: inherit; }
   display: block;
   visibility: hidden;
 }
-.metro-note:empty::before { content: " a0"; }
+.metro-note:empty::before { content: "\00a0"; }
 .metro-note.warn { color: var(--danger); }
 
 /* Export chip button */
