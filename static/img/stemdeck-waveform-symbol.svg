@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">StemDeck Waveform Symbol</title>
+  <desc id="desc">Golden segmented waveform symbol for StemDeck.</desc>
+  <defs>
+    <linearGradient id="gold" x1="110" y1="112" x2="402" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE38A"/>
+      <stop offset="0.48" stop-color="#F2B53D"/>
+      <stop offset="1" stop-color="#C98512"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#gold)">
+    <rect x="110" y="248" width="18" height="16" rx="8"/>
+    <rect x="144" y="204" width="24" height="104" rx="12"/>
+    <rect x="184" y="154" width="26" height="204" rx="13"/>
+    <rect x="225" y="214" width="22" height="84" rx="11"/>
+    <rect x="267" y="104" width="28" height="304" rx="14"/>
+    <rect x="314" y="188" width="24" height="136" rx="12"/>
+    <rect x="354" y="152" width="26" height="208" rx="13"/>
+    <rect x="395" y="216" width="24" height="80" rx="12"/>
+    <rect x="434" y="248" width="18" height="16" rx="8"/>
+  </g>
+</svg>

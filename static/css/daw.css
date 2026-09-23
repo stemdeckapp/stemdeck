@@ -11,6 +11,10 @@ input, textarea { font-family: inherit; }
 
 /* ── Root ── */
 .daw {
+  /* The rail's width, as a variable: the topbar's logo cell is sized from the
+     same number, so the divider under the logo is the one the rail already
+     draws, and the bar proper starts where the library does. */
+  --rail-w: 66px;
   width: 100vw;
   height: 100vh;
   background: var(--bg);
@@ -58,36 +62,54 @@ input, textarea { font-family: inherit; }
      inside a 77px bar, because align-items: center hid the gap; give the
      composer a second row and the box fills the bar edge to edge and touches
      the top of the window. */
-  padding: 10px 16px;
+  /* No left padding and no vertical padding of its own any more: the brand
+     cell owns the left edge and runs the full height of the bar, so the
+     vertical padding moved onto the composer stack beside it. */
+  padding: 0 16px 0 0;
   gap: 14px;
 }
+.daw-topbar > .daw-composer-stack { padding: 10px 0; }
 
-/* Brand */
+/* Logo cell.
+ *
+ * The top-left corner, exactly as wide as the rail below it and closed by the
+ * same border, so the bar proper begins where the library does. It was the
+ * full 390px of the library at first, which put 330px of empty bar beside the
+ * logo and cost the composer the width it was short of. The rail's width is
+ * the part that has something in it, and it does not move when the library
+ * collapses, so the cell needs no transition of its own. */
 .daw-brand {
+  align-self: stretch;
+  box-sizing: border-box;
+  width: var(--rail-w);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
-  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
 }
-.daw-brand img { height: 30px; width: auto; display: block; }
-.daw-brand-name {
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  line-height: 1;
+/* Lined up with the rail buttons below it, which means lined up by the bars,
+   not by the file. The symbol's artboard is not centred on its own artwork:
+   the bars run x110-x452 of a 512 box, so their middle sits 25 units right of
+   the middle of the image. Centring the image would therefore push the bars
+   2.5px right of the rail's centre line, which is exactly what it looked like.
+   4px is what puts the bars' middle on 32.5px, the centre of the 65px cell.
+   52px, not the 40px of a rail button: that same padding means the bars
+   themselves land at about 35px. */
+/* The logo is the link, so the anchor has to be the flex item the cell
+   centres, not an inline box that would add a line box's worth of height
+   around a 52px image. */
+.daw-brand a {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
 }
-.daw-brand-name .fg    { color: var(--fg); }
-.daw-brand-name .accent{ color: var(--accent); }
-
-.daw-version {
-  display: none !important; /* version shown in notification panel instead */
-}
-
-/* Topbar separator */
-.daw-sep {
-  width: 1px;
-  height: 28px;
-  background: var(--border);
+.daw-brand img {
+  width: 52px;
+  height: 52px;
+  margin-left: 4px;
+  margin-right: auto;
+  display: block;
   flex-shrink: 0;
 }
 
@@ -519,7 +541,7 @@ input, textarea { font-family: inherit; }
 
 /* Rail */
 .sidebar-rail {
-  width: 66px;
+  width: var(--rail-w);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1195,7 +1217,7 @@ input, textarea { font-family: inherit; }
 
 /* Collapsed sidebar strip */
 .cat-collapsed-strip { display: none; }
-.daw.cat-collapsed .sidebar { width: 66px; }
+.daw.cat-collapsed .sidebar { width: var(--rail-w); }
 .daw.cat-collapsed .sidebar-body { opacity: 0; pointer-events: none; visibility: hidden; }
 .daw.cat-collapsed .cat-collapsed-strip { display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 8px 0; overflow-y: auto; }
 

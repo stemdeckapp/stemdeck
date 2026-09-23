@@ -17,16 +17,21 @@
 
       <!-- ══ TOPBAR ══ -->
       <div class="daw-topbar">
-        <!-- Brand -->
+        <!-- Brand. Sized to the rail's width, so the bar starts where the
+             library does and the divider is the rail's own. -->
         <div class="daw-brand">
-          <span class="daw-brand-name">
-            <span class="fg">Stem</span><span class="accent">Deck</span>
-          </span>
+          <!-- An anchor rather than a click handler: the document-level
+               a[target="_blank"] listener in main.js already sends these to the
+               system browser through Tauri's open_url on the desktop, and leaves
+               them to the browser everywhere else. A handler here would have to
+               repeat that, and would get the desktop case wrong by opening the
+               site inside the app's own window. -->
+          <a href="https://stemdeck.app" target="_blank" rel="noopener noreferrer"
+             title="Open stemdeck.app" data-i18n-title="topbar.website"
+             aria-label="Open stemdeck.app" data-i18n-aria-label="topbar.website">
+            <img src="/img/stemdeck-waveform-symbol.svg" alt="StemDeck" width="52" height="52" />
+          </a>
         </div>
-        <span id="brandVersion" class="daw-version"></span>
-
-        <!-- Separator -->
-        <div class="daw-sep"></div>
 
         <!-- Composer pill -->
         <div class="daw-composer-stack">
