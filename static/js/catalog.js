@@ -1241,14 +1241,6 @@ function wireLibraryDeleteKeys() {
 
 // ─── Rendering helpers ───
 
-function getRecentTracks(trashIds, n = 3) {
-  return Object.entries(tracks)
-    .filter(([id, t]) => !trashIds.has(id) && t.title)
-    .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-    .slice(0, n)
-    .map(([id]) => id);
-}
-
 function getAllTags(trashIds) {
   const counts = {};
   for (const [id, track] of Object.entries(tracks)) {
@@ -1695,18 +1687,13 @@ function render() {
     return;
   }
 
-  // ── Library view — Recent · Stem Collections · Tags ──
-
-  // Recent section
-  const recentIds = getRecentTracks(trashIds).filter((id) => trackMatchesSearch(tracks[id]));
-  if (recentIds.length) {
-    const section = makeSectionEl(i18nT("library.recent"));
-    for (const id of recentIds) {
-      const item = renderRecentItem(id);
-      if (item) section.appendChild(item);
-    }
-    list.appendChild(section);
-  }
+  // ── Library view — Stem Collections · Tags ──
+  //
+  // There was a Recent section above the folders: the three newest tracks,
+  // every one of which is also in its folder, where a new import already lands
+  // at the top. It showed the same track twice for no gain, and with two
+  // imports of one song, four times in one panel (#656). Tracks still being
+  // processed show that in their own row, which is the useful part of it.
 
   // Stem Collections section
   const collectionsSection = makeSectionEl(i18nT("library.stemCollections"));
@@ -1728,8 +1715,8 @@ function render() {
   if (hasCollections) list.appendChild(collectionsSection);
 
   // Empty state when search yields nothing
-  if (catalogSearchQuery && !recentIds.length && !hasCollections) {
-    list.innerHTML = '<span class="folder-empty trash-empty">No tracks match your search</span>';
+  if (catalogSearchQuery && !hasCollections) {
+    list.innerHTML = `<span class="folder-empty trash-empty">${esc(i18nT("library.noSearchMatch"))}</span>`;
     return;
   }
 

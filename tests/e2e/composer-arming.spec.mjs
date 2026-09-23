@@ -103,8 +103,7 @@ test.describe("composer arming", () => {
     );
     await page.locator("#submit").click();
 
-    // A row renders in both Recent and the folder tree, so count is not the
-    // question -- presence is.
+    // Presence is the question here, not placement or count.
     await expect(page.locator(`.cat-item[data-id="cafebabe0003"]`).first()).toBeVisible({
       timeout: 10000,
     });
