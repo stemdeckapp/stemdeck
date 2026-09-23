@@ -61,8 +61,21 @@ jobs:
   # Browser tests for static/js (#339). node --check above is a syntax parse;
   # this drives the real UI against the real backend, including the Tauri code
   # path, which is where #335 hid because it was invisible in a browser.
+  # Split three ways, each shard on its own runner (#686). The suite runs
+  # serially inside a shard -- workers: 1 in playwright.config -- because it
+  # shares one backend and one jobs directory, and several specs change server
+  # state. A shard is a separate machine with its own backend, so splitting
+  # here adds parallelism without adding sharing. Files stay whole, since
+  # fullyParallel is off, so tests that rely on order within a file still get
+  # it. Free on a public repository; each shard pays its own setup.
   frontend-e2e:
     runs-on: ubuntu-latest
+    strategy:
+      # One failing shard must not cancel the others: the report is only
+      # useful whole.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
@@ -74,11 +87,12 @@ jobs:
       - run: uv sync --frozen --all-extras
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test
+      - run: npx playwright test --shard=${{ matrix.shard }}/3
       - if: failure()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: playwright-report
+          # Per shard: a second upload under the same name fails the job.
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
