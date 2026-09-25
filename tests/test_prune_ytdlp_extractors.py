@@ -10,6 +10,7 @@ machine, at the first download. These tests are the earlier warning.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
@@ -39,7 +40,7 @@ def pruned(tmp_path_factory) -> pathlib.Path:
     return site
 
 
-def _run_in(site: pathlib.Path, code: str) -> subprocess.CompletedProcess:
+def _run_in(site: pathlib.Path, code: str, *args: str) -> subprocess.CompletedProcess:
     """Run code with the pruned tree ahead of the installed one on sys.path.
 
     Inheriting the environment rather than replacing it: a bare env breaks
@@ -49,7 +50,7 @@ def _run_in(site: pathlib.Path, code: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(site)
     return subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, "-c", code, *args],
         capture_output=True,
         text=True,
         env=env,
@@ -82,6 +83,57 @@ def test_youtube_and_soundcloud_still_match(pruned: pathlib.Path) -> None:
         "print('ok')\n",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def _app_allowlists() -> list[list[str]]:
+    from app.pipeline.download import _ALLOWED_EXTRACTORS, _ALLOWED_PLAYLIST_EXTRACTORS
+    from app.pipeline.search import _EXTRACTORS
+
+    return [_ALLOWED_EXTRACTORS, _ALLOWED_PLAYLIST_EXTRACTORS, *_EXTRACTORS.values()]
+
+
+def test_every_extractor_the_app_allows_is_registered(pruned: pathlib.Path) -> None:
+    """An allowlisted name the registry does not export matches nothing.
+
+    Search failed in every packaged build for exactly this reason while working
+    from source, where nothing is pruned (#692). Reads the app's own lists, so
+    a new allowlist entry cannot get ahead of the prune.
+    """
+    wanted = {name for allowed in _app_allowlists() for name in allowed}
+    proc = _run_in(
+        pruned,
+        "from yt_dlp.extractor import gen_extractor_classes\n"
+        "print(','.join(c.IE_NAME.lower() for c in gen_extractor_classes()))\n",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    names = set(proc.stdout.strip().split(","))
+    assert wanted <= names, f"allowlisted but not shipped: {sorted(wanted - names)}"
+
+
+def test_every_search_target_finds_an_extractor(pruned: pathlib.Path) -> None:
+    """What search.py actually hands yt-dlp, under the allowlist it uses.
+
+    Offline: yt-dlp picks the extractor before any request, which is where
+    #692 failed with "No suitable extractor found for URL ytsearch8:...".
+    """
+    from app.pipeline.search import _EXTRACTORS, _target
+
+    cases = [
+        (_target(source, kind, "purple rain", 8), allowed)
+        for (source, kind), allowed in _EXTRACTORS.items()
+    ]
+    proc = _run_in(
+        pruned,
+        "import json, sys\n"
+        "from yt_dlp import YoutubeDL\n"
+        "for url, allowed in json.loads(sys.argv[1]):\n"
+        "    ydl = YoutubeDL({'quiet': True, 'allowed_extractors': allowed})\n"
+        "    if not any(ie.suitable(url) for ie in ydl._ies.values()):\n"
+        "        print('no extractor for', url)\n",
+        json.dumps(cases),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout == "", proc.stdout
 
 
 def test_the_registry_holds_only_what_ships(pruned: pathlib.Path) -> None:

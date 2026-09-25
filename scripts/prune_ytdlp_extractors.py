@@ -74,14 +74,27 @@ REGISTRY = frozenset({"__init__.py", "extractors.py", "_extractors.py"})
 
 # The classes _extractors.py must expose. Kept explicit so that a yt-dlp release
 # renaming one fails here, loudly, instead of at a user's first download.
+#
+# Every IE_NAME that app/ passes as allowed_extractors must be exported here,
+# or yt-dlp finds no extractor for it. A module surviving the prune is not
+# enough: only what this registry imports is registered. The search classes
+# were missing, and search failed in every packaged build while working from
+# source (#692). tests/test_prune_ytdlp_extractors.py checks the app's lists.
 EXPORTS = {
     "soundcloud": (
         "SoundcloudIE",
         "SoundcloudPlaylistIE",
+        "SoundcloudSearchIE",
         "SoundcloudSetIE",
         "SoundcloudUserIE",
     ),
-    "youtube": ("YoutubeIE", "YoutubePlaylistIE", "YoutubeTabIE"),
+    "youtube": (
+        "YoutubeIE",
+        "YoutubePlaylistIE",
+        "YoutubeSearchIE",
+        "YoutubeSearchURLIE",
+        "YoutubeTabIE",
+    ),
     "generic": ("GenericIE",),
 }
 
@@ -180,6 +193,12 @@ def verify(site_packages: pathlib.Path) -> None:
         "'https://youtu.be/dQw4w9WgXcQ'), 'youtu.be URL no longer matches'\n"
         "assert get_info_extractor('Soundcloud').suitable("
         "'https://soundcloud.com/artist/track'), 'SoundCloud URL no longer matches'\n"
+        # Search is registered separately from the URL extractors, and missing
+        # it passes every check above (#692).
+        "assert get_info_extractor('YoutubeSearch').suitable("
+        "'ytsearch1:x'), 'YouTube search no longer registered'\n"
+        "assert get_info_extractor('SoundcloudSearch').suitable("
+        "'scsearch1:x'), 'SoundCloud search no longer registered'\n"
         "print('  verified:', ', '.join(names))\n"
     )
     result = subprocess.run(
