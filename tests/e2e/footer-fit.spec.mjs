@@ -10,7 +10,7 @@
 //
 // These run at the config's 1280x720 unless a test sets its own viewport.
 import { test, expect } from "@playwright/test";
-import { openStudio, waitForClickTrack } from "./helpers.mjs";
+import { openStudio, seedLibrary, stubUpdateCheck, waitForClickTrack } from "./helpers.mjs";
 
 const stripFits = (page) =>
   page.evaluate(() => {
@@ -103,6 +103,42 @@ test.describe("footer fit", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("#t-metro-bar")).toBeHidden();
     await expect(more).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("the options popover is a solid panel above its button with no track loaded", async ({ page }) => {
+    // #697. With nothing loaded the options are .unavailable, which faded the
+    // whole panel to 40% and made it click-through. Inline that is right. As
+    // the popover it faded the box too, leaving a see-through ghost over the
+    // lanes that read as misplaced, and a click inside it hit the lane below.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await seedLibrary(page);
+    await stubUpdateCheck(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect.poll(() => collapseLevels(page), { timeout: 5000 }).toContain("collapse-click");
+
+    const more = page.locator("#t-metro-more");
+    await more.click();
+    const panel = page.locator("#t-metro-panel");
+    await expect(panel).toHaveClass(/\bunavailable\b/);
+    await expect(panel).toBeVisible();
+
+    const geo = await page.evaluate(() => {
+      const p = document.querySelector("#t-metro-panel");
+      const pr = p.getBoundingClientRect();
+      const br = document.querySelector("#t-metro-more").getBoundingClientRect();
+      const hit = document.elementFromPoint(pr.left + 4, pr.top + 4);
+      return {
+        opacity: getComputedStyle(p).opacity,
+        above: pr.bottom <= br.top,
+        overlapsX: pr.left < br.right && pr.right > br.left,
+        hitsPanel: p.contains(hit),
+      };
+    });
+    expect(geo).toEqual({ opacity: "1", above: true, overlapsX: true, hitsPanel: true });
+
+    // A click on the panel itself is not a click away from it.
+    await panel.click({ position: { x: 4, y: 4 } });
+    await expect(more).toHaveAttribute("aria-expanded", "true");
   });
 
   test("the strip opens back up when the room comes back", async ({ page }) => {

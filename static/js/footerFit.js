@@ -18,7 +18,8 @@
 //
 // The order below is cheapest first. Each level is re-measured from the
 // uncollapsed state rather than added on top of the last one, so the strip can
-// open back up as room returns and there is no hysteresis to tune.
+// open back up as room returns. Opening back up takes REOPEN_SLACK to spare,
+// though, not just a fit; see there for why (#633).
 
 // Least destructive first, and each step costs more than the last.
 //
@@ -46,9 +47,25 @@ const MIN_WRAP_PX = 240;
 // Rounding headroom on the width asked for; see wrapWidthFor.
 const WRAP_SLACK = 4;
 
+// Room a less collapsed level must have to spare before the strip goes back to
+// it. Collapsing still happens the moment the row is short by any amount.
+//
+// Without this the decision has one threshold, and a strip sitting exactly on
+// it flips on any disturbance smaller than a pixel: a fractional width at a 2.5
+// device pixel ratio rounding the other way, or a scrollbar arriving and
+// leaving. Each flip changes the strip's size, the observer fires, and it
+// flips back, which is the footer "breathing" in #633. With two thresholds
+// REOPEN_SLACK apart, whatever just collapsed a level has to give back more
+// than this before it undoes it, so a wobble smaller than that settles on the
+// first pass instead of cycling. 24px is wider than a classic Windows
+// scrollbar at any scale (17px), the largest width change anything in the
+// footer can make on its own.
+const REOPEN_SLACK = 24;
+
 let strip = null;
 let level = 0; // count of LEVELS applied, in order; 0 is fully inline
 let queued = false;
+let observedWidth = -1; // strip content width the observer last reported
 
 /**
  * Panel width that gives the row back `deficit` pixels, or 0 if wrapping
@@ -77,13 +94,42 @@ function wrapWidthFor(deficit) {
   // popover is the better answer for that window.
   //
   // WRAP_SLACK is not a fudge for a wrong sum. Widths here are fractional and
-  // scrollWidth is a rounded integer, so asking for exactly the deficit back
-  // can land a pixel short -- and a pixel short is not "nearly": it drops the
-  // whole cluster to the popover, which is the difference between the options
-  // being on screen and being behind a click.
+  // the panel is given a whole number of pixels, so asking for exactly the
+  // deficit back can land a pixel short -- and a pixel short is not "nearly":
+  // it drops the whole cluster to the popover, which is the difference between
+  // the options being on screen and being behind a click.
   const want = Math.floor(inline - deficit) - WRAP_SLACK;
   const width = Math.max(want, Math.ceil(inline / 2));
   return width >= MIN_WRAP_PX && width < inline ? width : 0;
+}
+
+/**
+ * How far the row runs past the strip's right edge: positive when it
+ * overflows, negative by the room it has to spare.
+ *
+ * Not scrollWidth - clientWidth. That never goes below zero, so it cannot say
+ * how much room there is, which is what REOPEN_SLACK needs to know. And both
+ * are integers rounded from fractional widths, so at a 2.5 device pixel ratio
+ * the same row could read as fitting on one pass and a pixel over on the next.
+ * Rect edges are fractional and the same on every pass.
+ *
+ * Only meaningful with the clusters packed to the left: apply() holds them
+ * there while it measures.
+ */
+function overrun() {
+  const box = strip.getBoundingClientRect();
+  let left = Infinity;
+  let right = -Infinity;
+  for (const el of strip.children) {
+    const r = el.getBoundingClientRect();
+    if (!r.width) continue;
+    left = Math.min(left, r.left);
+    right = Math.max(right, r.right);
+  }
+  // Edge to edge of the clusters rather than against the strip's own edges,
+  // so a strip that has been scrolled sideways measures the same as one that
+  // has not.
+  return right > left ? right - left - box.width : -box.width;
 }
 
 function apply() {
@@ -102,17 +148,28 @@ function apply() {
   // collapse every level for nothing.
   if (!strip.clientWidth) return;
 
-  let deficit = strip.scrollWidth - strip.clientWidth;
+  // The "click" level spreads the clusters with space-between, and a spread
+  // row always spans the strip exactly: it would never show room to spare.
+  // Held left-packed for the measurement only, and let go below.
+  strip.style.justifyContent = "flex-start";
+
+  // Positive means level n does not fit. A level less collapsed than the one
+  // in force also has to leave REOPEN_SLACK spare (#633).
+  const slack = (n) => (n < was ? REOPEN_SLACK : 0);
+  const natural = overrun();
+  let deficit = natural + slack(0);
 
   // Wrap: measured against the uncollapsed row, which is the only state where
-  // the panel's inline width can be read.
+  // the panel's inline width can be read. Asks for the slack this level needs,
+  // and for at least a pixel: when the row fits outright but not with the
+  // slack to reopen, wrapping is where it stays.
   if (deficit > 0) {
-    const w = wrapWidthFor(deficit);
+    const w = wrapWidthFor(Math.max(1, natural + slack(1)));
     if (w) {
       strip.style.setProperty("--metro-wrap-w", `${w}px`);
       strip.classList.add("collapse-wrap");
       level = 1;
-      deficit = strip.scrollWidth - strip.clientWidth;
+      deficit = overrun() + slack(1);
     }
   }
 
@@ -123,13 +180,15 @@ function apply() {
     strip.style.removeProperty("--metro-wrap-w");
     strip.classList.add("collapse-click");
     level = 2;
-    deficit = strip.scrollWidth - strip.clientWidth;
+    deficit = overrun() + slack(2);
   }
 
   if (deficit > 0) {
     strip.classList.add("collapse-tight");
     level = 3;
   }
+
+  strip.style.removeProperty("justify-content");
 
   // "click" is not only a layout change: it is what turns the click-track
   // options into a popover, and a popover left open across the change would be
@@ -161,8 +220,19 @@ export function initFooterFit() {
   // Watches the strip itself, not the window, so a sidebar collapse or any
   // other layout change that moves the boundary is picked up without anything
   // having to remember to tell us.
+  //
+  // Width changes only. The strip's height is an output of the fit, not an
+  // input: wrapping makes it taller, and a horizontal scrollbar coming or
+  // going changes it too. Re-fitting on those is a loop from the fit back into
+  // itself with nothing new to measure (#633). Content changes that do matter
+  // call refitFooter() themselves, and still go straight through.
   if (typeof ResizeObserver === "function") {
-    new ResizeObserver(refitFooter).observe(strip);
+    new ResizeObserver((entries) => {
+      const width = entries[entries.length - 1].contentRect.width;
+      if (width === observedWidth) return;
+      observedWidth = width;
+      refitFooter();
+    }).observe(strip);
   } else {
     window.addEventListener("resize", refitFooter);
   }

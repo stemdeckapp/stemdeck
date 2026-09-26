@@ -527,13 +527,14 @@ function deriveQuality(track) {
     // "local:<title>" with the extension removed, so "Lossless (WAV)" never
     // appeared for a real upload, and a title with a dot in it was misread
     // (#690).
-    const format = track.sourceFormat;
-    if (format === "wav") return i18nT("track.losslessWav");
-    if (format === "mp3") return i18nT("track.compressedMp3");
-    return i18nT("track.localFile");
+    // Just the format ("MP3", "FLAC"): the line is short and ends in the date,
+    // which a longer label pushed out of the card (#698). No format known, as
+    // for a track from before #690, returns "" and the chip is hidden: it used
+    // to fall back to "Local file", repeating the source chip beside it.
+    return trackFormat(track).toUpperCase();
   }
   if (sourceUrl.includes("youtube.com") || sourceUrl.includes("youtu.be")) return i18nT("track.qualityHigh");
-  if (sourceUrl.includes("soundcloud.com")) return i18nT("track.compressedMp3");
+  if (sourceUrl.includes("soundcloud.com")) return "MP3";
   return "—";
 }
 
@@ -612,7 +613,14 @@ function applyTrackInfoToPanel(track) {
   if (metaDuration) metaDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
   if (trackExtracted) trackExtracted.textContent = fmtExtracted(track.createdAt);
   if (trackSource) trackSource.textContent = deriveSource(track.sourceUrl);
-  if (trackQuality) trackQuality.textContent = deriveQuality(track);
+  if (trackQuality) {
+    const quality = deriveQuality(track);
+    trackQuality.textContent = quality;
+    // Hidden with the separator in front of it, so there is no empty "· ·".
+    trackQuality.hidden = !quality;
+    const sep = trackQuality.previousElementSibling;
+    if (sep?.classList.contains("daw-track-sep")) sep.hidden = !quality;
+  }
   // The now-playing square shows the same format icon the library row does.
   paintNowPlayingArt(trackFormat(track));
   if (favBtn) {
@@ -1435,6 +1443,10 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
 function renderFolder(folder) {
   const isTrash = folder.id === TRASH_ID;
   const isUnsorted = folder.id === UNSORTED_ID;
+  // Unsorted is the system folder every new import lands in: it has no grip,
+  // no New subfolder and no delete, so its row has nothing to reveal on hover
+  // (#695). The Stem Collections header already has New Folder.
+  const isSystem = isTrash || isUnsorted;
   const isSubfolder = Boolean(folder.parentId);
   if (!isTrash) folder.color = normalizeFolderColor(folder.color);
 
@@ -1443,7 +1455,7 @@ function renderFolder(folder) {
   el.dataset.id = folder.id;
 
   const head = document.createElement("div");
-  head.className = "folder-head";
+  head.className = isUnsorted ? "folder-head system" : "folder-head";
   if (!isTrash) head.style.setProperty("--folder-color", folder.color);
 
   const folderIcon = isTrash
@@ -1451,7 +1463,7 @@ function renderFolder(folder) {
     : `<svg class="f-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
 
   head.innerHTML = `
-    ${isTrash ? "" : `<span class="f-grip" title="${esc(i18nT("folder.dragToReorder"))}">
+    ${isSystem ? "" : `<span class="f-grip" title="${esc(i18nT("folder.dragToReorder"))}">
       <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true">
         <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
         <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
@@ -1462,16 +1474,16 @@ function renderFolder(folder) {
     ${folderIcon}
     <span class="f-name">${esc(folder.name)}</span>
     <span class="f-count">${folder.items.length}</span>
-    ${isTrash ? "" : `
+    ${isSystem ? "" : `
       <button class="f-subfolder" type="button" aria-label="${esc(i18nT("folder.newSubfolder"))}" title="${esc(i18nT("folder.newSubfolder"))}">
         <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
           <path d="M12 11v6M9 14h6"/>
         </svg>
       </button>
-      ${isUnsorted ? "" : `<button class="f-del" type="button" aria-label="${esc(i18nT("folder.deleteFolder"))}" title="${esc(i18nT("folder.deleteFolder"))}">
+      <button class="f-del" type="button" aria-label="${esc(i18nT("folder.deleteFolder"))}" title="${esc(i18nT("folder.deleteFolder"))}">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
-      </button>`}
+      </button>
     `}
   `;
 
@@ -1565,11 +1577,10 @@ function renderFolder(folder) {
       if (isFolderDescendant(folderDragId, folder.id)) return; // prevent cycle
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      const rect = head.getBoundingClientRect();
-      const rel = (e.clientY - rect.top) / rect.height;
-      el.classList.toggle("drop-before", rel < 0.25);
-      el.classList.toggle("drop-into", rel >= 0.25 && rel < 0.75);
-      el.classList.toggle("drop-after", rel >= 0.75);
+      const zone = folderDropZone(e, head, isUnsorted);
+      el.classList.toggle("drop-before", zone === "before");
+      el.classList.toggle("drop-into", zone === "into");
+      el.classList.toggle("drop-after", zone === "after");
       return;
     }
     if (!isTrackDragEvent(e)) return;
@@ -1585,11 +1596,10 @@ function renderFolder(folder) {
   el.addEventListener("drop", (e) => {
     e.preventDefault();
     if (folderDragId && folderDragId !== folder.id && !isTrash) {
-      const rect = head.getBoundingClientRect();
-      const rel = (e.clientY - rect.top) / rect.height;
+      const zone = folderDropZone(e, head, isUnsorted);
       el.classList.remove("drop-before", "drop-after", "drop-into");
-      if (rel < 0.25) reorderFolder(folderDragId, folder.id, true);
-      else if (rel >= 0.75) reorderFolder(folderDragId, folder.id, false);
+      if (zone === "before") reorderFolder(folderDragId, folder.id, true);
+      else if (zone === "after") reorderFolder(folderDragId, folder.id, false);
       else reparentFolder(folderDragId, folder.id);
       return;
     }
@@ -1598,6 +1608,18 @@ function renderFolder(folder) {
   });
 
   return el;
+}
+
+// Where a dragged folder lands relative to a folder row: the top quarter
+// reorders before it, the bottom quarter after it, the middle nests inside.
+// Unsorted takes no subfolders, so it splits into before/after only.
+function folderDropZone(e, head, noNesting) {
+  const rect = head.getBoundingClientRect();
+  const rel = (e.clientY - rect.top) / rect.height;
+  if (noNesting) return rel < 0.5 ? "before" : "after";
+  if (rel < 0.25) return "before";
+  if (rel >= 0.75) return "after";
+  return "into";
 }
 
 function renderStrip(strip, nonTrash) {

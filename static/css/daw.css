@@ -924,7 +924,8 @@ input, textarea { font-family: inherit; }
   transition: background var(--t-fast), color var(--t-fast);
   user-select: none;
 }
-.folder-head:hover { background: var(--panel); color: var(--fg); }
+/* Unsorted (.system) has no controls to reveal, so hovering it does not light it up (#695). */
+.folder-head:not(.system):hover { background: var(--panel); color: var(--fg); }
 .folder-head .f-chevron { width: 11px; height: 11px; transition: transform 180ms ease; flex-shrink: 0; color: var(--muted); }
 .folder.collapsed .folder-head .f-chevron { transform: rotate(-90deg); }
 .folder-head .f-icon { width: 13px; height: 13px; flex-shrink: 0; color: var(--folder-color); }
@@ -2527,11 +2528,23 @@ input, textarea { font-family: inherit; }
 }
 /* The clusters, and only the clusters, scroll. Favourite and Export Mix sit
    outside this box so a window too narrow for the row cannot carry them off
-   the right-hand edge. */
+   the right-hand edge.
+
+   Sideways only. overflow-x: auto alone computes overflow-y to auto too, and
+   the strip is sized to its content, so a vertical scrollbar has nothing to
+   scroll. It can still appear: at a fractional device pixel ratio (250%
+   Windows scaling) content and box heights round differently, and a sub-pixel
+   of phantom overflow puts a classic scrollbar down the strip's right edge.
+   That takes its width out of the row, space-between at the "click" level
+   spreads the loss across every gap, and footerFit's observer re-measures.
+   That matches the breathing row of #633 exactly: every gap moving, Export
+   Mix not. hidden clips exactly what auto already clipped, and never takes
+   width from the row. */
 .footer-clusters {
   flex: 1; min-width: 0;
   display: flex; align-items: flex-start; flex-wrap: nowrap;
   overflow-x: auto;
+  overflow-y: hidden;
   gap: 16px;
 }
 /* Acts on the track, not on playback, so it is pinned opposite the clusters
@@ -3017,8 +3030,8 @@ input, textarea { font-family: inherit; }
    Nothing is removed and nothing changes behaviour -- the same panel, one
    click away, and back inline the moment the row has room for it again.
 
-   Fixed, not absolute: .footer-clusters is overflow-x: auto, which computes
-   overflow-y to auto as well, so an absolutely positioned panel would be
+   Fixed, not absolute: .footer-clusters scrolls sideways and clips
+   vertically (overflow-y: hidden), so an absolutely positioned panel would be
    clipped by the strip it belongs to. Fixed escapes that (no ancestor here
    creates a containing block), and transport.js sets left/top from the
    trigger's rect -- the same shape as .search-panel below. */
@@ -3029,8 +3042,8 @@ input, textarea { font-family: inherit; }
   gap: 9px;
   position: fixed;
   z-index: 300;
-  /* 260px takes the count-in and meter selects side by side on the first row,
-     so the popover is two short rows rather than one control per line. */
+  /* 260px keeps the popover to a few short rows: count-in with its hint, then
+     the meter selects side by side, rather than one control per line. */
   width: 260px;
   padding: 10px;
   background: var(--panel); border: 1px solid var(--border-strong);
@@ -3040,6 +3053,21 @@ input, textarea { font-family: inherit; }
    !important and still wins over both. */
 .footer-clusters.collapse-click .footer-metro-panel:not(.open) { display: none; }
 .footer-clusters.collapse-click .footer-metro-panel.hidden { display: none !important; }
+
+/* The count-in plays with the click off too (#696), so in the popover it sits
+   apart: its own row, a caption saying so, and a rule between it and the
+   click-only settings below. A full-width item is what breaks the row, so the
+   meter select moves down beside Grid. Popover only: inline it would be one
+   more flex item on a row footerFit is already measuring to the pixel. */
+.metro-countin-hint { display: none; }
+.footer-clusters.collapse-click .metro-countin-hint {
+  display: block;
+  flex-basis: 100%;
+  margin-top: -4px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; line-height: 1.35; color: var(--muted);
+}
 
 /* The popover frees more width than the row was short -- the click cluster
    goes from about 450px to about 140px in one step, and there is no smaller
@@ -3099,8 +3127,8 @@ input, textarea { font-family: inherit; }
 .metro-vol-icon { flex-shrink: 0; }
 
 /* Fixed rather than absolute for the same reason the options popover is:
-   .footer-clusters is overflow-x: auto, which computes overflow-y to auto as
-   well, so an absolutely positioned panel would be clipped by the strip its
+   .footer-clusters scrolls sideways and clips vertically (overflow-y: hidden),
+   so an absolutely positioned panel would be clipped by the strip its
    button sits in. transport.js sets left/top from that button's rect. */
 .metro-vol-panel {
   position: fixed; z-index: 320;
@@ -4541,7 +4569,9 @@ input, textarea { font-family: inherit; }
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  /* 4px, not 6: with the meta line on two rows (#698) that is what keeps the
+     card inside the bar's height rather than growing it by 2px. */
+  gap: 4px;
   padding: 0 14px;
   background: var(--panel-2, var(--panel));
   border: 1px solid var(--border);
@@ -4630,18 +4660,24 @@ input, textarea { font-family: inherit; }
   color: var(--muted);
 }
 #nowPlayingPanel .daw-track-meta-line {
-  /* Indented to start under the title rather than under the artwork, and kept
-     to one line so the card holds its shape whatever the track is called. The
-     footer lets it wrap, because its gutter is narrow and tall; this one is
-     wide and short.
+  /* Not indented under the title: the 51px that would cost is the difference
+     between the line fitting on one row and needing two.
 
-     Not indented under the title either: the 51px that would cost is the
-     difference between the line fitting and ending in an ellipsis. */
+     It was kept to one row with nowrap and an ellipsis, but the ellipsis never
+     fired: every child is a flex item, so the last one, the extracted date,
+     was simply cut off at the card's edge (#698). It wraps instead, a whole
+     item at a time, so the date moves to a second row when the first is full.
+     The 40px cover already makes the card tall enough for two rows, with the
+     tighter gap on the card above. Never more than two: just above the
+     breakpoint that hides the card, a long language leaves it under 250px
+     wide, and a third row would make the whole bar taller. */
   margin: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  row-gap: 0;
+  line-height: 1.35;
+  max-height: 2.7em;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* 7. The whole waveform strip in the bottom bar.
@@ -4754,6 +4790,20 @@ input, textarea { font-family: inherit; }
  * metronome button beside them and every unavailable lane in the mixer already
  * behave. Half a control strip appearing and vanishing reads as a fault. */
 .footer-metro-panel.unavailable {
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* Except when the panel is the popover (#697). There it has a box of its own,
+ * and fading that box with its contents left a 40% ghost of a panel floating
+ * over the lanes, their lines showing through it and no edge to tie it to the
+ * button, which read as a popover in the wrong place. It also let a click
+ * inside fall through to whatever was under it. So the box stays solid and
+ * takes its clicks, and only the controls in it go quiet. */
+.footer-clusters.collapse-click .footer-metro-panel.unavailable {
+  opacity: 1;
+  pointer-events: auto;
+}
+.footer-clusters.collapse-click .footer-metro-panel.unavailable > * {
   opacity: 0.4;
   pointer-events: none;
 }
