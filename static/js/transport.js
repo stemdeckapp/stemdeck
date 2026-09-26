@@ -191,10 +191,17 @@ export function updatePlayheadMarker(currentSec) {
 // drive the small scrub bar in the now-playing card. Driven from the
 // same wavesurfer "timeupdate" event that already updates #t-time, so
 // every label stays in sync without extra event plumbing.
+//
+// Written only when the text actually changes. This runs every frame while
+// playing, and assigning textContent replaces the text node even when the
+// string is the same, which re-lays out the whole footer control strip sixty
+// times a second to show a number that moves once a second (#633).
 export function updateFooterTimes(currentSec) {
   if (!totalDuration) return;
-  if (footerTimeElapsed) footerTimeElapsed.textContent = fmtTime(currentSec);
-  if (footerTimeTotal) footerTimeTotal.textContent = fmtTime(totalDuration);
+  const elapsed = fmtTime(currentSec);
+  const total = fmtTime(totalDuration);
+  if (footerTimeElapsed && footerTimeElapsed.textContent !== elapsed) footerTimeElapsed.textContent = elapsed;
+  if (footerTimeTotal && footerTimeTotal.textContent !== total) footerTimeTotal.textContent = total;
   const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
   if (npScrubFill) npScrubFill.style.width = `${pct}%`;
   footerWaveDrawFn?.(pct / 100);
@@ -1435,8 +1442,8 @@ export function updateMetronomeAvailability(grid, reason = "") {
 // which only exists once footerFit decides the options do not fit inline, and
 // the volume fader, which is there at every width.
 //
-// Both are position:fixed. .footer-clusters is overflow-x: auto, which computes
-// overflow-y to auto as well, so an absolutely positioned panel would be
+// Both are position:fixed. .footer-clusters scrolls sideways and clips
+// vertically (overflow-y: hidden), so an absolutely positioned panel would be
 // clipped by the strip it belongs to. Fixed escapes that, at the price of
 // placing them from the trigger's rect by hand.
 

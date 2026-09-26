@@ -880,7 +880,7 @@
               </div>
               <div class="footer-metro-panel unavailable" id="t-metro-panel" role="group" aria-label="Click track options" data-i18n-aria-label="click.optionsAria">
                 <span class="metro-select-wrap">
-                  <select id="t-metro-countin" class="metro-select" title="Bars of click before the song starts when you press play" data-i18n-title="click.countInTitle" aria-label="Count-in" data-i18n-aria-label="click.countIn">
+                  <select id="t-metro-countin" class="metro-select" title="Bars of click before the song starts when you press play. Plays even with the click track off." data-i18n-title="click.countInTitle" aria-label="Count-in" data-i18n-aria-label="click.countIn">
                     <option value="0" selected data-i18n="click.countInOff">Count-in: off</option>
                     <option value="1" data-i18n="click.countIn1">Count-in: 1 bar</option>
                     <option value="2" data-i18n="click.countIn2">Count-in: 2 bars</option>
@@ -888,6 +888,11 @@
                     <option value="4" data-i18n="click.countIn4">Count-in: 4 bars</option>
                   </select>
                 </span>
+                <!-- The count-in plays with the click off as well as on (#696),
+                     which reads as a fault in a popover titled for the click.
+                     Popover only (see .metro-countin-hint in daw.css): inline,
+                     the tooltip says it and the row has no room for a caption. -->
+                <span class="metro-countin-hint" data-i18n="click.countInHint">Plays even with the click track off</span>
                 <span class="metro-select-wrap">
                   <select id="t-metro-bar" class="metro-select" aria-label="Accent every N beats" data-i18n-aria-label="click.barAccentAria">
                     <option value="-1" selected data-i18n="click.auto">Auto (detected)</option>
