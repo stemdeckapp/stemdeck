@@ -425,6 +425,42 @@ export function libraryArtist(artist) {
   return { id: artist.id, name: String(artist.name || ""), englishName: String(artist.englishName || "") };
 }
 
+const WORK_KINDS = new Set(["musical", "film", "tv", "other"]);
+
+/**
+ * The work a job's state carries: the musical, film or series a soundtrack
+ * or cast recording is from, found by the server while the job ran
+ * (app/pipeline/work_lookup.py). { id, kind, name, englishName } with id a
+ * Wikidata item, or null for anything else.
+ */
+export function libraryWork(work) {
+  const artist = libraryArtist(work);
+  if (!artist || !WORK_KINDS.has(work.kind)) return null;
+  return { ...artist, kind: work.kind };
+}
+
+/**
+ * Which recording a job was identified as (app/pipeline/identify.py), as the
+ * library keeps it: the names and whether it is a soundtrack, not the ids and
+ * scores, since the store is rewritten whole on every change. Null when the
+ * state carries none.
+ */
+export function libraryIdentity(identity) {
+  if (!identity || typeof identity !== "object" || !identity.title) return null;
+  const text = (value) => (typeof value === "string" ? value : "");
+  return {
+    source: text(identity.source),
+    title: text(identity.title),
+    artist: text(identity.artist),
+    album: text(identity.album),
+    // The year the album first came out, when the server knew it.
+    ...(Number.isInteger(identity.year) ? { year: identity.year } : {}),
+    secondaryTypes: Array.isArray(identity.secondary_types)
+      ? identity.secondary_types.filter((t) => typeof t === "string").slice(0, 12)
+      : [],
+  };
+}
+
 export function addTrackToLibrary(track) {
   // track: { id, title, thumb, stems, status, sourceUrl }
   const existingId = findTrackBySource(track.sourceUrl, track.id);
@@ -454,6 +490,9 @@ export function addTrackToLibrary(track) {
     // A band already on the track, saved in the artist box or found before,
     // is never replaced by the one the server found (#699).
     ...(existing.artist ? { artist: existing.artist } : {}),
+    // Likewise the identity and the work behind a soundtrack, once known.
+    ...(existing.identity ? { identity: existing.identity } : {}),
+    ...(existing.work ? { work: existing.work } : {}),
     createdAt: existing.createdAt ?? track.createdAt ?? (Date.now() / 1000),
     favorite: existing.favorite ?? false,
   };
@@ -499,6 +538,48 @@ export function getCurrentTrackArtist() {
   return { id: artist.id, name: String(artist.name || ""), englishName: String(artist.englishName || "") };
 }
 
+/**
+ * The work the open track's song is from, when it is a soundtrack or a cast
+ * recording: { id, kind, name, englishName }, or null.
+ */
+export function getCurrentTrackWork() {
+  return libraryWork(tracks[_currentTrackId]?.work);
+}
+
+// Identities checked against a catalogue. "tags" only repeats what the file
+// says, which the card and the box already read from the tags themselves.
+const CONFIDENT_SOURCES = new Set(["musicbrainz", "acoustid", "lrclib"]);
+
+function confidentIdentity(track) {
+  const identity = track?.identity;
+  return identity && CONFIDENT_SOURCES.has(identity.source) ? identity : null;
+}
+
+const trimmed = (value) => String(value || "").trim();
+
+/**
+ * The song the open track is, for the head of the artist box: { title,
+ * credit, album, year, soundtrack }, from the identity the server confirmed,
+ * else from the file's tags. Null when neither names the song. `year` is the
+ * identified album's first release, so only with that album, else 0.
+ */
+export function getCurrentTrackSong() {
+  const track = tracks[_currentTrackId];
+  if (!track) return null;
+  const identity = confidentIdentity(track);
+  const tags = track.audioTags || {};
+  const title = trimmed(identity?.title) || trimmed(tags.title);
+  if (!title) return null;
+  const identityAlbum = trimmed(identity?.album);
+  return {
+    title,
+    credit: trimmed(identity?.artist) || trimmed(tags.artist),
+    album: identityAlbum || trimmed(tags.album),
+    year: identityAlbum && Number.isInteger(identity.year) ? identity.year : 0,
+    soundtrack: Boolean(libraryWork(track.work)) || Boolean(identity?.secondaryTypes?.includes("Soundtrack")),
+  };
+}
+
 /** Save a band on the open track, kept with the rest of the library. */
 export function setCurrentTrackArtist(artist) {
   const track = tracks[_currentTrackId];
@@ -509,13 +590,20 @@ export function setCurrentTrackArtist(artist) {
   return true;
 }
 
-// The artist beside the title on the now-playing card (#699): the band saved
-// on the track, else the artist its file was tagged with. Neither known, and
-// the card is exactly what it was before there was an artist to show.
+// Beside the title on the now-playing card (#699): the musical or film a
+// soundtrack is from ("Dancing Through Life · Wicked"), since one cast
+// member's name says less about the song than the show does. Otherwise the
+// band saved on the track, else the artist its file was tagged with, else the
+// credit of the recording the server identified. None known, and the card is
+// exactly what it was before there was an artist to show. A title song
+// ("The Phantom of the Opera") would name the show twice, so it names the
+// performer instead.
 function paintNowPlayingArtist(track) {
   const el = document.getElementById("np-artist");
   if (!el) return;
-  const name = String(track?.artist?.name || track?.audioTags?.artist || "").trim();
+  let work = trimmed(libraryWork(track?.work)?.name);
+  if (work.toLowerCase() === nowPlayingTitle(track).toLowerCase()) work = "";
+  const name = trimmed(work || track?.artist?.name || track?.audioTags?.artist || confidentIdentity(track)?.artist);
   el.textContent = name;
   // The whole name on hover, since a long title can leave it clipped.
   el.title = name;
@@ -543,9 +631,14 @@ export function isCurrentTrackTagsPending() {
   return _tagsPending.has(_currentTrackId);
 }
 
+// A track imported before the server looked for the work a soundtrack is
+// from (work_lookup.py) is asked about once more, tags or not, for that and
+// the identity: workChecked marks it done. An import that finished on a
+// server that looks for it comes with the flag set (job.js).
 async function backfillAudioTags(trackId) {
   const track = tracks[trackId];
-  if (!track || track.audioTags || track.audioTagsChecked || track.status !== "done") return;
+  const tagsKnown = track?.audioTags || track?.audioTagsChecked;
+  if (!track || (tagsKnown && track.workChecked) || track.status !== "done") return;
   if (_tagsAsked.has(trackId)) return;
   _tagsAsked.add(trackId);
   _tagsPending.add(trackId);
@@ -557,11 +650,16 @@ async function backfillAudioTags(trackId) {
     // Kept on the track it was asked for, even if another is open by now.
     const target = tracks[trackId];
     if (!target) return;
-    target.audioTags = libraryAudioTags(data?.audio_tags);
+    if (!target.audioTags) target.audioTags = libraryAudioTags(data?.audio_tags);
     target.audioTagsChecked = true;
     // The band, when the server found it from those tags, so artistInfo.js
     // has nothing left to look up when "tracktags" reaches it.
     if (!target.artist) target.artist = libraryArtist(data?.artist);
+    // And the recording and the work behind a soundtrack, when the server
+    // found them. Asked once, like the tags: nothing found is an answer too.
+    if (!target.identity) target.identity = libraryIdentity(data?.identity);
+    if (!target.work) target.work = libraryWork(data?.work);
+    target.workChecked = true;
     saveState();
     if (_currentTrackId === trackId) paintNowPlayingNames(target);
   } catch (err) {
@@ -634,6 +732,10 @@ function stateMetadataToTrack(state, fallbackTrack) {
     // so it only survives a rebuild from server state by being carried. Else
     // the one the server found from the tags while the job ran.
     artist: fallbackTrack.artist ?? libraryArtist(state.artist),
+    // Which recording the server identified, and the musical or film a
+    // soundtrack is from: carried the same way.
+    identity: fallbackTrack.identity ?? libraryIdentity(state.identity),
+    work: fallbackTrack.work ?? libraryWork(state.work),
   };
 }
 
@@ -708,11 +810,17 @@ export function applyStemPresenceCards(stemPresence) {
   });
 }
 
+// The song the server identified, else the file's own title tag: the job
+// title is the filename or the video's name, which often carries the band,
+// "Official Video", "(From ... Cast Recording/2003)" and the like, and the
+// artist now has a place of its own beside it. Only the card: the library row
+// keeps the name the track was imported with.
+function nowPlayingTitle(track) {
+  return trimmed(confidentIdentity(track)?.title) || trimmed(track?.audioTags?.title) || track?.title || "";
+}
+
 function paintNowPlayingNames(track) {
-  // The file's own title tag when it has one: the job title is the filename
-  // or the video's name, which often carries the band, "Official Video" and
-  // the like, and the artist now has a place of its own beside it.
-  titleEl.textContent = String(track.audioTags?.title || "").trim() || track.title || i18nT("track.untitled");
+  titleEl.textContent = nowPlayingTitle(track) || i18nT("track.untitled");
   paintNowPlayingArtist(track);
 }
 
@@ -3307,6 +3415,15 @@ async function syncWithServer() {
           known.artist = libraryArtist(state.artist);
           backfilled = true;
         }
+        // And the identity and the work behind a soundtrack, the same way.
+        if (!known.identity && libraryIdentity(state.identity)) {
+          known.identity = libraryIdentity(state.identity);
+          backfilled = true;
+        }
+        if (!known.work && libraryWork(state.work)) {
+          known.work = libraryWork(state.work);
+          backfilled = true;
+        }
         continue;
       }
       if (trashIds.has(state.job_id)) continue;   // soft-deleted, skip
@@ -3665,6 +3782,73 @@ function wireLanguageSetting(overlay) {
   sel.addEventListener("change", () => setLanguage(sel.value));
 }
 
+// The AcoustID key for song identification (app/pipeline/identify.py). The
+// server never hands the key back, only whether one is set and its last four
+// characters, so the field starts empty every time and the line under it says
+// which key is saved. Saved on the button, not on change: a half-typed key
+// must not be sent, and a refused one has to say so.
+async function wireAcoustidSetting(overlay) {
+  const input = overlay.querySelector(".set-acoustid-key");
+  const saveBtn = overlay.querySelector(".set-acoustid-save");
+  const clearBtn = overlay.querySelector(".set-acoustid-clear");
+  const msg = overlay.querySelector(".acoustid-key-msg");
+  if (!input || !saveBtn || !clearBtn || !msg) return;
+
+  let isSet = false;
+  const show = (d) => {
+    isSet = d?.acoustid_api_key_set === true;
+    msg.classList.remove("error");
+    msg.textContent = isSet
+      ? i18nT("settings.acoustid.saved", { last4: d.acoustid_api_key_last4 || "" })
+      : i18nT("settings.acoustid.none");
+  };
+  const syncSave = () => { saveBtn.disabled = !input.value.trim(); };
+
+  const send = async (value) => {
+    saveBtn.disabled = true;
+    clearBtn.disabled = true;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ acoustid_api_key: value }),
+      });
+      if (r.ok) {
+        input.value = "";
+        show(await r.json());
+      } else {
+        // The server's detail is English; the translated line reads right in
+        // every language. The typed key stays in the field to be corrected.
+        msg.textContent = i18nT("settings.acoustid.invalid");
+        msg.classList.add("error");
+      }
+    } catch (err) {
+      console.warn("saving the AcoustID key failed:", err);
+      msg.textContent = i18nT("settings.acoustid.failed");
+      msg.classList.add("error");
+    } finally {
+      syncSave();
+      clearBtn.disabled = !isSet;
+    }
+  };
+
+  input.addEventListener("input", syncSave);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && input.value.trim()) send(input.value.trim());
+  });
+  saveBtn.addEventListener("click", () => send(input.value.trim()));
+  clearBtn.addEventListener("click", () => send(""));
+  syncSave();
+  clearBtn.disabled = true;
+  try {
+    const r = await fetch("/api/settings", { cache: "no-store" });
+    if (r.ok) show(await r.json());
+  } catch (err) {
+    console.warn("reading the AcoustID key state failed:", err);
+  }
+  clearBtn.disabled = !isSet;
+}
+
 // General settings: max track length (minutes), playlist import limit, and
 // MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
@@ -3678,13 +3862,14 @@ async function wireGeneralSettings(overlay) {
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceDesc = overlay.querySelector(".set-demucs-desc");
   const qualitySel = overlay.querySelector(".set-separation-quality");
+  const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
   const cookiesMsg = overlay.querySelector(".cookies-file-msg");
   const autoDeleteInput = overlay.querySelector(".auto-delete-input");
   const autoDeleteDaysRow = overlay.querySelector(".auto-delete-days-row");
   const autoDeleteDays = overlay.querySelector(".set-auto-delete-days");
   const autoDeleteDaysDesc = overlay.querySelector(".auto-delete-days-desc");
-  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !cookiesInput && !autoDeleteInput) return;
+  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !transcribeSel && !cookiesInput && !autoDeleteInput) return;
 
   // Last server-confirmed device choice, to revert the select when the server
   // rejects a forced device (e.g. CUDA not available on this machine).
@@ -3713,6 +3898,7 @@ async function wireGeneralSettings(overlay) {
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
     if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
+    if (transcribeSel && d.transcribe_lyrics) transcribeSel.value = d.transcribe_lyrics;
     // Unset is the normal case, so read the key rather than truthiness --
     // clearing the field must survive the round trip and not be repopulated.
     if (cookiesInput && "cookies_file" in d) cookiesInput.value = d.cookies_file || "";
@@ -3840,6 +4026,9 @@ async function wireGeneralSettings(overlay) {
   });
   qualitySel?.addEventListener("change", () => {
     post({ separation_quality: qualitySel.value });
+  });
+  transcribeSel?.addEventListener("change", () => {
+    post({ transcribe_lyrics: transcribeSel.value });
   });
   autoDeleteInput?.addEventListener("change", () => {
     // Enable the days field immediately rather than waiting for the round
@@ -4239,6 +4428,19 @@ function openLibraryEditor() {
             <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
             <div class="cookies-file-msg" role="status" aria-live="polite"></div>
           </div>
+          <div class="settings-row settings-row-stack acoustid-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.acoustid.title">Song identification</div>
+              <div class="settings-row-desc" data-i18n="settings.acoustid.desc">Optional. With a free AcoustID key, each import is identified by its audio fingerprint. Only the fingerprint is sent to AcoustID, never the audio. Without a key, tracks are identified by their tags on MusicBrainz.</div>
+            </div>
+            <div class="acoustid-key">
+              <input type="password" class="settings-text-input set-acoustid-key" spellcheck="false" autocomplete="off" maxlength="64" placeholder="AcoustID API key" data-i18n-placeholder="settings.acoustid.placeholder" aria-label="AcoustID API key" data-i18n-aria-label="settings.acoustid.placeholder" />
+              <button class="settings-btn set-acoustid-save" type="button" data-i18n="settings.acoustid.save">Save</button>
+              <button class="settings-btn set-acoustid-clear" type="button" data-i18n="settings.acoustid.clear">Clear</button>
+            </div>
+            <div class="acoustid-key-msg" role="status" aria-live="polite"></div>
+            <a class="acoustid-register" href="https://acoustid.org/new-application" target="_blank" rel="noopener noreferrer" data-i18n="settings.acoustid.register">Register a free key at acoustid.org</a>
+          </div>
           <div class="settings-row settings-row-stack">
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.stemsLocation.title">StemData location</div>
@@ -4302,6 +4504,19 @@ function openLibraryEditor() {
             <select class="settings-select settings-select-wide set-separation-quality" aria-label="Separation quality" data-i18n-aria-label="settings.quality.title">
               <option value="standard" data-i18n="settings.quality.standard">Standard</option>
               <option value="best" data-i18n="settings.quality.best">Best (2× slower)</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.transcribe.title">Transcribe lyrics</div>
+              <div class="settings-row-desc" data-i18n="settings.transcribe.desc">When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.</div>
+            </div>
+            <select class="settings-select settings-select-wide set-transcribe-lyrics" aria-label="Transcribe lyrics" data-i18n-aria-label="settings.transcribe.title">
+              <option value="auto" data-i18n="settings.transcribe.auto">Auto (NVIDIA GPU only)</option>
+              <option value="on" data-i18n="settings.transcribe.on">On</option>
+              <option value="off" data-i18n="settings.transcribe.off">Off</option>
             </select>
           </div>
         </div>
@@ -4486,6 +4701,7 @@ function openLibraryEditor() {
   const isDesktop = Boolean(window.__TAURI__?.core?.invoke);
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
+  wireAcoustidSetting(overlay);
   wireStemsLocation(overlay);
   wireExportsLocation(overlay);
   wireNetworkSetting(overlay);

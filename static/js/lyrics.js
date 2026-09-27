@@ -2,6 +2,10 @@
 // found, kept, and shown in time with playback, karaoke style (#699).
 //
 // Where they come from, in order:
+//   0. what the user chose for the track, kept here; else what the server
+//      found while the track was separated (GET /api/jobs/{id}/lyrics: the
+//      file's own, LRCLIB's, or a transcription), shown but not kept here, so
+//      a better answer from the server later still shows. Failing both:
 //   1. lyrics the file itself carried (an upload's embedded lyrics tag);
 //   2. LRCLIB (lyricsLookup.js), looked up by itself when the tab opens, by
 //      the artist and song the file was tagged with, or failing that the band
@@ -29,6 +33,7 @@ import {
   currentLineIndex,
   wordTimings,
   songFromTitle,
+  fromServerLyrics,
 } from "./lyricsLookup.js";
 
 // One store entry per track rather than a field in the library store: a song's
@@ -102,7 +107,13 @@ function lineButton(line, nextTime) {
   const row = el("button", "lyrics-line");
   row.type = "button";
   row.title = t("lyrics.seekTitle");
-  row.addEventListener("click", () => setPlayheadTime(line.time));
+  row.addEventListener("click", (e) => {
+    setPlayheadTime(line.time);
+    // A mouse click lets go of the line, so Space goes back to play and pause
+    // rather than pressing the line again, and no focus box stays on it. A
+    // key press (detail 0) keeps focus there for whoever is using the keys.
+    if (e.detail > 0) row.blur();
+  });
   const words = [];
   for (const word of wordTimings(line, nextTime, envelopeFor === shownTrackId ? envelope : null)) {
     const span = el("span", "lw", word.text);
@@ -133,6 +144,7 @@ function show(entry, others = []) {
       entry.artist,
       entry.album,
       entry.source === "file" ? t("lyrics.fromFile") : "",
+      entry.source === "whisper" ? t("lyrics.transcribed") : "",
     ].filter(Boolean).join(" · ")),
   );
   const tools = el("div", "lyrics-tools");
@@ -318,6 +330,23 @@ function showAnswer({ song, matches }) {
   else setStatus(t("lyrics.notFound", { song }), "muted");
 }
 
+/**
+ * The lyrics the server found for a track (lyrics.json), as { entry, others }
+ * in the shape this tab keeps; entry null when it kept none but has LRCLIB's
+ * versions to offer, which its 404 carries. Null when it has neither or cannot
+ * be reached, and the tab then looks for them itself.
+ */
+async function serverLyrics(trackId) {
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/lyrics`);
+    if (!res.ok && res.status !== 404) return null;
+    return fromServerLyrics(await res.json().catch(() => null));
+  } catch (err) {
+    console.warn("server lyrics fetch failed", err);
+    return null;
+  }
+}
+
 /** The lyrics a track's file carried, from the server, or "" if unavailable. */
 async function embeddedLyrics(trackId) {
   try {
@@ -373,6 +402,20 @@ async function loadForCurrentTrack() {
   }
   if (saved?.entry) {
     show(saved.entry, Array.isArray(saved.others) ? saved.others : []);
+    return;
+  }
+
+  // What the server found while the track was separated. Shown, not saved:
+  // picking another version is what saves one, as the user's own choice.
+  const found = await serverLyrics(info.id);
+  if (token !== loadToken) return;
+  if (found?.entry) {
+    show(found.entry, found.others);
+    return;
+  }
+  // None was the length of the track: its versions, to pick from.
+  if (found?.others.length) {
+    offer(found.others);
     return;
   }
 

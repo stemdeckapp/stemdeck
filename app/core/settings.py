@@ -14,6 +14,8 @@ at startup), so the Settings UI can change them without a restart:
 - `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
 - `auto_delete_jobs`  — whether finished jobs are deleted after a while (off).
 - `auto_delete_days`  — how long they are kept when that is on.
+- `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
+- `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -24,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -591,3 +594,91 @@ def set_separation_quality(value: str) -> str:
         _ensure()["separation_quality"] = choice
         _save()
         return choice
+
+
+# ── transcribe_lyrics ──
+# Whether a job with no lyrics found gets them transcribed from its vocals stem
+# with Whisper (app/pipeline/transcribe.py). "auto" (default) does it when the
+# job was separated on an NVIDIA GPU (cuda) only. Anywhere else, Apple's MPS
+# included, Whisper runs on the CPU, about 200 s a song rather than 30 s, so
+# "auto" leaves it off; "on" and "off" force it. Read per job, so
+# a change applies to the next import. STEMDECK_TRANSCRIBE_LYRICS seeds the
+# default for env-based deployments.
+_TRANSCRIBE_CHOICES = ("auto", "on", "off")
+
+
+def _default_transcribe_lyrics() -> str:
+    env = os.environ.get("STEMDECK_TRANSCRIBE_LYRICS", "").strip().lower()
+    return env if env in _TRANSCRIBE_CHOICES else "auto"
+
+
+def get_transcribe_lyrics() -> str:
+    with _LOCK:
+        v = _ensure().get("transcribe_lyrics")
+        return (
+            v if isinstance(v, str) and v in _TRANSCRIBE_CHOICES else _default_transcribe_lyrics()
+        )
+
+
+def set_transcribe_lyrics(value: str) -> str:
+    choice = (value or "").strip().lower()
+    if choice not in _TRANSCRIBE_CHOICES:
+        raise ValueError("transcribe_lyrics must be one of: " + ", ".join(_TRANSCRIBE_CHOICES))
+    with _LOCK:
+        _ensure()["transcribe_lyrics"] = choice
+        _save()
+        return choice
+
+
+def transcribe_lyrics_enabled(device: str | None) -> bool:
+    """Whether a job separated on ``device`` gets its lyrics transcribed.
+
+    ``device`` is the job's compute_device, so a GPU job that fell back to the
+    CPU ("cpu (fallback from cuda)") counts as a CPU one under "auto": the GPU
+    has just failed, and a CPU pass is the slow case "auto" exists to avoid.
+    """
+    choice = get_transcribe_lyrics()
+    if choice == "auto":
+        return device == "cuda"
+    return choice == "on"
+
+
+# ── acoustid_api_key ──
+# The user's own AcoustID application key, for identifying a track by its
+# audio fingerprint (app/pipeline/identify.py). Entered in Settings and never
+# shipped: AcoustID keys are per application and free to register. Without
+# one, nothing is fingerprinted and identification falls back to searching
+# MusicBrainz by the tags.
+#
+# A secret in the sense that it is the user's: never logged, and never handed
+# back by the API. /api/settings publishes only whether one is set and its
+# last four characters, so the field can show which key it holds.
+_ACOUSTID_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+
+
+def get_acoustid_api_key() -> str | None:
+    with _LOCK:
+        value = _ensure().get("acoustid_api_key")
+        return value if isinstance(value, str) and _ACOUSTID_KEY_RE.match(value) else None
+
+
+def set_acoustid_api_key(value: str | None) -> str | None:
+    """Persist the key, or clear it when given empty/None. Raises ValueError,
+    without the value in the message, when it cannot be an AcoustID key."""
+    with _LOCK:
+        if value is None or not str(value).strip():
+            _ensure().pop("acoustid_api_key", None)
+            _save()
+            return None
+        key = str(value).strip()
+        if not _ACOUSTID_KEY_RE.match(key):
+            raise ValueError("acoustid_api_key must be 4 to 64 letters, digits, - or _")
+        _ensure()["acoustid_api_key"] = key
+        _save()
+        return key
+
+
+def acoustid_api_key_hint() -> str | None:
+    """The last four characters of the key, for the Settings field, or None."""
+    key = get_acoustid_api_key()
+    return key[-4:] if key else None

@@ -220,7 +220,8 @@ test.describe("artist box", () => {
 
   test("the artist the file was tagged with opens straight on the band, without the search row", async ({ page }) => {
     const asked = await stubWikimedia(page);
-    // Already tagged, so its tags are never asked for again.
+    // Already tagged, and checked for the work a soundtrack is from, so its
+    // tags are never asked for again.
     const tagsAsked = await stubAudioTags(page, null);
     await seedCatalogState(page, {
       folders: [
@@ -228,7 +229,7 @@ test.describe("artist box", () => {
         { id: "trash", name: "Trash", items: [], color: null },
       ],
       tracks: {
-        [JOB_ID]: { ...fixtureTrack(JOB_ID, "E2E Fixture Track"), audioTags: { artist: "Dream Theater" } },
+        [JOB_ID]: { ...fixtureTrack(JOB_ID, "E2E Fixture Track"), audioTags: { artist: "Dream Theater" }, workChecked: true },
         [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)"),
       },
     });

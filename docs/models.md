@@ -23,6 +23,22 @@ audit needed -- an unambiguous upstream license.
 StemDeck runs this model on CPU after separation and passes its existing stems.
 The checkpoint is not bundled in StemDeck installers.
 
+## Whisper (lyrics transcription)
+
+- **Runtime**: `openai-whisper` (PyPI, MIT, `openai/whisper`), on the torch
+  StemDeck already ships for Demucs.
+- **Checkpoints**: `large-v3-turbo` (1.6 GB) on a GPU with room for it,
+  `small` (0.5 GB) on a CPU or a smaller GPU. Overridable with
+  `STEMDECK_WHISPER_MODEL_GPU` / `STEMDECK_WHISPER_MODEL_CPU`.
+- **License**: MIT for both the code and the published weights.
+- **Upstream**: https://github.com/openai/whisper
+
+Runs only when no lyrics were found for a job and the `transcribe_lyrics`
+setting allows it (by default on a GPU only). Weights download on first use
+into `<TORCH_HOME>/whisper`, or during desktop setup when transcription would
+run, and are verified by Whisper's own SHA-256 check. Not bundled in StemDeck
+installers.
+
 ## UVR-MDX-NET Karaoke 2 (on-demand lead/backing vocal split, #275)
 
 - **File**: `UVR_MDXNET_KARA_2.onnx`

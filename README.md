@@ -214,6 +214,8 @@ xattr -dr com.apple.quarantine desktop/src-tauri/target/aarch64-apple-darwin/rel
 
 Python 3.12 or newer, `ffmpeg` on your PATH, and [uv](https://github.com/astral-sh/uv). Around 170 MB of free disk for the Demucs model, which downloads automatically on first run.
 
+Optional, for song identification with an AcoustID key: an FFmpeg built with chromaprint (Debian and Ubuntu's `ffmpeg` is), or Chromaprint's `fpcalc` on your PATH (`brew install chromaprint`, `apt install libchromaprint-tools`, or your distro's `chromaprint` package). `./run.sh setup` installs it when your FFmpeg needs it. Without either, songs are identified by their tags only.
+
 #### macOS / Linux (one-shot)
 
 ```sh
@@ -335,6 +337,7 @@ The library is persistent by default (`STEMDECK_PERSIST_LIBRARY=1`), so tracks a
 | `STEMDECK_FFMPEG_DIR` | (none) | Directory containing a bundled ffmpeg binary. |
 | `STEMDECK_FFMPEG` | `ffmpeg` | Path to the ffmpeg executable. |
 | `STEMDECK_FFPROBE` | `ffprobe` | Path to the ffprobe executable. |
+| `STEMDECK_FPCALC` | `fpcalc` | Path to Chromaprint's fpcalc, used for song fingerprinting when FFmpeg has no chromaprint muxer. |
 | `STEMDECK_MAX_DURATION_SEC` | `1200` | Reject audio longer than this (seconds). |
 | `STEMDECK_JOB_TTL_SECONDS` | `86400` | How long to keep job dirs on disk. |
 | `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |

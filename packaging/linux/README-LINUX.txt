@@ -53,6 +53,12 @@ StemDeck downloads FFmpeg automatically on first launch (or uses a system
 `ffmpeg` if one is already on your PATH). The only system libraries you need
 are your distro's WebKitGTK + GTK, which the desktop shell links against.
 
+Song identification with an AcoustID key also needs Chromaprint's fpcalc when
+your FFmpeg has no chromaprint support. StemDeck downloads it in the background
+on launch when it is needed; if that fails, songs are identified by their tags
+only. A distro package works too (Debian/Ubuntu: libchromaprint-tools,
+Fedora: chromaprint-tools, Arch: chromaprint).
+
   Debian / Ubuntu:
     sudo apt update
     sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0

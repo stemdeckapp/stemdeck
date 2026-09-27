@@ -101,6 +101,15 @@ status() {
     fi
 }
 
+# Song identification fingerprints with FFmpeg's chromaprint muxer, or with
+# fpcalc where that FFmpeg has none (app/pipeline/fpcalc.py). True when there
+# is neither. grep reads the whole listing, not -q, so pipefail never sees
+# FFmpeg die of a closed pipe.
+needs_fpcalc() {
+    command -v fpcalc >/dev/null 2>&1 && return 1
+    ! ffmpeg -hide_banner -muxers 2>/dev/null | grep -w chromaprint >/dev/null
+}
+
 setup() {
     local os
     case "$(uname -s)" in
@@ -124,6 +133,11 @@ setup() {
         else
             echo "ffmpeg: already installed ($(ffmpeg -version | head -n1))"
         fi
+        # Optional, so never fatal: without it songs are named by their tags.
+        if needs_fpcalc; then
+            echo "==> brew install chromaprint (optional, for song fingerprinting)"
+            brew install chromaprint || echo "chromaprint: not installed, song fingerprinting stays off" >&2
+        fi
         if ! command -v uv >/dev/null 2>&1; then
             echo "==> brew install uv"
             brew install uv
@@ -142,6 +156,12 @@ setup() {
             sudo apt-get install -y ffmpeg
         else
             echo "ffmpeg: already installed ($(ffmpeg -version | head -n1))"
+        fi
+        # Debian and Ubuntu's ffmpeg has the muxer, so this is only for an
+        # FFmpeg from elsewhere. Optional, so never fatal.
+        if needs_fpcalc; then
+            echo "==> sudo apt-get install -y libchromaprint-tools (optional, for song fingerprinting)"
+            sudo apt-get install -y libchromaprint-tools || echo "fpcalc: not installed, song fingerprinting stays off" >&2
         fi
         if ! command -v uv >/dev/null 2>&1; then
             echo "==> installing uv via astral.sh installer"

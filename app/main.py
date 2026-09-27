@@ -50,6 +50,7 @@ from app.core.settings import (
     AUTO_DELETE_DAYS_MIN,
     DURATION_MAX_SEC,
     DURATION_MIN_SEC,
+    acoustid_api_key_hint,
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
@@ -63,7 +64,9 @@ from app.core.settings import (
     get_playlist_max_items,
     get_port,
     get_separation_quality,
+    get_transcribe_lyrics,
     get_video_max_height,
+    set_acoustid_api_key,
     set_allow_network,
     set_auto_delete_days,
     set_auto_delete_jobs,
@@ -76,6 +79,7 @@ from app.core.settings import (
     set_playlist_max_items,
     set_port,
     set_separation_quality,
+    set_transcribe_lyrics,
     set_video_max_height,
 )
 from app.core.stems_location import (
@@ -362,9 +366,16 @@ def _settings_payload() -> dict[str, object]:
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),
         "separation_quality": get_separation_quality(),
+        # Whisper lyrics for a job no lookup found any for: "auto" (on a GPU
+        # only) | "on" | "off".
+        "transcribe_lyrics": get_transcribe_lyrics(),
         # Absent unless the user set one. Only the path is exposed, never the
         # file's contents -- those are the user's YouTube session.
         "cookies_file": get_cookies_file(),
+        # Never the key itself: whether one is set, and its last four
+        # characters so the field can show which one.
+        "acoustid_api_key_set": acoustid_api_key_hint() is not None,
+        "acoustid_api_key_last4": acoustid_api_key_hint(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
         # select; the resolved value shows what jobs will actually run on;
@@ -444,6 +455,16 @@ async def update_settings(request: Request) -> dict[str, object]:
             raise HTTPException(status_code=422, detail=str(e)) from None
         except (TypeError, OSError):
             raise HTTPException(status_code=422, detail="invalid cookies file") from None
+    if "acoustid_api_key" in body:
+        value = body["acoustid_api_key"]
+        if value is not None and not isinstance(value, str):
+            raise HTTPException(status_code=422, detail="invalid AcoustID key") from None
+        try:
+            set_acoustid_api_key(value)
+        except ValueError:
+            # A fixed message: the rejected value is the user's key, and
+            # nothing here echoes it back or logs it.
+            raise HTTPException(status_code=422, detail="invalid AcoustID key") from None
     if "demucs_device" in body:
         try:
             set_demucs_device(str(body["demucs_device"]))
@@ -454,6 +475,11 @@ async def update_settings(request: Request) -> dict[str, object]:
     if "separation_quality" in body:
         try:
             set_separation_quality(str(body["separation_quality"]))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+    if "transcribe_lyrics" in body:
+        try:
+            set_transcribe_lyrics(str(body["transcribe_lyrics"]))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
     return _settings_payload()

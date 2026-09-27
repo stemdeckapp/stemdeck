@@ -219,6 +219,64 @@ def lookup_band(
     return band if band and artist_matches_name(band, search) else None
 
 
+def _claim_values(entity: dict[str, Any], prop: str) -> set[str]:
+    """The plain string values of one of the entity's claims."""
+    claims = entity.get("claims")
+    statements = claims.get(prop) if isinstance(claims, dict) else None
+    values = set()
+    for statement in statements if isinstance(statements, list) else []:
+        snak = statement.get("mainsnak") if isinstance(statement, dict) else None
+        datavalue = snak.get("datavalue") if isinstance(snak, dict) else None
+        value = datavalue.get("value") if isinstance(datavalue, dict) else None
+        if isinstance(value, str):
+            values.add(value.lower())
+    return values
+
+
+def lookup_band_by_id(
+    qid: str,
+    musicbrainz_id: str,
+    *,
+    name: str = "",
+    fetch_json: FetchJson | None = None,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> dict[str, str] | None:
+    """The band Wikidata item ``qid`` is, as {"id", "name", "englishName"}.
+
+    For a band reached from a MusicBrainz artist (its url relationship to
+    Wikidata), not by searching a name, so there is no name to agree with:
+    the rule instead is that the item names that same MusicBrainz artist back
+    (P434). An item that does not is a stale or wrong link, and is not kept.
+    ``name`` only picks the language the label is read in. Raises when
+    Wikidata cannot be reached."""
+    if not _QID_RE.match(qid or "") or not musicbrainz_id or cancelled():
+        return None
+    fetch_json = fetch_json or _fetch_json
+    lang = search_language(name) if name else "en"
+    answer = fetch_json(
+        {
+            "action": "wbgetentities",
+            "ids": qid,
+            "props": "claims|labels",
+            "languages": "en" if lang == "en" else f"{lang}|en",
+            "languagefallback": "1",
+        }
+    )
+    entities = answer.get("entities") if isinstance(answer, dict) else None
+    entity = entities.get(qid) if isinstance(entities, dict) else None
+    if not isinstance(entity, dict):
+        return None
+    if musicbrainz_id.lower() not in _claim_values(entity, MUSICBRAINZ_ARTIST_ID):
+        return None
+    return clean_artist(
+        {
+            "id": entity.get("id"),
+            "name": _label(entity, lang, "en") or name,
+            "englishName": _label(entity, "en"),
+        }
+    )
+
+
 def find_band(
     artist_tag: Any,
     *,

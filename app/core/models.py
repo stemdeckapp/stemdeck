@@ -42,6 +42,102 @@ def clean_artist(value: Any) -> dict[str, str] | None:
     return {"id": band_id, **names}
 
 
+# A MusicBrainz id (recording, artist, release group): a lower-case UUID.
+MBID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# "lrclib": named by LRCLIB's artist and album for a title MusicBrainz could
+# not place (title_parse.py, lyrics_lookup.identify_on_lrclib).
+IDENTITY_SOURCES = ("acoustid", "musicbrainz", "lrclib", "tags")
+# More artists than this on one recording is not a credit worth keeping.
+_IDENTITY_MAX_ARTISTS = 20
+_IDENTITY_MAX_TYPES = 12
+# Before sound recording, a year is a typo or a placeholder.
+_IDENTITY_MIN_YEAR = 1860
+
+
+def _identity_text(value: Any) -> str:
+    return value.strip()[:_ARTIST_NAME_MAX_CHARS] if isinstance(value, str) else ""
+
+
+def _identity_mbid(value: Any) -> str | None:
+    return value if isinstance(value, str) and MBID_RE.match(value) else None
+
+
+def clean_identity(value: Any) -> dict[str, Any] | None:
+    """What a job was identified as, in the one shape the design fixes, or None.
+
+    {"source", "score", "recording_mbid", "title", "artist", "artist_mbids",
+    "album", "release_group_mbid", "release_group_type", "secondary_types",
+    "year", "duration"}, with "year" the album's first release. Used for everything written (the pipeline builds identities
+    through it) and everything read back from disk, so a damaged or
+    hand-edited record never reaches the page, the band lookup or the lyrics
+    lookup in any other shape. A title and an artist are required: an identity
+    without both names nothing.
+    """
+    if not isinstance(value, dict) or value.get("source") not in IDENTITY_SOURCES:
+        return None
+    title = _identity_text(value.get("title"))
+    artist = _identity_text(value.get("artist"))
+    if not title or not artist:
+        return None
+    score = value.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+        score = 0.0
+    duration = value.get("duration")
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not 0 < duration < 86400
+    ):
+        duration = None
+    year = value.get("year")
+    if (
+        isinstance(year, bool)
+        or not isinstance(year, int)
+        or not _IDENTITY_MIN_YEAR <= year <= 9999
+    ):
+        year = None
+    mbids = value.get("artist_mbids")
+    types = value.get("secondary_types")
+    return {
+        "source": value["source"],
+        "score": round(max(0.0, min(1.0, float(score))), 4),
+        "recording_mbid": _identity_mbid(value.get("recording_mbid")),
+        "title": title,
+        "artist": artist,
+        "artist_mbids": [m for m in mbids if _identity_mbid(m)][:_IDENTITY_MAX_ARTISTS]
+        if isinstance(mbids, list)
+        else [],
+        "album": _identity_text(value.get("album")) or None,
+        "release_group_mbid": _identity_mbid(value.get("release_group_mbid")),
+        "release_group_type": _identity_text(value.get("release_group_type")) or None,
+        "secondary_types": [t for t in (_identity_text(t) for t in types) if t][
+            :_IDENTITY_MAX_TYPES
+        ]
+        if isinstance(types, list)
+        else [],
+        "year": year,
+        "duration": round(float(duration), 3) if duration is not None else None,
+    }
+
+
+# What a work (app/pipeline/work_lookup.py) can be.
+WORK_KINDS = ("musical", "film", "tv", "other")
+
+
+def clean_work(value: Any) -> dict[str, str] | None:
+    """The work a job's song is from, {"id", "kind", "name", "englishName"},
+    or None. clean_artist's rules, and a kind from WORK_KINDS."""
+    work = clean_artist(value)
+    if work is None or not isinstance(value, dict) or value.get("kind") not in WORK_KINDS:
+        return None
+    return {
+        "id": work["id"],
+        "kind": value["kind"],
+        "name": work["name"],
+        "englishName": work["englishName"],
+    }
+
+
 def _set(job: Job, **fields: object) -> None:
     """Mutate Job fields, then bump job.version so the SSE stream (#289) can
     detect the change with a cheap int compare instead of re-serializing on
@@ -105,12 +201,25 @@ class Job:
     # Lyrics tab and the artist box fill themselves from it. None when the
     # source had none, and for anything imported before it was read.
     audio_tags: dict[str, str] | None = None
+    # Which recording this is, found while the job ran (app/pipeline/identify.py):
+    # by audio fingerprint on AcoustID when the user set a key, else a
+    # confident MusicBrainz search by the tags, else the tags alone. The shape
+    # is clean_identity's. None when nothing names the track.
+    identity: dict[str, Any] | None = None
     # The band audio_tags' artist names, found on Wikidata while the job ran
     # (#699): {"id": "Q...", "name", "englishName"}. Only ever an exact match
     # for the tag, so a wrong band is never saved with nobody looking. None
     # when there was no artist tag, no such band, or no connection; the page
     # then looks for it itself, and a band saved there always wins over this.
     artist: dict[str, str] | None = None
+    # The musical, film or series the song is from, when the recording is a
+    # soundtrack or a cast recording (app/pipeline/work_lookup.py): clean_work's
+    # {"id": "Q...", "kind", "name", "englishName"}. None for anything else.
+    work: dict[str, str] | None = None
+    # Whether the job has lyrics.json beside its stems (lyrics_lookup.py). The
+    # lyrics themselves stay in that file: they run to kilobytes, and this
+    # record is rewritten whole on every save.
+    has_lyrics: bool = False
     # True when a silent video track (video.mp4) was preserved from an .mp4
     # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
@@ -202,7 +311,10 @@ class Job:
             "source_url": self.source_url,
             "source_format": self.source_format,
             "audio_tags": self.audio_tags,
+            "identity": self.identity,
             "artist": self.artist,
+            "work": self.work,
+            "has_lyrics": self.has_lyrics,
             "has_video": self.has_video,
             "video_status": self.video_status,
             "error": self.error,
@@ -243,6 +355,8 @@ class Job:
         for key, value in fields.items():
             setattr(job, key, value)
         job.artist = clean_artist(job.artist)
+        job.identity = clean_identity(job.identity)
+        job.work = clean_work(job.work)
         job.cancel_requested = False
         return job
 

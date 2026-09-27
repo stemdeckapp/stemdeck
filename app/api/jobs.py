@@ -20,11 +20,14 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.config import (
     JOB_ID_RE,
     JOBS_DIR,
+    LYRICS_LOOKUP_BUDGET_SEC,
     MAX_PENDING_UPLOAD_JOBS,
     MAX_PENDING_URL_JOBS,
     STEM_NAMES,
-    TIMEOUT_ARTIST_LOOKUP,
     TIMEOUT_FETCH_TAGS,
+    TIMEOUT_IDENTIFY_BACKFILL,
+    TIMEOUT_LYRICS_LOOKUP,
+    TIMEOUT_WORK_BACKFILL,
     ffprobe_executable,
 )
 from app.core.models import Job, _set
@@ -37,16 +40,29 @@ from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
 from app.core.registry import set_trashed as registry_set_trashed
-from app.core.settings import get_auto_sections, get_max_duration_sec
+from app.core.settings import get_acoustid_api_key, get_auto_sections, get_max_duration_sec
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
-from app.pipeline.artist_lookup import find_band, tagged_artist_name
+from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
+from app.pipeline.identify import can_identify_title, identify_and_find_band
+from app.pipeline.lyrics_lookup import (
+    build_query,
+    candidates_path,
+    copy_lyrics,
+    find_lyrics,
+    keep_answer,
+    lyrics_path,
+    lyrics_settled,
+    read_candidates,
+    read_lyrics,
+)
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.vocal_split import split_vocals
+from app.pipeline.work_lookup import find_work, might_have_work
 
 router = APIRouter(tags=["jobs"])
 logger = logging.getLogger("stemdeck.api")
@@ -543,6 +559,8 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         logger.exception("[%s] resplit could not stage the source", job_id)
         raise HTTPException(status_code=500, detail="could not start re-split") from None
 
+    # The same recording, so the same lyrics, and LRCLIB's "nothing" too.
+    has_lyrics = await asyncio.to_thread(copy_lyrics, _job_dir(job_id), new_dir)
     new_job = Job(
         id=new_id,
         selected_stems=selected,
@@ -553,9 +571,12 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         # track it came from instead of replacing it.
         source_url=_resplit_source_url(job.source_url, new_id),
         source_format=source.suffix.lower().removeprefix("."),
-        # The same recording, so the same tags and the same band.
+        # The same recording, so the same tags, identity and band.
         audio_tags=job.audio_tags,
+        identity=job.identity,
         artist=job.artist,
+        work=job.work,
+        has_lyrics=has_lyrics,
         auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
@@ -782,11 +803,24 @@ async def refresh_audio_tags(job_id: str) -> dict:
     """Fill in a finished track's tags, and the band they name (#699), for
     tracks imported before the pipeline found them.
 
-    Answers {"audio_tags": {...} | null, "artist": {...} | null}. A lookup
-    that fails or times out is "nothing found", not an error: the page asks
-    once per track and does not retry, and the reason is in the server log.
-    The band is looked up when the tags name an artist and the job has no
-    band yet, whether the tags were found just now or were there already.
+    Answers {"audio_tags": {...} | null, "artist": {...} | null,
+    "has_lyrics": bool}. A lookup that fails or times out is "nothing found",
+    not an error: the page asks once per track and does not retry, and the
+    reason is in the server log. The band is looked up when the tags name an
+    artist and the job has no band yet, whether the tags were found just now
+    or were there already, and the lyrics (lyrics.json, GET .../lyrics) when
+    the job has none and anything is known to look them up by.
+
+    Also "identity" (app/pipeline/identify.py), found here for a job that has
+    none, the same way the pipeline finds it: an AcoustID fingerprint of the
+    kept upload or of the stems summed, when the user set a key, else a
+    MusicBrainz search by the tags, else by the title (and LRCLIB), else the
+    tags. The band is then found
+    through it. An added key, so older clients read the answer as before.
+
+    And "work" (app/pipeline/work_lookup.py): the musical, film or series a
+    soundtrack or cast recording is from, found here for a job that has none
+    when its identity, album tag or title says it is one. Also an added key.
 
     Deliberately outside _pipeline_lock. This is one metadata request, and
     waiting behind a twenty-minute separation for it would leave the artist
@@ -799,8 +833,21 @@ async def refresh_audio_tags(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status != "done":
         raise HTTPException(status_code=409, detail="job is not finished")
-    if job.audio_tags and (job.artist or not tagged_artist_name(job.audio_tags.get("artist"))):
-        return {"audio_tags": job.audio_tags, "artist": job.artist}
+    job_dir = _job_dir(job_id)
+    if (
+        job.audio_tags
+        and (job.artist or not tagged_artist_name(job.audio_tags.get("artist")))
+        and lyrics_settled(job_dir)
+        and not _wants_identity(job, job.audio_tags)
+        and not _wants_work(job, job.identity, job.audio_tags)
+    ):
+        return {
+            "audio_tags": job.audio_tags,
+            "artist": job.artist,
+            "has_lyrics": True,
+            "identity": job.identity,
+            "work": job.work,
+        }
     if job_id in _TAG_LOOKUPS:
         raise HTTPException(status_code=409, detail="already looking up this track")
 
@@ -823,36 +870,192 @@ async def refresh_audio_tags(job_id: str) -> dict:
                 logger.warning("[%s] audio tag lookup failed", job_id, exc_info=True)
                 tags = None
         artist = None
-        if tags and not job.artist:
-            # find_band never raises; the wait is bounded all the same, since
-            # a socket timeout is per read, not per request.
+        identity = job.identity
+        # The identity when the job has none and there is something to find
+        # it by (a key to fingerprint with, or an artist tag), and the band
+        # through it, only for a job with none and a name to find it by: a
+        # job here for its lyrics alone may have tags naming no artist.
+        want_identity = _wants_identity(job, tags)
+        want_band = not job.artist and bool(
+            tagged_artist_name((tags or {}).get("artist"))
+            or (identity or {}).get("artist")
+            or want_identity
+        )
+        if want_identity or want_band:
+            audio = await asyncio.to_thread(_fingerprint_audio, job) if want_identity else []
+            # identify_and_find_band never raises; the wait is bounded all the
+            # same, since a socket timeout is per read, not per request.
             try:
-                artist = await asyncio.wait_for(
+                identity, artist = await asyncio.wait_for(
                     asyncio.to_thread(
-                        find_band,
-                        tags.get("artist"),
+                        identify_and_find_band,
+                        job,
+                        audio,
+                        tags=tags,
+                        want_band=want_band,
                         cancelled=lambda: registry_get(job_id) is not job,
                     ),
-                    timeout=2 * TIMEOUT_ARTIST_LOOKUP + 1,
+                    timeout=TIMEOUT_IDENTIFY_BACKFILL,
                 )
             except asyncio.TimeoutError:
-                logger.info("[%s] band lookup timed out", job_id)
+                logger.info("[%s] identification timed out", job_id)
+        work = None
+        # The work behind a soundtrack, once the identity says which recording
+        # this is. find_work never raises; the wait is bounded as above.
+        if _wants_work(job, identity, tags):
+            try:
+                work = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        find_work,
+                        identity,
+                        tags,
+                        title=job.title,
+                        cancelled=lambda: registry_get(job_id) is not job,
+                    ),
+                    timeout=TIMEOUT_WORK_BACKFILL,
+                )
+            except asyncio.TimeoutError:
+                logger.info("[%s] work lookup timed out", job_id)
+        lyrics = None
+        query = build_query(job, audio_tags=tags, band=artist, identity=identity)
+        # Not asked again while LRCLIB's last "nothing" is recent.
+        if query is not None and not lyrics_settled(job_dir):
+            # find_lyrics never raises, and starts no request past its budget.
+            try:
+                lyrics = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        find_lyrics,
+                        query,
+                        cancelled=lambda: registry_get(job_id) is not job,
+                        fallback_title=job.title or "",
+                    ),
+                    timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
+                )
+            except asyncio.TimeoutError:
+                logger.info("[%s] lyrics lookup timed out", job_id)
     finally:
         _TAG_LOOKUPS.discard(job_id)
 
     # The track was deleted while the lookup ran.
     if registry_get(job_id) is not job:
-        return {"audio_tags": None, "artist": None}
+        return {
+            "audio_tags": None,
+            "artist": None,
+            "has_lyrics": False,
+            "identity": None,
+            "work": None,
+        }
+    if (
+        lyrics
+        and not lyrics_path(job_dir).is_file()
+        and await asyncio.to_thread(keep_answer, job, job_dir, lyrics)
+    ):
+        registry_persist(JOBS_DIR)
     found: dict[str, object] = {}
     if tags and not job.audio_tags:
         found["audio_tags"] = tags
     if artist and not job.artist:
         found["artist"] = artist
+    if identity and not job.identity:
+        found["identity"] = identity
+    if work and not job.work:
+        found["work"] = work
     if found:
         _set(job, **found)
         registry_persist(JOBS_DIR)
         await asyncio.to_thread(_write_metadata_fields, job_id, found)
-    return {"audio_tags": job.audio_tags, "artist": job.artist}
+    return {
+        "audio_tags": job.audio_tags,
+        "artist": job.artist,
+        "has_lyrics": lyrics_path(job_dir).is_file(),
+        "identity": job.identity,
+        "work": job.work,
+    }
+
+
+def _wants_identity(job: Job, tags: dict[str, str] | None) -> bool:
+    """Whether the backfill should identify ``job``: it has no identity yet,
+    and there is a key to fingerprint with, an artist tag to search by, or a
+    title naming more than a song (a YouTube upload with no music metadata)."""
+    if job.identity is not None:
+        return False
+    return (
+        bool(get_acoustid_api_key())
+        or bool(tagged_artist_name((tags or {}).get("artist")))
+        or can_identify_title(tags, job.title)
+    )
+
+
+def _wants_work(job: Job, identity: dict[str, object] | None, tags: dict[str, str] | None) -> bool:
+    """Whether the backfill should look for the work ``job``'s song is from:
+    it has none yet, and its identity, album tag or title says it is from one."""
+    return job.work is None and might_have_work(identity, tags, job.title)
+
+
+def _fingerprint_audio(job: Job) -> list[Path]:
+    """Blocking: what to fingerprint a finished job from. The upload kept
+    beside it; else its stems, which add back up to the mix (a link's
+    download is deleted once they exist). Only whitelisted stem names, each
+    resolved inside the job's directory."""
+    source = _retained_source(job.id)
+    if source is not None:
+        return [source]
+    stems_root = (JOBS_DIR / job.id / "stems").resolve()
+    stems = []
+    for name in STEM_NAMES:
+        path = (stems_root / f"{name}.wav").resolve()
+        if path.is_file() and path.is_relative_to(JOBS_DIR.resolve()):
+            stems.append(path)
+    return stems
+
+
+def _job_dir(job_id: str) -> Path:
+    """A job's directory, for an id that has passed JOB_ID_RE. Refused (404)
+    if it would resolve outside JOBS_DIR all the same."""
+    job_dir = (JOBS_DIR / job_id).resolve()
+    if not job_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    return job_dir
+
+
+@router.get("/{job_id}/lyrics")
+def get_lyrics(job_id: str) -> Response:
+    """The track's lyrics, as found while it was separated (lyrics.json, see
+    app/pipeline/lyrics_lookup.py), or 404 when it has none.
+
+    A 404 may carry {"others": [...]}: the versions LRCLIB had when none was
+    the length of the track (lyrics_candidates.json), for the tab to offer.
+    A transcription with no others of its own is served with those.
+
+    Served apart from the job's state, which carries only has_lyrics: the
+    text runs to kilobytes, with every other version kept beside it, and the
+    state is sent on every change to a running job.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    if registry_get(job_id) is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    job_dir = _job_dir(job_id)
+    jobs_root = JOBS_DIR.resolve()
+    path = lyrics_path(job_dir).resolve()
+    found_path = candidates_path(job_dir).resolve()
+    if not path.is_relative_to(jobs_root) or not found_path.is_relative_to(jobs_root):
+        raise HTTPException(status_code=404, detail="no lyrics")
+    entry = read_lyrics(job_dir) if path.is_file() else None
+    if entry is None and path.is_file():
+        logger.warning("unreadable lyrics for %s", job_id)
+    found = read_candidates(job_dir) if found_path.is_file() else None
+    others = found["others"] if found else []
+    headers = {"Cache-Control": "no-cache"}
+    if entry is not None:
+        if not entry["others"]:
+            entry["others"] = others
+        return JSONResponse(entry, headers=headers)
+    if others:
+        return JSONResponse(
+            {"detail": "no lyrics", "others": others}, status_code=404, headers=headers
+        )
+    raise HTTPException(status_code=404, detail="no lyrics")
 
 
 # Upper bound on an edited grid. A 20-minute track at 300 BPM is ~6000 beats;

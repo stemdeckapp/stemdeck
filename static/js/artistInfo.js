@@ -8,15 +8,25 @@
 // one lookup made without it, which saves the band from a file's artist tag
 // when a track is opened (see "The band from the file's tags" below).
 //
+// The song leads the box whenever the track is known as one (identified by
+// the server, or named by its tags): its title, who performs it, the album,
+// and the show a soundtrack is from. A song from a musical or a film then
+// shows that work (the server finds which, app/pipeline/work_lookup.py)
+// before any performer, and the performer compactly, with their history one
+// click away: a cast member's biography says less about the song than the
+// show does. Any other band follows the song in full, as it always has.
+//
 // Everything that came from the network goes in with textContent, never as
 // HTML. Wikipedia text is written by anyone, and this page can reach the
 // desktop app's native commands.
 
 import { t, getLanguage, onLanguageChange } from "./i18n.js";
-import { artistMatchesName, lookupArtist, taggedArtistName } from "./artistLookup.js";
+import { artistMatchesName, lookupArtist, lookupWork, taggedArtistName } from "./artistLookup.js";
 import {
   getCurrentTrackArtist,
   getCurrentTrackInfo,
+  getCurrentTrackSong,
+  getCurrentTrackWork,
   isCurrentTrackTagsPending,
   setCurrentTrackArtist,
 } from "./catalog.js";
@@ -62,8 +72,10 @@ function el(tag, className, text) {
   return node;
 }
 
+// Under the song, which is known before anything is looked up, so a wait or a
+// failure still says what the track is.
 function showStatus(message, kind = "") {
-  body.replaceChildren(el("p", `artist-status${kind ? ` ${kind}` : ""}`, message));
+  body.replaceChildren(...songParts(), el("p", `artist-status${kind ? ` ${kind}` : ""}`, message));
 }
 
 function section(titleKey, ...children) {
@@ -97,8 +109,139 @@ function saveButton(artist) {
   return button;
 }
 
-function render(artist) {
-  const head = el("header", "artist-head");
+// "From the musical", "From the film": the title of the work's section.
+const WORK_TITLE_KEYS = {
+  musical: "artist.work.musical",
+  film: "artist.work.film",
+  tv: "artist.work.tv",
+  other: "artist.work.other",
+};
+
+// "From the musical Wicked", "From the film The Greatest Showman": the line
+// under the song's title.
+const SONG_FROM_KEYS = {
+  musical: "artist.song.fromMusical",
+  film: "artist.song.fromFilm",
+  tv: "artist.song.fromTv",
+  other: "artist.song.fromOther",
+};
+
+// The song the open track is, heading the box: its title, the show it is
+// from, who performs it (the whole credit, not only the first name, which is
+// the one looked up) and the album, with the year it came out when known.
+// Nothing when the track is not known as a song, and the box is then exactly
+// what it was before.
+function songParts() {
+  const song = getCurrentTrackSong();
+  if (!song) return [];
+  const work = getCurrentTrackWork();
+  const head = el("header", "artist-song");
+  head.append(el("h2", "artist-song-title", song.title));
+  if (work) head.append(el("p", "artist-desc artist-song-from", t(SONG_FROM_KEYS[work.kind] || SONG_FROM_KEYS.other, { name: work.name })));
+  // A cast recording's album is often just the show's name, said just above,
+  // so it is left out then, unless it carries the year.
+  const repeatsWork = work && song.album.toLowerCase() === work.name.toLowerCase();
+  let album = repeatsWork && !song.year ? "" : song.album;
+  if (album && song.year) album = t("artist.song.albumYear", { album, year: song.year });
+  const facts = [
+    ["artist.song.performedBy", song.credit],
+    ["artist.song.album", album],
+  ].filter(([, value]) => value);
+  if (facts.length) {
+    const list = el("dl", "artist-work-credits artist-song-facts");
+    for (const [key, value] of facts) list.append(el("dt", "", t(key)), el("dd", "", value));
+    head.append(list);
+  }
+  return [head];
+}
+
+// Labelled by what it opens, since a box with a show and a performer in it has
+// one of these for each. target="_blank" is all it takes: main.js routes these
+// through the desktop app's open_url, since the webview will not open one
+// itself.
+function readMoreLink(name, url) {
+  const link = el("a", "artist-more", t("artist.readMoreAbout", { name }));
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  return link;
+}
+
+// Names in the reader's language's own list style ("A, B and C").
+function nameListText(names) {
+  try {
+    return new Intl.ListFormat(getLanguage(), { style: "long", type: "conjunction" }).format(names);
+  } catch (err) {
+    console.warn("list format unavailable", err);
+    return names.join(", ");
+  }
+}
+
+// The work a song is from: its name and year, picture, a short synopsis, who
+// wrote the music, the lyrics and the book, and the way to its article.
+function workSection(work, { lead = false } = {}) {
+  const box = el("section", `artist-section artist-work${lead ? " lead" : ""}`);
+  box.append(el("h3", "artist-section-title", t(WORK_TITLE_KEYS[work.kind] || WORK_TITLE_KEYS.other)));
+
+  const head = el("div", "artist-head artist-work-head");
+  if (work.image) {
+    const img = el("img", "artist-photo artist-work-photo");
+    img.alt = "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => img.remove(), { once: true });
+    img.src = work.image;
+    head.append(img);
+  }
+  const titles = el("div", "artist-titles");
+  const name = el(lead ? "h2" : "h4", "artist-work-name", work.name);
+  if (work.year) name.append(" ", el("span", "artist-work-year num", work.year));
+  titles.append(name);
+  if (work.description) titles.append(el("p", "artist-desc", work.description));
+  head.append(titles);
+  box.append(head);
+
+  if (work.synopsis?.length) {
+    const prose = el("div", "artist-history artist-work-synopsis");
+    for (const paragraph of work.synopsis) prose.append(el("p", "", paragraph));
+    box.append(prose);
+  }
+
+  const credits = [
+    ["artist.work.music", work.composers],
+    ["artist.work.lyrics", work.lyricists],
+    ["artist.work.book", work.bookWriters],
+  ].filter(([, names]) => names?.length);
+  if (credits.length) {
+    const list = el("dl", "artist-work-credits");
+    for (const [key, names] of credits) list.append(el("dt", "", t(key)), el("dd", "", nameListText(names)));
+    box.append(list);
+  }
+
+  if (work.articleUrl) {
+    const more = el("p", "artist-work-more");
+    more.append(readMoreLink(work.name, work.articleUrl));
+    box.append(more);
+  }
+  return box;
+}
+
+// A link-styled button that opens the search row: "Not this band? Search"
+// under a band, or the search itself when there is no band to show.
+function searchLink(key) {
+  const other = el("p", "artist-other");
+  const link = el("button", "artist-other-btn", t(key));
+  link.type = "button";
+  link.addEventListener("click", () => showSearch(true, { focus: true }));
+  other.append(link);
+  return other;
+}
+
+// The band's photo, name, one-line description and save button. `compact`
+// is the performer under a show: a smaller heading, since the song and the
+// show above it are what the box is about.
+function bandHead(artist, { compact = false } = {}) {
+  const head = el("header", `artist-head${compact ? " artist-performer-head" : ""}`);
   if (artist.image) {
     const img = el("img", "artist-photo");
     img.alt = "";
@@ -110,22 +253,84 @@ function render(artist) {
     head.append(img);
   }
   const titles = el("div", "artist-titles");
-  titles.append(el("h2", "artist-name", artist.name));
+  titles.append(el(compact ? "h4" : "h2", "artist-name", artist.name));
   if (artist.description) titles.append(el("p", "artist-desc", artist.description));
   head.append(titles, saveButton(artist));
+  return head;
+}
 
-  const parts = [head];
+// The performer of a song from a show: name and description, and their
+// history, members and albums behind "More about <name>", with the link to
+// their article. Unless that article is the show's own, already linked above.
+function performerSection(artist, work) {
+  const box = el("section", "artist-section artist-performer");
+  box.append(el("h3", "artist-section-title", t("artist.performer")), bandHead(artist, { compact: true }));
+  if (!searchShown) box.append(searchLink("artist.notThisPerformer"));
+  const details = bandDetails(artist);
+  const url = artist.articleUrl && artist.articleUrl !== work?.articleUrl ? artist.articleUrl : "";
+  if (url) {
+    const more = el("p", "artist-work-more");
+    more.append(readMoreLink(artist.name, url));
+    details.push(more);
+  }
+  if (!details.length) return box;
+  const more = el("div", "artist-performer-more");
+  more.hidden = true;
+  more.tabIndex = -1;
+  more.append(...details);
+  const open = el("p", "artist-other artist-performer-open");
+  const button = el("button", "artist-other-btn", t("artist.moreAbout", { name: artist.name }));
+  button.type = "button";
+  button.addEventListener("click", () => {
+    more.hidden = false;
+    open.remove();
+    // Focus goes where the button was, so a keyboard user carries on reading.
+    more.focus({ preventScroll: true });
+  });
+  open.append(button);
+  box.append(open, more);
+  return box;
+}
 
-  // Under the name, where a wrong band is noticed: the way back to the field.
-  if (!searchShown) {
-    const other = el("p", "artist-other");
-    const link = el("button", "artist-other-btn", t("artist.notThisBand"));
-    link.type = "button";
-    link.addEventListener("click", () => showSearch(true, { focus: true }));
-    other.append(link);
-    parts.push(other);
+// The song first when known, then the show it is from, then who performs it:
+// compactly under a show, and in full, as the box has always shown a band,
+// when there is no show. No band means the search for one is a click away,
+// rather than an empty field in front of what is known.
+function render(artist, work = null) {
+  const parts = songParts();
+  const song = parts.length > 0;
+  const soundtrack = Boolean(work) || Boolean(getCurrentTrackSong()?.soundtrack);
+  if (!artist) showSearch(false);
+  const foot = el("footer", "artist-foot");
+
+  if (work) parts.push(workSection(work, { lead: !song }));
+  if (artist && soundtrack) {
+    parts.push(performerSection(artist, work));
+  } else if (artist) {
+    const head = bandHead(artist);
+    // Under the song, the band starts a section of its own.
+    if (song) head.classList.add("artist-band-head");
+    parts.push(head);
+    // Under the name, where a wrong band is noticed: the way back to the field.
+    if (!searchShown) parts.push(searchLink("artist.notThisBand"));
+    parts.push(...bandDetails(artist));
+    if (artist.articleUrl) foot.append(readMoreLink(artist.name, artist.articleUrl));
+  } else {
+    parts.push(searchLink("artist.searchPlaceholder"));
   }
 
+  // The credit, only for what came from Wikipedia and Wikidata.
+  if (artist || work) {
+    foot.append(el("span", "artist-source", t("artist.source")));
+    parts.push(foot);
+  }
+  body.replaceChildren(...parts);
+  body.scrollTop = 0;
+}
+
+// A band's history, members and studio albums, as sections.
+function bandDetails(artist) {
+  const parts = [];
   if (artist.history.length) {
     const prose = el("div", "artist-history");
     for (const paragraph of artist.history) prose.append(el("p", "", paragraph));
@@ -151,61 +356,80 @@ function render(artist) {
     }
     parts.push(section("artist.albums", list));
   }
-
-  const foot = el("footer", "artist-foot");
-  if (artist.articleUrl) {
-    // target="_blank" is all it takes: main.js routes these through the
-    // desktop app's open_url, since the webview will not open one itself.
-    const link = el("a", "artist-more", t("artist.readMore"));
-    link.href = artist.articleUrl;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    foot.append(link);
-  }
-  foot.append(el("span", "artist-source", t("artist.source")));
-  parts.push(foot);
-
-  body.replaceChildren(...parts);
-  body.scrollTop = 0;
+  return parts;
 }
 
-async function search(name, { id = "" } = {}) {
+// The work the open track's song is from, looked up by its id for the box, or
+// null when the track has none. One that cannot be reached is shown by the
+// name kept on the track, and asked for again next time.
+async function loadWork(work, lang, signal) {
+  if (!work) return null;
+  const key = `${lang}|work#${work.id}`;
+  if (answers.has(key)) return answers.get(key);
+  try {
+    const found = await lookupWork(work.id, lang, { signal });
+    const value = found ? { ...found, kind: work.kind, name: found.name || work.name } : null;
+    answers.set(key, value);
+    return value;
+  } catch (err) {
+    if (!signal.aborted) console.warn("work lookup failed", err);
+    return { id: work.id, kind: work.kind, name: work.name, synopsis: [] };
+  }
+}
+
+// The band by id or name, from the answers already had or from Wikidata.
+async function bandAnswer(query, id, lang, signal) {
+  const key = id ? `${lang}|#${id}` : `${lang}|${query.toLowerCase()}`;
+  if (answers.has(key)) return answers.get(key);
+  const artist = await lookupArtist(query, lang, { id, signal });
+  if (signal.aborted) return null;
+  answers.set(key, artist);
+  // Also by id, so a band found by name and then saved opens from the cache.
+  if (artist) answers.set(`${lang}|#${artist.id}`, artist);
+  return artist;
+}
+
+// `typed` is a name searched for in the box. Found nothing, it says so, where
+// the name the box opened with instead gives way to the track's work.
+async function search(name, { id = "", typed = false } = {}) {
   const query = String(name || "").trim();
   lastQuery = query;
   lastId = id;
   current?.abort();
   current = null;
-  if (!query && !id) {
+  const trackWork = getCurrentTrackWork();
+  if (!query && !id && !trackWork) {
+    // A song known by no band: the song, with the search a click away.
+    if (!typed && getCurrentTrackSong()) render(null);
     // Nothing asked yet: the field's placeholder already says what to do.
-    body.replaceChildren();
+    else body.replaceChildren(...songParts());
     return;
   }
 
   const lang = getLanguage();
-  const key = id ? `${lang}|#${id}` : `${lang}|${query.toLowerCase()}`;
   // Nothing to show means the field is the next step, filled with the name
   // that found nothing so it can be corrected or tried again.
   const notFound = () => {
     showSearch(true);
     showStatus(t("artist.notFound", { name: query }), "muted");
   };
-  if (answers.has(key)) {
-    const cached = answers.get(key);
-    if (cached) render(cached);
-    else notFound();
-    return;
-  }
 
   const controller = new AbortController();
   current = controller;
-  showStatus(t("artist.loading", { name: query }), "loading");
+  const bandKey = id ? `${lang}|#${id}` : `${lang}|${query.toLowerCase()}`;
+  const waitsForBand = (query || id) && !answers.has(bandKey);
+  const waitsForWork = trackWork && !answers.has(`${lang}|work#${trackWork.id}`);
+  if (waitsForBand || waitsForWork) {
+    showStatus(t("artist.loading", { name: query || trackWork.name }), "loading");
+  }
   try {
-    const artist = await lookupArtist(query, lang, { id, signal: controller.signal });
+    const [artist, work] = await Promise.all([
+      query || id ? bandAnswer(query, id, lang, controller.signal) : null,
+      loadWork(trackWork, lang, controller.signal),
+    ]);
     if (controller.signal.aborted) return;
-    answers.set(key, artist);
-    // Also by id, so a band found by name and then saved opens from the cache.
-    if (artist) answers.set(`${lang}|#${artist.id}`, artist);
-    if (artist) render(artist);
+    if (artist) render(artist, work);
+    else if (work && !typed) render(null, work);
     else notFound();
   } catch (err) {
     // A newer search or closing the box aborts this one; that is not a fault.
@@ -247,7 +471,7 @@ function showFromTrack({ focus = true } = {}) {
     link.type = "button";
     link.addEventListener("click", () => {
       waiting = false;
-      body.replaceChildren();
+      body.replaceChildren(...songParts());
       showSearch(true, { focus: true });
     });
     other.append(link);
@@ -256,11 +480,14 @@ function showFromTrack({ focus = true } = {}) {
     return;
   }
   const name = saved?.name || taggedArtistName(info?.audioTags?.artist);
+  // A work or a song to show is an answer too, so the field stays out of its
+  // way.
+  const answer = Boolean(name || getCurrentTrackWork() || getCurrentTrackSong());
   input.value = name;
-  showSearch(!name);
+  showSearch(!answer);
   // With a name, the answer is what they came for, so focus stays off the
   // field and Escape closes. Without one, the field is the next step.
-  if (focus) (name ? closeButton : input)?.focus();
+  if (focus) (answer ? closeButton : input)?.focus();
   search(name, { id: saved?.id || "" });
 }
 
@@ -381,7 +608,7 @@ export function initArtistInfo() {
     e.preventDefault();
     // What was typed, by name: the saved band's id only applies to the name
     // the box opened with.
-    search(input.value);
+    search(input.value, { typed: true });
   });
   document.getElementById("artistClose")?.addEventListener("click", close);
   dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) close(); });

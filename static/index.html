@@ -198,10 +198,10 @@
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
             </button>
-            <!-- The artist box (#699): band history, members and albums, and
-                 where a band is saved on the track. type="button" for the
+            <!-- The song and artist box (#699): the song, the show a soundtrack
+                 is from, the band, and where a band is saved on the track. type="button" for the
                  same reason as the heart: this is inside <form id="job-form">. -->
-            <button class="daw-details-btn" type="button" id="np-details-btn" title="About this artist" aria-label="About this artist" data-i18n-title="artist.openTitle" data-i18n-aria-label="artist.openTitle">
+            <button class="daw-details-btn" type="button" id="np-details-btn" title="About this song" aria-label="About this song" data-i18n-title="artist.openTitle" data-i18n-aria-label="artist.openTitle">
               <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.6v.01" stroke-width="2.4"/>
               </svg>
@@ -426,7 +426,7 @@
                  says it is, not what someone types. -->
             <section class="lyrics-panel" id="lyricsPanel" aria-labelledby="lyricsTitle">
               <h2 class="lyrics-title" id="lyricsTitle" data-i18n="lyrics.title">Lyrics</h2>
-              <p class="lyrics-note" data-i18n="lyrics.privacy">Found on LRCLIB by the artist and song in the file's tags, or the band saved on this track. Nothing else is sent.</p>
+              <p class="lyrics-note" data-i18n="lyrics.privacy">Taken from the file itself, or found on LRCLIB by the song this track was identified as. If neither has any and the setting allows it, they are transcribed locally from the vocals. Nothing else is sent.</p>
               <p class="lyrics-status" id="lyricsStatus" aria-live="polite"></p>
               <div class="lyrics-versions" id="lyricsVersions"></div>
               <div class="lyrics-body" id="lyricsBody"></div>
@@ -1117,6 +1117,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
           </a>
         </div>
+        <p class="about-credits" data-i18n="about.credits">Song details from AcoustID, MusicBrainz (CC0), Wikipedia (CC BY-SA) and Wikidata (CC0). Lyrics from LRCLIB. Transcription by OpenAI Whisper (MIT).</p>
       </div>
     </div>
 
@@ -1139,7 +1140,7 @@
 
     <!-- Artist box (#699), opened from the now-playing card. Filled by
          artistInfo.js from Wikidata and Wikipedia, only after a click. -->
-    <div class="about-backdrop hidden" id="artistDialog" role="dialog" aria-modal="true" aria-label="About the artist" data-i18n-aria-label="artist.dialogAria">
+    <div class="about-backdrop hidden" id="artistDialog" role="dialog" aria-modal="true" aria-label="About the song" data-i18n-aria-label="artist.dialogAria">
       <div class="about-card artist-card">
         <button class="about-close" id="artistClose" type="button" aria-label="Close" data-i18n-aria-label="artist.close">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -1150,8 +1151,12 @@
                  aria-label="Band or artist to look up" data-i18n-aria-label="artist.searchAria" />
           <button type="submit" class="artist-search-btn" data-i18n="artist.search">Search</button>
         </form>
-        <p class="artist-privacy" data-i18n="artist.privacy">Only an artist's name is sent to Wikipedia and Wikidata: the one you search for here, and the artist in a track's tags when you open the track.</p>
         <div class="artist-body" id="artistBody" aria-live="polite"></div>
+        <!-- What is sent where, at the foot of the box rather than the first thing
+             read in it. Outside the body, so it stays put while the body scrolls. -->
+        <footer class="artist-card-foot">
+          <p class="artist-privacy" data-i18n="artist.privacy">When a track is imported or opened, names from it (artist, song, album or show) are sent to MusicBrainz, Wikidata, Wikipedia and LRCLIB, and a name you search for here to Wikidata and Wikipedia. With an AcoustID key set, an audio fingerprint also goes to AcoustID. Nothing else is sent.</p>
+        </footer>
       </div>
     </div>
 

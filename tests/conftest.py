@@ -22,6 +22,48 @@ def _no_wikidata(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_lrclib(monkeypatch):
+    """No test reaches LRCLIB. A job with tags looks its lyrics up while it
+    runs, and so does the tag backfill; offline is what this answers, which
+    the lookup treats as "no lyrics". Tests that want an answer stub it."""
+
+    def offline(endpoint, params):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr("app.pipeline.lyrics_lookup._fetch_json", offline)
+
+
+@pytest.fixture(autouse=True)
+def _no_whisper(monkeypatch):
+    """No test runs Whisper. A job separated on a GPU with no lyrics found
+    transcribes its vocals at the end (app/pipeline/transcribe.py), and the
+    real worker would download a 1.6 GB model. The worker this points at
+    exits at once, which the stage treats as "no transcript". Tests that want
+    one point _spawn_worker_cmd at a stub of their own."""
+    monkeypatch.setattr(
+        "app.pipeline.transcribe._spawn_worker_cmd",
+        lambda vocals, device: [sys.executable, "-c", "raise SystemExit(3)"],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_acoustid_or_musicbrainz(monkeypatch, tmp_path):
+    """No test reaches api.acoustid.org or musicbrainz.org. Every job with an
+    artist tag is identified while it runs (app/pipeline/identify.py), and so
+    is the tag backfill; offline is what this answers, which identification
+    treats as "not found" and falls back to the tags. The MusicBrainz cache
+    goes to a temporary directory, so no test reads or writes the real one.
+    Tests that want an answer stub the two requests themselves."""
+
+    def offline(*args, **kwargs):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr("app.pipeline.musicbrainz._fetch_json", offline)
+    monkeypatch.setattr("app.pipeline.identify._acoustid_request", offline)
+    monkeypatch.setattr("app.pipeline.musicbrainz.CACHE_DIR", tmp_path / "_musicbrainz_cache")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 

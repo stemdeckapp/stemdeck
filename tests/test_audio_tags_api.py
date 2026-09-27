@@ -22,6 +22,28 @@ from app.core.registry import _jobs
 LITHIUM_URL = "https://www.youtube.com/watch?v=pkcJEvMcnEg"
 QUEEN = {"id": "Q15862", "name": "Queen", "englishName": "Queen"}
 NIRVANA = {"id": "Q11649", "name": "Nirvana", "englishName": "Nirvana"}
+
+
+def _tags_identity(artist, title, album=None, duration=None):
+    """The identity a track gets from its tags alone: what every lookup here
+    finds, since conftest keeps AcoustID and MusicBrainz offline and no
+    AcoustID key is set."""
+    return {
+        "source": "tags",
+        "score": 0.0,
+        "recording_mbid": None,
+        "title": title,
+        "artist": artist,
+        "artist_mbids": [],
+        "album": album,
+        "release_group_mbid": None,
+        "release_group_type": None,
+        "secondary_types": [],
+        "year": None,
+        "duration": duration,
+    }
+
+
 # What yt-dlp really returned for it: no music fields, the band as channel.
 LITHIUM_INFO = {
     "artist": None,
@@ -99,13 +121,16 @@ def test_tags_and_band_already_there_are_returned_untouched(client):
     with (
         patch("app.api.jobs.fetch_audio_tags") as fetch,
         patch("app.api.jobs.probe_tags") as probe,
-        patch("app.api.jobs.find_band") as find,
+        patch("app.pipeline.identify.find_band") as find,
     ):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
     assert r.json() == {
         "audio_tags": {"artist": "Queen", "title": "Bicycle Race"},
         "artist": QUEEN,
+        "has_lyrics": False,
+        "identity": _tags_identity("Queen", "Bicycle Race"),
+        "work": None,
     }
     fetch.assert_not_called()
     probe.assert_not_called()
@@ -114,9 +139,15 @@ def test_tags_and_band_already_there_are_returned_untouched(client):
 
 def test_tags_with_no_artist_look_up_no_band(client):
     job = _done_job(audio_tags={"title": "Bicycle Race"})
-    with patch("app.api.jobs.find_band") as find:
+    with patch("app.pipeline.identify.find_band") as find:
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
-    assert r.json() == {"audio_tags": {"title": "Bicycle Race"}, "artist": None}
+    assert r.json() == {
+        "audio_tags": {"title": "Bicycle Race"},
+        "artist": None,
+        "has_lyrics": False,
+        "identity": None,
+        "work": None,
+    }
     find.assert_not_called()
 
 
@@ -129,11 +160,17 @@ def test_tags_already_there_get_their_band(client):
     meta_path.write_text(json.dumps({"title": "Lithium", "bpm": 123}), encoding="utf-8")
     with (
         patch("app.api.jobs.fetch_audio_tags") as fetch,
-        patch("app.api.jobs.find_band", return_value=QUEEN) as find,
+        patch("app.pipeline.identify.find_band", return_value=QUEEN) as find,
     ):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": {"artist": "Queen", "title": "Bicycle Race"}, "artist": QUEEN}
+    assert r.json() == {
+        "audio_tags": {"artist": "Queen", "title": "Bicycle Race"},
+        "artist": QUEEN,
+        "has_lyrics": False,
+        "identity": _tags_identity("Queen", "Bicycle Race"),
+        "work": None,
+    }
     fetch.assert_not_called()
     assert find.call_args.args == ("Queen",)
     assert job.artist == QUEEN
@@ -141,13 +178,18 @@ def test_tags_already_there_get_their_band(client):
     [record] = [j for j in registry["jobs"] if j["id"] == job.id]
     assert record["artist"] == QUEEN
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta == {"title": "Lithium", "bpm": 123, "artist": QUEEN}
+    assert meta == {
+        "title": "Lithium",
+        "bpm": 123,
+        "artist": QUEEN,
+        "identity": _tags_identity("Queen", "Bicycle Race"),
+    }
 
 
 def test_tags_found_now_get_their_band_too(client, fake_ydl):
     job = _done_job()
     fake_ydl.replies = [dict(LITHIUM_INFO)]
-    with patch("app.api.jobs.find_band", return_value=NIRVANA) as find:
+    with patch("app.pipeline.identify.find_band", return_value=NIRVANA) as find:
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.json()["artist"] == NIRVANA
     assert find.call_args.args == ("Nirvana",)
@@ -164,7 +206,13 @@ def test_a_band_that_cannot_be_found_leaves_the_tags_kept(client):
     with patch("app.api.jobs.probe_tags", return_value=found):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": found, "artist": None}
+    assert r.json() == {
+        "audio_tags": found,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": _tags_identity("Nirvana", "Lithium"),
+        "work": None,
+    }
     assert job.audio_tags == found
     assert job.artist is None
 
@@ -189,7 +237,13 @@ def test_an_upload_is_read_from_its_kept_source(client):
     ):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": found, "artist": None}
+    assert r.json() == {
+        "audio_tags": found,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": _tags_identity("Nirvana", "Lithium", "Nevermind"),
+        "work": None,
+    }
     probe.assert_called_once_with(source.resolve())
     fetch.assert_not_called()
     assert job.audio_tags == found
@@ -200,7 +254,13 @@ def test_an_upload_with_no_kept_source_has_nothing_to_read(client):
     with patch("app.api.jobs.probe_tags") as probe:
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": None, "artist": None}
+    assert r.json() == {
+        "audio_tags": None,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": None,
+        "work": None,
+    }
     probe.assert_not_called()
 
 
@@ -247,7 +307,13 @@ def test_a_link_is_looked_up_without_downloading_and_the_tags_kept(client, fake_
 
     expected = {"artist": "Nirvana", "title": "Lithium (Official Music Video)"}
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": expected, "artist": None}
+    assert r.json() == {
+        "audio_tags": expected,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": _tags_identity("Nirvana", "Lithium"),
+        "work": None,
+    }
     [(opts, url, download)] = fake_ydl.calls
     assert url == LITHIUM_URL
     assert download is False, "metadata only"
@@ -260,7 +326,12 @@ def test_a_link_is_looked_up_without_downloading_and_the_tags_kept(client, fake_
     [record] = [j for j in registry["jobs"] if j["id"] == job.id]
     assert record["audio_tags"] == expected
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta == {"title": "Lithium", "bpm": 123, "audio_tags": expected}
+    assert meta == {
+        "title": "Lithium",
+        "bpm": 123,
+        "audio_tags": expected,
+        "identity": _tags_identity("Nirvana", "Lithium"),
+    }
 
 
 def test_a_bot_check_is_retried_with_cookies(client, fake_ydl, tmp_path):
@@ -283,7 +354,13 @@ def test_a_stored_url_that_is_not_one_we_accept_is_never_fetched(client, fake_yd
     job = _done_job(source_url="https://example.com/lithium.mp3")
     r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": None, "artist": None}
+    assert r.json() == {
+        "audio_tags": None,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": None,
+        "work": None,
+    }
     assert fake_ydl.calls == []
 
 
@@ -292,7 +369,13 @@ def test_a_failed_lookup_is_nothing_found(client):
     with patch("app.api.jobs.fetch_audio_tags", side_effect=RuntimeError("HTTP Error 403")):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": None, "artist": None}
+    assert r.json() == {
+        "audio_tags": None,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": None,
+        "work": None,
+    }
     assert "403" not in r.text
     assert job.audio_tags is None
     assert job.id not in jobs_mod._TAG_LOOKUPS, "the guard is released on failure"
@@ -304,5 +387,11 @@ def test_a_lookup_that_takes_too_long_is_nothing_found(client, monkeypatch):
     with patch("app.api.jobs.fetch_audio_tags", side_effect=lambda url: time.sleep(0.5)):
         r = client.post(f"/api/jobs/{job.id}/audio-tags")
     assert r.status_code == 200
-    assert r.json() == {"audio_tags": None, "artist": None}
+    assert r.json() == {
+        "audio_tags": None,
+        "artist": None,
+        "has_lyrics": False,
+        "identity": None,
+        "work": None,
+    }
     assert job.audio_tags is None

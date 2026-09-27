@@ -1792,6 +1792,10 @@ fn start_backend(
         }
 
         apply_ffmpeg_path(&mut cmd, &data_dir)?;
+        // fpcalc for song fingerprinting, fetched in the background once the
+        // FFmpeg it stands in for is settled. Never waited for.
+        #[cfg(unix)]
+        spawn_fpcalc_setup(data_dir.clone());
 
         #[cfg(windows)]
         {
@@ -4790,6 +4794,193 @@ fn download_linux_ffmpeg(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// fpcalc, Chromaprint's own fingerprinter, for song identification where the
+// FFmpeg in use has no chromaprint muxer: the shaka-project and evermeet macOS
+// builds and johnvansickle's Linux build (app/pipeline/fpcalc.py). Windows gets
+// none, BtbN's gpl build has the muxer. Optional: without it AcoustID
+// fingerprinting stays off and tracks are identified by their tags.
+//
+// Pinned like the FFmpeg hashes above, since this binary is downloaded, marked
+// executable and run. Each hash is the sha256 of the release tarball as
+// downloaded from GitHub. To bump: change FPCALC_VERSION, download every asset
+// fpcalc_asset() names from
+// https://github.com/acoustid/chromaprint/releases/tag/v<version>, run
+// `sha256sum` on each, and replace all three hashes together. A stale pin fails
+// closed: no fpcalc, never an unverified one.
+#[cfg(any(unix, test))]
+const FPCALC_VERSION: &str = "1.6.1";
+#[cfg(any(unix, test))]
+const FPCALC_SHA256_LINUX_X86_64: &str =
+    "fc16cd37a70168040bc9ceb45f1d4d1216f5a75bc4c9cf8564bea70ac6a45733";
+#[cfg(any(unix, test))]
+const FPCALC_SHA256_LINUX_ARM64: &str =
+    "7eaf5d655c4aa172ab28e3c870b8bb61dd2c327ac94de145676f88842cf6215a";
+#[cfg(any(unix, test))]
+const FPCALC_SHA256_MACOS_UNIVERSAL: &str =
+    "240aeb5a8c8205af458e3625cb7487b826b711a999e491ef00111f3cebd76f00";
+
+/// The release asset to fetch for this OS and CPU, with its pinned hash, or
+/// None where none is fetched (Windows, or a platform with no build).
+///
+/// Takes the OS and arch rather than reading `std::env::consts`, so every arm
+/// is testable on any host. macOS takes the universal binary: one file that
+/// runs natively on either CPU, so an Intel app under Rosetta and a native one
+/// can never end up with a binary the other half cannot run (#637's shape).
+#[cfg(any(unix, test))]
+fn fpcalc_asset(os: &str, arch: &str) -> Option<(String, &'static str)> {
+    let (suffix, sha256) = match (os, arch) {
+        ("linux", "x86_64") => ("linux-x86_64", FPCALC_SHA256_LINUX_X86_64),
+        ("linux", "aarch64") => ("linux-arm64", FPCALC_SHA256_LINUX_ARM64),
+        ("macos", "x86_64" | "aarch64") => ("macos-universal", FPCALC_SHA256_MACOS_UNIVERSAL),
+        _ => return None,
+    };
+    Some((
+        format!("chromaprint-fpcalc-{FPCALC_VERSION}-{suffix}.tar.gz"),
+        sha256,
+    ))
+}
+
+/// Whether an `ffmpeg -muxers` listing names chromaprint. Lines are
+/// ` E chromaprint     Chromaprint`: flags, then the name.
+#[cfg(any(unix, test))]
+fn lists_chromaprint_muxer(listing: &str) -> bool {
+    listing
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("chromaprint"))
+}
+
+/// Check `archive` against its pinned hash, then write the one file named
+/// `fpcalc` in it to `target`. Nothing is extracted from an archive that does
+/// not match, and only that one regular file is ever written, to `target`
+/// whatever path the archive gives it.
+#[cfg(any(unix, test))]
+fn unpack_fpcalc(archive: &Path, expected_sha256: &str, target: &Path) -> Result<(), String> {
+    verify_pinned_sha256(archive, Some(expected_sha256), "fpcalc")?;
+    let file = fs::File::open(archive)
+        .map_err(|e| format!("failed to open {}: {e}", archive.display()))?;
+    let mut tarball = Archive::new(GzDecoder::new(file));
+    let entries = tarball
+        .entries()
+        .map_err(|e| format!("failed to read the fpcalc archive: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("failed to read the fpcalc archive: {e}"))?;
+        let is_fpcalc = entry.header().entry_type().is_file()
+            && entry
+                .path()
+                .is_ok_and(|path| path.file_name().is_some_and(|name| name == "fpcalc"));
+        if !is_fpcalc {
+            continue;
+        }
+        let mut output = fs::File::create(target)
+            .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|e| format!("failed to extract {}: {e}", target.display()))?;
+        return Ok(());
+    }
+    Err("the fpcalc archive did not contain fpcalc".to_string())
+}
+
+#[cfg(unix)]
+fn verify_fpcalc(path: &Path) -> Result<(), String> {
+    let mut command = Command::new(path);
+    command
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let output = command_output_with_timeout(command, Duration::from_secs(15), "fpcalc check")?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "fpcalc at {} failed to run ({})",
+            path.display(),
+            output.status
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn ffmpeg_has_chromaprint(ffmpeg: &Path) -> bool {
+    let mut command = Command::new(ffmpeg);
+    command
+        .args(["-hide_banner", "-muxers"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg muxer check")
+        .is_ok_and(|output| lists_chromaprint_muxer(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Put a working fpcalc in data/ffmpeg when song identification would need
+/// one and nothing already provides it. Every failure is returned for the
+/// caller to log; none is a reason to stop anything.
+#[cfg(unix)]
+fn ensure_fpcalc(data_dir: &Path) -> Result<(), String> {
+    // The user's own choice, which the backend honours; not ours to replace.
+    if env_path_override("STEMDECK_FPCALC").is_some() {
+        return Ok(());
+    }
+    let ffmpeg_dir = data_dir.join("ffmpeg");
+    let target = ffmpeg_dir.join("fpcalc");
+    if target.is_file() && verify_fpcalc(&target).is_ok() {
+        return Ok(());
+    }
+    // A system install (Homebrew's chromaprint, a distro's libchromaprint-
+    // tools), or an FFmpeg that needs no help. The backend sees the same PATH.
+    if verify_fpcalc(Path::new("fpcalc")).is_ok() {
+        return Ok(());
+    }
+    if verified_ffmpeg_pair(data_dir).is_some_and(|(ffmpeg, _)| ffmpeg_has_chromaprint(&ffmpeg)) {
+        return Ok(());
+    }
+    let (asset, sha256) = fpcalc_asset(env::consts::OS, env::consts::ARCH).ok_or_else(|| {
+        format!(
+            "no fpcalc build for {}/{}",
+            env::consts::OS,
+            env::consts::ARCH
+        )
+    })?;
+    let url = format!(
+        "https://github.com/acoustid/chromaprint/releases/download/v{FPCALC_VERSION}/{asset}"
+    );
+    fs::create_dir_all(&ffmpeg_dir)
+        .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
+    // Beside FFmpeg rather than in downloads/, which prune_downloads may be
+    // emptying while this runs.
+    let archive = ffmpeg_dir.join("fpcalc.tar.gz");
+    let staged = ffmpeg_dir.join("fpcalc.partial");
+    let result = download_file(&url, &archive, Duration::from_secs(5 * 60), "fpcalc")
+        .and_then(|()| unpack_fpcalc(&archive, sha256, &staged))
+        .and_then(|()| make_executable(&staged))
+        .and_then(|()| verify_fpcalc(&staged))
+        // Into place only once it runs: the backend looks for it on every
+        // fingerprint, and must never find a half-written one.
+        .and_then(|()| {
+            fs::rename(&staged, &target)
+                .map_err(|e| format!("failed to move fpcalc to {}: {e}", target.display()))
+        });
+    let _ = fs::remove_file(&archive);
+    let _ = fs::remove_file(&staged);
+    result
+}
+
+/// ensure_fpcalc, once per launch, on a thread of its own. It is a few
+/// megabytes the app works without, so it never holds up setup or the window,
+/// and an install set up before fpcalc existed gets it on its next launch. The
+/// backend looks for fpcalc on every fingerprint, so one that lands after it
+/// started is used from then on.
+#[cfg(unix)]
+fn spawn_fpcalc_setup(data_dir: PathBuf) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    thread::spawn(move || {
+        if let Err(err) = ensure_fpcalc(&data_dir) {
+            eprintln!("[stemdeck] no fpcalc, song fingerprinting stays off: {err}");
+        }
+    });
+}
+
 // "arm64" on Apple Silicon, "x64" everywhere else -- takes the arch string
 // rather than reading std::env::consts::ARCH itself so both branches are
 // unit-testable on any host, not just the one they happen to be running on.
@@ -4819,8 +5010,9 @@ fn override_sha256(env_var: &str) -> Option<String> {
 // Unix rather than macOS: the Linux FFmpeg download calls this too (#518).
 // While the gate said macOS the Linux caller referred to a function that was
 // configured out, and nothing noticed because nothing compiles the Linux shell
-// until a release builds it (#531).
-#[cfg(unix)]
+// until a release builds it (#531). Also under test on every host, for
+// unpack_fpcalc's tests.
+#[cfg(any(unix, test))]
 fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Result<(), String> {
     let Some(expected) = expected else {
         return Ok(());
@@ -7383,5 +7575,136 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert!(hint.contains("8000") && hint.contains("1234"));
         // No foreign responder seen: say nothing rather than guess at a cause.
         assert!(super::port_conflict_hint(8000, None).is_empty());
+    }
+
+    // --- fpcalc, for song fingerprinting without FFmpeg's chromaprint muxer ---
+
+    #[test]
+    fn fpcalc_asset_picks_the_build_for_each_platform() {
+        let asset = super::fpcalc_asset;
+        assert_eq!(
+            asset("linux", "x86_64"),
+            Some((
+                "chromaprint-fpcalc-1.6.1-linux-x86_64.tar.gz".to_string(),
+                super::FPCALC_SHA256_LINUX_X86_64
+            ))
+        );
+        assert_eq!(
+            asset("linux", "aarch64"),
+            Some((
+                "chromaprint-fpcalc-1.6.1-linux-arm64.tar.gz".to_string(),
+                super::FPCALC_SHA256_LINUX_ARM64
+            ))
+        );
+        for arch in ["x86_64", "aarch64"] {
+            assert_eq!(
+                asset("macos", arch),
+                Some((
+                    "chromaprint-fpcalc-1.6.1-macos-universal.tar.gz".to_string(),
+                    super::FPCALC_SHA256_MACOS_UNIVERSAL
+                ))
+            );
+        }
+        // Windows' FFmpeg has the muxer; nothing to fetch there or anywhere
+        // without a published build.
+        assert_eq!(asset("windows", "x86_64"), None);
+        assert_eq!(asset("linux", "riscv64"), None);
+        assert_eq!(asset("freebsd", "x86_64"), None);
+    }
+
+    #[test]
+    fn fpcalc_pins_are_sha256_hex() {
+        for sha in [
+            super::FPCALC_SHA256_LINUX_X86_64,
+            super::FPCALC_SHA256_LINUX_ARM64,
+            super::FPCALC_SHA256_MACOS_UNIVERSAL,
+        ] {
+            assert_eq!(sha.len(), 64);
+            assert!(sha
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        }
+    }
+
+    #[test]
+    fn the_chromaprint_muxer_is_found_in_a_muxer_listing() {
+        let with = "File formats:\n  E = Muxing supported\n --\n  E caf  Apple CAF\n  E chromaprint     Chromaprint\n  E crc   CRC testing\n";
+        let without = "File formats:\n  E = Muxing supported\n --\n  E caf  Apple CAF\n  E crc   CRC testing\n";
+        assert!(super::lists_chromaprint_muxer(with));
+        assert!(!super::lists_chromaprint_muxer(without));
+        // A description mentioning it is not the muxer.
+        assert!(!super::lists_chromaprint_muxer(
+            "  E null  raw null for chromaprint tests\n"
+        ));
+    }
+
+    /// A release-shaped tarball: `<dir>/fpcalc` beside other files.
+    fn fpcalc_tarball(dir: &Path, members: &[(&str, &[u8])]) -> PathBuf {
+        let archive = dir.join("fpcalc.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoder);
+        for (path, body) in members {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, path, *body).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+        archive
+    }
+
+    fn sha256_of(path: &Path) -> String {
+        super::sha256_file(path).unwrap()
+    }
+
+    #[test]
+    fn unpack_fpcalc_extracts_only_fpcalc() {
+        let dir = make_tmp();
+        let archive = fpcalc_tarball(
+            dir.path(),
+            &[
+                ("chromaprint-fpcalc-1.6.1-linux-x86_64/LICENSE", b"license"),
+                (
+                    "chromaprint-fpcalc-1.6.1-linux-x86_64/fpcalc",
+                    b"the binary",
+                ),
+            ],
+        );
+        let target = dir.path().join("out").join("fpcalc.partial");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let sha = sha256_of(&archive);
+        super::unpack_fpcalc(&archive, &sha, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"the binary");
+        let written: Vec<_> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(written, vec![std::ffi::OsString::from("fpcalc.partial")]);
+    }
+
+    #[test]
+    fn unpack_fpcalc_rejects_a_checksum_mismatch() {
+        let dir = make_tmp();
+        let archive = fpcalc_tarball(dir.path(), &[("x/fpcalc", b"tampered")]);
+        let target = dir.path().join("fpcalc.partial");
+        let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+        let err = super::unpack_fpcalc(&archive, wrong, &target).unwrap_err();
+        assert!(err.contains("checksum mismatch"), "{err}");
+        assert!(!target.exists(), "nothing extracted from a bad archive");
+        assert!(!archive.exists(), "the bad archive is removed");
+    }
+
+    #[test]
+    fn unpack_fpcalc_fails_on_an_archive_without_fpcalc() {
+        let dir = make_tmp();
+        let archive = fpcalc_tarball(dir.path(), &[("x/fpcalc.exe", b"wrong platform")]);
+        let target = dir.path().join("fpcalc.partial");
+        let sha = sha256_of(&archive);
+        assert!(super::unpack_fpcalc(&archive, &sha, &target).is_err());
+        assert!(!target.exists());
     }
 }

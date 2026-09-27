@@ -269,6 +269,28 @@ test.describe("lyrics tab", () => {
     await expect(page.locator(".lyrics-line.current")).toHaveText("Third line");
   });
 
+  test("a clicked line lets go of focus, so Space plays rather than pressing it again", async ({ page }) => {
+    await lyricsShown(page);
+    const isPlaying = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.isPlaying());
+    const second = page.locator(".lyrics-line", { hasText: "Second line" });
+    await second.click();
+    await expect(page.locator("#t-time")).toContainText("00:02");
+    await expect(second).not.toBeFocused();
+
+    await page.keyboard.press("Space");
+    await expect.poll(isPlaying).toBe(true);
+    await page.keyboard.press("Space");
+    await expect.poll(isPlaying).toBe(false);
+
+    // From the keyboard, focus stays on the line, where its ring shows.
+    const third = page.locator(".lyrics-line", { hasText: "Third line" });
+    await third.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#t-time")).toContainText("00:04");
+    await expect(third).toBeFocused();
+    expect(await third.evaluate((el) => el.matches(":focus-visible"))).toBe(true);
+  });
+
   test("the line being sung fills word by word, and the next is raised", async ({ page }) => {
     await lyricsShown(page);
 

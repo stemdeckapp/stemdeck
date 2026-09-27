@@ -384,7 +384,7 @@ async def test_a_link_finishes_with_its_band_on_the_job_and_on_disk(tmp_path: Pa
     assert job.status == "done"
     assert job.artist == DT
     assert job.to_state()["artist"] == DT
-    assert job.stage_timings["artist_wait"] < 0.1, "the answer was already waiting"
+    assert job.stage_timings["identify_wait"] < 0.1, "the answer was already waiting"
     meta = json.loads((tmp_path / job.id / "metadata.json").read_text(encoding="utf-8"))
     assert meta["artist"] == DT
     registry = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))
@@ -395,7 +395,7 @@ async def test_a_link_finishes_with_its_band_on_the_job_and_on_disk(tmp_path: Pa
 async def test_a_lookup_that_hangs_does_not_hold_the_job(tmp_path: Path, monkeypatch):
     gate = threading.Event()
     monkeypatch.setattr(al, "_fetch_json", Wikidata(gate=gate))
-    monkeypatch.setattr("app.pipeline.runner.ARTIST_LOOKUP_GRACE_SEC", 0.2)
+    monkeypatch.setattr("app.pipeline.runner.IDENTIFY_GRACE_SEC", 0.2)
     job = Job(id="abcdefabc211")
     started = time.monotonic()
     try:
@@ -467,7 +467,7 @@ async def test_a_job_cancelled_while_the_lookup_is_out_gets_no_band(tmp_path: Pa
         await run_pipeline(job, URL, tmp_path)
     # Let the lookup thread run out: it must still write nothing.
     for thread in threading.enumerate():
-        if thread.name == f"artist-{job.id}":
+        if thread.name == f"identify-{job.id}":
             thread.join(5)
     assert job.status == "cancelled"
     assert job.artist is None

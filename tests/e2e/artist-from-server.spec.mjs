@@ -164,4 +164,41 @@ test.describe("band found by the server during the import", () => {
     await page.waitForTimeout(PAST_THE_WAIT_MS);
     expect(asked).toEqual([]);
   });
+
+  test("a band's song heads the box, and the band follows in full", async ({ page }) => {
+    await stubWikimedia(page);
+    const identity = {
+      source: "acoustid",
+      title: "Pull Me Under",
+      artist: "Dream Theater",
+      album: "Images and Words",
+      secondaryTypes: [],
+    };
+    await openPage(page, {
+      [JOB_ID]: {
+        ...fixtureTrack(JOB_ID, "Dream Theater - Pull Me Under (Official Video)"),
+        audioTagsChecked: true,
+        workChecked: true,
+        artist: BAND,
+        identity,
+      },
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)"),
+    });
+    await page.locator(`.cat-item[data-id="${JOB_ID}"]`).first().click();
+    await expect(page.locator("#title")).toHaveText("Pull Me Under", { timeout: 15000 });
+    await expect(page.locator("#np-artist")).toHaveText("Dream Theater");
+
+    await page.locator("#np-details-btn").click();
+    await expect(page.locator(".artist-song-title")).toHaveText("Pull Me Under");
+    await expect(page.locator(".artist-song-from")).toHaveCount(0);
+    await expect(page.locator(".artist-song-facts dd")).toHaveText(["Dream Theater", "Images and Words"]);
+    // The band as it always was: its own heading and history, not folded away.
+    await expect(page.locator("h2.artist-name")).toHaveText("Dream Theater");
+    await expect(page.locator(".artist-history")).toBeVisible();
+    await expect(page.locator(".artist-performer")).toHaveCount(0);
+    const order = await page.locator("#artistBody > *").evaluateAll((els) => els.map((el) => el.className));
+    expect(order[0]).toContain("artist-song");
+    expect(order[1]).toContain("artist-band-head");
+    await expect(page.locator(".artist-more")).toHaveText("Read more about Dream Theater on Wikipedia");
+  });
 });

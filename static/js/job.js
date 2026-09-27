@@ -9,7 +9,7 @@ import {
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, paintFinishedTrackNames } from "./catalog.js";
+import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames } from "./catalog.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
@@ -387,6 +387,13 @@ function applyState(state) {
       // and the Lyrics tab have it with no lookup of their own. A band already
       // saved on the track is kept (see addTrackToLibrary).
       ...(libraryArtist(state.artist) ? { artist: libraryArtist(state.artist) } : {}),
+      // The recording it was identified as, and the musical or film a
+      // soundtrack is from, on the same terms.
+      ...(libraryIdentity(state.identity) ? { identity: libraryIdentity(state.identity) } : {}),
+      ...(libraryWork(state.work) ? { work: libraryWork(state.work) } : {}),
+      // A server that sends "work" looked for it while the job ran, so the
+      // track never needs to ask it again (catalog.js backfillAudioTags).
+      ...(state.status === "done" && "work" in state ? { workChecked: true } : {}),
     });
   }
 

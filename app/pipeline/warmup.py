@@ -1,9 +1,9 @@
 """Eager model pre-download for the desktop first-boot setup wizard (#275).
 
-Run as `python -m app.pipeline.warmup`. Downloads/caches the four ML
+Run as `python -m app.pipeline.warmup`. Downloads/caches the ML
 checkpoint families StemDeck uses: Demucs (htdemucs_6s), beat-this,
-All-In-One song sections, and the on-demand lead/backing vocal-split karaoke
-model. This keeps a user's first real job from paying for them mid-pipeline. Invoked by the Tauri
+All-In-One song sections, the on-demand lead/backing vocal-split karaoke
+model, and Whisper for lyrics transcription when that would run. This keeps a user's first real job from paying for them mid-pipeline. Invoked by the Tauri
 `warmup_models` command (desktop/src-tauri/src/main.rs) as one of the setup
 steps; Docker has no equivalent step and keeps the pre-existing
 lazy-download-on-first-use behavior (see docs/models.md).
@@ -39,6 +39,8 @@ from app.core.config import (
     DEMUCS_MODEL,
     MODELS_DIR,
     SECTION_MODEL,
+    TRANSCRIBE_MODEL_CPU,
+    TRANSCRIBE_MODEL_GPU,
     VOCAL_SPLIT_MODEL,
 )
 
@@ -88,11 +90,33 @@ def _warm_sections() -> None:
     load_pretrained_model(model_name=SECTION_MODEL, device="cpu")
 
 
+def _warm_whisper() -> None:
+    """The Whisper model the lyrics stage would use here, and only when that
+    stage would run: under "auto" only a CUDA install transcribes, and the
+    GPU model is 1.6 GB. Last in the list for the same reason, so a slow
+    connection costs the other models nothing. A download cut short by the
+    setup timeout heals itself: Whisper checks the file's SHA-256 on every
+    load and fetches it again when it does not match."""
+    from app.core.settings import get_demucs_device, transcribe_lyrics_enabled
+
+    device = get_demucs_device()
+    if not transcribe_lyrics_enabled(device):
+        return
+
+    import whisper
+
+    from app.pipeline.transcribe import whisper_models_dir
+
+    name = TRANSCRIBE_MODEL_GPU if device == "cuda" else TRANSCRIBE_MODEL_CPU
+    whisper.load_model(name, device="cpu", download_root=str(whisper_models_dir()))
+
+
 _STEPS = (
     ("demucs", _warm_demucs),
     ("beat_this", _warm_beat_this),
     ("sections", _warm_sections),
     ("vocal_split", _warm_vocal_split),
+    ("whisper", _warm_whisper),
 )
 
 

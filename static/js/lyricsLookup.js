@@ -40,6 +40,42 @@ function normalise(row) {
   };
 }
 
+const SERVER_SOURCES = new Set(["lrclib", "file", "whisper"]);
+
+/** One version from the server's lyrics.json in the tab's shape, or null. */
+function fromServerVersion(v) {
+  if (!v || typeof v !== "object" || !SERVER_SOURCES.has(v.source)) return null;
+  const text = (x) => (typeof x === "string" ? x : "");
+  const version = {
+    id: Number(v.lrclib_id) || 0,
+    source: v.source,
+    track: text(v.track),
+    artist: text(v.artist),
+    album: text(v.album),
+    duration: Number(v.duration) || 0,
+    instrumental: v.instrumental === true,
+    synced: text(v.synced),
+    plain: text(v.plain),
+  };
+  return version.synced || version.plain || version.instrumental ? version : null;
+}
+
+/**
+ * The lyrics the server found for a track (GET /api/jobs/{id}/lyrics) as the
+ * tab keeps them: { entry, others }, `others` being the LRCLIB versions to
+ * offer. `entry` is null when the server kept none but has versions to offer
+ * (its 404 carries them); null when the answer holds neither.
+ */
+export function fromServerLyrics(data) {
+  if (!data || typeof data !== "object") return null;
+  const found = fromServerVersion(data);
+  const others = (Array.isArray(data.others) ? data.others : [])
+    .map(fromServerVersion)
+    .filter((m) => m?.id && m.id !== found?.id);
+  if (found) return { entry: { v: 1, ...found }, others };
+  return others.length ? { entry: null, others } : null;
+}
+
 /**
  * Best first, for a track `duration` seconds long (0 when unknown):
  * closest in length, then synced over plain among versions within

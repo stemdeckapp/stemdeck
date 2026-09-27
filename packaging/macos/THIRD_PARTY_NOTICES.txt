@@ -12,6 +12,7 @@ Downloaded during first-run setup:
 
 - StemDeck runtime pack containing Python and Python package dependencies
 - FFmpeg and ffprobe
+- Chromaprint's fpcalc, when the FFmpeg in use has no chromaprint support
 - Demucs model weights
 
 The runtime pack carries the full inventory under licenses/. INDEX.txt there
@@ -40,3 +41,16 @@ Written offer of source. The complete corresponding source is:
 If either link stops resolving, open an issue at
 https://github.com/stemdeckapp/stemdeck/issues and the source will be
 provided by another means.
+
+Chromaprint fpcalc
+------------------
+For song fingerprinting, StemDeck downloads Chromaprint's fpcalc 1.6.1
+(the upstream release build) beside FFmpeg and calls it as a separate
+executable. It is not linked into StemDeck.
+
+License: GNU Lesser General Public License v2.1 for Chromaprint as a
+         whole (its own code is MIT); the binary includes FFmpeg's
+         libraries.
+         https://github.com/acoustid/chromaprint/blob/v1.6.1/LICENSE.md
+Source:  https://github.com/acoustid/chromaprint/releases/tag/v1.6.1
+         https://git.ffmpeg.org/ffmpeg.git

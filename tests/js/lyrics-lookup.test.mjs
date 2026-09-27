@@ -16,6 +16,7 @@ import {
   voicedPhrases,
   syllables,
   songFromTitle,
+  fromServerLyrics,
 } from "../../static/js/lyricsLookup.js";
 
 let pass = 0,
@@ -253,6 +254,56 @@ try {
   rejected = true;
 }
 check("no connection rejects, rather than reading as nothing found", rejected);
+
+// ── fromServerLyrics: lyrics.json from GET /api/jobs/{id}/lyrics ──
+const version = (id, source = "lrclib", extra = {}) => ({
+  v: 1,
+  source,
+  track: "Metropolis",
+  artist: "Dream Theater",
+  album: "Images and Words",
+  duration: 572,
+  synced: "[00:01.00]x",
+  plain: "x",
+  instrumental: false,
+  lrclib_id: id,
+  ...extra,
+});
+const served = fromServerLyrics({ ...version(3), others: [version(3), version(5), version(null), { source: "x" }] });
+check(
+  "the server's answer in the tab's shape",
+  same(served.entry, {
+    v: 1,
+    id: 3,
+    source: "lrclib",
+    track: "Metropolis",
+    artist: "Dream Theater",
+    album: "Images and Words",
+    duration: 572,
+    instrumental: false,
+    synced: "[00:01.00]x",
+    plain: "x",
+  }),
+  JSON.stringify(served.entry),
+);
+check(
+  "other versions are LRCLIB's, without the one shown or anything malformed",
+  same(served.others.map((m) => m.id), [5]),
+  JSON.stringify(served.others),
+);
+const offered = fromServerLyrics({ detail: "no lyrics", others: [version(9), version(null)] });
+check(
+  "versions the server kept none of come as others to offer, with no entry",
+  offered.entry === null && same(offered.others.map((m) => m.id), [9]),
+  JSON.stringify(offered),
+);
+check("a transcription keeps its source", fromServerLyrics(version(null, "whisper")).entry.source === "whisper");
+check(
+  "an answer that is not lyrics is nothing",
+  fromServerLyrics(null) === null
+    && fromServerLyrics({ detail: "no lyrics" }) === null
+    && fromServerLyrics(version(3, "lrclib", { synced: "", plain: "" })) === null,
+);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

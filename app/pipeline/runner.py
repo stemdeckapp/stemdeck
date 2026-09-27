@@ -10,13 +10,18 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core.config import ARTIST_LOOKUP_GRACE_SEC, DEMUCS_MODEL, TIMEOUT_FFMPEG
+from app.core.config import (
+    DEMUCS_MODEL,
+    IDENTIFY_GRACE_SEC,
+    LYRICS_IDENTITY_WAIT_SEC,
+    LYRICS_LOOKUP_GRACE_SEC,
+    TIMEOUT_FFMPEG,
+)
 from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
 from app.core.registry import is_upload, set_proc
 from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze
-from app.pipeline.artist_lookup import BandLookup
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
     cleanup_source,
@@ -27,8 +32,11 @@ from app.pipeline.collect import (
 )
 from app.pipeline.download import download
 from app.pipeline.errors import classify_failure
+from app.pipeline.identify import IdentifyLookup, release_source
+from app.pipeline.lyrics_lookup import LyricsLookup
 from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
+from app.pipeline.transcribe import transcribe_lyrics
 
 logger = logging.getLogger("stemdeck.pipeline")
 
@@ -207,6 +215,9 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     # at all -- and the person who imported it may no longer have the file
     # either. A link costs a re-download; an upload costs the recording.
     if not is_upload(job):
+        # A fingerprint still reading the source would make the delete fail
+        # on Windows. It finished long ago, so this is nearly always a no-op.
+        release_source(job.id)
         cleanup_source(job_dir)
     job.stems = [{"name": name, "url": f"/api/jobs/{job.id}/stems/{name}.wav"} for name in found]
     _check_cancel(job)
@@ -279,19 +290,41 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     The lookup is two small web requests and separation takes minutes, so by
     the time the job is done the answer has long been waiting, and the wait
     below is for nothing. When it has not arrived, the job waits at most
-    ARTIST_LOOKUP_GRACE_SEC and finishes without it; the page then looks for
+    IDENTIFY_GRACE_SEC and finishes without it; the page then looks for
     the band itself when the track is opened.
+
+    The band is found through the recording the job is identified as
+    (identify.py: an AcoustID fingerprint of the source, or a MusicBrainz
+    search by the tags), which runs in the same thread first.
 
     Only a pipeline that got to the end keeps the answer: a cancel or a
     failure raises out of _run_common, past finish(), and nothing is written.
     """
-    lookup = BandLookup.start(job)
+    lookup = IdentifyLookup.start(job, [source])
+    # The lyrics, on the same terms: LRCLIB beside separation, lyrics.json
+    # written only by a pipeline that got to the end. Looked up by the
+    # identity once the identification has it, else by the tags.
+    lyrics = LyricsLookup.start(
+        job,
+        job_dir,
+        identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+    )
     _run_common(job, source, job_dir)
     if lookup is not None:
         mark = time.monotonic()
-        lookup.finish(job, ARTIST_LOOKUP_GRACE_SEC)
+        lookup.finish(job, IDENTIFY_GRACE_SEC)
         # What the lookup cost the import, which should be nothing (#293).
-        _lap(job, "artist_wait", mark)
+        _lap(job, "identify_wait", mark)
+    if lyrics is not None:
+        mark = time.monotonic()
+        lyrics.finish(job, job_dir, LYRICS_LOOKUP_GRACE_SEC)
+        _lap(job, "lyrics_wait", mark)
+    # Lyrics from the vocals stem, only when the lookup found none: last,
+    # because it needs both the stem and the lookup's answer. Never raises
+    # but for a cancel.
+    mark = time.monotonic()
+    transcribe_lyrics(job, job_dir)
+    _lap(job, "transcribe", mark)
 
 
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
@@ -315,7 +348,9 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "title": job.title,
         "thumbnail": job.thumbnail,
         "audio_tags": job.audio_tags,
+        "identity": job.identity,
         "artist": job.artist,
+        "work": job.work,
         "duration_sec": job.duration_sec,
         "bpm": job.bpm,
         "key": job.key,

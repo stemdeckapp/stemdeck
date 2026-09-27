@@ -3560,6 +3560,9 @@ input, textarea { font-family: inherit; }
   color: var(--muted); text-decoration: none; transition: all 0.15s;
 }
 .about-social-btn:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+/* Where song details, lyrics and transcription come from, and their
+   licences: small print under the socials. */
+.about-credits { margin: 16px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
 
 /* ── Release notes dialog ── */
 .release-card {
@@ -3905,6 +3908,9 @@ input, textarea { font-family: inherit; }
   cursor: pointer; transition: color var(--t-fast), background var(--t-fast);
 }
 .lyrics-line:hover { color: var(--fg-2); background: var(--panel); }
+/* A ring for keyboard focus only: a clicked line lets go of focus (lyrics.js). */
+.lyrics-line:focus { outline: none; }
+.lyrics-line:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .lyrics-line.current { color: var(--fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
 /* The line after it, a step brighter than the rest, so the next words can be
    read before they are due. */
@@ -3947,11 +3953,15 @@ input, textarea { font-family: inherit; }
   color: var(--fg-2); font-weight: 600; cursor: pointer;
 }
 .artist-search-btn:hover { background: var(--accent); border-color: var(--accent); color: #000; }
-.artist-privacy { margin: 6px 0 14px; font-size: 11px; color: var(--muted); }
-/* A band already known opens without the search row; the privacy line then
-   sits in the close button's corner and takes over its room. */
+.artist-search { margin-bottom: 14px; }
+/* A band or a song already known opens without the search row; the body's
+   first line then sits in the close button's corner and leaves it room. */
 .artist-search.hidden { display: none; }
-.artist-search.hidden + .artist-privacy { margin: 2px 34px 14px 0; }
+.artist-search.hidden + .artist-body > :first-child { margin-right: 34px; }
+/* What is sent where: the box's foot, under the scrolling body, in the
+   credit line's small muted type. */
+.artist-card-foot { flex-shrink: 0; padding-top: 8px; }
+.artist-privacy { margin: 0; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
 .artist-other { margin: -6px 0 10px; font-size: 12px; }
 .artist-status + .artist-other { margin-top: -14px; text-align: center; }
 .artist-other-btn {
@@ -4016,6 +4026,43 @@ input, textarea { font-family: inherit; }
 .artist-more { color: var(--accent); font-weight: 600; text-decoration: none; }
 .artist-more:hover { text-decoration: underline; }
 @media (max-width: 560px) { .artist-albums { columns: 1; } }
+
+/* The musical or film a song is from: a section below the band, or the whole
+   box when there is no band, where it leads without the rule above it. */
+.artist-work.lead { padding-top: 0; border-top: 0; }
+.artist-work-head { margin-bottom: 10px; }
+.artist-work:not(.lead) .artist-work-photo { width: 56px; height: 56px; }
+/* Two classes deep, as .artist-name, to outrank .about-card h2. */
+.artist-card .artist-work-name {
+  margin: 0; font-family: inherit; font-size: 16px; font-weight: 700; line-height: 1.25;
+}
+.artist-card .artist-work.lead .artist-work-name { font-size: 22px; line-height: 1.2; }
+.artist-work-year { font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.artist-work-credits {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  margin: 4px 0 8px; font-size: 12.5px;
+}
+.artist-work-credits dt { color: var(--muted); }
+.artist-work-credits dd { margin: 0; color: var(--fg-2); }
+.artist-work-more { margin: 0; font-size: 12px; }
+
+/* The song, heading the box whenever the track is known as one. What follows
+   it (the show, or a band) then starts below a rule, as any section does. */
+.artist-song { margin-bottom: 14px; }
+/* Two classes deep, as .artist-name, to outrank .about-card h2. */
+.artist-card .artist-song-title {
+  margin: 0; font-family: inherit; font-size: 22px; font-weight: 700; line-height: 1.2;
+}
+.artist-song-from { font-size: 13px; color: var(--fg-2); }
+.artist-song-facts { margin: 10px 0 0; }
+.artist-head.artist-band-head { padding-top: 14px; border-top: 1px solid var(--border); }
+/* The performer under a show: the work section's smaller photo and name, and
+   the rest behind "More about ...". */
+.artist-performer-head { margin-bottom: 8px; }
+.artist-performer .artist-photo { width: 56px; height: 56px; }
+.artist-card .artist-performer .artist-name { font-size: 16px; line-height: 1.25; }
+.artist-performer .artist-other { margin: 0 0 6px; }
+.artist-performer-more:focus { outline: none; }
 
 /* The info button that opens the box: the heart's mirror image, a full-height
    segment on the card's right edge, where the heart used to be. A button of
@@ -4334,6 +4381,19 @@ input, textarea { font-family: inherit; }
 .settings-text-input:focus { outline: none; border-color: rgba(244,183,64,0.5); }
 .cookies-file-msg {
   margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--danger);
+}
+
+/* AcoustID key: a masked field with its Save and Clear beside it. */
+.acoustid-key {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.acoustid-key .settings-text-input { flex: 1; min-width: 0; margin-top: 0; }
+.acoustid-key-msg {
+  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--muted);
+}
+.acoustid-key-msg.error { color: var(--danger); }
+.acoustid-register {
+  display: inline-block; margin-top: 4px; font-size: 11px; color: var(--accent);
 }
 
 /* Logs sub-navigation: Location / Application / Setup. */

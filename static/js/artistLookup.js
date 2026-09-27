@@ -138,12 +138,12 @@ export function albumsFromSparql(json) {
 
 /**
  * The History section of a plain-text article extract, as paragraphs, capped
- * at about HISTORY_MAX_CHARS and cut at a sentence. Falls back to the text
+ * at about `maxChars` (HISTORY_MAX_CHARS) and cut at a sentence. Falls back to the text
  * before the first heading, the article's own summary, when no heading in
  * `headings` is found. Sub-headings inside the section are dropped: the box
  * shows prose, not the article's outline.
  */
-export function historyFromExtract(extract, headings) {
+export function historyFromExtract(extract, headings, maxChars = HISTORY_MAX_CHARS) {
   const text = String(extract || "");
   const lines = text.split("\n");
   const isLevel2 = (line) => /^==[^=].*[^=]==\s*$/.test(line.trim());
@@ -166,14 +166,14 @@ export function historyFromExtract(extract, headings) {
   for (const raw of body) {
     const line = raw.trim();
     if (!line || /^=+.*=+$/.test(line)) continue;
-    if (length + line.length <= HISTORY_MAX_CHARS) {
+    if (length + line.length <= maxChars) {
       paragraphs.push(line);
       length += line.length;
       continue;
     }
     // The paragraph that crosses the cap is cut at its last full sentence
     // inside it, or left out if not even one sentence fits.
-    const room = HISTORY_MAX_CHARS - length;
+    const room = maxChars - length;
     const cut = line.slice(0, room);
     const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("。"), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
     if (stop > 40) paragraphs.push(`${cut.slice(0, stop + 1)} \u2026`);
@@ -185,6 +185,79 @@ export function historyFromExtract(extract, headings) {
 /** Headings to try for an edition: its own, then the English ones. */
 export function historyHeadingsFor(wikiLang) {
   return [...new Set([...(HISTORY_HEADINGS[wikiLang] || []), ...HISTORY_HEADINGS.en])];
+}
+
+// ─── The work a soundtrack is from ───
+//
+// A song from a musical or a film has the work behind it as well as, or
+// instead of, a band. The server finds which work (app/pipeline/work_lookup.py)
+// and keeps its Wikidata id on the track; this looks it up by that id for the
+// box: year, picture, a short synopsis, and who wrote the music, the lyrics and
+// the book, from Wikidata; the synopsis from Wikipedia, the same way as a
+// band's History.
+
+const COMPOSER = "P86";
+const LYRICIST = "P676";
+const LIBRETTIST = "P87";
+// When a work first came out, whichever is earliest: a film is published, a
+// stage show first performed, a series starts.
+const WORK_DATES = ["P577", "P1191", "P580"];
+const PEOPLE_MAX = 6;
+const SYNOPSIS_MAX_CHARS = 700;
+
+// The level-two heading that holds a work's story, per edition, as for
+// HISTORY_HEADINGS. No such section, and the article's lead stands in for it.
+const SYNOPSIS_HEADINGS = {
+  en: ["plot", "synopsis", "story", "premise"],
+  pl: ["fabuła", "opis fabuły", "treść", "streszczenie"],
+  ja: ["あらすじ", "ストーリー", "物語"],
+  ko: ["줄거리", "시놉시스"],
+  zh: ["剧情", "劇情", "情节", "情節", "故事", "劇情簡介", "剧情简介"],
+  de: ["handlung", "inhalt"],
+  fr: ["synopsis", "résumé", "intrigue"],
+  es: ["argumento", "sinopsis", "trama"],
+  pt: ["enredo", "sinopse", "trama"],
+  id: ["alur", "sinopsis", "plot", "cerita"],
+};
+
+/** Story headings to try for an edition: its own, then the English ones. */
+export function synopsisHeadingsFor(wikiLang) {
+  return [...new Set([...(SYNOPSIS_HEADINGS[wikiLang] || []), ...SYNOPSIS_HEADINGS.en])];
+}
+
+/** A work's story, from an article extract: its Plot or Synopsis, else its lead. */
+export function synopsisFromExtract(extract, wikiLang) {
+  return historyFromExtract(extract, synopsisHeadingsFor(wikiLang), SYNOPSIS_MAX_CHARS);
+}
+
+function claimIds(claims, prop) {
+  const ids = [];
+  for (const statement of claims?.[prop] || []) {
+    if (statement.rank === "deprecated") continue;
+    const id = statement.mainsnak?.datavalue?.value?.id;
+    if (/^Q\d+$/.test(id || "") && !ids.includes(id)) ids.push(id);
+  }
+  return ids.slice(0, PEOPLE_MAX);
+}
+
+/**
+ * What a work's claims say about it: the year it first came out ("" when
+ * none), and the ids of its composers, lyricists and book writers.
+ */
+export function workFacts(claims) {
+  const years = [];
+  for (const prop of WORK_DATES) {
+    for (const statement of claims?.[prop] || []) {
+      const year = /^[+]?(\d{4})/.exec(statement.mainsnak?.datavalue?.value?.time || "")?.[1];
+      if (year) years.push(year);
+    }
+  }
+  return {
+    year: years.sort()[0] || "",
+    composers: claimIds(claims, COMPOSER),
+    lyricists: claimIds(claims, LYRICIST),
+    bookWriters: claimIds(claims, LIBRETTIST),
+  };
 }
 
 // Latin accents, as the combining marks NFKD leaves them as, so a file tagged
@@ -268,6 +341,72 @@ function sparqlQuery(qid, lang) {
 
 function label(entity, lang) {
   return entity?.labels?.[lang]?.value || entity?.labels?.en?.value || "";
+}
+
+function commonsImage(claims) {
+  const file = claims?.[IMAGE]?.[0]?.mainsnak?.datavalue?.value;
+  return typeof file === "string"
+    ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=240`
+    : "";
+}
+
+/**
+ * Look up the work with Wikidata id `id` for the box. Resolves to null when
+ * Wikidata has no such item, and rejects when Wikidata cannot be reached.
+ * The people and the synopsis are each optional, as a band's members and
+ * history are: one failing leaves that part out.
+ */
+export async function lookupWork(id, appLang, { fetchJson = defaultFetchJson, signal } = {}) {
+  if (!/^Q\d+$/.test(String(id || ""))) return null;
+  const lang = wikiLanguage(appLang);
+  const { signal: sig, done } = withTimeout(signal);
+  const get = (url) => fetchJson(url, sig);
+  try {
+    const entities = (await get(query(WIKIDATA_API, {
+      action: "wbgetentities", ids: id,
+      props: "claims|sitelinks/urls|labels|descriptions",
+      languages: lang === "en" ? "en" : `${lang}|en`, languagefallback: "1",
+      sitefilter: lang === "en" ? "enwiki" : `${lang}wiki|enwiki`,
+    })))?.entities;
+    const work = entities?.[id];
+    if (!work || work.missing !== undefined) return null;
+
+    const site = work.sitelinks?.[`${lang}wiki`] || work.sitelinks?.enwiki || null;
+    const siteLang = site?.site === `${lang}wiki` ? lang : "en";
+    const facts = workFacts(work.claims);
+    const peopleIds = [...new Set([...facts.composers, ...facts.lyricists, ...facts.bookWriters])];
+
+    const [people, extractJson] = await Promise.all([
+      peopleIds.length
+        ? get(query(WIKIDATA_API, {
+          action: "wbgetentities", ids: peopleIds.join("|"), props: "labels",
+          languages: lang === "en" ? "en" : `${lang}|en`, languagefallback: "1",
+        })).catch((err) => { console.warn("work credits lookup failed", err); return null; })
+        : null,
+      site
+        ? get(query(`https://${siteLang}.wikipedia.org/w/api.php`, {
+          action: "query", prop: "extracts", explaintext: "1", exsectionformat: "wiki",
+          titles: site.title, formatversion: "2", redirects: "1",
+        })).catch((err) => { console.warn("work synopsis lookup failed", err); return null; })
+        : null,
+    ]);
+    const names = (ids) => ids.map((pid) => label(people?.entities?.[pid], lang)).filter(Boolean);
+
+    return {
+      id,
+      name: label(work, lang),
+      description: work.descriptions?.[lang]?.value || work.descriptions?.en?.value || "",
+      year: facts.year,
+      image: commonsImage(work.claims),
+      synopsis: synopsisFromExtract(extractJson?.query?.pages?.[0]?.extract, siteLang),
+      composers: names(facts.composers),
+      lyricists: names(facts.lyricists),
+      bookWriters: names(facts.bookWriters),
+      articleUrl: site?.url || "",
+    };
+  } finally {
+    done();
+  }
 }
 
 /**

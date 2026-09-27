@@ -88,6 +88,14 @@ dependencies = [
     # today, but pin it explicitly so this survives an eventual librosa 1.x move
     # (#407) -- same platform gate as audio-separator itself.
     "audioread>=3.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # Lyrics transcribed from the vocals stem when no published lyrics were
+    # found. OpenAI's reference Whisper runs on the torch Demucs already ships,
+    # so it adds about 3 MB of wheels (itself, tiktoken, regex, more-itertools)
+    # and no second CUDA runtime. faster-whisper was measured against it and
+    # would add ctranslate2 + PyAV (47 MB on Windows, 75 MB on Linux) plus its
+    # own cuBLAS/cuDNN requirement. Word timestamps come from word_timestamps=True.
+    # Model weights are downloaded on first use, never bundled.
+    "openai-whisper>=20250625",
 ]
 
 [project.optional-dependencies]
