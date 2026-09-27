@@ -3845,6 +3845,207 @@ input, textarea { font-family: inherit; }
    what was pushing the list past the dialog and putting a scrollbar on it. */
 .friends-card { width: min(1020px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
+
+/* ── Lyrics tab (#699) ──
+   A view of the sidebar, like Favorites and Trash, but not a list: while it is
+   on, the search box and the library list step aside and the panel takes the
+   whole height, so the lyrics get the room and scroll on their own. */
+.lyrics-panel { display: none; }
+.sidebar.lyrics-view .daw-search,
+.sidebar.lyrics-view .clear-bin-bar,
+.sidebar.lyrics-view .daw-lib-list { display: none !important; }
+.sidebar.lyrics-view .lyrics-panel {
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 auto; min-height: 0;
+}
+/* The EXTRACT label's type, like every other section head in the app. */
+.lyrics-title {
+  margin: 0; font-size: 10px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.lyrics-note { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--muted); }
+.lyrics-status { margin: 0; font-size: 12px; color: var(--fg-2); }
+.lyrics-status:empty { display: none; }
+.lyrics-status.muted { color: var(--muted); }
+.lyrics-status.error { color: var(--danger); }
+
+.lyrics-versions:empty { display: none; }
+.lyrics-versions { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.lyrics-match { display: flex; flex-direction: column; min-width: 0; }
+.lyrics-match-title { font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-match-meta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-tools { display: flex; gap: 12px; }
+.lyrics-link {
+  padding: 0; background: none; border: none; cursor: pointer;
+  color: var(--accent); font-size: 11px; font-weight: 600;
+}
+.lyrics-link:hover { text-decoration: underline; }
+/* display: flex would otherwise outrank the hidden attribute that folds it. */
+.lyrics-version-list[hidden] { display: none; }
+.lyrics-version-list { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
+.lyrics-version {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; min-width: 0;
+  padding: 5px 7px; border-radius: 6px; border: 1px solid transparent;
+  background: none; color: var(--fg-2); text-align: left; cursor: pointer;
+}
+.lyrics-version:hover { background: var(--panel); border-color: var(--border); }
+.lyrics-version-title { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-version-meta { font-size: 10.5px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The lyrics scroll inside the panel. The bottom padding lets the last lines
+   reach the middle, where the line being sung is kept. position: relative
+   makes this the lines' offsetParent, which lyrics.js measures from. */
+.lyrics-body { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 2px 40%; }
+.lyrics-body:empty { display: none; }
+/* Synced lines are buttons, since clicking one moves the playhead there. */
+.lyrics-line {
+  display: block; width: 100%; margin: 0; padding: 4px 8px;
+  background: none; border: none; border-radius: 6px;
+  color: var(--muted); font: inherit; font-size: 14px; line-height: 1.45; text-align: left;
+  cursor: pointer; transition: color var(--t-fast), background var(--t-fast);
+}
+.lyrics-line:hover { color: var(--fg-2); background: var(--panel); }
+.lyrics-line.current { color: var(--fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+/* The line after it, a step brighter than the rest, so the next words can be
+   read before they are due. */
+.lyrics-line.next { color: var(--fg-2); }
+/* The karaoke wipe, one word at a time: sung words take the accent, and the
+   word being sung is filled left to right up to --fill, set every frame by
+   lyrics.js. Per word rather than across the whole line, so a line that wraps
+   fills its first row before its second instead of both at once. */
+.lyrics-line.current .lw.sung { color: var(--accent); }
+.lyrics-line.current .lw.singing {
+  color: transparent;
+  background: linear-gradient(90deg, var(--accent) var(--fill, 0%), var(--fg) var(--fill, 0%));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.lyrics-text { margin: 0; padding: 1px 8px; font-size: 13.5px; line-height: 1.55; color: var(--fg-2); }
+
+/* ── Artist box (#699) ──
+   The About dialog's frame, left-aligned and wider, because it holds prose
+   and lists rather than a logo and two buttons. The body scrolls on its own
+   so the search field stays put above a long history. */
+.artist-card {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 22px 22px 18px;
+  text-align: left;
+  align-items: stretch;
+}
+/* Room on the right for the close button, which sits in the same corner. */
+.artist-search { display: flex; gap: 8px; margin-right: 34px; }
+.artist-search input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 10px;
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 8px;
+  color: var(--fg); font: inherit; font-size: 13px;
+}
+.artist-search input:focus { outline: none; border-color: var(--accent); }
+.artist-search-btn {
+  height: 34px; padding: 0 14px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--border);
+  color: var(--fg-2); font-weight: 600; cursor: pointer;
+}
+.artist-search-btn:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+.artist-privacy { margin: 6px 0 14px; font-size: 11px; color: var(--muted); }
+/* A band already known opens without the search row; the privacy line then
+   sits in the close button's corner and takes over its room. */
+.artist-search.hidden { display: none; }
+.artist-search.hidden + .artist-privacy { margin: 2px 34px 14px 0; }
+.artist-other { margin: -6px 0 10px; font-size: 12px; }
+.artist-status + .artist-other { margin-top: -14px; text-align: center; }
+.artist-other-btn {
+  padding: 0; background: none; border: 0;
+  color: var(--accent); font: inherit; cursor: pointer;
+}
+.artist-other-btn:hover { text-decoration: underline; }
+.artist-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.artist-status { margin: 24px 0; text-align: center; font-size: 13px; color: var(--fg-2); }
+.artist-status.muted { color: var(--muted); }
+.artist-status.error { color: var(--danger); }
+
+.artist-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.artist-photo {
+  width: 72px; height: 72px; flex-shrink: 0;
+  object-fit: cover; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--panel);
+}
+/* Two classes deep so it outranks .about-card h2, which is the About box's
+   monospace wordmark and not a band name. */
+.artist-card .artist-name {
+  margin: 0; font-family: inherit; font-size: 22px; font-weight: 700; line-height: 1.2;
+}
+.artist-desc { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.artist-titles { flex: 1 1 auto; min-width: 0; }
+/* Save for this track: the accent until it is done, then a quiet
+   label that says so. It sits by the name because the name is what is saved. */
+.artist-save {
+  flex-shrink: 0; align-self: center;
+  height: 30px; padding: 0 12px; border-radius: 8px;
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #000; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.artist-save:hover { filter: brightness(1.08); }
+.artist-save.saved {
+  background: var(--panel); border-color: var(--border);
+  color: var(--muted); cursor: default; filter: none;
+}
+
+.artist-section { padding: 12px 0; border-top: 1px solid var(--border); }
+/* The EXTRACT label's type, as the card's NOW PLAYING legend uses. */
+.artist-section-title {
+  margin: 0 0 8px; font-size: 10px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.artist-history p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; color: var(--fg-2); }
+.artist-names { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.artist-names li {
+  padding: 3px 10px; font-size: 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+}
+.artist-subtitle { margin: 10px 0 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
+/* Two columns: a band with twenty albums is a short box, not a long one. */
+.artist-albums { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 24px; }
+.artist-albums li { display: flex; gap: 10px; padding: 3px 0; font-size: 12.5px; break-inside: avoid; }
+.artist-album-year { min-width: 4ch; color: var(--muted); font-variant-numeric: tabular-nums; }
+.artist-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.artist-more { color: var(--accent); font-weight: 600; text-decoration: none; }
+.artist-more:hover { text-decoration: underline; }
+@media (max-width: 560px) { .artist-albums { columns: 1; } }
+
+/* The info button that opens the box: the heart's mirror image, a full-height
+   segment on the card's right edge, where the heart used to be. A button of
+   its own rather than the whole card being clickable, which competed with the
+   heart inside it and gave the keyboard nothing real to press. */
+#nowPlayingPanel .track-panel-head .daw-details-btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--np-fav);
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0 7px 7px 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+#nowPlayingPanel .track-panel-head .daw-details-btn:hover { background: var(--panel-3); color: var(--fg); }
+#nowPlayingPanel .track-panel-head .daw-details-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Nothing to look up before a track is open. */
+.app.no-track #nowPlayingPanel .daw-details-btn { opacity: 0.4; pointer-events: none; }
+/* The text stops short of the segment. */
+#nowPlayingPanel .track-panel-info,
+#nowPlayingPanel .daw-track-meta-line { padding-right: calc(var(--np-fav) + 10px); }
 .lib-friends-grid {
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
@@ -4279,8 +4480,11 @@ input, textarea { font-family: inherit; }
      and are therefore exactly the same width. As a flex row the search grew to
      whatever was left over, which is why it ran past the last chip.
 
-     Columns: content | spacer | rule | detect | split. Row one is the import
-     gesture, row two is what to extract. */
+     Columns: content | detect | split | rule | card. Row one is the import
+     gesture, row two is what to extract. Split sits straight after the options
+     it acts on, and the loaded track comes after the rule, at the end: in the
+     middle of the row it read as Split's input, when it is only what is
+     playing (#699). */
   height: auto;
   display: grid;
   /* minmax(0, 1fr), not 1fr: a grid track's automatic minimum is its
@@ -4288,7 +4492,7 @@ input, textarea { font-family: inherit; }
      it. The card sat at its natural width and pushed Split stems off the right
      edge of its own container. Zero as the floor lets the column give way, and
      the card's own text clips with an ellipsis rather than forcing the row. */
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, max-content) auto auto auto minmax(0, 1fr);
   align-items: center;
   row-gap: 8px;
   column-gap: 10px;
@@ -4351,9 +4555,9 @@ input, textarea { font-family: inherit; }
   min-width: 0;
 }
 
-/* The rule stays, but it now separates the search from the two actions on the
-   same line, which is what it does in the mockup. It used to divide the row
-   from the Extract chips, which are on their own line now. */
+/* The rule divides the extraction, search through Split, from the track that
+   is playing (#699). Nothing crosses it: what is left of it is one sentence,
+   what is right of it is not an input to that sentence. */
 /* One rule, down both rows.
  *
  * There were two: this one beside the actions, and the Collapse label's own
@@ -4362,7 +4566,7 @@ input, textarea { font-family: inherit; }
  * that reads as broken without being nameable. Spanning the rows makes it one
  * line that cannot drift from itself. */
 .daw-composer > .daw-composer-sep {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1 / 3;
   display: block;
   justify-self: center;
@@ -4379,7 +4583,7 @@ input, textarea { font-family: inherit; }
    Grid because the switch sits left of the label and spans both the label and
    the EXPERIMENTAL note under it. */
 .daw-composer > .structure-toggle {
-  grid-column: 4;
+  grid-column: 2;
   grid-row: 1;
   position: relative;
   display: grid;
@@ -4439,7 +4643,7 @@ input, textarea { font-family: inherit; }
   border-left: none;
 }
 .daw-composer > .daw-process-btn {
-  grid-column: 5;
+  grid-column: 3;
   grid-row: 1;
 }
 
@@ -4460,19 +4664,19 @@ input, textarea { font-family: inherit; }
    and it would need the strip and the footer inset to match, or something
    given the freed space. */
 
-/* Row two, right-hand end: on the chips' line rather than below it.
+/* Row two, under the two actions: on the chips' line rather than below it.
 
-   Columns 4 to 6, not 3: a spanning item's minimum lands in the first track it
-   covers, so starting at the separator's column handed that 1px column the
-   toggles' whole width and took it out of the card's. The two action columns
-   are already as wide as Detect structure and Split stems, which is more than
-   the toggles need, so spanning only those costs the row nothing.
+   Columns 2 to 4, the two action columns only, not the rule's: a spanning
+   item's minimum lands in the first track it covers, and the 1px rule column
+   would have been handed the toggles' whole width. The action columns are
+   already as wide as Detect structure and Split stems, which is more than the
+   toggles need, so spanning only those costs the row nothing.
 
    A grid item rather than absolutely positioned: out of flow it sat on the
    right line and would have landed on top of the Extract chips the moment a
    window was narrow enough for the two to meet. */
 .daw-composer > .daw-panel-toggles {
-  grid-column: 4 / 6;
+  grid-column: 2 / 4;
   grid-row: 2;
   justify-self: end;
   align-self: center;
@@ -4540,24 +4744,29 @@ input, textarea { font-family: inherit; }
    because that timeline's left edge had to line up with the lane waveforms.
    The timeline is gone, and this row had empty space in the middle of it, so
    the block moved in the markup rather than being pinned here: it is a cell in
-   the grid, column two, spanning both rows. That is the column the search and
-   the chips do not use, between them and the actions on the right. */
+   the grid, spanning both rows. It was column two, between the chips and the
+   actions, where the row read as "file, options, this track, Split" and made
+   the track look like what Split would act on (#699). Now it is the last
+   column, after the rule, and labelled as what is playing. */
 #nowPlayingPanel {
   position: relative;
-  grid-column: 2;
+  grid-column: 5;
   grid-row: 1 / 3;
-  /* As wide as the track it is naming, not as wide as the window.
-     It was stretched to fill its column, so a spare 400px of bar became 400px
-     of card with the same text sitting in it. It sizes to its content now and
-     stops; a long title clips with an ellipsis at the cap rather than dragging
-     the card out to meet it. */
-  justify-self: start;
+  /* Fills its column up to the cap below. It once sized to its content, so a
+     spare 400px of bar would not become 400px of card; the cap does that job
+     now, and filling the column is what lets the card be a size container for
+     the artwork's container query (see .track-panel-cover below). A long
+     title clips with an ellipsis at the cap rather than dragging the card out
+     to meet it. */
+  justify-self: stretch;
   /* A real ceiling, not a percentage of the column: 100% just meant "as wide
      as the bar allows", so the card was 422px at 1600 and 460 at 1920 with the
-     same text in it. 460 is what the meta line needs at its longest, duration
-     through to the extracted date, so the card is the same size at every
-     window width and a long title clips rather than pushing it wider. */
-  max-width: min(100%, 460px);
+     same text in it. 460 was what the meta line needed at its longest,
+     duration through to the extracted date; 536 is that plus the 76px the
+     full-height artwork now takes from the text column (#699). So the card is
+     the same size at every window width and a long title clips rather than
+     pushing it wider. */
+  max-width: min(100%, 536px);
   align-self: stretch;
   /* .footer-track-slot is `width: var(--daw-col-w)`, which is the gutter width
      it was built to fill in the footer. Here the column decides the width, so
@@ -4565,7 +4774,11 @@ input, textarea { font-family: inherit; }
      out of the composer on a narrow window. */
   width: auto;
   min-width: 0;
-  margin: 0 14px;
+  /* No side margins. In the middle of the row it needed air on both sides;
+     at the end, the rule and the grid gap already set it off on the left and
+     the bar's padding on the right, and 28px of margin was 28px taken from
+     the meta line, enough to clip the date in German at 1600 (#698). */
+  margin: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -4576,6 +4789,39 @@ input, textarea { font-family: inherit; }
   background: var(--panel-2, var(--panel));
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+/* "Now playing", set into the card's top border like a fieldset legend.
+   On the border rather than as a line of its own: the card's height is already
+   spent on the title and a two-row meta line (#698). The background is the
+   bar's, so the label cuts the border instead of sitting on top of it. The type
+   is the EXTRACT label's, so the two labels on this row read as a pair. */
+#nowPlayingPanel .np-legend {
+  position: absolute;
+  top: 0;
+  /* Over the text column, not the artwork: on the art it would put a band of
+     bar colour across the top of the picture. */
+  left: calc(var(--np-fav) + var(--np-art) + 8px);
+  transform: translateY(-50%);
+  padding: 0 5px;
+  background: var(--panel);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* .footer-track-slot clips the card, a leftover from the footer gutter it was
+   built for, and that clip cut the legend's top half off. The lines inside
+   already clip themselves (title ellipsis, meta line overflow), so this keeps
+   the same clip on the sides and bottom and opens only the 8px above, which
+   is the composer's own padding and where the legend sits. */
+#nowPlayingPanel {
+  overflow: visible;
+  clip-path: inset(-8px 0 0 0);
 }
 
 /* The footer clamps the title to two lines, because its gutter is narrow and
@@ -4606,6 +4852,33 @@ input, textarea { font-family: inherit; }
   justify-content: flex-start;
 }
 #nowPlayingPanel .track-panel-info { flex: 1 1 auto; min-width: 0; }
+/* The artist (#699), after the title on the title's own line, in the meta
+   line's quieter voice. A line of its own would make the card taller than the
+   bar, and in the meta line it would push the extracted date off the end.
+   The artist keeps its whole width up to 45% of the line, clipping past that,
+   and the title takes the rest, clipping as it always has. Same size and line
+   height as the title, so sharing a baseline adds nothing to the line. */
+#nowPlayingPanel .track-panel-info {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0;
+}
+#nowPlayingPanel .track-panel-title { flex: 0 1 auto; min-width: 0; }
+#nowPlayingPanel .np-artist {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--muted);
+}
+#nowPlayingPanel .np-artist::before {
+  content: "\00b7";
+  padding: 0 6px;
+}
 /* A flex item's automatic minimum is its content, all the way down, so one
    missing min-width anywhere in this chain gives the card a floor it will not
    go below and the row overflows instead. The title and the meta line both
@@ -4623,19 +4896,23 @@ input, textarea { font-family: inherit; }
  * So it gets a segment of its own, full height, separated by the same hairline
  * the composer uses between its clusters. The icon then has a place rather than
  * a position, and the card reads as two parts: what the track is, and the one
- * thing you can do to it from here. */
+ * thing you can do to it from here.
+ *
+ * On the left edge, before the artwork (#699): heart, picture, then the words.
+ * On the right it sat at the far end of the bar, away from the track it acts
+ * on, and the text had to stop 56px short to leave room for it. */
 #nowPlayingPanel .track-panel-head .daw-fav-btn {
   position: absolute;
-  right: 0;
+  left: 0;
   top: 0;
   bottom: 0;
   transform: none;
   margin: 0;
-  width: 46px;
+  width: var(--np-fav);
   height: auto;
   border: none;
-  border-left: 1px solid var(--border);
-  border-radius: 0 8px 8px 0;
+  border-right: 1px solid var(--border);
+  border-radius: 7px 0 0 7px;
   background: none;
   color: var(--muted);
 }
@@ -4647,9 +4924,62 @@ input, textarea { font-family: inherit; }
   width: 17px;
   height: 17px;
 }
-/* The text stops where the segment starts. */
-#nowPlayingPanel .track-panel-info,
-#nowPlayingPanel .daw-track-meta-line { padding-right: 56px; }
+/* The artwork, as a segment like the heart's and right after it: full height,
+   with a hairline beside it, rather than a 40px square squeezed between
+   the label and the meta line. It was the smallest thing in the card while
+   being the quickest way to tell which song is open (#699).
+
+   76px is the card's inside height (78 less its borders), so the picture is
+   square and edge to edge. Title and meta line both start after it, which
+   also puts them on one left edge. That costs the text 76px, so the card's
+   width cap went up by the same amount; the bar has room to the right.
+
+   Only while the card is wide enough to pay for it. A narrow card, which is a
+   long language in a window just above the breakpoint that hides the card,
+   needs those 76px for the extracted date (#698), so below 380px the art goes
+   back inline at 40px. A container query, not a media query: how wide the
+   card is depends on the language as much as on the window.
+
+   Container queries style descendants only, which is why the room for the art
+   is padding on the two text rows rather than on the card itself. And a size
+   container ignores its content when sizing, so the card fills its column (up
+   to the cap) instead of shrinking to fit its text. */
+#nowPlayingPanel {
+  --np-fav: 34px;
+  --np-art: 76px;
+  container-type: inline-size;
+}
+#nowPlayingPanel .track-panel-cover {
+  position: absolute;
+  left: var(--np-fav);
+  top: 0;
+  bottom: 0;
+  width: var(--np-art) !important;
+  height: auto !important;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+}
+#nowPlayingPanel .track-panel-head,
+#nowPlayingPanel .daw-track-meta-line { padding-left: calc(var(--np-fav) + var(--np-art)); }
+@container (max-width: 379px) {
+  #nowPlayingPanel .track-panel-cover {
+    /* relative, not static: the thumbnail inside is absolutely positioned,
+       and against a static cover it would fill the whole card. */
+    position: relative;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 7px;
+    border-right: none;
+  }
+  #nowPlayingPanel .track-panel-head,
+  #nowPlayingPanel .daw-track-meta-line { padding-left: var(--np-fav); }
+  /* Over the title, clear of the heart and the 40px art:
+     heart + card padding 14 + art 40 + 6. */
+  #nowPlayingPanel .np-legend { left: calc(var(--np-fav) + 60px); }
+}
 
 /* Source and quality keep their footer colours, which up here is four accents
    in one short line. Muted to one voice; the stems dot keeps its colour,
@@ -4675,7 +5005,10 @@ input, textarea { font-family: inherit; }
   flex-wrap: wrap;
   row-gap: 0;
   line-height: 1.35;
-  max-height: 2.7em;
+  /* Two rows at 1.35, plus 2px: at exactly 2.7em the second row's line box
+     rounded a pixel past the cap and was measured as clipped. A third row
+     would need another 1.35em, so the headroom never lets one through. */
+  max-height: calc(2.7em + 2px);
   white-space: nowrap;
   overflow: hidden;
 }
@@ -4782,6 +5115,9 @@ input, textarea { font-family: inherit; }
  */
 @media (max-width: 1460px) {
   .daw-composer > #nowPlayingPanel { display: none; }
+  /* The rule only divides the extraction from the card. Without the card it
+     would divide the row from nothing. */
+  .daw-composer > .daw-composer-sep { display: none; }
 }
 
 /* The click-track options with nothing to act on.

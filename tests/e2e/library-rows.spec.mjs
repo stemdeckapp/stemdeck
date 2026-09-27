@@ -35,13 +35,6 @@ async function open(page) {
   await page.locator(".cat-item").first().waitFor({ timeout: 20000 });
 }
 
-/** The stems a job really has, from the server, not counting the mix. */
-async function stemFiles(page, id) {
-  const res = await page.request.get(`/api/jobs/${id}`);
-  const state = await res.json();
-  return (state.stems || []).filter((s) => (s.name ?? s) !== "original").length;
-}
-
 // Both fixture jobs, as seedLibrary has them, with the first one changed.
 // Seeding only the first would not work: the startup sync adopts the second
 // from the server, and as they share a source the catalog's dedup (#542)
@@ -65,12 +58,21 @@ test.describe("library rows", () => {
     // No local library at all: both jobs arrive through the startup sync, the
     // path that used to leave the line as " · 0 stems".
     await open(page);
-    const expected = await stemFiles(page, SIBLING_JOB_ID);
-    expect(expected).toBeGreaterThan(0);
-
     const line = await rowText(page, SIBLING_JOB_ID);
     expect(line).not.toMatch(/^·/);
-    expect(line).toMatch(new RegExp(`(^|· )${expected} stems$`));
+    expect(line).not.toMatch(/·\s*$/);
+    // The row gives the length only; the stem count lives in the now-playing
+    // card (#699).
+    expect(line).not.toMatch(/stems?/i);
+  });
+
+  test("a finished row gives its length and no stem count", async ({ page }) => {
+    await seedCatalogState(
+      page,
+      withTracks({ ...fixtureTrack(JOB_ID, "Timed"), duration: 357 }),
+    );
+    await open(page);
+    expect(await rowText(page, JOB_ID)).toBe("05:57");
   });
 
   test("an old stored label is not shown, and not searched", async ({ page }) => {

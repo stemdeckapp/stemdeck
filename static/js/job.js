@@ -9,7 +9,7 @@ import {
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards } from "./catalog.js";
+import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, paintFinishedTrackNames } from "./catalog.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
@@ -344,6 +344,9 @@ async function finishDoneJob(state) {
     finalState.has_video ?? false,
   );
   initSections(finalState.job_id, finalState.sections, finalState.duration || 0);
+  // The card names the song and its band now, as it does when the track is
+  // opened from the library, rather than only after it is reopened (#699).
+  paintFinishedTrackNames(finalState.job_id);
 }
 
 function applyState(state) {
@@ -377,6 +380,13 @@ function applyState(state) {
       sectionsSource: state.sections_source,
       sourceUrl: jobSources.get(state.job_id) || (isForeground ? urlInput.value : ""),
       createdAt: state.created_at,
+      // So a track that has just finished importing already knows its artist
+      // and title (#699), rather than only once it is reopened from the library.
+      ...(state.audio_tags ? { audioTags: libraryAudioTags(state.audio_tags) } : {}),
+      // And its band, found by the server while the job ran, so the artist box
+      // and the Lyrics tab have it with no lookup of their own. A band already
+      // saved on the track is kept (see addTrackToLibrary).
+      ...(libraryArtist(state.artist) ? { artist: libraryArtist(state.artist) } : {}),
     });
   }
 

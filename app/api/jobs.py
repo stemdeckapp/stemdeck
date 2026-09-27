@@ -23,6 +23,8 @@ from app.core.config import (
     MAX_PENDING_UPLOAD_JOBS,
     MAX_PENDING_URL_JOBS,
     STEM_NAMES,
+    TIMEOUT_ARTIST_LOOKUP,
+    TIMEOUT_FETCH_TAGS,
     ffprobe_executable,
 )
 from app.core.models import Job, _set
@@ -38,8 +40,10 @@ from app.core.registry import set_trashed as registry_set_trashed
 from app.core.settings import get_auto_sections, get_max_duration_sec
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
+from app.pipeline.artist_lookup import find_band, tagged_artist_name
+from app.pipeline.audio_tags import probe_tags
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
-from app.pipeline.download import InvalidYouTubeURL, validate_youtube_url
+from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.vocal_split import split_vocals
@@ -309,6 +313,10 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
 
+    # Now, while the upload still exists: it is deleted once the pipeline is
+    # done with it, and the stems carry no tags. Never fails the upload.
+    audio_tags = await asyncio.to_thread(probe_tags, source_path)
+
     title = _sanitize_title(filename)
     local_source_url = f"local:{title}"
     job = Job(
@@ -318,6 +326,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         duration_sec=duration,
         source_url=local_source_url,
         source_format=ext.removeprefix("."),
+        audio_tags=audio_tags,
         auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
@@ -544,6 +553,9 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         # track it came from instead of replacing it.
         source_url=_resplit_source_url(job.source_url, new_id),
         source_format=source.suffix.lower().removeprefix("."),
+        # The same recording, so the same tags and the same band.
+        audio_tags=job.audio_tags,
+        artist=job.artist,
         auto_sections=get_auto_sections(),
     )
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
@@ -717,6 +729,130 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
         registry_persist(JOBS_DIR)
 
     return {"job_id": job_id, "sections": validated, "sections_source": "manual"}
+
+
+# Jobs whose tags are being looked up right now. Only touched on the event
+# loop, with no await between the check and the add, so a plain set is enough.
+_TAG_LOOKUPS: set[str] = set()
+
+
+def _lookup_audio_tags(job: Job) -> dict[str, str] | None:
+    """Blocking: the tags a finished job's own source can still give, or None.
+
+    An upload is asked through the source kept beside it, if one was. A link
+    is asked through its metadata, and only once the stored URL has passed the
+    same validator as an import: it came from the registry, not from this
+    request, but nothing that fails that check is ever handed to yt-dlp.
+    Raises when the fetch fails.
+    """
+    source_url = job.source_url or ""
+    if source_url.startswith("local:"):
+        source = _retained_source(job.id)
+        return probe_tags(source) if source is not None else None
+    try:
+        url = validate_youtube_url(source_url)
+    except InvalidYouTubeURL:
+        return None
+    return fetch_audio_tags(url)
+
+
+def _write_metadata_fields(job_id: str, fields: dict[str, object]) -> None:
+    """Put ``fields`` (the tags, the band) into metadata.json, if the job has
+    one, and change nothing else in it: restore() rebuilds a lost registry
+    entry from this file."""
+    meta_path = (JOBS_DIR / job_id / "metadata.json").resolve()
+    if not meta_path.is_relative_to(JOBS_DIR.resolve()):
+        return
+    # The same lock as the sections editor, the other read-modify-write here.
+    with _SECTIONS_WRITE_LOCK:
+        try:
+            if not meta_path.is_file():
+                return
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if not isinstance(meta, dict):
+                return
+            meta.update(fields)
+            _write_json_atomic(meta_path, meta)
+        except (OSError, ValueError):
+            logger.warning("could not record audio tags in metadata for %s", job_id, exc_info=True)
+
+
+@router.post("/{job_id}/audio-tags")
+async def refresh_audio_tags(job_id: str) -> dict:
+    """Fill in a finished track's tags, and the band they name (#699), for
+    tracks imported before the pipeline found them.
+
+    Answers {"audio_tags": {...} | null, "artist": {...} | null}. A lookup
+    that fails or times out is "nothing found", not an error: the page asks
+    once per track and does not retry, and the reason is in the server log.
+    The band is looked up when the tags name an artist and the job has no
+    band yet, whether the tags were found just now or were there already.
+
+    Deliberately outside _pipeline_lock. This is one metadata request, and
+    waiting behind a twenty-minute separation for it would leave the artist
+    box empty for no reason.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail="job is not finished")
+    if job.audio_tags and (job.artist or not tagged_artist_name(job.audio_tags.get("artist"))):
+        return {"audio_tags": job.audio_tags, "artist": job.artist}
+    if job_id in _TAG_LOOKUPS:
+        raise HTTPException(status_code=409, detail="already looking up this track")
+
+    _TAG_LOOKUPS.add(job_id)
+    try:
+        tags = job.audio_tags
+        if not tags:
+            try:
+                # A timeout abandons the wait, not the thread: yt-dlp's own
+                # socket timeout ends that, and its answer is then dropped.
+                tags = await asyncio.wait_for(
+                    asyncio.to_thread(_lookup_audio_tags, job), timeout=TIMEOUT_FETCH_TAGS
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[%s] audio tag lookup timed out after %ds", job_id, TIMEOUT_FETCH_TAGS
+                )
+                tags = None
+            except Exception:
+                logger.warning("[%s] audio tag lookup failed", job_id, exc_info=True)
+                tags = None
+        artist = None
+        if tags and not job.artist:
+            # find_band never raises; the wait is bounded all the same, since
+            # a socket timeout is per read, not per request.
+            try:
+                artist = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        find_band,
+                        tags.get("artist"),
+                        cancelled=lambda: registry_get(job_id) is not job,
+                    ),
+                    timeout=2 * TIMEOUT_ARTIST_LOOKUP + 1,
+                )
+            except asyncio.TimeoutError:
+                logger.info("[%s] band lookup timed out", job_id)
+    finally:
+        _TAG_LOOKUPS.discard(job_id)
+
+    # The track was deleted while the lookup ran.
+    if registry_get(job_id) is not job:
+        return {"audio_tags": None, "artist": None}
+    found: dict[str, object] = {}
+    if tags and not job.audio_tags:
+        found["audio_tags"] = tags
+    if artist and not job.artist:
+        found["artist"] = artist
+    if found:
+        _set(job, **found)
+        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(_write_metadata_fields, job_id, found)
+    return {"audio_tags": job.audio_tags, "artist": job.artist}
 
 
 # Upper bound on an edited grid. A 20-minute track at 300 BPM is ~6000 beats;

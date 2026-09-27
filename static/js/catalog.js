@@ -207,6 +207,8 @@ let folders = [];
 let tracks = {};
 let _deletedJobIds = new Set();
 let _currentTrackId = null;
+// The open track's tags as the last render() saw them. See setCurrentTrack().
+let _renderedTagsKey = "";
 let _loadTrackToken = 0;
 let catalogView = "library";
 let catalogSearchQuery = "";
@@ -399,6 +401,30 @@ function saveState() {
 
 // ─── Track management ───
 
+/**
+ * A job's audio_tags as the library keeps them (#699): artist, title and album
+ * as they are, and embedded lyrics reduced to `hasLyrics: true`. The lyrics run
+ * to 20,000 characters and the library store is rewritten whole on every
+ * change to any track, so they stay on the server; the Lyrics tab fetches them
+ * once, into a store entry of its own, the first time it needs them.
+ */
+export function libraryAudioTags(tags) {
+  if (!tags || typeof tags !== "object") return null;
+  const { lyrics, ...rest } = tags;
+  return lyrics ? { ...rest, hasLyrics: true } : rest;
+}
+
+/**
+ * The band a job's state carries (#699), found by the server while the job
+ * ran, as the library keeps a band: { id, name, englishName } with id a
+ * Wikidata item. Null for anything else, so a malformed answer never reaches
+ * the artist box.
+ */
+export function libraryArtist(artist) {
+  if (!artist || typeof artist !== "object" || !/^Q\d+$/.test(String(artist.id || ""))) return null;
+  return { id: artist.id, name: String(artist.name || ""), englishName: String(artist.englishName || "") };
+}
+
 export function addTrackToLibrary(track) {
   // track: { id, title, thumb, stems, status, sourceUrl }
   const existingId = findTrackBySource(track.sourceUrl, track.id);
@@ -425,6 +451,9 @@ export function addTrackToLibrary(track) {
   tracks[track.id] = {
     ...existing,
     ...track,
+    // A band already on the track, saved in the artist box or found before,
+    // is never replaced by the one the server found (#699).
+    ...(existing.artist ? { artist: existing.artist } : {}),
     createdAt: existing.createdAt ?? track.createdAt ?? (Date.now() / 1000),
     favorite: existing.favorite ?? false,
   };
@@ -440,6 +469,107 @@ export function addTrackToLibrary(track) {
   }
   saveState();
   render();
+}
+
+/**
+ * The open track, for the lyrics panel: its id, title and length in seconds,
+ * or null when none is open.
+ */
+export function getCurrentTrackInfo() {
+  const track = tracks[_currentTrackId];
+  if (!track) return null;
+  return {
+    id: _currentTrackId,
+    title: track.title || "",
+    duration: Number(track.duration) || 0,
+    // What the file itself was tagged with at import, when it was: artist,
+    // title, album, and lyrics if it carried them. Null for tracks imported
+    // before tags were read, and for sources that had none.
+    audioTags: track.audioTags || null,
+  };
+}
+
+/**
+ * The band saved on the open track from the artist box (#699), as
+ * { id, name } with id a Wikidata item, or null when none has been saved.
+ */
+export function getCurrentTrackArtist() {
+  const artist = tracks[_currentTrackId]?.artist;
+  if (!artist || !/^Q\d+$/.test(artist.id)) return null;
+  return { id: artist.id, name: String(artist.name || ""), englishName: String(artist.englishName || "") };
+}
+
+/** Save a band on the open track, kept with the rest of the library. */
+export function setCurrentTrackArtist(artist) {
+  const track = tracks[_currentTrackId];
+  if (!track || !/^Q\d+$/.test(artist?.id || "")) return false;
+  track.artist = { id: artist.id, name: String(artist.name || ""), englishName: String(artist.englishName || "") };
+  saveState();
+  paintNowPlayingArtist(track);
+  return true;
+}
+
+// The artist beside the title on the now-playing card (#699): the band saved
+// on the track, else the artist its file was tagged with. Neither known, and
+// the card is exactly what it was before there was an artist to show.
+function paintNowPlayingArtist(track) {
+  const el = document.getElementById("np-artist");
+  if (!el) return;
+  const name = String(track?.artist?.name || track?.audioTags?.artist || "").trim();
+  el.textContent = name;
+  // The whole name on hover, since a long title can leave it clipped.
+  el.title = name;
+  el.hidden = !name;
+}
+
+// ─── Tags for tracks imported before they were read ───
+//
+// A track from before #699 has no audioTags, so the card, the artist box and
+// the Lyrics tab had nothing to go on. Opening one asks the server once to
+// read them now, from the upload it kept or the video's metadata, in the
+// background: the track loads exactly as it would have. The answer is kept on
+// the track with audioTagsChecked, null included, so a file with no tags is
+// asked about once ever. A failure sets nothing, and the next session asks
+// again. A 409 (the job is not finished, or the server is already reading its
+// tags) is "not yet", so the next open of the track asks again. The server
+// can take up to ~45s on a slow video metadata fetch, which is why nothing
+// waits on this. "tracktags" then tells artistInfo.js and lyrics.js, which
+// import this module and so cannot be imported back.
+const _tagsAsked = new Set(); // once per track per page load
+const _tagsPending = new Set();
+
+/** Whether the open track's tags are still being asked for. */
+export function isCurrentTrackTagsPending() {
+  return _tagsPending.has(_currentTrackId);
+}
+
+async function backfillAudioTags(trackId) {
+  const track = tracks[trackId];
+  if (!track || track.audioTags || track.audioTagsChecked || track.status !== "done") return;
+  if (_tagsAsked.has(trackId)) return;
+  _tagsAsked.add(trackId);
+  _tagsPending.add(trackId);
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/audio-tags`, { method: "POST" });
+    if (res.status === 409) _tagsAsked.delete(trackId);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Kept on the track it was asked for, even if another is open by now.
+    const target = tracks[trackId];
+    if (!target) return;
+    target.audioTags = libraryAudioTags(data?.audio_tags);
+    target.audioTagsChecked = true;
+    // The band, when the server found it from those tags, so artistInfo.js
+    // has nothing left to look up when "tracktags" reaches it.
+    if (!target.artist) target.artist = libraryArtist(data?.artist);
+    saveState();
+    if (_currentTrackId === trackId) paintNowPlayingNames(target);
+  } catch (err) {
+    console.warn("[catalog] reading an older track's tags failed:", err);
+  } finally {
+    _tagsPending.delete(trackId);
+    document.dispatchEvent(new CustomEvent("tracktags", { detail: { id: trackId } }));
+  }
 }
 
 export function updateTrackStatus(trackId, status) {
@@ -492,11 +622,18 @@ function stateMetadataToTrack(state, fallbackTrack) {
     sectionsSource: state.sections_source ?? fallbackTrack.sectionsSource ?? null,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
     sourceFormat: state.source_format ?? fallbackTrack.sourceFormat ?? null,
+    // The source's own artist, title, album and lyrics (#699), read at import.
+    audioTags: state.audio_tags ? libraryAudioTags(state.audio_tags) : fallbackTrack.audioTags ?? null,
     mixUrl: state.mix_url ?? fallbackTrack.mixUrl ?? null,
     hasVideo: state.has_video ?? fallbackTrack.hasVideo ?? false,
     videoStatus: state.video_status ?? fallbackTrack.videoStatus ?? null,
     createdAt: fallbackTrack.createdAt ?? state.created_at,
     favorite: fallbackTrack.favorite ?? false,
+    // The band (#699): the one saved on the track first, since a band chosen
+    // in the artist box always wins, and the server never hears of that one,
+    // so it only survives a rebuild from server state by being carried. Else
+    // the one the server found from the tags while the job ran.
+    artist: fallbackTrack.artist ?? libraryArtist(state.artist),
   };
 }
 
@@ -571,8 +708,26 @@ export function applyStemPresenceCards(stemPresence) {
   });
 }
 
+function paintNowPlayingNames(track) {
+  // The file's own title tag when it has one: the job title is the filename
+  // or the video's name, which often carries the band, "Official Video" and
+  // the like, and the artist now has a place of its own beside it.
+  titleEl.textContent = String(track.audioTags?.title || "").trim() || track.title || i18nT("track.untitled");
+  paintNowPlayingArtist(track);
+}
+
+/**
+ * Name the song and its artist on the now-playing card for a track that has
+ * just finished importing, the way opening it from the library does. Nothing
+ * if another track is open by now.
+ */
+export function paintFinishedTrackNames(trackId) {
+  const track = tracks[trackId];
+  if (track && trackId === _currentTrackId) paintNowPlayingNames(track);
+}
+
 function applyTrackInfoToPanel(track) {
-  titleEl.textContent = track.title || i18nT("track.untitled");
+  paintNowPlayingNames(track);
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
   updateFooterTrack({
@@ -701,12 +856,16 @@ function moveTrackToTrash(trackId) {
 }
 
 function setCatalogView(view) {
-  catalogView = ["trash", "favorites", "queue"].includes(view) ? view : "library";
-  // Switching to Trash, Favourites or Queue is a request to look at the
-  // sidebar, so a collapsed one comes back. Through the shared helper, or the
-  // collapse button's aria-expanded is left claiming the sidebar is still shut.
+  catalogView = ["trash", "favorites", "queue", "lyrics"].includes(view) ? view : "library";
+  // Switching to Trash, Favourites, Queue or Lyrics is a request to look at
+  // the sidebar, so a collapsed one comes back. Through the shared helper, or
+  // the collapse button's aria-expanded is left claiming the sidebar is still
+  // shut.
   if (catalogView !== "library") setSidebarCollapsed(false);
   render();
+  // The lyrics panel (lyrics.js) draws itself; this is how it learns it is on
+  // screen, without catalog.js importing it.
+  document.dispatchEvent(new CustomEvent("catalogviewchange", { detail: { view: catalogView } }));
 }
 
 function applyStoredStemSelection(track) {
@@ -828,6 +987,12 @@ async function loadTrackIntoStudio(trackId) {
   applyTrackInfoToPanel(track);
   wireUpAudio(trackId, track.audioStems, track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
+  // Not awaited: the track is already loading, and the answer arrives as a
+  // "tracktags" event.
+  backfillAudioTags(trackId);
+  // For artistInfo.js, which finds the band from the file's tags. An event
+  // rather than an import, since that module already imports this one.
+  document.dispatchEvent(new CustomEvent("trackopen", { detail: { id: trackId } }));
 }
 
 /**
@@ -864,6 +1029,12 @@ export function setResplitTarget(track) {
 
 export function setCurrentTrack(trackId) {
   _currentTrackId = trackId;
+  // The library's Tags section shows the open track's tags, so it is rebuilt
+  // when those are not what the last render() drew. Compared by tags rather
+  // than by id: loadTrackIntoStudio() can bring a track's tags in from the
+  // server while that same track is already the open one. Anything else is
+  // patched in place, since a full render() rebuilds the whole sidebar.
+  if (openTrackTags().join("\n") !== _renderedTagsKey) { render(); return; }
   for (const el of document.querySelectorAll(".cat-item.active")) el.classList.remove("active");
   for (const el of document.querySelectorAll(`.cat-item[data-id="${trackId}"]`)) el.classList.add("active");
   for (const el of document.querySelectorAll(".strip-thumb.active")) el.classList.remove("active");
@@ -1257,6 +1428,13 @@ function wireLibraryDeleteKeys() {
 
 // ─── Rendering helpers ───
 
+/** The open track's tags, deduplicated, or none when it is in the Trash. */
+function openTrackTags() {
+  const track = tracks[_currentTrackId];
+  if (!track || getTrashFolder()?.items.includes(_currentTrackId)) return [];
+  return [...new Set(track.tags ?? [])];
+}
+
 function getAllTags(trashIds) {
   const counts = {};
   for (const [id, track] of Object.entries(tracks)) {
@@ -1322,13 +1500,11 @@ function trackSublineHtml(track, { inTrash = false } = {}) {
   } else if (track.status === "error") {
     parts = [i18nT("notifKind.importFailed")];
   } else {
-    const stems = stemCountOf(track);
-    // A done track that knows neither its length nor its stems says nothing
-    // rather than "0 stems", which would be a claim and a wrong one.
-    parts = [
-      track.duration ? fmtTime(track.duration) : "",
-      stems ? i18nPlural("footer.stemsCount", stems) : "",
-    ];
+    // Just the length. The stem count was here too, but every row carrying
+    // "6 stems" says the same thing forty times over, and the now-playing card
+    // shows it for the track that is open (#699). A done track that does not
+    // know its length says nothing rather than a placeholder.
+    parts = [track.duration ? fmtTime(track.duration) : ""];
   }
   if (inTrash) parts.push(i18nT("track.removed"));
   // Spaced as text as well as by the row's flex gap, so what a screen reader
@@ -1653,6 +1829,8 @@ function render() {
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
   if (!list) return;
+  const openTags = openTrackTags();
+  _renderedTagsKey = openTags.join("\n");
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
@@ -1662,11 +1840,17 @@ function render() {
   const isTrashView = catalogView === "trash";
   const isFavoritesView = catalogView === "favorites";
   const isQueueView = catalogView === "queue";
-  const isLibraryView = !isTrashView && !isFavoritesView && !isQueueView;
+  const isLyricsView = catalogView === "lyrics";
+  const isLibraryView = !isTrashView && !isFavoritesView && !isQueueView && !isLyricsView;
 
   catalog?.classList.toggle("trash-view", isTrashView);
   catalog?.classList.toggle("favorites-view", isFavoritesView);
   catalog?.classList.toggle("queue-view", isQueueView);
+  // The lyrics panel replaces the list rather than being rendered into it;
+  // daw.css swaps which of the two is shown.
+  catalog?.classList.toggle("lyrics-view", isLyricsView);
+  document.querySelector(".rail-lyrics")?.classList.toggle("active", isLyricsView);
+  document.querySelector(".rail-lyrics")?.setAttribute("aria-pressed", String(isLyricsView));
 
   document.querySelector(".rail-library")?.classList.toggle("active", isLibraryView);
   document.querySelector(".rail-library")?.setAttribute("aria-pressed", String(isLibraryView));
@@ -1764,14 +1948,19 @@ function render() {
     return;
   }
 
-  // Tags section
-  const tags = getAllTags(trashIds);
-  if (tags.length) {
+  // Tags section: the open track's tags only. Every tag in the library was a
+  // wall of chips with nothing to say which song they came from. The count is
+  // still library-wide, since it is how many tracks the chip's filter finds.
+  // setCurrentTrack() re-renders when the open track's tags change.
+  if (openTags.length) {
+    const counts = new Map(getAllTags(trashIds));
     const section = makeSectionEl(i18nT("library.tags"));
+    section.classList.add("lib-tags-section");
     const row = document.createElement("div");
     row.className = "lib-tags-row";
     const activeTag = catalogSearchQuery.startsWith("#") ? catalogSearchQuery.slice(1) : null;
-    for (const [tag, count] of tags) {
+    for (const tag of openTags) {
+      const count = counts.get(tag) ?? 1;
       const chip = document.createElement("button");
       chip.className = `lib-tag-chip${activeTag === tag ? " active" : ""}`;
       chip.type = "button";
@@ -2220,6 +2409,7 @@ function wireCatalogRailViews() {
   document.querySelector(".rail-library")?.addEventListener("click", () => setCatalogView("library"));
   document.querySelector(".rail-favorites")?.addEventListener("click", () => setCatalogView("favorites"));
   document.querySelector(".rail-trash")?.addEventListener("click", () => setCatalogView("trash"));
+  document.querySelector(".rail-lyrics")?.addEventListener("click", () => setCatalogView("lyrics"));
   document.querySelector(".rail-queue")?.addEventListener("click", () => setCatalogView("queue"));
   document.getElementById("clearBinBtn")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
@@ -3108,6 +3298,13 @@ async function syncWithServer() {
         // whole library shows its icons at startup.
         if (!known.sourceFormat && state.source_format) {
           known.sourceFormat = state.source_format;
+          backfilled = true;
+        }
+        // Likewise the band the server found while the job ran (#699), for a
+        // track added before its import finished. Never over one already
+        // saved on the track.
+        if (!known.artist && libraryArtist(state.artist)) {
+          known.artist = libraryArtist(state.artist);
           backfilled = true;
         }
         continue;

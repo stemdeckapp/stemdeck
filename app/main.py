@@ -849,7 +849,11 @@ def download_logs_zip() -> StreamingResponse:
 # script-src has no 'unsafe-inline'/'eval': all JS is same-origin modules and the
 # inline scripts/onclick were moved out. 'unsafe-inline' is allowed for *styles*
 # only (the UI sets many style attributes). Allowances:
-#   connect-src  -> same-origin API/SSE, the GitHub update check, Tauri IPC
+#   connect-src  -> same-origin API/SSE, the GitHub update check, Tauri IPC,
+#                   Wikidata/Wikipedia for the artist box the now-playing card
+#                   opens, and LRCLIB for the Lyrics tab (#699). All four are
+#                   read-only public APIs, asked only about the open track, and
+#                   sent only an artist and a song name.
 #   img-src https: -> remote YouTube/SoundCloud thumbnails
 #   style/font   -> the Google Fonts <link>
 _CSP = (
@@ -863,7 +867,9 @@ _CSP = (
     # track init); without them Multitrack.create throws and no audio loads
     # (#186). They are inline/same-origin schemes, not network endpoints, so
     # they add no exfiltration channel — script-src below stays locked.
-    "connect-src 'self' https://api.github.com ipc: http://ipc.localhost data: blob:; "
+    "connect-src 'self' https://api.github.com ipc: http://ipc.localhost data: blob: "
+    "https://www.wikidata.org https://query.wikidata.org https://*.wikipedia.org "
+    "https://lrclib.net; "
     "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
 )
 

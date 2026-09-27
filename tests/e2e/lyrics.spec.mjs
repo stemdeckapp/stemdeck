@@ -1,0 +1,400 @@
+// The Lyrics tab (#699): a view of the sidebar that finds the open track's
+// lyrics by itself, from the file's tags or the band saved on the track, keeps
+// them for the track, and shows them in time with playback, karaoke style.
+// There is no search box.
+//
+// LRCLIB is answered here, so the tests run offline. The fixture track is six
+// seconds long, which is why the synced lines below sit inside it and why the
+// first row below counts as the same recording. Ranking, LRC parsing, word
+// timing and title cleaning are covered in tests/js/lyrics-lookup.test.mjs;
+// this is the page: what is looked up and when, what is kept, what is shown.
+import { test, expect } from "@playwright/test";
+import {
+  JOB_ID,
+  SIBLING_JOB_ID,
+  fixtureTrack,
+  readCatalogState,
+  seedCatalogState,
+  seedLibrary,
+  stubAudioTags,
+  stubExportEndpoints,
+  stubUpdateCheck,
+} from "./helpers.mjs";
+
+const LRCLIB = /^https:\/\/lrclib\.net\//;
+
+const ROWS = [
+  {
+    id: 101,
+    trackName: "Fixture Song",
+    artistName: "Fixture Band",
+    albumName: "Studio",
+    duration: 6,
+    instrumental: false,
+    syncedLyrics: "[00:00.50] First line\n[00:02.00] Second line\n[00:04.00] Third line",
+    plainLyrics: "First line\nSecond line\nThird line",
+  },
+  {
+    id: 102,
+    trackName: "Fixture Song (Live)",
+    artistName: "Fixture Band",
+    albumName: "Live",
+    duration: 300,
+    instrumental: false,
+    syncedLyrics: null,
+    plainLyrics: "Live words\nMore live words",
+  },
+];
+
+const TAGS = { audioTags: { artist: "Fixture Band", title: "Fixture Song" } };
+
+async function stubLrclib(page, { rows = ROWS, offline = false } = {}) {
+  const asked = [];
+  await page.route(LRCLIB, async (route) => {
+    asked.push(route.request().url());
+    if (offline) return route.abort("internetdisconnected");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify(rows),
+    });
+  });
+  return asked;
+}
+
+/** Both fixture tracks, the first with `extra` fields (tags, a saved band). */
+async function seedWith(page, extra) {
+  await seedCatalogState(page, {
+    folders: [
+      { id: "f-unsorted", name: "Unsorted", items: [JOB_ID, SIBLING_JOB_ID], color: null },
+      { id: "trash", name: "Trash", items: [], color: null },
+    ],
+    tracks: {
+      [JOB_ID]: { ...fixtureTrack(JOB_ID, "E2E Fixture Track"), ...extra },
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)"),
+    },
+  });
+}
+
+// A tagged artist also sets off the artist box's own lookup (artistInfo.js).
+// Answered with "no such band", so no test reaches Wikimedia and none gets a
+// band saved behind its back.
+const WIKIMEDIA = /^https:\/\/((www|query)\.wikidata\.org|[a-z-]+\.wikipedia\.org)\//;
+
+async function open(page) {
+  await stubExportEndpoints(page);
+  await stubUpdateCheck(page);
+  await page.route(WIKIMEDIA, (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    headers: { "access-control-allow-origin": "*" },
+    body: JSON.stringify({ search: [] }),
+  }));
+  // An untagged track asks the server to read its tags when it is opened
+  // (catalog.js). Answered with none, so an untagged fixture stays untagged.
+  await stubAudioTags(page, null);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.locator(".cat-item").first().waitFor({ timeout: 20000 });
+}
+
+async function openTrack(page) {
+  await page.locator(`.cat-item[data-id="${JOB_ID}"]`).first().click();
+  await expect(page.locator(".app")).not.toHaveClass(/no-track/, { timeout: 15000 });
+}
+
+const showLyricsTab = (page) => page.locator(".rail-lyrics").click();
+
+/** A tagged track, opened, with the tab showing its lyrics found. */
+async function lyricsShown(page) {
+  const asked = await stubLrclib(page);
+  await seedWith(page, TAGS);
+  await open(page);
+  await openTrack(page);
+  await showLyricsTab(page);
+  await expect(page.locator(".lyrics-line")).toHaveCount(3);
+  return asked;
+}
+
+const stored = (page) =>
+  page.evaluate((id) => JSON.parse(localStorage.getItem(`stemdeck.lyrics.${id}`) || "null"), JOB_ID);
+
+test.describe("lyrics tab", () => {
+  test("the rail button swaps the library list for the lyrics panel, which has no search box", async ({ page }) => {
+    await stubLrclib(page);
+    await seedLibrary(page);
+    await open(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsPanel")).toBeVisible();
+    await expect(page.locator("#catalogList")).toBeHidden();
+    await expect(page.locator(".rail-lyrics")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#lyricsPanel input, #lyricsPanel form")).toHaveCount(0);
+
+    await page.locator(".rail-library").click();
+    await expect(page.locator("#lyricsPanel")).toBeHidden();
+    await expect(page.locator("#catalogList")).toBeVisible();
+  });
+
+  test("with no track open it says to open one", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedLibrary(page);
+    await open(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toHaveText("Open a track to find its lyrics.");
+    expect(asked).toEqual([]);
+  });
+
+  test("a track with no tags and no saved band says how to give it one, and asks nothing", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedLibrary(page);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toContainText("Save its band with the");
+    expect(asked).toEqual([]);
+  });
+
+  test("the file's tags are looked up, and a version the track's length is kept", async ({ page }) => {
+    const asked = await lyricsShown(page);
+    await expect(page.locator(".lyrics-line")).toHaveText(["First line", "Second line", "Third line"]);
+    await expect(page.locator(".lyrics-match-title")).toHaveText("Fixture Song");
+
+    // What went out: the tagged artist and song, to LRCLIB, nothing else.
+    expect(asked).toHaveLength(1);
+    const url = new URL(asked[0]);
+    expect(url.searchParams.get("artist_name")).toBe("Fixture Band");
+    expect(url.searchParams.get("track_name")).toBe("Fixture Song");
+    expect(asked[0]).not.toContain("E2E");
+
+    // Kept on this machine, for this track.
+    await expect.poll(async () => (await stored(page))?.entry?.id ?? null).toBe(101);
+
+    // The other version is folded away until asked for, then can be taken.
+    const toggle = page.locator(".lyrics-tools .lyrics-link").first();
+    await expect(toggle).toHaveText("Other versions (1)");
+    await expect(page.locator(".lyrics-version-list")).toBeHidden();
+    await toggle.click();
+    await page.locator(".lyrics-version", { hasText: "Fixture Song (Live)" }).click();
+    await expect(page.locator(".lyrics-text").first()).toHaveText("Live words");
+    await expect(page.locator(".lyrics-line")).toHaveCount(0);
+  });
+
+  test("a saved band is looked up with the song's name taken from the title", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedWith(page, { artist: { id: "Q162586", name: "Dream Theater", englishName: "Dream Theater" } });
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    const url = new URL(asked[0]);
+    expect(url.searchParams.get("artist_name")).toBe("Dream Theater");
+    expect(url.searchParams.get("track_name")).toBe("E2E Fixture Track");
+
+    // Kept, so coming back to the tab asks nothing more.
+    await page.locator(".rail-library").click();
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    expect(asked).toHaveLength(1);
+  });
+
+  test("the library keeps only that a file has lyrics; the tab fetches them once", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedWith(page, { audioTags: { artist: "Fixture Band", title: "Fixture Song", hasLyrics: true } });
+    // The server's state for the job carries the lyrics, as it does for an
+    // upload whose file had a lyrics tag.
+    await page.route(new RegExp(`/api/jobs/${JOB_ID}$`), async (route) => {
+      const response = await route.fetch();
+      const state = await response.json();
+      state.audio_tags = {
+        artist: "Fixture Band",
+        title: "Fixture Song",
+        lyrics: ["[00:00.50]Served one", "[00:02.00]Served two"].join("\n"),
+      };
+      await route.fulfill({ response, json: state });
+    });
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveText(["Served one", "Served two"]);
+    expect(asked).toEqual([]);
+
+    // The library store has the flag, never the text.
+    const library = await readCatalogState(page);
+    expect(library.tracks[JOB_ID].audioTags).toEqual({ artist: "Fixture Band", title: "Fixture Song", hasLyrics: true });
+    expect(JSON.stringify(library)).not.toContain("Served one");
+  });
+
+  test("lyrics the file came with are shown, with nothing asked", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedWith(page, {
+      audioTags: {
+        artist: "Fixture Band",
+        title: "Fixture Song",
+        lyrics: ["[00:00.50]Embedded one", "[00:02.00]Embedded two"].join("\n"),
+      },
+    });
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveText(["Embedded one", "Embedded two"]);
+    await expect(page.locator(".lyrics-match-meta")).toContainText("From the file");
+    expect(asked).toEqual([]);
+  });
+
+  test("with no version the track's length, they are offered and none is kept", async ({ page }) => {
+    const asked = await stubLrclib(page, { rows: [ROWS[1]] });
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toContainText("Pick the right one");
+    await expect(page.locator(".lyrics-version")).toHaveCount(1);
+    await expect(page.locator(".lyrics-line")).toHaveCount(0);
+    expect(await stored(page)).toBeNull();
+
+    // The same offer again on coming back, without asking again.
+    await page.locator(".rail-library").click();
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-version")).toHaveCount(1);
+    expect(asked).toHaveLength(1);
+
+    await page.locator(".lyrics-version").click();
+    await expect(page.locator(".lyrics-text").first()).toHaveText("Live words");
+  });
+
+  test("clicking a synced line moves the playhead there and marks it", async ({ page }) => {
+    await lyricsShown(page);
+    await page.locator(".lyrics-line", { hasText: "Third line" }).click();
+    await expect(page.locator("#t-time")).toContainText("00:04");
+    await expect(page.locator(".lyrics-line.current")).toHaveText("Third line");
+  });
+
+  test("the line being sung fills word by word, and the next is raised", async ({ page }) => {
+    await lyricsShown(page);
+
+    // Paused just after "Second line" starts: its first word is being sung.
+    await page.locator(".lyrics-line", { hasText: "Second line" }).click();
+    const current = page.locator(".lyrics-line.current");
+    await expect(current).toHaveText("Second line");
+    await expect(current.locator(".lw")).toHaveCount(2);
+    await expect(current.locator(".lw").first()).toHaveClass(/singing/);
+    await expect(current.locator(".lw").nth(1)).not.toHaveClass(/sung|singing/);
+    await expect(page.locator(".lyrics-line.next")).toHaveText("Third line");
+
+    // Moving on leaves no fill behind on the line before.
+    await page.locator(".lyrics-line", { hasText: "Third line" }).click();
+    await expect(page.locator(".lyrics-line", { hasText: "Second line" }).locator(".lw.sung, .lw.singing"))
+      .toHaveCount(0);
+  });
+
+  test("the wipe waits for the singer: no fill while the vocals stem is silent", async ({ page }) => {
+    // The fixture's vocals are a steady tone, so the real envelope would have
+    // the singing start on the stamp. This one has the voice come in 0.6s
+    // after "Second line" is stamped, as a singer who is late on it would.
+    const hop = 0.04;
+    const db = Array.from({ length: 150 }, (_, i) => (i * hop >= 2.6 && i * hop < 3.6 ? -15 : -90));
+    const envelopeUrl = new RegExp(`/api/jobs/${JOB_ID}/vocal-envelope$`);
+    await page.route(envelopeUrl, (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ hop, db }),
+    }));
+    const asked = page.waitForRequest(envelopeUrl);
+    await lyricsShown(page);
+    await asked;
+
+    await page.locator(".lyrics-line", { hasText: "Second line" }).click();
+    const current = page.locator(".lyrics-line.current");
+    await expect(current).toHaveText("Second line");
+    // Paused on the stamp, before the voice: the line is current, nothing filled.
+    await expect(current.locator(".lw.sung, .lw.singing")).toHaveCount(0);
+  });
+
+  test("kept lyrics come back after a reload, with nothing asked", async ({ page }) => {
+    const asked = await lyricsShown(page);
+    // The library is re-seeded on every load; the lyrics have a store entry of
+    // their own, so they survive it.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator(".cat-item").first().waitFor({ timeout: 20000 });
+    asked.length = 0;
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    expect(asked).toEqual([]);
+  });
+
+  test("removed lyrics stay removed until looked up again", async ({ page }) => {
+    const asked = await lyricsShown(page);
+    await page.locator(".lyrics-tools .lyrics-link", { hasText: "Remove lyrics" }).click();
+    await expect(page.locator(".lyrics-line")).toHaveCount(0);
+    await expect(page.locator("#lyricsStatus")).toHaveText("Lyrics removed for this track.");
+    await expect.poll(() => stored(page)).toEqual({ dismissed: true });
+
+    // The lookup runs by itself, and must not bring them straight back.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator(".cat-item").first().waitFor({ timeout: 20000 });
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toHaveText("Lyrics removed for this track.");
+    expect(asked).toHaveLength(1);
+
+    await page.locator(".lyrics-link", { hasText: "Look up again" }).click();
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    expect(asked).toHaveLength(2);
+  });
+
+  test("nothing found says so", async ({ page }) => {
+    await stubLrclib(page, { rows: [] });
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toHaveText("No lyrics found for “Fixture Song”.");
+  });
+
+  test("no connection says so, and the next opening tries again", async ({ page }) => {
+    const asked = await stubLrclib(page, { offline: true });
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator("#lyricsStatus")).toHaveText(
+      "Could not reach LRCLIB. Check your connection and try again.",
+    );
+
+    await page.unroute(LRCLIB);
+    await stubLrclib(page);
+    await page.locator(".rail-library").click();
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    expect(asked).toHaveLength(1);
+  });
+
+  test("no connection offers a way to try again in place", async ({ page }) => {
+    await stubLrclib(page, { offline: true });
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    const again = page.locator(".lyrics-link", { hasText: "Look up again" });
+    await expect(again).toBeVisible();
+
+    await page.unroute(LRCLIB);
+    const asked = await stubLrclib(page);
+    await again.click();
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    expect(asked).toHaveLength(1);
+  });
+
+  test("a tagged artist with no tagged title is looked up with the song from the title", async ({ page }) => {
+    const asked = await stubLrclib(page);
+    await seedWith(page, { audioTags: { artist: "Fixture Band" } });
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    const url = new URL(asked[0]);
+    expect(url.searchParams.get("artist_name")).toBe("Fixture Band");
+    expect(url.searchParams.get("track_name")).toBe("E2E Fixture Track");
+  });
+});

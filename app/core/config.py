@@ -319,6 +319,39 @@ TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
 # so it gets its own, larger budget.
 TIMEOUT_BEATGRID = _env_int("STEMDECK_TIMEOUT_BEATGRID", 300)
 
+# Reading an upload's tags (artist, title, album, lyrics) with ffprobe for the
+# Lyrics tab and the artist box (#699). Tags are a nicety, so a probe that
+# takes longer than this is abandoned and the upload goes ahead without them.
+TIMEOUT_PROBE_TAGS = _env_int("STEMDECK_TIMEOUT_PROBE_TAGS", 15)
+# Looking up a finished link's tags after the fact, for tracks imported before
+# tags were read: one yt-dlp metadata request (two if YouTube's bot check sends
+# it back for cookies), no download. Past this the lookup answers "nothing
+# found" rather than keep the page waiting.
+TIMEOUT_FETCH_TAGS = _env_int("STEMDECK_TIMEOUT_FETCH_TAGS", 45)
+# Caps on what a tag may carry into the job record, which is rewritten whole
+# on every save: a name longer than this is not a name, and a lyrics tag
+# longer than this is not lyrics.
+AUDIO_TAG_MAX_CHARS = 300
+AUDIO_TAG_LYRICS_MAX_CHARS = 20000
+
+# Finding the band a job's artist tag names, on Wikidata, while the job is
+# separated (#699), so the artist box and the Lyrics tab have it the moment the
+# import is done. Two requests, each abandoned after this many seconds. The
+# lookup runs beside separation, which takes far longer, so it costs an import
+# no time unless both requests are slow and the separation was fast.
+TIMEOUT_ARTIST_LOOKUP = _env_int("STEMDECK_TIMEOUT_ARTIST_LOOKUP", 8)
+# How long a finished pipeline waits for a lookup still in flight before it
+# lets the job finish without a band. Kept short: the page finds the band
+# itself when it opens a track that has none, so the wait buys little.
+ARTIST_LOOKUP_GRACE_SEC = _env_int("STEMDECK_ARTIST_LOOKUP_GRACE_SEC", 2)
+# Wikimedia asks every client to name itself and a way to reach its maker.
+ARTIST_LOOKUP_USER_AGENT = (
+    "StemDeck (https://github.com/stemdeckapp/stemdeck; self-hosted stem separation)"
+)
+# A search and one entity fetch for its hits come to well under this; an
+# answer bigger than it is not one worth parsing.
+ARTIST_LOOKUP_MAX_BYTES = 8 * 1024 * 1024
+
 # Beat-grid analysis parameters. 22050 Hz is plenty for onset detection (the
 # percussive energy that matters lives well under 11 kHz) and keeps the decode
 # cheap; hop 512 gives ~23 ms grid resolution, the librosa default pairing.

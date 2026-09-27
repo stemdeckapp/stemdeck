@@ -170,6 +170,31 @@ export async function stubExportEndpoints(page) {
 }
 
 /**
+ * Answer the tag read an older track asks for when it is opened (#699), with
+ * `answer` as its audio_tags (null: the file had none; a function: called with
+ * the job id), and record the job id of each request. `hold`, when given, is
+ * awaited before answering, so a test can act while the read is still out.
+ * `status` other than 200 answers with that error instead.
+ */
+export async function stubAudioTags(page, answer = null, { hold = null, status = 200 } = {}) {
+  const asked = [];
+  await page.route("**/api/jobs/*/audio-tags", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/")[3];
+    asked.push(id);
+    if (hold) await hold;
+    const tags = typeof answer === "function" ? answer(id) : answer;
+    try {
+      await route.fulfill(status === 200
+        ? { status, contentType: "application/json", body: JSON.stringify({ audio_tags: tags }) }
+        : { status, contentType: "application/json", body: JSON.stringify({ detail: "stubbed" }) });
+    } catch {
+      // The page went away while the answer was held.
+    }
+  });
+  return asked;
+}
+
+/**
  * Answer the update check locally instead of letting it reach GitHub.
  *
  * Two reasons. It puts an external service in the path of every run, and more

@@ -29,6 +29,7 @@ from app.core.config import (
 )
 from app.core.registry import get as registry_get
 from app.core.settings import get_export_sample_rate
+from app.pipeline.audio_stats import vocal_envelope
 from app.pipeline.click_render import cache_key as click_cache_key
 from app.pipeline.click_render import count_in_beats, render_click_wav, render_count_in_wav
 
@@ -868,6 +869,61 @@ async def get_stem_peaks(job_id: str, request: Request) -> Response:
     immutable, since that was never true once splits could rewrite it.
     """
     return _peaks_response(job_id, request)
+
+
+# The vocals stem's level every 40ms: fine enough to find the gap between two
+# sung words (a breath is 150ms or more), coarse enough that a ten minute track
+# is about 60 KB. peaks.json cannot serve instead: it is a fixed 3000 points
+# per track, 100ms apart on a five minute song and 200ms on a ten minute one.
+_VOCAL_ENVELOPE_HOP_SEC = 0.04
+_VOCAL_ENVELOPE_FILE = "vocal_envelope.json"
+
+
+def _write_vocal_envelope(src: Path, dest: Path) -> None:
+    hop, levels = vocal_envelope(src, _VOCAL_ENVELOPE_HOP_SEC)
+    # A unique temp name: two first requests for the same track may compute at
+    # once, and each moves a whole file into place.
+    tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps({"hop": hop, "db": levels}), encoding="utf-8")
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@router.get("/jobs/{job_id}/vocal-envelope")
+async def get_vocal_envelope(job_id: str) -> Response:
+    """How loud the vocals stem is over time, for the lyrics wipe (#699):
+    `{"hop": seconds, "db": [whole dBFS per hop, -90 to 0]}`.
+
+    Lyrics from LRCLIB mostly stamp only when each line starts, so the tab
+    uses this to tell where in a line the singer is actually singing.
+
+    Computed the first time a track asks and kept beside its stems, so every
+    job has it, including those separated before it existed. Recomputed if
+    vocals.wav is newer than what was kept. Deliberately outside
+    _pipeline_lock: it is one streamed read of one stem, under a second for a
+    five minute track, and waiting behind a whole separation would leave the
+    lyrics on the rough estimate for minutes.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not ready")
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    src = stems_dir / "vocals.wav"
+    dest = stems_dir / _VOCAL_ENVELOPE_FILE
+    jobs_root = JOBS_DIR.resolve()
+    if not src.is_file() or not src.is_relative_to(jobs_root) or not dest.is_relative_to(jobs_root):
+        raise HTTPException(status_code=404, detail="no vocals")
+    try:
+        if not dest.is_file() or dest.stat().st_mtime_ns < src.stat().st_mtime_ns:
+            await asyncio.to_thread(_write_vocal_envelope, src, dest)
+    except Exception:
+        logger.exception("could not compute the vocal envelope for %s", job_id)
+        raise HTTPException(status_code=500, detail="vocal envelope unavailable") from None
+    return FileResponse(dest, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/jobs/{job_id}/stems/beats.json")

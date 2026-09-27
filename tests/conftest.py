@@ -9,6 +9,19 @@ from app.pipeline import jobqueue as _jobqueue
 
 
 @pytest.fixture(autouse=True)
+def _no_wikidata(monkeypatch):
+    """No test reaches Wikidata. A job with an artist tag looks its band up
+    while it runs (#699), so any pipeline or endpoint test with tags would
+    otherwise make a real request. Offline is what this answers, which the
+    lookup treats as "no band"; tests that want an answer stub it themselves."""
+
+    def offline(params):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr("app.pipeline.artist_lookup._fetch_json", offline)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 

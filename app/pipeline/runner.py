@@ -10,12 +10,13 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core.config import DEMUCS_MODEL, TIMEOUT_FFMPEG
+from app.core.config import ARTIST_LOOKUP_GRACE_SEC, DEMUCS_MODEL, TIMEOUT_FFMPEG
 from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
 from app.core.registry import is_upload, set_proc
 from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze
+from app.pipeline.artist_lookup import BandLookup
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
     cleanup_source,
@@ -270,12 +271,35 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     _lap(job, "sections", mark)
 
 
+def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
+    """_run_common, with the band the artist tag names looked up beside it (#699).
+
+    Started as soon as the tags are known, which is now for both pipelines:
+    a link's come with its download, an upload's were read when it arrived.
+    The lookup is two small web requests and separation takes minutes, so by
+    the time the job is done the answer has long been waiting, and the wait
+    below is for nothing. When it has not arrived, the job waits at most
+    ARTIST_LOOKUP_GRACE_SEC and finishes without it; the page then looks for
+    the band itself when the track is opened.
+
+    Only a pipeline that got to the end keeps the answer: a cancel or a
+    failure raises out of _run_common, past finish(), and nothing is written.
+    """
+    lookup = BandLookup.start(job)
+    _run_common(job, source, job_dir)
+    if lookup is not None:
+        mark = time.monotonic()
+        lookup.finish(job, ARTIST_LOOKUP_GRACE_SEC)
+        # What the lookup cost the import, which should be nothing (#293).
+        _lap(job, "artist_wait", mark)
+
+
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _check_cancel(job)
     mark = time.monotonic()
     source = download(job, url, job_dir)
     _lap(job, "download", mark)
-    _run_common(job, source, job_dir)
+    _run_with_band_lookup(job, source, job_dir)
 
 
 def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
@@ -283,13 +307,15 @@ def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
     mark = time.monotonic()
     source = _prepare_local_source(job, source_path, job_dir)
     _lap(job, "prepare", mark)
-    _run_common(job, source, job_dir)
+    _run_with_band_lookup(job, source, job_dir)
 
 
 def _write_metadata(job: Job, job_dir: Path) -> None:
     meta = {
         "title": job.title,
         "thumbnail": job.thumbnail,
+        "audio_tags": job.audio_tags,
+        "artist": job.artist,
         "duration_sec": job.duration_sec,
         "bpm": job.bpm,
         "key": job.key,

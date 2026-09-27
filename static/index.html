@@ -170,6 +170,9 @@
                It used to fill the gutter beside the footer timeline. That
                timeline is gone, and this row had empty space in the middle. -->
           <div class="footer-track-slot" id="nowPlayingPanel">
+          <!-- Says what this card is, so it is not read as the input to Split
+               beside it (#699). Set into the top border by daw.css. -->
+          <span class="np-legend" data-i18n="track.nowPlaying">Now playing</span>
           <div class="track-panel-head">
             <div class="daw-cover track-panel-cover" id="np-art">
               <div class="np-art-placeholder" aria-hidden="true">
@@ -181,6 +184,10 @@
             </div>
             <div class="track-panel-info">
               <div class="daw-track-title track-panel-title" id="title">—</div>
+              <!-- The artist, from the file's tags or the band saved on the
+                   track (#699). On the title's line, so the card keeps its
+                   height; hidden when neither is known. -->
+              <span class="np-artist" id="np-artist" hidden></span>
             </div>
             <!-- type="button" is load-bearing. This sits inside <form id="job-form">
                  since the now-playing block moved up into the composer, and a
@@ -189,6 +196,14 @@
             <button class="daw-fav-btn" type="button" id="fav-btn" aria-label="Toggle favorite" data-i18n-aria-label="fav.toggleAria" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
+            <!-- The artist box (#699): band history, members and albums, and
+                 where a band is saved on the track. type="button" for the
+                 same reason as the heart: this is inside <form id="job-form">. -->
+            <button class="daw-details-btn" type="button" id="np-details-btn" title="About this artist" aria-label="About this artist" data-i18n-title="artist.openTitle" data-i18n-aria-label="artist.openTitle">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.6v.01" stroke-width="2.4"/>
               </svg>
             </button>
           </div>
@@ -290,6 +305,15 @@
                 <path d="M4 4h16v16H4z M4 9h16"/>
               </svg>
               <span data-i18n="nav.library">Library</span>
+            </button>
+            <!-- Lyrics for the open track (#699): a view of the sidebar, like
+                 Favorites and Trash, drawn by lyrics.js. -->
+            <button class="rail-btn rail-lyrics" type="button" title="Lyrics" aria-label="Lyrics" aria-pressed="false" data-i18n-title="nav.lyrics" data-i18n-aria-label="nav.lyrics">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6h11 M4 11h11 M4 16h6"/>
+                <path d="M18 5v10.5"/><circle cx="15.8" cy="16" r="2.2"/><path d="M18 5l3 1.2"/>
+              </svg>
+              <span data-i18n="nav.lyrics">Lyrics</span>
             </button>
             <button class="rail-btn rail-queue hidden" type="button" title="Import queue" aria-label="Import queue" aria-pressed="false" data-i18n-title="nav.importQueue" data-i18n-aria-label="nav.importQueue">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -394,6 +418,19 @@
 
             <!-- Collapsed strip (JS compat) -->
             <div id="catalogStrip" class="cat-collapsed-strip"></div>
+
+            <!-- Lyrics tab (#699). Shown instead of the list while the Lyrics
+                 view is on (.lyrics-view on #catalogPanel); lyrics.js fills it
+                 by itself, from the file's tags or the band saved on the track.
+                 There is no search box: what it looks up is what the track
+                 says it is, not what someone types. -->
+            <section class="lyrics-panel" id="lyricsPanel" aria-labelledby="lyricsTitle">
+              <h2 class="lyrics-title" id="lyricsTitle" data-i18n="lyrics.title">Lyrics</h2>
+              <p class="lyrics-note" data-i18n="lyrics.privacy">Found on LRCLIB by the artist and song in the file's tags, or the band saved on this track. Nothing else is sent.</p>
+              <p class="lyrics-status" id="lyricsStatus" aria-live="polite"></p>
+              <div class="lyrics-versions" id="lyricsVersions"></div>
+              <div class="lyrics-body" id="lyricsBody"></div>
+            </section>
           </div>
         </aside>
 
@@ -1097,6 +1134,24 @@
         <h2 id="friendsTitle" data-i18n="friends.title">We Recommend</h2>
         <p class="about-tagline" data-i18n="friends.tagline">StemDeck is free and does not accept any money, sponsorship, or funding from anyone listed below. I share these makers and artists and communities purely for the joy of pointing you toward wonderful people doing beautiful work. Go meet them ❤️</p>
         <div class="lib-friends-grid" id="friendsDialogGrid"></div>
+      </div>
+    </div>
+
+    <!-- Artist box (#699), opened from the now-playing card. Filled by
+         artistInfo.js from Wikidata and Wikipedia, only after a click. -->
+    <div class="about-backdrop hidden" id="artistDialog" role="dialog" aria-modal="true" aria-label="About the artist" data-i18n-aria-label="artist.dialogAria">
+      <div class="about-card artist-card">
+        <button class="about-close" id="artistClose" type="button" aria-label="Close" data-i18n-aria-label="artist.close">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <form class="artist-search" id="artistSearch" role="search">
+          <input id="artistQuery" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Search for a band or artist" data-i18n-placeholder="artist.searchPlaceholder"
+                 aria-label="Band or artist to look up" data-i18n-aria-label="artist.searchAria" />
+          <button type="submit" class="artist-search-btn" data-i18n="artist.search">Search</button>
+        </form>
+        <p class="artist-privacy" data-i18n="artist.privacy">Only an artist's name is sent to Wikipedia and Wikidata: the one you search for here, and the artist in a track's tags when you open the track.</p>
+        <div class="artist-body" id="artistBody" aria-live="polite"></div>
       </div>
     </div>
 

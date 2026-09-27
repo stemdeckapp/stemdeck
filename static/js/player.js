@@ -823,6 +823,16 @@ function teardownMetronome() {
   setBeatGridAvailable(false);
 }
 
+// The artist catalog.js puts beside the title (#699) goes with the title, or
+// the next import's card names the previous track's band.
+function hideNowPlayingArtist() {
+  const artist = document.getElementById("np-artist");
+  if (!artist) return;
+  artist.textContent = "";
+  artist.title = "";
+  artist.hidden = true;
+}
+
 export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("is-import");
   document.querySelector(".app")?.classList.remove("engine-waveforms");
@@ -873,6 +883,7 @@ export function destroyPlayer() {
   wavesGrid.innerHTML = "";
 
   titleEl.textContent = "";
+  hideNowPlayingArtist();
   bpmChip.textContent = "\u2014 BPM";
   keyChip.textContent = "\u2014 \u2014";
   stemsChip.textContent = t("footer.stemsPlaceholder");
@@ -929,6 +940,7 @@ export function renderEmptyShell() {
   requestAnimationFrame(() => _applyLaneHeight(1 + STEM_NAMES.length));
   applyStemSelectionFilter(new Set(STEM_NAMES));
   titleEl.textContent = t("player.readyToImport");
+  hideNowPlayingArtist();
   bpmChip.textContent = "\u2014 BPM";
   keyChip.textContent = "\u2014 \u2014";
   stemsChip.textContent = t("footer.stemsPlaceholder");
@@ -1210,6 +1222,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
 
   stemsChip.textContent = plural("footer.stemsCount", stems.length);
 
+  // Cleared on every load, not only in destroyPlayer(): switching tracks from
+  // the library comes straight here, so a track with no thumbnail (an upload)
+  // kept the previous track's picture over its own format icon.
+  npThumb.classList.remove("loaded");
+  npThumb.removeAttribute("src");
   if (thumbnail) {
     npThumb.onload = () => npThumb.classList.add("loaded");
     npThumb.onerror = () => npThumb.classList.remove("loaded");

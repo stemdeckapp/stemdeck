@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -13,6 +14,32 @@ class JobCancelled(Exception):
 JobStatus = Literal[
     "queued", "downloading", "analyzing", "separating", "processing", "done", "error", "cancelled"
 ]
+
+# A Wikidata item id. Anything else is not a band this app found.
+_WIKIDATA_ID_RE = re.compile(r"^Q\d{1,12}$")
+# A band's name, as kept on the job. Longer than this is not a name.
+_ARTIST_NAME_MAX_CHARS = 300
+
+
+def clean_artist(value: Any) -> dict[str, str] | None:
+    """A band as kept on a job, {"id", "name", "englishName"}, or None.
+
+    For anything read back from disk (the registry, metadata.json), where a
+    hand-edited or damaged file must not put a malformed band in front of the
+    page: the id has to be a Wikidata item, the names plain strings.
+    """
+    if not isinstance(value, dict):
+        return None
+    band_id = value.get("id")
+    if not isinstance(band_id, str) or not _WIKIDATA_ID_RE.match(band_id):
+        return None
+    names = {}
+    for key in ("name", "englishName"):
+        name = value.get(key)
+        names[key] = name.strip()[:_ARTIST_NAME_MAX_CHARS] if isinstance(name, str) else ""
+    if not names["name"] and not names["englishName"]:
+        return None
+    return {"id": band_id, **names}
 
 
 def _set(job: Job, **fields: object) -> None:
@@ -72,6 +99,18 @@ class Job:
     # for a link, and for an upload older than this field until its state is
     # first served (see _job_state).
     source_format: str | None = None
+    # What the source said about itself (#699): {"artist", "title", "album",
+    # "lyrics"}, each only when present. An upload's container tags, read
+    # before the upload is deleted; a link's music metadata from yt-dlp. The
+    # Lyrics tab and the artist box fill themselves from it. None when the
+    # source had none, and for anything imported before it was read.
+    audio_tags: dict[str, str] | None = None
+    # The band audio_tags' artist names, found on Wikidata while the job ran
+    # (#699): {"id": "Q...", "name", "englishName"}. Only ever an exact match
+    # for the tag, so a wrong band is never saved with nobody looking. None
+    # when there was no artist tag, no such band, or no connection; the page
+    # then looks for it itself, and a band saved there always wins over this.
+    artist: dict[str, str] | None = None
     # True when a silent video track (video.mp4) was preserved from an .mp4
     # upload, enabling the "Export Mix (with video)" MP4 export.
     has_video: bool = False
@@ -162,6 +201,8 @@ class Job:
             "mix_url": self.mix_url,
             "source_url": self.source_url,
             "source_format": self.source_format,
+            "audio_tags": self.audio_tags,
+            "artist": self.artist,
             "has_video": self.has_video,
             "video_status": self.video_status,
             "error": self.error,
@@ -201,6 +242,7 @@ class Job:
         job = cls(id=job_id)
         for key, value in fields.items():
             setattr(job, key, value)
+        job.artist = clean_artist(job.artist)
         job.cancel_requested = False
         return job
 
