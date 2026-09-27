@@ -107,7 +107,8 @@ test.describe("export menu, desktop (Tauri) mode", () => {
     await page.evaluate(() => window.__e2e.failSave("nope"));
 
     await expect(ui.error).toBeVisible();
-    await expect(ui.error).toContainText("Dismiss");
+    // Closed by its own button; "Try again" would send the user to the URL field.
+    await expect(ui.error.getByRole("button", { name: "Dismiss" })).toBeVisible();
     await expect(ui.error).not.toContainText("Try again");
   });
 });

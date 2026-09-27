@@ -1287,18 +1287,63 @@ input, textarea { font-family: inherit; }
 .cancel-btn:hover { background: var(--panel-3); color: var(--fg); }
 .cancel-btn.hidden { display: none !important; }
 
-/* Error banner */
-.error {
-  position: absolute;
-  top: 64px; left: 260px; right: 0;
-  z-index: 15;
-  padding: 12px 20px;
-  background: rgba(214,90,74,0.12);
-  border-bottom: 1px solid rgba(214,90,74,0.3);
-  color: #ff9090;
-  font-size: 13px;
+/* Error banner: the studio's one alert box. By its id, never the class:
+   "error" is also the modifier every small status line takes (lyrics, the
+   artist box, settings), and the banner's rules on the class floated those
+   over the top bar as unreadable strips. A solid card, top right, above
+   everything, with its own close button (showError in job.js). */
+#error {
+  position: fixed;
+  top: 16px; right: 16px;
+  width: min(440px, calc(100vw - 32px));
+  z-index: 1000;
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 10px 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid rgba(214,90,74,0.45);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+  color: var(--fg);
+  font-size: 13px; line-height: 1.45;
+  animation: error-in 160ms ease-out;
 }
-.error.hidden { display: none !important; }
+#error.hidden { display: none !important; }
+#error .error-icon {
+  flex-shrink: 0;
+  width: 18px; height: 18px; margin-top: 1px;
+  color: var(--danger);
+}
+#error .error-msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#error .error-detail {
+  margin-top: 4px;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--muted);
+}
+#error .error-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+#error .retry-btn {
+  height: 26px; padding: 0 10px;
+  background: transparent;
+  border: 1px solid rgba(214,90,74,0.6); border-radius: var(--radius-sm);
+  color: var(--fg); font: inherit; font-size: 12px;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+#error .retry-btn:hover { background: rgba(214,90,74,0.18); }
+#error .error-close {
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--muted); font-size: 18px; line-height: 1;
+  cursor: pointer;
+}
+#error .error-close:hover { background: var(--panel-3); color: var(--fg); }
+#error :is(.retry-btn, .error-close):focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }
+@keyframes error-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { #error { animation: none; } }
 
 /* ── Track header ── */
 .daw-track-header {

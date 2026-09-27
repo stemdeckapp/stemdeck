@@ -41,7 +41,7 @@ test.describe("failure notifications", () => {
   test("one failure produces one card, not one per sighting", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await failAnExport(page);
-    await page.locator(".retry-btn").click();
+    await page.locator("#error .error-close").click();
     await failAnExport(page);
 
     await openBell(page);

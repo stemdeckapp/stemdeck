@@ -386,6 +386,16 @@ test.describe("lyrics tab", () => {
     await expect(page.locator("#lyricsStatus")).toHaveText(
       "Could not reach LRCLIB. Check your connection and try again.",
     );
+    // An error status stays in the tab, not floated over the top bar the way
+    // the error banner's rules once took every element marked "error".
+    await expect(page.locator("#lyricsStatus")).toHaveClass(/error/);
+    expect(await page.locator("#lyricsStatus").evaluate((el) => getComputedStyle(el).position)).toBe("static");
+    const tab = await page.locator("#lyricsStatus").evaluate((el) => {
+      const own = el.getBoundingClientRect();
+      const side = el.closest("aside").getBoundingClientRect();
+      return own.left >= side.left && own.right <= side.right;
+    });
+    expect(tab).toBe(true);
 
     await page.unroute(LRCLIB);
     await stubLrclib(page);

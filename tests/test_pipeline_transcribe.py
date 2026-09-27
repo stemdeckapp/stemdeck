@@ -723,9 +723,12 @@ def test_lyrics_that_need_no_mending_never_start_the_worker(tmp_path, monkeypatc
     ("choice", "device", "spawned"),
     [
         ("off", "cuda", []),
-        ("auto", "cpu", []),
-        ("auto", "mps", []),
-        ("auto", "cpu (fallback from cuda)", []),
+        ("off", "cpu", []),
+        # Unlike a transcription, "auto" mends on every device: a CPU or Mac
+        # install would otherwise show the song with letters missing.
+        ("auto", "cpu", ["cpu"]),
+        ("auto", "mps", ["cpu"]),
+        ("auto", "cpu (fallback from cuda)", ["cpu"]),
         ("auto", "cuda", ["cuda"]),
         ("on", "cpu", ["cpu"]),
     ],

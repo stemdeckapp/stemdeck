@@ -164,10 +164,42 @@ function stopJobPolling() {
   }
 }
 
-// `retry` controls the button: "Try again" sends the user back to the URL field
-// to start a fresh import, which is right for an import failure and wrong for
-// anything else. Export failures pass retry:false and get a plain Dismiss, since
-// the error box has no other way to be cleared.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// A circled "!" in the danger colour, so the box reads as an error at a glance.
+function errorIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "error-icon");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("aria-hidden", "true");
+  for (const [tag, attrs] of [
+    ["circle", { cx: 12, cy: 12, r: 9.5 }],
+    ["line", { x1: 12, y1: 7.5, x2: 12, y2: 13 }],
+    ["line", { x1: 12, y1: 16.5, x2: 12, y2: 16.6 }],
+  ]) {
+    const part = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, String(v));
+    svg.append(part);
+  }
+  return svg;
+}
+
+function hideError() {
+  errorEl.classList.add("hidden");
+}
+
+// Escape closes the box too, as it closes every other popup.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !errorEl.classList.contains("hidden")) hideError();
+});
+
+// `retry` adds "Try again", which sends the user back to the URL field to start
+// a fresh import: right for an import failure and wrong for anything else. The
+// close button is always there, so no failure can leave the box stuck open.
 export function showError(message, detail, { retry = true } = {}) {
   delete errorEl.dataset.kind; // see showPlaybackError
   errorEl.textContent = "";
@@ -182,18 +214,29 @@ export function showError(message, detail, { retry = true } = {}) {
     detailEl.textContent = detail;
     msg.appendChild(detailEl);
   }
-  const btn = document.createElement("button");
-  btn.className = "retry-btn";
-  btn.type = "button";
-  btn.textContent = retry ? t("job.tryAgain") : t("job.dismiss");
-  btn.addEventListener("click", () => {
-    errorEl.classList.add("hidden");
-    if (retry) {
+  const actions = document.createElement("div");
+  actions.className = "error-actions";
+  if (retry) {
+    const btn = document.createElement("button");
+    btn.className = "retry-btn";
+    btn.type = "button";
+    btn.textContent = t("job.tryAgain");
+    btn.addEventListener("click", () => {
+      hideError();
       urlInput.focus();
       urlInput.select();
-    }
-  });
-  errorEl.append(msg, btn);
+    });
+    actions.append(btn);
+  }
+  const close = document.createElement("button");
+  close.className = "error-close";
+  close.type = "button";
+  close.textContent = String.fromCodePoint(0xd7);
+  close.title = t("job.dismiss");
+  close.setAttribute("aria-label", t("job.dismiss"));
+  close.addEventListener("click", hideError);
+  actions.append(close);
+  errorEl.append(errorIcon(), msg, actions);
   errorEl.classList.remove("hidden");
 }
 

@@ -4,7 +4,8 @@ The last stage of a job, after separation and after the lyrics lookup
 (lyrics_lookup.py) has been joined: it needs the vocals stem, and it only
 runs when the lookup came back empty, so that a track with published lyrics
 never pays for it. Whether it runs at all is the transcribe_lyrics setting
-("auto" means a CUDA job only).
+("auto" means a CUDA job only; mending found lyrics, below, runs on any
+device unless it is "off").
 
 Inference happens in a fresh worker process (transcribe_worker.py), with the
 same cancellation, total timeout and output-stall watchdog as the section
@@ -59,7 +60,7 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
-from app.core.settings import transcribe_lyrics_enabled
+from app.core.settings import lyrics_mending_enabled, transcribe_lyrics_enabled
 from app.pipeline.lyrics_lookup import lyrics_path, read_lyrics, write_lyrics
 from app.pipeline.lyrics_repair import looks_stripped, mend_from_transcript, words_of
 
@@ -448,10 +449,12 @@ def transcribe_lyrics(job: Job, job_dir: Path) -> bool:
         raise JobCancelled()
     started = time.monotonic()
     try:
+        if lyrics_path(job_dir).is_file():
+            # Found lyrics may have lost their accents: mended, not replaced,
+            # and on any device unless the setting is "off" (see
+            # lyrics_mending_enabled).
+            return lyrics_mending_enabled() and mend_lyrics(job, job_dir)
         reason = skip_reason(job, job_dir)
-        if reason == _FOUND and lyrics_path(job_dir).is_file():
-            # Found lyrics may have lost their accents: mended, not replaced.
-            return mend_lyrics(job, job_dir)
         if reason is not None:
             logger.info("[%s] lyrics transcription skipped: %s", job.id, reason)
             return False

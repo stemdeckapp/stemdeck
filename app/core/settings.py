@@ -643,6 +643,16 @@ def transcribe_lyrics_enabled(device: str | None) -> bool:
     return choice == "on"
 
 
+def lyrics_mending_enabled() -> bool:
+    """Whether found lyrics that lost their accents may be mended from the
+    vocals (transcribe.mend_lyrics), on any device unless the setting is "off".
+
+    Unlike a transcription, "auto" does not keep this to CUDA: its gates hold
+    it to the rare song whose lyrics are missing letters, which otherwise
+    shows broken words on every CPU and Mac install."""
+    return get_transcribe_lyrics() != "off"
+
+
 # ── acoustid_api_key ──
 # The user's own AcoustID application key, for identifying a track by its
 # audio fingerprint (app/pipeline/identify.py). Entered in Settings and never

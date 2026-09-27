@@ -117,7 +117,20 @@ export function setPlayheadTime(sec) {
 // Label spacing the ruler will not go below, comfortably wider than a "10:00"
 // label so neighbours never crowd each other.
 const MIN_TICK_PX = 110;
-const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300];
+const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+// At 1x, never more labelled ticks than this across the whole track. A song
+// keeps the 15/30/60-second steps it always had (a minute apart up to 12
+// minutes); a long mix or a full album steps up the ladder instead, where a
+// minute apart piled 59 labels on top of each other for an hour-long video.
+const MAX_BASE_TICKS = 12;
+
+function baseTickStep(durationSec) {
+  const floor = durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
+  return (
+    TICK_LADDER.find((step) => step >= floor && durationSec / step <= MAX_BASE_TICKS) ??
+    TICK_LADDER[TICK_LADDER.length - 1]
+  );
+}
 
 // `contentWidthPx` is the width the ticks will actually occupy. Omitted (the
 // footer strip, which always shows the whole track) the step is the plain
@@ -129,7 +142,7 @@ const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300];
 let _rulerStep = 0;
 
 function tickStep(durationSec, contentWidthPx = 0) {
-  const base = durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
+  const base = baseTickStep(durationSec);
   // Zoom is the only thing that subdivides it. Spreading the same handful of
   // ticks across five screen widths would make the ruler less useful the
   // further in you went, which is backwards.
