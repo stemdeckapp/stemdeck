@@ -206,6 +206,23 @@ test.describe("the work a soundtrack is from", () => {
     await expect(links.nth(1)).toHaveAttribute("href", "https://en.wikipedia.org/wiki/Kristin_Chenoweth");
   });
 
+  test("a performer that cannot be reached leaves the musical in the box", async ({ page }) => {
+    await stubWikimedia(page);
+    // Registered last, so it runs first: the performer's own requests fail.
+    await page.route(WIKIMEDIA, (route) => {
+      const url = route.request().url();
+      return /Q229379|Kristin/.test(decodeURIComponent(url)) ? route.abort("failed") : route.fallback();
+    });
+    await openPage(page, { [JOB_ID]: castTrack(JOB_ID, { artist: BAND }) });
+    await openTrack(page);
+
+    await page.locator("#np-details-btn").click();
+    const work = page.locator(".artist-work");
+    await expect(work).toBeVisible({ timeout: 15000 });
+    await expect(work.locator(".artist-work-name")).toHaveText("Wicked 2003");
+    await expect(page.locator(".artist-status.error")).toHaveCount(0);
+  });
+
   test("an identified recording names its song on the card and heads the box", async ({ page }) => {
     await stubWikimedia(page);
     const raw = 'Dancing Through Life (From "Wicked" Original Broadway Cast Recording/2003 / Audio)';

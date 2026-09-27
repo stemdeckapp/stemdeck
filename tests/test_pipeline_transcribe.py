@@ -303,6 +303,35 @@ def test_stage_writes_lyrics_json(tmp_path, monkeypatch):
     assert get_proc(job.id) is None
 
 
+def test_a_polish_transcript_crosses_the_pipe_whole(tmp_path, monkeypatch):
+    # The worker prints its JSON unescaped, as the real one does. Under a
+    # Windows locale its stdout would be cp1252, which has no "ł" or "ś": the
+    # stage has to make the pipe UTF-8 whatever this process inherited.
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    words = [_w("Śpiewałem", 7.88, 8.6), _w("głośno", 8.6, 9.1), _w("pod", 9.1, 9.3)]
+    words += [_w("prysznicem,", 9.3, 10.0), _w("żółć", 10.0, 10.5), _w("gęś", 10.5, 11.0)]
+    answer = tmp_path / "answer.json"
+    answer.write_text(
+        json.dumps({**_ANSWER, "language": "pl", "segments": [_segment(words)]}),
+        encoding="utf-8",
+    )
+    script = _stub(
+        tmp_path,
+        f"data = json.load(open(r'{answer}', encoding='utf-8'))\n"
+        "print(json.dumps(data, ensure_ascii=False), flush=True)\n",
+    )
+    _use_stub(monkeypatch, script)
+    job, job_dir = _job(), _job_dir(tmp_path)
+
+    assert tr.transcribe_lyrics(job, job_dir) is True
+
+    saved = read_lyrics(job_dir)
+    assert saved["language"] == "pl"
+    assert "Śpiewałem" in saved["synced"] and "żółć" in saved["synced"]
+    assert "gęś" in saved["plain"]
+
+
 def test_stage_runs_an_mps_job_on_the_cpu(tmp_path, monkeypatch):
     settings_mod.set_transcribe_lyrics("on")
     seen: list = []
@@ -548,3 +577,342 @@ def test_lyrics_cleaner_keeps_only_a_language_code(language, kept):
     assert ("language" in cleaned) is kept
     if kept:
         assert cleaned["language"] == language
+
+
+# ── mending lyrics that lost their accents ──
+#
+# LRCLIB's copy of a song can have lost every letter outside ASCII ("Nic sie
+# nie stao" for "Nic się nie stało"). The stage then transcribes the vocals
+# and gives the letters back, word by word, keeping LRCLIB's timing.
+
+HYMN = (
+    "[00:01.00]Jeszcze Polska nie zginęła,\n"
+    "[00:04.00]Kiedy my żyjemy.\n"
+    "[00:07.00]Co nam obca przemoc wzięła,\n"
+    "[00:10.00]Szablą odbierzemy.\n"
+    "[00:13.00]Marsz, marsz, Dąbrowski,\n"
+    "[00:16.00]Z ziemi włoskiej do Polski.\n"
+    "[00:19.00]Za twoim przewodem\n"
+    "[00:22.00]Złączym się z narodem.\n"
+)
+HYMN = HYMN + HYMN.replace("[00:", "[01:")
+
+
+def _stripped(text: str) -> str:
+    """As LRCLIB's damaged copies hold it: "ę" folded, the rest dropped."""
+    return "".join(ch for ch in text.replace("ę", "e") if ord(ch) < 128)
+
+
+def _heard(text: str, language: str = "pl", probability: float = 0.97, **extra) -> dict:
+    from app.pipeline.lyrics_repair import words_of
+
+    words = [_w(word, 1.0 + i * 0.4, 1.3 + i * 0.4) for i, word in enumerate(words_of(text))]
+    return {
+        **_ANSWER,
+        "language": language,
+        "language_probability": probability,
+        "segments": [_segment(words)] if words else [],
+        **extra,
+    }
+
+
+def _with_lyrics(tmp_path: Path, synced: str, **fields) -> Path:
+    from app.pipeline.lyrics_lookup import write_lyrics
+
+    job_dir = _job_dir(tmp_path)
+    entry = {
+        "v": 1,
+        "source": "lrclib",
+        "track": "Mazurek",
+        "artist": "Chór",
+        "album": "",
+        "duration": 255.0,
+        "synced": synced,
+        "plain": synced,
+        "instrumental": False,
+        "lrclib_id": 42,
+        "timing": "exact",
+        "others": [],
+        **fields,
+    }
+    assert write_lyrics(Job(id="abc123def456"), job_dir, entry)
+    return job_dir
+
+
+def _answering(tmp_path: Path, monkeypatch, answer: dict, seen: list | None = None) -> Path:
+    """A stub worker that records its arguments and prints ``answer``."""
+    data, argv = tmp_path / "answer.json", tmp_path / "argv.json"
+    data.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+    script = _stub(
+        tmp_path,
+        f"json.dump(sys.argv[1:], open(r'{argv}', 'w', encoding='utf-8'))\n"
+        f"data = json.load(open(r'{data}', encoding='utf-8'))\n"
+        "print(json.dumps(data, ensure_ascii=False), flush=True)\n",
+    )
+    _use_stub(monkeypatch, script, seen)
+    return argv
+
+
+def test_stripped_lyrics_get_their_letters_back_and_keep_their_timing(tmp_path, monkeypatch):
+    argv = _answering(tmp_path, monkeypatch, _heard(HYMN))
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+    job = _job(has_lyrics=True)
+
+    assert tr.transcribe_lyrics(job, job_dir) is True
+
+    saved = read_lyrics(job_dir)
+    assert saved["synced"] == HYMN, "LRCLIB's stamps, the heard letters"
+    assert saved["repaired"] == "whisper"
+    assert (saved["source"], saved["lrclib_id"], saved["timing"]) == ("lrclib", 42, "exact")
+    assert "language" not in saved, "the lyrics are LRCLIB's, not a transcript"
+    args = json.loads(argv.read_text(encoding="utf-8"))
+    languages = args[args.index("--languages") + 1].split(",")
+    assert "pl" in languages and "en" not in languages and "ru" not in languages
+    assert get_proc(job.id) is None
+
+
+def test_only_a_heard_word_that_strips_down_to_the_written_one_goes_in(tmp_path, monkeypatch):
+    heard = (
+        HYMN.replace("Szablą", "Sablą")  # misheard
+        .replace("zginęła", "zgubiła")  # another word
+        .replace("żyjemy", "żyjemy sobie")  # an extra word
+    )
+    _answering(tmp_path, monkeypatch, _heard(heard))
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+
+    assert tr.transcribe_lyrics(_job(has_lyrics=True), job_dir) is True
+
+    synced = read_lyrics(job_dir)["synced"]
+    assert "[00:10.00]Szabl odbierzemy." in synced
+    assert "[00:01.00]Jeszcze Polska nie zginea," in synced
+    assert "[00:04.00]Kiedy my żyjemy." in synced
+    assert "[00:22.00]Złączym się z narodem." in synced
+    assert [line[:10] for line in synced.splitlines()] == [line[:10] for line in HYMN.splitlines()]
+
+
+ENGLISH = (
+    "[00:01.00]I know the night is long and you are far away from home\n"
+    "[00:05.00]But every time I think of you I feel the city glow\n"
+    "[00:09.00]So hold me close and tell me that the morning will be kind\n"
+    "[00:13.00]Cause all the words we never said are running through my mind\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("synced", "fields"),
+    [
+        pytest.param(ENGLISH * 2, {}, id="english"),
+        pytest.param(HYMN, {}, id="correctly accented"),
+        pytest.param(_stripped(HYMN), {"repaired": "whisper"}, id="mended already"),
+        pytest.param(_stripped(HYMN), {"source": "file"}, id="the file's own"),
+    ],
+)
+def test_lyrics_that_need_no_mending_never_start_the_worker(tmp_path, monkeypatch, synced, fields):
+    seen: list = []
+    _answering(tmp_path, monkeypatch, _heard(HYMN), seen)
+    job_dir = _with_lyrics(tmp_path, synced, **fields)
+    before = lyrics_path(job_dir).read_bytes()
+
+    assert tr.transcribe_lyrics(_job(has_lyrics=True), job_dir) is False
+
+    assert seen == []
+    assert lyrics_path(job_dir).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("choice", "device", "spawned"),
+    [
+        ("off", "cuda", []),
+        ("auto", "cpu", []),
+        ("auto", "mps", []),
+        ("auto", "cpu (fallback from cuda)", []),
+        ("auto", "cuda", ["cuda"]),
+        ("on", "cpu", ["cpu"]),
+    ],
+)
+def test_mending_follows_the_transcription_setting(tmp_path, monkeypatch, choice, device, spawned):
+    settings_mod.set_transcribe_lyrics(choice)
+    seen: list = []
+    _answering(tmp_path, monkeypatch, _heard(HYMN), seen)
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+
+    tr.transcribe_lyrics(_job(has_lyrics=True, compute_device=device), job_dir)
+
+    assert seen == spawned
+    assert (read_lyrics(job_dir).get("repaired") == "whisper") is bool(spawned)
+
+
+TRANSLITERATED = (
+    "[00:01.00]Teploe mesto, no ulicy zhdut otpechatkov nashikh nog\n"
+    "[00:05.00]Zvezdnaya pyl na sapogakh, myagkoe kreslo, kletchatyy pled\n"
+    "[00:09.00]Ne nazhatyy vovremya kurok, solnechnyy den v oslepitelnykh snakh\n"
+) * 2
+
+
+@pytest.mark.parametrize(
+    ("synced", "answer"),
+    [
+        # What the worker answers when the language is not one to mend.
+        pytest.param(
+            _stripped(HYMN),
+            _heard("", "ru", skipped="language"),
+            id="skipped by the worker",
+        ),
+        # Russian in Latin letters: the text alone looks stripped, the
+        # language says it is a transliteration, which nothing can mend.
+        pytest.param(TRANSLITERATED, _heard(TRANSLITERATED, "ru"), id="transliterated cyrillic"),
+        pytest.param(_stripped(HYMN), _heard(HYMN, "pl", 0.5), id="language unsure"),
+        pytest.param(_stripped(HYMN), _heard(HYMN, "en"), id="another language"),
+    ],
+)
+def test_lyrics_in_a_language_without_accents_are_left_alone(tmp_path, monkeypatch, synced, answer):
+    _answering(tmp_path, monkeypatch, answer)
+    job_dir = _with_lyrics(tmp_path, synced)
+    before = lyrics_path(job_dir).read_bytes()
+
+    assert tr.transcribe_lyrics(_job(has_lyrics=True), job_dir) is False
+
+    assert lyrics_path(job_dir).read_bytes() == before
+
+
+def test_a_song_written_without_accents_is_not_mended(tmp_path, monkeypatch):
+    # The singer sings what is written; Whisper hearing a word or two with
+    # accents it does not have is not evidence of a stripped copy.
+    plain_song = _stripped(HYMN)
+    heard = plain_song.replace("Jeszcze", "Jeszczę", 1).replace("yjemy", "żyjemy", 1)
+    _answering(tmp_path, monkeypatch, _heard(heard))
+    job_dir = _with_lyrics(tmp_path, plain_song)
+    before = lyrics_path(job_dir).read_bytes()
+
+    assert tr.transcribe_lyrics(_job(has_lyrics=True), job_dir) is False
+
+    assert lyrics_path(job_dir).read_bytes() == before
+
+
+def test_a_failed_mending_worker_leaves_the_lyrics(tmp_path, monkeypatch):
+    _use_stub(monkeypatch, _stub(tmp_path, "print('boom', file=sys.stderr)\nsys.exit(1)\n"))
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+    before = lyrics_path(job_dir).read_bytes()
+    assert tr.transcribe_lyrics(_job(has_lyrics=True), job_dir) is False
+    assert lyrics_path(job_dir).read_bytes() == before
+
+
+def test_cancelling_reaches_the_mending_worker(tmp_path, monkeypatch):
+    script = _stub(
+        tmp_path,
+        "print('@@PHASE@@transcribe', file=sys.stderr, flush=True)\n"
+        "for i in range(600):\n"
+        "    print(f' {i % 100}%|', file=sys.stderr, flush=True)\n"
+        "    time.sleep(0.1)\n",
+    )
+    _use_stub(monkeypatch, script)
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+    before = lyrics_path(job_dir).read_bytes()
+    job = _job(has_lyrics=True)
+    threading.Timer(0.5, lambda: setattr(job, "cancel_requested", True)).start()
+
+    started = time.monotonic()
+    with pytest.raises(JobCancelled):
+        tr.transcribe_lyrics(job, job_dir)
+    assert time.monotonic() - started < 20
+    assert get_proc(job.id) is None
+    assert lyrics_path(job_dir).read_bytes() == before
+
+
+def test_a_cancelled_job_never_starts_mending(tmp_path, monkeypatch):
+    seen: list = []
+    _answering(tmp_path, monkeypatch, _heard(HYMN), seen)
+    job_dir = _with_lyrics(tmp_path, _stripped(HYMN))
+    with pytest.raises(JobCancelled):
+        tr.transcribe_lyrics(_job(has_lyrics=True, cancel_requested=True), job_dir)
+    assert seen == []
+
+
+# The worker's language gate, with Whisper and torch stood in for.
+
+
+def _fake_whisper(monkeypatch, probs: dict[str, float]) -> list[str]:
+    import types
+
+    import numpy as np
+
+    calls: list[str] = []
+
+    class Mel:
+        def to(self, device):
+            return self
+
+    class Model:
+        is_multilingual = True
+        dims = types.SimpleNamespace(n_mels=128)
+        device = "cpu"
+
+        def detect_language(self, mel):
+            calls.append("detect")
+            return None, probs
+
+        def transcribe(self, audio, **kwargs):
+            calls.append("transcribe")
+            return {"segments": []}
+
+    fake_whisper = types.ModuleType("whisper")
+    fake_whisper.log_mel_spectrogram = lambda audio, n_mels: Mel()
+    fake_whisper.pad_or_trim = lambda audio: audio
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(worker, "load_audio", lambda path: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(worker, "load_model", lambda *a: Model())
+    return calls
+
+
+def _worker_args(tmp_path: Path, *extra: str):
+    return worker._parser().parse_args(
+        [
+            "--audio",
+            str(tmp_path / "vocals.wav"),
+            "--device",
+            "cpu",
+            "--model",
+            "turbo",
+            "--fallback-model",
+            "small",
+            "--download-root",
+            str(tmp_path),
+            "--min-free-mb",
+            "3072",
+            "--small-min-free-mb",
+            "1536",
+            "--silence-sec",
+            "2",
+            *extra,
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("probs", "transcribed"),
+    [
+        ({"pl": 0.95, "en": 0.05}, True),
+        ({"en": 0.95, "pl": 0.05}, False),
+        ({"pl": 0.6, "cs": 0.4}, False),
+    ],
+)
+def test_worker_transcribes_only_a_language_it_was_asked_for(
+    tmp_path, monkeypatch, probs, transcribed
+):
+    calls = _fake_whisper(monkeypatch, probs)
+    args = _worker_args(tmp_path, "--languages", "cs,pl", "--min-language-probability", "0.8")
+    out = worker.transcribe(args)
+    assert calls == (["detect", "transcribe"] if transcribed else ["detect"])
+    assert out["language"] == max(probs, key=probs.get)
+    assert ("skipped" in out) is not transcribed
+    if not transcribed:
+        assert out["skipped"] == "language" and out["segments"] == []
+
+
+def test_worker_without_a_language_list_transcribes_whatever_it_hears(tmp_path, monkeypatch):
+    calls = _fake_whisper(monkeypatch, {"en": 0.99})
+    worker.transcribe(_worker_args(tmp_path))
+    assert calls == ["detect", "transcribe"]

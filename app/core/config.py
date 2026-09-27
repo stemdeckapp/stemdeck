@@ -341,6 +341,16 @@ TIMEOUT_FETCH_TAGS = _env_int("STEMDECK_TIMEOUT_FETCH_TAGS", 45)
 # longer than this is not lyrics.
 AUDIO_TAG_MAX_CHARS = 300
 AUDIO_TAG_LYRICS_MAX_CHARS = 20000
+# An upload's tags written in a Windows codepage but read as Latin-1 (an MP3's
+# ID3v1 tag, or an ID3v2 frame marked ISO-8859-1): "zapomnia³em" for
+# "zapomniałem", "Êèíî" for "Кино". The codepages tried when re-reading
+# them, Central European then Cyrillic. See _repair_encoding in
+# app/pipeline/audio_tags.py for when a re-reading is taken.
+AUDIO_TAG_LEGACY_CODEPAGES = ("cp1250", "cp1251")
+# A word of at least this many letters, every one of them accented Latin, is
+# taken as mis-decoded ("Êèíî"). Real names this short made only of accents
+# exist ("ÆØÅ"), so three letters is not evidence on its own.
+AUDIO_TAG_MOJIBAKE_MIN_WORD = 4
 
 # Finding the band a job's artist tag names, on Wikidata, while the job is
 # separated (#699), so the artist box and the Lyrics tab have it the moment the
@@ -492,6 +502,72 @@ LYRICS_ALIGN_MIN_LINES = 6
 LYRICS_ALIGN_MIN_Z = 4.5
 LYRICS_ALIGN_MIN_RATIO = 1.15
 LYRICS_ALIGN_MIN_HITS = 0.6
+# Lyrics that lost their letters outside ASCII, mended from a reference that
+# has them (app/pipeline/lyrics_repair.py). A copy with no intact twin on
+# LRCLIB is checked against the audio only when it has at least this many
+# words, none with such a letter, and fewer than this share of them common
+# English words. Measured on LRCLIB copies: four English songs (171 to 676
+# words) scored 0.23 to 0.27 on that list, eleven Polish copies (Kukulska,
+# Kayah, Bisz, stripped or not) 0.
+LYRICS_STRIPPED_CHECK_MIN_WORDS = 40
+LYRICS_STRIPPED_ENGLISH_MAX_SHARE = 0.1
+# Then Whisper decides the language from the vocals, and only a language
+# written with such letters, detected with at least this probability, goes
+# on to a transcription. Languages written in another script are left out:
+# a copy of theirs in Latin letters is a transliteration, which a
+# transcription cannot mend.
+LYRICS_REPAIR_LANGUAGES = frozenset(
+    [
+        "pl",
+        "cs",
+        "sk",
+        "sl",
+        "hr",
+        "bs",
+        "hu",
+        "ro",
+        "tr",
+        "de",
+        "fr",
+        "pt",
+        "es",
+        "ca",
+        "gl",
+        "it",
+        "vi",
+        "lt",
+        "lv",
+        "et",
+        "fi",
+        "is",
+        "fo",
+        "da",
+        "no",
+        "nn",
+        "sv",
+        "sq",
+        "mt",
+        "lb",
+    ]
+)
+LYRICS_REPAIR_MIN_LANGUAGE_PROB = 0.8
+# And the transcription must bear it out: at least this many words given
+# their letters back, this share of the words paired with what Whisper heard,
+# and this share of those pairs given letters. A song written without accents
+# in any of those languages pairs the same way and gives back next to none.
+LYRICS_REPAIR_MIN_RESTORED = 5
+LYRICS_REPAIR_MIN_ALIGNED = 0.4
+LYRICS_REPAIR_MIN_RESTORED_SHARE = 0.1
+# A word no sure pair covered (a chorus the transcription skipped, a word
+# beside a misheard one) takes the spelling the song's sure pairs gave it
+# elsewhere, when they gave it only that one, at least this many times, and
+# never kept it as it is. On "W biegu" 1 mends 49 words against 46 for 2, the
+# three being repeats of "biegne", "cigle" and "pno" whose other occurrence
+# was heard.
+LYRICS_REPAIR_VOCABULARY_MIN = 1
+# The in-order pairing is quadratic: words times reference words beyond this
+# are not paired at all (a song is a few hundred of each).
+LYRICS_REPAIR_ALIGN_MAX_CELLS = 4_000_000
 
 # Lyrics transcribed from the vocals stem with Whisper when no lookup found
 # any (app/pipeline/transcribe.py). Whether it runs is the transcribe_lyrics

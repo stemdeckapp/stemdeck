@@ -11,6 +11,11 @@ same cancellation, total timeout and output-stall watchdog as the section
 worker. The process exiting is what releases its GPU memory, so the persistent
 Demucs worker, which shares the card, keeps its own allocation untouched.
 
+When the lookup did find lyrics but they look like a copy that lost its
+accents (lyrics_repair.py), the same worker is asked instead to detect the
+language and, only for one written with accents, transcribe: the heard words
+give the letters back to LRCLIB's lines, whose timing is kept (mend_lyrics).
+
 Lyrics are optional. Every failure here is logged and the job finishes
 without them; only a cancel propagates.
 
@@ -36,6 +41,8 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import (
+    LYRICS_REPAIR_LANGUAGES,
+    LYRICS_REPAIR_MIN_LANGUAGE_PROB,
     TIMEOUT_TRANSCRIBE,
     TIMEOUT_TRANSCRIBE_STALL,
     TRANSCRIBE_GPU_MIN_FREE_MB,
@@ -53,7 +60,8 @@ from app.core.config import (
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import transcribe_lyrics_enabled
-from app.pipeline.lyrics_lookup import lyrics_path, write_lyrics
+from app.pipeline.lyrics_lookup import lyrics_path, read_lyrics, write_lyrics
+from app.pipeline.lyrics_repair import looks_stripped, mend_from_transcript, words_of
 
 logger = logging.getLogger("stemdeck.transcribe")
 
@@ -116,21 +124,35 @@ def _spawn_worker_cmd(vocals: Path, device: str) -> list[str]:
     ]
 
 
+_FOUND = "lyrics already found"
+
+
 def skip_reason(job: Job, job_dir: Path) -> str | None:
     """Why this job gets no transcription, or None when it should get one."""
     if not transcribe_lyrics_enabled(job.compute_device):
         return f"off for device {job.compute_device or 'unknown'}"
     if job.has_lyrics or lyrics_path(job_dir).is_file():
-        return "lyrics already found"
+        return _FOUND
     tags = job.audio_tags or {}
     if isinstance(tags.get("lyrics"), str) and tags["lyrics"].strip():
         return "the file carries its own lyrics"
+    return _vocals_reason(job, job_dir)
+
+
+def _vocals_reason(job: Job, job_dir: Path) -> str | None:
+    """Why this job's vocals are not worth transcribing, or None."""
     if not (job_dir / "stems" / "vocals.wav").is_file():
         return "no vocals stem"
     presence = (job.stem_presence or {}).get("vocals")
     if isinstance(presence, int) and presence < TRANSCRIBE_MIN_VOCAL_PRESENCE:
         return f"vocals too quiet ({presence})"
     return None
+
+
+def _device(job: Job) -> str:
+    # macOS has no CUDA, and Whisper's alignment buffer is a sparse tensor
+    # MPS cannot hold, so an MPS job transcribes on the CPU, CPU model.
+    return "cuda" if job.compute_device == "cuda" else "cpu"
 
 
 def _terminate(proc: subprocess.Popen) -> None:
@@ -427,15 +449,15 @@ def transcribe_lyrics(job: Job, job_dir: Path) -> bool:
     started = time.monotonic()
     try:
         reason = skip_reason(job, job_dir)
+        if reason == _FOUND and lyrics_path(job_dir).is_file():
+            # Found lyrics may have lost their accents: mended, not replaced.
+            return mend_lyrics(job, job_dir)
         if reason is not None:
             logger.info("[%s] lyrics transcription skipped: %s", job.id, reason)
             return False
-        # macOS has no CUDA, and Whisper's alignment buffer is a sparse tensor
-        # MPS cannot hold, so an MPS job transcribes on the CPU, CPU model.
-        device = "cuda" if job.compute_device == "cuda" else "cpu"
         _set(job, stage=_STAGE)
         vocals = job_dir / "stems" / "vocals.wav"
-        result = _run_worker(job, _spawn_worker_cmd(vocals, device))
+        result = _run_worker(job, _spawn_worker_cmd(vocals, _device(job)))
         if result is None:
             return False
         entry = build_lyrics(result, job)
@@ -465,5 +487,94 @@ def transcribe_lyrics(job: Job, job_dir: Path) -> bool:
         _number(result.get("language_probability")) or 0.0,
         entry["synced"].count("\n") + 1,
         result.get("peak_vram_mb"),
+    )
+    return True
+
+
+# ── lyrics that lost their accents ──
+
+
+def _language_gate() -> list[str]:
+    """The worker arguments that make it stop once it has detected the
+    language, unless that is one written with letters outside ASCII."""
+    return [
+        "--languages",
+        ",".join(sorted(LYRICS_REPAIR_LANGUAGES)),
+        "--min-language-probability",
+        str(LYRICS_REPAIR_MIN_LANGUAGE_PROB),
+    ]
+
+
+def heard_words(result: dict[str, Any]) -> list[str]:
+    """The words of the worker's answer, in order, from the segments
+    build_lyrics would keep."""
+    segments = result.get("segments")
+    heard: list[str] = []
+    for segment in segments if isinstance(segments, list) else []:
+        if _kept(segment):
+            for word in _words(segment, 0.0):
+                heard.extend(words_of(word["text"]))
+    return heard
+
+
+def mend_lyrics(job: Job, job_dir: Path) -> bool:
+    """Give the job's LRCLIB lyrics back the letters they lost, from what
+    Whisper hears in its vocals. True when lyrics.json was rewritten, with
+    "repaired": "whisper".
+
+    Three gates, cheapest first, so that English and lyrics that have their
+    accents never start the worker, and a song written without accents is
+    never touched: the text (lyrics_repair.looks_stripped); the language
+    Whisper detects in the vocals, before anything is transcribed
+    (LYRICS_REPAIR_LANGUAGES); then the transcription, which must give
+    letters back to enough words (lyrics_repair.mend_from_transcript). A word
+    is only replaced by a heard word that strips down to it, and the timing
+    stays LRCLIB's.
+
+    Called by transcribe_lyrics once the setting allows a transcription, and
+    shares its contract: never raises but JobCancelled."""
+    entry = read_lyrics(job_dir)
+    if entry is None or entry["source"] != "lrclib" or "repaired" in entry:
+        return False
+    if not looks_stripped(entry["synced"] or entry["plain"]):
+        return False
+    reason = _vocals_reason(job, job_dir)
+    if reason is not None:
+        logger.info("[%s] lyrics mending skipped: %s", job.id, reason)
+        return False
+    started = time.monotonic()
+    _set(job, stage=_STAGE)
+    vocals = job_dir / "stems" / "vocals.wav"
+    result = _run_worker(job, _spawn_worker_cmd(vocals, _device(job)) + _language_gate())
+    if result is None:
+        return False
+    language = result.get("language")
+    probability = _number(result.get("language_probability")) or 0.0
+    if (
+        result.get("skipped")
+        or language not in LYRICS_REPAIR_LANGUAGES
+        or probability < LYRICS_REPAIR_MIN_LANGUAGE_PROB
+    ):
+        logger.info(
+            "[%s] lyrics left as they are: sung in %s (%.2f)", job.id, language, probability
+        )
+        return False
+    mended = mend_from_transcript(entry, heard_words(result))
+    if mended is None:
+        logger.info("[%s] lyrics left as they are: the transcription does not bear it out", job.id)
+        return False
+    # Nothing else writes lyrics.json while the pipeline runs; checked all the
+    # same, so a mend never lands on lyrics it was not made from.
+    if read_lyrics(job_dir) != entry:
+        return False
+    if not write_lyrics(job, job_dir, mended):
+        return False
+    logger.info(
+        "[%s] lyrics mended from the vocals in %.1fs: language=%s (%.2f) model=%s",
+        job.id,
+        time.monotonic() - started,
+        language,
+        probability,
+        result.get("model"),
     )
     return True

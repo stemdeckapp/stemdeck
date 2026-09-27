@@ -18,6 +18,11 @@ The LRCLIB cascade, stopping at the first answer kept:
     cast or soundtrack recording under the show ("Popular" by "Wicked");
 (c) a search by the track's name alone.
 
+Every step keeps only versions of this song by a name the track is known by
+(belongs_to): LRCLIB's search also answers with other artists' songs of a
+similar name, and a track with no lyrics is better than one with another
+song's. A track known by no name at all gets none from LRCLIB.
+
 When the track's length is known, each step first looks for a version within
 LYRICS_SAME_RECORDING_SEC of it, whose timing is the track's ("timing":
 "exact"). (c) is never asked without a length, since a name alone can be
@@ -74,8 +79,9 @@ from app.core.config import (
     TITLE_MIN_COVERAGE,
 )
 from app.core.models import Job, _set, clean_identity
-from app.pipeline.artist_lookup import _ssl_context
+from app.pipeline.artist_lookup import _ssl_context, artist_name_key
 from app.pipeline.lyrics_align import align_lyrics
+from app.pipeline.lyrics_repair import restore_letters, words_of
 from app.pipeline.title_parse import TitleReading, coverage, resolvable, song_key, work_hint
 
 logger = logging.getLogger("stemdeck.lyrics")
@@ -85,6 +91,10 @@ LYRICS_SOURCES = frozenset(("lrclib", "file", "whisper"))
 # transcription); "unverified": a version of another length, as LRCLIB has it;
 # "shifted": that, moved onto the track by lyrics_align.py.
 LYRICS_TIMINGS = frozenset(("exact", "shifted", "unverified"))
+# Where the letters a stripped copy lost were taken from (lyrics_repair.py):
+# another LRCLIB copy of the song, or what Whisper heard in the vocals stem.
+# Absent on lyrics that were never mended.
+LYRICS_REPAIRS = frozenset(("lrclib", "whisper"))
 
 # How many album names are tried as the artist before giving up on (b).
 _ALBUM_ARTIST_TRIES = 2
@@ -144,8 +154,8 @@ def normalise(row: Any) -> dict[str, Any]:
 def rank_matches(rows: Any, duration: float = 0) -> list[dict[str, Any]]:
     """Best first, for a track ``duration`` seconds long (0 when unknown):
     closest in length, then synced over plain among versions within
-    LYRICS_SAME_RECORDING_SEC of each other, then whatever LRCLIB ranked
-    first. Rows with no id, and with neither kind of lyrics and no
+    LYRICS_SAME_RECORDING_SEC of each other, then intact over a copy stripped
+    of its accents, then whatever LRCLIB ranked first. Rows with no id, and with neither kind of lyrics and no
     instrumental flag, are dropped."""
     return _rank(
         [
@@ -158,7 +168,10 @@ def rank_matches(rows: Any, duration: float = 0) -> list[dict[str, Any]]:
 
 
 def _rank(matches: list[dict[str, Any]], duration: float) -> list[dict[str, Any]]:
-    """rank_matches' order, over versions already normalised."""
+    """rank_matches' order, over versions already normalised. Among versions
+    equally near in length and equally synced, one that is a stripped copy of
+    another (stripped_copy) goes after the rest."""
+    stripped = _stripped_ids(matches)
 
     def off(m: dict[str, Any]) -> float:
         return abs(m["duration"] - duration) if duration and m["duration"] else 0.0
@@ -169,9 +182,143 @@ def _rank(matches: list[dict[str, Any]], duration: float) -> list[dict[str, Any]
             return da - db
         if bool(a[1]["synced"]) != bool(b[1]["synced"]):
             return -1 if a[1]["synced"] else 1
+        sa, sb = a[0] in stripped, b[0] in stripped
+        if sa != sb:
+            return 1 if sa else -1
         return (da - db) or (a[0] - b[0])
 
     return [m for _, m in sorted(enumerate(matches), key=cmp_to_key(compare))]
+
+
+# ── stripped copies: strippedCopy in static/js/lyricsLookup.js ──
+#
+# LRCLIB holds many songs more than once, and some copies lost every letter
+# outside ASCII on their way in: "Niewinnoci biaym niegiem" for "Niewinnością
+# białym śniegiem" (Kayah, lrclib 5470091 beside the intact 10910419). Each
+# such letter was either dropped or folded to its base ("się" as "sie"). Such
+# a copy cannot be told from a song written without accents on its own, only
+# beside the copy it was stripped from: that is what is compared here.
+
+# LRC time stamps and header tags, which say nothing about the words.
+_LRC_TAGS = re.compile(r"\[[^\]\n]*\]|<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>")
+# The intact copy has at least this many words with a letter outside ASCII,
+# so a stray "café" proves nothing.
+_STRIPPED_MIN_WORDS = 5
+# The stripped copy keeps at most this share of them.
+_STRIPPED_KEPT_MAX = 0.25
+# At least this share of the intact copy's accented words appear in the
+# stripped one with those letters dropped or folded,
+_STRIPPED_FOUND_MIN = 0.6
+# and at least this share of the stripped copy's words are the intact one's.
+_STRIPPED_SAME_MIN = 0.8
+
+
+def _ascii_only(text: str) -> str:
+    return "".join(ch for ch in text if ord(ch) < 128)
+
+
+def _word_runs(text: str) -> list[str]:
+    """The runs of letters and their marks in ``text``: [\\p{L}\\p{M}]+ in the
+    page. Marks count, or a word in Devanagari or Thai would break at each
+    vowel sign."""
+    words: list[str] = []
+    start = -1
+    for i, ch in enumerate(text + " "):
+        if unicodedata.category(ch)[0] in "LM":
+            start = i if start < 0 else start
+        elif start >= 0:
+            words.append(text[start:i])
+            start = -1
+    return words
+
+
+def _stripped_forms(word: str) -> set[str]:
+    """What an accented ``word`` becomes when its letters outside ASCII are
+    dropped ("każe" as "kae") or folded to their base first ("się" as "sie")."""
+    folded = _ascii_only(unicodedata.normalize("NFD", word))
+    return {form for form in (_ascii_only(word), folded) if form}
+
+
+class _Words:
+    """A version's words, lowercased, time stamps left out, with what they
+    would be stripped: worked out once per version, compared many times."""
+
+    def __init__(self, match: dict[str, Any]) -> None:
+        text = unicodedata.normalize("NFC", match["synced"] or match["plain"] or "")
+        self.words = _word_runs(_LRC_TAGS.sub(" ", text).lower())
+        self.have = set(self.words)
+        self.accented = [w for w in self.words if not w.isascii()]
+        self.forms = [_stripped_forms(w) for w in self.accented]
+        self.known = self.have.union(*self.forms)
+
+    def stripped_from(self, intact: _Words) -> bool:
+        """Whether these words are ``intact``'s with their accents lost."""
+        accented = len(intact.accented)
+        if accented < _STRIPPED_MIN_WORDS or not self.words:
+            return False
+        if len(self.accented) > accented * _STRIPPED_KEPT_MAX:
+            return False
+        found = sum(bool(forms & self.have) for forms in intact.forms)
+        if found < accented * _STRIPPED_FOUND_MIN:
+            return False
+        same = sum(w in intact.known for w in self.words)
+        return same >= len(self.words) * _STRIPPED_SAME_MIN
+
+
+def stripped_copy(match: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Whether ``match`` is ``other``'s lyrics with the letters outside ASCII
+    lost: dropped or folded to their base letter."""
+    return _Words(match).stripped_from(_Words(other))
+
+
+def _stripped_ids(matches: list[dict[str, Any]]) -> set[int]:
+    """The positions in ``matches`` of versions that are a stripped copy of
+    another version there."""
+    words = [_Words(m) for m in matches]
+    intact = [(j, w) for j, w in enumerate(words) if len(w.accented) >= _STRIPPED_MIN_WORDS]
+    return {
+        i
+        for i, w in enumerate(words)
+        if any(j != i and w.stripped_from(other) for j, other in intact)
+    }
+
+
+def _intact_twin(
+    chosen: dict[str, Any], pool: list[dict[str, Any]], duration: float
+) -> dict[str, Any]:
+    """``chosen``, or when it is a stripped copy of a version in ``pool`` that
+    can stand in for it (as synced, and the track's length when ``chosen``
+    is), the best of those."""
+    words = _Words(chosen)
+    twins = [
+        m
+        for m in pool
+        if m["lrclib_id"] != chosen["lrclib_id"]
+        and (m["synced"] or not chosen["synced"])
+        and (not same_recording(chosen, duration) or same_recording(m, duration))
+        and words.stripped_from(_Words(m))
+    ]
+    return _rank(twins, duration)[0] if twins else chosen
+
+
+def _mended(chosen: dict[str, Any], pool: list[dict[str, Any]], duration: float) -> dict[str, Any]:
+    """``chosen``, or when it is a stripped copy of a version in ``pool`` and
+    no twin could stand in for it (a plain copy, or one of another length),
+    ``chosen`` with its letters given back from the best of those, word by
+    word, its timing untouched: "repaired": "lrclib"."""
+    words = _Words(chosen)
+    intact = [
+        m for m in pool if m["lrclib_id"] != chosen["lrclib_id"] and words.stripped_from(_Words(m))
+    ]
+    if not intact:
+        return chosen
+    source = _rank(intact, duration)[0]
+    reference = words_of(source["synced"] or source["plain"])
+    synced = restore_letters(chosen["synced"], reference)
+    plain = restore_letters(chosen["plain"], reference)
+    if not (synced.restored or plain.restored):
+        return chosen
+    return {**chosen, "synced": synced.text, "plain": plain.text, "repaired": "lrclib"}
 
 
 def same_recording(match: dict[str, Any], duration: float) -> bool:
@@ -228,6 +375,95 @@ def song_from_title(title: Any, artist: Any = "") -> str:
     while end > start and _edge(song[end - 1]):
         end -= 1
     return song[start:end].strip()
+
+
+# ── whose song a version is: belongsTo in static/js/lyricsLookup.js ──
+#
+# LRCLIB's search is fuzzy: asked for one artist's song it also answers with
+# other artists' songs of a similar name. Lyrics that may be another song's are
+# worse than none, so a version is kept only when its song is the one asked for
+# and its artist is one of the names the track is known by: the artist itself,
+# one of the artists credited with it ("Keala Settle" of "Keala Settle & The
+# Greatest Showman Ensemble"), or the show a cast recording is filed under.
+_NAME_LIST = re.compile(
+    r"\s*(?:[&,+/;]|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*", re.IGNORECASE
+)
+_LEADING_THE = re.compile(r"^\s*the\s+", re.IGNORECASE)
+_SONG_FEATURING = re.compile(r"\s+(?:ft\.?|feat\.?|featuring)\s.*$", re.IGNORECASE | re.DOTALL)
+_SONG_BRACKETS = re.compile(r"[(\[{][^()\[\]{}]*[)\]}]")
+_SONG_TAIL = re.compile(rf"\s+[{re.escape(_DASHES)}]+\s+.*$", re.DOTALL)
+# One credited artist matches only when its name is at least this long, so an
+# initial or a stray "DJ" names nobody; a run of words inside a longer name
+# ("The Greatest Showman" in "The Greatest Showman Cast") needs this many.
+_PART_MIN_CHARS = 4
+_RUN_MIN_WORDS = 2
+
+
+def _name_key(name: Any) -> str:
+    return artist_name_key(_LEADING_THE.sub("", str(name or "")))
+
+
+def _name_words(name: Any) -> list[str]:
+    words, word = [], []
+    for ch in str(name or "") + " ":
+        if unicodedata.category(ch)[0] in ("L", "M", "N"):
+            word.append(ch)
+        elif word:
+            words.append(artist_name_key("".join(word)))
+            word = []
+    return [w for w in words if w]
+
+
+def _name_parts(name: Any) -> list[str]:
+    return [key for key in map(_name_key, _NAME_LIST.split(str(name or ""))) if key]
+
+
+def _contains_run(words: list[str], run: list[str]) -> bool:
+    if len(run) < _RUN_MIN_WORDS or len(run) > len(words):
+        return False
+    return any(words[i : i + len(run)] == run for i in range(len(words) - len(run) + 1))
+
+
+def same_artist(found: Any, names: tuple[str, ...] | list[str]) -> bool:
+    """Whether ``found``, a version's artist, is one of ``names``."""
+    their_key = _name_key(found)
+    if not their_key:
+        return False
+    their_parts = _name_parts(found)
+    their_words = _name_words(found)
+    for name in names:
+        if not str(name or "").strip():
+            continue
+        if _name_key(name) == their_key:
+            return True
+        if any(len(p) >= _PART_MIN_CHARS and p in their_parts for p in _name_parts(name)):
+            return True
+        mine = _name_words(name)
+        if _contains_run(mine, their_words) or _contains_run(their_words, mine):
+            return True
+    return False
+
+
+def _song_keys(name: Any) -> tuple[str, str]:
+    full = _SONG_FEATURING.sub("", _SONG_BRACKETS.sub(" ", str(name or "")))
+    return artist_name_key(full), artist_name_key(_SONG_TAIL.sub("", full))
+
+
+def same_song(found: Any, song: Any) -> bool:
+    """Whether ``found``, a version's song, is ``song``: the same name less
+    brackets and featured artists, or one of them the other with a " - ..."
+    tail ("This Is Me - From The Greatest Showman"). Two tails never make a
+    match: "Part I - Dawn" is not "Part I - Dusk"."""
+    a_full, a_head = _song_keys(found)
+    b_full, b_head = _song_keys(song)
+    if not a_full or not b_full:
+        return False
+    return a_full in (b_full, b_head) or a_head == b_full
+
+
+def belongs_to(match: dict[str, Any], song: str, names: tuple[str, ...] | list[str]) -> bool:
+    """Whether a version is ``song`` by one of ``names`` (the artist, a show)."""
+    return same_song(match.get("track"), song) and same_artist(match.get("artist"), names)
 
 
 _LRC_STAMP = re.compile(r"^\s*\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]", re.MULTILINE)
@@ -461,14 +697,20 @@ def lookup_lyrics(
     # The song by artist (or show) and title, whatever its length.
     song: list[dict[str, Any]] = []
     chosen: dict[str, Any] | None = None
+    # Who the song may be filed under. Only versions of this song by one of
+    # them are kept or offered (belongs_to): no lyrics beat another song's.
+    names = tuple(n for n in (query.artist, *query.album_artists) if n)
 
     def ask(endpoint: str, params: dict[str, str]) -> Any:
         if cancelled() or time.monotonic() > deadline:
             raise _Stop
         return fetch_json(endpoint, params)
 
+    def mine(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [m for m in rows if belongs_to(m, query.track, names)]
+
     def search(params: dict[str, str]) -> list[dict[str, Any]]:
-        rows = rank_matches(ask("search", params), duration)
+        rows = mine(rank_matches(ask("search", params), duration))
         found.extend(rows)
         return rows
 
@@ -486,7 +728,7 @@ def lookup_lyrics(
             if duration:
                 params["duration"] = str(round(duration))
             try:
-                exact = rank_matches([ask("get", params)], duration)
+                exact = mine(rank_matches([ask("get", params)], duration))
             except urllib.error.HTTPError:
                 logger.info("LRCLIB exact match failed", exc_info=True)
                 exact = []
@@ -510,8 +752,9 @@ def lookup_lyrics(
                     break
                 if song:
                     break
-        if chosen is None and duration:
-            # (c) The name alone.
+        if chosen is None and duration and names:
+            # (c) The name alone, which answers with anybody's song of that
+            # name: only one by a name the track is known by is kept.
             rows = held(search({"q": query.track}))
             chosen = rows[0] if rows else None
     except _Stop:
@@ -527,6 +770,12 @@ def lookup_lyrics(
         ranked = _rank(song, duration)
         chosen = next((m for m in ranked if m["synced"]), ranked[0])
         timing = "unverified" if chosen["synced"] else "exact"
+    if chosen is not None:
+        # LRCLIB's exact match can be a copy that lost its accents while the
+        # search found the copy it was stripped from. When that copy cannot
+        # stand in for it, its words still can.
+        chosen = _intact_twin(chosen, song + found, duration)
+        chosen = _mended(chosen, song + found, duration)
 
     others: list[dict[str, Any]] = []
     seen = {chosen["lrclib_id"]} if chosen else set()
@@ -621,6 +870,9 @@ def clean_lyrics(value: Any) -> dict[str, Any] | None:
     if timing not in LYRICS_TIMINGS:
         return None
     entry["timing"] = timing
+    # Only on lyrics whose lost letters were given back (lyrics_repair.py).
+    if value.get("repaired") in LYRICS_REPAIRS:
+        entry["repaired"] = value["repaired"]
     others = value.get("others")
     cleaned = [_clean_version(o) for o in (others if isinstance(others, list) else [])]
     entry["others"] = [o for o in cleaned if o is not None][:LYRICS_OTHERS_MAX]

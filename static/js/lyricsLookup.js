@@ -14,6 +14,8 @@
 // No DOM here, and fetch is passed in, so this runs under node for the unit
 // tests (tests/js/lyrics-lookup.test.mjs).
 
+import { artistNameKey } from "./artistLookup.js";
+
 const LRCLIB_SEARCH = "https://lrclib.net/api/search";
 const TIMEOUT_MS = 12000;
 
@@ -79,13 +81,15 @@ export function fromServerLyrics(data) {
 /**
  * Best first, for a track `duration` seconds long (0 when unknown):
  * closest in length, then synced over plain among versions within
- * SAME_LENGTH_SEC of each other, then whatever LRCLIB ranked first.
+ * SAME_LENGTH_SEC of each other, then intact over a copy stripped of its
+ * accents (strippedCopy), then whatever LRCLIB ranked first.
  */
 export function rankMatches(rows, duration = 0) {
   const matches = (Array.isArray(rows) ? rows : [])
     .map(normalise)
     .filter((m) => m.id && (m.synced || m.plain || m.instrumental));
   const off = (m) => (duration && m.duration ? Math.abs(m.duration - duration) : 0);
+  const stripped = strippedIndexes(matches);
   return matches
     .map((m, rank) => ({ m, rank }))
     .sort((a, b) => {
@@ -93,9 +97,78 @@ export function rankMatches(rows, duration = 0) {
       const db = off(b.m);
       if (Math.abs(da - db) > SAME_LENGTH_SEC) return da - db;
       if (Boolean(a.m.synced) !== Boolean(b.m.synced)) return a.m.synced ? -1 : 1;
+      const sa = stripped.has(a.rank);
+      if (sa !== stripped.has(b.rank)) return sa ? 1 : -1;
       return da - db || a.rank - b.rank;
     })
     .map(({ m }) => m);
+}
+
+// Stripped copies, as _Words in app/pipeline/lyrics_lookup.py. LRCLIB holds
+// many songs more than once, and some copies lost every letter outside ASCII
+// on their way in: "Niewinnoci biaym niegiem" for "Niewinnością białym
+// śniegiem" (Kayah, lrclib 5470091 beside the intact 10910419). Each such
+// letter was either dropped or folded to its base ("się" as "sie"). Such a copy
+// cannot be told from a song written without accents on its own, only beside
+// the copy it was stripped from.
+const LRC_TAGS = /\[[^\]\n]*\]|<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g;
+const NOT_ASCII = /[^\p{ASCII}]/gu;
+const isAscii = (word) => !/[^\p{ASCII}]/u.test(word);
+// The intact copy has at least this many words with a letter outside ASCII,
+// so a stray "café" proves nothing; the stripped one keeps at most a quarter
+// of them; at least 60% of the intact copy's accented words appear in it with
+// those letters dropped or folded; at least 80% of its words are the intact
+// copy's.
+const STRIPPED_MIN_WORDS = 5;
+const STRIPPED_KEPT_MAX = 0.25;
+const STRIPPED_FOUND_MIN = 0.6;
+const STRIPPED_SAME_MIN = 0.8;
+
+/** What an accented word becomes with its letters outside ASCII dropped
+ * ("każe" as "kae") or folded to their base first ("się" as "sie"). */
+function strippedForms(word) {
+  const forms = [word.replace(NOT_ASCII, ""), word.normalize("NFD").replace(NOT_ASCII, "")];
+  return forms.filter(Boolean);
+}
+
+/** A version's words, lowercased, time stamps left out, with what they would
+ * be stripped: worked out once per version, compared many times. */
+function wordsOf(match) {
+  const text = String(match?.synced || match?.plain || "").normalize("NFC").replace(LRC_TAGS, " ");
+  const words = text.toLowerCase().match(/[\p{L}\p{M}]+/gu) || [];
+  const accented = words.filter((w) => !isAscii(w));
+  const forms = accented.map(strippedForms);
+  return { words, have: new Set(words), accented, forms, known: new Set([...words, ...forms.flat()]) };
+}
+
+function strippedFrom(copy, intact) {
+  const accented = intact.accented.length;
+  if (accented < STRIPPED_MIN_WORDS || !copy.words.length) return false;
+  if (copy.accented.length > accented * STRIPPED_KEPT_MAX) return false;
+  const found = intact.forms.filter((forms) => forms.some((f) => copy.have.has(f))).length;
+  if (found < accented * STRIPPED_FOUND_MIN) return false;
+  const same = copy.words.filter((w) => intact.known.has(w)).length;
+  return same >= copy.words.length * STRIPPED_SAME_MIN;
+}
+
+/**
+ * Whether `match` is `other`'s lyrics with the letters outside ASCII lost,
+ * dropped or folded to their base letter. Both are versions as rankMatches
+ * gives them ({ synced, plain }).
+ */
+export function strippedCopy(match, other) {
+  return strippedFrom(wordsOf(match), wordsOf(other));
+}
+
+/** The indexes in `matches` of versions that are a stripped copy of another. */
+function strippedIndexes(matches) {
+  const words = matches.map(wordsOf);
+  const intact = words.map((w, j) => [j, w]).filter(([, w]) => w.accented.length >= STRIPPED_MIN_WORDS);
+  const out = new Set();
+  words.forEach((w, i) => {
+    if (intact.some(([j, other]) => j !== i && strippedFrom(w, other))) out.add(i);
+  });
+  return out;
 }
 
 /**
@@ -113,7 +186,9 @@ export function rankMatches(rows, duration = 0) {
 export function parseLrc(text) {
   const lines = [];
   let offset = 0;
-  for (const raw of String(text || "").split(/\r?\n/)) {
+  // Composed, as most fonts expect: text typed on a Mac can arrive with each
+  // accent a mark of its own ("ś" as "s" and a combining acute).
+  for (const raw of String(text || "").normalize("NFC").split(/\r?\n/)) {
     const tag = /^\[offset:\s*([+-]?\d+)\s*\]/i.exec(raw.trim());
     if (tag) {
       offset = Number(tag[1]) / 1000;
@@ -205,7 +280,14 @@ const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 
 /** A line's text as the pieces the wipe fills: words, or characters. */
 function lineTokens(text) {
-  return UNSPACED.test(text) && !/\s/.test(text) ? Array.from(text) : text.match(/\S+\s*/g) || [];
+  return UNSPACED.test(text) && !/\s/.test(text) ? characters(text) : text.match(/\S+\s*/g) || [];
+}
+
+/** `text` as the characters a reader sees: a base letter with the marks on it
+ * stays one piece ("か" with its voicing mark, when the text came decomposed),
+ * so no mark is left in a span of its own. */
+function characters(text) {
+  return text.match(/\P{M}\p{M}*|\p{M}+/gu) || [];
 }
 
 /**
@@ -416,6 +498,75 @@ export function songFromTitle(title, artist = "") {
     .replace(/\s+/g, " ")
     .replace(/^[\s\p{Pd}:|]+|[\s\p{Pd}:|]+$/gu, "")
     .trim();
+}
+
+// Whose song a version is: belongs_to in app/pipeline/lyrics_lookup.py.
+//
+// LRCLIB's search is fuzzy: asked for one artist's song it also answers with
+// other artists' songs of a similar name. Lyrics that may be another song's are
+// worse than none, so a version is kept only when its song is the one asked for
+// and its artist is one of the names the track is known by: the artist itself,
+// one of the artists credited with it ("Keala Settle" of "Keala Settle & The
+// Greatest Showman Ensemble"), or the show a cast recording is filed under.
+const NAME_LIST = /\s*(?:[&,+/;]|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*/iu;
+const LEADING_THE = /^\s*the\s+/iu;
+const SONG_FEATURING = /\s+(?:ft\.?|feat\.?|featuring)\s.*$/iu;
+const SONG_BRACKETS = /[([{][^()[\]{}]*[)\]}]/gu;
+const SONG_TAIL = /\s+\p{Pd}+\s+.*$/u;
+// One credited artist matches only when its name is at least this long, so an
+// initial or a stray "DJ" names nobody; a run of words inside a longer name
+// ("The Greatest Showman" in "The Greatest Showman Cast") needs this many.
+const PART_MIN_CHARS = 4;
+const RUN_MIN_WORDS = 2;
+
+const nameKey = (name) => artistNameKey(String(name || "").replace(LEADING_THE, ""));
+const nameWords = (name) => (String(name || "").match(/[\p{L}\p{M}\p{N}]+/gu) || []).map(artistNameKey).filter(Boolean);
+const nameParts = (name) => String(name || "").split(NAME_LIST).map(nameKey).filter(Boolean);
+
+function containsRun(words, run) {
+  if (run.length < RUN_MIN_WORDS || run.length > words.length) return false;
+  for (let i = 0; i + run.length <= words.length; i++) {
+    if (run.every((w, j) => words[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/** Whether `found`, a version's artist, is one of `names`. */
+export function sameArtist(found, names) {
+  const theirKey = nameKey(found);
+  if (!theirKey) return false;
+  const theirParts = nameParts(found);
+  const theirWords = nameWords(found);
+  return names.some((name) => {
+    if (!String(name || "").trim()) return false;
+    if (nameKey(name) === theirKey) return true;
+    if (nameParts(name).some((p) => p.length >= PART_MIN_CHARS && theirParts.includes(p))) return true;
+    const mine = nameWords(name);
+    return containsRun(mine, theirWords) || containsRun(theirWords, mine);
+  });
+}
+
+function songKeys(name) {
+  const full = String(name || "").replace(SONG_BRACKETS, " ").replace(SONG_FEATURING, "");
+  return { full: artistNameKey(full), head: artistNameKey(full.replace(SONG_TAIL, "")) };
+}
+
+/**
+ * Whether `found`, a version's song, is `song`: the same name less brackets
+ * and featured artists, or one of them the other with a " - ..." tail ("This
+ * Is Me - From The Greatest Showman"). Two tails never make a match: "Part I -
+ * Dawn" is not "Part I - Dusk".
+ */
+export function sameSong(found, song) {
+  const a = songKeys(found);
+  const b = songKeys(song);
+  if (!a.full || !b.full) return false;
+  return a.full === b.full || a.head === b.full || a.full === b.head;
+}
+
+/** Whether a version is `song` by `artist` or one of `names` (a show's). */
+export function belongsTo(match, { artist = "", song = "", names = [] } = {}) {
+  return sameSong(match?.track, song) && sameArtist(match?.artist, [artist, ...names]);
 }
 
 /** Index of the line being sung at `seconds`, or -1 before the first. */

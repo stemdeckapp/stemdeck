@@ -260,6 +260,112 @@ export function workFacts(claims) {
   };
 }
 
+// ─── Official links ───
+//
+// A band's or a show's own site, Instagram, Spotify and Apple Music pages,
+// from the Wikidata item already fetched for the box: no other service is
+// asked. Wikidata is edited by anyone, so every value is checked against the
+// shape its property allows before a URL is built from it, and a value that
+// does not fit is dropped rather than repaired. The box puts them in with
+// setAttribute and textContent only.
+
+const OFFICIAL_WEBSITE = "P856";
+const INSTAGRAM_USERNAME = "P2003";
+const SPOTIFY_ARTIST_ID = "P1902";
+const APPLE_MUSIC_ARTIST_ID = "P2850";
+const URL_MAX_CHARS = 2048;
+
+// In the order the box shows them.
+const LINK_KINDS = [
+  {
+    kind: "website",
+    prop: OFFICIAL_WEBSITE,
+    build: (value) => {
+      // Nothing that is not plainly a web address: no spaces or control
+      // characters for a parser to be lenient about, no javascript: or data:,
+      // no user:password@ to disguise where it goes.
+      if (value.length > URL_MAX_CHARS || /[\s\p{Cc}]/u.test(value)) return "";
+      // A host straight after the scheme: the URL parser would read a third
+      // slash or a backslash leniently, and what is shown should be what
+      // Wikidata said.
+      if (!/^https?:\/\/[^/\\]/i.test(value)) return "";
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        return "";
+      }
+      if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+      if (!url.hostname || url.username || url.password) return "";
+      return url.href;
+    },
+  },
+  {
+    kind: "instagram",
+    prop: INSTAGRAM_USERNAME,
+    // Letters, digits, dots and underscores, up to 30, and not only dots.
+    build: (value) => (/^(?=.*[A-Za-z0-9_])[A-Za-z0-9._]{1,30}$/.test(value)
+      ? `https://www.instagram.com/${encodeURIComponent(value)}/`
+      : ""),
+  },
+  {
+    kind: "spotify",
+    prop: SPOTIFY_ARTIST_ID,
+    // Spotify's base-62 ids are always 22 characters.
+    build: (value) => (/^[0-9A-Za-z]{22}$/.test(value)
+      ? `https://open.spotify.com/artist/${encodeURIComponent(value)}`
+      : ""),
+  },
+  {
+    kind: "appleMusic",
+    prop: APPLE_MUSIC_ARTIST_ID,
+    // The iTunes artist id: digits only.
+    build: (value) => (/^[1-9][0-9]{0,14}$/.test(value)
+      ? `https://music.apple.com/artist/${encodeURIComponent(value)}`
+      : ""),
+  },
+];
+
+/**
+ * The URL for one official link, or "" when `value` is not the shape `kind`
+ * allows. `kind` is one of "website", "instagram", "spotify", "appleMusic".
+ */
+export function officialLinkUrl(kind, value) {
+  const spec = LINK_KINDS.find((k) => k.kind === kind);
+  if (!spec || typeof value !== "string") return "";
+  return spec.build(value);
+}
+
+/**
+ * The official links in an item's claims, as [{ kind, url }], in the order
+ * website, Instagram, Spotify, Apple Music, and only those present. Per
+ * property, the preferred statement wins over normal ones, the first of each
+ * rank before later ones; deprecated ones never count, and nor does one whose
+ * value fails its check.
+ */
+export function officialLinks(claims) {
+  const links = [];
+  for (const { kind, prop, build } of LINK_KINDS) {
+    const statements = (Array.isArray(claims?.[prop]) ? claims[prop] : [])
+      .filter((s) => s?.rank === "preferred" || s?.rank === "normal");
+    const ordered = [
+      ...statements.filter((s) => s.rank === "preferred"),
+      ...statements.filter((s) => s.rank === "normal"),
+    ];
+    for (const statement of ordered) {
+      const value = statement.mainsnak?.snaktype === "value" || statement.mainsnak?.snaktype === undefined
+        ? statement.mainsnak?.datavalue?.value
+        : undefined;
+      const url = typeof value === "string" ? build(value) : "";
+      if (url) {
+        links.push({ kind, url });
+        break;
+      }
+    }
+  }
+  return links;
+}
+
 // Latin accents, as the combining marks NFKD leaves them as, so a file tagged
 // "Beyonce" still matches "Beyoncé". Only this block: the marks in a Japanese
 // or Korean name are part of it, and folding them could make two names one.
@@ -402,6 +508,7 @@ export async function lookupWork(id, appLang, { fetchJson = defaultFetchJson, si
       composers: names(facts.composers),
       lyricists: names(facts.lyricists),
       bookWriters: names(facts.bookWriters),
+      links: officialLinks(work.claims),
       articleUrl: site?.url || "",
     };
   } finally {
@@ -489,6 +596,7 @@ export async function lookupArtist(name, appLang, { id = "", fetchJson = default
       history: historyFromExtract(extractJson?.query?.pages?.[0]?.extract, historyHeadingsFor(siteLang)),
       members: { current: names(members.current), former: names(members.former) },
       albums: albumsFromSparql(albumsJson),
+      links: officialLinks(artist.claims),
       articleUrl: site?.url || "",
     };
   } finally {

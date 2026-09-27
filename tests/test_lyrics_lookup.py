@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import unicodedata
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -47,11 +48,13 @@ _REAL_FETCH_JSON = ll._fetch_json
 EN_DASH = chr(0x2013)
 
 
-def row(lrclib_id, duration, kind="synced", *, artist="A", track=None, album=""):
+def row(
+    lrclib_id, duration, kind="synced", *, artist="Dream Theater", track="Metropolis", album=""
+):
     """An LRCLIB row, as tests/js/lyrics-lookup.test.mjs builds them."""
     return {
         "id": lrclib_id,
-        "trackName": track or f"T{lrclib_id}",
+        "trackName": track,
         "artistName": artist,
         "albumName": album,
         "duration": duration,
@@ -133,8 +136,8 @@ def test_a_row_becomes_a_version_of_lyrics_json():
     assert version == {
         "v": 1,
         "source": "lrclib",
-        "track": "T7",
-        "artist": "A",
+        "track": "Metropolis",
+        "artist": "Dream Theater",
         "album": "Images and Words",
         "duration": 200.5,
         "synced": "[00:01.00]line 7",
@@ -263,7 +266,12 @@ def test_others_are_capped():
 def test_a_cast_recording_is_found_under_the_shows_name():
     """LRCLIB files "Popular" under the artist "Wicked", not the singer."""
     lrclib = Lrclib(
-        searches={"Wicked": [row(20, 300, artist="Wicked"), row(21, 225.7, artist="Wicked")]}
+        searches={
+            "Wicked": [
+                row(20, 300, artist="Wicked", track="Popular"),
+                row(21, 225.7, artist="Wicked", track="Popular"),
+            ]
+        }
     )
     q = query(
         artist="Kristin Chenoweth",
@@ -280,8 +288,8 @@ def test_a_cast_recording_is_found_under_the_shows_name():
 def test_the_shows_name_is_held_to_the_tracks_length():
     lrclib = Lrclib(
         searches={
-            "Wicked": [row(20, 300, artist="Wicked")],
-            "q:Popular": [row(30, 190), row(31, 226.5)],
+            "Wicked": [row(20, 300, artist="Wicked", track="Popular")],
+            "q:Popular": [row(30, 190, track="Popular"), row(31, 226.5, track="Popular")],
         }
     )
     q = query(track="Popular", duration=225.6, album_artists=("Wicked",))
@@ -306,10 +314,71 @@ def test_the_name_alone_is_never_asked_without_the_tracks_length():
     assert "q:Metropolis" not in lrclib.searched
 
 
-def test_no_artist_skips_straight_to_the_name():
+def test_a_track_known_by_no_name_gets_no_lyrics():
+    """The name alone finds anybody's song: with nobody to hold it to, none
+    is kept and LRCLIB is not asked."""
     lrclib = Lrclib(searches={"q:Metropolis": [row(40, 572)]})
-    assert kept(query(artist=""), fetch_json=lrclib)["lrclib_id"] == 40
-    assert [e for e, _ in lrclib.asked] == ["search"]
+    answer = lookup_lyrics(query(artist=""), fetch_json=lrclib)
+    assert answer is not None and answer.lyrics is None and answer.others == []
+    assert lrclib.asked == []
+
+
+def test_another_artists_song_of_that_name_is_neither_kept_nor_offered():
+    lrclib = Lrclib(
+        exact=row(10, 572, artist="Metropolis Tribute Orchestra"),
+        searches={
+            "Dream Theater": [
+                row(11, 572, track="Metropolis Part 2"),
+                row(12, 572, artist="Kesha"),
+            ],
+            "q:Metropolis": [row(13, 572, artist="Someone Else")],
+        },
+    )
+    answer = lookup_lyrics(query(), fetch_json=lrclib)
+    assert answer.lyrics is None
+    assert answer.others == [], "not offered either: the tab would say it is this song"
+
+
+def test_a_credited_artist_or_a_song_tail_still_belongs():
+    q = query(
+        artist="Keala Settle & The Greatest Showman Ensemble", track="This Is Me", duration=235.0
+    )
+    tail = row(50, 234.9, artist="Keala Settle", track="This Is Me - From The Greatest Showman")
+    found = kept(q, fetch_json=Lrclib(searches={q.artist: [tail]}))
+    assert found["lrclib_id"] == 50
+
+
+@pytest.mark.parametrize(
+    ("found", "names", "same"),
+    [
+        ("The Beatles", ["Beatles"], True),
+        ("Beyonce", ["Beyonc" + chr(0xE9)], True),
+        ("Keala Settle", ["Keala Settle & The Greatest Showman Ensemble"], True),
+        ("The Greatest Showman Cast", ["The Greatest Showman"], True),
+        ("Pink", ["Pink Floyd"], False),
+        ("DJ", ["DJ & Someone Else"], False),
+        ("Kesha", ["Keala Settle"], False),
+        ("", ["Keala Settle"], False),
+        ("Keala Settle", [""], False),
+    ],
+)
+def test_same_artist(found, names, same):
+    assert ll.same_artist(found, names) is same
+
+
+@pytest.mark.parametrize(
+    ("found", "song", "same"),
+    [
+        ("This Is Me", "this is me", True),
+        ("This Is Me (feat. Someone) [Live]", "This Is Me", True),
+        ("This Is Me - From The Greatest Showman", "This Is Me", True),
+        ("Part I - Dawn", "Part I - Dusk", False),
+        ("This Is Not Me", "This Is Me", False),
+        ("", "This Is Me", False),
+    ],
+)
+def test_same_song(found, song, same):
+    assert ll.same_song(found, song) is same
 
 
 def test_lyrics_the_file_carried_win_and_ask_nothing():
@@ -354,7 +423,7 @@ def test_a_synced_version_is_preferred_when_none_is_the_tracks_length():
 
 
 def test_the_shows_song_in_another_length_is_kept_too():
-    lrclib = Lrclib(searches={"Wicked": [row(20, 300, artist="Wicked")]})
+    lrclib = Lrclib(searches={"Wicked": [row(20, 300, artist="Wicked", track="Popular")]})
     q = query(artist="Kristin Chenoweth", track="Popular", duration=225.6,
               album_artists=("Wicked", "Wicked (Original Broadway Cast Recording)"))  # fmt: skip
     found = kept(q, fetch_json=lrclib)
@@ -646,7 +715,9 @@ def test_the_identity_still_being_found_is_waited_for(tmp_path: Path, monkeypatc
     """The identification runs beside the lookup and puts its answer on the
     job only when the pipeline is done, so the lookup asks it directly, in
     its own thread, and looks up what it says rather than the tags."""
-    lrclib = Lrclib(searches={"Ariana Grande": [row(5, 231)]})
+    lrclib = Lrclib(
+        searches={"Ariana Grande": [row(5, 231, artist="Ariana Grande", track="Popular")]}
+    )
     monkeypatch.setattr(ll, "_fetch_json", lrclib)
     job = Job(id="abcdefabc326", duration_sec=231.0, audio_tags={"title": "popular (hd)"})
     identified = threading.Event()
@@ -813,3 +884,197 @@ async def test_a_job_cancelled_while_the_lookup_is_out_gets_no_lyrics(tmp_path: 
     assert job.has_lyrics is False
     assert not (tmp_path / job.id).exists()
     assert [e for e, _ in lrclib.asked] == ["get"], "the cancel stopped the search"
+
+
+# ── letters outside ASCII ──
+#
+# LRCLIB holds some songs as copies that lost those letters on the way in
+# (Kayah's "Nie ma, nie ma ciebie": eleven copies read "Niewinnoci biaym
+# niegiem", one "Niewinnością białym śniegiem"). The anthem stands in for a
+# song here, being in the public domain.
+
+ANTHEM = (
+    "[00:01.00]Jeszcze Polska nie zginęła,\n"
+    "[00:04.00]Kiedy my żyjemy.\n"
+    "[00:07.00]Co nam obca przemoc wzięła,\n"
+    "[00:10.00]Szablą odbierzemy.\n"
+    "[00:13.00]Marsz, marsz, Dąbrowski,\n"
+    "[00:16.00]Z ziemi włoskiej do Polski.\n"
+    "[00:19.00]Za twoim przewodem\n"
+    "[00:22.00]Złączym się z narodem.\n"
+)
+
+
+def _drop(text: str) -> str:
+    """Every letter outside ASCII dropped: "Szablą" as "Szabl"."""
+    return "".join(ch for ch in text if ord(ch) < 128)
+
+
+def _fold(text: str) -> str:
+    """Folded to the base letter where there is one: "Szablą" as "Szabla"."""
+    return _drop(unicodedata.normalize("NFD", text))
+
+
+def _as_lrclib_drops_them(text: str) -> str:
+    """What LRCLIB's damaged copies hold: "ę" folded, the rest dropped."""
+    return _drop(text.replace("ę", "e"))
+
+
+def text_row(lrclib_id, duration, text, *, synced=True):
+    return {
+        **row(lrclib_id, duration),
+        "syncedLyrics": text if synced else None,
+        "plainLyrics": ll._LRC_TAGS.sub("", text),
+    }
+
+
+@pytest.mark.parametrize("strip", [_drop, _fold, _as_lrclib_drops_them])
+def test_a_copy_that_lost_its_polish_letters_is_told_from_the_one_it_came_from(strip):
+    intact = ll.normalise(text_row(1, 200, ANTHEM))
+    stripped = ll.normalise(text_row(2, 200, strip(ANTHEM)))
+    assert ll.stripped_copy(stripped, intact)
+    assert not ll.stripped_copy(intact, stripped)
+    assert not ll.stripped_copy(intact, intact)
+
+
+@pytest.mark.parametrize(
+    "intact, other",
+    [
+        # Another script, or its transliteration, is not a stripped copy.
+        (
+            "[00:01.00]Группа крови на рукаве, мой порядковый номер на рукаве",
+            "[00:01.00]Gruppa krovi na rukave, moy poryadkovyy nomer na rukave",
+        ),
+        (
+            "[00:01.00]夢ならばどれほどよかったでしょう 未だにあなたのことを夢にみる",
+            "[00:01.00]Yume naraba dore hodo yokatta deshou imada ni anata no koto wo yume ni miru",
+        ),
+        # A stray accent proves nothing.
+        (
+            "[00:01.00]A café, a naïve smile, and the rest in plain English words",
+            "[00:01.00]A cafe, a naive smile, and the rest in plain English words",
+        ),
+        # Another song entirely, written without accents.
+        (ANTHEM, "[00:01.00]Jeszcze nic nie jest stracone, moja mila, gdy jestem z toba"),
+    ],
+)
+def test_other_scripts_and_other_songs_are_not_stripped_copies(intact, other):
+    a, b = ll.normalise(text_row(1, 200, intact)), ll.normalise(text_row(2, 200, other))
+    assert not ll.stripped_copy(b, a)
+    assert not ll.stripped_copy(a, b)
+
+
+def test_ranking_puts_the_intact_copy_before_one_lrclib_ranked_first():
+    rows = [
+        text_row(5470091, 230.0, _as_lrclib_drops_them(ANTHEM)),
+        text_row(28700266, 230.0, _as_lrclib_drops_them(ANTHEM)),
+        text_row(10910419, 229.93, ANTHEM),
+        text_row(4291789, 230.0, ANTHEM, synced=False),
+    ]
+    assert ids(rank_matches(rows, 230.0)) == [10910419, 5470091, 28700266, 4291789]
+    assert ids(rank_matches(rows)) == [10910419, 5470091, 28700266, 4291789]
+
+
+def test_synced_still_beats_plain_and_length_still_beats_both():
+    stripped = text_row(1, 230.0, _as_lrclib_drops_them(ANTHEM))
+    assert ids(rank_matches([stripped, text_row(2, 230.0, ANTHEM, synced=False)], 230.0)) == [
+        1,
+        2,
+    ], "no synced copy is intact: the words in time beat the words alone"
+    assert ids(rank_matches([stripped, text_row(3, 250.0, ANTHEM)], 230.0)) == [1, 3]
+
+
+def test_an_exact_match_that_lost_its_letters_gives_way_to_its_intact_copy():
+    stripped = {**text_row(5470091, 230.0, _as_lrclib_drops_them(ANTHEM)), "artistName": "Kayah"}
+    intact = {**text_row(10910419, 229.93, ANTHEM), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=stripped, searches={"Kayah": [stripped, intact]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert found["lrclib_id"] == 10910419
+    assert "Złączym się z narodem." in found["synced"]
+    assert found["timing"] == "exact"
+    assert ids(found["others"]) == [5470091]
+
+
+def test_an_intact_copy_of_another_length_does_not_replace_one_the_tracks_length():
+    stripped = {**text_row(1, 230.0, _as_lrclib_drops_them(ANTHEM)), "artistName": "Kayah"}
+    intact = {**text_row(2, 260.0, ANTHEM), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=stripped, searches={"Kayah": [stripped, intact]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert found["lrclib_id"] == 1, "its timing is the track's; the other's is not"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ANTHEM,
+        "[00:01.00]Группа крови на рукаве",
+        "[00:01.00]夢ならばどれほどよかったでしょう",
+        "[00:01.00]Ngày ấy, anh đã đi xa",
+        "[00:01.00]Ich weiß, dass Mädchen über Grüße lächeln",
+        "[00:01.00]Coração, não há razão",
+        "[00:01.00]Çok güzel şarkı söylüyorsun",
+    ],
+)
+def test_every_script_survives_the_file_byte_for_byte(tmp_path: Path, text):
+    job = Job(id="abcdefabc399")
+    entry = {**_found(), "synced": text, "plain": ll._LRC_TAGS.sub("", text), "others": []}
+    line = text.splitlines()[0].split("]", 1)[1]
+    entry["track"] = entry["artist"] = line
+    assert write_lyrics(job, tmp_path, entry)
+    raw = (tmp_path / "lyrics.json").read_bytes()
+    assert line.encode("utf-8") in raw, "UTF-8, never the locale's codepage"
+    back = read_lyrics(tmp_path)
+    assert back["synced"] == text and back["track"] == entry["track"]
+
+
+def test_a_stripped_copy_with_an_intact_plain_one_gets_its_letters_back():
+    # No synced copy is intact, so the damaged one's timing is kept and its
+    # words are mended from the plain copy, word by word.
+    stripped = {**text_row(1, 230.0, _as_lrclib_drops_them(ANTHEM)), "artistName": "Kayah"}
+    plain = {**text_row(2, 230.0, ANTHEM, synced=False), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=stripped, searches={"Kayah": [stripped, plain]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert found["lrclib_id"] == 1
+    assert found["synced"] == ANTHEM, "every letter back, every stamp where it was"
+    assert found["plain"] == ll._LRC_TAGS.sub("", ANTHEM)
+    assert found["repaired"] == "lrclib"
+    assert found["timing"] == "exact"
+    assert ids(found["others"]) == [2]
+
+
+def test_an_intact_copy_of_another_length_mends_the_one_the_tracks_length():
+    stripped = {**text_row(1, 230.0, _as_lrclib_drops_them(ANTHEM)), "artistName": "Kayah"}
+    intact = {**text_row(2, 260.0, ANTHEM), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=stripped, searches={"Kayah": [stripped, intact]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert (found["lrclib_id"], found["repaired"]) == (1, "lrclib")
+    assert found["synced"] == ANTHEM, "its own stamps, the other's letters"
+
+
+def test_a_copy_nothing_intact_stands_beside_is_left_as_it_is():
+    stripped = {**text_row(1, 230.0, _as_lrclib_drops_them(ANTHEM)), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=stripped, searches={"Kayah": [stripped]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert found["synced"] == _as_lrclib_drops_them(ANTHEM)
+    assert "repaired" not in found
+
+
+def test_an_intact_copy_is_never_marked_repaired():
+    intact = {**text_row(1, 230.0, ANTHEM), "artistName": "Kayah"}
+    lrclib = Lrclib(exact=intact, searches={"Kayah": [intact]})
+    found = kept(query(artist="Kayah", duration=230.0), fetch_json=lrclib)
+    assert found["synced"] == ANTHEM and "repaired" not in found
+    assert set(found) == KEYS
+
+
+@pytest.mark.parametrize(("repaired", "kept_as"), [("lrclib", "lrclib"), ("whisper", "whisper")])
+def test_where_the_letters_came_from_survives_the_file(tmp_path: Path, repaired, kept_as):
+    job = Job(id="abcdefabc398")
+    assert write_lyrics(job, tmp_path, {**_found(), "repaired": repaired})
+    assert read_lyrics(tmp_path)["repaired"] == kept_as
+
+
+@pytest.mark.parametrize("repaired", ["yes", True, 1, None, ""])
+def test_a_repair_mark_that_is_not_one_is_dropped_not_fatal(repaired):
+    entry = clean_lyrics({**_found(), "repaired": repaired})
+    assert entry is not None and "repaired" not in entry

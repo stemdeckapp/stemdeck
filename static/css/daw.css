@@ -4063,6 +4063,23 @@ input, textarea { font-family: inherit; }
 .artist-card .artist-performer .artist-name { font-size: 16px; line-height: 1.25; }
 .artist-performer .artist-other { margin: 0 0 6px; }
 .artist-performer-more:focus { outline: none; }
+/* Official links under a band's or a show's heading: the member chips' pill
+   shape, an icon and a short label each, wrapping on a narrow box. */
+.artist-links {
+  list-style: none; display: flex; flex-wrap: wrap; gap: 6px;
+  margin: -6px 0 12px; padding: 0;
+}
+.artist-performer .artist-links, .artist-work .artist-links { margin: 0 0 10px; }
+.artist-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; font-size: 12px; font-weight: 500; line-height: 1.4;
+  color: var(--fg-2); text-decoration: none; white-space: nowrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+}
+.artist-link svg { flex-shrink: 0; color: var(--muted); }
+.artist-link:hover { color: var(--fg); border-color: var(--accent); }
+.artist-link:hover svg { color: var(--accent); }
+.artist-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* The info button that opens the box: the heart's mirror image, a full-height
    segment on the card's right edge, where the heart used to be. A button of

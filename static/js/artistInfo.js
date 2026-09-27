@@ -167,6 +167,84 @@ function readMoreLink(name, url) {
   return link;
 }
 
+// Official links, each an icon and a short label. Brand names are the same
+// in every language; only "Website" is translated. The icons are drawn here,
+// not fetched, and every path is a constant: nothing from Wikidata reaches
+// them. Stroked in currentColor, so they follow the text in either theme.
+const SVG_NS = "http://www.w3.org/2000/svg";
+const LINK_ICONS = {
+  website: [
+    "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0",
+    "M2 12h20",
+    "M12 2a15.3 15.3 0 0 1 4 10a15.3 15.3 0 0 1-4 10a15.3 15.3 0 0 1-4-10a15.3 15.3 0 0 1 4-10z",
+  ],
+  instagram: [
+    "M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5z",
+    "M16 11.37A4 4 0 1 1 12.63 8A4 4 0 0 1 16 11.37z",
+    "M17.5 6.5h.01",
+  ],
+  spotify: [
+    "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0",
+    "M6.8 9.4c3.5-1.1 7.3-.8 10.4.9",
+    "M7.5 12.6c2.9-.8 5.9-.5 8.4.8",
+    "M8.2 15.6c2.2-.5 4.4-.3 6.3.6",
+  ],
+  appleMusic: [
+    "M9 18V5l12-2v13",
+    "M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
+    "M15 16a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
+  ],
+};
+const LINK_LABELS = {
+  website: () => t("artist.links.website"),
+  instagram: () => "Instagram",
+  spotify: () => "Spotify",
+  appleMusic: () => "Apple Music",
+};
+
+function linkIcon(kind) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const d of LINK_ICONS[kind]) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+// The row under a band's or a show's heading, or null when it has none, so
+// no empty row is left behind. Opened outside the app as readMoreLink is.
+// The URLs were checked and built in artistLookup.js; this only accepts
+// http(s) again, so nothing else can ever become a link here.
+function officialLinksRow(links, name) {
+  const usable = (links || []).filter((link) => LINK_ICONS[link?.kind] && /^https?:\/\//i.test(link.url || ""));
+  if (!usable.length) return null;
+  const list = el("ul", "artist-links");
+  list.setAttribute("aria-label", t("artist.links.aria", { name }));
+  for (const { kind, url } of usable) {
+    const link = el("a", `artist-link artist-link-${kind}`);
+    link.setAttribute("href", url);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.dataset.kind = kind;
+    link.append(linkIcon(kind), el("span", "", LINK_LABELS[kind]()));
+    const item = el("li");
+    item.append(link);
+    list.append(item);
+  }
+  return list;
+}
+
 // Names in the reader's language's own list style ("A, B and C").
 function nameListText(names) {
   try {
@@ -200,6 +278,8 @@ function workSection(work, { lead = false } = {}) {
   if (work.description) titles.append(el("p", "artist-desc", work.description));
   head.append(titles);
   box.append(head);
+  const links = officialLinksRow(work.links, work.name);
+  if (links) box.append(links);
 
   if (work.synopsis?.length) {
     const prose = el("div", "artist-history artist-work-synopsis");
@@ -265,6 +345,8 @@ function bandHead(artist, { compact = false } = {}) {
 function performerSection(artist, work) {
   const box = el("section", "artist-section artist-performer");
   box.append(el("h3", "artist-section-title", t("artist.performer")), bandHead(artist, { compact: true }));
+  const links = officialLinksRow(artist.links, artist.name);
+  if (links) box.append(links);
   if (!searchShown) box.append(searchLink("artist.notThisPerformer"));
   const details = bandDetails(artist);
   const url = artist.articleUrl && artist.articleUrl !== work?.articleUrl ? artist.articleUrl : "";
@@ -311,6 +393,8 @@ function render(artist, work = null) {
     // Under the song, the band starts a section of its own.
     if (song) head.classList.add("artist-band-head");
     parts.push(head);
+    const links = officialLinksRow(artist.links, artist.name);
+    if (links) parts.push(links);
     // Under the name, where a wrong band is noticed: the way back to the field.
     if (!searchShown) parts.push(searchLink("artist.notThisBand"));
     parts.push(...bandDetails(artist));
@@ -423,11 +507,21 @@ async function search(name, { id = "", typed = false } = {}) {
     showStatus(t("artist.loading", { name: query || trackWork.name }), "loading");
   }
   try {
+    // A band that cannot be reached must not take the work down with it: the
+    // work is shown on its own and the band is asked for again next time.
+    let bandError = null;
     const [artist, work] = await Promise.all([
-      query || id ? bandAnswer(query, id, lang, controller.signal) : null,
+      query || id
+        ? bandAnswer(query, id, lang, controller.signal).catch((err) => {
+            bandError = err;
+            return null;
+          })
+        : null,
       loadWork(trackWork, lang, controller.signal),
     ]);
-    if (controller.signal.aborted) return;
+    const timedOut = controller.signal.reason?.message === "timeout";
+    if (controller.signal.aborted && !timedOut) return;
+    if (bandError && !(work && !typed)) throw bandError;
     if (artist) render(artist, work);
     else if (work && !typed) render(null, work);
     else notFound();

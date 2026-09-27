@@ -34,6 +34,7 @@ import {
   wordTimings,
   songFromTitle,
   fromServerLyrics,
+  belongsTo,
 } from "./lyricsLookup.js";
 
 // One store entry per track rather than a field in the library store: a song's
@@ -175,7 +176,8 @@ function show(entry, others = []) {
     bodyEl.classList.add("synced");
     if (lines.length) loadEnvelope(shownTrackId);
   } else if (entry.plain) {
-    for (const text of entry.plain.split(/\r?\n/)) bodyEl.append(el("p", "lyrics-text", text || " "));
+    // Composed, as parseLrc does for synced lines.
+    for (const text of entry.plain.normalize("NFC").split(/\r?\n/)) bodyEl.append(el("p", "lyrics-text", text || " "));
   }
   bodyEl.scrollTop = 0;
 }
@@ -288,9 +290,11 @@ function lookAgainButton() {
 }
 
 /**
- * Look the open track up on LRCLIB by what it is known to be. A version the
- * same length as the track is kept straight away; otherwise the versions are
- * offered to pick from; with none, it says so. What it found is remembered for
+ * Look the open track up on LRCLIB by what it is known to be. Only versions of
+ * this song by this artist count (belongsTo): LRCLIB's search also answers with
+ * other artists' songs, and no lyrics beat another song's. One the same length
+ * as the track is kept straight away; otherwise they are offered to pick from;
+ * with none, it says so. What it found is remembered for
  * the session, so opening the tab again does not ask again. A failed
  * connection is not, so the next opening tries again.
  */
@@ -300,7 +304,8 @@ async function lookUp(info, { artist, song }) {
   searchController = controller;
   setStatus(t("lyrics.loading", { song }), "loading");
   try {
-    const matches = await searchLyrics({ artist, song, duration: info.duration }, { signal: controller.signal });
+    const found = await searchLyrics({ artist, song, duration: info.duration }, { signal: controller.signal });
+    const matches = found.filter((m) => belongsTo(m, { artist, song }));
     if (controller.signal.aborted || getCurrentTrackInfo()?.id !== info.id) return;
     const best = matches[0];
     const sameLength = Boolean(best) && info.duration > 0 && best.duration > 0

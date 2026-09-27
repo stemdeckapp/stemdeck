@@ -58,7 +58,7 @@ test.describe("AcoustID key", () => {
       page.locator(".set-acoustid-save").click(),
     ]);
     expect(await response.text()).not.toContain(KEY);
-    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in 34Ed is saved.");
+    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in Ed is saved.");
     await expect(input).toHaveValue("");
     await expect(page.locator(".set-acoustid-clear")).toBeEnabled();
 
@@ -68,7 +68,7 @@ test.describe("AcoustID key", () => {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
-    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in 34Ed is saved.");
+    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in Ed is saved.");
     await expect(page.locator(".set-acoustid-key")).toHaveValue("");
   });
 
@@ -88,7 +88,7 @@ test.describe("AcoustID key", () => {
   test("Clear removes the key", async ({ page }) => {
     await page.request.post("/api/settings", { data: { acoustid_api_key: KEY } });
     await openSettings(page);
-    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in 34Ed is saved.");
+    await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in Ed is saved.");
     await page.locator(".set-acoustid-clear").click();
     await expect(page.locator(".acoustid-key-msg")).toHaveText("No key saved.");
     await expect(page.locator(".set-acoustid-clear")).toBeDisabled();

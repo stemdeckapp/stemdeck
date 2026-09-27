@@ -61,7 +61,7 @@ def _isolate_registry():
 def test_unset_by_default(client):
     data = client.get("/api/settings").json()
     assert data["acoustid_api_key_set"] is False
-    assert data["acoustid_api_key_last4"] is None
+    assert data["acoustid_api_key_tail"] is None
     assert "acoustid_api_key" not in data
 
 
@@ -70,11 +70,11 @@ def test_the_key_is_saved_and_never_handed_back(client, caplog):
     r = client.post("/api/settings", json={"acoustid_api_key": f"  {KEY}  "})
     assert r.status_code == 200
     assert r.json()["acoustid_api_key_set"] is True
-    assert r.json()["acoustid_api_key_last4"] == "Vu7T"
+    assert r.json()["acoustid_api_key_tail"] == "7T"
     assert KEY not in r.text
     got = client.get("/api/settings")
     assert KEY not in got.text
-    assert got.json()["acoustid_api_key_last4"] == KEY[-4:]
+    assert got.json()["acoustid_api_key_tail"] == KEY[-2:]
     assert _settings.get_acoustid_api_key() == KEY
     assert KEY not in caplog.text
 
@@ -94,7 +94,9 @@ def test_clearing_the_key(client, value):
     assert _settings.get_acoustid_api_key() is None
 
 
-@pytest.mark.parametrize("value", ["has space s", "q1", "x" * 65, "<script>", 12345, ["a"]])
+@pytest.mark.parametrize(
+    "value", ["has space s", "q1", "short7x", "x" * 65, "<script>", 12345, ["a"]]
+)
 def test_a_key_that_cannot_be_one_is_refused_without_echoing_it(client, value):
     _settings.set_acoustid_api_key(KEY)
     r = client.post("/api/settings", json={"acoustid_api_key": value})

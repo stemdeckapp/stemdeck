@@ -340,3 +340,20 @@ def test_the_backfill_moves_a_version_of_another_length_onto_the_track(client, m
         assert client.post(f"/api/jobs/{job.id}/audio-tags").json()["has_lyrics"] is True
     assert align.call_count == 1
     assert json.loads(_lyrics_file(job).read_text(encoding="utf-8"))["timing"] == "unverified"
+
+
+def test_lyrics_in_polish_are_served_as_utf8(client):
+    job = _done_job(has_lyrics=True)
+    polish = {
+        **LYRICS,
+        "track": "Małomiasteczkowy",
+        "artist": "Dawid Podsiadło",
+        "synced": "[00:11.56]Małomiasteczkowa twarz\n[00:31.72]Śpiewałem głośno pod prysznicem",
+        "plain": "Małomiasteczkowa twarz\nŚpiewałem głośno pod prysznicem",
+    }
+    lyrics_file = _lyrics_file(job)
+    lyrics_file.write_text(json.dumps(polish, ensure_ascii=False), encoding="utf-8")
+    r = client.get(f"/api/jobs/{job.id}/lyrics")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert json.loads(r.content.decode("utf-8")) == polish

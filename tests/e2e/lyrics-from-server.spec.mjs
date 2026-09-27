@@ -166,6 +166,37 @@ test.describe("lyrics from the server", () => {
     await expect(page.locator(".lyrics-tools .lyrics-link")).toHaveText(["Remove lyrics"]);
   });
 
+  test("Polish is shown letter for letter, a word to a span, even when it came decomposed", async ({ page }) => {
+    // The second line arrives as a Mac can type it: each accent a mark of its own.
+    const polish = {
+      ...version(203, {
+        track: "Małomiasteczkowy",
+        artist: "Dawid Podsiadło",
+        album: "Małomiasteczkowy",
+        synced: `[00:00.50]Małomiasteczkowa głowa\n[00:02.00]${"Śpiewałem głośno pod prysznicem".normalize("NFD")}\n[00:04.00]Żółć, gęś, źdźbło`,
+        plain: "",
+      }),
+      others: [],
+    };
+    await setUp(page, { server: polish });
+    await expect(page.locator(".lyrics-line")).toHaveText([
+      "Małomiasteczkowa głowa",
+      "Śpiewałem głośno pod prysznicem",
+      "Żółć, gęś, źdźbło",
+    ]);
+    await expect(page.locator(".lyrics-match-title")).toHaveText("Małomiasteczkowy");
+    await expect(page.locator(".lyrics-match-meta")).toHaveText("Dawid Podsiadło · Małomiasteczkowy");
+    const spans = await page.locator(".lyrics-line").nth(1).locator(".lw").allTextContents();
+    expect(spans).toEqual(["Śpiewałem ", "głośno ", "pod ", "prysznicem"]);
+    expect(spans.join("").length).toBe(31); // 33 decomposed
+  });
+
+  test("plain Polish lyrics are shown letter for letter", async ({ page }) => {
+    const plain = { ...version(204, { synced: "", plain: "Źdźbło trawy\nZażółć gęślą jaźń".normalize("NFD") }), others: [] };
+    await setUp(page, { server: plain });
+    await expect(page.locator(".lyrics-text")).toHaveText(["Źdźbło trawy", "Zażółć gęślą jaźń"]);
+  });
+
   test("versions the server kept none of are offered to pick from, with nothing asked of LRCLIB", async ({ page }) => {
     const { lrclib } = await setUp(page, { server: { detail: "no lyrics", others: SERVER.others } });
     await expect(page.locator("#lyricsStatus")).toContainText("Pick the right one");

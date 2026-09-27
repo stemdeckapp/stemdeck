@@ -9,7 +9,8 @@ it clear of the Demucs worker's own allocation on the same card.
 
 Output contract: exactly one compact JSON line on stdout,
 ``{"language", "language_probability", "model", "device", "segments",
-"peak_vram_mb"}``, each segment ``{"start", "end", "text", "words"}`` and each
+"peak_vram_mb"}`` (and ``"skipped": "language"``, with no segments, when
+``--languages`` did not include the one detected), each segment ``{"start", "end", "text", "words"}`` and each
 word ``{"start", "end", "word", "probability"}``. Everything else, including
 third-party chatter and Whisper's own progress bars, goes to stderr, where
 the parent reads ``@@PHASE@@<name>`` lines and percentages for the stage text.
@@ -42,6 +43,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-free-mb", type=int, required=True)
     parser.add_argument("--small-min-free-mb", type=int, required=True)
     parser.add_argument("--silence-sec", type=float, required=True)
+    # Transcribe only a song in one of these languages (comma separated),
+    # detected with at least this probability; anything else answers with no
+    # segments and "skipped": "language". Used to mend lyrics that lost their
+    # accents (transcribe.py), which only a language written with them can.
+    parser.add_argument("--languages", default="")
+    parser.add_argument("--min-language-probability", type=float, default=0.0)
     return parser
 
 
@@ -160,6 +167,20 @@ def transcribe(args: argparse.Namespace) -> dict:
         language = max(probs, key=probs.get)
     else:  # an English-only model set through the environment
         language, probs = "en", {"en": 1.0}
+
+    wanted = {code for code in args.languages.split(",") if code}
+    if wanted and (
+        language not in wanted or float(probs[language]) < args.min_language_probability
+    ):
+        return {
+            "language": language,
+            "language_probability": round(float(probs[language]), 4),
+            "model": model_name,
+            "device": device,
+            "segments": [],
+            "skipped": "language",
+            "peak_vram_mb": None,
+        }
 
     _phase("transcribe")
     result = model.transcribe(

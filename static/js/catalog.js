@@ -3799,7 +3799,7 @@ async function wireAcoustidSetting(overlay) {
     isSet = d?.acoustid_api_key_set === true;
     msg.classList.remove("error");
     msg.textContent = isSet
-      ? i18nT("settings.acoustid.saved", { last4: d.acoustid_api_key_last4 || "" })
+      ? i18nT("settings.acoustid.saved", { tail: d.acoustid_api_key_tail || "" })
       : i18nT("settings.acoustid.none");
   };
   const syncSave = () => { saveBtn.disabled = !input.value.trim(); };

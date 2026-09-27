@@ -652,8 +652,10 @@ def transcribe_lyrics_enabled(device: str | None) -> bool:
 #
 # A secret in the sense that it is the user's: never logged, and never handed
 # back by the API. /api/settings publishes only whether one is set and its
-# last four characters, so the field can show which key it holds.
-_ACOUSTID_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+# last two characters, so the field can show which key it holds. Real keys
+# are about ten characters, so two is a hint and not a useful part of one.
+_ACOUSTID_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+ACOUSTID_KEY_HINT_CHARS = 2
 
 
 def get_acoustid_api_key() -> str | None:
@@ -672,13 +674,13 @@ def set_acoustid_api_key(value: str | None) -> str | None:
             return None
         key = str(value).strip()
         if not _ACOUSTID_KEY_RE.match(key):
-            raise ValueError("acoustid_api_key must be 4 to 64 letters, digits, - or _")
+            raise ValueError("acoustid_api_key must be 8 to 64 letters, digits, - or _")
         _ensure()["acoustid_api_key"] = key
         _save()
         return key
 
 
 def acoustid_api_key_hint() -> str | None:
-    """The last four characters of the key, for the Settings field, or None."""
+    """The last two characters of the key, for the Settings field, or None."""
     key = get_acoustid_api_key()
-    return key[-4:] if key else None
+    return key[-ACOUSTID_KEY_HINT_CHARS:] if key else None

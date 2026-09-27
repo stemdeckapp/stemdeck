@@ -375,7 +375,7 @@ def _settings_payload() -> dict[str, object]:
         # Never the key itself: whether one is set, and its last four
         # characters so the field can show which one.
         "acoustid_api_key_set": acoustid_api_key_hint() is not None,
-        "acoustid_api_key_last4": acoustid_api_key_hint(),
+        "acoustid_api_key_tail": acoustid_api_key_hint(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
         # select; the resolved value shows what jobs will actually run on;

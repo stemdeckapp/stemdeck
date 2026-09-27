@@ -48,6 +48,9 @@ const ROWS = [
 
 const TAGS = { audioTags: { artist: "Fixture Band", title: "Fixture Song" } };
 
+// The first row as another artist's or another song's, for a search that asks for those.
+const rowAs = (artistName, trackName) => [{ ...ROWS[0], artistName, trackName }];
+
 async function stubLrclib(page, { rows = ROWS, offline = false } = {}) {
   const asked = [];
   await page.route(LRCLIB, async (route) => {
@@ -180,7 +183,7 @@ test.describe("lyrics tab", () => {
   });
 
   test("a saved band is looked up with the song's name taken from the title", async ({ page }) => {
-    const asked = await stubLrclib(page);
+    const asked = await stubLrclib(page, { rows: rowAs("Dream Theater", "E2E Fixture Track") });
     await seedWith(page, { artist: { id: "Q162586", name: "Dream Theater", englishName: "Dream Theater" } });
     await open(page);
     await openTrack(page);
@@ -409,7 +412,7 @@ test.describe("lyrics tab", () => {
   });
 
   test("a tagged artist with no tagged title is looked up with the song from the title", async ({ page }) => {
-    const asked = await stubLrclib(page);
+    const asked = await stubLrclib(page, { rows: rowAs("Fixture Band", "E2E Fixture Track") });
     await seedWith(page, { audioTags: { artist: "Fixture Band" } });
     await open(page);
     await openTrack(page);
@@ -418,5 +421,16 @@ test.describe("lyrics tab", () => {
     const url = new URL(asked[0]);
     expect(url.searchParams.get("artist_name")).toBe("Fixture Band");
     expect(url.searchParams.get("track_name")).toBe("E2E Fixture Track");
+  });
+
+  test("another artist's song of the same name is not this track's lyrics", async ({ page }) => {
+    await stubLrclib(page, { rows: [...rowAs("Someone Else", "Fixture Song"), ...rowAs("Fixture Band", "Another Song")] });
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-status")).toHaveText("No lyrics found for “Fixture Song”.");
+    await expect(page.locator(".lyrics-line")).toHaveCount(0);
+    await expect(page.locator(".lyrics-version")).toHaveCount(0);
   });
 });

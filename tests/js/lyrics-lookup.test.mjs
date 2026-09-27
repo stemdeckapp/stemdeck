@@ -17,6 +17,10 @@ import {
   syllables,
   songFromTitle,
   fromServerLyrics,
+  strippedCopy,
+  belongsTo,
+  sameArtist,
+  sameSong,
 } from "../../static/js/lyricsLookup.js";
 
 let pass = 0,
@@ -304,6 +308,112 @@ check(
     && fromServerLyrics({ detail: "no lyrics" }) === null
     && fromServerLyrics(version(3, "lrclib", { synced: "", plain: "" })) === null,
 );
+
+// ── letters outside ASCII ──
+// LRCLIB holds some songs as copies that lost those letters on the way in
+// (Kayah's "Nie ma, nie ma ciebie": eleven copies read "Niewinnoci biaym
+// niegiem", one "Niewinnością białym śniegiem"). The anthem stands in for a
+// song, being in the public domain. The same cases as tests/test_lyrics_lookup.py.
+const ANTHEM = [
+  "[00:01.00]Jeszcze Polska nie zginęła,",
+  "[00:04.00]Kiedy my żyjemy.",
+  "[00:07.00]Co nam obca przemoc wzięła,",
+  "[00:10.00]Szablą odbierzemy.",
+  "[00:13.00]Marsz, marsz, Dąbrowski,",
+  "[00:16.00]Z ziemi włoskiej do Polski.",
+  "[00:19.00]Za twoim przewodem",
+  "[00:22.00]Złączym się z narodem.",
+].join("\n");
+const drop = (s) => s.replace(/[^\p{ASCII}]/gu, "");
+const fold = (s) => drop(s.normalize("NFD"));
+const asLrclibDropsThem = (s) => drop(s.replaceAll("ę", "e"));
+const textRow = (id, duration, text, synced = true) => ({
+  id,
+  trackName: `T${id}`,
+  artistName: "A",
+  albumName: "",
+  duration,
+  instrumental: false,
+  syncedLyrics: synced ? text : null,
+  plainLyrics: text.replace(/\[[^\]\n]*\]/g, ""),
+});
+const lyricsOf = (text) => ({ synced: text, plain: "" });
+
+for (const [name, strip] of [["dropped", drop], ["folded", fold], ["as LRCLIB drops them", asLrclibDropsThem]]) {
+  check(`a copy whose Polish letters were ${name} is told from its source`, strippedCopy(lyricsOf(strip(ANTHEM)), lyricsOf(ANTHEM)));
+}
+check("the intact copy is not a stripped one", !strippedCopy(lyricsOf(ANTHEM), lyricsOf(asLrclibDropsThem(ANTHEM))));
+check("a copy is not a stripped copy of itself", !strippedCopy(lyricsOf(ANTHEM), lyricsOf(ANTHEM)));
+for (const [intact, other] of [
+  ["[00:01.00]Группа крови на рукаве, мой порядковый номер на рукаве", "[00:01.00]Gruppa krovi na rukave, moy poryadkovyy nomer na rukave"],
+  ["[00:01.00]夢ならばどれほどよかったでしょう 未だにあなたのことを夢にみる", "[00:01.00]Yume naraba dore hodo yokatta deshou imada ni anata no koto wo yume ni miru"],
+  ["[00:01.00]A café, a naïve smile, and the rest in plain English words", "[00:01.00]A cafe, a naive smile, and the rest in plain English words"],
+  [ANTHEM, "[00:01.00]Jeszcze nic nie jest stracone, moja mila, gdy jestem z toba"],
+]) {
+  check(
+    `not a stripped copy: ${other.slice(10, 30)}`,
+    !strippedCopy(lyricsOf(other), lyricsOf(intact)) && !strippedCopy(lyricsOf(intact), lyricsOf(other)),
+  );
+}
+{
+  const rows = [
+    textRow(5470091, 230, asLrclibDropsThem(ANTHEM)),
+    textRow(28700266, 230, asLrclibDropsThem(ANTHEM)),
+    textRow(10910419, 229.93, ANTHEM),
+    textRow(4291789, 230, ANTHEM, false),
+  ];
+  const want = [10910419, 5470091, 28700266, 4291789];
+  check("the intact copy ranks before stripped ones LRCLIB listed first", same(rankMatches(rows, 230).map((m) => m.id), want));
+  check("and with the length unknown", same(rankMatches(rows).map((m) => m.id), want));
+  const stripped = textRow(1, 230, asLrclibDropsThem(ANTHEM));
+  check(
+    "synced still beats plain, and length beats both",
+    same(rankMatches([stripped, textRow(2, 230, ANTHEM, false)], 230).map((m) => m.id), [1, 2])
+      && same(rankMatches([stripped, textRow(3, 250, ANTHEM)], 230).map((m) => m.id), [1, 3]),
+  );
+}
+
+// Polish through parsing and the wipe: nothing dropped, nothing split.
+{
+  const polish = parseLrc("[00:31.72]<00:31.72>Śpiewałem <00:32.40>głośno <00:32.90>pod <00:33.10>prysznicem\n[00:33.97]Ten mój małomiasteczkowy hit");
+  check("Polish lines keep every letter", polish[0].text === "Śpiewałem głośno pod prysznicem" && polish[1].text === "Ten mój małomiasteczkowy hit");
+  check("Polish word stamps keep every letter", same(polish[0].words.map((w) => w.text.trim()), ["Śpiewałem", "głośno", "pod", "prysznicem"]));
+  const words = wordTimings(polish[1], 36.76);
+  check("the wipe splits Polish only at spaces", same(words.map((w) => w.text), ["Ten ", "mój ", "małomiasteczkowy ", "hit"]), JSON.stringify(words.map((w) => w.text)));
+  check("a Polish word is weighed by its vowels", syllables("małomiasteczkowy") === 6 && syllables("żółć") === 1 && syllables("gęś") === 1);
+  // Decomposed text, as a Mac can type it: one letter per accent, not two.
+  const decomposed = parseLrc("[00:01.00]Śpiewałem głośno".normalize("NFD"));
+  check("decomposed text is composed", decomposed[0].text === "Śpiewałem głośno" && decomposed[0].text.length === 16);
+  const kana = wordTimings({ time: 0, text: "が夢" + String.fromCodePoint(0x845b, 0xe0100) }, 4);
+  check(
+    "an unspaced line splits into characters with their marks",
+    same(kana.map((w) => w.text), ["が", "夢", String.fromCodePoint(0x845b, 0xe0100)]),
+    JSON.stringify(kana.map((w) => w.text)),
+  );
+  const cyrillic = wordTimings(parseLrc("[00:01.00]Группа крови на рукаве")[0], 5);
+  check("Cyrillic words stay whole", same(cyrillic.map((w) => w.text), ["Группа ", "крови ", "на ", "рукаве"]));
+}
+
+// Whose song a version is: only this song by this artist is ever kept.
+{
+  const ask = { artist: "Keala Settle & The Greatest Showman Ensemble", song: "This Is Me" };
+  const row = (artist, track) => ({ artist, track });
+  check("the same artist and song belong", belongsTo(row("Keala Settle & The Greatest Showman Ensemble", "This Is Me"), ask));
+  check("one credited artist belongs", belongsTo(row("Keala Settle", "This Is Me"), ask));
+  check("the cast filed as a run of the name belongs", belongsTo(row("The Greatest Showman Ensemble", "This Is Me"), ask));
+  check("a song tail belongs", belongsTo(row("Keala Settle", "This Is Me - From The Greatest Showman"), ask));
+  check("brackets and featuring are ignored", sameSong("This Is Me (feat. Someone) [Live]", "This Is Me"));
+  check("another artist's song of that name does not", !belongsTo(row("Kesha", "This Is Me"), ask));
+  check("the artist's other song does not", !belongsTo(row("Keala Settle", "This Is Not Me"), ask));
+  check("two different tails are two songs", !sameSong("Part I - Dawn", "Part I - Dusk"));
+  check("no artist known, nothing belongs", !belongsTo(row("Keala Settle", "This Is Me"), { artist: "", song: "This Is Me" }));
+  check("a show's name counts when given", belongsTo(row("Wicked", "Popular"), { artist: "Kristin Chenoweth", song: "Popular", names: ["Wicked"] }));
+  check("a show's name does not count unless given", !belongsTo(row("Wicked", "Popular"), { artist: "Kristin Chenoweth", song: "Popular" }));
+  check("case, accents and a leading The do not matter", sameArtist("the beatles", ["The Beatles"]) && sameArtist("Beyonce", ["Beyoncé"]) && sameArtist("Beatles", ["The Beatles"]));
+  check("Polish names compare letter for letter", sameArtist("Dawid Podsiadło", ["Dawid Podsiadło"]) && !sameArtist("Dawid Podsiadło", ["Dawid Kwiatkowski"]));
+  check("a two-letter credit names nobody", !sameArtist("DJ", ["DJ & Someone Else"]));
+  check("one shared word is not a shared name", !sameArtist("Pink", ["Pink Floyd"]));
+}
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
