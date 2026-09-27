@@ -26,6 +26,7 @@ from app.api.router import router
 from app.core import tls_listener
 from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddleware
 from app.core.config import (
+    ACOUSTID_CHECK_KEY,
     DEMUCS_MODEL,
     FFMPEG_BIN,
     HTTPS_PORT,
@@ -51,6 +52,7 @@ from app.core.settings import (
     DURATION_MAX_SEC,
     DURATION_MIN_SEC,
     acoustid_api_key_hint,
+    acoustid_key_format_ok,
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
@@ -414,6 +416,11 @@ def get_settings(request: Request) -> dict[str, object]:
     return {**_settings_payload(), "port": port, "lan_addresses": addresses}
 
 
+# The detail for a key AcoustID refuses, which the Settings field tells apart
+# from a key of the wrong shape to say which key it wants.
+ACOUSTID_KEY_REFUSED = "AcoustID does not accept this key"
+
+
 @app.post("/api/settings", tags=["settings"])
 async def update_settings(request: Request) -> dict[str, object]:
     """Update runtime settings. Reachable from the host machine always; from a
@@ -459,6 +466,14 @@ async def update_settings(request: Request) -> dict[str, object]:
         value = body["acoustid_api_key"]
         if value is not None and not isinstance(value, str):
             raise HTTPException(status_code=422, detail="invalid AcoustID key") from None
+        key = (value or "").strip()
+        if key and ACOUSTID_CHECK_KEY and acoustid_key_format_ok(key):
+            # Tried once before it is kept: a key AcoustID refuses would
+            # otherwise fail every import without a word.
+            from app.pipeline.identify import acoustid_key_works
+
+            if await asyncio.to_thread(acoustid_key_works, key) is False:
+                raise HTTPException(status_code=422, detail=ACOUSTID_KEY_REFUSED) from None
         try:
             set_acoustid_api_key(value)
         except ValueError:

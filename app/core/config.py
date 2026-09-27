@@ -378,6 +378,11 @@ ARTIST_LOOKUP_MAX_BYTES = 8 * 1024 * 1024
 # key. Only runs when the user set one in Settings. TIMEOUT_FINGERPRINT bounds
 # either one.
 ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
+# A key is tried once when it is saved (identify.acoustid_key_works), so a key
+# AcoustID refuses is caught in Settings rather than failing every import in
+# silence. 0 turns the check off, for the browser tests, which must never
+# reach AcoustID.
+ACOUSTID_CHECK_KEY = _env_int("STEMDECK_ACOUSTID_CHECK_KEY", 1) != 0
 FINGERPRINT_LENGTH_SEC = 120
 # Decoding two minutes of audio for the fingerprint takes about a second; past
 # this the fingerprint is abandoned and identification goes on without it.

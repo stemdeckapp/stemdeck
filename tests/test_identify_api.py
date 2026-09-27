@@ -107,6 +107,56 @@ def test_a_key_that_cannot_be_one_is_refused_without_echoing_it(client, value):
     assert _settings.get_acoustid_api_key() == KEY, "the old key stays"
 
 
+# ── the key is tried when it is saved ──
+
+
+def _acoustid_answers(monkeypatch, code):
+    """AcoustID refusing every lookup with ``code`` (4: the key, 3: the
+    fingerprint), recording what it was sent."""
+    sent = []
+
+    def refuse(form):
+        sent.append(dict(form))
+        raise ident.AcoustIDRefused(code, f"AcoustID refused the lookup (400): code {code}")
+
+    monkeypatch.setattr(ident, "_acoustid_request", refuse)
+    return sent
+
+
+def test_a_key_acoustid_refuses_is_not_saved(client, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    _settings.set_acoustid_api_key(KEY)
+    sent = _acoustid_answers(monkeypatch, 4)
+    other = "Us3rK3yXyz"
+    r = client.post("/api/settings", json={"acoustid_api_key": other})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "AcoustID does not accept this key"
+    assert other not in r.text and other not in caplog.text
+    assert _settings.get_acoustid_api_key() == KEY, "the old key stays"
+    assert [f["client"] for f in sent] == [other], "asked once, as the client key"
+
+
+def test_a_key_acoustid_knows_is_saved(client, monkeypatch):
+    _acoustid_answers(monkeypatch, 3)  # the key is fine; the fingerprint is not one
+    r = client.post("/api/settings", json={"acoustid_api_key": KEY})
+    assert r.status_code == 200
+    assert _settings.get_acoustid_api_key() == KEY
+
+
+def test_a_key_that_cannot_be_checked_is_kept_on_trust(client):
+    # conftest answers every AcoustID request as offline.
+    r = client.post("/api/settings", json={"acoustid_api_key": KEY})
+    assert r.status_code == 200
+    assert _settings.get_acoustid_api_key() == KEY
+
+
+def test_the_check_can_be_turned_off(client, monkeypatch):
+    sent = _acoustid_answers(monkeypatch, 4)
+    monkeypatch.setattr("app.main.ACOUSTID_CHECK_KEY", False)
+    r = client.post("/api/settings", json={"acoustid_api_key": KEY})
+    assert r.status_code == 200 and sent == []
+
+
 # ── the backfill ──
 
 

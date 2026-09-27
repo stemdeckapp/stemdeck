@@ -3819,7 +3819,11 @@ async function wireAcoustidSetting(overlay) {
       } else {
         // The server's detail is English; the translated line reads right in
         // every language. The typed key stays in the field to be corrected.
-        msg.textContent = i18nT("settings.acoustid.invalid");
+        // A key AcoustID itself refused is almost always the user key from
+        // the profile page, which only submits fingerprints: say which to use.
+        const detail = (await r.json().catch(() => null))?.detail;
+        const refused = detail === "AcoustID does not accept this key";
+        msg.textContent = i18nT(refused ? "settings.acoustid.refused" : "settings.acoustid.invalid");
         msg.classList.add("error");
       }
     } catch (err) {

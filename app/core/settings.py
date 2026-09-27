@@ -668,6 +668,11 @@ _ACOUSTID_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 ACOUSTID_KEY_HINT_CHARS = 2
 
 
+def acoustid_key_format_ok(key: str) -> bool:
+    """Whether ``key`` has the shape of an AcoustID key at all."""
+    return bool(_ACOUSTID_KEY_RE.match(key))
+
+
 def get_acoustid_api_key() -> str | None:
     with _LOCK:
         value = _ensure().get("acoustid_api_key")

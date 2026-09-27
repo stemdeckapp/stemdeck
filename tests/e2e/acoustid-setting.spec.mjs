@@ -85,6 +85,22 @@ test.describe("AcoustID key", () => {
     expect((await settings(page)).acoustid_api_key_set).toBe(false);
   });
 
+  test("a key AcoustID refuses says which key to use instead", async ({ page }) => {
+    // The server tries a key on AcoustID before keeping it; the browser tests
+    // never reach AcoustID, so its refusal is answered here.
+    await page.route("**/api/settings", (route) => (route.request().method() === "POST"
+      ? route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ detail: "AcoustID does not accept this key" }) })
+      : route.fallback()));
+    await openSettings(page);
+    await page.locator(".set-acoustid-key").fill(KEY);
+    await page.locator(".set-acoustid-save").click();
+    await expect(page.locator(".acoustid-key-msg")).toHaveText(
+      "AcoustID does not accept this key. Use the key of an application you register at acoustid.org, not the user key on your profile.",
+    );
+    await expect(page.locator(".acoustid-key-msg")).toHaveClass(/error/);
+    await expect(page.locator(".set-acoustid-key")).toHaveValue(KEY);
+  });
+
   test("Clear removes the key", async ({ page }) => {
     await page.request.post("/api/settings", { data: { acoustid_api_key: KEY } });
     await openSettings(page);

@@ -318,6 +318,19 @@ def _wait(
 # ── AcoustID ──
 
 
+class AcoustIDRefused(OSError):
+    """A lookup AcoustID refused, with its error code: 4 is a key it does not
+    know, 3 a fingerprint it cannot read."""
+
+    def __init__(self, code: int | None, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# AcoustID's error code for a key it does not accept.
+_ACOUSTID_BAD_KEY = 4
+
+
 def _acoustid_request(form: dict[str, str]) -> Any:
     """One AcoustID lookup, after waiting for its turn. Raises on any failure.
 
@@ -345,15 +358,40 @@ def _acoustid_request(form: dict[str, str]) -> Any:
     except urllib.error.HTTPError as err:
         # AcoustID answers a refused lookup with 400 and a JSON reason.
         try:
-            reason = json.loads(err.read(64 * 1024)).get("error", {}).get("message")
+            error = json.loads(err.read(64 * 1024)).get("error", {})
+            reason, code = error.get("message"), error.get("code")
         except Exception:
-            reason = None
-        raise OSError(
-            f"AcoustID refused the lookup ({err.code}): {reason or 'no reason'}"
+            reason, code = None, None
+        raise AcoustIDRefused(
+            code if isinstance(code, int) else None,
+            f"AcoustID refused the lookup ({err.code}): {reason or 'no reason'}",
         ) from None
     if len(answer) > IDENTIFY_MAX_BYTES:
         raise ValueError("AcoustID answer too large")
     return json.loads(answer)
+
+
+def acoustid_key_works(key: str) -> bool | None:
+    """Whether AcoustID accepts ``key`` for lookups: True or False, or None
+    when it cannot be asked (offline, AcoustID down), and the key is then
+    kept on trust.
+
+    Asked with a fingerprint that is not one: a key AcoustID knows is refused
+    for the fingerprint, one it does not for the key. The key AcoustID's site
+    shows on a user's profile is for submitting fingerprints, not for looking
+    them up, and is the one people paste; this is what tells them."""
+    form = {"client": key, "duration": "30", "fingerprint": "AQAA", "format": "json"}
+    try:
+        answer = _acoustid_request(form)
+    except AcoustIDRefused as err:
+        return err.code != _ACOUSTID_BAD_KEY
+    except Exception:
+        logger.info("AcoustID could not be asked whether the key works", exc_info=True)
+        return None
+    error = answer.get("error") if isinstance(answer, dict) else None
+    if isinstance(error, dict):
+        return error.get("code") != _ACOUSTID_BAD_KEY
+    return True
 
 
 def best_acoustid_match(

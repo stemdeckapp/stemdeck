@@ -26,6 +26,7 @@ exec env \
     STEMDECK_LOGS_DIR="$WORK_DIR/data/logs" \
     STEMDECK_MODELS_DIR="$WORK_DIR/data/models" \
     STEMDECK_DOWNLOADS_DIR="$WORK_DIR/data/downloads" \
+    STEMDECK_ACOUSTID_CHECK_KEY=0 \
     uv run uvicorn app.main:app \
         --host 127.0.0.1 \
         --port "$PORT" \
