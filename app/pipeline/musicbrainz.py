@@ -1,6 +1,6 @@
 """MusicBrainz, asked by everything in StemDeck that needs it.
 
-Five questions, all read-only:
+These questions, all read-only:
 
 * a recording by its MBID (what AcoustID matched a fingerprint to): its
   credited title and artists, and the release groups it came out on;
@@ -9,6 +9,10 @@ Five questions, all read-only:
 * a recording search by one reading of a track's title (title_parse.py), for
   a track its tags do not name, kept only when the recording's credit and
   release titles account for the title's other words;
+* artists by name, sort name or alias, whatever the script (周杰倫 is also
+  Jay Chou, IU also 아이유), then a song among one artist's recordings: for a
+  title whose words no credit has as written, or a video longer than the
+  album cut;
 * an artist's Wikidata item, from its url relationships, which is how the band
   a recording credits is found without searching for its name;
 * a release group's url relationships (Wikidata, IMDb), which is how the film
@@ -42,9 +46,13 @@ from typing import Any
 from app.core.config import (
     IDENTIFY_DURATION_TOLERANCE_SEC,
     IDENTIFY_MAX_BYTES,
+    IDENTIFY_VIDEO_EXTRA_SEC,
     MUSICBRAINZ_API,
     MUSICBRAINZ_CACHE_DIR,
     MUSICBRAINZ_CACHE_TTL_SEC,
+    MUSICBRAINZ_RETRIES,
+    MUSICBRAINZ_RETRY_BACKOFF_SEC,
+    MUSICBRAINZ_RETRY_MAX_WAIT_SEC,
     MUSICBRAINZ_SEARCH_MIN_SCORE,
     MUSICBRAINZ_USER_AGENT,
     TIMEOUT_IDENTIFY_REQUEST,
@@ -52,7 +60,7 @@ from app.core.config import (
 )
 from app.core.models import MBID_RE, clean_identity
 from app.pipeline import ratelimit, title_parse
-from app.pipeline.artist_lookup import _ssl_context, artist_name_key
+from app.pipeline.artist_lookup import _ssl_context
 from app.pipeline.title_parse import TitleReading
 
 logger = logging.getLogger("stemdeck.identify")
@@ -70,18 +78,34 @@ _PRIMARY_RANK = {"album": 0, "ep": 1, "single": 2}
 _BRACKETS_RE = re.compile(r"\s*[(\[][^)\]]*[)\]]")
 
 
-def _fetch_json(path: str, params: dict[str, str]) -> Any:
+def _retry_wait(err: urllib.error.HTTPError, attempt: int) -> float:
+    """How long to wait before asking again after ``err``: what its
+    Retry-After says when that is a number of seconds, else the backoff for
+    this attempt, capped either way."""
+    backoff = MUSICBRAINZ_RETRY_BACKOFF_SEC * 2**attempt
+    try:
+        asked = float((err.headers or {}).get("Retry-After") or "")
+    except (TypeError, ValueError):
+        asked = backoff
+    return max(0.0, min(asked, MUSICBRAINZ_RETRY_MAX_WAIT_SEC))
+
+
+def _fetch_json(
+    path: str, params: dict[str, str], *, cancelled: Callable[[], bool] = lambda: False
+) -> Any:
     """One MusicBrainz request, after waiting for its turn. Raises on any
     failure, including a turn too far off (ratelimit.RateLimited).
 
-    MusicBrainz answers 503 when it sheds load, even to a client keeping to
-    its rate, so a 503 is asked once more, on the next turn."""
+    MusicBrainz answers 503 (or 429) when it sheds load, even to a client
+    keeping to its rate, so a refused request is asked again after a wait, up
+    to MUSICBRAINZ_RETRIES times, each on a turn of its own. A job cancelled
+    during the wait stops it (ratelimit.RateLimited)."""
     query = urllib.parse.urlencode({**params, "fmt": "json"})
     url = f"{MUSICBRAINZ_API}/{path}?{query}"
     request = urllib.request.Request(
         url, headers={"User-Agent": MUSICBRAINZ_USER_AGENT, "Accept": "application/json"}
     )
-    for attempt in range(2):
+    for attempt in range(MUSICBRAINZ_RETRIES + 1):
         ratelimit.MUSICBRAINZ.wait()
         try:
             # A fixed https base with only a path of our own and a query built
@@ -93,20 +117,37 @@ def _fetch_json(path: str, params: dict[str, str]) -> Any:
                 body = response.read(IDENTIFY_MAX_BYTES + 1)
             break
         except urllib.error.HTTPError as err:
-            if err.code != 503 or attempt:
+            if err.code not in (429, 503) or attempt == MUSICBRAINZ_RETRIES:
                 raise
+            # Slept in short steps, so a cancelled job stops waiting promptly.
+            left = _retry_wait(err, attempt)
+            while left > 0:
+                if cancelled():
+                    raise ratelimit.RateLimited("cancelled while waiting") from None
+                step = min(left, 0.25)
+                _sleep(step)
+                left -= step
     if len(body) > IDENTIFY_MAX_BYTES:
         raise ValueError("MusicBrainz answer too large")
     return json.loads(body)
 
 
+# Replaced by tests, so a retry costs no real time.
+_sleep = time.sleep
+
+
 # ── the cache ──
+
+
+# What is kept, by the lookup it answers: "recording-works" is a recording
+# with its works, asked apart from the recording's own lookup.
+_CACHE_KINDS = ("recording", "artist", "release-group", "recording-works", "work")
 
 
 def _cache_path(kind: str, mbid: str) -> Path | None:
     # Both halves are ours, and the MBID is checked, so the name can never
     # leave the cache directory.
-    if kind not in ("recording", "artist", "release-group") or not MBID_RE.match(mbid):
+    if kind not in _CACHE_KINDS or not MBID_RE.match(mbid):
         return None
     return CACHE_DIR / f"{kind}-{mbid}.json"
 
@@ -335,6 +376,44 @@ def artist_wikidata_id(mbid: str) -> str | None:
     return None
 
 
+# Works asked about for one recording's other titles, at most: a medley
+# performs several.
+_WORKS_MAX = 2
+
+
+def work_titles(recording_mbid: str, *, cancelled: Callable[[], bool] = lambda: False) -> list[str]:
+    """The titles the song a recording performs goes by: each work's title
+    and its aliases (a Korean song's English title, a Japanese one's
+    romanisation), from the cache when they are there. Raises when
+    MusicBrainz cannot be reached."""
+    if not MBID_RE.match(recording_mbid or "") or cancelled():
+        return []
+    data = _cached(
+        "recording-works", recording_mbid, f"recording/{recording_mbid}", {"inc": "work-rels"}
+    )
+    relations = data.get("relations") if isinstance(data, dict) else None
+    titles: list[str] = []
+    works = 0
+    for relation in relations if isinstance(relations, list) else []:
+        work = relation.get("work") if isinstance(relation, dict) else None
+        if not isinstance(work, dict) or relation.get("type") != "performance":
+            continue
+        if isinstance(work.get("title"), str):
+            titles.append(work["title"])
+        work_id = work.get("id")
+        if not isinstance(work_id, str) or not MBID_RE.match(work_id) or cancelled():
+            continue
+        works += 1
+        found = _cached("work", work_id, f"work/{work_id}", {"inc": "aliases"})
+        aliases = found.get("aliases") if isinstance(found, dict) else None
+        for alias in aliases if isinstance(aliases, list) else []:
+            if isinstance(alias, dict) and isinstance(alias.get("name"), str):
+                titles.append(alias["name"])
+        if works >= _WORKS_MAX:
+            break
+    return titles
+
+
 def lookup_release_group(mbid: str) -> dict[str, Any] | None:
     """A release group by MBID, with its url relationships (Wikidata, IMDb),
     from the cache when it is there. For the work a soundtrack is from
@@ -352,7 +431,21 @@ def _lucene_phrase(text: str) -> str:
 
 
 def _title_key(title: Any) -> str:
-    return artist_name_key(_BRACKETS_RE.sub("", str(title or "")))
+    return title_parse.name_key(_BRACKETS_RE.sub("", str(title or "")))
+
+
+def _title_keys(title: Any) -> set[str]:
+    """The keys a recording's title can match by: less its brackets, and
+    whole ("Palette (feat. G-DRAGON)" is Palette)."""
+    return {k for k in (_title_key(title), title_parse.name_key(title)) if k}
+
+
+def _recording_names(names: list[str]) -> str:
+    """The recording: part of a query asking for any of ``names``, each its
+    own quoted phrase."""
+    if len(names) == 1:
+        return _lucene_phrase(names[0])
+    return "(" + " OR ".join(_lucene_phrase(n) for n in names) + ")"
 
 
 def search_recording(
@@ -390,7 +483,7 @@ def search_recording(
         },
     )
     hits = data.get("recordings") if isinstance(data, dict) else None
-    want_artist = artist_name_key(artist)
+    want_artist = title_parse.name_key(artist)
     want_title = _title_key(title)
     kept: list[tuple[float, float, dict[str, Any]]] = []
     for hit in hits if isinstance(hits, list) else []:
@@ -406,17 +499,17 @@ def search_recording(
         if off > IDENTIFY_DURATION_TOLERANCE_SEC:
             continue
         credit = hit.get("artist-credit")
-        names = {artist_name_key(credited_artist(credit))}
+        names = {title_parse.name_key(credited_artist(credit))}
         if isinstance(credit, list) and credit and isinstance(credit[0], dict):
             first = credit[0]
-            names.add(artist_name_key(first.get("name")))
+            names.add(title_parse.name_key(first.get("name")))
             if isinstance(first.get("artist"), dict):
-                names.add(artist_name_key(first["artist"].get("name")))
+                names.add(title_parse.name_key(first["artist"].get("name")))
         if want_artist not in names:
             continue
         if not want_title or want_title not in (
             _title_key(hit.get("title")),
-            artist_name_key(hit.get("title")),
+            title_parse.name_key(hit.get("title")),
         ):
             continue
         if hit.get("video") is True:
@@ -429,6 +522,26 @@ def search_recording(
 
 
 _LIVE_RE = re.compile(r"\blive\b", re.IGNORECASE)
+# A recording that is another take on the song, not the song, as the brackets
+# in its title or its disambiguation say: an instrumental, a karaoke track, a
+# remix, someone else's cover. "Lemon (Kenshi Yonezu Cover)" names the artist
+# a title asks for in its release title, and so would cover its words. Never
+# taken for an upload of the song, whatever its length.
+_NOT_THE_SONG_RE = re.compile(
+    r"\b(?:inst\.?|instrumental|karaoke|off\s+vocal|backing\s+track|mr(?=\s*$)"
+    r"|a\s+cappella|acapella|remix|cover(?:ed)?)(?:\b|\.)"
+    r"|カバー|翻唱|커버|伴奏|カラオケ",
+    re.IGNORECASE,
+)
+_BRACKETED_RE = re.compile(r"[(\[]([^)\]]*)[)\]]")
+
+
+def is_another_take(hit: dict[str, Any]) -> bool:
+    """Whether a recording is another take on its song (_NOT_THE_SONG_RE),
+    by the brackets in its title or by its disambiguation."""
+    title = str(hit.get("title") or "")
+    texts = [*_BRACKETED_RE.findall(title), str(hit.get("disambiguation") or "")]
+    return any(_NOT_THE_SONG_RE.search(text.strip()) for text in texts)
 
 
 def is_live(hit: dict[str, Any]) -> bool:
@@ -473,6 +586,21 @@ def _length_off(hit: dict[str, Any], duration: float) -> float | None:
     return abs(length / 1000 - duration)
 
 
+def _names_a_show(hit: dict[str, Any]) -> bool:
+    """Whether any release a recording came out on is a soundtrack or a cast
+    recording: by its release group's type, or by what its title says
+    (title_parse.kind_of)."""
+    for release in hit.get("releases") or []:
+        group = release.get("release-group") if isinstance(release, dict) else None
+        if not isinstance(group, dict):
+            continue
+        if "soundtrack" in _secondary_types(group):
+            return True
+        if title_parse.kind_of(group.get("title")) or title_parse.kind_of(release.get("title")):
+            return True
+    return False
+
+
 def _release_titles(hit: dict[str, Any]) -> list[str]:
     titles = []
     for release in hit.get("releases") or []:
@@ -492,21 +620,22 @@ def best_title_match(answer: Any, reading: TitleReading, duration: float) -> dic
     """The recording a search for ``reading`` found that the track is, as an
     identity, or None when none is confidently it.
 
-    A hit counts only when its title is the song's, its length is within
-    IDENTIFY_DURATION_TOLERANCE_SEC of the track's (the Broadway cast's 457
-    seconds, not the film's 587) and it is not a video; and it is kept only
-    when its credit and its release titles contain at least
-    TITLE_MIN_COVERAGE of the reading's words beyond the song (the performers
-    the title lists, the show it names). Of those: the most words covered,
-    then not live, then the credit naming the performers (Keala Settle, not
-    Kesha's cover on "The Greatest Showman: Reimagined"), then a release named
-    for the show (the cast album, not a compilation), then _search_rank."""
-    want_title = _title_key(reading.song)
+    A hit counts only when its title is the song's (by any name the title
+    gives it), its length is within IDENTIFY_DURATION_TOLERANCE_SEC of the
+    track's (the Broadway cast's 457 seconds, not the film's 587), and it is
+    neither a video nor another take (is_another_take); and it is kept only when its credit and its release titles
+    contain at least TITLE_MIN_COVERAGE of the reading's words beyond the
+    song (the performers the title lists, the show it names), for the best of
+    the artist's names. Of those: the most words covered, then not live, then
+    the credit naming the performers (Keala Settle, not Kesha's cover on "The
+    Greatest Showman: Reimagined"), then a release named for the show (the
+    cast album, not a compilation), then _search_rank."""
+    want_titles = {k for k in map(_title_key, title_parse.song_names(reading)) if k}
     want = title_parse.extra_words(reading)
-    artist_words = title_parse.words(reading.artist)
+    artist_names = [a for a in (reading.artist, *reading.artist_alts) if a]
     work_words = title_parse.words(reading.work)
     hits = answer.get("recordings") if isinstance(answer, dict) else None
-    if not want_title or not want or not duration or duration <= 0:
+    if not want_titles or not want or not duration or duration <= 0:
         return None
     kept: list[tuple[tuple, float, dict[str, Any]]] = []
     for hit in hits if isinstance(hits, list) else []:
@@ -515,7 +644,7 @@ def best_title_match(answer: Any, reading: TitleReading, duration: float) -> dic
         off = _length_off(hit, duration)
         if off is None or off > IDENTIFY_DURATION_TOLERANCE_SEC:
             continue
-        if want_title not in (_title_key(hit.get("title")), artist_name_key(hit.get("title"))):
+        if not want_titles & _title_keys(hit.get("title")) or is_another_take(hit):
             continue
         credit = credited_artist(hit.get("artist-credit"))
         releases = _release_titles(hit)
@@ -523,9 +652,19 @@ def best_title_match(answer: Any, reading: TitleReading, duration: float) -> dic
         if covered < TITLE_MIN_COVERAGE:
             continue
         credit_words = title_parse.words(credit)
-        by_credit = bool(artist_words) and (
-            len(artist_words & credit_words) / len(artist_words) >= TITLE_MIN_COVERAGE
-        )
+        by_credit = False
+        for name in artist_names:
+            artist_words = title_parse.words(name)
+            if artist_words and (
+                len(artist_words & credit_words) / len(artist_words) >= TITLE_MIN_COVERAGE
+            ):
+                by_credit = True
+        if artist_names and not work_words and not by_credit and not _names_a_show(hit):
+            # The artist named only in an album's title: a tribute or a cover
+            # ("Alexandra recorda Amália", "Tom Jobim... Os Anos 60"), unless
+            # the album is a show's, whose name the title can give as the
+            # artist ("Defying Gravity | Wicked").
+            continue
         named_release = bool(work_words) and any(
             work_words <= title_parse.words(title) for title in releases
         )
@@ -546,12 +685,14 @@ def search_by_title(
     cancelled: Callable[[], bool] = lambda: False,
 ) -> dict[str, Any] | None:
     """The recording one reading of a track's title is, found by search, or
-    None (see best_title_match). The query asks for the song by name, the
-    track's length, an official release, and any of the reading's other words
-    in the credit or a release title, so the recordings that could account
-    for them come first. Raises when MusicBrainz cannot be reached."""
-    want = sorted(title_parse.extra_words(reading))
-    if not reading.song or not want or not duration or duration <= 0 or cancelled():
+    None (see best_title_match). The query asks for the song by any name the
+    title gives it, the track's length, an official release, and any of the
+    reading's other words in the credit or a release title, so the
+    recordings that could account for them come first. Raises when
+    MusicBrainz cannot be reached."""
+    want = sorted(title_parse.search_words(reading))
+    songs = title_parse.song_names(reading)
+    if not songs or not want or not duration or duration <= 0 or cancelled():
         return None
     low = max(0, round((duration - IDENTIFY_DURATION_TOLERANCE_SEC) * 1000))
     high = round((duration + IDENTIFY_DURATION_TOLERANCE_SEC) * 1000)
@@ -561,11 +702,177 @@ def search_by_title(
         "recording",
         {
             "query": (
-                f"recording:{_lucene_phrase(reading.song)}"
+                f"recording:{_recording_names(songs)}"
                 f" AND dur:[{low} TO {high}] AND status:official"
                 f" AND (artist:({terms}) OR release:({terms}))"
             ),
             "limit": _SEARCH_LIMIT,
         },
+        cancelled=cancelled,
     )
     return best_title_match(data, reading, duration)
+
+
+# ── the artist by name, then the song among theirs ──
+
+# Names asked for in one artist search, at most.
+_ARTIST_NAMES = 10
+# Artists asked for in one recording search, at most: several can share a
+# name ("Perfect"), and the song and its length tell them apart.
+_ARTIST_IDS = 5
+# Artists found by name, kept for the life of the process by the names asked
+# for: an import asks for the same artist twice (for the recording, then for
+# the band), and a re-split once more.
+_ARTISTS_FOUND: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+_ARTISTS_FOUND_MAX = 256
+
+
+def _artist_keys(artist: dict[str, Any]) -> set[str]:
+    """Every name an artist in a search answer goes by, as keys: its name,
+    its sort name both ways round ("Chou, Jay" and "Jay Chou"), and every
+    alias and alias sort name."""
+    names: list[Any] = [artist.get("name"), artist.get("sort-name")]
+    sort_name = artist.get("sort-name")
+    if isinstance(sort_name, str) and sort_name.count(",") == 1:
+        last, first = sort_name.split(",")
+        names.append(f"{first} {last}")
+    for alias in artist.get("aliases") or []:
+        if isinstance(alias, dict):
+            names += [alias.get("name"), alias.get("sort-name")]
+    return {k for k in (title_parse.name_key(n) for n in names if isinstance(n, str)) if k}
+
+
+def search_artists(
+    names: list[str], *, cancelled: Callable[[], bool] = lambda: False
+) -> list[dict[str, Any]]:
+    """The MusicBrainz artists called one of ``names``, by name, sort name or
+    alias, whatever the script: "Jay Chou" and "周杰倫" both find 周杰倫, whose
+    aliases hold the other. One search for all of them.
+
+    As [{"id", "name", "score", "matched", "matches"}], "matched" the first
+    name asked for that it goes by and "matches" every one, in the order of
+    ``names``, then by MusicBrainz's score. An
+    artist none of whose names is exactly one asked for (case, accents and
+    punctuation aside) is not kept: the search itself forgives spelling.
+    Raises when MusicBrainz cannot be reached."""
+    asked: list[tuple[str, str]] = []
+    for name in names:
+        name = str(name or "").strip()
+        key = title_parse.name_key(name)
+        if key and key not in {k for _, k in asked}:
+            asked.append((name, key))
+    asked = asked[:_ARTIST_NAMES]
+    if not asked or cancelled():
+        return []
+    cache_key = tuple(k for _, k in asked)
+    if cache_key in _ARTISTS_FOUND:
+        return _ARTISTS_FOUND[cache_key]
+    query = " OR ".join(
+        f"artist:{_lucene_phrase(name)} OR alias:{_lucene_phrase(name)}" for name, _ in asked
+    )
+    data = _fetch_json("artist", {"query": query, "limit": _SEARCH_LIMIT}, cancelled=cancelled)
+    artists = data.get("artists") if isinstance(data, dict) else None
+    found: list[tuple[int, float, dict[str, Any]]] = []
+    for artist in artists if isinstance(artists, list) else []:
+        if not isinstance(artist, dict):
+            continue
+        mbid, score = artist.get("id"), artist.get("score")
+        if not isinstance(mbid, str) or not MBID_RE.match(mbid):
+            continue
+        score = float(score) if isinstance(score, (int, float)) else 0.0
+        keys = _artist_keys(artist)
+        matches = [name for name, key in asked if key in keys]
+        if matches:
+            index = next(i for i, (name, _) in enumerate(asked) if name == matches[0])
+            label = artist.get("name") if isinstance(artist.get("name"), str) else matches[0]
+            entry = {"id": mbid, "name": label, "score": score, "matched": matches[0]}
+            found.append((index, -score, {**entry, "matches": matches}))
+    answer = [entry for _, _, entry in sorted(found, key=lambda item: item[:2])]
+    if len(_ARTISTS_FOUND) >= _ARTISTS_FOUND_MAX:
+        _ARTISTS_FOUND.clear()
+    _ARTISTS_FOUND[cache_key] = answer
+    return answer
+
+
+def search_by_artist(
+    songs: list[str],
+    artist_ids: list[str],
+    duration: float | None,
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> dict[str, Any] | None:
+    """The recording of one of ``songs`` (names of one song) by one of
+    ``artist_ids``, found by search, or None (see best_artist_match). Raises
+    when MusicBrainz cannot be reached."""
+    songs = [s for s in songs if _title_key(s)]
+    ids = [i for i in artist_ids if isinstance(i, str) and MBID_RE.match(i)][:_ARTIST_IDS]
+    if not songs or not ids or not duration or duration <= 0 or cancelled():
+        return None
+    low = max(0, round((duration - IDENTIFY_VIDEO_EXTRA_SEC) * 1000))
+    high = round((duration + IDENTIFY_DURATION_TOLERANCE_SEC) * 1000)
+    data = _fetch_json(
+        "recording",
+        {
+            "query": (
+                f"recording:{_recording_names(songs)} AND arid:({' OR '.join(ids)})"
+                f" AND dur:[{low} TO {high}] AND status:official"
+            ),
+            "limit": _SEARCH_LIMIT,
+        },
+        cancelled=cancelled,
+    )
+    return best_artist_match(data, songs, ids, duration)
+
+
+def best_artist_match(
+    answer: Any, songs: list[str], artist_ids: list[str], duration: float
+) -> dict[str, Any] | None:
+    """The recording of one of ``songs`` by one of ``artist_ids`` in a search
+    answer that the upload is, as an identity, or None.
+
+    The artist is known for certain here, so the length is looked at the way
+    a music video needs: a recording up to IDENTIFY_VIDEO_EXTRA_SEC shorter
+    than the upload counts (the intro, the story), never one longer. A hit
+    counts only when its title is one of ``songs`` once brackets are set
+    aside, it credits one of the artists, it is not a video, and it is not an
+    instrumental, karaoke or remix take. Of those: not live, then one within
+    IDENTIFY_DURATION_TOLERANCE_SEC of the upload's length (an audio upload
+    is the recording itself), then the title exactly as asked, then
+    _search_rank."""
+    want_titles = {k for k in map(_title_key, songs) if k}
+    exact = {title_parse.name_key(s) for s in songs}
+    hits = answer.get("recordings") if isinstance(answer, dict) else None
+    if not want_titles or not duration or duration <= 0:
+        return None
+    kept: list[tuple[tuple, float, dict[str, Any]]] = []
+    for hit in hits if isinstance(hits, list) else []:
+        if not isinstance(hit, dict) or hit.get("video") is True:
+            continue
+        length = hit.get("length")
+        if not isinstance(length, (int, float)) or isinstance(length, bool) or length <= 0:
+            continue
+        seconds = length / 1000
+        if (
+            not duration - IDENTIFY_VIDEO_EXTRA_SEC
+            <= seconds
+            <= duration + (IDENTIFY_DURATION_TOLERANCE_SEC)
+        ):
+            continue
+        title = hit.get("title")
+        if not want_titles & _title_keys(title) or is_another_take(hit):
+            continue
+        if not set(credited_artist_ids(hit.get("artist-credit"))) & set(artist_ids):
+            continue
+        off = abs(seconds - duration)
+        score = hit.get("score")
+        score = float(score) if isinstance(score, (int, float)) else 0.0
+        rank = (
+            is_live(hit),
+            off > IDENTIFY_DURATION_TOLERANCE_SEC,
+            title_parse.name_key(title) not in exact,
+        )
+        kept.append((rank + _search_rank(hit, off, score), score, hit))
+    if not kept:
+        return None
+    _, score, hit = min(kept, key=lambda item: item[0])
+    return identity_from_recording(hit, source="musicbrainz", score=score / 100)

@@ -146,7 +146,7 @@ class MusicBrainz:
         self.fail = fail
         self.delay = delay
 
-    def __call__(self, path, params):
+    def __call__(self, path, params, **_kwargs):
         self.asked.append((path, dict(params)))
         time.sleep(self.delay)
         if self.fail:

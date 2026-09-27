@@ -16,12 +16,20 @@ The LRCLIB cascade, stopping at the first answer kept:
 (b) a search by artist and track, ranked by length (the page's rankMatches);
     when that finds nothing, the album as the artist, since LRCLIB files a
     cast or soundtrack recording under the show ("Popular" by "Wicked");
-(c) a search by the track's name alone.
+(c) a search by the track's name alone;
+(d) when none of those found a version the track's length, the other names
+    the artist goes by: the two a name like "周杰倫 Jay Chou" gives at once,
+    and those MusicBrainz and Wikidata record for the artist (name_aliases.py:
+    周杰倫 for Jay Chou, 아이유 for IU). What was already found is looked at
+    again under them, then a few are searched by;
+(e) when still nothing was found, the other titles the song goes by (the
+    identity's title_aliases: "Good Day" for 좋은 날), by the artist.
 
 Every step keeps only versions of this song by a name the track is known by
 (belongs_to): LRCLIB's search also answers with other artists' songs of a
 similar name, and a track with no lyrics is better than one with another
-song's. A track known by no name at all gets none from LRCLIB.
+song's. A track known by no name at all gets none from LRCLIB. Names and songs
+are compared folded, so 紅豆 is 红豆 and a full-width letter its half-width one.
 
 When the track's length is known, each step first looks for a version within
 LYRICS_SAME_RECORDING_SEC of it, whose timing is the track's ("timing":
@@ -39,7 +47,8 @@ the tab offers them to pick from, a transcription (transcribe.py) can be made,
 and the tag backfill does not ask LRCLIB again for LYRICS_NOT_FOUND_RETRY_SEC.
 
 What is sent is the artist, song, album or show names and the track's length,
-nothing else. Everything here is best-effort: no connection, no match or a
+nothing else (and to MusicBrainz and Wikidata, for the artist's other names,
+only the artist's MBID or Wikidata id). Everything here is best-effort: no connection, no match or a
 slow answer leave the job without lyrics.json, and the tab then looks for them
 itself as it always has.
 """
@@ -72,6 +81,8 @@ from app.core.config import (
     LYRICS_FILE,
     LYRICS_LOOKUP_BUDGET_SEC,
     LYRICS_LOOKUP_MAX_BYTES,
+    LYRICS_LOOKUP_RETRIES,
+    LYRICS_LOOKUP_RETRY_SEC,
     LYRICS_NOT_FOUND_RETRY_SEC,
     LYRICS_OTHERS_MAX,
     LYRICS_SAME_RECORDING_SEC,
@@ -82,6 +93,7 @@ from app.core.models import Job, _set, clean_identity
 from app.pipeline.artist_lookup import _ssl_context, artist_name_key
 from app.pipeline.lyrics_align import align_lyrics
 from app.pipeline.lyrics_repair import restore_letters, words_of
+from app.pipeline.name_aliases import artist_aliases, fold, has_cjk, name_key, name_weight
 from app.pipeline.title_parse import TitleReading, coverage, resolvable, song_key, work_hint
 
 logger = logging.getLogger("stemdeck.lyrics")
@@ -98,6 +110,10 @@ LYRICS_REPAIRS = frozenset(("lrclib", "whisper"))
 
 # How many album names are tried as the artist before giving up on (b).
 _ALBUM_ARTIST_TRIES = 2
+# How many of the artist's other names are searched by in (d).
+_OTHER_NAME_SEARCHES = 3
+# How many of the song's other titles are searched by in (e).
+_OTHER_TITLE_SEARCHES = 2
 # A name, album or title longer than this is not one.
 _NAME_MAX_CHARS = 300
 # Lyrics longer than this are not lyrics. A whole LRCLIB answer is capped by
@@ -108,6 +124,9 @@ FetchJson = Callable[[str, dict[str, str]], Any]
 # What the job was identified as, when that is still being found beside the
 # lookup: IdentifyLookup.wait_identity with a timeout.
 IdentitySource = Callable[[], "dict[str, Any] | None"]
+# The other names a query's artist goes by (name_aliases.artist_aliases), for
+# a query and whether the lookup was cancelled.
+AliasSource = Callable[["LyricsQuery", Callable[[], bool]], "list[str]"]
 
 
 # ── ranking: rankMatches in static/js/lyricsLookup.js ──
@@ -384,28 +403,35 @@ def song_from_title(title: Any, artist: Any = "") -> str:
 # worse than none, so a version is kept only when its song is the one asked for
 # and its artist is one of the names the track is known by: the artist itself,
 # one of the artists credited with it ("Keala Settle" of "Keala Settle & The
-# Greatest Showman Ensemble"), or the show a cast recording is filed under.
+# Greatest Showman Ensemble"), the show a cast recording is filed under, or
+# another name the artist is recorded under (name_aliases.py: "Jay Chou" for
+# 周杰倫). Names are compared folded (name_aliases.fold): full-width letters
+# as half-width, traditional Chinese as simplified.
 _NAME_LIST = re.compile(
     r"\s*(?:[&,+/;]|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*", re.IGNORECASE
 )
 _LEADING_THE = re.compile(r"^\s*the\s+", re.IGNORECASE)
 _SONG_FEATURING = re.compile(r"\s+(?:ft\.?|feat\.?|featuring)\s.*$", re.IGNORECASE | re.DOTALL)
-_SONG_BRACKETS = re.compile(r"[(\[{][^()\[\]{}]*[)\]}]")
+_SONG_BRACKETS = re.compile(r"[(\[{【][^()\[\]{}【】]*[)\]}】]")
 _SONG_TAIL = re.compile(rf"\s+[{re.escape(_DASHES)}]+\s+.*$", re.DOTALL)
-# One credited artist matches only when its name is at least this long, so an
-# initial or a stray "DJ" names nobody; a run of words inside a longer name
+# What stands between the names a name is written in at once: "周杰倫 Jay
+# Chou", "IU (아이유)", "五月天 (Mayday)".
+_SCRIPT_BREAK = re.compile(r"[\s()\[\]{}【】「」『』〈〉《》]+")
+# One credited artist matches only when its name weighs at least this much
+# (name_aliases.name_weight: an ideograph counts two), so an initial or a
+# stray "DJ" names nobody while 王菲 does; a run of words inside a longer name
 # ("The Greatest Showman" in "The Greatest Showman Cast") needs this many.
 _PART_MIN_CHARS = 4
 _RUN_MIN_WORDS = 2
 
 
 def _name_key(name: Any) -> str:
-    return artist_name_key(_LEADING_THE.sub("", str(name or "")))
+    return name_key(_LEADING_THE.sub("", fold(name)))
 
 
 def _name_words(name: Any) -> list[str]:
     words, word = [], []
-    for ch in str(name or "") + " ":
+    for ch in fold(name) + " ":
         if unicodedata.category(ch)[0] in ("L", "M", "N"):
             word.append(ch)
         elif word:
@@ -415,7 +441,43 @@ def _name_words(name: Any) -> list[str]:
 
 
 def _name_parts(name: Any) -> list[str]:
-    return [key for key in map(_name_key, _NAME_LIST.split(str(name or ""))) if key]
+    return [key for key in map(_name_key, _NAME_LIST.split(fold(name))) if key]
+
+
+def _script_of(token: str) -> str:
+    """ "cjk" for a token all in Chinese, Japanese or Korean letters, "other"
+    for one with none, "mixed" for both ("Official髭男dism"), "" for none."""
+    letters = [ch for ch in token if unicodedata.category(ch)[0] == "L"]
+    cjk = sum(map(has_cjk, letters))
+    if not letters:
+        return ""
+    return "cjk" if cjk == len(letters) else "other" if not cjk else "mixed"
+
+
+def script_names(name: Any) -> list[str]:
+    """The names a name gives in two scripts at once, each on its own:
+    "周杰倫 Jay Chou" as 周杰倫 and "Jay Chou", "IU (아이유)" as IU and 아이유.
+    [] for a name in one script, or with a word that mixes them, which is one
+    name ("Official髭男dism")."""
+    tokens = [t for t in _SCRIPT_BREAK.split(fold(name)) if t]
+    kinds = [_script_of(t) for t in tokens]
+    if "mixed" in kinds or len({k for k in kinds if k}) < 2:
+        return []
+    groups: list[list[str]] = []
+    last = ""
+    for token, kind in zip(tokens, kinds, strict=True):
+        if not kind:
+            last = ""
+            continue
+        if kind != last:
+            groups.append([])
+        groups[-1].append(token)
+        last = kind
+    return [" ".join(g) for g in groups]
+
+
+def _whole_names(name: Any) -> set[str]:
+    return {k for k in (_name_key(name), *map(_name_key, script_names(name))) if k}
 
 
 def _contains_run(words: list[str], run: list[str]) -> bool:
@@ -426,17 +488,17 @@ def _contains_run(words: list[str], run: list[str]) -> bool:
 
 def same_artist(found: Any, names: tuple[str, ...] | list[str]) -> bool:
     """Whether ``found``, a version's artist, is one of ``names``."""
-    their_key = _name_key(found)
-    if not their_key:
+    if not _name_key(found):
         return False
+    theirs = _whole_names(found)
     their_parts = _name_parts(found)
     their_words = _name_words(found)
     for name in names:
         if not str(name or "").strip():
             continue
-        if _name_key(name) == their_key:
+        if theirs & _whole_names(name):
             return True
-        if any(len(p) >= _PART_MIN_CHARS and p in their_parts for p in _name_parts(name)):
+        if any(name_weight(p) >= _PART_MIN_CHARS and p in their_parts for p in _name_parts(name)):
             return True
         mine = _name_words(name)
         if _contains_run(mine, their_words) or _contains_run(their_words, mine):
@@ -445,7 +507,10 @@ def same_artist(found: Any, names: tuple[str, ...] | list[str]) -> bool:
 
 
 def _song_keys(name: Any) -> tuple[str, str]:
-    full = _SONG_FEATURING.sub("", _SONG_BRACKETS.sub(" ", str(name or "")))
+    text = fold(name)
+    full = _SONG_FEATURING.sub("", _SONG_BRACKETS.sub(" ", text))
+    # A name all in brackets (【白日】) is the name, not a note on it.
+    full = full if artist_name_key(full) else text
     return artist_name_key(full), artist_name_key(_SONG_TAIL.sub("", full))
 
 
@@ -453,7 +518,8 @@ def same_song(found: Any, song: Any) -> bool:
     """Whether ``found``, a version's song, is ``song``: the same name less
     brackets and featured artists, or one of them the other with a " - ..."
     tail ("This Is Me - From The Greatest Showman"). Two tails never make a
-    match: "Part I - Dawn" is not "Part I - Dusk"."""
+    match: "Part I - Dawn" is not "Part I - Dusk". Compared folded:
+    "紅豆" is "红豆", "晴天 (Sunny Day)" and "晴天（Sunny Day）" are "晴天"."""
     a_full, a_head = _song_keys(found)
     b_full, b_head = _song_keys(song)
     if not a_full or not b_full:
@@ -462,7 +528,8 @@ def same_song(found: Any, song: Any) -> bool:
 
 
 def belongs_to(match: dict[str, Any], song: str, names: tuple[str, ...] | list[str]) -> bool:
-    """Whether a version is ``song`` by one of ``names`` (the artist, a show)."""
+    """Whether a version is ``song`` by one of ``names`` (the artist, a show,
+    another name the artist goes by)."""
     return same_song(match.get("track"), song) and same_artist(match.get("artist"), names)
 
 
@@ -488,6 +555,14 @@ class LyricsQuery:
     # Other names the recording may be filed under on LRCLIB: the show a cast
     # or soundtrack recording belongs to.
     album_artists: tuple[str, ...] = ()
+    # Who the artist is, when known: the MusicBrainz artists the recording
+    # credits and the Wikidata item of the band. The other names they go by
+    # count as the artist's own (name_aliases.py).
+    artist_ids: tuple[str, ...] = ()
+    band_id: str = ""
+    # Other titles the song goes by (the identity's title_aliases): LRCLIB
+    # may file 좋은 날 as "Good Day".
+    track_aliases: tuple[str, ...] = ()
 
 
 def _name(value: Any) -> str:
@@ -537,10 +612,20 @@ def build_query(
     duration = _number(job.duration_sec) or _number(identity.get("duration"))
     embedded = tags.get("lyrics") if isinstance(tags.get("lyrics"), str) else ""
 
+    artist_ids: tuple[str, ...] = ()
+    track_aliases: tuple[str, ...] = ()
     if _name(identity.get("title")):
         artist = _name(identity.get("artist")) or _name(tags.get("artist")) or band_name
+        if _name(identity.get("artist")):
+            mbids = identity.get("artist_mbids")
+            artist_ids = (
+                tuple(m for m in mbids if isinstance(m, str)) if isinstance(mbids, list) else ()
+            )
         track = _name(identity["title"])
         album = _name(identity.get("album")) or _name(tags.get("album"))
+        aliases = identity.get("title_aliases")
+        if isinstance(aliases, list):
+            track_aliases = tuple(n for n in map(_name, aliases) if n)
     elif _name(tags.get("title")):
         artist = _name(tags.get("artist")) or band_name
         track = song_from_title(tags["title"], artist) or _name(tags["title"])
@@ -562,6 +647,9 @@ def build_query(
         album_artists=_album_artists(
             album, getattr(job, "work", None), artist, hint.work if hint else ""
         ),
+        artist_ids=artist_ids,
+        band_id=_name(band.get("id")),
+        track_aliases=track_aliases,
     )
 
 
@@ -669,10 +757,38 @@ def _from_file(query: LyricsQuery, fallback_title: str) -> dict[str, Any]:
     }
 
 
+def _artist_aliases(query: LyricsQuery, cancelled: Callable[[], bool]) -> list[str]:
+    """The names MusicBrainz and Wikidata record for the query's artist."""
+    if not (query.artist_ids or query.band_id):
+        return []
+    return artist_aliases(query.artist_ids, query.band_id, cancelled=cancelled)
+
+
+def _other_names(query: LyricsQuery, aliases: list[str]) -> list[str]:
+    """Who else to search LRCLIB by, best first: the names the artist's own
+    name gives at once, then the recorded ones in another script than it (an
+    uploader writes one or the other), then the rest. Each once, and never a
+    name already asked by."""
+    asked = {n.casefold() for n in (query.artist, *query.album_artists)}
+    written = has_cjk(query.artist)
+    ranked = [
+        *script_names(query.artist),
+        *(n for n in aliases if has_cjk(n) != written),
+        *(n for n in aliases if has_cjk(n) == written),
+    ]
+    out: list[str] = []
+    for name in ranked:
+        if name.casefold() not in asked:
+            asked.add(name.casefold())
+            out.append(name)
+    return out
+
+
 def lookup_lyrics(
     query: LyricsQuery,
     *,
     fetch_json: FetchJson | None = None,
+    aliases: AliasSource | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     budget: float | None = None,
     fallback_title: str = "",
@@ -680,7 +796,8 @@ def lookup_lyrics(
     """What LRCLIB has for ``query``. None when nothing could be asked, or
     the lookup was cancelled or ran out of time before it kept anything, so
     that it is asked again later. Raises when LRCLIB cannot be reached or
-    answers nonsense.
+    answers nonsense. ``aliases`` gives the other names the artist goes by
+    (name_aliases.py by default), and is asked only for step (d).
 
     No request is started once ``cancelled()`` or ``budget`` seconds have
     passed; running out of time keeps what was found."""
@@ -691,26 +808,50 @@ def lookup_lyrics(
     # Resolved here rather than as the default, so a test can stand in for
     # the network by replacing _fetch_json.
     fetch_json = fetch_json or _fetch_json
+    aliases = aliases or _artist_aliases
     deadline = time.monotonic() + (LYRICS_LOOKUP_BUDGET_SEC if budget is None else budget)
     duration = query.duration
     found: list[dict[str, Any]] = []
+    # Every version LRCLIB answered with, whoever's, to be looked at again
+    # under the artist's other names.
+    asked: list[dict[str, Any]] = []
     # The song by artist (or show) and title, whatever its length.
     song: list[dict[str, Any]] = []
     chosen: dict[str, Any] | None = None
     # Who the song may be filed under. Only versions of this song by one of
     # them are kept or offered (belongs_to): no lyrics beat another song's.
-    names = tuple(n for n in (query.artist, *query.album_artists) if n)
+    names = [n for n in (query.artist, *query.album_artists) if n]
 
-    def ask(endpoint: str, params: dict[str, str]) -> Any:
+    def check() -> None:
         if cancelled() or time.monotonic() > deadline:
             raise _Stop
-        return fetch_json(endpoint, params)
+
+    def ask(endpoint: str, params: dict[str, str]) -> Any:
+        for attempt in range(LYRICS_LOOKUP_RETRIES + 1):
+            check()
+            try:
+                return fetch_json(endpoint, params)
+            except urllib.error.HTTPError as err:
+                wait = LYRICS_LOOKUP_RETRY_SEC * 2**attempt
+                busy = err.code in (429, 503)
+                if not busy or attempt == LYRICS_LOOKUP_RETRIES:
+                    raise
+                if time.monotonic() + wait > deadline:
+                    raise
+                logger.info("LRCLIB busy (%s); asking again in %.0fs", err.code, wait)
+                time.sleep(wait)
+        raise AssertionError("unreachable")
 
     def mine(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [m for m in rows if belongs_to(m, query.track, names)]
 
+    def answered(rows: Any) -> list[dict[str, Any]]:
+        ranked = rank_matches(rows, duration)
+        asked.extend(ranked)
+        return ranked
+
     def search(params: dict[str, str]) -> list[dict[str, Any]]:
-        rows = mine(rank_matches(ask("search", params), duration))
+        rows = mine(answered(ask("search", params)))
         found.extend(rows)
         return rows
 
@@ -728,7 +869,7 @@ def lookup_lyrics(
             if duration:
                 params["duration"] = str(round(duration))
             try:
-                exact = mine(rank_matches([ask("get", params)], duration))
+                exact = mine(answered([ask("get", params)]))
             except urllib.error.HTTPError:
                 logger.info("LRCLIB exact match failed", exc_info=True)
                 exact = []
@@ -757,6 +898,43 @@ def lookup_lyrics(
             # name: only one by a name the track is known by is kept.
             rows = held(search({"q": query.track}))
             chosen = rows[0] if rows else None
+        if chosen is None and query.artist:
+            # (d) The artist's other names. First what the searches above
+            # already answered with, looked at again under them: (c) often
+            # holds the song under the name the track does not go by.
+            check()
+            more = _other_names(query, aliases(query, cancelled))
+            if more:
+                names.extend(more)
+                have = {m["lrclib_id"] for m in found}
+                again = []
+                for m in _rank(asked, duration):
+                    if m["lrclib_id"] not in have and belongs_to(m, query.track, names):
+                        have.add(m["lrclib_id"])
+                        again.append(m)
+                found.extend(again)
+                rows = held(again)
+                chosen = rows[0] if rows else None
+            # Then searched by, as (b) is by the artist.
+            for name in more[:_OTHER_NAME_SEARCHES]:
+                if chosen is not None:
+                    break
+                rows = search({"artist_name": name, "track_name": query.track})
+                song.extend(rows)
+                rows = held(rows)
+                chosen = rows[0] if rows else None
+        if chosen is None and not song and query.artist:
+            # (e) The song's other titles, by the artist: a version counts
+            # when it is that title by a name the track is known by.
+            for alias in query.track_aliases[:_OTHER_TITLE_SEARCHES]:
+                rows = answered(ask("search", {"artist_name": query.artist, "track_name": alias}))
+                rows = [m for m in rows if belongs_to(m, alias, names)]
+                found.extend(rows)
+                song.extend(rows)
+                rows = held(rows)
+                chosen = rows[0] if rows else None
+                if song:
+                    break
     except _Stop:
         if cancelled() or (chosen is None and not song):
             return None
@@ -793,6 +971,7 @@ def find_lyrics(
     query: LyricsQuery | None,
     *,
     fetch_json: FetchJson | None = None,
+    aliases: AliasSource | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     budget: float | None = None,
     fallback_title: str = "",
@@ -804,6 +983,7 @@ def find_lyrics(
         return lookup_lyrics(
             query,
             fetch_json=fetch_json,
+            aliases=aliases,
             cancelled=cancelled,
             budget=budget,
             fallback_title=fallback_title,

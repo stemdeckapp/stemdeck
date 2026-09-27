@@ -29,6 +29,8 @@ import { getCurrentTrackInfo, getCurrentTrackArtist } from "./catalog.js";
 import { transport, setPlayheadTime } from "./transport.js";
 import {
   searchLyrics,
+  rankVersions,
+  otherNames,
   parseLrc,
   currentLineIndex,
   wordTimings,
@@ -103,9 +105,30 @@ function clearLyrics() {
   versionsEl.replaceChildren();
 }
 
+// The language a line's script says it is in, for its lang attribute: Korean
+// then wraps between words rather than inside one (word-break: keep-all in
+// daw.css), and the browser draws Han characters in the Japanese or Chinese
+// forms the line is written in, rather than whichever its font prefers.
+const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
+const HANGUL = /\p{Script=Hangul}/u;
+const HAN = /\p{Script=Han}/u;
+
+function scriptLang(text) {
+  if (KANA.test(text)) return "ja";
+  if (HANGUL.test(text)) return "ko";
+  if (HAN.test(text)) return "zh";
+  return "";
+}
+
+function tagLang(node, text) {
+  const lang = scriptLang(text);
+  if (lang) node.lang = lang;
+  return node;
+}
+
 /** A synced line as a button of word spans, which the wipe fills in turn. */
 function lineButton(line, nextTime) {
-  const row = el("button", "lyrics-line");
+  const row = tagLang(el("button", "lyrics-line"), line.text);
   row.type = "button";
   row.title = t("lyrics.seekTitle");
   row.addEventListener("click", (e) => {
@@ -177,7 +200,7 @@ function show(entry, others = []) {
     if (lines.length) loadEnvelope(shownTrackId);
   } else if (entry.plain) {
     // Composed, as parseLrc does for synced lines.
-    for (const text of entry.plain.normalize("NFC").split(/\r?\n/)) bodyEl.append(el("p", "lyrics-text", text || " "));
+    for (const text of entry.plain.normalize("NFC").split(/\r?\n/)) bodyEl.append(tagLang(el("p", "lyrics-text", text || " "), text));
   }
   bodyEl.scrollTop = 0;
 }
@@ -289,28 +312,48 @@ function lookAgainButton() {
   return again;
 }
 
+// How many of the artist's other names are searched by when its own finds no
+// version the track's length.
+const OTHER_NAME_SEARCHES = 2;
+
+const sameLength = (match, info) => Boolean(match) && info.duration > 0 && match.duration > 0
+  && Math.abs(match.duration - info.duration) <= SAME_RECORDING_SEC;
+
 /**
  * Look the open track up on LRCLIB by what it is known to be. Only versions of
  * this song by this artist count (belongsTo): LRCLIB's search also answers with
- * other artists' songs, and no lyrics beat another song's. One the same length
- * as the track is kept straight away; otherwise they are offered to pick from;
- * with none, it says so. What it found is remembered for
- * the session, so opening the tab again does not ask again. A failed
- * connection is not, so the next opening tries again.
+ * other artists' songs, and no lyrics beat another song's. `names` are the
+ * other names the artist goes by (the band's, in its own script and in
+ * English), which count as its own, and which are searched by too when the
+ * artist's name finds no version the track's length: LRCLIB files a song under
+ * whichever name its uploader wrote, 周杰倫 or Jay Chou. One the same length as
+ * the track is kept straight away; otherwise they are offered to pick from;
+ * with none, it says so. What it found is remembered for the session, so
+ * opening the tab again does not ask again. A failed connection is not, so the
+ * next opening tries again.
  */
-async function lookUp(info, { artist, song }) {
+async function lookUp(info, { artist, song, names = [] }) {
   searchController?.abort();
   const controller = new AbortController();
   searchController = controller;
   setStatus(t("lyrics.loading", { song }), "loading");
   try {
-    const found = await searchLyrics({ artist, song, duration: info.duration }, { signal: controller.signal });
-    const matches = found.filter((m) => belongsTo(m, { artist, song }));
+    const known = { artist, song, names };
+    const search = async (by) => (await searchLyrics({ artist: by, song, duration: info.duration }, { signal: controller.signal }))
+      .filter((m) => belongsTo(m, known));
+    let matches = await search(artist);
+    for (const other of otherNames(artist, names).slice(0, OTHER_NAME_SEARCHES)) {
+      if (sameLength(matches[0], info) || controller.signal.aborted) break;
+      // A failure here keeps what the artist's own name found.
+      const more = await search(other).catch((err) => {
+        console.warn("lyrics lookup by another name failed", err);
+        return [];
+      });
+      matches = rankVersions([...matches, ...more], info.duration);
+    }
     if (controller.signal.aborted || getCurrentTrackInfo()?.id !== info.id) return;
     const best = matches[0];
-    const sameLength = Boolean(best) && info.duration > 0 && best.duration > 0
-      && Math.abs(best.duration - info.duration) <= SAME_RECORDING_SEC;
-    if (sameLength) {
+    if (sameLength(best, info)) {
       await keep(best, matches.slice(1, 12));
       return;
     }
@@ -375,9 +418,12 @@ function knownSong(info) {
   const tags = info.audioTags || {};
   const band = getCurrentTrackArtist();
   const artist = tags.artist || band?.englishName || band?.name || "";
-  if (tags.title) return { artist, song: songFromTitle(tags.title, artist) || tags.title };
-  if (!artist) return { artist, song: "" };
-  return { artist, song: songFromTitle(info.title, artist) };
+  // The band's names, its own and its English one: the same artist, which
+  // LRCLIB may file the song under.
+  const names = [band?.name, band?.englishName].filter(Boolean);
+  if (tags.title) return { artist, names, song: songFromTitle(tags.title, artist) || tags.title };
+  if (!artist) return { artist, names, song: "" };
+  return { artist, names, song: songFromTitle(info.title, artist) };
 }
 
 /** Show what is kept for the open track, or find it. */
@@ -427,7 +473,7 @@ async function loadForCurrentTrack() {
   // Lyrics the file came with are this recording's own: nothing to look up.
   // The library keeps only that there are some (libraryAudioTags); the text is
   // asked of the server once, then kept in this track's own entry below.
-  const { artist, song } = knownSong(info);
+  const { artist, song, names } = knownSong(info);
   const embedded = info.audioTags?.lyrics || (info.audioTags?.hasLyrics ? await embeddedLyrics(info.id) : "");
   if (token !== loadToken) return;
   if (embedded) {
@@ -454,7 +500,7 @@ async function loadForCurrentTrack() {
     showAnswer(answered.get(info.id));
     return;
   }
-  lookUp(info, { artist, song });
+  lookUp(info, { artist, song, names });
 }
 
 // While the tab is on screen: notice a different track being opened, mark the

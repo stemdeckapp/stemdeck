@@ -136,5 +136,39 @@ try {
 }
 check("no connection rejects, so the box can say so", rejected);
 
+// ── A work in another language ──
+// A Japanese film: its own title beside the English one, and its story read
+// from the Japanese Wikipedia when the English article has none. Trimmed
+// from Spirited Away (Q155653), with the English article made a stub.
+const SPIRITED = {
+  id: "Q155653",
+  labels: { en: { language: "en", value: "Spirited Away" } },
+  descriptions: { en: { value: "2001 film by Hayao Miyazaki" } },
+  sitelinks: {
+    enwiki: { site: "enwiki", title: "Spirited Away", url: "https://en.wikipedia.org/wiki/Spirited_Away" },
+    jawiki: { site: "jawiki", title: "千と千尋の神隠し", url: "https://ja.wikipedia.org/wiki/%E5%8D%83" },
+  },
+  claims: {
+    P1476: [{ rank: "normal", mainsnak: { datavalue: { value: { language: "ja", text: "千と千尋の神隠し" } } } }],
+    P577: [time("+2001-07-20T00:00:00Z")],
+  },
+};
+const jaCalls = [];
+const spirited = await lookupWork("Q155653", "en", {
+  fetchJson: async (url) => {
+    jaCalls.push(url);
+    const u = new URL(url);
+    if (u.host === "ja.wikipedia.org") return { query: { pages: [{ extract: `概要。\n== あらすじ ==\n${"千尋は両親と共に不思議な町に迷い込む。".repeat(20)}` }] } };
+    if (u.host.endsWith("wikipedia.org")) return { query: { pages: [{ extract: "A film." }] } };
+    if (u.searchParams.get("props") === "labels") return { entities: {} };
+    return { entities: { Q155653: SPIRITED } };
+  },
+});
+check("the title in the reader's language", spirited?.name === "Spirited Away");
+check("and in its own, from its title claim", spirited?.nativeName === "千と千尋の神隠し" && spirited?.nativeLang === "ja");
+check("the story from the Japanese article", spirited?.synopsisLang === "ja" && spirited?.synopsis[0]?.startsWith("千尋は"));
+check("the link is to that article", spirited?.articleUrl === "https://ja.wikipedia.org/wiki/%E5%8D%83");
+check("the English article asked first", new URL(jaCalls.find((url) => url.includes("wikipedia.org"))).host === "en.wikipedia.org");
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

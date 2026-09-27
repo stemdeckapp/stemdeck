@@ -21,7 +21,15 @@
 // desktop app's native commands.
 
 import { t, getLanguage, onLanguageChange } from "./i18n.js";
-import { artistMatchesName, lookupArtist, lookupWork, taggedArtistName } from "./artistLookup.js";
+import {
+  artistMatchesName,
+  languageTag,
+  lookupArtist,
+  lookupWork,
+  nativeNameToShow,
+  taggedArtistName,
+  wikiLanguage,
+} from "./artistLookup.js";
 import {
   getCurrentTrackArtist,
   getCurrentTrackInfo,
@@ -84,10 +92,55 @@ function section(titleKey, ...children) {
   return box;
 }
 
-function nameList(names) {
+// A name in the artist's own language, after the name in the reader's: 周杰倫
+// after "Jay Chou", 아이유 after "IU". Marked with its language, so the right
+// font draws it (a Han character is drawn differently in Japanese and in each
+// Chinese script) and a screen reader reads it in that language. Nothing when
+// it is the same name.
+function appendNative(node, name, native, lang) {
+  const shown = nativeNameToShow(name, native);
+  if (!shown) return node;
+  const span = el("span", "artist-native", shown);
+  if (lang) span.lang = languageTag(lang);
+  span.dir = "auto";
+  node.append(" ", span);
+  return node;
+}
+
+// Members as chips, each with their own-language name when it differs.
+function nameList(people, nativeLang = "") {
   const list = el("ul", "artist-names");
-  for (const name of names) list.append(el("li", "", name));
+  for (const person of people) {
+    const { name, native } = typeof person === "string" ? { name: person, native: "" } : person;
+    list.append(appendNative(el("li", "", name), name, native, nativeLang));
+  }
   return list;
+}
+
+// A Wikipedia edition's language, named in the reader's own: "Japanese",
+// "japoński", "日语".
+function languageName(code) {
+  try {
+    return new Intl.DisplayNames([getLanguage()], { type: "language" }).of(code) || code;
+  } catch (err) {
+    console.warn("language names unavailable", err);
+    return code;
+  }
+}
+
+// Prose read from Wikipedia: its paragraphs, marked with the language they
+// are in, and when that is not the reader's own edition, a line saying which
+// it is. A Chinese singer's history can be read from the Chinese Wikipedia
+// under any language, since the English article may say two lines.
+function articleProse(className, paragraphs, edition, variant) {
+  const prose = el("div", className);
+  if (edition) {
+    prose.lang = languageTag(variant || edition);
+    prose.dir = "auto";
+  }
+  for (const paragraph of paragraphs) prose.append(el("p", "", paragraph));
+  if (!edition || edition === wikiLanguage(getLanguage())) return [prose];
+  return [el("p", "artist-edition", t("artist.fromWikipedia", { language: languageName(edition) })), prose];
 }
 
 // "Save for this track", or "Saved for this track" once it is. Kept as the
@@ -159,9 +212,10 @@ function songParts() {
 // one of these for each. target="_blank" is all it takes: main.js routes these
 // through the desktop app's open_url, since the webview will not open one
 // itself.
-function readMoreLink(name, url) {
+function readMoreLink(name, url, edition = "") {
   const link = el("a", "artist-more", t("artist.readMoreAbout", { name }));
   link.href = url;
+  if (edition) link.hreflang = languageTag(edition);
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   return link;
@@ -273,6 +327,7 @@ function workSection(work, { lead = false } = {}) {
   }
   const titles = el("div", "artist-titles");
   const name = el(lead ? "h2" : "h4", "artist-work-name", work.name);
+  appendNative(name, work.name, work.nativeName, work.nativeLang);
   if (work.year) name.append(" ", el("span", "artist-work-year num", work.year));
   titles.append(name);
   if (work.description) titles.append(el("p", "artist-desc", work.description));
@@ -282,9 +337,7 @@ function workSection(work, { lead = false } = {}) {
   if (links) box.append(links);
 
   if (work.synopsis?.length) {
-    const prose = el("div", "artist-history artist-work-synopsis");
-    for (const paragraph of work.synopsis) prose.append(el("p", "", paragraph));
-    box.append(prose);
+    box.append(...articleProse("artist-history artist-work-synopsis", work.synopsis, work.synopsisLang, work.synopsisVariant));
   }
 
   const credits = [
@@ -300,7 +353,7 @@ function workSection(work, { lead = false } = {}) {
 
   if (work.articleUrl) {
     const more = el("p", "artist-work-more");
-    more.append(readMoreLink(work.name, work.articleUrl));
+    more.append(readMoreLink(work.name, work.articleUrl, work.synopsisLang));
     box.append(more);
   }
   return box;
@@ -333,7 +386,7 @@ function bandHead(artist, { compact = false } = {}) {
     head.append(img);
   }
   const titles = el("div", "artist-titles");
-  titles.append(el(compact ? "h4" : "h2", "artist-name", artist.name));
+  titles.append(appendNative(el(compact ? "h4" : "h2", "artist-name", artist.name), artist.name, artist.nativeName, artist.nativeLang));
   if (artist.description) titles.append(el("p", "artist-desc", artist.description));
   head.append(titles, saveButton(artist));
   return head;
@@ -352,7 +405,7 @@ function performerSection(artist, work) {
   const url = artist.articleUrl && artist.articleUrl !== work?.articleUrl ? artist.articleUrl : "";
   if (url) {
     const more = el("p", "artist-work-more");
-    more.append(readMoreLink(artist.name, url));
+    more.append(readMoreLink(artist.name, url, artist.historyLang));
     details.push(more);
   }
   if (!details.length) return box;
@@ -398,7 +451,7 @@ function render(artist, work = null) {
     // Under the name, where a wrong band is noticed: the way back to the field.
     if (!searchShown) parts.push(searchLink("artist.notThisBand"));
     parts.push(...bandDetails(artist));
-    if (artist.articleUrl) foot.append(readMoreLink(artist.name, artist.articleUrl));
+    if (artist.articleUrl) foot.append(readMoreLink(artist.name, artist.articleUrl, artist.historyLang));
   } else {
     parts.push(searchLink("artist.searchPlaceholder"));
   }
@@ -416,17 +469,15 @@ function render(artist, work = null) {
 function bandDetails(artist) {
   const parts = [];
   if (artist.history.length) {
-    const prose = el("div", "artist-history");
-    for (const paragraph of artist.history) prose.append(el("p", "", paragraph));
-    parts.push(section("artist.history", prose));
+    parts.push(section("artist.history", ...articleProse("artist-history", artist.history, artist.historyLang, artist.historyVariant)));
   }
 
   const { current: now, former } = artist.members;
   if (now.length || former.length) {
     const children = [];
-    if (now.length) children.push(nameList(now));
+    if (now.length) children.push(nameList(now, artist.nativeLang));
     if (former.length) {
-      children.push(el("h4", "artist-subtitle", t("artist.formerMembers")), nameList(former));
+      children.push(el("h4", "artist-subtitle", t("artist.formerMembers")), nameList(former, artist.nativeLang));
     }
     parts.push(section("artist.members", ...children));
   }
@@ -438,7 +489,9 @@ function bandDetails(artist) {
       row.append(el("span", "artist-album-year num", album.year), el("span", "artist-album-title", album.title));
       list.append(row);
     }
-    parts.push(section("artist.albums", list));
+    // "Albums" rather than "Studio albums" when the list had to take plain
+    // albums as well (artistLookup.js albumList).
+    parts.push(section(artist.albumsStudioOnly === false ? "artist.albumsAll" : "artist.albums", list));
   }
   return parts;
 }

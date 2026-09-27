@@ -79,7 +79,7 @@ async function stubWikimedia(page, { offline = false, nothing = false } = {}) {
       url.host === "query.wikidata.org" ? "sparql"
       : url.host.endsWith("wikipedia.org") ? "extract"
       : url.searchParams.get("action") === "wbsearchentities" ? "search"
-      : url.searchParams.get("props") === "labels" ? "members"
+      : url.searchParams.get("props").startsWith("labels") ? "members"
       : "entities";
     const body = nothing && kind === "search" ? { search: [] } : ANSWERS[kind];
     return route.fulfill({

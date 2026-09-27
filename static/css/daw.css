@@ -3953,6 +3953,9 @@ input, textarea { font-family: inherit; }
   cursor: pointer; transition: color var(--t-fast), background var(--t-fast);
 }
 .lyrics-line:hover { color: var(--fg-2); background: var(--panel); }
+/* Korean is spaced into words and wraps between them, never inside one; a
+   word too long for the line still breaks. lang is set per line by lyrics.js. */
+.lyrics-line:lang(ko), .lyrics-text:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
 /* A ring for keyboard focus only: a clicked line lets go of focus (lyrics.js). */
 .lyrics-line:focus { outline: none; }
 .lyrics-line:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -4032,6 +4035,28 @@ input, textarea { font-family: inherit; }
 }
 .artist-desc { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
 .artist-titles { flex: 1 1 auto; min-width: 0; }
+/* A long name, or one in a script with no spaces to break at, wraps inside
+   the box rather than pushing the save button out of it. */
+.artist-card .artist-name, .artist-card .artist-work-name { overflow-wrap: anywhere; }
+/* The name in the artist's own language after the one in the reader's
+   (Jay Chou 周杰倫): lighter, and kept whole on the next line when the two do
+   not fit on one. */
+.artist-native {
+  display: inline-block; max-width: 100%;
+  font-size: 0.72em; font-weight: 500; color: var(--muted);
+}
+.artist-names .artist-native { margin-left: 2px; font-size: 1em; }
+/* Which Wikipedia the text below was read from, when not the reader's own. */
+.artist-edition { margin: -4px 0 6px; font-size: 11px; color: var(--muted); }
+/* Korean breaks between words, as it is written, not inside them; Japanese
+   keeps small kana and closing marks off the start of a line. */
+.artist-card :lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
+.artist-history:lang(ja) { line-break: strict; }
+/* The section titles' wide tracking is for Latin capitals; between Chinese,
+   Japanese or Korean characters it reads as a gap inside the word. */
+.artist-section-title:lang(ja), .artist-section-title:lang(ko), .artist-section-title:lang(zh) {
+  letter-spacing: 0.02em;
+}
 /* Save for this track: the accent until it is done, then a quiet
    label that says so. It sits by the name because the name is what is saved. */
 .artist-save {

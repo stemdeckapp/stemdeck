@@ -272,29 +272,65 @@ def tags_from_probe(raw: dict[str, Any] | None) -> dict[str, str] | None:
 # only ever carry that artist's releases.
 _TOPIC_SUFFIX = " - Topic"
 # "Artist - Title", with the separators people actually type: a hyphen, an en
-# or em dash or a pipe with space either side, or a colon followed by one.
-_TITLE_SEPARATOR_RE = re.compile(r"\s+[-\N{EN DASH}\N{EM DASH}|]\s+|\s*:\s+")
-_NON_WORD_RE = re.compile(r"[\W_]+")
+# or em dash or a pipe with space either side, a colon followed by one, and the
+# ones East Asian titles use: "_", "/" or "~" after a space, their full-width
+# forms with or without one ("YOASOBI／群青"), or a dash touching the title
+# ("周杰倫 -晴天"). A title
+# that goes straight on to the song in marks counts too:
+# "周杰倫 Jay Chou【晴天 Sunny Day】", "YOASOBI「夜に駆ける」".
+_TITLE_SEPARATOR_RE = re.compile(
+    r"\s+[-\N{EN DASH}\N{EM DASH}|_/~]\s*|\s*:\s+"
+    r"|\s*[\N{FULLWIDTH SOLIDUS}\N{FULLWIDTH VERTICAL LINE}\N{FULLWIDTH HYPHEN-MINUS}"
+    r"\N{FULLWIDTH COLON}]\s*"
+    r"|\s*(?=[\N{LEFT BLACK LENTICULAR BRACKET}\N{LEFT CORNER BRACKET}"
+    r"\N{LEFT WHITE CORNER BRACKET}\N{LEFT DOUBLE ANGLE BRACKET}\N{LEFT ANGLE BRACKET}"
+    r"\N{LEFT WHITE LENTICULAR BRACKET}])"
+)
 # What an artist's own channel tends to append to their name: "NirvanaVEVO",
-# "Nirvana Official". Compared on the squashed key, so spacing is irrelevant.
-_CHANNEL_SUFFIXES = ("vevo", "official")
+# "Nirvana Official", "King Gnu official YouTube channel", "公式チャンネル"
+# (official channel), "官方頻道". Compared on the squashed key, so spacing is
+# irrelevant.
+_CHANNEL_SUFFIXES = (
+    "vevo",
+    "official",
+    "channel",
+    "youtube",
+    "officiel",
+    "oficial",
+    "チャンネル",
+    "公式",
+    "頻道",
+    "频道",
+    "官方",
+)
 
 
 def _name_key(text: str) -> str:
-    """A name reduced for comparison: case-folded, punctuation and spacing gone."""
-    return _NON_WORD_RE.sub("", text.casefold())
+    """A name reduced for comparison: no case, accents, punctuation or
+    spacing, and traditional Chinese as simplified (title_parse.name_key), so
+    a title's "Dawid Podsiadlo" is the channel's "Dawid Podsiadło"."""
+    # Imported here: title_parse reaches the network layer's key function
+    # lazily, and this module stays light to import.
+    from app.pipeline.title_parse import name_key
+
+    return name_key(text)
 
 
-def _channel_key(channel: str) -> str:
+def _channel_keys(channel: str) -> list[str]:
+    """The channel's key, then each shorter one its suffixes come off to:
+    "Roxy Music" stays "roxymusic" too, however many suffixes there are."""
     key = _name_key(channel)
+    keys = [key]
     stripped = True
     while stripped:
         stripped = False
         for suffix in _CHANNEL_SUFFIXES:
-            if key.endswith(suffix):
-                key = key.removesuffix(suffix)
+            suffix_key = _name_key(suffix)
+            if key.endswith(suffix_key) and key != suffix_key:
+                key = key.removesuffix(suffix_key)
+                keys.append(key)
                 stripped = True
-    return key
+    return keys
 
 
 def _artist_from_channel(info: dict[str, Any]) -> tuple[str, str] | None:
@@ -319,15 +355,18 @@ def _artist_from_channel(info: dict[str, Any]) -> tuple[str, str] | None:
             if artist:
                 return artist, video_title
             continue
-        key = _channel_key(channel)
-        if not key:
+        keys = [k for k in _channel_keys(channel) if k]
+        if not keys:
             continue
         for match in _TITLE_SEPARATOR_RE.finditer(video_title):
             prefix = video_title[: match.start()].strip()
-            if _name_key(prefix) == key:
+            if prefix and _name_key(prefix) in keys:
                 rest = video_title[match.end() :].strip()
                 if rest:
-                    return prefix, rest
+                    # The channel's own spelling when it is the name itself
+                    # (a title typed without its accents), else the title's
+                    # ("Nirvana", not "NirvanaVEVO").
+                    return (channel if _name_key(prefix) == keys[0] else prefix), rest
                 break
     return None
 

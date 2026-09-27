@@ -14,18 +14,22 @@ Best source first, stopping at the first answer:
 3. The title, read every way it can be (title_parse.py: "Artist - Song",
    'Song (From "Work")', "Song   Performers", "Work Cast - Song"...), each
    reading searched for on MusicBrainz and kept only when a recording that
-   length credits the title's other words (musicbrainz.search_by_title); when
-   MusicBrainz has none, LRCLIB is asked the same way, and its artist and
-   album name the track (source "lrclib"). This is all a YouTube upload with
-   no music metadata has, and a second opinion when the tags named something
-   MusicBrainz does not know.
+   length credits the title's other words (musicbrainz.search_by_title); then
+   the artist a reading names, looked up by name and alias in any script, and
+   the song among that artist's recordings, a music video's longer length
+   allowed for (identify_by_artist). When MusicBrainz has none, LRCLIB is
+   asked the same way, and its artist and album name the track (source
+   "lrclib"). This is all a YouTube upload with no music metadata has, and a
+   second opinion when the tags named something MusicBrainz does not know.
 4. The tags alone, as source "tags", when they name both an artist and a song.
 
 The answer is ``job.identity`` (clean_identity's shape). The band a job's
 artist is (``job.artist``) is then found through it: the recording's first
 credited artist's MusicBrainz id, that artist's Wikidata link, and the
 Wikidata item naming the same MusicBrainz artist back. Without an identity
-with artist ids, the band is searched for by name as before (artist_lookup).
+with artist ids, the band is searched for by name as before (artist_lookup),
+then by the names the tag or the title give, on MusicBrainz (find_band_for):
+a compilation matches no recording, and its artist box still shows the band.
 
 What is sent: to AcoustID a fingerprint (not audio) and the track's length;
 to MusicBrainz, Wikidata and LRCLIB, ids, names from the track (artist, song,
@@ -56,6 +60,7 @@ from app.core.config import (
     IDENTIFY_MAX_BYTES,
     TIMEOUT_FINGERPRINT,
     TIMEOUT_IDENTIFY_REQUEST,
+    TITLE_ARTIST_SEARCHES,
     TITLE_LRCLIB_SEARCHES,
     TITLE_MUSICBRAINZ_SEARCHES,
     ffmpeg_executable,
@@ -505,6 +510,7 @@ def identify_by_title(
     if not duration or duration <= 0:
         return None
     readings = title_parse.readings_for(tags, title)
+    reachable = True
     for reading in readings[:TITLE_MUSICBRAINZ_SEARCHES]:
         if cancelled():
             return None
@@ -513,7 +519,16 @@ def identify_by_title(
         except Exception:
             # Down, or the rate limit's queue too long: no point asking again.
             logger.info("[%s] MusicBrainz title search failed", job_id, exc_info=True)
+            reachable = False
             break
+        if identity:
+            return identity
+    if reachable and not cancelled():
+        try:
+            identity = identify_by_artist(readings, title, duration, cancelled=cancelled)
+        except Exception:
+            logger.info("[%s] MusicBrainz artist search failed", job_id, exc_info=True)
+            identity = None
         if identity:
             return identity
     for reading in readings[:TITLE_LRCLIB_SEARCHES] if lrclib else []:
@@ -529,9 +544,71 @@ def identify_by_title(
     return None
 
 
+def identify_by_artist(
+    readings: list[title_parse.TitleReading],
+    title: str | None,
+    duration: float,
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> dict[str, Any] | None:
+    """The identity found by looking the artist up first, or None.
+
+    For when no recording credits the title's words as they are written: the
+    title names 周杰倫 as "Jay Chou", 鄧麗君 as "邓丽君", or its video is longer
+    than the album cut. Each reading's artist is searched for by name and
+    alias (musicbrainz.search_artists), then the song among that artist's
+    recordings (musicbrainz.search_by_artist), for up to
+    TITLE_ARTIST_SEARCHES readings. A title with nothing else to read in it,
+    no separator at all ("美空ひばり 川の流れのように"), is cut every way it can
+    be, and each cut that names an artist is tried, the longest name first.
+    Raises when MusicBrainz cannot be reached."""
+    tried: set[tuple[str, ...]] = set()
+    for reading in readings:
+        if len(tried) >= TITLE_ARTIST_SEARCHES or cancelled():
+            break
+        names = title_parse.artist_names(reading)
+        key = tuple(title_parse.name_key(n) for n in names)
+        if not names or key in tried:
+            continue
+        tried.add(key)
+        artists = musicbrainz.search_artists(names, cancelled=cancelled)
+        ids = [a["id"] for a in artists]
+        if ids:
+            identity = musicbrainz.search_by_artist(
+                title_parse.song_names(reading), ids, duration, cancelled=cancelled
+            )
+            if identity:
+                return identity
+    if readings:
+        return None
+    cuts = title_parse.name_splits(title)
+    if not cuts or cancelled():
+        return None
+    artists = musicbrainz.search_artists([a for a, _ in cuts], cancelled=cancelled)
+    by_name: dict[str, list[str]] = {}
+    for artist in artists:
+        by_name.setdefault(title_parse.name_key(artist["matched"]), []).append(artist["id"])
+    songs = {title_parse.name_key(a): s for a, s in cuts}
+    for name in sorted(by_name, key=len, reverse=True)[:TITLE_ARTIST_SEARCHES]:
+        if cancelled():
+            return None
+        identity = musicbrainz.search_by_artist(
+            [songs[name]], by_name[name], duration, cancelled=cancelled
+        )
+        if identity:
+            return identity
+    return None
+
+
 def can_identify_title(tags: dict[str, str] | None, title: str | None) -> bool:
-    """Whether identify_by_title has a reading to go on."""
-    return bool(title_parse.readings_for(tags, title))
+    """Whether identify_by_title has a reading to go on: one naming more than
+    a song, or a title an artist's name could be cut from; or, for the band
+    alone, a compilation's title (band_from_title)."""
+    return (
+        bool(title_parse.readings_for(tags, title))
+        or bool(title_parse.name_splits(title))
+        or title_parse.title_names(title)[1]
+    )
 
 
 # ── the whole answer ──
@@ -548,7 +625,67 @@ def identify(
     cancelled: Callable[[], bool] = lambda: False,
 ) -> dict[str, Any] | None:
     """The identity of a track, best source first (see the module), or None
-    when nothing names it. Never raises."""
+    when nothing names it, with the other titles its song goes by
+    (title_aliases). Never raises."""
+    identity = _identify(
+        tags=tags,
+        title=title,
+        duration=duration,
+        audio=audio,
+        api_key=api_key,
+        job_id=job_id,
+        cancelled=cancelled,
+    )
+    if identity is None or cancelled():
+        return identity
+    aliases = title_aliases(identity, tags, title, cancelled=cancelled)
+    return clean_identity({**identity, "title_aliases": aliases}) if aliases else identity
+
+
+def title_aliases(
+    identity: dict[str, Any],
+    tags: dict[str, str] | None,
+    title: str | None,
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> list[str]:
+    """The other titles an identified song goes by, for the lyrics lookup:
+    LRCLIB files 좋은 날 as "Good Day" as often as not. The upload's own
+    ("IU _ Good Day (좋은 날)": whichever of its readings names the song the
+    identity does), then, for a song in Chinese, Japanese or Korean, where
+    they matter, its MusicBrainz work's title and aliases. Never raises."""
+    song = title_parse.song_key(identity.get("title"))
+    found: list[str] = []
+    for reading in [*title_parse.readings_for(tags, title), *title_parse.parse_title(title)]:
+        names = title_parse.song_names(reading)
+        if song in {title_parse.song_key(n) for n in names}:
+            found += names
+    recording = identity.get("recording_mbid")
+    if recording and title_parse.is_east_asian(str(identity.get("title") or "")):
+        try:
+            found += musicbrainz.work_titles(recording, cancelled=cancelled)
+        except Exception:
+            logger.info("work titles lookup failed", exc_info=True)
+    aliases: list[str] = []
+    keys = {song}
+    for name in found:
+        key = title_parse.song_key(name)
+        if key and key not in keys:
+            keys.add(key)
+            aliases.append(name.strip())
+    return aliases
+
+
+def _identify(
+    *,
+    tags: dict[str, str] | None,
+    title: str | None,
+    duration: float | None,
+    audio: list[Path],
+    api_key: str | None,
+    job_id: str = "",
+    cancelled: Callable[[], bool] = lambda: False,
+) -> dict[str, Any] | None:
     # Imported here: lyrics_lookup is the newer module and may come to
     # depend on this one.
     from app.pipeline.lyrics_lookup import song_from_title
@@ -567,6 +704,14 @@ def identify(
         return None
     artist = tagged_artist_name(tags.get("artist"))
     song = song_from_title(tags.get("title"), artist) or (tags.get("title") or "").strip()
+    if song and artist:
+        # A song in marks or among East Asian noise ("「群青」Official Music
+        # Video", a channel's title less its name): the title's own reading.
+        readings = title_parse.readings_for({"artist": artist, "title": song})
+        if readings and title_parse.name_key(readings[0].artist) in {
+            title_parse.name_key(n) for n in title_parse.name_alternatives(artist)
+        }:
+            song = readings[0].song
     if not song and artist:
         song = song_from_title(title, artist)
     if artist and song:
@@ -607,28 +752,150 @@ def find_band_for(
     identity: dict[str, Any] | None,
     artist_tag: Any,
     *,
+    title: str | None = None,
     cancelled: Callable[[], bool] = lambda: False,
 ) -> dict[str, str] | None:
-    """The band for a track: through the identity's first credited artist
-    (MusicBrainz artist -> its Wikidata link -> the item naming it back), else
-    by searching Wikidata for the tag's artist name, or the identity's, with
-    the name search's own strict rule. Never raises."""
+    """The band for a track, or None. Never raises.
+
+    Through the identity's first credited artist (MusicBrainz artist -> its
+    Wikidata link -> the item naming it back), else by searching Wikidata for
+    the tag's artist name, or the identity's, with the name search's own
+    strict rule. When that finds nothing, or there is no name at all but a
+    ``title`` (a compilation, a live cut, a fan's upload of another length:
+    nothing a recording search could match), the names the tag or the title
+    give ("鄧麗君 Teresa Teng テレサ・テン", "邓丽君经典金曲 - Teresa Teng's
+    classic songs") are looked up on MusicBrainz by name and alias, and the
+    one artist they name, when it is only one, is the band."""
     if identity and identity.get("source") != "tags" and identity.get("artist_mbids"):
-        mbid = identity["artist_mbids"][0]
-        try:
-            qid = musicbrainz.artist_wikidata_id(mbid)
-            if qid and not cancelled():
-                band = lookup_band_by_id(
-                    qid, mbid, name=tagged_artist_name(identity.get("artist")), cancelled=cancelled
-                )
-                if band:
-                    return band
-        except Exception:
-            logger.info("band lookup by MusicBrainz id failed", exc_info=True)
+        band = _band_by_artist_id(
+            identity["artist_mbids"][0],
+            tagged_artist_name(identity.get("artist")),
+            cancelled=cancelled,
+        )
+        if band:
+            return band
     if cancelled():
         return None
     name = tagged_artist_name(artist_tag) or tagged_artist_name((identity or {}).get("artist"))
-    return find_band(name, cancelled=cancelled) if name else None
+    if name:
+        band = find_band(name, cancelled=cancelled)
+        if band:
+            return band
+        return _band_by_other_names(name, cancelled=cancelled)
+    return band_from_title(title, cancelled=cancelled) if title else None
+
+
+def _band_by_other_names(name: str, *, cancelled: Callable[[], bool]) -> dict[str, str] | None:
+    """The band an artist tag or credit names by one of its other names
+    ("鄧麗君 Teresa Teng テレサ・テン" is three), found on MusicBrainz by name
+    and alias when only one artist is that likely, else on Wikidata by each
+    of the first two. Never raises."""
+    names = title_parse.name_alternatives(name)
+    if len(names) < 2 or cancelled():
+        return None
+    try:
+        artists = musicbrainz.search_artists(names, cancelled=cancelled)
+    except Exception:
+        logger.info("band lookup by MusicBrainz name failed", exc_info=True)
+        artists = []
+    artist = _only_artist(artists)
+    if artist:
+        band = _band_by_artist_id(artist["id"], artist["name"], cancelled=cancelled)
+        if band:
+            return band
+    # Wikidata by each other name, as the tag's own name was: its label may
+    # be in either script ("周杰倫 Jay Chou" is neither label whole).
+    for other in names[1:3]:
+        if cancelled():
+            return None
+        band = find_band(other, cancelled=cancelled)
+        if band:
+            return band
+    return None
+
+
+def band_from_title(
+    title: str | None, *, cancelled: Callable[[], bool] = lambda: False
+) -> dict[str, str] | None:
+    """The band a title names with nothing else to go by (no recording
+    found, no artist tag), or None. Never raises.
+
+    Only on evidence a title cannot give by chance, since a wrong band is
+    worse than none ("Metropolis - Part I" once made Metropolis the band):
+
+    * two names in different scripts that MusicBrainz knows, exactly (by
+      name, sort name or alias, never a near miss), as one artist and no
+      other: "邓丽君经典金曲 - Teresa Teng's classic songs", "周杰倫 Jay Chou";
+    * or a compilation's title (its words taken off: "经典金曲", "Greatest
+      Hits") every part of which names that one artist and nobody else.
+
+    That artist's Wikidata item, which must name the same MusicBrainz artist
+    back (and so be a musician or a band), is the band, as for a recording."""
+    groups, compilation = title_parse.title_names(title)
+    names = [n for group in groups for n in group]
+    if not names or cancelled():
+        return None
+    try:
+        artists = musicbrainz.search_artists(names, cancelled=cancelled)
+    except Exception:
+        logger.info("band lookup by MusicBrainz name failed", exc_info=True)
+        return None
+    ids_by_name: dict[str, set[str]] = {}
+    for artist in artists:
+        for matched in artist["matches"]:
+            ids_by_name.setdefault(title_parse.name_key(matched), set()).add(artist["id"])
+
+    def ids(name: str) -> set[str]:
+        return ids_by_name.get(title_parse.name_key(name), set())
+
+    chosen: set[str] = set()
+    # Two scripts: each artist id with the scripts of the names naming it.
+    scripts: dict[str, set[str]] = {}
+    for name in names:
+        for mbid in ids(name):
+            scripts.setdefault(mbid, set()).add(title_parse.script_of(name))
+    chosen = {mbid for mbid, seen in scripts.items() if len(seen) > 1}
+    if not chosen and compilation:
+        # Every part names the artist: the one id all of them share.
+        per_part = [set().union(*(ids(n) for n in group)) for group in groups]
+        if all(per_part):
+            chosen = set.intersection(*per_part)
+    if len(chosen) != 1 or cancelled():
+        return None
+    mbid = chosen.pop()
+    name = next(a["name"] for a in artists if a["id"] == mbid)
+    return _band_by_artist_id(mbid, name, cancelled=cancelled)
+
+
+def _band_by_artist_id(
+    mbid: str, name: str, *, cancelled: Callable[[], bool]
+) -> dict[str, str] | None:
+    """The band a MusicBrainz artist is on Wikidata, or None. Never raises."""
+    try:
+        qid = musicbrainz.artist_wikidata_id(mbid)
+        if qid and not cancelled():
+            return lookup_band_by_id(qid, mbid, name=name, cancelled=cancelled)
+    except Exception:
+        logger.info("band lookup by MusicBrainz id failed", exc_info=True)
+    return None
+
+
+# Two artists matching the same name this close in MusicBrainz's score are
+# as likely as each other: neither is taken for the band without a recording
+# to say which ("BTS" the group scores 100, the next "BTS" 68).
+_ARTIST_SCORE_MARGIN = 10
+
+
+def _only_artist(artists: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one artist a name search found for the first name that matched
+    any, or None when none did or two are as likely."""
+    if not artists:
+        return None
+    first = artists[0]
+    same = [a for a in artists if a["matched"] == first["matched"]]
+    if len(same) > 1 and same[0]["score"] - same[1]["score"] < _ARTIST_SCORE_MARGIN:
+        return None
+    return first
 
 
 def can_identify(
@@ -670,7 +937,9 @@ def identify_and_find_band(
         )
     band = None
     if want_band and not cancelled():
-        band = find_band_for(identity, (tags or {}).get("artist"), cancelled=cancelled)
+        band = find_band_for(
+            identity, (tags or {}).get("artist"), title=job.title, cancelled=cancelled
+        )
     return identity, band
 
 
@@ -731,7 +1000,9 @@ class IdentifyLookup:
         self._identity = identity
         self._identity_ready.set()
         if want_band and not cancelled():
-            self._band = find_band_for(identity, tags.get("artist"), cancelled=cancelled)
+            self._band = find_band_for(
+                identity, tags.get("artist"), title=job.title, cancelled=cancelled
+            )
         self._band_done.set()
         if want_work and not cancelled():
             self._work = find_work(identity, tags, title=job.title, cancelled=cancelled)

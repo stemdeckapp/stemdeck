@@ -161,6 +161,57 @@ def _label(entity: dict[str, Any], *codes: str) -> str:
     return ""
 
 
+# The languages a name's labels are read in, by the language it is searched
+# in. A name in Chinese characters alone may be Chinese in either script
+# (鄧麗君, 邓丽君) or Japanese (米津玄師): its label is looked for in all of
+# them, since Wikidata keeps a separate one for each.
+_LABEL_LANGUAGES = {
+    "zh": ("zh", "zh-hant", "zh-hans", "zh-tw", "zh-hk", "zh-cn", "ja"),
+}
+
+
+def _languages(lang: str) -> list[str]:
+    return [*_LABEL_LANGUAGES.get(lang, (lang,)), "en"] if lang != "en" else ["en"]
+
+
+def _names_in(entity: dict[str, Any], codes: list[str]) -> list[tuple[str, bool]]:
+    """(name, is_label) for every label and alias the entity has in
+    ``codes``, labels first."""
+    found: list[tuple[str, bool]] = []
+    for field, is_label in (("labels", True), ("aliases", False)):
+        values = entity.get(field)
+        if not isinstance(values, dict):
+            continue
+        for code in codes:
+            entries = values.get(code)
+            for entry in entries if isinstance(entries, list) else [entries]:
+                if isinstance(entry, dict) and isinstance(entry.get("value"), str):
+                    found.append((entry["value"], is_label))
+    return found
+
+
+def _display_name(entity: dict[str, Any], lang: str, name: str) -> str:
+    """What to call a band found for ``name``: its label in the script the
+    name was written in when one matches it ("邓丽君" searched finds the
+    simplified label, not the traditional 鄧麗君), else its label in
+    ``lang``'s languages, else English."""
+    codes = _languages(lang)
+    want = artist_name_key(name)
+    for label, is_label in _names_in(entity, codes):
+        if is_label and want and artist_name_key(label) == want:
+            return label
+    return _label(entity, *codes)
+
+
+def _goes_by(entity: dict[str, Any], lang: str, name: str) -> bool:
+    """Whether any label or alias of the entity in ``lang``'s languages, or
+    English, is ``name`` once case, accents and punctuation are set aside."""
+    want = artist_name_key(name)
+    return bool(want) and any(
+        artist_name_key(value) == want for value, _ in _names_in(entity, _languages(lang))
+    )
+
+
 def lookup_band(
     name: str,
     *,
@@ -199,8 +250,10 @@ def lookup_band(
         {
             "action": "wbgetentities",
             "ids": "|".join(ids),
-            "props": "claims|labels",
-            "languages": "en" if lang == "en" else f"{lang}|en",
+            # Aliases too, outside English: a band written in another script
+            # is often known by a name its label is not (IU is 아이유).
+            "props": "claims|labels" if lang == "en" else "claims|labels|aliases",
+            "languages": "|".join(_languages(lang)),
             "languagefallback": "1",
         }
     )
@@ -210,13 +263,17 @@ def lookup_band(
     band = clean_artist(
         {
             "id": entity.get("id"),
-            "name": _label(entity, lang, "en") or search,
+            "name": _display_name(entity, lang, search) or search,
             # Kept beside the name: LRCLIB lists artists by the name they
             # release under, which the English label nearly always is.
             "englishName": _label(entity, "en"),
         }
     )
-    return band if band and artist_matches_name(band, search) else None
+    if not band:
+        return None
+    if artist_matches_name(band, search) or (lang != "en" and _goes_by(entity, lang, search)):
+        return band
+    return None
 
 
 def _claim_values(entity: dict[str, Any], prop: str) -> set[str]:
@@ -258,7 +315,7 @@ def lookup_band_by_id(
             "action": "wbgetentities",
             "ids": qid,
             "props": "claims|labels",
-            "languages": "en" if lang == "en" else f"{lang}|en",
+            "languages": "|".join(_languages(lang)),
             "languagefallback": "1",
         }
     )
@@ -271,7 +328,7 @@ def lookup_band_by_id(
     return clean_artist(
         {
             "id": entity.get("id"),
-            "name": _label(entity, lang, "en") or name,
+            "name": _display_name(entity, lang, name) or name,
             "englishName": _label(entity, "en"),
         }
     )

@@ -21,6 +21,10 @@ import {
   belongsTo,
   sameArtist,
   sameSong,
+  scriptNames,
+  otherNames,
+  fold as foldName,
+  rankVersions,
 } from "../../static/js/lyricsLookup.js";
 
 let pass = 0,
@@ -413,6 +417,91 @@ for (const [intact, other] of [
   check("Polish names compare letter for letter", sameArtist("Dawid Podsiadło", ["Dawid Podsiadło"]) && !sameArtist("Dawid Podsiadło", ["Dawid Kwiatkowski"]));
   check("a two-letter credit names nobody", !sameArtist("DJ", ["DJ & Someone Else"]));
   check("one shared word is not a shared name", !sameArtist("Pink", ["Pink Floyd"]));
+}
+
+// Chinese, Japanese and Korean names: the cases in tests/test_lyrics_names.py.
+{
+  const artists = [
+    ["周杰伦", ["周杰倫"], true],
+    ["邓丽君", ["鄧麗君"], true],
+    ["ＹＯＡＳＯＢＩ", ["YOASOBI"], true],
+    ["ｷﾝｸﾞﾇｰ", ["キングヌー"], true],
+    ["Dawid Podsiadlo", ["Dawid Podsiadło"], true],
+    ["鄧麗君 (Teresa Teng)", ["Teresa Teng"], true],
+    ["五月天 (Mayday)", ["五月天"], true],
+    ["IU", ["IU (아이유)"], true],
+    ["周杰倫", ["周杰倫 Jay Chou"], true],
+    ["Jay Chou", ["周杰倫 Jay Chou"], true],
+    ["周杰倫 & 費玉清", ["周杰倫"], true],
+    ["Jay Chou", ["周杰倫"], false],
+    ["아이유", ["IU"], false],
+    ["张信哲", ["周杰倫"], false],
+    ["五月天 阿信", ["五月天"], false],
+    ["告五人", ["五月天"], false],
+    ["Official", ["Official髭男dism"], false],
+    ["林", ["林 & 周杰倫"], false],
+  ];
+  for (const [found, names, want] of artists) {
+    check(`sameArtist(${found}, ${names}) is ${want}`, sameArtist(found, names) === want);
+  }
+  const songs = [
+    ["红豆", "紅豆", true],
+    ["晴天 (Sunny Day)", "晴天", true],
+    ["晴天（Sunny Day）", "晴天", true],
+    ["「白日」", "白日", true],
+    ["【白日】", "白日", true],
+    ["밤편지 (Through the Night)", "밤편지", true],
+    ["月亮代表我的心 - 劇集 “黃金有罪” 插曲", "月亮代表我的心", true],
+    ["Malomiasteczkowy", "Małomiasteczkowy", true],
+    ["晴れの日(晴天)", "晴天", false],
+    ["雨天", "晴天", false],
+    ["The Moon Represents My Heart - 月亮代表我的心", "月亮代表我的心", false],
+  ];
+  for (const [found, song, want] of songs) {
+    check(`sameSong(${found}, ${song}) is ${want}`, sameSong(found, song) === want);
+  }
+  check("a name in two scripts gives both", same(scriptNames("周杰倫 Jay Chou"), ["周杰伦", "Jay Chou"]) && same(scriptNames("IU(아이유)"), ["IU", "아이유"]));
+  check("a name mixing scripts in one word is one name", same(scriptNames("Official髭男dism"), []) && same(scriptNames("五月天 阿信"), []));
+  check("folding: traditional, width, plain Latin", foldName("鄧麗君 ＩＵ Podsiadło") === "邓丽君 IU Podsiadlo");
+  check("the band's names count as the artist's", belongsTo({ artist: "周杰倫", track: "晴天" }, { artist: "Jay Chou", song: "晴天", names: ["周杰倫", "Jay Chou"] }));
+  check("and never make another artist's song the track's", !belongsTo({ artist: "张信哲", track: "晴天" }, { artist: "Jay Chou", song: "晴天", names: ["周杰倫"] }));
+  check(
+    "other names to search by: a name's own scripts, then the band's, each once",
+    same(otherNames("周杰倫 Jay Chou", ["周杰倫", "Jay Chou", "周杰倫 Jay Chou"]), ["周杰伦", "Jay Chou", "周杰倫"]),
+    JSON.stringify(otherNames("周杰倫 Jay Chou", ["周杰倫", "Jay Chou"])),
+  );
+  check("the artist's own name is not searched again", same(otherNames("IU", ["IU", "아이유"]), ["아이유"]));
+  const a = rankMatches([row(1, 300, "synced"), row(2, 269, "synced")], 269);
+  const b = rankMatches([row(3, 270, "synced"), row(2, 269, "synced")], 269);
+  check("versions from two searches rank together, each once", same(rankVersions([...a, ...b], 269).map((m) => m.id), [2, 3, 1]));
+}
+
+// Karaoke in Chinese, Japanese and Korean.
+{
+  const texts = (line, next = 20) => wordTimings(line, next).map((w) => w.text);
+  const zh = texts({ time: 0, text: "故事的小黄花 从出生那年" });
+  check("Chinese with a space between phrases still goes a character at a time", same(zh, ["故", "事", "的", "小", "黄", "花 ", "从", "出", "生", "那", "年"]), JSON.stringify(zh));
+  const ja = texts({ time: 0, text: "「夢ならば」Lemon しゃべらない" });
+  check(
+    "Japanese: brackets with their character, Latin words whole, small kana with the one before",
+    same(ja, ["「夢", "な", "ら", "ば」", "Lemon ", "しゃ", "べ", "ら", "な", "い"]),
+    JSON.stringify(ja),
+  );
+  check("the texts give the line back", ja.join("") === "「夢ならば」Lemon しゃべらない");
+  const ko = wordTimings({ time: 0, text: "나는 너를 사랑해요" }, 20);
+  check("Korean goes a word at a time", same(ko.map((w) => w.text), ["나는 ", "너를 ", "사랑해요"]));
+  check("a Korean word takes as long as its syllables", Math.abs((ko[2].end - ko[2].start) / (ko[0].end - ko[0].start) - 2) < 1e-9);
+  check("syllables: a block, a character, a kana each", syllables("사랑해요") === 4 && syllables("晴天") === 2 && syllables("しゃ") === 1 && syllables("ティー") === 2);
+  const enhanced = parseLrc("[00:10.00]<00:10.00>夜<00:10.40>に<00:10.80>駆ける\n[00:14.00]前に <00:15.00>君が");
+  check(
+    "enhanced LRC in Japanese: each stamped piece filled at its stamp",
+    same(wordTimings(enhanced[0], 14).map((w) => [w.text, w.start]), [["夜", 10], ["に", 10.4], ["駆ける", 10.8]]),
+  );
+  check(
+    "words before the first word stamp are kept, from the line's own stamp",
+    enhanced[1].text === "前に 君が" && same(wordTimings(enhanced[1], 20).map((w) => [w.text, w.start]), [["前に ", 14], ["君が", 15]]),
+    JSON.stringify(enhanced[1]),
+  );
 }
 
 console.log(`${pass} passed, ${fail} failed`);

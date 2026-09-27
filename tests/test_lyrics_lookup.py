@@ -1078,3 +1078,48 @@ def test_where_the_letters_came_from_survives_the_file(tmp_path: Path, repaired,
 def test_a_repair_mark_that_is_not_one_is_dropped_not_fatal(repaired):
     entry = clean_lyrics({**_found(), "repaired": repaired})
     assert entry is not None and "repaired" not in entry
+
+
+# ── LRCLIB busy ──
+
+
+class _Busy:
+    """LRCLIB answering ``code`` for the first ``times`` requests, then the
+    artist's version of the song."""
+
+    def __init__(self, times, code=503):
+        self.times = times
+        self.code = code
+        self.calls = 0
+
+    def __call__(self, endpoint, params):
+        self.calls += 1
+        if self.calls <= self.times:
+            raise urllib.error.HTTPError("u", self.code, "busy", {}, None)
+        return row(1, 572) if endpoint == "get" else [row(1, 572)]
+
+
+def test_a_busy_moment_is_asked_again_and_the_lyrics_kept(monkeypatch):
+    waits = []
+    monkeypatch.setattr(ll.time, "sleep", waits.append)
+    lrclib = _Busy(2)
+    assert kept(query(), fetch_json=lrclib)["lrclib_id"] == 1
+    assert waits == [1.0, 2.0], "twice, a second and then two"
+
+
+def test_a_server_that_stays_busy_is_given_up_on(monkeypatch):
+    monkeypatch.setattr(ll.time, "sleep", lambda s: None)
+    lrclib = _Busy(100, code=429)
+    with pytest.raises(urllib.error.HTTPError):
+        lookup_lyrics(query(), fetch_json=lrclib)
+    # The exact match, three times, gives way to the search, three times,
+    # whose failure is LRCLIB's: raised, so the lookup is tried again later.
+    assert lrclib.calls == 3 * 2
+
+
+def test_other_failures_are_not_asked_again(monkeypatch):
+    monkeypatch.setattr(ll.time, "sleep", lambda s: pytest.fail("no wait"))
+    lrclib = _Busy(1, code=500)
+    found = kept(query(), fetch_json=lrclib)
+    assert found["lrclib_id"] == 1, "the exact match failed; the search found it"
+    assert lrclib.calls == 2

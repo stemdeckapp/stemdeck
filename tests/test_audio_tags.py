@@ -140,6 +140,45 @@ def test_a_label_channel_is_not_the_artist_of_what_it_uploads():
     assert tags_from_ytdlp(info) is None
 
 
+@pytest.mark.parametrize(
+    ("channel", "title", "tags"),
+    [
+        # The song in marks straight after the name.
+        (
+            "周杰倫 Jay Chou",
+            "周杰倫 Jay Chou【晴天 Sunny Day】-Official Music Video",
+            {"artist": "周杰倫 Jay Chou", "title": "【晴天 Sunny Day】-Official Music Video"},
+        ),
+        ("YOASOBI", "YOASOBI「群青」Official Music Video", {"artist": "YOASOBI"}),
+        # What a Japanese or Chinese channel adds to the name.
+        ("King Gnu official YouTube channel", "King Gnu - 白日", {"artist": "King Gnu"}),
+        ("宇多田ヒカル 公式チャンネル", "宇多田ヒカル - First Love", {"artist": "宇多田ヒカル"}),
+        ("Edith Piaf Officiel", "Edith Piaf - La vie en rose", {"artist": "Edith Piaf"}),
+        # East Asian separators.
+        ("IU", "IU _ Palette", {"artist": "IU", "title": "Palette"}),
+        ("YOASOBI", "YOASOBI／群青", {"artist": "YOASOBI", "title": "群青"}),
+        # A title typed without its letters: the channel's own spelling.
+        (
+            "Dawid Podsiadło",
+            "Dawid Podsiadlo - Małomiasteczkowy",
+            {"artist": "Dawid Podsiadło", "title": "Małomiasteczkowy"},
+        ),
+        # A suffix that is part of the name is not lost.
+        ("Roxy Music", "Roxy Music - More Than This", {"artist": "Roxy Music"}),
+    ],
+)
+def test_an_artists_own_channel_is_read_in_every_script(channel, title, tags):
+    found = tags_from_ytdlp({"channel": channel, "title": title})
+    assert found is not None
+    assert {k: found[k] for k in tags} == tags
+
+
+def test_a_k_pop_label_channel_is_not_the_artist():
+    for channel in ("HYBE LABELS", "1theK (원더케이)", "SMTOWN", "JVR Music"):
+        info = {"channel": channel, "title": "NewJeans (뉴진스) 'Ditto' Official MV (side A)"}
+        assert tags_from_ytdlp(info) is None
+
+
 def test_a_fan_upload_is_not_corroborated():
     info = {"channel": "grungefan1991", "uploader": "grungefan1991", "title": "Nirvana - Lithium"}
     assert tags_from_ytdlp(info) is None

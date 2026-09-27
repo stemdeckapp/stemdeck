@@ -195,6 +195,62 @@ def test_a_name_in_another_script_matches_its_own_label():
     assert wikidata.asked[1]["languages"] == "ja|en"
 
 
+TERESA_TENG = {
+    "entities": {
+        "Q15971": {
+            "id": "Q15971",
+            "labels": {
+                "zh": {"value": "鄧麗君"},
+                "zh-hans": {"value": "邓丽君"},
+                "ja": {"value": "テレサ・テン"},
+                "en": {"value": "Teresa Teng"},
+            },
+            "claims": {"P434": [{"mainsnak": {"datavalue": {"value": "5c5cb762"}}}]},
+        }
+    }
+}
+
+
+def test_chinese_characters_are_read_in_every_chinese_script_and_japanese():
+    """邓丽君 is the simplified label, not the zh one: Chinese characters
+    alone could be either script, or Japanese, and each has its own."""
+    wikidata = Wikidata(search={"search": [{"id": "Q15971"}]}, entities=TERESA_TENG)
+    band = lookup_band("邓丽君", fetch_json=wikidata)
+    assert band == {"id": "Q15971", "name": "邓丽君", "englishName": "Teresa Teng"}
+    languages = wikidata.asked[1]["languages"].split("|")
+    assert {"zh", "zh-hant", "zh-hans", "ja", "en"} <= set(languages)
+    assert band == lookup_band("鄧麗君", fetch_json=wikidata) | {"name": "邓丽君"}
+
+
+def test_a_band_is_found_by_its_alias_in_the_same_script():
+    entities = {
+        "entities": {
+            "Q1": {
+                "id": "Q1",
+                "labels": {"ko": {"value": "아이유"}, "en": {"value": "IU"}},
+                "aliases": {"ko": [{"value": "이지은"}]},
+                "claims": {"P434": [{}]},
+            }
+        }
+    }
+    wikidata = Wikidata(search={"search": [{"id": "Q1"}]}, entities=entities)
+    band = lookup_band("이지은", fetch_json=wikidata)
+    assert band == {"id": "Q1", "name": "아이유", "englishName": "IU"}
+    assert "aliases" in wikidata.asked[1]["props"]
+    # English asks exactly what it asked before.
+    wikidata = Wikidata()
+    lookup_band("Dream Theater", fetch_json=wikidata)
+    assert wikidata.asked[1]["props"] == "claims|labels"
+    assert wikidata.asked[1]["languages"] == "en"
+
+
+def test_a_band_by_id_is_named_in_the_script_its_credit_is():
+    band = al.lookup_band_by_id(
+        "Q15971", "5c5cb762", name="鄧麗君", fetch_json=lambda params: TERESA_TENG
+    )
+    assert band == {"id": "Q15971", "name": "鄧麗君", "englishName": "Teresa Teng"}
+
+
 def test_no_artist_among_the_hits_is_no_band():
     assert lookup_band("Dream Theater", fetch_json=Wikidata(search={"search": []})) is None
     only_album = {"entities": {"Q13420662": ENTITIES["entities"]["Q13420662"]}}

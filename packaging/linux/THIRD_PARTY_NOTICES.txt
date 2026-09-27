@@ -56,6 +56,17 @@ soundfile
 License: BSD
 Website: https://github.com/bastibe/python-soundfile
 
+OpenCC character table (data only)
+License: Apache License 2.0
+Website: https://github.com/BYVoid/OpenCC
+StemDeck folds traditional Chinese characters to simplified ones when it
+compares artist and song names, so lyrics filed under either are found.
+The table (app/_vendor/opencc/zh_t2s.txt, and the same pairs in
+static/js/zhVariants.js) is derived from OpenCC's TSCharacters.txt,
+Copyright Carbo Kuo (BYVoid) and the OpenCC contributors: only the first
+simplified form of each character is kept. The license text is
+app/_vendor/opencc/LICENSE.
+
 System Requirements (Not Bundled)
 ---------------------------------
 

@@ -50,6 +50,7 @@ IDENTITY_SOURCES = ("acoustid", "musicbrainz", "lrclib", "tags")
 # More artists than this on one recording is not a credit worth keeping.
 _IDENTITY_MAX_ARTISTS = 20
 _IDENTITY_MAX_TYPES = 12
+_IDENTITY_MAX_TITLE_ALIASES = 6
 # Before sound recording, a year is a typo or a placeholder.
 _IDENTITY_MIN_YEAR = 1860
 
@@ -67,8 +68,9 @@ def clean_identity(value: Any) -> dict[str, Any] | None:
 
     {"source", "score", "recording_mbid", "title", "artist", "artist_mbids",
     "album", "release_group_mbid", "release_group_type", "secondary_types",
-    "year", "duration"}, with "year" the album's first release. Used for everything written (the pipeline builds identities
-    through it) and everything read back from disk, so a damaged or
+    "year", "duration"}, and "title_aliases" when there are any, with "year"
+    the album's first release. Used for everything written (the pipeline
+    builds identities through it) and everything read back from disk, so a damaged or
     hand-edited record never reaches the page, the band lookup or the lyrics
     lookup in any other shape. A title and an artist are required: an identity
     without both names nothing.
@@ -98,6 +100,14 @@ def clean_identity(value: Any) -> dict[str, Any] | None:
         year = None
     mbids = value.get("artist_mbids")
     types = value.get("secondary_types")
+    aliases: list[str] = []
+    for alias in (
+        value.get("title_aliases") or [] if isinstance(value.get("title_aliases"), list) else []
+    ):
+        text = _identity_text(alias)
+        if text and text != title and text not in aliases:
+            aliases.append(text)
+    aliases = aliases[:_IDENTITY_MAX_TITLE_ALIASES]
     return {
         "source": value["source"],
         "score": round(max(0.0, min(1.0, float(score))), 4),
@@ -117,6 +127,11 @@ def clean_identity(value: Any) -> dict[str, Any] | None:
         else [],
         "year": year,
         "duration": round(float(duration), 3) if duration is not None else None,
+        # Other titles the song goes by, when any are known: the upload's own
+        # ("Good Day (좋은 날)") and its MusicBrainz work's. For the lyrics
+        # lookup, since LRCLIB files a song under any of them. Left out when
+        # there are none, so an identity without them keeps its old shape.
+        **({"title_aliases": aliases} if aliases else {}),
     }
 
 

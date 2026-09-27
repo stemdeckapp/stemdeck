@@ -54,3 +54,15 @@ License: GNU Lesser General Public License v2.1 for Chromaprint as a
          https://github.com/acoustid/chromaprint/blob/v1.6.1/LICENSE.md
 Source:  https://github.com/acoustid/chromaprint/releases/tag/v1.6.1
          https://git.ffmpeg.org/ffmpeg.git
+
+OpenCC character table
+----------------------
+License: Apache License 2.0
+Website: https://github.com/BYVoid/OpenCC
+StemDeck folds traditional Chinese characters to simplified ones when it
+compares artist and song names, so lyrics filed under either are found.
+The table (app/_vendor/opencc/zh_t2s.txt, and the same pairs in
+static/js/zhVariants.js) is derived from OpenCC's TSCharacters.txt,
+Copyright Carbo Kuo (BYVoid) and the OpenCC contributors: only the first
+simplified form of each character is kept. The license text is
+app/_vendor/opencc/LICENSE.

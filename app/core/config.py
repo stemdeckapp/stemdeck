@@ -405,6 +405,14 @@ def _musicbrainz_user_agent() -> str:
 
 
 MUSICBRAINZ_USER_AGENT = _musicbrainz_user_agent()
+# MusicBrainz sheds load with 503 (and now and then 429) even to a client
+# keeping to its rate: measured on 2026-09-27, four of 45 benchmark songs lost
+# their identity to a single 503. A refused request is asked again up to this
+# many times, waiting MUSICBRAINZ_RETRY_BACKOFF_SEC, then twice that, and so
+# on, or what Retry-After asks, never more than MUSICBRAINZ_RETRY_MAX_WAIT_SEC.
+MUSICBRAINZ_RETRIES = 3
+MUSICBRAINZ_RETRY_BACKOFF_SEC = 1.0
+MUSICBRAINZ_RETRY_MAX_WAIT_SEC = 8.0
 # A request that would wait longer than this for its turn under the rate
 # limit is not made at all: a queue that long means something else is
 # hammering the service, and identification is best-effort.
@@ -423,6 +431,18 @@ TITLE_LRCLIB_SEARCHES = 2
 # (or LRCLIB's artist and album) contain at least this share of the title's
 # words beyond the song's name: the performers, the show.
 TITLE_MIN_COVERAGE = 0.5
+# When no reading's words are found in a credit, the artist a reading names is
+# looked up on MusicBrainz by name and alias, which finds 周杰倫 from "Jay
+# Chou", IU from "아이유" and 鄧麗君 from "邓丽君", and the song is searched for
+# among that artist's recordings: for up to this many readings, two requests
+# each.
+TITLE_ARTIST_SEARCHES = 2
+# A music video runs longer than the recording on the album: an intro, a
+# story, credits. Among the recordings of an artist found by name, one this
+# much shorter than the upload still counts, the nearest length first.
+# Measured on 2026-09-27: IU's "Good Day" video is 124 seconds longer than
+# the single, BTS "Spring Day" 55, Jay Chou's "Sunny Day" 49.
+IDENTIFY_VIDEO_EXTRA_SEC = 150
 # Each AcoustID or MusicBrainz request is abandoned after this many seconds.
 TIMEOUT_IDENTIFY_REQUEST = _env_int("STEMDECK_TIMEOUT_IDENTIFY_REQUEST", 8)
 # How long a finished pipeline waits for identification still in flight, as
@@ -470,6 +490,12 @@ TIMEOUT_LYRICS_LOOKUP = _env_int("STEMDECK_TIMEOUT_LYRICS_LOOKUP", 10)
 # No further request is started this many seconds into a lookup. The cascade
 # is at most five requests, and all of them run beside separation.
 LYRICS_LOOKUP_BUDGET_SEC = _env_int("STEMDECK_LYRICS_LOOKUP_BUDGET_SEC", 30)
+# LRCLIB answers 503 or 429 when it is busy, for a moment. Each request is
+# asked again this many times, waiting LYRICS_LOOKUP_RETRY_SEC and then twice
+# that, within the lookup's budget, so one busy moment does not cost a song
+# its lyrics.
+LYRICS_LOOKUP_RETRIES = 2
+LYRICS_LOOKUP_RETRY_SEC = 1.0
 # How long a finished pipeline waits for a lookup still in flight. Short for
 # the same reason as the band's: the tab looks for lyrics itself when a track
 # has none.

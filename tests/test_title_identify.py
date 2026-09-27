@@ -239,7 +239,7 @@ class MusicBrainz:
         self.groups = groups or {}
         self.asked: list[tuple[str, dict]] = []
 
-    def __call__(self, path, params):
+    def __call__(self, path, params, **_kwargs):
         self.asked.append((path, dict(params)))
         if self.fail is not None:
             raise self.fail
@@ -435,33 +435,61 @@ class _Response(io.BytesIO):
         return False
 
 
-def _urlopen(*codes):
+def _urlopen(*codes, headers=None):
     """urlopen answering each of ``codes`` in turn: an HTTP error, or 200."""
     answers = list(codes)
 
     def urlopen(request, timeout, context):
         code = answers.pop(0)
         if code != 200:
-            raise urllib.error.HTTPError(request.full_url, code, "busy", {}, io.BytesIO(b""))
+            raise urllib.error.HTTPError(
+                request.full_url, code, "busy", headers or {}, io.BytesIO(b"")
+            )
         return _Response(b'{"ok": true}')
 
     return urlopen
 
 
-def test_a_503_is_asked_once_more_on_the_next_turn(monkeypatch):
-    turns = []
+def test_a_busy_answer_is_asked_again_after_a_growing_wait(monkeypatch):
+    """Four of 45 songs in the language benchmark lost their identity to a
+    single 503 when one retry was all there was."""
+    turns, slept = [], []
     monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: turns.append(1))
-    monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(503, 200))
+    monkeypatch.setattr(mb, "_sleep", slept.append)
+    monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(503, 429, 200))
     assert _REAL_MB_FETCH("recording", {"query": "x"}) == {"ok": True}
-    assert len(turns) == 2
+    assert len(turns) == 3, "each attempt takes a turn of its own"
+    assert sum(slept) == pytest.approx(1.0 + 2.0)
 
 
-@pytest.mark.parametrize("codes", [(503, 503), (400,)])
-def test_a_second_503_or_any_other_error_raises(monkeypatch, codes):
+def test_retry_after_is_kept_to_within_a_bound(monkeypatch):
+    slept = []
     monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: None)
+    monkeypatch.setattr(mb, "_sleep", slept.append)
+    monkeypatch.setattr(
+        mb.urllib.request, "urlopen", _urlopen(503, 200, headers={"Retry-After": "600"})
+    )
+    assert _REAL_MB_FETCH("recording", {"query": "x"}) == {"ok": True}
+    assert sum(slept) == pytest.approx(mb.MUSICBRAINZ_RETRY_MAX_WAIT_SEC)
+
+
+@pytest.mark.parametrize("codes", [(503,) * (mb.MUSICBRAINZ_RETRIES + 1), (400,), (404,)])
+def test_a_refusal_past_the_retries_or_any_other_error_raises(monkeypatch, codes):
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: None)
+    monkeypatch.setattr(mb, "_sleep", lambda seconds: None)
     monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(*codes))
     with pytest.raises(urllib.error.HTTPError):
         _REAL_MB_FETCH("recording", {"query": "x"})
+
+
+def test_a_cancel_stops_the_wait(monkeypatch):
+    turns = []
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: turns.append(1))
+    monkeypatch.setattr(mb, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(503, 200))
+    with pytest.raises(mb.ratelimit.RateLimited):
+        _REAL_MB_FETCH("recording", {"query": "x"}, cancelled=lambda: True)
+    assert len(turns) == 1
 
 
 # ── LRCLIB as the second opinion ──

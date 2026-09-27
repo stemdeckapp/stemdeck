@@ -15,6 +15,7 @@
 // tests (tests/js/lyrics-lookup.test.mjs).
 
 import { artistNameKey } from "./artistLookup.js";
+import { toSimplified } from "./zhVariants.js";
 
 const LRCLIB_SEARCH = "https://lrclib.net/api/search";
 const TIMEOUT_MS = 12000;
@@ -88,6 +89,14 @@ export function rankMatches(rows, duration = 0) {
   const matches = (Array.isArray(rows) ? rows : [])
     .map(normalise)
     .filter((m) => m.id && (m.synced || m.plain || m.instrumental));
+  return rankVersions(matches, duration);
+}
+
+/** rankMatches' order over versions it already gave, say from two searches.
+ * Each version once, by id. */
+export function rankVersions(versions, duration = 0) {
+  const seen = new Set();
+  const matches = versions.filter((m) => m?.id && !seen.has(m.id) && seen.add(m.id));
   const off = (m) => (duration && m.duration ? Math.abs(m.duration - duration) : 0);
   const stripped = strippedIndexes(matches);
   return matches
@@ -204,7 +213,11 @@ export function parseLrc(text) {
     if (!stamps.length) continue;
     const words = wordStamps(rest);
     const plain = rest.replace(WORD_STAMP, "").replace(/\s+/g, " ").trim();
-    for (const time of stamps) lines.push(words ? { time, text: plain, words } : { time, text: plain });
+    for (const time of stamps) {
+      // Words sung before the first word stamp start with the line.
+      const timed = words?.[0].time == null ? words?.map((w, i) => (i ? w : { ...w, time })) : words;
+      lines.push(timed ? { time, text: plain, words: timed } : { time, text: plain });
+    }
   }
   const shift = (t) => Math.max(0, t - offset);
   return lines
@@ -218,13 +231,16 @@ export function parseLrc(text) {
 
 const WORD_STAMP = /<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)>/g;
 
-/** Word stamps in a line's text, [{ time, text }], or null when it has none. */
+/** Word stamps in a line's text, [{ time, text }], or null when it has none.
+ * Text before the first stamp is a piece of its own with no time (null),
+ * which is the line's. */
 function wordStamps(text) {
   const pieces = [];
   let last = null;
   let cursor = 0;
   for (const m of text.matchAll(WORD_STAMP)) {
     if (last) last.text = text.slice(cursor, m.index);
+    else if (text.slice(0, m.index).trim()) pieces.push({ time: null, text: text.slice(0, m.index) });
     last = { time: Number(m[1]) * 60 + Number(m[2].replace(":", ".")), text: "" };
     pieces.push(last);
     cursor = m.index + m[0].length;
@@ -275,12 +291,70 @@ const WINDOW_SECONDS_PER_SYLLABLE = 1;
 const MIN_WINDOW_SECONDS = 6;
 
 // Scripts written without spaces between words, where the wipe moves a
-// character at a time instead.
-const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+// character at a time instead, the long vowel mark ("ー") with them. Korean
+// is written with spaces, and goes a word at a time as Latin does.
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー]/u;
+// Characters sung one to a syllable: a Chinese character, a kana (a Japanese
+// mora), a Korean syllable block. The small kana that bend the one before
+// them ("しゃ", "ティ") are not one of their own.
+const SYLLABIC = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー가-힣]/gu;
+const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/gu;
+const SMALL_KANA_ONE = /^[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]$/u;
+// Punctuation that opens ("「", "(", "“"), which goes with the character
+// after it; any other goes with the one before.
+const OPENING = /^[\p{Ps}\p{Pi}]$/u;
+const MARKS = /^[\p{P}\p{S}]+$/u;
 
-/** A line's text as the pieces the wipe fills: words, or characters. */
+/** A line's text as the pieces the wipe fills: words, and in Chinese and
+ * Japanese each character, the texts joined giving back the line. */
 function lineTokens(text) {
-  return UNSPACED.test(text) && !/\s/.test(text) ? characters(text) : text.match(/\S+\s*/g) || [];
+  const words = text.match(/\S+\s*/g) || [];
+  return UNSPACED.test(text) ? words.flatMap(unspacedPieces) : words;
+}
+
+/**
+ * One spaced word of a line as the pieces the wipe fills: a Chinese or
+ * Japanese character each on its own, a run of anything else ("Lemon", "2",
+ * a Korean word) together, punctuation with its neighbour so no piece is only
+ * a mark ("「夜", "る」"), and the space after the word on the last piece.
+ */
+function unspacedPieces(word) {
+  if (!UNSPACED.test(word)) return [word];
+  const pieces = [];
+  let run = false; // whether the last piece is a run that may go on
+  let opening = ""; // opening marks waiting for the character after them
+  for (const ch of characters(word)) {
+    if (/^\s+$/u.test(ch)) {
+      if (pieces.length) pieces[pieces.length - 1] += ch;
+      else opening += ch;
+      run = false;
+    } else if (MARKS.test(ch)) {
+      if (OPENING.test(ch) || !pieces.length) {
+        opening += ch;
+      } else {
+        pieces[pieces.length - 1] += ch;
+      }
+      run = false;
+    } else if (SMALL_KANA_ONE.test(ch) && pieces.length && !run && !opening) {
+      // "しゃ", "ティ": one sound, one piece.
+      pieces[pieces.length - 1] += ch;
+    } else if (UNSPACED.test(ch)) {
+      pieces.push(opening + ch);
+      opening = "";
+      run = false;
+    } else if (run && !opening) {
+      pieces[pieces.length - 1] += ch;
+    } else {
+      pieces.push(opening + ch);
+      opening = "";
+      run = true;
+    }
+  }
+  if (opening) {
+    if (pieces.length) pieces[pieces.length - 1] += opening;
+    else pieces.push(opening);
+  }
+  return pieces;
 }
 
 /** `text` as the characters a reader sees: a base letter with the marks on it
@@ -291,13 +365,20 @@ function characters(text) {
 }
 
 /**
- * About how many syllables `token` is sung in: vowel groups in Latin
- * script, less a silent final e ("home", "'cause", but not "table"), and
- * for other scripts one per two or three letters. At least one.
+ * About how many syllables `token` is sung in: a Chinese character, kana or
+ * Korean syllable block each, vowel groups in Latin script, less a silent
+ * final e ("home", "'cause", but not "table"), and for other scripts one per
+ * two or three letters. At least one.
  */
 export function syllables(token) {
   const word = token.trim();
   if (!word) return 0;
+  const composed = word.normalize("NFC");
+  const syllabic = (composed.match(SYLLABIC) || []).length - (composed.match(SMALL_KANA) || []).length;
+  if (syllabic > 0) {
+    const latin = composed.normalize("NFD").toLowerCase().match(/[aeiouy]+/g) || [];
+    return syllabic + latin.length;
+  }
   // The silent e is looked for before accents are stripped: "cafe" with an
   // acute is two syllables.
   const lower = word.normalize("NFC").toLowerCase().replace(/[^\p{L}]+$/u, "");
@@ -507,21 +588,92 @@ export function songFromTitle(title, artist = "") {
 // worse than none, so a version is kept only when its song is the one asked for
 // and its artist is one of the names the track is known by: the artist itself,
 // one of the artists credited with it ("Keala Settle" of "Keala Settle & The
-// Greatest Showman Ensemble"), or the show a cast recording is filed under.
+// Greatest Showman Ensemble"), the show a cast recording is filed under, or
+// another name the band goes by (its name in the artist box). Names are
+// compared folded (fold): full-width letters as half-width, traditional
+// Chinese as simplified.
 const NAME_LIST = /\s*(?:[&,+/;]|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*/iu;
 const LEADING_THE = /^\s*the\s+/iu;
 const SONG_FEATURING = /\s+(?:ft\.?|feat\.?|featuring)\s.*$/iu;
-const SONG_BRACKETS = /[([{][^()[\]{}]*[)\]}]/gu;
+const SONG_BRACKETS = /[([{【][^()[\]{}【】]*[)\]}】]/gu;
 const SONG_TAIL = /\s+\p{Pd}+\s+.*$/u;
-// One credited artist matches only when its name is at least this long, so an
-// initial or a stray "DJ" names nobody; a run of words inside a longer name
-// ("The Greatest Showman" in "The Greatest Showman Cast") needs this many.
+// What stands between the names a name is written in at once: "周杰倫 Jay
+// Chou", "IU (아이유)", "五月天 (Mayday)".
+const SCRIPT_BREAK = /[\s()[\]{}【】「」『』〈〉《》]+/u;
+// One credited artist matches only when its name weighs at least this much
+// (nameWeight: an ideograph counts two), so an initial or a stray "DJ" names
+// nobody while 王菲 does; a run of words inside a longer name ("The Greatest
+// Showman" in "The Greatest Showman Cast") needs this many.
 const PART_MIN_CHARS = 4;
 const RUN_MIN_WORDS = 2;
 
-const nameKey = (name) => artistNameKey(String(name || "").replace(LEADING_THE, ""));
-const nameWords = (name) => (String(name || "").match(/[\p{L}\p{M}\p{N}]+/gu) || []).map(artistNameKey).filter(Boolean);
-const nameParts = (name) => String(name || "").split(NAME_LIST).map(nameKey).filter(Boolean);
+// Latin letters Unicode does not build from a base letter and an accent, as a
+// name typed without them has them: "Podsiadlo" for Podsiadło.
+const LATIN_LETTERS = { ł: "l", Ł: "L", ø: "o", Ø: "O", đ: "d", Đ: "D", ð: "d", Ð: "D", ß: "ss", æ: "ae", Æ: "AE", œ: "oe", Œ: "OE", ı: "i", þ: "th", Þ: "TH" };
+const LATIN_LETTER = /[łŁøØđĐðÐßæÆœŒıþÞ]/gu;
+
+/** A name as it is compared, fold() in app/pipeline/name_aliases.py:
+ * compatibility forms unified (full-width Latin, half-width kana),
+ * traditional Chinese as simplified, and the Latin letters above plain. */
+export function fold(text) {
+  return toSimplified(String(text || "").normalize("NFKC").replace(LATIN_LETTER, (ch) => LATIN_LETTERS[ch]));
+}
+
+const isHan = (cp) =>
+  (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0x20000 && cp <= 0x3ffff);
+
+/** A Chinese, Japanese or Korean letter: an ideograph, kana or Hangul. */
+function isCjk(ch) {
+  const cp = ch.codePointAt(0);
+  return isHan(cp)
+    || (cp >= 0x3040 && cp <= 0x30ff) || (cp >= 0x31f0 && cp <= 0x31ff) || (cp >= 0xff66 && cp <= 0xff9f)
+    || (cp >= 0x1100 && cp <= 0x11ff) || (cp >= 0x3130 && cp <= 0x318f) || (cp >= 0xac00 && cp <= 0xd7af);
+}
+
+/** How much of a name a name key is, in Latin letters: name_weight in
+ * name_aliases.py. An ideograph counts two, marks nothing. */
+function nameWeight(key) {
+  let weight = 0;
+  for (const ch of key) weight += isHan(ch.codePointAt(0)) ? 2 : /\p{M}/u.test(ch) ? 0 : 1;
+  return weight;
+}
+
+const nameKey = (name) => artistNameKey(fold(name).replace(LEADING_THE, ""));
+const nameWords = (name) => (fold(name).match(/[\p{L}\p{M}\p{N}]+/gu) || []).map(artistNameKey).filter(Boolean);
+const nameParts = (name) => fold(name).split(NAME_LIST).map(nameKey).filter(Boolean);
+
+function scriptOf(token) {
+  const letters = token.match(/\p{L}/gu) || [];
+  if (!letters.length) return "";
+  const cjk = letters.filter(isCjk).length;
+  return cjk === letters.length ? "cjk" : cjk ? "mixed" : "other";
+}
+
+/**
+ * The names a name gives in two scripts at once, each on its own: "周杰倫 Jay
+ * Chou" as 周杰倫 and "Jay Chou", "IU (아이유)" as IU and 아이유. [] for a name
+ * in one script, or with a word that mixes them ("Official髭男dism").
+ * script_names in app/pipeline/lyrics_lookup.py.
+ */
+export function scriptNames(name) {
+  const tokens = fold(name).split(SCRIPT_BREAK).filter(Boolean);
+  const kinds = tokens.map(scriptOf);
+  if (kinds.includes("mixed") || new Set(kinds.filter(Boolean)).size < 2) return [];
+  const groups = [];
+  let last = "";
+  tokens.forEach((token, i) => {
+    if (!kinds[i]) {
+      last = "";
+      return;
+    }
+    if (kinds[i] !== last) groups.push([]);
+    groups.at(-1).push(token);
+    last = kinds[i];
+  });
+  return groups.map((group) => group.join(" "));
+}
+
+const wholeNames = (name) => [nameKey(name), ...scriptNames(name).map(nameKey)].filter(Boolean);
 
 function containsRun(words, run) {
   if (run.length < RUN_MIN_WORDS || run.length > words.length) return false;
@@ -533,21 +685,24 @@ function containsRun(words, run) {
 
 /** Whether `found`, a version's artist, is one of `names`. */
 export function sameArtist(found, names) {
-  const theirKey = nameKey(found);
-  if (!theirKey) return false;
+  if (!nameKey(found)) return false;
+  const theirs = new Set(wholeNames(found));
   const theirParts = nameParts(found);
   const theirWords = nameWords(found);
   return names.some((name) => {
     if (!String(name || "").trim()) return false;
-    if (nameKey(name) === theirKey) return true;
-    if (nameParts(name).some((p) => p.length >= PART_MIN_CHARS && theirParts.includes(p))) return true;
+    if (wholeNames(name).some((key) => theirs.has(key))) return true;
+    if (nameParts(name).some((p) => nameWeight(p) >= PART_MIN_CHARS && theirParts.includes(p))) return true;
     const mine = nameWords(name);
     return containsRun(mine, theirWords) || containsRun(theirWords, mine);
   });
 }
 
 function songKeys(name) {
-  const full = String(name || "").replace(SONG_BRACKETS, " ").replace(SONG_FEATURING, "");
+  const text = fold(name);
+  let full = text.replace(SONG_BRACKETS, " ").replace(SONG_FEATURING, "");
+  // A name all in brackets (【白日】) is the name, not a note on it.
+  if (!artistNameKey(full)) full = text;
   return { full: artistNameKey(full), head: artistNameKey(full.replace(SONG_TAIL, "")) };
 }
 
@@ -555,7 +710,7 @@ function songKeys(name) {
  * Whether `found`, a version's song, is `song`: the same name less brackets
  * and featured artists, or one of them the other with a " - ..." tail ("This
  * Is Me - From The Greatest Showman"). Two tails never make a match: "Part I -
- * Dawn" is not "Part I - Dusk".
+ * Dawn" is not "Part I - Dusk". Compared folded: "紅豆" is "红豆".
  */
 export function sameSong(found, song) {
   const a = songKeys(found);
@@ -564,9 +719,29 @@ export function sameSong(found, song) {
   return a.full === b.full || a.head === b.full || a.full === b.head;
 }
 
-/** Whether a version is `song` by `artist` or one of `names` (a show's). */
+/** Whether a version is `song` by `artist` or one of `names` (a show's, the
+ * band's other names). */
 export function belongsTo(match, { artist = "", song = "", names = [] } = {}) {
   return sameSong(match?.track, song) && sameArtist(match?.artist, [artist, ...names]);
+}
+
+/**
+ * Who else to search LRCLIB by when the artist's own name found no version
+ * the track's length: the names it gives at once ("周杰倫 Jay Chou"), then
+ * `names` (the band's in the artist box), each once and never the artist's
+ * own. An uploader files a song under whichever one they write.
+ */
+export function otherNames(artist, names = []) {
+  const asked = new Set([String(artist || "").trim().toLowerCase()]);
+  const out = [];
+  for (const name of [...scriptNames(artist), ...names]) {
+    const text = String(name || "").trim();
+    if (text && !asked.has(text.toLowerCase())) {
+      asked.add(text.toLowerCase());
+      out.push(text);
+    }
+  }
+  return out;
 }
 
 /** Index of the line being sung at `seconds`, or -1 before the first. */
