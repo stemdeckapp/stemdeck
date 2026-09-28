@@ -458,6 +458,11 @@ export function libraryIdentity(identity) {
     secondaryTypes: Array.isArray(identity.secondary_types)
       ? identity.secondary_types.filter((t) => typeof t === "string").slice(0, 12)
       : [],
+    // The song's other titles ("Good Day" for 좋은 날), which lyrics may be
+    // filed under.
+    titleAliases: Array.isArray(identity.title_aliases)
+      ? identity.title_aliases.filter((t) => typeof t === "string").slice(0, 6)
+      : [],
   };
 }
 
@@ -525,6 +530,8 @@ export function getCurrentTrackInfo() {
     // title, album, and lyrics if it carried them. Null for tracks imported
     // before tags were read, and for sources that had none.
     audioTags: track.audioTags || null,
+    // What the track was identified as (libraryIdentity), or null.
+    identity: track.identity || null,
   };
 }
 

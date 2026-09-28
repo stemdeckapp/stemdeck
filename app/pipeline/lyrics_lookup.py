@@ -534,6 +534,29 @@ def belongs_to(match: dict[str, Any], song: str, names: tuple[str, ...] | list[s
     return same_song(match.get("track"), song) and same_artist(match.get("artist"), names)
 
 
+def saved_lyrics_belong(entry: dict[str, Any], query: LyricsQuery | None) -> bool:
+    """Whether LRCLIB lyrics kept on a track are that track's, by the rule a
+    lookup keeps them by now (belongs_to).
+
+    Lyrics kept before that rule existed were taken from a fuzzy search and
+    can be another song's (NIHIL "Barro" kept Renato Vianna's "Joao de
+    Barro"), and nothing ever looked at them again. A song that matches
+    neither the track's name nor any of its other titles is never this
+    track's. An artist in another script ("Jay Chou" for the credit 周杰倫)
+    was matched through the artist's aliases when the lyrics were found, and
+    stands; in the same script it has to match. Anything not from LRCLIB, or
+    a track known by no name, is left alone."""
+    if query is None or entry.get("source") != "lrclib":
+        return True
+    songs = [s for s in (query.track, *query.track_aliases) if s]
+    if songs and not any(same_song(entry.get("track"), s) for s in songs):
+        return False
+    names = tuple(n for n in (query.artist, *query.album_artists) if n)
+    if not names or same_artist(entry.get("artist"), names):
+        return True
+    return has_cjk(str(entry.get("artist") or "")) != has_cjk(query.artist)
+
+
 _LRC_STAMP = re.compile(r"^\s*\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]", re.MULTILINE)
 
 

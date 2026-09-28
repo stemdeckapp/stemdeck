@@ -444,3 +444,24 @@ test.describe("lyrics tab", () => {
     await expect(page.locator(".lyrics-version")).toHaveCount(0);
   });
 });
+
+test.describe("lyrics kept before a lookup was held to the track", () => {
+  test("another song's lyrics kept by the tab are dropped and the track looked up again", async ({ page }) => {
+    // Kept by an older tab from a fuzzy search: NIHIL "Barro" once got
+    // Renato Vianna's "Joao de Barro".
+    await page.addInitScript((id) => {
+      localStorage.setItem(`stemdeck.lyrics.${id}`, JSON.stringify({
+        entry: { v: 1, source: "lrclib", id: 9, track: "Another Song", artist: "Someone Else", album: "", duration: 6, instrumental: false, synced: "[00:00.50]Not this song", plain: "" },
+        others: [],
+      }));
+    }, JOB_ID);
+    const asked = await stubLrclib(page);
+    await seedWith(page, TAGS);
+    await open(page);
+    await openTrack(page);
+    await showLyricsTab(page);
+    await expect(page.locator(".lyrics-line")).toHaveCount(3);
+    await expect(page.locator(".lyrics-body")).not.toContainText("Not this song");
+    expect(asked.length).toBeGreaterThan(0);
+  });
+});

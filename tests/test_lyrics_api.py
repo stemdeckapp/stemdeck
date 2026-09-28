@@ -569,3 +569,59 @@ def test_a_resplit_carries_the_users_alignment(client, monkeypatch):
     r = client.post(f"/api/jobs/{job.id}/resplit", json={"stems": ["vocals"]})
     new_id = r.json()["job_id"]
     assert client.get(f"/api/jobs/{new_id}/lyrics").json()["offset_sec"] == 12.3
+
+
+# ── lyrics kept before a lookup was held to the track ──
+
+
+def test_kept_lyrics_of_another_song_are_dropped_when_asked_for(client):
+    """NIHIL "Barro" kept Renato Vianna's "Joao de Barro" from a fuzzy search
+    before a lookup had to match the track's song and artist."""
+    job = _done_job(has_lyrics=True, audio_tags={"artist": "NIHIL", "title": "Barro"})
+    wrong = {**LYRICS, "track": "Joao de Barro", "artist": "Renato Vianna"}
+    _lyrics_file(job).write_text(json.dumps(wrong), encoding="utf-8")
+    r = client.get(f"/api/jobs/{job.id}/lyrics")
+    assert r.status_code == 404
+    assert not _lyrics_file(job).exists(), "dropped for good"
+    assert job.has_lyrics is False
+
+
+def test_the_same_song_by_another_artist_in_the_same_script_is_dropped(client):
+    job = _done_job(has_lyrics=True, audio_tags=TAGS)
+    cover = {**LYRICS, "track": "Metropolis", "artist": "Motorhead"}
+    _lyrics_file(job).write_text(json.dumps(cover), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 404
+
+
+def test_an_artist_in_another_script_stands(client):
+    """Matched through the artist's aliases when the lyrics were found."""
+    job = _done_job(has_lyrics=True, audio_tags={"artist": "Jay Chou", "title": "Sunny Day"})
+    native = {**LYRICS, "track": "Sunny Day", "artist": "周杰倫"}
+    _lyrics_file(job).write_text(json.dumps(native), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 200
+
+
+def test_the_tracks_own_lyrics_and_a_transcription_are_kept(client):
+    job = _done_job(has_lyrics=True, audio_tags=TAGS)
+    _lyrics_file(job).write_text(json.dumps(LYRICS), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 200
+    heard = {
+        **LYRICS,
+        "source": "whisper",
+        "track": "Anything",
+        "artist": "Anyone",
+        "lrclib_id": None,
+    }
+    _lyrics_file(job).write_text(json.dumps(heard), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 200
+
+
+def test_other_versions_of_another_song_are_not_offered(client):
+    job = _done_job(has_lyrics=True, audio_tags=TAGS)
+    others = [
+        {**LYRICS, "lrclib_id": 7, "track": "Metropolis Part 2"},
+        {**LYRICS, "lrclib_id": 8, "track": "Metropolis", "duration": 600.0},
+    ]
+    _lyrics_file(job).write_text(json.dumps({**LYRICS, "others": others}), encoding="utf-8")
+    got = client.get(f"/api/jobs/{job.id}/lyrics").json()
+    assert [o["lrclib_id"] for o in got["others"]] == [8]

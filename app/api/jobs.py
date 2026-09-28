@@ -62,6 +62,7 @@ from app.pipeline.lyrics_lookup import (
     lyrics_settled,
     read_candidates,
     read_lyrics,
+    saved_lyrics_belong,
     set_lyrics_offset,
 )
 from app.pipeline.runner import _pipeline_lock
@@ -1050,6 +1051,21 @@ def get_lyrics(job_id: str) -> Response:
         logger.warning("unreadable lyrics for %s", job_id)
     found = read_candidates(job_dir) if found_path.is_file() else None
     others = found["others"] if found else []
+    # Lyrics kept before a lookup held them to the track's own song and artist
+    # can be another song's: checked by that rule each time they are asked for,
+    # and dropped for good when they fail it.
+    job = registry_get(job_id)
+    query = build_query(job) if job is not None else None
+    others = [o for o in others if saved_lyrics_belong(o, query)]
+    if entry is not None and not saved_lyrics_belong(entry, query):
+        logger.info("[%s] dropping kept lyrics of another song", job_id)
+        path.unlink(missing_ok=True)
+        if job is not None:
+            _set(job, has_lyrics=False)
+            registry_persist(JOBS_DIR)
+        entry = None
+    if entry is not None:
+        entry["others"] = [o for o in entry["others"] if saved_lyrics_belong(o, query)]
     headers = {"Cache-Control": "no-cache"}
     if entry is not None:
         if not entry["others"]:

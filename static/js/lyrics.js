@@ -44,6 +44,7 @@ import {
   songFromTitle,
   fromServerLyrics,
   belongsTo,
+  sameSong,
   clampOffset,
   shiftLines,
   firstSungIndex,
@@ -749,6 +750,21 @@ function knownSong(info) {
 }
 
 /** Show what is kept for the open track, or find it. */
+/**
+ * Whether lyrics this tab kept for a track are another song's. Before a lookup
+ * held a version to the track's own song and artist, a fuzzy search could keep
+ * another song of a similar name (NIHIL "Barro" got "Joao de Barro"). Only the
+ * song is held to it here: the artist of a version the user picked on purpose,
+ * a cover say, is their choice.
+ */
+function keptForAnotherSong(entry, info) {
+  if (entry?.source !== "lrclib") return false;
+  const { song } = knownSong(info);
+  if (!song || !entry.track) return false;
+  const titles = [song, info.identity?.title, ...(info.identity?.titleAliases || [])].filter(Boolean);
+  return !titles.some((title) => sameSong(entry.track, title));
+}
+
 async function loadForCurrentTrack() {
   const info = getCurrentTrackInfo();
   // The Align panel stays open while the same track is shown again.
@@ -775,9 +791,15 @@ async function loadForCurrentTrack() {
     showRemoved();
     return;
   }
-  if (saved?.entry) {
+  if (saved?.entry && !keptForAnotherSong(saved.entry, info)) {
     show(saved.entry, Array.isArray(saved.others) ? saved.others : []);
     return;
+  }
+  if (saved?.entry) {
+    // Kept by the tab before a lookup was held to the track's own song:
+    // another song's lyrics, dropped so the track is looked up again.
+    await storeSet(storeKey(info.id), null);
+    if (token !== loadToken) return;
   }
 
   // What the server found while the track was separated. Shown, not saved:
