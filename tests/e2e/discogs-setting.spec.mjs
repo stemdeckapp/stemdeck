@@ -70,7 +70,7 @@ test.describe("Discogs token", () => {
       "Band profiles, members and releases for bands Wikipedia does not cover, from Discogs. Optional.",
     );
     await expect(page.locator(".discogs-privacy")).toHaveText(
-      "Band names are sent to Discogs only when a token is saved and Wikipedia has no history, members or albums for the band.",
+      "Band names are sent to Discogs only when a token is saved, and only for a band Wikipedia has no history, members or albums for, or a name you search for that Wikipedia does not have.",
     );
     const link = page.locator(".discogs-register");
     await expect(link).toHaveText("Get a free token at discogs.com");

@@ -494,6 +494,11 @@ DISCOGS_RETRY_BACKOFF_SEC = 2.0
 DISCOGS_RETRY_MAX_WAIT_SEC = 10.0
 DISCOGS_REQUEST_BUDGET_SEC = 20.0
 DISCOGS_LOOKUP_BUDGET_SEC = _env_int("STEMDECK_DISCOGS_LOOKUP_BUDGET_SEC", 45)
+# A name typed in the artist box, searched on Discogs (GET /api/discogs/artist):
+# the search and the profiles of its first few artists, one a second, so the
+# user can tell "Nihil (2)" from "Nihil (5)". What is not in by then is left
+# out rather than waited for.
+DISCOGS_SEARCH_BUDGET_SEC = _env_int("STEMDECK_DISCOGS_SEARCH_BUDGET_SEC", 15)
 # An artist's release list at 100 a page is well under a megabyte.
 DISCOGS_MAX_BYTES = 2 * 1024 * 1024
 # Answers kept on disk, one file per request, as MusicBrainz's are.

@@ -4146,6 +4146,34 @@ input, textarea { font-family: inherit; }
    share the row, so it wraps rather than squeezing them. */
 .artist-foot { flex-wrap: wrap; }
 .artist-discogs-credit { font-weight: 500; }
+/* "Only Wikipedia was searched": a quiet aside, not a warning, with the way
+   to the setting as a small secondary button. */
+.artist-discogs-note {
+  margin: 0 0 12px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12px; line-height: 1.5; color: var(--fg-2);
+}
+.artist-discogs-note p { margin: 0 0 8px; }
+.artist-discogs-open {
+  height: 28px; padding: 0 12px; border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border-strong);
+  color: var(--fg); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.artist-discogs-open:hover { border-color: var(--accent); color: var(--accent); }
+.artist-status + .artist-discogs-note { margin-top: -8px; }
+/* The artists Discogs has for a name Wikipedia does not know, to pick from:
+   each its name, with Discogs' number, and the start of its profile. */
+.artist-candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.artist-candidate {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  padding: 8px 10px; text-align: start;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--fg); font: inherit; cursor: pointer;
+}
+.artist-candidate:hover, .artist-candidate:focus-visible { border-color: var(--accent); }
+.artist-candidate-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.artist-candidate-profile { font-size: 12px; line-height: 1.45; color: var(--muted); }
+.artist-discogs-pick + .artist-foot { justify-content: flex-end; }
 @media (max-width: 560px) { .artist-albums { columns: 1; } }
 
 /* The musical or film a song is from: a section below the band, or the whole

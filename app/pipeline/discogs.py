@@ -27,7 +27,8 @@ the same band again asks Discogs nothing. Nothing here raises into its
 callers: a failure is "nothing found".
 
 What is sent: the track's artist name, its song and album titles, and
-Discogs ids.
+Discogs ids; and a band name typed in the artist box that Wikipedia did not
+find (search_artists), whose candidates the user picks from.
 """
 
 from __future__ import annotations
@@ -774,6 +775,111 @@ def artist_for_track(
                 _KEPT.clear()
             _KEPT[key] = (time.time(), answer)
     return answer
+
+
+# ── a name typed in the box ──
+#
+# Here the user chooses, so nothing is taken on a name alone as above: the
+# artists Discogs finds are offered, each with the start of its profile so
+# "Nihil (2)" can be told from "Nihil (5)", and the one picked is fetched by
+# its id.
+
+_CANDIDATES_MAX = 8
+# Profiles fetched for the snippet, at most: each is a request, one a second.
+_CANDIDATES_PROFILED = 5
+_SNIPPET_MAX_CHARS = 200
+QUERY_MAX_CHARS = 100
+
+
+def valid_query(value: Any) -> str:
+    """A typed name, trimmed, or "" when it is empty, too long, or holds a
+    control or format character (a bidi override, a NUL)."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text or len(text) > QUERY_MAX_CHARS:
+        return ""
+    if any(unicodedata.category(ch) in ("Cc", "Cf") and ch != _ZWJ for ch in text):
+        return ""
+    return text
+
+
+def _snippet(profile: Any) -> str:
+    paragraphs = profile_paragraphs(profile)
+    if not paragraphs:
+        return ""
+    first = paragraphs[0]
+    if len(first) <= _SNIPPET_MAX_CHARS:
+        return first
+    return first[:_SNIPPET_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",;: ") + _ELLIPSIS
+
+
+def search_artists(
+    name: str, token: str, *, cancelled: Cancelled = _never
+) -> list[dict[str, Any]] | None:
+    """The Discogs artists a search for ``name`` finds, as [{"id", "name",
+    "profile"}], those named exactly ``name`` first, at most
+    _CANDIDATES_MAX. ``name`` keeps Discogs' number ("Nihil (5)"), since that
+    is how two artists of one name are told apart; ``profile`` is the start of
+    the artist's profile, or "" when it has none or was not in in time. None
+    when the search itself failed. Never raises."""
+    query = valid_query(name)
+    if not token or not query:
+        return None
+    session = _Session(token=token, cancelled=cancelled)
+    try:
+        answer = session.get(
+            "database/search", {"type": "artist", "q": query, "per_page": _SEARCH_PER_PAGE}
+        )
+        if answer is None:
+            return None
+        hits = answer.get("results")
+        want = name_key(query)
+        found: list[dict[str, Any]] = []
+        for hit in hits if isinstance(hits, list) else []:
+            if not isinstance(hit, dict) or hit.get("type", "artist") != "artist":
+                continue
+            artist_id = _artist_id(hit.get("id"))
+            title = hit.get("title")
+            shown = _plain(title).strip()[:_NAME_MAX_CHARS] if isinstance(title, str) else ""
+            if not artist_id or not shown or any(c["id"] == artist_id for c in found):
+                continue
+            found.append({"id": artist_id, "name": shown, "profile": ""})
+        # Stable: Discogs' own order within each half.
+        found.sort(key=lambda c: name_key(c["name"]) != want)
+        found = found[:_CANDIDATES_MAX]
+        for candidate in found[:_CANDIDATES_PROFILED]:
+            if cancelled():
+                break
+            artist = session.get(f"artists/{candidate['id']}")
+            if isinstance(artist, dict):
+                candidate["profile"] = _snippet(artist.get("profile"))
+        return found
+    except Exception:
+        logger.warning("Discogs artist search failed", exc_info=True)
+        return None
+
+
+def artist_by_id(
+    artist_id: int, token: str, *, cancelled: Cancelled = _never
+) -> dict[str, Any] | None:
+    """The profile of the Discogs artist ``artist_id`` (artist_profile's
+    shape), or None when there is none or it could not be had. Never raises."""
+    if not token or not isinstance(artist_id, int) or artist_id <= 0:
+        return None
+    session = _Session(token=token, cancelled=cancelled)
+    try:
+        artist = session.get(f"artists/{artist_id}")
+        if artist is None or cancelled():
+            return None
+        releases = session.get(
+            f"artists/{artist_id}/releases",
+            {"sort": "year", "sort_order": "asc", "per_page": "100"},
+        )
+        return artist_profile(artist, releases)
+    except Exception:
+        logger.warning("Discogs artist failed", exc_info=True)
+        return None
 
 
 def forget() -> None:

@@ -8,7 +8,14 @@
 //
 // Run:  node tests/js/artist-discogs.test.mjs
 
-import { discogsBand, discogsExtraFromJson, needsDiscogs, sameArtist, withDiscogs } from "../../static/js/artistDiscogs.js";
+import {
+  discogsBand,
+  discogsCandidatesFromJson,
+  discogsExtraFromJson,
+  needsDiscogs,
+  sameArtist,
+  withDiscogs,
+} from "../../static/js/artistDiscogs.js";
 import { discogsArtistId } from "../../static/js/artistLookup.js";
 
 let pass = 0,
@@ -119,6 +126,31 @@ check("none is empty", discogsArtistId({}) === "");
 check("two different ones are no answer", discogsArtistId({ P1953: [claim("1"), claim("2")] }) === "");
 check("a deprecated one does not count", discogsArtistId({ P1953: [claim("1", "deprecated"), claim("2")] }) === "2");
 check("a value that is not an id does not count", discogsArtistId({ P1953: [claim("abc")] }) === "");
+
+// ── the artists a typed name finds (GET /api/discogs/artist?q=) ──
+
+const candidates = discogsCandidatesFromJson({
+  candidates: [
+    { id: 555501, name: "Nihil (5)", profile: "Portuguese sludge band." },
+    { id: 12, name: "Nihil", profile: "" },
+    { id: 12, name: "Nihil again", profile: "" },
+    { id: "13", name: "String id", profile: "" },
+    { id: 14, name: "", profile: "" },
+    { id: -1, name: "Negative", profile: "" },
+    { id: 1.5, name: "Fraction", profile: "" },
+    { id: 15, name: 42, profile: "" },
+    { id: 16, name: "Nihil (2)", profile: { html: "<b>x</b>" } },
+  ],
+});
+check("candidates keep the number that tells them apart", candidates[0].name === "Nihil (5)" && candidates[0].profile === "Portuguese sludge band.");
+check("only whole positive ids with a name, each once", JSON.stringify(candidates.map((c) => c.id)) === "[555501,12,16]", candidates);
+check("a profile that is not text is dropped", candidates[2].profile === "");
+check("no candidates is an empty list", discogsCandidatesFromJson({ candidates: [] }).length === 0);
+check("an answer of the wrong shape is an empty list", discogsCandidatesFromJson(null).length === 0 && discogsCandidatesFromJson({ candidates: "x" }).length === 0);
+check(
+  "at most eight",
+  discogsCandidatesFromJson({ candidates: Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `A${i}` })) }).length === 8,
+);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

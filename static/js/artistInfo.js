@@ -20,7 +20,13 @@
 // Discogs when the user has set a Discogs token: the server asks Discogs and
 // answers GET /api/jobs/{id}/artist-extra (artistDiscogs.js), so the token
 // never reaches the page. Wikipedia always comes first; what Discogs added is
-// labelled, and credited as Discogs' terms ask.
+// labelled, and credited as Discogs' terms ask. A name Wikipedia does not know
+// is looked for on Discogs too (GET /api/discogs/artist), and the artists it
+// finds are offered to pick from: a name alone is not enough to be sure.
+//
+// With no token saved, the box says where only Wikipedia was searched (a name
+// it found nothing for, a band it has little on) and offers the way to the
+// setting. Never under a band Wikipedia covers in full.
 //
 // Everything that came from the network goes in with textContent, never as
 // HTML. Wikipedia text is written by anyone, and this page can reach the
@@ -36,7 +42,7 @@ import {
   taggedArtistName,
   wikiLanguage,
 } from "./artistLookup.js";
-import { discogsExtraFromJson, needsDiscogs, withDiscogs } from "./artistDiscogs.js";
+import { discogsCandidatesFromJson, discogsExtraFromJson, needsDiscogs, withDiscogs } from "./artistDiscogs.js";
 import {
   getCurrentTrackArtist,
   getCurrentTrackInfo,
@@ -64,6 +70,7 @@ let returnFocus = null;
 let searchShown = true;
 let waiting = false; // open on a track whose tags or band are still being found
 let searchGen = 0; // bumped by every search and by closing: a late answer checks it
+let tokenAsked = null; // whether a Discogs token is saved, asked once per opening
 
 const isOpen = () => dialog && !dialog.classList.contains("hidden");
 
@@ -489,6 +496,163 @@ function render(artist, work = null) {
   if (artist || work) parts.push(foot);
   body.replaceChildren(...parts);
   body.scrollTop = 0;
+  // A band with no history, members or albums here is the gap Discogs fills.
+  if (artist && !soundtrack && !artist.discogs && needsDiscogs(artist)) offerDiscogsSetup(foot);
+}
+
+// ─── Discogs, when Wikipedia has nothing or little ───
+
+// Whether a Discogs token is saved: true, false, or null when Settings could
+// not be read. Asked once each time the box opens, so a token saved in
+// Settings counts the next time. Never the token: only whether there is one.
+function discogsTokenSet() {
+  tokenAsked ??= fetch("/api/settings", { headers: { Accept: "application/json" } })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json) => (typeof json?.discogs_token_set === "boolean" ? json.discogs_token_set : null))
+    .catch((err) => {
+      console.warn("settings unavailable for the Discogs note", err);
+      return null;
+    });
+  return tokenAsked;
+}
+
+// Settings, on the Song details tab, with the token field focused. The box
+// closes first: Settings is a dialog of its own.
+function openDiscogsSettings() {
+  close();
+  document.getElementById("settingsBtn")?.click();
+  const settings = document.querySelector(".library-editor-backdrop");
+  settings?.querySelector('.settings-tab[data-tab="details"]')?.click();
+  settings?.querySelector(".set-discogs-token")?.focus();
+}
+
+// "Only Wikipedia was searched", and the button to the setting.
+function discogsSetupNote() {
+  const note = el("div", "artist-discogs-note");
+  const button = el("button", "artist-discogs-open", t("artist.discogsOpenSettings"));
+  button.type = "button";
+  button.addEventListener("click", openDiscogsSettings);
+  note.append(el("p", "", t("artist.discogsNote")), button);
+  return note;
+}
+
+// The note before `anchor`, once it is known that no token is saved, and only
+// if what it was for is still shown.
+function offerDiscogsSetup(anchor) {
+  discogsTokenSet().then((set) => {
+    if (set !== false || !anchor.isConnected || body.querySelector(".artist-discogs-note")) return;
+    anchor.before(discogsSetupNote());
+  });
+}
+
+const NO_TOKEN = "no-token";
+
+// The artists Discogs finds for a name: a list (maybe empty), NO_TOKEN when no
+// token is saved (the server answers 404 and asks Discogs nothing), or null
+// when Discogs could not be asked. Only a list is kept.
+async function searchDiscogs(query, signal) {
+  const key = `discogs?${query.toLowerCase()}`;
+  if (answers.has(key)) return answers.get(key);
+  try {
+    const res = await fetch(`/api/discogs/artist?q=${encodeURIComponent(query)}`, { signal, headers: { Accept: "application/json" } });
+    if (res.status === 404) return NO_TOKEN;
+    if (!res.ok) return null;
+    const found = discogsCandidatesFromJson(await res.json());
+    answers.set(key, found);
+    return found;
+  } catch (err) {
+    if (!signal.aborted) console.warn("Discogs artist search failed", err);
+    return null;
+  }
+}
+
+// Wikipedia found nothing for `query`. With a token saved, Discogs is asked,
+// and what it finds is offered to pick from; without one, the box says only
+// Wikipedia was searched and how to add Discogs. The field stays open either
+// way, holding the name so it can be corrected.
+async function nothingOnWikipedia(query, signal) {
+  showSearch(true);
+  const shown = () => !signal.aborted && isOpen();
+  const notFound = () => showStatus(t("artist.notFound", { name: query }), "muted");
+  const token = await discogsTokenSet();
+  if (!shown()) return;
+  if (!query || token === false) {
+    notFound();
+    if (token === false) body.append(discogsSetupNote());
+    return;
+  }
+  const kept = answers.get(`discogs?${query.toLowerCase()}`);
+  if (!kept) showStatus(t("artist.loadingDiscogs", { name: query }), "loading");
+  const found = kept || (await searchDiscogs(query, signal));
+  if (!shown()) return;
+  if (Array.isArray(found) && found.length) {
+    showCandidates(query, found);
+  } else if (Array.isArray(found)) {
+    showStatus(t("artist.notFoundAnywhere", { name: query }), "muted");
+  } else {
+    notFound();
+    if (found === NO_TOKEN) body.append(discogsSetupNote());
+    else body.append(el("p", "artist-status error", t("artist.discogsOffline")));
+  }
+}
+
+// The artists Discogs has for a name Wikipedia does not know, each with its
+// Discogs number and the start of its profile, to pick the one meant.
+function showCandidates(query, candidates) {
+  const box = el("section", "artist-section artist-discogs-pick");
+  box.append(el("h3", "artist-section-title", t("artist.discogsPick")), el("p", "artist-edition", t("artist.discogsPickHint")));
+  const list = el("ul", "artist-candidates");
+  for (const candidate of candidates) {
+    const button = el("button", "artist-candidate");
+    button.type = "button";
+    button.dataset.id = String(candidate.id);
+    button.append(el("span", "artist-candidate-name", candidate.name));
+    if (candidate.profile) button.append(el("span", "artist-candidate-profile", candidate.profile));
+    button.addEventListener("click", () => pickDiscogs(candidate));
+    const item = el("li");
+    item.append(button);
+    list.append(item);
+  }
+  box.append(list);
+  const foot = el("footer", "artist-foot");
+  foot.append(discogsCredit(""));
+  body.replaceChildren(...songParts(), el("p", "artist-status muted", t("artist.notFound", { name: query })), box, foot);
+  body.scrollTop = 0;
+}
+
+// The artist picked from Discogs' list, drawn as any band known only to
+// Discogs. It has no Wikidata id, so it is not saved on the track.
+async function pickDiscogs(candidate) {
+  current?.abort();
+  const controller = new AbortController();
+  current = controller;
+  const gen = ++searchGen;
+  const key = `discogs#${candidate.id}`;
+  if (!answers.has(key)) showStatus(t("artist.loadingDiscogs", { name: candidate.name }), "loading");
+  try {
+    let extra = answers.get(key) || null;
+    if (!extra) {
+      const res = await fetch(`/api/discogs/artist/${encodeURIComponent(candidate.id)}`, {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+      extra = res.ok ? discogsExtraFromJson(await res.json()) : null;
+      if (extra) answers.set(key, extra);
+    }
+    if (controller.signal.aborted || gen !== searchGen || !isOpen()) return;
+    if (!extra) {
+      showStatus(t("artist.discogsOffline"), "error");
+      return;
+    }
+    showSearch(false);
+    render(withDiscogs(null, extra));
+  } catch (err) {
+    if (controller.signal.aborted) return;
+    console.warn("Discogs artist failed", err);
+    showStatus(t("artist.discogsOffline"), "error");
+  } finally {
+    if (current === controller) current = null;
+  }
 }
 
 // "Data provided by Discogs", linked to the band's page there.
@@ -629,12 +793,6 @@ async function search(name, { id = "", typed = false } = {}) {
   }
 
   const lang = getLanguage();
-  // Nothing to show means the field is the next step, filled with the name
-  // that found nothing so it can be corrected or tried again.
-  const notFound = () => {
-    showSearch(true);
-    showStatus(t("artist.notFound", { name: query }), "muted");
-  };
 
   const controller = new AbortController();
   current = controller;
@@ -675,7 +833,12 @@ async function search(name, { id = "", typed = false } = {}) {
     if (bandError && !(work && !typed)) throw bandError;
     if (artist) render(artist, work);
     else if (work && !typed) render(null, work);
-    else notFound();
+    else {
+      // Nothing to show means the field is the next step, filled with the
+      // name that found nothing so it can be corrected or tried again.
+      await nothingOnWikipedia(query, controller.signal);
+      return;
+    }
     if (typed || !(artist || work) || !needsDiscogs(artist)) return;
     // Drawn already; filled from Discogs when its answer is in, if it has
     // what Wikipedia lacks.
@@ -746,6 +909,7 @@ function showFromTrack({ focus = true } = {}) {
 
 function open() {
   returnFocus = document.activeElement;
+  tokenAsked = null;
   dialog.classList.remove("hidden");
   showFromTrack();
 }

@@ -66,6 +66,27 @@ export function discogsExtraFromJson(json) {
   };
 }
 
+const CANDIDATES_MAX = 8;
+
+/**
+ * The artists GET /api/discogs/artist?q= offers for a typed name, checked
+ * as discogsExtraFromJson checks a profile: [{id, name, profile}], at most
+ * CANDIDATES_MAX, each with a whole positive id and a name. The name keeps
+ * Discogs' number ("Nihil (5)"), which is how two of one name are told apart.
+ */
+export function discogsCandidatesFromJson(json) {
+  const list = Array.isArray(json?.candidates) ? json.candidates : [];
+  const found = [];
+  for (const item of list) {
+    const id = Number.isInteger(item?.id) && item.id > 0 && item.id < 1e12 ? item.id : 0;
+    const name = text(item?.name, 300);
+    if (!id || !name || found.some((c) => c.id === id)) continue;
+    found.push({ id, name, profile: text(item.profile, 400) });
+    if (found.length >= CANDIDATES_MAX) break;
+  }
+  return found;
+}
+
 /**
  * A band known only to Discogs, in the shape the box draws a Wikidata band
  * in (artistLookup.js lookupArtist). It has no Wikidata id, so it cannot be

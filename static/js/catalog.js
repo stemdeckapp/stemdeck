@@ -4597,7 +4597,7 @@ function openLibraryEditor() {
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.discogs.title">Discogs</div>
               <div class="settings-row-desc" data-i18n="settings.discogs.desc">Band profiles, members and releases for bands Wikipedia does not cover, from Discogs. Optional.</div>
-              <div class="settings-row-desc discogs-privacy" data-i18n="settings.discogs.privacy">Band names are sent to Discogs only when a token is saved and Wikipedia has no history, members or albums for the band.</div>
+              <div class="settings-row-desc discogs-privacy" data-i18n="settings.discogs.privacy">Band names are sent to Discogs only when a token is saved, and only for a band Wikipedia has no history, members or albums for, or a name you search for that Wikipedia does not have.</div>
             </div>
             <div class="discogs-token">
               <input type="password" class="settings-text-input set-discogs-token" spellcheck="false" autocomplete="off" maxlength="80" placeholder="Discogs personal access token" data-i18n-placeholder="settings.discogs.placeholder" aria-label="Discogs personal access token" data-i18n-aria-label="settings.discogs.placeholder" />
