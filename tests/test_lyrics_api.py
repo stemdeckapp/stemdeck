@@ -1,10 +1,13 @@
-"""GET /api/jobs/{id}/lyrics, and lyrics.json for older tracks through the tag
-backfill (POST /api/jobs/{id}/audio-tags). No network: conftest answers LRCLIB
-as offline, and tests that want an answer stand in for it."""
+"""GET /api/jobs/{id}/lyrics, the Align panel's POST .../lyrics/offset and
+.../lyrics/align, and lyrics.json for older tracks through the tag backfill
+(POST /api/jobs/{id}/audio-tags). No network: conftest answers LRCLIB as
+offline, and tests that want an answer stand in for it."""
 
 from __future__ import annotations
 
 import json
+import os
+import random
 import time
 from unittest.mock import patch
 
@@ -15,6 +18,7 @@ import app.api.jobs as jobs_mod
 import app.pipeline.lyrics_lookup as ll
 from app.core.models import Job
 from app.core.registry import _jobs
+from tests.test_lyrics_align import HOP, LINES, envelope, lrc
 
 LYRICS = {
     "v": 1,
@@ -357,3 +361,211 @@ def test_lyrics_in_polish_are_served_as_utf8(client):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/json")
     assert json.loads(r.content.decode("utf-8")) == polish
+
+
+# ── the Align panel: POST .../lyrics/offset and .../lyrics/align ──
+
+
+def _with_vocals(job: Job, onsets) -> None:
+    """A vocals stem whose kept envelope sings at ``onsets``, as
+    test_lyrics_align.py makes them."""
+    stems = jobs_mod.JOBS_DIR / job.id / "stems"
+    (stems / "vocals.wav").write_bytes(b"RIFF")
+    kept = stems / "vocal_envelope.json"
+    kept.write_text(json.dumps({"hop": HOP, "db": envelope(onsets)}), encoding="utf-8")
+    later = (stems / "vocals.wav").stat().st_mtime_ns + 10**9
+    os.utime(kept, ns=(later, later))
+
+
+def _synced_job(onsets=None) -> Job:
+    job = _done_job(has_lyrics=True)
+    _lyrics_file(job).write_text(json.dumps({**LYRICS, "synced": lrc(LINES)}), encoding="utf-8")
+    if onsets is not None:
+        _with_vocals(job, onsets)
+    return job
+
+
+def _body(route: str) -> dict:
+    return {"offset_sec": 1} if route == "offset" else {}
+
+
+def test_an_offset_is_kept_and_served_beside_the_untouched_text(client):
+    job = _synced_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 15.94})
+    assert r.status_code == 200
+    assert r.json() == {"offset_sec": 15.94}
+    served = client.get(f"/api/jobs/{job.id}/lyrics").json()
+    assert served["offset_sec"] == 15.94
+    assert served["synced"] == lrc(LINES), "their own timing stays recoverable"
+
+
+def test_reset_is_an_offset_of_zero(client):
+    job = _synced_job()
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": -3.5})
+    r = client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 0})
+    assert r.json() == {"offset_sec": 0.0}
+    served = client.get(f"/api/jobs/{job.id}/lyrics").json()
+    assert served["offset_sec"] == 0.0
+    assert served["synced"] == lrc(LINES)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"offset_sec": 600.5}, {"offset_sec": -601}, {"offset_sec": "ten"}, {}, {"offset_sec": None}],
+)
+def test_an_offset_out_of_bounds_or_not_a_number_is_422(client, body):
+    job = _synced_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/offset", json=body)
+    assert r.status_code == 422
+    assert "offset_sec" not in client.get(f"/api/jobs/{job.id}/lyrics").json()
+
+
+def test_a_non_finite_offset_is_422(client):
+    job = _synced_job()
+    for literal in (b"NaN", b"Infinity"):
+        r = client.post(
+            f"/api/jobs/{job.id}/lyrics/offset",
+            content=b'{"offset_sec": ' + literal + b"}",
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 422
+
+
+def test_the_bounds_themselves_are_accepted(client):
+    job = _synced_job()
+    for value in (600, -600):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": value})
+        assert r.json() == {"offset_sec": float(value)}
+
+
+@pytest.mark.parametrize("route", ["offset", "align"])
+def test_an_unknown_or_malformed_job_is_404(client, route):
+    for job_id in ("bbbbbbbbbbbb", "not-a-job"):
+        r = client.post(f"/api/jobs/{job_id}/lyrics/{route}", json=_body(route))
+        assert r.status_code == 404
+
+
+@pytest.mark.parametrize("job_id", ["../../etc/passwd", "..%2F..%2Fetc", "aaaa/../aaaa"])
+@pytest.mark.parametrize("route", ["offset", "align"])
+def test_a_traversing_id_is_refused_by_the_edits(client, job_id, route):
+    r = client.post(f"/api/jobs/{job_id}/lyrics/{route}", json=_body(route))
+    assert r.status_code in (404, 405), r.status_code
+
+
+@pytest.mark.parametrize("route", ["offset", "align"])
+def test_a_track_without_lyrics_is_404_and_nothing_is_written(client, route):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/{route}", json=_body(route))
+    assert r.status_code == 404
+    assert r.json() == {"detail": "no lyrics"}
+    assert not _lyrics_file(job).exists()
+
+
+@pytest.mark.parametrize("route", ["offset", "align"])
+def test_text_only_lyrics_have_no_timing_to_move(client, route):
+    job = _done_job(has_lyrics=True)
+    _lyrics_file(job).write_text(json.dumps({**LYRICS, "synced": ""}), encoding="utf-8")
+    r = client.post(f"/api/jobs/{job.id}/lyrics/{route}", json=_body(route))
+    assert r.status_code == 409
+
+
+def test_old_lyrics_without_an_offset_are_served_as_they_were(client):
+    """lyrics.json from before the Align panel has no offset_sec, and the
+    answer does not grow one: the page reads a missing one as 0."""
+    job = _done_job(has_lyrics=True)
+    _lyrics_file(job).write_text(json.dumps(LYRICS), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").json() == LYRICS
+
+
+def test_a_damaged_offset_is_dropped_not_the_lyrics(client):
+    job = _done_job(has_lyrics=True)
+    for bad in (1e9, "12", True, None):
+        _lyrics_file(job).write_text(json.dumps({**LYRICS, "offset_sec": bad}), encoding="utf-8")
+        assert client.get(f"/api/jobs/{job.id}/lyrics").json() == LYRICS
+
+
+def test_auto_detect_keeps_a_confident_estimate(client):
+    job = _synced_job([t + 16 for t in LINES])
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["confident"] is True
+    assert body["offset_sec"] == pytest.approx(16, abs=0.1)
+    served = client.get(f"/api/jobs/{job.id}/lyrics").json()
+    assert served["offset_sec"] == body["offset_sec"]
+    assert served["synced"] == lrc(LINES)
+
+
+def test_auto_detect_ignores_the_offset_already_kept(client):
+    """Estimated from the lyrics' own timing, whatever the user had set."""
+    job = _synced_job([t - 4 for t in LINES])
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 30})
+    body = client.post(f"/api/jobs/{job.id}/lyrics/align", json={}).json()
+    assert body["offset_sec"] == pytest.approx(-4, abs=0.1)
+
+
+def test_auto_detect_that_cannot_tell_leaves_the_lyrics_as_they_are(client):
+    rng = random.Random(7)
+    job = _synced_job(sorted(rng.uniform(0, 190) for _ in range(40)))
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 2.5})
+    before = _lyrics_file(job).read_bytes()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align")
+    assert r.status_code == 200
+    assert r.json() == {"confident": False, "offset_sec": None}
+    assert _lyrics_file(job).read_bytes() == before
+
+
+def test_auto_detect_without_a_vocals_stem_cannot_tell(client):
+    job = _synced_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align")
+    assert r.json() == {"confident": False, "offset_sec": None}
+
+
+def test_auto_detect_for_lyrics_the_browser_keeps_saves_nothing(client):
+    """The tab's own LRCLIB find is sent along; lyrics.json is not needed,
+    and none is written."""
+    job = _done_job()
+    _with_vocals(job, [t + 7 for t in LINES])
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align", json={"synced": lrc(LINES)})
+    assert r.status_code == 200
+    assert r.json()["confident"] is True
+    assert r.json()["offset_sec"] == pytest.approx(7, abs=0.1)
+    assert not _lyrics_file(job).exists()
+
+
+def test_auto_detect_bounds_the_text_it_is_sent(client):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align", json={"synced": "x" * 100_001})
+    assert r.status_code == 422
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align", json={"synced": "x" * 500_000})
+    assert r.status_code == 413
+    r = client.post(f"/api/jobs/{job.id}/lyrics/align", json=["not", "an", "object"])
+    assert r.status_code == 422
+
+
+def test_auto_detect_waits_for_the_track_to_be_separated(client):
+    job = _synced_job([t + 16 for t in LINES])
+    job.status = "running"
+    assert client.post(f"/api/jobs/{job.id}/lyrics/align").status_code == 409
+
+
+def test_the_pipeline_leaves_lyrics_aligned_by_hand_alone(client):
+    """A hand-set offset is the user's timing: lyrics_align.py never moves
+    the text beneath it, which would move the lines twice."""
+    from app.pipeline.lyrics_align import align_lyrics
+
+    job = _synced_job([t + 16 for t in LINES])
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 3})
+    before = _lyrics_file(job).read_bytes()
+    assert align_lyrics(job, jobs_mod.JOBS_DIR / job.id) == "exact"
+    assert _lyrics_file(job).read_bytes() == before
+
+
+def test_a_resplit_carries_the_users_alignment(client, monkeypatch):
+    monkeypatch.setattr(ll, "_fetch_json", Lrclib(ROWS))
+    job = _synced_job()
+    (jobs_mod.JOBS_DIR / job.id / "source.mp3").write_bytes(b"ID3")
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 12.3})
+    r = client.post(f"/api/jobs/{job.id}/resplit", json={"stems": ["vocals"]})
+    new_id = r.json()["job_id"]
+    assert client.get(f"/api/jobs/{new_id}/lyrics").json()["offset_sec"] == 12.3

@@ -29,7 +29,7 @@ It opens the app's window and plays a few seconds of several songs out loud.
   PyTorch (2.5 GB), FFmpeg, the models and, later, the Whisper model (1.6 GB).
   These are kept between runs.
 - A run on an RTX 3080 with those already downloaded: about 20 minutes, most
-  of it separating the eleven imports while the checks run. YouTube refuses a
+  of it separating the twelve imports while the checks run. YouTube refuses a
   download now and then (a 403); that import is split once more, at the back
   of the queue, which can add 10 minutes. The 59 minute compilation (C4, T1)
   is the longest import; `STEMDECK_ACCEPTANCE_SKIP_LONG=1` leaves it out.

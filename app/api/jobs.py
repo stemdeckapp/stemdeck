@@ -21,6 +21,7 @@ from app.core.config import (
     JOB_ID_RE,
     JOBS_DIR,
     LYRICS_LOOKUP_BUDGET_SEC,
+    LYRICS_OFFSET_MAX_SEC,
     MAX_PENDING_UPLOAD_JOBS,
     MAX_PENDING_URL_JOBS,
     STEM_NAMES,
@@ -49,7 +50,9 @@ from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
 from app.pipeline.identify import can_identify_title, identify_and_find_band
+from app.pipeline.lyrics_align import detect_offset
 from app.pipeline.lyrics_lookup import (
+    _TEXT_MAX_CHARS,
     build_query,
     candidates_path,
     copy_lyrics,
@@ -59,6 +62,7 @@ from app.pipeline.lyrics_lookup import (
     lyrics_settled,
     read_candidates,
     read_lyrics,
+    set_lyrics_offset,
 )
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.vocal_split import split_vocals
@@ -1056,6 +1060,134 @@ def get_lyrics(job_id: str) -> Response:
             {"detail": "no lyrics", "others": others}, status_code=404, headers=headers
         )
     raise HTTPException(status_code=404, detail="no lyrics")
+
+
+class LyricsOffsetBody(BaseModel):
+    """How many seconds later than their own timing the lyrics are shown:
+    negative for earlier, 0 for their own timing again."""
+
+    offset_sec: float = Field(
+        ge=-LYRICS_OFFSET_MAX_SEC, le=LYRICS_OFFSET_MAX_SEC, allow_inf_nan=False
+    )
+
+
+class LyricsAlignBody(BaseModel):
+    """Synced lyrics kept only in the browser (found by the tab's own
+    LRCLIB lookup), to estimate against the track's vocals without saving
+    anything. Omitted for the lyrics the server keeps (lyrics.json)."""
+
+    synced: str | None = Field(default=None, max_length=_TEXT_MAX_CHARS)
+
+
+def _lyrics_job(job_id: str) -> tuple[Job, Path]:
+    """The job and its directory, for a lyrics edit: 404 for a malformed or
+    unknown id, or one whose lyrics.json would resolve outside JOBS_DIR."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    job_dir = _job_dir(job_id)
+    if not lyrics_path(job_dir).resolve().is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="no lyrics")
+    return job, job_dir
+
+
+def _synced_lyrics(job_dir: Path) -> dict:
+    """Blocking: the job's lyrics.json when it has synced lyrics. 404 when it
+    has none, 409 when they are text only and have no timing to move."""
+    entry = read_lyrics(job_dir) if lyrics_path(job_dir).is_file() else None
+    if entry is None:
+        raise HTTPException(status_code=404, detail="no lyrics")
+    if not entry["synced"]:
+        raise HTTPException(status_code=409, detail="lyrics are not synced")
+    return entry
+
+
+# A lyrics edit's body: an offset, or at most _TEXT_MAX_CHARS of LRC, which
+# as UTF-8 runs to four bytes a character.
+_LYRICS_BODY_MAX_BYTES = 4 * _TEXT_MAX_CHARS + 1024
+
+
+async def _lyrics_body(request: Request, model: type[BaseModel], empty_ok: bool = False):
+    """A lyrics edit's JSON body as ``model``: None for no body at all when
+    ``empty_ok``. 413 past _LYRICS_BODY_MAX_BYTES, else 422 for anything that
+    is not the model, with NaN and Infinity refused while parsing (see
+    _reject_non_finite) and nothing sent back of what was submitted."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > _LYRICS_BODY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="body too large")
+    raw = await request.body()
+    if len(raw) > _LYRICS_BODY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="body too large")
+    if not raw.strip() and empty_ok:
+        return None
+    try:
+        data = json.loads(raw, parse_constant=_reject_non_finite)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="invalid JSON body") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="expected a JSON object")
+    try:
+        return model(**data)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="invalid lyrics edit") from exc
+
+
+@router.post("/{job_id}/lyrics/offset")
+async def set_lyrics_offset_route(job_id: str, request: Request) -> dict:
+    """Keep the user's alignment of the track's synced lyrics (the Lyrics
+    tab's Align panel): {"offset_sec": seconds later, negative for earlier,
+    0 for their own timing}. Kept beside the synced text in lyrics.json, which
+    is never rewritten, and applied by the page. Answers the offset kept."""
+    job, job_dir = _lyrics_job(job_id)
+    body = await _lyrics_body(request, LyricsOffsetBody)
+    await asyncio.to_thread(_synced_lyrics, job_dir)
+    entry = await asyncio.to_thread(set_lyrics_offset, job, job_dir, body.offset_sec)
+    if entry is None:
+        raise HTTPException(status_code=500, detail="could not save lyrics")
+    return {"offset_sec": entry["offset_sec"]}
+
+
+@router.post("/{job_id}/lyrics/align")
+async def align_lyrics_route(job_id: str, request: Request) -> dict:
+    """Estimate from the vocals stem how much later the lyrics are sung on
+    this track than their stamps say, whatever timing they were saved with
+    (the Align panel's Auto-detect): {"confident": bool, "offset_sec":
+    seconds or null}.
+
+    Without a body, for the lyrics the server keeps: a confident estimate is
+    kept as their offset, as POST .../lyrics/offset would, and one that is
+    not leaves them as they are. With {"synced": ...}, lyrics the browser
+    keeps: only the estimate is answered, and nothing is saved.
+
+    Outside _pipeline_lock, like GET .../vocal-envelope: at most one streamed
+    read of one stem, and none when its envelope is already kept."""
+    job, job_dir = _lyrics_job(job_id)
+    body = await _lyrics_body(request, LyricsAlignBody, empty_ok=True)
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail="job not ready")
+    stems_dir = (job_dir / "stems").resolve()
+    if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    kept_here = body is None or body.synced is None
+    if kept_here:
+        synced = (await asyncio.to_thread(_synced_lyrics, job_dir))["synced"]
+    else:
+        synced = body.synced
+    try:
+        shift = await asyncio.to_thread(detect_offset, synced, stems_dir)
+    except Exception:
+        logger.exception("lyrics alignment failed for %s", job_id)
+        raise HTTPException(status_code=500, detail="could not align lyrics") from None
+    if shift is None or abs(shift) > LYRICS_OFFSET_MAX_SEC:
+        return {"confident": False, "offset_sec": None}
+    if kept_here:
+        entry = await asyncio.to_thread(set_lyrics_offset, job, job_dir, shift)
+        if entry is None:
+            raise HTTPException(status_code=500, detail="could not save lyrics")
+        shift = entry["offset_sec"]
+    return {"confident": True, "offset_sec": shift}
 
 
 # Upper bound on an edited grid. A 20-minute track at 300 BPM is ~6000 beats;

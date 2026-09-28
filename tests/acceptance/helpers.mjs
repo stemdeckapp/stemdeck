@@ -35,6 +35,8 @@ export const SONGS = {
   yoasobi: { url: "https://www.youtube.com/watch?v=Y4nEEZwckuU", label: "YOASOBI, Gunjou" },
   iu: { url: "https://www.youtube.com/watch?v=jeqdYqsrsA0", label: "IU, Good Day" },
   polish: { url: "https://www.youtube.com/watch?v=cKKWT4zR5aY", label: "Natalia Kukulska, W biegu" },
+  // The video sings 16 s after LRCLIB's copies start their first line (0.05 s).
+  basketCase: { url: "https://www.youtube.com/watch?v=NUTGr5t3MoY", label: "Green Day, Basket Case" },
   localMp3: { file: "acceptance-tone.mp3", label: "local MP3 with tags" },
   untagged: { file: "recording.wav", label: "local WAV with no tags" },
   teresa: { url: "https://www.youtube.com/watch?v=xofwwFiLtuk", label: "Teresa Teng compilation (59 min)", long: true },

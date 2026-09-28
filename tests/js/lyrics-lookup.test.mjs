@@ -25,6 +25,11 @@ import {
   otherNames,
   fold as foldName,
   rankVersions,
+  clampOffset,
+  shiftLines,
+  firstSungIndex,
+  offsetToStart,
+  MAX_OFFSET_SEC,
 } from "../../static/js/lyricsLookup.js";
 
 let pass = 0,
@@ -502,6 +507,39 @@ for (const [intact, other] of [
     enhanced[1].text === "前に 君が" && same(wordTimings(enhanced[1], 20).map((w) => [w.text, w.start]), [["前に ", 14], ["君が", 15]]),
     JSON.stringify(enhanced[1]),
   );
+}
+
+// The Align panel: one offset over the lines' own timing.
+{
+  check("an offset is kept to the hundredth", clampOffset(15.936) === 15.94);
+  check("an offset is bounded both ways", clampOffset(9999) === MAX_OFFSET_SEC && clampOffset(-9999) === -MAX_OFFSET_SEC);
+  check(
+    "anything not a finite number is no offset",
+    [NaN, Infinity, "12", null, undefined, true, {}].every((x) => clampOffset(x) === 0),
+  );
+  check("-0 reads as none", Object.is(clampOffset(-0.001), 0));
+
+  const near = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-9);
+  const base = parseLrc("[00:00.05]<00:00.05>Do you <00:01.00>have\n[00:04.00]\n[00:05.00]Second");
+  const moved = shiftLines(base, 15.9);
+  check("lines and word stamps move together", near(moved.map((l) => l.time), [15.95, 19.9, 20.9]) && near([moved[0].words[1].time], [16.9]), JSON.stringify(moved));
+  check("the lines at their own timing are left as they were", base[0].time === 0.05 && base[0].words[1].time === 1);
+  check("no offset is the same lines", shiftLines(base, 0) === base);
+  const early = shiftLines(base, -3);
+  check("moved before the track starts rather than piled at zero", early[0].time < 0 && near(shiftLines(early, 3).map((l) => l.time), base.map((l) => l.time)));
+  check("the line being sung follows the offset", currentLineIndex(moved, 10) === -1 && currentLineIndex(moved, 16) === 0);
+
+  const gapFirst = parseLrc("[00:01.00]\n[00:03.00]First words\n[00:06.00]Next");
+  check("Start lyrics here skips an instrumental gap", firstSungIndex(gapFirst) === 1);
+  check("no sung line is -1", firstSungIndex(parseLrc("[00:01.00]")) === -1 && firstSungIndex([]) === -1);
+  check("the offset that puts a line at the playhead", offsetToStart(gapFirst, 1, 19) === 16 && offsetToStart(gapFirst, 2, 1) === -5);
+  check("no such line is no offset", offsetToStart(gapFirst, 7, 19) === 0);
+
+  const lyricsJson = { source: "lrclib", lrclib_id: 3, synced: "[00:01.00]Hi", duration: 180, offset_sec: 15.9, others: [{ source: "lrclib", lrclib_id: 4, synced: "[00:01.00]Hi", offset_sec: 3 }] };
+  const found = fromServerLyrics(lyricsJson);
+  check("the server's offset comes with the lyrics it keeps", found.entry.offsetSec === 15.9);
+  check("never with the versions offered", found.others.every((o) => !("offsetSec" in o)));
+  check("an old lyrics.json has none", !("offsetSec" in fromServerLyrics({ ...lyricsJson, offset_sec: undefined }).entry));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

@@ -975,6 +975,57 @@ test(title("L3"), async ({ app }, testInfo) => {
   await shot(page, testInfo, "lyrics");
 });
 
+// Steps: import Green Day, Basket Case (the video); Lyrics, Align, Auto-detect.
+// Expect: the first line, "Do you have the time", starts near 16 s, where
+// the video's singing does, not at LRCLIB's 0:00; a click on it plays from
+// there.
+test(title("L4"), async ({ app }, testInfo) => {
+  const { page } = app;
+  await wideWindow(page);
+  const id = await trackFor(page, "basketCase");
+  await openTrack(page, id);
+  await openLyrics(page);
+  const s = await lyricsState(page);
+  note(testInfo, `Lyrics: ${s.synced} synced lines, source "${s.meta}".`);
+  expect(s.synced, `synced lyrics (status: "${s.status}")`).toBeGreaterThan(8);
+  const saved = await api(`/api/jobs/${id}/lyrics`);
+  note(testInfo, `Saved with timing "${saved.timing}"${"offset_sec" in saved ? `, offset ${saved.offset_sec} s` : ""}.`);
+
+  const toggle = page.locator("#lyricsVersions .lyrics-align-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(page.locator("#lyricsAlign")).toBeVisible();
+  const message = page.locator("#lyricsAlign .lyrics-align-message");
+  await page.locator("#lyricsAlign .lyrics-align-btn", { hasText: await tr(page, "en", "lyrics.align.detect") }).click();
+  const checking = await tr(page, "en", "lyrics.align.detecting");
+  await expect.poll(async () => {
+    const text = (await message.textContent()).trim();
+    return text !== "" && text !== checking;
+  }, { timeout: 60_000 }).toBe(true);
+  const said = (await message.textContent()).trim();
+  const shown = (await page.locator("#lyricsAlign .lyrics-align-offset").textContent()).trim();
+  note(testInfo, `Auto-detect said "${said}"; offset shown ${shown}.`);
+  expect(said, "a confident estimate").toMatch(/^Moved to fit the vocals/);
+
+  // Where the first sung line starts now: its stamp plus the offset kept.
+  const after = await api(`/api/jobs/${id}/lyrics`);
+  const stamp = after.synced.split(/\r?\n/)
+    .map((line) => /^\[(\d+):(\d+(?:\.\d+)?)\]\s*(\S.*)$/.exec(line.trim()))
+    .find(Boolean);
+  expect(stamp, "a stamped line with words").toBeTruthy();
+  const first = Number(stamp[1]) * 60 + Number(stamp[2]) + (after.offset_sec || 0);
+  note(testInfo, `First line "${stamp[3]}" now starts at ${first.toFixed(2)} s.`);
+  expect(first, "the first line starts where the video's singing does").toBeGreaterThan(14.5);
+  expect(first).toBeLessThan(17.5);
+
+  // And the page follows: a click on the first line plays from there.
+  await page.locator("#lyricsBody .lyrics-line", { hasText: stamp[3].slice(0, 12) }).first().click();
+  await expect.poll(async () => seconds(await page.locator("#t-time").textContent()), { timeout: 5000 })
+    .toBeGreaterThanOrEqual(14);
+  expect(seconds(await page.locator("#t-time").textContent())).toBeLessThanOrEqual(17);
+  await shot(page, testInfo, "aligned");
+  partly(testInfo, "Whether the words now land with the voice is for ears: the program saw the first line move to the video's first sung line.");
+});
+
 // ─── The hour-long compilation ──────────────────────────────────────────────
 
 // Steps: import 邓丽君经典金曲 (59 min); open About this song. Expect: the box

@@ -13,6 +13,7 @@ import random
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from app.core.models import Job
 from app.pipeline.lyrics_align import (
@@ -151,8 +152,25 @@ def test_a_fit_that_is_not_clear_leaves_them_as_they_were(tmp_path: Path):
     assert read_lyrics(tmp_path) == before
 
 
-def test_exact_timing_is_left_alone(tmp_path: Path):
+def test_a_version_the_tracks_length_timed_to_another_cut_is_moved_too(tmp_path: Path):
+    """The same length proves nothing: Green Day's "Basket Case" video sings
+    16 s after LRCLIB's copy of the same length starts its lines."""
     job = _job_with_lyrics(tmp_path, "exact", [t + 7 for t in LINES])
+    assert align_lyrics(job, tmp_path) == "shifted"
+    assert line_starts(read_lyrics(tmp_path)["synced"])[0] == pytest.approx(LINES[0] + 7, abs=0.1)
+
+
+def test_exact_timing_within_a_second_is_left_alone(tmp_path: Path):
+    job = _job_with_lyrics(tmp_path, "exact", [t + 0.5 for t in LINES])
+    before = read_lyrics(tmp_path)
+    assert align_lyrics(job, tmp_path) == "exact"
+    assert read_lyrics(tmp_path) == before
+
+
+def test_a_transcription_is_the_tracks_own_timing_and_never_moved(tmp_path: Path):
+    job = _job_with_lyrics(tmp_path, "exact", [t + 7 for t in LINES])
+    entry = read_lyrics(tmp_path)
+    write_lyrics(job, tmp_path, {**entry, "source": "whisper"})
     before = read_lyrics(tmp_path)
     assert align_lyrics(job, tmp_path) == "exact"
     assert read_lyrics(tmp_path) == before

@@ -3922,12 +3922,53 @@ input, textarea { font-family: inherit; }
 .lyrics-match { display: flex; flex-direction: column; min-width: 0; }
 .lyrics-match-title { font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lyrics-match-meta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lyrics-tools { display: flex; gap: 12px; }
+.lyrics-tools { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .lyrics-link {
   padding: 0; background: none; border: none; cursor: pointer;
   color: var(--accent); font-size: 11px; font-weight: 600;
 }
 .lyrics-link:hover { text-decoration: underline; }
+/* Align, for lyrics with no timing to move: still focusable, so its tooltip
+   says why (lyrics.js). */
+.lyrics-link[aria-disabled="true"] { color: var(--muted); cursor: default; }
+.lyrics-link[aria-disabled="true"]:hover { text-decoration: none; }
+
+/* The Align panel: under the tools row, the sidebar's width, every control a
+   button so the keys reach them all. The nudges sit either side of the
+   offset they change. */
+.lyrics-align {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+}
+.lyrics-align-hint { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--muted); }
+.lyrics-align-target {
+  margin: 0; font-size: 11px; color: var(--fg-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lyrics-align-target:empty { display: none; }
+.lyrics-align-btn {
+  min-height: 26px; padding: 0 8px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--border-strong);
+  color: var(--fg-2); font-family: inherit; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: background var(--t-fast), color var(--t-fast);
+}
+.lyrics-align-btn:hover { background: var(--panel-3); color: var(--fg); }
+.lyrics-align-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lyrics-align-btn[aria-busy="true"] { cursor: progress; opacity: 0.6; }
+.lyrics-align-start { width: 100%; color: var(--accent); border-color: var(--accent); }
+.lyrics-align-nudges { display: flex; align-items: center; gap: 4px; }
+.lyrics-align-nudge { flex: 0 0 auto; padding: 0 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.lyrics-align-offset {
+  flex: 1 1 auto; min-width: 0; text-align: center;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--fg);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.lyrics-align-actions { display: flex; gap: 6px; }
+.lyrics-align-actions .lyrics-align-btn { flex: 1 1 0; min-width: 0; }
+.lyrics-align-message { margin: 0; font-size: 11px; line-height: 1.4; color: var(--fg-2); }
+.lyrics-align-message:empty { display: none; }
+.lyrics-align-message.muted, .lyrics-align-message.loading { color: var(--muted); }
+.lyrics-align-message.error { color: var(--danger); }
 /* display: flex would otherwise outrank the hidden attribute that folds it. */
 .lyrics-version-list[hidden] { display: none; }
 .lyrics-version-list { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
@@ -3963,6 +4004,9 @@ input, textarea { font-family: inherit; }
 /* The line after it, a step brighter than the rest, so the next words can be
    read before they are due. */
 .lyrics-line.next { color: var(--fg-2); }
+/* While the Align panel is open, the line last clicked, which Start lyrics
+   here moves instead of the first. */
+.lyrics-body.aligning .lyrics-line.picked { outline: 1px dashed var(--border-strong); outline-offset: -1px; }
 /* The karaoke wipe, one word at a time: sung words take the accent, and the
    word being sung is filled left to right up to --fill, set every frame by
    lyrics.js. Per word rather than across the whole line, so a line that wraps

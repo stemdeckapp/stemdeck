@@ -19,11 +19,18 @@
 // word, the next line is raised a step, the view keeps the line in the middle,
 // and clicking a line moves the playhead there. Plain lyrics are shown as text.
 //
+// Align moves synced lyrics timed to another cut of the song (a video's
+// intro) onto this track: the first sung line, or the one last clicked, to
+// the playhead; nudges earlier or later; the server's estimate from the
+// vocals stem; or back to their own timing. What moved is one offset kept
+// beside the synced text, never the text: on the server for lyrics it keeps
+// (POST .../lyrics/offset), in the track's store entry for lyrics kept here.
+//
 // Everything that came from the network or a file's tags goes in with
 // textContent, never as HTML: anyone can edit LRCLIB or a tag, and this page
 // can reach the desktop app's native commands.
 
-import { t } from "./i18n.js";
+import { t, getLanguage } from "./i18n.js";
 import { storeGet, storeSet } from "./utils.js";
 import { getCurrentTrackInfo, getCurrentTrackArtist } from "./catalog.js";
 import { transport, setPlayheadTime } from "./transport.js";
@@ -37,6 +44,10 @@ import {
   songFromTitle,
   fromServerLyrics,
   belongsTo,
+  clampOffset,
+  shiftLines,
+  firstSungIndex,
+  offsetToStart,
 } from "./lyricsLookup.js";
 
 // One store entry per track rather than a field in the library store: a song's
@@ -57,7 +68,21 @@ let bodyEl = null;
 
 let visible = false;
 let shownTrackId = null; // the track whose lyrics are on screen
-let lines = []; // parsed synced lines of what is shown, [] for plain text
+let lines = []; // synced lines of what is shown, at the offset, [] for plain text
+let baseLines = []; // the same lines at their own timing
+let offset = 0; // seconds the lines are moved later (earlier when negative)
+// What is on screen and where it is kept: "server" for lyrics.json, "store"
+// for the track's entry here. The Align panel saves to the same place.
+let shownEntry = null;
+let shownOthers = [];
+let shownFrom = "store";
+let pickedIndex = -1; // the line last clicked, which Start lyrics here moves
+let alignOpen = false; // the Align panel, kept open while the track is
+let align = null; // the Align panel's elements while it is on screen
+let alignToggleEl = null; // the Align link in the tools row
+let saveTimer = 0;
+let pendingSave = null;
+let alignToken = 0; // guards against an estimate landing after a switch
 let lineEls = [];
 let lineWords = []; // per line: [{ el, start, end }] for the wipe
 let currentIndex = -1;
@@ -96,12 +121,21 @@ function fmtLength(seconds) {
 }
 
 function clearLyrics() {
+  flushSave();
   lines = [];
+  baseLines = [];
+  offset = 0;
+  shownEntry = null;
+  shownOthers = [];
+  pickedIndex = -1;
+  align = null;
+  alignToggleEl = null;
+  alignToken++;
   lineEls = [];
   lineWords = [];
   currentIndex = -1;
   bodyEl.replaceChildren();
-  bodyEl.classList.remove("synced");
+  bodyEl.classList.remove("synced", "aligning");
   versionsEl.replaceChildren();
 }
 
@@ -127,12 +161,15 @@ function tagLang(node, text) {
 }
 
 /** A synced line as a button of word spans, which the wipe fills in turn. */
-function lineButton(line, nextTime) {
+function lineButton(line, nextTime, index) {
   const row = tagLang(el("button", "lyrics-line"), line.text);
   row.type = "button";
   row.title = t("lyrics.seekTitle");
   row.addEventListener("click", (e) => {
-    setPlayheadTime(line.time);
+    // Its time at the offset now, not when the button was made.
+    setPlayheadTime(Math.max(0, lines[index]?.time ?? line.time));
+    pickedIndex = index;
+    showAlignTarget();
     // A mouse click lets go of the line, so Space goes back to play and pause
     // rather than pressing the line again, and no focus box stays on it. A
     // key press (detail 0) keeps focus there for whoever is using the keys.
@@ -150,10 +187,17 @@ function lineButton(line, nextTime) {
   return row;
 }
 
-/** Draw what is kept for the track: `entry` as saved, `others` to offer. */
-function show(entry, others = []) {
+/**
+ * Draw what is kept for the track: `entry` as saved, `others` to offer.
+ * `from` is where it is kept, "server" or "store", which is where the Align
+ * panel saves an offset.
+ */
+function show(entry, others = [], from = "store") {
   clearLyrics();
   if (!entry) return;
+  shownEntry = entry;
+  shownOthers = others;
+  shownFrom = from;
 
   if (entry.instrumental && !entry.synced && !entry.plain) {
     setStatus(t("lyrics.instrumental"), "muted");
@@ -173,6 +217,11 @@ function show(entry, others = []) {
   );
   const tools = el("div", "lyrics-tools");
   versionsEl.append(head, tools);
+  if (entry.synced) {
+    baseLines = parseLrc(entry.synced);
+    offset = clampOffset(entry.offsetSec);
+    lines = shiftLines(baseLines, offset);
+  }
   if (others.length) {
     const toggle = el("button", "lyrics-link", t("lyrics.otherVersions", { count: others.length }));
     toggle.type = "button";
@@ -187,14 +236,17 @@ function show(entry, others = []) {
     tools.append(toggle);
     versionsEl.append(list);
   }
+  // Words to align, or to say why they cannot be: not for an instrumental.
+  // The panel goes under the tools row, above the versions list.
+  if (entry.synced || entry.plain) tools.append(alignToggle());
+  if (lines.length && alignOpen) tools.after(alignPanel());
   const remove = el("button", "lyrics-link", t("lyrics.remove"));
   remove.type = "button";
   remove.addEventListener("click", () => removeLyrics());
   tools.append(remove);
 
   if (entry.synced) {
-    lines = parseLrc(entry.synced);
-    lineEls = lines.map((line, i) => lineButton(line, lines[i + 1]?.time ?? null));
+    lineEls = lines.map((line, i) => lineButton(line, lines[i + 1]?.time ?? null, i));
     bodyEl.append(...lineEls);
     bodyEl.classList.add("synced");
     if (lines.length) loadEnvelope(shownTrackId);
@@ -228,17 +280,279 @@ async function loadEnvelope(trackId) {
   }
 }
 
-/** Give the words on screen the envelope's timings: once, not per frame. */
+/** Give the words on screen the envelope's timings, or the estimate without
+ * one, at the lines' times now: once, not per frame. */
 function retime() {
+  const levels = envelopeFor === shownTrackId ? envelope : null;
   lines.forEach((line, i) => {
     const words = lineWords[i];
-    const timed = wordTimings(line, lines[i + 1]?.time ?? null, envelope);
+    const timed = wordTimings(line, lines[i + 1]?.time ?? null, levels);
     if (!words || timed.length !== words.length) return;
     timed.forEach((word, k) => {
       words[k].start = word.start;
       words[k].end = word.end;
     });
   });
+}
+
+// ── Align ──
+
+// The nudges, in seconds: a coarse and a fine step each way.
+const NUDGES = [-0.5, -0.1, 0.1, 0.5];
+// An offset is saved this long after its last change, so a run of nudges is
+// one request rather than one each.
+const SAVE_DELAY_MS = 400;
+
+/** Seconds to a tenth, in the app's language: "+15.9", "-0.5", "0.0". */
+function formatSeconds(seconds, signDisplay = "exceptZero") {
+  try {
+    return new Intl.NumberFormat(getLanguage(), {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+      signDisplay,
+    }).format(seconds);
+  } catch (err) {
+    console.warn("number format failed", err);
+    return (signDisplay !== "never" && seconds > 0 ? "+" : "") + seconds.toFixed(1);
+  }
+}
+
+/** The Align link in the tools row. Disabled, and saying why, for lyrics
+ * without timing: aria-disabled rather than disabled, so it keeps its
+ * tooltip and can still be reached with the keys to read it. */
+function alignToggle() {
+  const toggle = el("button", "lyrics-link lyrics-align-toggle", t("lyrics.align.button"));
+  toggle.type = "button";
+  alignToggleEl = toggle;
+  if (!lines.length) {
+    toggle.setAttribute("aria-disabled", "true");
+    toggle.title = t("lyrics.align.syncedOnly");
+    return toggle;
+  }
+  toggle.title = t("lyrics.align.title");
+  toggle.setAttribute("aria-controls", "lyricsAlign");
+  toggle.setAttribute("aria-expanded", String(alignOpen));
+  toggle.addEventListener("click", () => {
+    if (align) closeAlign(false);
+    else openAlign();
+  });
+  return toggle;
+}
+
+function openAlign() {
+  if (!lines.length || align) return;
+  alignOpen = true;
+  alignToggleEl?.setAttribute("aria-expanded", "true");
+  alignToggleEl?.closest(".lyrics-tools")?.after(alignPanel());
+}
+
+function closeAlign(focusToggle) {
+  alignOpen = false;
+  align?.panel.remove();
+  align = null;
+  bodyEl.classList.remove("aligning");
+  alignToggleEl?.setAttribute("aria-expanded", "false");
+  if (focusToggle) alignToggleEl?.focus();
+}
+
+/** One of the panel's buttons. A mouse click lets go of it, as a line does,
+ * so Space goes back to play and pause mid-practice. */
+function alignButton(text, onClick, className = "") {
+  const btn = el("button", `lyrics-align-btn${className ? ` ${className}` : ""}`, text);
+  btn.type = "button";
+  btn.addEventListener("click", (e) => {
+    onClick();
+    if (e.detail > 0) btn.blur();
+  });
+  return btn;
+}
+
+function alignPanel() {
+  const panel = el("div", "lyrics-align");
+  panel.id = "lyricsAlign";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-label", t("lyrics.align.title"));
+
+  const start = alignButton(t("lyrics.align.start"), startHere, "lyrics-align-start");
+  start.title = t("lyrics.align.startTitle");
+  const target = el("p", "lyrics-align-target");
+
+  const nudges = el("div", "lyrics-align-nudges");
+  const readout = el("output", "lyrics-align-offset");
+  readout.setAttribute("aria-live", "polite");
+  readout.title = t("lyrics.align.offsetTitle");
+  const steps = NUDGES.map((step) => {
+    const btn = alignButton(formatSeconds(step, "always"), () => applyOffset(offset + step), "lyrics-align-nudge");
+    const label = t(step < 0 ? "lyrics.align.earlier" : "lyrics.align.later", { seconds: formatSeconds(Math.abs(step), "never") });
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    return btn;
+  });
+  nudges.append(steps[0], steps[1], readout, steps[2], steps[3]);
+
+  const actions = el("div", "lyrics-align-actions");
+  const detect = alignButton(t("lyrics.align.detect"), autoDetect);
+  detect.title = t("lyrics.align.detectTitle");
+  const reset = alignButton(t("lyrics.align.reset"), () => applyOffset(0));
+  reset.title = t("lyrics.align.resetTitle");
+  actions.append(detect, reset);
+
+  const message = el("p", "lyrics-align-message");
+  message.setAttribute("aria-live", "polite");
+
+  panel.append(el("p", "lyrics-align-hint", t("lyrics.align.hint")), start, target, nudges, actions, message);
+  panel.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    closeAlign(true);
+  });
+  align = { panel, target, readout, detect, message };
+  bodyEl.classList.add("aligning");
+  showOffset();
+  showAlignTarget();
+  return panel;
+}
+
+function showOffset() {
+  if (align) align.readout.textContent = t("lyrics.align.offset", { offset: formatSeconds(offset) });
+}
+
+function setAlignMessage(text = "", kind = "") {
+  if (!align) return;
+  align.message.textContent = text;
+  align.message.className = `lyrics-align-message${kind ? ` ${kind}` : ""}`;
+}
+
+/** The line Start lyrics here moves: the one last clicked, else the first
+ * with words. */
+function alignIndex() {
+  return pickedIndex >= 0 && pickedIndex < baseLines.length ? pickedIndex : firstSungIndex(baseLines);
+}
+
+/** Say which line Start lyrics here moves, and mark it among the lines. */
+function showAlignTarget() {
+  lineEls.forEach((row, i) => row.classList.toggle("picked", i === pickedIndex));
+  if (!align) return;
+  const index = alignIndex();
+  const text = baseLines[index]?.text || "";
+  align.target.textContent = text
+    ? t(pickedIndex >= 0 ? "lyrics.align.targetPicked" : "lyrics.align.targetFirst", { line: text })
+    : "";
+  align.target.removeAttribute("lang");
+  tagLang(align.target, text);
+}
+
+/** Start lyrics here: the line alignIndex names moves to the playhead. */
+function startHere() {
+  const index = alignIndex();
+  if (index < 0) return;
+  const now = transport()?.getCurrentTime?.() ?? 0;
+  applyOffset(offsetToStart(baseLines, index, now));
+}
+
+/**
+ * Show the lines `seconds` later than their own timing, at once: the wipe,
+ * the line marked and a line click all read `lines`, which the frame loop
+ * picks up on its next frame. Saved shortly after unless `save` is false
+ * (the server has saved it already).
+ */
+function applyOffset(seconds, { save = true } = {}) {
+  if (!baseLines.length) return;
+  offset = clampOffset(seconds);
+  lines = shiftLines(baseLines, offset);
+  if (shownEntry) shownEntry.offsetSec = offset;
+  retime();
+  showOffset();
+  setAlignMessage();
+  if (save) scheduleSave();
+}
+
+function scheduleSave() {
+  pendingSave = { trackId: shownTrackId, entry: shownEntry, others: shownOthers, from: shownFrom, value: offset };
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, SAVE_DELAY_MS);
+}
+
+/** Save the offset waiting to be saved, now. */
+function flushSave() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  const save = pendingSave;
+  pendingSave = null;
+  return save ? saveOffset(save) : Promise.resolve();
+}
+
+/** Forget an offset waiting to be saved in the store: the entry it belongs
+ * to is being replaced or removed there, and saving it would bring it back.
+ * One for the server is saved, since lyrics.json stays. */
+function dropStoreSave() {
+  if (pendingSave?.from === "store") {
+    clearTimeout(saveTimer);
+    saveTimer = 0;
+    pendingSave = null;
+  }
+  return flushSave();
+}
+
+async function saveOffset({ trackId, entry, others, from, value }) {
+  try {
+    if (from === "server") {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/lyrics/offset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ offset_sec: value }),
+        keepalive: true,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } else {
+      await storeSet(storeKey(trackId), { entry: { ...entry, offsetSec: value }, others });
+    }
+  } catch (err) {
+    console.warn("lyrics offset save failed", err);
+    if (trackId === shownTrackId) setAlignMessage(t("lyrics.align.saveFailed"), "error");
+  }
+}
+
+/**
+ * Auto-detect: the server estimates from the vocals stem how much later the
+ * lines are sung than their own timing says. Applied when it is sure; when
+ * not, the lyrics stay as they are and the panel says so. The server keeps
+ * what it applies to lyrics.json itself; lyrics kept here are sent along
+ * and the answer saved here.
+ */
+async function autoDetect() {
+  if (!align || !baseLines.length || align.detect.getAttribute("aria-busy") === "true") return;
+  const trackId = shownTrackId;
+  const from = shownFrom;
+  const synced = shownEntry?.synced || "";
+  // A nudge not yet saved is what "as they are" means if it cannot tell.
+  await flushSave();
+  const token = ++alignToken;
+  if (!align) return;
+  align.detect.setAttribute("aria-busy", "true");
+  setAlignMessage(t("lyrics.align.detecting"), "loading");
+  let answer = null;
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/lyrics/align`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(from === "server" ? {} : { synced }),
+    });
+    if (res.ok) answer = await res.json();
+    else console.warn("lyrics auto-detect refused", res.status);
+  } catch (err) {
+    console.warn("lyrics auto-detect failed", err);
+  }
+  if (token !== alignToken || trackId !== shownTrackId || !align) return;
+  align.detect.removeAttribute("aria-busy");
+  if (!answer) {
+    setAlignMessage(t("lyrics.align.detectFailed"), "error");
+  } else if (answer.confident === true && typeof answer.offset_sec === "number") {
+    applyOffset(answer.offset_sec, { save: from !== "server" });
+    setAlignMessage(t("lyrics.align.detected", { offset: formatSeconds(offset) }));
+  } else {
+    setAlignMessage(t("lyrics.align.unsure"), "muted");
+  }
 }
 
 function versionList(matches, all) {
@@ -276,6 +590,9 @@ async function keep(match, others) {
   const info = getCurrentTrackInfo();
   if (!info) return;
   const entry = { v: 1, source: "lrclib", ...match, savedAt: Date.now() };
+  // Another version, at its own timing: the offset was the old one's.
+  delete entry.offsetSec;
+  await dropStoreSave();
   await storeSet(storeKey(info.id), { entry, others });
   answered.delete(info.id);
   if (getCurrentTrackInfo()?.id !== info.id) return;
@@ -288,6 +605,7 @@ async function keep(match, others) {
 async function removeLyrics() {
   const info = getCurrentTrackInfo();
   if (!info) return;
+  await dropStoreSave();
   await storeSet(storeKey(info.id), { dismissed: true });
   answered.delete(info.id);
   showRemoved();
@@ -429,6 +747,8 @@ function knownSong(info) {
 /** Show what is kept for the open track, or find it. */
 async function loadForCurrentTrack() {
   const info = getCurrentTrackInfo();
+  // The Align panel stays open while the same track is shown again.
+  if ((info?.id ?? null) !== shownTrackId) alignOpen = false;
   shownTrackId = info?.id ?? null;
   nothingKnownFor = null;
   searchController?.abort();
@@ -461,7 +781,7 @@ async function loadForCurrentTrack() {
   const found = await serverLyrics(info.id);
   if (token !== loadToken) return;
   if (found?.entry) {
-    show(found.entry, found.others);
+    show(found.entry, found.others, "server");
     return;
   }
   // None was the length of the track: its versions, to pick from.
@@ -579,6 +899,10 @@ export function initLyrics() {
   bodyEl = document.getElementById("lyricsBody");
   if (!panel || !statusEl || !versionsEl || !bodyEl) return;
 
+  // An offset still waiting to be saved goes before the page does.
+  window.addEventListener("pagehide", () => {
+    flushSave();
+  });
   document.addEventListener("catalogviewchange", (e) => setVisible(e.detail?.view === "lyrics"));
   document.addEventListener("tracktags", (e) => {
     if (visible && nothingKnownFor && e.detail?.id === nothingKnownFor) loadForCurrentTrack();

@@ -84,6 +84,7 @@ from app.core.config import (
     LYRICS_LOOKUP_RETRIES,
     LYRICS_LOOKUP_RETRY_SEC,
     LYRICS_NOT_FOUND_RETRY_SEC,
+    LYRICS_OFFSET_MAX_SEC,
     LYRICS_OTHERS_MAX,
     LYRICS_SAME_RECORDING_SEC,
     TIMEOUT_LYRICS_LOOKUP,
@@ -1035,6 +1036,16 @@ def _clean_version(value: Any) -> dict[str, Any] | None:
     return version
 
 
+def clean_offset(value: Any) -> float | None:
+    """A lyrics offset in seconds, to the hundredth, or None when ``value``
+    is not a finite number within +-LYRICS_OFFSET_MAX_SEC."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or abs(value) > LYRICS_OFFSET_MAX_SEC:
+        return None
+    return round(float(value), 2) + 0.0  # + 0.0: never -0.0
+
+
 def clean_lyrics(value: Any) -> dict[str, Any] | None:
     """lyrics.json as read back from disk, or None when it is not one. A
     damaged or hand-edited file must not put anything malformed in front of
@@ -1053,6 +1064,12 @@ def clean_lyrics(value: Any) -> dict[str, Any] | None:
     # Only on lyrics whose lost letters were given back (lyrics_repair.py).
     if value.get("repaired") in LYRICS_REPAIRS:
         entry["repaired"] = value["repaired"]
+    # Only once the user has aligned them in the Lyrics tab: seconds later
+    # (earlier when negative) than the synced text says, applied by the page.
+    # A value out of bounds is dropped rather than the whole file.
+    offset = clean_offset(value.get("offset_sec"))
+    if offset is not None:
+        entry["offset_sec"] = offset
     others = value.get("others")
     cleaned = [_clean_version(o) for o in (others if isinstance(others, list) else [])]
     entry["others"] = [o for o in cleaned if o is not None][:LYRICS_OTHERS_MAX]
@@ -1160,9 +1177,31 @@ def keep_answer(job: Job, job_dir: Path, answer: LookupAnswer) -> bool:
     return True
 
 
+# One edit of lyrics.json at a time from the Lyrics tab: each reads the file,
+# changes the offset and writes it back whole.
+_OFFSET_LOCK = threading.Lock()
+
+
+def set_lyrics_offset(job: Job, job_dir: Path, offset: float) -> dict[str, Any] | None:
+    """Keep ``offset`` seconds as the user's alignment of the job's synced
+    lyrics (0 is their own timing again) and return the entry as written.
+    None when the job has no synced lyrics or they could not be written. The
+    synced text itself is never rewritten, so their own timing stays there."""
+    cleaned = clean_offset(offset)
+    if cleaned is None:
+        return None
+    with _OFFSET_LOCK:
+        entry = read_lyrics(job_dir)
+        if entry is None or not entry["synced"]:
+            return None
+        entry = {**entry, "offset_sec": cleaned}
+        return entry if write_lyrics(job, job_dir, entry) else None
+
+
 def copy_lyrics(src_dir: Path, dest_dir: Path) -> bool:
     """Copy a job's lyrics.json and candidates file to another job of the
-    same recording (a re-split). True when lyrics.json was copied."""
+    same recording (a re-split), with any alignment the user gave the lyrics
+    (offset_sec). True when lyrics.json was copied."""
     copied = False
     for path in (lyrics_path(src_dir), candidates_path(src_dir)):
         if not path.is_file():

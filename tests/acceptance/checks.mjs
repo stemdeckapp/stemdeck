@@ -21,6 +21,7 @@ export const CHECKS = [
   { id: "L1", area: "Lyrics", title: "Lyrics follow the singer, karaoke style, and a line click jumps there", refs: [702] },
   { id: "L2", area: "Lyrics", title: "Polish lyrics get their letters back", refs: [703] },
   { id: "L3", area: "Lyrics", title: "A track with nothing to go on shows no lyrics rather than a guess", refs: [702] },
+  { id: "L4", area: "Lyrics", title: "Auto-detect moves lyrics timed to another cut onto the video", refs: [] },
   { id: "C1", area: "Other languages", title: "A Chinese song finds its artist, native name and character-by-character karaoke", refs: [705, 709] },
   { id: "C2", area: "Other languages", title: "A Japanese song finds its artist and lyrics", refs: [705, 709] },
   { id: "C3", area: "Other languages", title: "A Korean song filed under its English title still gets lyrics", refs: [705, 709] },

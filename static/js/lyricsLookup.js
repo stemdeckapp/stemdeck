@@ -75,7 +75,9 @@ export function fromServerLyrics(data) {
   const others = (Array.isArray(data.others) ? data.others : [])
     .map(fromServerVersion)
     .filter((m) => m?.id && m.id !== found?.id);
-  if (found) return { entry: { v: 1, ...found }, others };
+  // The user's alignment (the Align panel), on the kept version only.
+  const offsetSec = clampOffset(data.offset_sec);
+  if (found) return { entry: { v: 1, ...found, ...(offsetSec ? { offsetSec } : {}) }, others };
   return others.length ? { entry: null, others } : null;
 }
 
@@ -742,6 +744,46 @@ export function otherNames(artist, names = []) {
     }
   }
   return out;
+}
+
+// How far the Align panel moves lyrics either way, as the server bounds it
+// (LYRICS_OFFSET_MAX_SEC in app/core/config.py).
+export const MAX_OFFSET_SEC = 600;
+
+/** An offset in seconds, to the hundredth and within MAX_OFFSET_SEC; 0 for
+ * anything that is not a finite number (a string included). */
+export function clampOffset(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return 0;
+  // + 0 turns -0 into 0, so an offset back at zero reads as none.
+  return Math.round(Math.min(MAX_OFFSET_SEC, Math.max(-MAX_OFFSET_SEC, seconds)) * 100) / 100 + 0;
+}
+
+/**
+ * parseLrc's lines `offset` seconds later (earlier when negative), word stamps
+ * too. Not clamped at zero, unlike the [offset:] tag: a line moved before the
+ * track starts is simply never reached, and moving it back finds it where it
+ * was.
+ */
+export function shiftLines(lines, offset) {
+  if (!offset) return lines;
+  return lines.map((line) => ({
+    ...line,
+    time: line.time + offset,
+    ...(line.words ? { words: line.words.map((w) => (w.time == null ? w : { ...w, time: w.time + offset })) } : {}),
+  }));
+}
+
+/** The first line with words, which "Start lyrics here" moves by default; -1
+ * when there is none. */
+export function firstSungIndex(lines) {
+  return lines.findIndex((line) => line.text.trim() !== "");
+}
+
+/** The offset that puts line `index` of `lines` (at their own timing) at
+ * `seconds` into the track. */
+export function offsetToStart(lines, index, seconds) {
+  const line = lines[index];
+  return line ? clampOffset(seconds - line.time) : 0;
 }
 
 /** Index of the line being sung at `seconds`, or -1 before the first. */

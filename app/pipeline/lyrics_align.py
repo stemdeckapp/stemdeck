@@ -1,5 +1,8 @@
 """Moving LRCLIB's timing onto this track, for lyrics from a version of
-another length (lyrics_lookup.py saves those with "timing": "unverified").
+another length (lyrics_lookup.py saves those with "timing": "unverified"),
+and for a version of the same length whose lines the vocals show start at
+least LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC away: a copy the track's length can
+still be timed to another cut, and its length alone proved nothing.
 
 A version of a song a few seconds longer or shorter than the track is most
 often the same recording with more or less lead-in: a video's intro, a
@@ -32,6 +35,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 from app.core.config import (
+    LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC,
     LYRICS_ALIGN_MAX_OFFSET_SEC,
     LYRICS_ALIGN_MIN_HITS,
     LYRICS_ALIGN_MIN_LINES,
@@ -203,24 +207,49 @@ def _envelope(stems_dir: Path) -> tuple[float, list[int]] | None:
     return vocal_envelope(vocals, _ENVELOPE_HOP_SEC)
 
 
+def detect_offset(synced: str, stems_dir: Path) -> float | None:
+    """How many seconds later ``synced``'s lines are sung on this track, from
+    the vocals stem in ``stems_dir``, whatever timing they were saved with:
+    the Lyrics tab's Auto-detect. None when the stem does not show it clearly,
+    or there is no stem. Blocking: may read the whole stem."""
+    envelope = _envelope(stems_dir)
+    if envelope is None:
+        return None
+    hop, db = envelope
+    return estimate_offset(line_starts(synced), onset_strength(db), hop)
+
+
 def align_lyrics(job: Job, job_dir: Path) -> str | None:
-    """Move unverified lyrics' timing onto this track, when the vocals stem
-    shows clearly by how much. Returns the timing the job's lyrics.json is
-    left with, or None when it has none to align. Never raises."""
+    """Move LRCLIB lyrics' timing onto this track, when the vocals stem shows
+    clearly by how much: a version of another length ("unverified") by any
+    amount, one of the track's length ("exact") only by at least
+    LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC. A transcription or the file's own
+    lyrics are the track's timing already. Returns the timing the job's
+    lyrics.json is left with, or None when it has none to align. Never
+    raises."""
     # Imported here: lyrics_lookup imports this module.
     from app.pipeline.lyrics_lookup import read_lyrics, write_lyrics
 
     try:
         entry = read_lyrics(job_dir)
-        if entry is None or entry.get("timing") != "unverified" or not entry["synced"]:
+        if entry is None or not entry["synced"]:
             return entry.get("timing") if entry else None
+        timing = entry.get("timing")
+        # Aligned by hand in the Lyrics tab: the user's timing, not to guess at.
+        if "offset_sec" in entry:
+            return timing
+        checked = timing == "unverified" or (timing == "exact" and entry["source"] == "lrclib")
+        if not checked:
+            return timing
         envelope = _envelope(job_dir / "stems")
         if envelope is None:
-            return "unverified"
+            return timing
         hop, db = envelope
         shift = estimate_offset(line_starts(entry["synced"]), onset_strength(db), hop)
         if shift is None:
-            return "unverified"
+            return timing
+        if timing == "exact" and abs(shift) < LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC:
+            return timing
         logger.info("[%s] lyrics timing moved by %+.2fs", job.id, shift)
         write_lyrics(
             job,

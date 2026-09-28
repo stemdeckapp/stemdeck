@@ -537,6 +537,15 @@ LYRICS_ALIGN_MIN_LINES = 6
 LYRICS_ALIGN_MIN_Z = 4.5
 LYRICS_ALIGN_MIN_RATIO = 1.15
 LYRICS_ALIGN_MIN_HITS = 0.6
+# LRCLIB's version the track's own length ("timing": "exact") is checked the
+# same way, and moved only when the voice clearly starts at least this much
+# later or earlier: a copy of the right length can still be timed to another
+# cut (Green Day "Basket Case": the video's lines start 16 s after the copy's).
+LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC = 1.0
+# How far the Lyrics tab's Align panel may move a track's lyrics, either way
+# ("offset_sec" in lyrics.json, POST /api/jobs/{id}/lyrics/offset): a long
+# intro or a medley's later verse, and no further.
+LYRICS_OFFSET_MAX_SEC = 600
 # Lyrics that lost their letters outside ASCII, mended from a reference that
 # has them (app/pipeline/lyrics_repair.py). A copy with no intact twin on
 # LRCLIB is checked against the audio only when it has at least this many
