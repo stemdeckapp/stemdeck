@@ -6,6 +6,7 @@
   "scripts": {
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:acceptance": "playwright test -c tests/acceptance/playwright.acceptance.config.mjs",
     "test:js": "for f in tests/js/*.test.mjs; do node \"$f\"; done"
   },
   "devDependencies": {

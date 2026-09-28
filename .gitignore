@@ -26,8 +26,9 @@ static/version.json
 desktop/node_modules/
 node_modules/
 
-# Playwright browser-test output (tests/e2e)
+# Playwright browser-test output (tests/e2e), and the acceptance run's report
 test-results/
+acceptance-results/
 playwright-report/
 blob-report/
 desktop/src-tauri/target/

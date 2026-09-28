@@ -61,6 +61,17 @@ const cardShown = (page) =>
   );
 
 test.describe("update check", () => {
+  for (const version of ["0.18.2.dev0", "0.7.0a5.dev3+g1a2b3c4", "0.18.2+local"]) {
+    test(`a dev build (${version}) is never offered an update`, async ({ page }) => {
+      await stubVersion(page, version);
+      await stubGithub(page, { body: release({ tag_name: "v0.18.1" }) });
+      await open(page);
+
+      await page.waitForTimeout(1200);
+      expect(await cardShown(page)).toBe(false);
+    });
+  }
+
   test("a release GitHub calls latest is offered", async ({ page }) => {
     await stubVersion(page, "0.5.0");
     await stubGithub(page, { body: release() });

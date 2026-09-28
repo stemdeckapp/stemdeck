@@ -2693,6 +2693,12 @@ function normalizeVersion(value) {
 // ("0.7.0-alpha.9") and the backend's PEP440 package version ("0.7.0a9", from
 // hatch-vcs via /api/health) compare equal. Without this the update banner
 // shows on every release because the two strings never match literally.
+// A build no release should be offered to: a source checkout's git-derived
+// version (0.7.0a5.dev3+g1a2b3c4) or a test build's (0.18.2.dev0).
+function isDevVersion(value) {
+  return /\.?dev\d*|\+/i.test(normalizeVersion(value));
+}
+
 function canonicalVersion(value) {
   return normalizeVersion(value)
     .toLowerCase()
@@ -3126,7 +3132,9 @@ async function checkForUpdate() {
     if (!latest || canonicalVersion(latest) === canonicalVersion(currentVersion)) return;
     // Dev/source builds report a git-derived version (e.g. 0.7.0a5.dev3+g…) that
     // is *ahead* of the last release — don't nag them with an "update" banner.
-    if (/\bdev\b|\+/.test(currentVersion)) return;
+    // A test build is 0.18.2.dev0: "dev" runs straight into its number, which
+    // a word boundary after it never matched.
+    if (isDevVersion(currentVersion)) return;
 
     let dismissed = null;
     try { dismissed = localStorage.getItem(DISMISSED_UPDATE_KEY); } catch (e) { console.warn(e); }

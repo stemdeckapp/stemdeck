@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -82,9 +83,48 @@ def _with_retries(job: Job, fn, *, what: str):
                     wait,
                 )
                 _set(job, stage=f"Network error — retrying ({attempt + 1}/{_MAX_RETRIES})...")
-                time.sleep(wait)
+                _sleep_unless_cancelled(job, wait)
             else:
                 raise
+
+
+# How often a wait on yt-dlp looks at the job's cancel flag.
+_CANCEL_POLL_SEC = 0.1
+
+
+def _sleep_unless_cancelled(job: Job, seconds: float) -> None:
+    """Sleep ``seconds``, or raise JobCancelled as soon as the job is."""
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        if job.cancel_requested:
+            raise JobCancelled()
+        time.sleep(min(left, _CANCEL_POLL_SEC))
+
+
+def _cancellable(job: Job, fn):
+    """``fn()``, run on a thread of its own so a cancel stops the wait for it.
+
+    yt-dlp's metadata probe has no progress hook to raise from, and resolving
+    a YouTube link takes up to twenty seconds, all of it deaf to Cancel. The
+    probe writes nothing, so one abandoned by a cancel is left to finish on
+    its own; only its answer is dropped."""
+    result: dict = {}
+
+    def run() -> None:
+        try:
+            result["value"] = fn()
+        except BaseException as exc:
+            result["error"] = exc
+
+    worker = threading.Thread(target=run, name=f"probe-{job.id}", daemon=True)
+    worker.start()
+    while worker.is_alive():
+        if job.cancel_requested:
+            raise JobCancelled()
+        worker.join(_CANCEL_POLL_SEC)
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
 
 
 # YouTube refusing to serve us at all, as opposed to a video being unavailable.
@@ -542,8 +582,12 @@ def download(job: Job, url: str, job_dir: Path) -> Path:
     # used to fail the whole job immediately (#279).
     def _probe(use_cookies: bool) -> dict:
         opts = {**_base_ydl_opts(_ALLOWED_EXTRACTORS, use_cookies=use_cookies), "noplaylist": True}
-        with YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=False) or {}
+
+        def ask() -> dict:
+            with YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False) or {}
+
+        return _cancellable(job, ask)
 
     # The bot check lands on this first request, so this is where the cookie
     # fallback is decided. Whether it engaged is remembered below so the fetch
