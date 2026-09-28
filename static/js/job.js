@@ -192,10 +192,20 @@ function hideError() {
   errorEl.classList.add("hidden");
 }
 
-// Escape closes the box too, as it closes every other popup.
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !errorEl.classList.contains("hidden")) hideError();
-});
+// Escape closes the box too, as it closes every other popup. The box sits
+// above everything, so it is the one an Escape is for: heard first (capture,
+// on the window) and used up there, so the artist box or Settings open beneath
+// it stay open until a second Escape.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.key !== "Escape" || errorEl.classList.contains("hidden")) return;
+    hideError();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  },
+  true,
+);
 
 // `retry` adds "Try again", which sends the user back to the URL field to start
 // a fresh import: right for an import failure and wrong for anything else. The

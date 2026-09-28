@@ -150,7 +150,7 @@ class MusicBrainz:
         self.asked: list[str] = []
         self.fail = fail
 
-    def __call__(self, path, params):
+    def __call__(self, path, params, **_):
         self.asked.append(path)
         if self.fail:
             raise OSError("MusicBrainz down")

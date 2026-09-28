@@ -37,4 +37,20 @@ test.describe("the error box", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("#error")).toBeHidden();
   });
+
+  test("Escape closes it alone, leaving a popup beneath it open", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await page.locator("#settingsBtn").click();
+    const settings = page.locator(".set-acoustid-key");
+    await expect(settings).toBeVisible();
+    await page.evaluate(async () => (await import("/js/job.js")).showError("Something failed.", null, { retry: false }));
+    await expect(page.locator("#error")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#error")).toBeHidden();
+    await expect(settings).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+  });
 });

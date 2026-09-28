@@ -374,18 +374,39 @@ def _acoustid_request(form: dict[str, str]) -> Any:
 
 def acoustid_key_works(key: str) -> bool | None:
     """Whether AcoustID accepts ``key`` for lookups: True or False, or None
-    when it cannot be asked (offline, AcoustID down), and the key is then
-    kept on trust.
+    when it cannot be asked (offline, AcoustID down or too slow), and the key
+    is then kept on trust.
 
     Asked with a fingerprint that is not one: a key AcoustID knows is refused
     for the fingerprint, one it does not for the key. The key AcoustID's site
     shows on a user's profile is for submitting fingerprints, not for looking
-    them up, and is the one people paste; this is what tells them."""
+    them up, and is the one people paste; this is what tells them.
+
+    The Save waits for this, so it waits at most twice the request timeout.
+    The request's own timeout bounds each read, not the whole answer: a
+    server sending a byte at a time would otherwise hold the Save for as long
+    as it went on. The request is left to finish on its own thread."""
+    result: list[bool | None] = [None]
+
+    def ask() -> None:
+        result[0] = _key_verdict(key)
+
+    worker = threading.Thread(target=ask, name="acoustid-key-check", daemon=True)
+    worker.start()
+    worker.join(TIMEOUT_IDENTIFY_REQUEST * 2)
+    if worker.is_alive():
+        logger.info("AcoustID took too long to say whether the key works")
+        return None
+    return result[0]
+
+
+def _key_verdict(key: str) -> bool | None:
     form = {"client": key, "duration": "30", "fingerprint": "AQAA", "format": "json"}
     try:
         answer = _acoustid_request(form)
     except AcoustIDRefused as err:
-        return err.code != _ACOUSTID_BAD_KEY
+        # A refusal with no reason (a 503, say) says nothing about the key.
+        return None if err.code is None else err.code != _ACOUSTID_BAD_KEY
     except Exception:
         logger.info("AcoustID could not be asked whether the key works", exc_info=True)
         return None
@@ -509,7 +530,7 @@ def identify_by_fingerprint(
     identity = None
     if not cancelled():
         try:
-            recording = musicbrainz.lookup_recording(rec["id"])
+            recording = musicbrainz.lookup_recording(rec["id"], cancelled=cancelled)
             identity = musicbrainz.identity_from_recording(
                 recording, source="acoustid", score=score, fallback_duration=duration
             )
@@ -911,7 +932,7 @@ def _band_by_artist_id(
 ) -> dict[str, str] | None:
     """The band a MusicBrainz artist is on Wikidata, or None. Never raises."""
     try:
-        qid = musicbrainz.artist_wikidata_id(mbid)
+        qid = musicbrainz.artist_wikidata_id(mbid, cancelled=cancelled)
         if qid and not cancelled():
             return lookup_band_by_id(qid, mbid, name=name, cancelled=cancelled)
     except Exception:

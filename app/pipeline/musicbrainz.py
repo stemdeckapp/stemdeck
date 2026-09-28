@@ -50,6 +50,7 @@ from app.core.config import (
     MUSICBRAINZ_API,
     MUSICBRAINZ_CACHE_DIR,
     MUSICBRAINZ_CACHE_TTL_SEC,
+    MUSICBRAINZ_REQUEST_BUDGET_SEC,
     MUSICBRAINZ_RETRIES,
     MUSICBRAINZ_RETRY_BACKOFF_SEC,
     MUSICBRAINZ_RETRY_MAX_WAIT_SEC,
@@ -98,15 +99,17 @@ def _fetch_json(
 
     MusicBrainz answers 503 (or 429) when it sheds load, even to a client
     keeping to its rate, so a refused request is asked again after a wait, up
-    to MUSICBRAINZ_RETRIES times, each on a turn of its own. A job cancelled
-    during the wait stops it (ratelimit.RateLimited)."""
+    to MUSICBRAINZ_RETRIES times, each on a turn of its own, and never past
+    MUSICBRAINZ_REQUEST_BUDGET_SEC in all. A job cancelled while it waits,
+    for its turn or to ask again, stops it (ratelimit.RateLimited)."""
     query = urllib.parse.urlencode({**params, "fmt": "json"})
     url = f"{MUSICBRAINZ_API}/{path}?{query}"
     request = urllib.request.Request(
         url, headers={"User-Agent": MUSICBRAINZ_USER_AGENT, "Accept": "application/json"}
     )
+    deadline = time.monotonic() + MUSICBRAINZ_REQUEST_BUDGET_SEC
     for attempt in range(MUSICBRAINZ_RETRIES + 1):
-        ratelimit.MUSICBRAINZ.wait()
+        ratelimit.MUSICBRAINZ.wait(cancelled=cancelled)
         try:
             # A fixed https base with only a path of our own and a query built
             # here, never a URL from a request or a tag, which is what B310
@@ -121,6 +124,8 @@ def _fetch_json(
                 raise
             # Slept in short steps, so a cancelled job stops waiting promptly.
             left = _retry_wait(err, attempt)
+            if time.monotonic() + left > deadline:
+                raise
             while left > 0:
                 if cancelled():
                     raise ratelimit.RateLimited("cancelled while waiting") from None
@@ -186,11 +191,18 @@ def cache_put(kind: str, mbid: str, data: Any) -> None:
         logger.info("could not cache MusicBrainz %s %s", kind, mbid, exc_info=True)
 
 
-def _cached(kind: str, mbid: str, path: str, params: dict[str, str]) -> Any:
+def _cached(
+    kind: str,
+    mbid: str,
+    path: str,
+    params: dict[str, str],
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> Any:
     kept = cache_get(kind, mbid)
     if kept is not None:
         return kept
-    data = _fetch_json(path, params)
+    data = _fetch_json(path, params, cancelled=cancelled)
     if isinstance(data, dict):
         cache_put(kind, mbid, data)
     return data
@@ -343,7 +355,9 @@ def identity_from_recording(
 # ── the questions ──
 
 
-def lookup_recording(mbid: str) -> dict[str, Any] | None:
+def lookup_recording(
+    mbid: str, *, cancelled: Callable[[], bool] = lambda: False
+) -> dict[str, Any] | None:
     """A recording by MBID, with its artist credit and its releases' release
     groups, from the cache when it is there. Raises when MusicBrainz cannot
     be reached."""
@@ -354,16 +368,17 @@ def lookup_recording(mbid: str) -> dict[str, Any] | None:
         mbid,
         f"recording/{mbid}",
         {"inc": "artist-credits+releases+release-groups"},
+        cancelled=cancelled,
     )
     return data if isinstance(data, dict) else None
 
 
-def artist_wikidata_id(mbid: str) -> str | None:
+def artist_wikidata_id(mbid: str, *, cancelled: Callable[[], bool] = lambda: False) -> str | None:
     """The Wikidata item a MusicBrainz artist links to, or None. Raises when
     MusicBrainz cannot be reached."""
     if not MBID_RE.match(mbid or ""):
         return None
-    data = _cached("artist", mbid, f"artist/{mbid}", {"inc": "url-rels"})
+    data = _cached("artist", mbid, f"artist/{mbid}", {"inc": "url-rels"}, cancelled=cancelled)
     relations = data.get("relations") if isinstance(data, dict) else None
     for relation in relations if isinstance(relations, list) else []:
         if not isinstance(relation, dict) or relation.get("type") != "wikidata":
@@ -389,7 +404,11 @@ def work_titles(recording_mbid: str, *, cancelled: Callable[[], bool] = lambda: 
     if not MBID_RE.match(recording_mbid or "") or cancelled():
         return []
     data = _cached(
-        "recording-works", recording_mbid, f"recording/{recording_mbid}", {"inc": "work-rels"}
+        "recording-works",
+        recording_mbid,
+        f"recording/{recording_mbid}",
+        {"inc": "work-rels"},
+        cancelled=cancelled,
     )
     relations = data.get("relations") if isinstance(data, dict) else None
     titles: list[str] = []
@@ -404,7 +423,7 @@ def work_titles(recording_mbid: str, *, cancelled: Callable[[], bool] = lambda: 
         if not isinstance(work_id, str) or not MBID_RE.match(work_id) or cancelled():
             continue
         works += 1
-        found = _cached("work", work_id, f"work/{work_id}", {"inc": "aliases"})
+        found = _cached("work", work_id, f"work/{work_id}", {"inc": "aliases"}, cancelled=cancelled)
         aliases = found.get("aliases") if isinstance(found, dict) else None
         for alias in aliases if isinstance(aliases, list) else []:
             if isinstance(alias, dict) and isinstance(alias.get("name"), str):
@@ -414,13 +433,17 @@ def work_titles(recording_mbid: str, *, cancelled: Callable[[], bool] = lambda: 
     return titles
 
 
-def lookup_release_group(mbid: str) -> dict[str, Any] | None:
+def lookup_release_group(
+    mbid: str, *, cancelled: Callable[[], bool] = lambda: False
+) -> dict[str, Any] | None:
     """A release group by MBID, with its url relationships (Wikidata, IMDb),
     from the cache when it is there. For the work a soundtrack is from
     (work_lookup.py). Raises when MusicBrainz cannot be reached."""
     if not MBID_RE.match(mbid or ""):
         return None
-    data = _cached("release-group", mbid, f"release-group/{mbid}", {"inc": "url-rels"})
+    data = _cached(
+        "release-group", mbid, f"release-group/{mbid}", {"inc": "url-rels"}, cancelled=cancelled
+    )
     return data if isinstance(data, dict) else None
 
 
@@ -481,6 +504,7 @@ def search_recording(
             ),
             "limit": _SEARCH_LIMIT,
         },
+        cancelled=cancelled,
     )
     hits = data.get("recordings") if isinstance(data, dict) else None
     want_artist = title_parse.name_key(artist)

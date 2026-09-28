@@ -187,28 +187,34 @@ def looks_stripped(text: str) -> bool:
     return english < len(words) * LYRICS_STRIPPED_ENGLISH_MAX_SHARE
 
 
+def _strips_to(reference: str, word: str) -> bool:
+    """Whether ``reference`` gives ``word`` with each of its letters outside
+    ASCII kept, folded to its base or dropped, and every other letter kept.
+
+    Walked a letter at a time over the set of places in ``word`` reached so
+    far, so the cost is at most the product of the two lengths. A regular
+    expression of optional groups did the same by backtracking, which a word
+    of forty accented letters in someone's LRCLIB upload turned into hours of
+    matching with the interpreter locked."""
+    reached = {0}
+    for ch in reference:
+        after: set[int] = set()
+        base = "" if ch.isascii() else _base(ch)
+        for at in reached:
+            if word.startswith(ch, at):
+                after.add(at + len(ch))
+            if not ch.isascii():
+                after.add(at)
+                if base and word.startswith(base, at):
+                    after.add(at + len(base))
+        if not after:
+            return False
+        reached = after
+    return len(word) in reached
+
+
 class _Stripper:
-    """Whether a reference word strips down to a word, with each reference
-    word's pattern compiled once."""
-
-    def __init__(self) -> None:
-        self._patterns: dict[str, re.Pattern[str] | None] = {}
-
-    def _pattern(self, word: str) -> re.Pattern[str] | None:
-        if word not in self._patterns:
-            if word.isascii():
-                self._patterns[word] = None
-            else:
-                parts = []
-                for ch in word:
-                    if ch.isascii():
-                        parts.append(re.escape(ch))
-                        continue
-                    base = _base(ch)
-                    options = re.escape(ch) + (f"|{re.escape(base)}" if base else "")
-                    parts.append(f"(?:{options})?")
-                self._patterns[word] = re.compile("".join(parts))
-        return self._patterns[word]
+    """Whether a reference word strips down to a word."""
 
     def restores(self, reference: str, word: str) -> bool:
         """Whether ``reference`` (lowercase) is ``word`` (lowercase) with the
@@ -216,10 +222,7 @@ class _Stripper:
         dropped gives ``word``. Never for a word left with fewer than two
         letters, or half the reference's, unless it is all of it folded: a
         lone "e" is not "że"."""
-        if reference == word:
-            return False
-        pattern = self._pattern(reference)
-        if pattern is None or not pattern.fullmatch(word):
+        if reference == word or reference.isascii() or not _strips_to(reference, word):
             return False
         if len(word) >= max(2, math.ceil(len(reference) / 2)):
             return True

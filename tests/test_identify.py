@@ -560,7 +560,7 @@ def test_the_real_request_names_stemdeck_and_waits_its_turn(monkeypatch):
         seen["agent"] = request.get_header("User-agent")
         return Response(b"{}")
 
-    def wait():
+    def wait(**_):
         seen["waited"] += 1
 
     monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", wait)
@@ -603,7 +603,7 @@ def test_the_cache_never_leaves_its_directory():
 
 def test_a_wikidata_link_that_is_not_one_is_ignored(monkeypatch):
     rels = {"relations": [{"type": "wikidata", "url": {"resource": "https://evil.example/Q1"}}]}
-    monkeypatch.setattr(mb, "_fetch_json", lambda path, params: rels)
+    monkeypatch.setattr(mb, "_fetch_json", lambda path, params, **_: rels)
     assert mb.artist_wikidata_id(QUEEN_MBID) is None
 
 

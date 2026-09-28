@@ -454,7 +454,7 @@ def test_a_busy_answer_is_asked_again_after_a_growing_wait(monkeypatch):
     """Four of 45 songs in the language benchmark lost their identity to a
     single 503 when one retry was all there was."""
     turns, slept = [], []
-    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: turns.append(1))
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda **_: turns.append(1))
     monkeypatch.setattr(mb, "_sleep", slept.append)
     monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(503, 429, 200))
     assert _REAL_MB_FETCH("recording", {"query": "x"}) == {"ok": True}
@@ -464,7 +464,7 @@ def test_a_busy_answer_is_asked_again_after_a_growing_wait(monkeypatch):
 
 def test_retry_after_is_kept_to_within_a_bound(monkeypatch):
     slept = []
-    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: None)
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda **_: None)
     monkeypatch.setattr(mb, "_sleep", slept.append)
     monkeypatch.setattr(
         mb.urllib.request, "urlopen", _urlopen(503, 200, headers={"Retry-After": "600"})
@@ -475,7 +475,7 @@ def test_retry_after_is_kept_to_within_a_bound(monkeypatch):
 
 @pytest.mark.parametrize("codes", [(503,) * (mb.MUSICBRAINZ_RETRIES + 1), (400,), (404,)])
 def test_a_refusal_past_the_retries_or_any_other_error_raises(monkeypatch, codes):
-    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: None)
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda **_: None)
     monkeypatch.setattr(mb, "_sleep", lambda seconds: None)
     monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(*codes))
     with pytest.raises(urllib.error.HTTPError):
@@ -484,7 +484,7 @@ def test_a_refusal_past_the_retries_or_any_other_error_raises(monkeypatch, codes
 
 def test_a_cancel_stops_the_wait(monkeypatch):
     turns = []
-    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda: turns.append(1))
+    monkeypatch.setattr(mb.ratelimit.MUSICBRAINZ, "wait", lambda **_: turns.append(1))
     monkeypatch.setattr(mb, "_sleep", lambda seconds: None)
     monkeypatch.setattr(mb.urllib.request, "urlopen", _urlopen(503, 200))
     with pytest.raises(mb.ratelimit.RateLimited):

@@ -546,7 +546,7 @@ def lookup_work(
     mbid = (identity or {}).get("release_group_mbid")
     if is_soundtrack and mbid:
         try:
-            group = musicbrainz.lookup_release_group(mbid)
+            group = musicbrainz.lookup_release_group(mbid, cancelled=cancelled)
         except Exception:
             logger.info("release group lookup failed", exc_info=True)
             group = None

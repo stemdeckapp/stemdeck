@@ -572,15 +572,17 @@ async function search(name, { id = "", typed = false } = {}) {
         : null,
       loadWork(trackWork, lang, controller.signal),
     ]);
-    const timedOut = controller.signal.reason?.message === "timeout";
-    if (controller.signal.aborted && !timedOut) return;
+    // Only a newer search or closing the box aborts this controller; a
+    // request that times out aborts its own inner signal (artistLookup.js
+    // withTimeout) and arrives here as bandError, or in the catch below.
+    if (controller.signal.aborted) return;
     if (bandError && !(work && !typed)) throw bandError;
     if (artist) render(artist, work);
     else if (work && !typed) render(null, work);
     else notFound();
   } catch (err) {
     // A newer search or closing the box aborts this one; that is not a fault.
-    if (controller.signal.aborted && controller.signal.reason?.message !== "timeout") return;
+    if (controller.signal.aborted) return;
     console.warn("artist lookup failed", err);
     showSearch(true);
     showStatus(t("artist.offline"), "error");

@@ -193,3 +193,30 @@ def test_a_transcript_of_another_song_is_not_used():
     heard = words_of("Zupełnie inna piosenka, śpiewana gdzie indziej, o czymś innym. " * 5)
     heard += words_of(ANTHEM)[:6]
     assert mend_from_transcript(_entry(_as_lrclib_drops_them(SONG)), heard) is None
+
+
+# ── a word built to be slow ──
+
+
+def test_a_long_accented_word_is_checked_in_linear_time():
+    """A word of forty accented letters in someone's LRCLIB upload once made
+    the check backtrack for hours, with the interpreter locked."""
+    import time
+
+    import app.pipeline.lyrics_repair as lr
+
+    stripper = lr._Stripper()
+    started = time.perf_counter()
+    assert not stripper.restores("é" * 40, "e" * 20 + "x")
+    assert stripper.restores("é" * 40, "e" * 40)
+    assert stripper.restores("é" * 40, "e" * 20)
+    assert time.perf_counter() - started < 0.5
+
+
+def test_each_letter_is_kept_folded_or_dropped():
+    import app.pipeline.lyrics_repair as lr
+
+    check = lr._strips_to
+    assert check("każe", "kae") and check("każe", "kaze") and check("każe", "każe")
+    assert check("się", "sie") and check("się", "si")
+    assert not check("każe", "kaxe") and not check("każe", "kazee") and not check("abc", "ab")

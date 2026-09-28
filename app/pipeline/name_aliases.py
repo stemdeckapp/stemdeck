@@ -192,7 +192,7 @@ def wikidata_names(entity: Any) -> list[str]:
     return names
 
 
-def _musicbrainz_artist(mbid: str) -> Any:
+def _musicbrainz_artist(mbid: str, *, cancelled: Callable[[], bool] = lambda: False) -> Any:
     """The artist with its aliases and url relationships, from the cache when
     it holds them. The answer replaces a cached one without aliases, which
     artist_wikidata_id reads the same way. Raises when MusicBrainz cannot be
@@ -201,7 +201,9 @@ def _musicbrainz_artist(mbid: str) -> Any:
     if isinstance(kept, dict) and "aliases" in kept:
         return kept
     # Looked up on the module, so the tests' stand-in for the network holds.
-    data = musicbrainz._fetch_json(f"artist/{mbid}", {"inc": "aliases+url-rels"})
+    data = musicbrainz._fetch_json(
+        f"artist/{mbid}", {"inc": "aliases+url-rels"}, cancelled=cancelled
+    )
     if isinstance(data, dict):
         musicbrainz.cache_put("artist", mbid, data)
     return data
@@ -249,7 +251,7 @@ def artist_aliases(
         if cancelled():
             return names
         try:
-            for name in musicbrainz_names(_musicbrainz_artist(mbid)):
+            for name in musicbrainz_names(_musicbrainz_artist(mbid, cancelled=cancelled)):
                 _add(names, name)
         except Exception:
             logger.info("artist aliases from MusicBrainz failed", exc_info=True)

@@ -1,0 +1,437 @@
+{
+ "fold": [
+  {
+   "in": "鄧麗君",
+   "out": "邓丽君"
+  },
+  {
+   "in": "周杰倫 Jay Chou",
+   "out": "周杰伦 Jay Chou"
+  },
+  {
+   "in": "紅豆",
+   "out": "红豆"
+  },
+  {
+   "in": "ＹＯＡＳＯＢＩ",
+   "out": "YOASOBI"
+  },
+  {
+   "in": "ｷﾝｸﾞﾇｰ",
+   "out": "キングヌー"
+  },
+  {
+   "in": "Dawid Podsiadło",
+   "out": "Dawid Podsiadlo"
+  },
+  {
+   "in": "Großstadt",
+   "out": "Grossstadt"
+  },
+  {
+   "in": "Sigur Rós",
+   "out": "Sigur Rós"
+  },
+  {
+   "in": "Ægir Øresund",
+   "out": "AEgir Oresund"
+  },
+  {
+   "in": "Œuvre",
+   "out": "OEuvre"
+  },
+  {
+   "in": "宇多田ヒカル",
+   "out": "宇多田ヒカル"
+  },
+  {
+   "in": "아이유",
+   "out": "아이유"
+  },
+  {
+   "in": "Кино",
+   "out": "Кино"
+  },
+  {
+   "in": "晴天（Sunny Day）",
+   "out": "晴天(Sunny Day)"
+  },
+  {
+   "in": "①②③",
+   "out": "123"
+  },
+  {
+   "in": "ﬁre",
+   "out": "fire"
+  },
+  {
+   "in": "",
+   "out": ""
+  }
+ ],
+ "sameArtist": [
+  {
+   "found": "周杰伦",
+   "names": [
+    "周杰倫"
+   ],
+   "same": true
+  },
+  {
+   "found": "邓丽君",
+   "names": [
+    "鄧麗君"
+   ],
+   "same": true
+  },
+  {
+   "found": "ＹＯＡＳＯＢＩ",
+   "names": [
+    "YOASOBI"
+   ],
+   "same": true
+  },
+  {
+   "found": "ｷﾝｸﾞﾇｰ",
+   "names": [
+    "キングヌー"
+   ],
+   "same": true
+  },
+  {
+   "found": "Dawid Podsiadlo",
+   "names": [
+    "Dawid Podsiadło"
+   ],
+   "same": true
+  },
+  {
+   "found": "鄧麗君 (Teresa Teng)",
+   "names": [
+    "Teresa Teng"
+   ],
+   "same": true
+  },
+  {
+   "found": "五月天 (Mayday)",
+   "names": [
+    "五月天"
+   ],
+   "same": true
+  },
+  {
+   "found": "IU",
+   "names": [
+    "IU (아이유)"
+   ],
+   "same": true
+  },
+  {
+   "found": "周杰倫",
+   "names": [
+    "周杰倫 Jay Chou"
+   ],
+   "same": true
+  },
+  {
+   "found": "Jay Chou",
+   "names": [
+    "周杰倫 Jay Chou"
+   ],
+   "same": true
+  },
+  {
+   "found": "周杰倫 & 費玉清",
+   "names": [
+    "周杰倫"
+   ],
+   "same": true
+  },
+  {
+   "found": "Jay Chou",
+   "names": [
+    "周杰倫"
+   ],
+   "same": false
+  },
+  {
+   "found": "아이유",
+   "names": [
+    "IU"
+   ],
+   "same": false
+  },
+  {
+   "found": "张信哲",
+   "names": [
+    "周杰倫"
+   ],
+   "same": false
+  },
+  {
+   "found": "五月天 阿信",
+   "names": [
+    "五月天"
+   ],
+   "same": false
+  },
+  {
+   "found": "告五人",
+   "names": [
+    "五月天"
+   ],
+   "same": false
+  },
+  {
+   "found": "Official",
+   "names": [
+    "Official髭男dism"
+   ],
+   "same": false
+  },
+  {
+   "found": "林",
+   "names": [
+    "林 & 周杰倫"
+   ],
+   "same": false
+  },
+  {
+   "found": "The Beatles",
+   "names": [
+    "Beatles"
+   ],
+   "same": true
+  },
+  {
+   "found": "Beyonce",
+   "names": [
+    "Beyoncé"
+   ],
+   "same": true
+  },
+  {
+   "found": "Keala Settle",
+   "names": [
+    "Keala Settle & The Greatest Showman Ensemble"
+   ],
+   "same": true
+  },
+  {
+   "found": "The Greatest Showman Cast",
+   "names": [
+    "The Greatest Showman"
+   ],
+   "same": true
+  },
+  {
+   "found": "Pink",
+   "names": [
+    "Pink Floyd"
+   ],
+   "same": false
+  },
+  {
+   "found": "DJ",
+   "names": [
+    "DJ & Someone Else"
+   ],
+   "same": false
+  },
+  {
+   "found": "Kesha",
+   "names": [
+    "Keala Settle"
+   ],
+   "same": false
+  },
+  {
+   "found": "",
+   "names": [
+    "Keala Settle"
+   ],
+   "same": false
+  },
+  {
+   "found": "Keala Settle",
+   "names": [
+    ""
+   ],
+   "same": false
+  },
+  {
+   "found": "王菲",
+   "names": [
+    "王菲 & 那英"
+   ],
+   "same": true
+  },
+  {
+   "found": "Sigur Ros",
+   "names": [
+    "Sigur Rós"
+   ],
+   "same": true
+  },
+  {
+   "found": "Grossstadt",
+   "names": [
+    "Großstadt"
+   ],
+   "same": true
+  }
+ ],
+ "sameSong": [
+  {
+   "found": "红豆",
+   "same": true,
+   "song": "紅豆"
+  },
+  {
+   "found": "月亮代表我的心",
+   "same": true,
+   "song": "月亮代表我的心"
+  },
+  {
+   "found": "晴天 (Sunny Day)",
+   "same": true,
+   "song": "晴天"
+  },
+  {
+   "found": "晴天（Sunny Day）",
+   "same": true,
+   "song": "晴天"
+  },
+  {
+   "found": "「白日」",
+   "same": true,
+   "song": "白日"
+  },
+  {
+   "found": "【白日】",
+   "same": true,
+   "song": "白日"
+  },
+  {
+   "found": "밤편지 (Through the Night)",
+   "same": true,
+   "song": "밤편지"
+  },
+  {
+   "found": "月亮代表我的心 - 劇集 “黃金有罪” 插曲",
+   "same": true,
+   "song": "月亮代表我的心"
+  },
+  {
+   "found": "Malomiasteczkowy",
+   "same": true,
+   "song": "Małomiasteczkowy"
+  },
+  {
+   "found": "晴れの日(晴天)",
+   "same": false,
+   "song": "晴天"
+  },
+  {
+   "found": "雨天",
+   "same": false,
+   "song": "晴天"
+  },
+  {
+   "found": "The Moon Represents My Heart - 月亮代表我的心",
+   "same": false,
+   "song": "月亮代表我的心"
+  },
+  {
+   "found": "This Is Me",
+   "same": true,
+   "song": "this is me"
+  },
+  {
+   "found": "This Is Me (feat. Someone) [Live]",
+   "same": true,
+   "song": "This Is Me"
+  },
+  {
+   "found": "This Is Me - From The Greatest Showman",
+   "same": true,
+   "song": "This Is Me"
+  },
+  {
+   "found": "Part I - Dawn",
+   "same": false,
+   "song": "Part I - Dusk"
+  },
+  {
+   "found": "This Is Not Me",
+   "same": false,
+   "song": "This Is Me"
+  },
+  {
+   "found": "",
+   "same": false,
+   "song": "This Is Me"
+  }
+ ],
+ "scriptNames": [
+  {
+   "in": "周杰倫 Jay Chou",
+   "out": [
+    "周杰伦",
+    "Jay Chou"
+   ]
+  },
+  {
+   "in": "鄧麗君 Teresa Teng テレサ・テン",
+   "out": [
+    "邓丽君",
+    "Teresa Teng",
+    "テレサ・テン"
+   ]
+  },
+  {
+   "in": "IU (아이유)",
+   "out": [
+    "IU",
+    "아이유"
+   ]
+  },
+  {
+   "in": "五月天 (Mayday)",
+   "out": [
+    "五月天",
+    "Mayday"
+   ]
+  },
+  {
+   "in": "BTS (방탄소년단)",
+   "out": [
+    "BTS",
+    "방탄소년단"
+   ]
+  },
+  {
+   "in": "Official髭男dism",
+   "out": []
+  },
+  {
+   "in": "五月天 阿信",
+   "out": []
+  },
+  {
+   "in": "Queen",
+   "out": []
+  },
+  {
+   "in": "周杰倫【Jay Chou】",
+   "out": [
+    "周杰伦",
+    "Jay Chou"
+   ]
+  },
+  {
+   "in": "",
+   "out": []
+  }
+ ]
+}

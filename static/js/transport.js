@@ -1,5 +1,6 @@
 import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } from "./utils.js";
 import { MIN_LOOP_SEC, loopDragResult } from "./loopRegion.js";
+import { tickStepAt } from "./rulerTicks.js";
 import {
   playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
   speedBtns,
@@ -111,30 +112,9 @@ export function setPlayheadTime(sec) {
   updatePresencePlayhead(next);
 }
 
-// Spacing of the timeline's labelled ticks. Shared by the ruler above the
-// lanes and the one on the footer waveform: the two strips are the same width
-// and start at the same x, so a time has to land at the same place in both.
-// Label spacing the ruler will not go below, comfortably wider than a "10:00"
-// label so neighbours never crowd each other.
-const MIN_TICK_PX = 110;
-const TICK_LADDER = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
-// At 1x, never more labelled ticks than this across the whole track. A song
-// keeps the 15/30/60-second steps it always had (a minute apart up to 12
-// minutes); a long mix or a full album steps up the ladder instead, where a
-// minute apart piled 59 labels on top of each other for an hour-long video.
-const MAX_BASE_TICKS = 12;
-
-function baseTickStep(durationSec) {
-  const floor = durationSec < 90 ? 15 : durationSec < 300 ? 30 : 60;
-  return (
-    TICK_LADDER.find((step) => step >= floor && durationSec / step <= MAX_BASE_TICKS) ??
-    TICK_LADDER[TICK_LADDER.length - 1]
-  );
-}
-
-// `contentWidthPx` is the width the ticks will actually occupy. Omitted (the
-// footer strip, which always shows the whole track) the step is the plain
-// duration-based one, which is also what 1x has always used.
+// Spacing of the timeline's labelled ticks: rulerTicks.js, a module of its own
+// so node can test it. `contentWidthPx` is the width the ticks will actually
+// occupy; omitted (the footer strip) the step is the plain duration-based one.
 // The step the ruler was last built with. buildRuler mutates elements inside
 // .wave-scroll, which is the element the resize observer watches, so rebuilding
 // unconditionally from that callback can re-trigger it. Comparing against this
@@ -142,17 +122,7 @@ function baseTickStep(durationSec) {
 let _rulerStep = 0;
 
 function tickStep(durationSec, contentWidthPx = 0) {
-  const base = baseTickStep(durationSec);
-  // Zoom is the only thing that subdivides it. Spreading the same handful of
-  // ticks across five screen widths would make the ruler less useful the
-  // further in you went, which is backwards.
-  if (waveZoom <= 1 || !contentWidthPx || !durationSec) return base;
-  const pxPerSec = contentWidthPx / durationSec;
-  for (const step of TICK_LADDER) {
-    if (step > base) break;
-    if (step * pxPerSec >= MIN_TICK_PX) return step;
-  }
-  return base;
+  return tickStepAt(durationSec, contentWidthPx, waveZoom);
 }
 
 export function buildRuler(durationSec) {

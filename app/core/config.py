@@ -418,6 +418,10 @@ MUSICBRAINZ_USER_AGENT = _musicbrainz_user_agent()
 MUSICBRAINZ_RETRIES = 3
 MUSICBRAINZ_RETRY_BACKOFF_SEC = 1.0
 MUSICBRAINZ_RETRY_MAX_WAIT_SEC = 8.0
+# The most one request may take, its retries and their waits included: past
+# it, a request still being refused gives up, so a run of busy answers never
+# holds a lookup (and the shared queue behind it) for a minute.
+MUSICBRAINZ_REQUEST_BUDGET_SEC = 20.0
 # A request that would wait longer than this for its turn under the rate
 # limit is not made at all: a queue that long means something else is
 # hammering the service, and identification is best-effort.
