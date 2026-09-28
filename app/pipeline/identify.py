@@ -168,6 +168,7 @@ def release_source(job_id: str, timeout: float = 5.0) -> None:
     try:
         proc.kill()
     except OSError:
+        # Already exited between the check and the kill: nothing left open.
         pass
     done.wait(timeout)
 

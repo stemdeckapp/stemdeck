@@ -508,6 +508,13 @@ def test_an_identity_year_is_kept_only_as_a_plausible_year():
     assert clean_identity(base)["year"] is None
 
 
+def test_an_identity_score_that_is_not_a_number_reads_as_none_at_all():
+    base = {"source": "acoustid", "title": "Song", "artist": "Queen"}
+    assert clean_identity({**base, "score": 0.93})["score"] == 0.93
+    for bad in (float("nan"), float("inf"), float("-inf"), True, "0.9", None):
+        assert clean_identity({**base, "score": bad})["score"] == 0.0
+
+
 def test_a_recording_only_on_a_soundtrack_keeps_the_soundtrack():
     recording = {
         "id": REC,

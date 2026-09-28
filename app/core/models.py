@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -82,7 +83,7 @@ def clean_identity(value: Any) -> dict[str, Any] | None:
     if not title or not artist:
         return None
     score = value.get("score")
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
         score = 0.0
     duration = value.get("duration")
     if (
