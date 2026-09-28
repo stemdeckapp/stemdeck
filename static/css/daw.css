@@ -3965,6 +3965,9 @@ input, textarea { font-family: inherit; }
 }
 .lyrics-align-actions { display: flex; gap: 6px; }
 .lyrics-align-actions .lyrics-align-btn { flex: 1 1 0; min-width: 0; }
+/* Done closes the panel: filled, so it reads as the way out. */
+.lyrics-align-done { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.lyrics-align-done:hover { background: var(--accent); color: var(--bg); filter: brightness(1.08); }
 .lyrics-align-message { margin: 0; font-size: 11px; line-height: 1.4; color: var(--fg-2); }
 .lyrics-align-message:empty { display: none; }
 .lyrics-align-message.muted, .lyrics-align-message.loading { color: var(--muted); }

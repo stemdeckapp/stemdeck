@@ -395,7 +395,11 @@ function alignPanel() {
   detect.title = t("lyrics.align.detectTitle");
   const reset = alignButton(t("lyrics.align.reset"), () => applyOffset(0));
   reset.title = t("lyrics.align.resetTitle");
-  actions.append(detect, reset);
+  // Closes the panel. Nothing to save here: every change is saved as it is
+  // made (a burst of nudges once, after the last).
+  const done = alignButton(t("lyrics.align.done"), () => closeAlign(true), "lyrics-align-done");
+  done.title = t("lyrics.align.doneTitle");
+  actions.append(detect, reset, done);
 
   const message = el("p", "lyrics-align-message");
   message.setAttribute("aria-live", "polite");

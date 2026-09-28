@@ -192,6 +192,20 @@ test.describe("aligning lyrics to the track", () => {
     expect(offsets.length).toBeLessThan(5);
   });
 
+  test("Done closes the panel and the adjustment stays", async ({ page }) => {
+    await setUp(page);
+    await alignLink(page).click();
+    await expect(panel(page)).toBeVisible();
+    await button(page, "Later by 0.5 s").click();
+    await expect(readout(page)).toHaveText("+0.5 s");
+    await button(page, "Done").click();
+    await expect(panel(page)).toBeHidden();
+    await expect(alignLink(page)).toHaveAttribute("aria-expanded", "false");
+    // Opened again, the offset is still the one set.
+    await alignLink(page).click();
+    await expect(readout(page)).toHaveText("+0.5 s");
+  });
+
   test("the panel works from the keyboard, and Escape closes it back onto Align", async ({ page }) => {
     await setUp(page);
     await alignLink(page).focus();
