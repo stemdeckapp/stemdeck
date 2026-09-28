@@ -64,6 +64,37 @@ def _no_acoustid_or_musicbrainz(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_discogs(monkeypatch):
+    """No test reaches api.discogs.com. A Discogs token is tried once when it
+    is saved (app/pipeline/discogs_auth.py); offline is what this answers,
+    which keeps the token on trust. Tests that want an answer stub it."""
+
+    def offline(*args, **kwargs):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr("app.pipeline.discogs_auth._ask_identity", offline)
+
+
+@pytest.fixture(autouse=True)
+def _no_discogs_api(monkeypatch, tmp_path):
+    """No test reaches api.discogs.com for a band's profile either
+    (app/pipeline/discogs.py, GET /api/jobs/{id}/artist-extra). Offline is
+    what this answers, which the lookup treats as "nothing found". Its disk
+    cache goes to a temporary directory and its memory is emptied, so no test
+    reads another's answers. Tests that want an answer stub _send."""
+    from app.pipeline import discogs as _discogs
+
+    def offline(*args, **kwargs):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr(_discogs, "_send", offline)
+    monkeypatch.setattr(_discogs, "CACHE_DIR", tmp_path / "_discogs_cache")
+    _discogs.forget()
+    yield
+    _discogs.forget()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 

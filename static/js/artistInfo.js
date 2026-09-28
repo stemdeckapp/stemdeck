@@ -16,6 +16,12 @@
 // click away: a cast member's biography says less about the song than the
 // show does. Any other band follows the song in full, as it always has.
 //
+// A band Wikipedia has no article on, or leaves gaps in, is filled from
+// Discogs when the user has set a Discogs token: the server asks Discogs and
+// answers GET /api/jobs/{id}/artist-extra (artistDiscogs.js), so the token
+// never reaches the page. Wikipedia always comes first; what Discogs added is
+// labelled, and credited as Discogs' terms ask.
+//
 // Everything that came from the network goes in with textContent, never as
 // HTML. Wikipedia text is written by anyone, and this page can reach the
 // desktop app's native commands.
@@ -30,6 +36,7 @@ import {
   taggedArtistName,
   wikiLanguage,
 } from "./artistLookup.js";
+import { discogsExtraFromJson, needsDiscogs, withDiscogs } from "./artistDiscogs.js";
 import {
   getCurrentTrackArtist,
   getCurrentTrackInfo,
@@ -56,6 +63,7 @@ let lastId = ""; // the saved band's Wikidata id, when the box opened on one
 let returnFocus = null;
 let searchShown = true;
 let waiting = false; // open on a track whose tags or band are still being found
+let searchGen = 0; // bumped by every search and by closing: a late answer checks it
 
 const isOpen = () => dialog && !dialog.classList.contains("hidden");
 
@@ -248,12 +256,21 @@ const LINK_ICONS = {
     "M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
     "M15 16a3 3 0 1 0 6 0a3 3 0 1 0-6 0",
   ],
+  bandcamp: ["M2 18L8.5 6H22l-6.5 12z"],
+  facebook: ["M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"],
+  youtube: [
+    "M22.5 6.4a2.8 2.8 0 0 0-1.9-2C18.9 4 12 4 12 4s-6.9 0-8.6.5a2.8 2.8 0 0 0-1.9 2A29 29 0 0 0 1 11.8a29 29 0 0 0 .5 5.3A2.8 2.8 0 0 0 3.4 19c1.7.5 8.6.5 8.6.5s6.9 0 8.6-.5a2.8 2.8 0 0 0 1.9-2 29 29 0 0 0 .5-5.3 29 29 0 0 0-.5-5.3z",
+    "M9.8 15l5.7-3.2-5.7-3.3z",
+  ],
 };
 const LINK_LABELS = {
   website: () => t("artist.links.website"),
   instagram: () => "Instagram",
   spotify: () => "Spotify",
   appleMusic: () => "Apple Music",
+  bandcamp: () => "Bandcamp",
+  facebook: () => "Facebook",
+  youtube: () => "YouTube",
 };
 
 function linkIcon(kind) {
@@ -285,9 +302,14 @@ function officialLinksRow(links, name) {
   if (!usable.length) return null;
   const list = el("ul", "artist-links");
   list.setAttribute("aria-label", t("artist.links.aria", { name }));
-  for (const { kind, url } of usable) {
+  for (const { kind, url, fromDiscogs } of usable) {
     const link = el("a", `artist-link artist-link-${kind}`);
     link.setAttribute("href", url);
+    // Beside a Wikidata band's own links, the ones only Discogs had say so.
+    if (fromDiscogs) {
+      link.classList.add("from-discogs");
+      link.title = t("artist.fromDiscogs");
+    }
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
     link.dataset.kind = kind;
@@ -388,7 +410,10 @@ function bandHead(artist, { compact = false } = {}) {
   const titles = el("div", "artist-titles");
   titles.append(appendNative(el(compact ? "h4" : "h2", "artist-name", artist.name), artist.name, artist.nativeName, artist.nativeLang));
   if (artist.description) titles.append(el("p", "artist-desc", artist.description));
-  head.append(titles, saveButton(artist));
+  else if (artist.realName) titles.append(el("p", "artist-desc", t("artist.realName", { name: artist.realName })));
+  head.append(titles);
+  // A band known only to Discogs has no Wikidata id to be saved by.
+  if (artist.id) head.append(saveButton(artist));
   return head;
 }
 
@@ -456,20 +481,35 @@ function render(artist, work = null) {
     parts.push(searchLink("artist.searchPlaceholder"));
   }
 
-  // The credit, only for what came from Wikipedia and Wikidata.
-  if (artist || work) {
-    foot.append(el("span", "artist-source", t("artist.source")));
-    parts.push(foot);
-  }
+  // The credit: Wikipedia and Wikidata for what came from them, and Discogs,
+  // linked to the band's page there as its terms ask, for what it added.
+  if (work || (artist && !artist.discogs?.only)) foot.append(el("span", "artist-source", t("artist.source")));
+  if (artist?.discogs?.only) foot.append(el("span", "artist-source artist-source-discogs", t("artist.fromDiscogs")));
+  if (artist?.discogs) foot.append(discogsCredit(artist.discogs.url));
+  if (artist || work) parts.push(foot);
   body.replaceChildren(...parts);
   body.scrollTop = 0;
+}
+
+// "Data provided by Discogs", linked to the band's page there.
+function discogsCredit(url) {
+  const link = el("a", "artist-more artist-discogs-credit", t("artist.discogsCredit"));
+  link.href = /^https:\/\/www\.discogs\.com\//.test(url || "") ? url : "https://www.discogs.com/";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  return link;
+}
+
+// "From Discogs" under a section Discogs filled in beside a Wikipedia band.
+function discogsNote(artist, key) {
+  return artist.discogs?.filled?.includes(key) ? [el("p", "artist-edition artist-from-discogs", t("artist.fromDiscogs"))] : [];
 }
 
 // A band's history, members and studio albums, as sections.
 function bandDetails(artist) {
   const parts = [];
   if (artist.history.length) {
-    parts.push(section("artist.history", ...articleProse("artist-history", artist.history, artist.historyLang, artist.historyVariant)));
+    parts.push(section("artist.history", ...discogsNote(artist, "history"), ...articleProse("artist-history", artist.history, artist.historyLang, artist.historyVariant)));
   }
 
   const { current: now, former } = artist.members;
@@ -479,8 +519,11 @@ function bandDetails(artist) {
     if (former.length) {
       children.push(el("h4", "artist-subtitle", t("artist.formerMembers")), nameList(former, artist.nativeLang));
     }
-    parts.push(section("artist.members", ...children));
+    parts.push(section("artist.members", ...discogsNote(artist, "members"), ...children));
   }
+
+  // The bands a person is in, as Discogs lists them.
+  if (artist.groups?.length) parts.push(section("artist.memberOf", nameList(artist.groups)));
 
   if (artist.albums.length) {
     const list = el("ol", "artist-albums");
@@ -490,8 +533,11 @@ function bandDetails(artist) {
       list.append(row);
     }
     // "Albums" rather than "Studio albums" when the list had to take plain
-    // albums as well (artistLookup.js albumList).
-    parts.push(section(artist.albumsStudioOnly === false ? "artist.albumsAll" : "artist.albums", list));
+    // albums as well (artistLookup.js albumList), and "Releases" for Discogs'
+    // list, which is every release under the band's name.
+    const title = artist.albumsStudioOnly === null ? "artist.releases"
+      : artist.albumsStudioOnly === false ? "artist.albumsAll" : "artist.albums";
+    parts.push(section(title, ...discogsNote(artist, "albums"), list));
   }
   return parts;
 }
@@ -526,20 +572,59 @@ async function bandAnswer(query, id, lang, signal) {
   return artist;
 }
 
+// The Discogs profile of the open track's band, from the server, or null:
+// no token set (404 at once, and nothing is sent to Discogs), no band it was
+// sure of, or no connection. Only an answer is kept, so setting a token in
+// Settings takes effect the next time the box opens.
+async function loadExtra(trackId, signal) {
+  if (!trackId) return null;
+  const key = `extra#${trackId}`;
+  if (answers.has(key)) return answers.get(key);
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/artist-extra`, { signal, headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const extra = discogsExtraFromJson(await res.json());
+    if (extra) answers.set(key, extra);
+    return extra;
+  } catch (err) {
+    if (!signal.aborted) console.warn("artist details from Discogs failed", err);
+    return null;
+  }
+}
+
 // `typed` is a name searched for in the box. Found nothing, it says so, where
 // the name the box opened with instead gives way to the track's work.
+//
+// The box's own band (not a typed one) is asked of Discogs only when
+// Wikipedia leaves a gap (artistDiscogs.js needsDiscogs): Wikipedia's answer
+// is drawn as soon as it is in, and redrawn with the gaps filled when
+// Discogs' arrives. With no Wikidata band at all, the box waits for Discogs
+// before it says nothing was found.
 async function search(name, { id = "", typed = false } = {}) {
   const query = String(name || "").trim();
   lastQuery = query;
   lastId = id;
   current?.abort();
   current = null;
+  const gen = ++searchGen;
   const trackWork = getCurrentTrackWork();
+  const trackId = getCurrentTrackInfo()?.id || "";
+  const extraController = new AbortController();
+  let extraAsked = null;
+  const extraFor = () => (extraAsked ??= typed ? Promise.resolve(null) : loadExtra(trackId, extraController.signal));
+  const stillShown = () => gen === searchGen && isOpen();
   if (!query && !id && !trackWork) {
-    // A song known by no band: the song, with the search a click away.
-    if (!typed && getCurrentTrackSong()) render(null);
-    // Nothing asked yet: the field's placeholder already says what to do.
-    else body.replaceChildren(...songParts());
+    // A song known by no band: the song, with the search a click away, and
+    // the band from Discogs when it knows the track's.
+    if (!typed && getCurrentTrackSong()) {
+      render(null);
+      const extra = await extraFor();
+      if (extra && stillShown()) render(withDiscogs(null, extra));
+    } else {
+      extraController.abort();
+      // Nothing asked yet: the field's placeholder already says what to do.
+      body.replaceChildren(...songParts());
+    }
     return;
   }
 
@@ -553,6 +638,7 @@ async function search(name, { id = "", typed = false } = {}) {
 
   const controller = new AbortController();
   current = controller;
+  controller.signal.addEventListener("abort", () => extraController.abort(), { once: true });
   const bandKey = id ? `${lang}|#${id}` : `${lang}|${query.toLowerCase()}`;
   const waitsForBand = (query || id) && !answers.has(bandKey);
   const waitsForWork = trackWork && !answers.has(`${lang}|work#${trackWork.id}`);
@@ -576,10 +662,28 @@ async function search(name, { id = "", typed = false } = {}) {
     // request that times out aborts its own inner signal (artistLookup.js
     // withTimeout) and arrives here as bandError, or in the catch below.
     if (controller.signal.aborted) return;
+    if (!artist && !work && !typed) {
+      // No band on Wikidata, or none reachable: Discogs may know it.
+      const extra = await extraFor();
+      if (controller.signal.aborted) return;
+      if (extra) {
+        showSearch(false);
+        render(withDiscogs(null, extra));
+        return;
+      }
+    }
     if (bandError && !(work && !typed)) throw bandError;
     if (artist) render(artist, work);
     else if (work && !typed) render(null, work);
     else notFound();
+    if (typed || !(artist || work) || !needsDiscogs(artist)) return;
+    // Drawn already; filled from Discogs when its answer is in, if it has
+    // what Wikipedia lacks.
+    extraFor().then((extra) => {
+      if (!extra || !stillShown() || controller.signal.aborted) return;
+      const band = withDiscogs(artist, extra);
+      if (band !== artist) render(band, work);
+    });
   } catch (err) {
     // A newer search or closing the box aborts this one; that is not a fault.
     if (controller.signal.aborted) return;
@@ -656,6 +760,7 @@ function settle() {
 function close() {
   current?.abort();
   current = null;
+  searchGen += 1;
   waiting = false;
   dialog.classList.add("hidden");
   returnFocus?.focus?.();

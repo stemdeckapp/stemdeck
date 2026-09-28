@@ -3797,25 +3797,27 @@ function wireLanguageSetting(overlay) {
   sel.addEventListener("change", () => setLanguage(sel.value));
 }
 
-// The AcoustID key for song identification (app/pipeline/identify.py). The
-// server never hands the key back, only whether one is set and its last four
-// characters, so the field starts empty every time and the line under it says
-// which key is saved. Saved on the button, not on change: a half-typed key
-// must not be sent, and a refused one has to say so.
-async function wireAcoustidSetting(overlay) {
-  const input = overlay.querySelector(".set-acoustid-key");
-  const saveBtn = overlay.querySelector(".set-acoustid-save");
-  const clearBtn = overlay.querySelector(".set-acoustid-clear");
-  const msg = overlay.querySelector(".acoustid-key-msg");
+// A key the user pastes for a lookup service (Settings > Song details): the
+// AcoustID key for song identification (app/pipeline/identify.py) and the
+// Discogs token for band profiles. The server never hands one back, only
+// whether one is set and its last two characters, so the field starts empty
+// every time and the line under it says which is saved. Saved on the button,
+// not on change: a half-typed key must not be sent, and a refused one has to
+// say so.
+async function wireSecretSetting(overlay, spec) {
+  const input = overlay.querySelector(spec.input);
+  const saveBtn = overlay.querySelector(spec.save);
+  const clearBtn = overlay.querySelector(spec.clear);
+  const msg = overlay.querySelector(spec.msg);
   if (!input || !saveBtn || !clearBtn || !msg) return;
 
   let isSet = false;
   const show = (d) => {
-    isSet = d?.acoustid_api_key_set === true;
+    isSet = d?.[spec.setField] === true;
     msg.classList.remove("error");
     msg.textContent = isSet
-      ? i18nT("settings.acoustid.saved", { tail: d.acoustid_api_key_tail || "" })
-      : i18nT("settings.acoustid.none");
+      ? i18nT(`${spec.keys}.saved`, { tail: d[spec.tailField] || "" })
+      : i18nT(`${spec.keys}.none`);
   };
   const syncSave = () => { saveBtn.disabled = !input.value.trim(); };
 
@@ -3826,7 +3828,7 @@ async function wireAcoustidSetting(overlay) {
       const r = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ acoustid_api_key: value }),
+        body: JSON.stringify({ [spec.field]: value }),
       });
       if (r.ok) {
         input.value = "";
@@ -3834,16 +3836,15 @@ async function wireAcoustidSetting(overlay) {
       } else {
         // The server's detail is English; the translated line reads right in
         // every language. The typed key stays in the field to be corrected.
-        // A key AcoustID itself refused is almost always the user key from
-        // the profile page, which only submits fingerprints: say which to use.
+        // One the service itself refused gets a line saying which to use.
         const detail = (await r.json().catch(() => null))?.detail;
-        const refused = detail === "AcoustID does not accept this key";
-        msg.textContent = i18nT(refused ? "settings.acoustid.refused" : "settings.acoustid.invalid");
+        const refused = detail === spec.refusedDetail;
+        msg.textContent = i18nT(`${spec.keys}.${refused ? "refused" : "invalid"}`);
         msg.classList.add("error");
       }
     } catch (err) {
-      console.warn("saving the AcoustID key failed:", err);
-      msg.textContent = i18nT("settings.acoustid.failed");
+      console.warn(`saving ${spec.field} failed:`, err);
+      msg.textContent = i18nT(`${spec.keys}.failed`);
       msg.classList.add("error");
     } finally {
       syncSave();
@@ -3863,9 +3864,39 @@ async function wireAcoustidSetting(overlay) {
     const r = await fetch("/api/settings", { cache: "no-store" });
     if (r.ok) show(await r.json());
   } catch (err) {
-    console.warn("reading the AcoustID key state failed:", err);
+    console.warn(`reading the ${spec.field} state failed:`, err);
   }
   clearBtn.disabled = !isSet;
+}
+
+function wireAcoustidSetting(overlay) {
+  return wireSecretSetting(overlay, {
+    input: ".set-acoustid-key",
+    save: ".set-acoustid-save",
+    clear: ".set-acoustid-clear",
+    msg: ".acoustid-key-msg",
+    field: "acoustid_api_key",
+    setField: "acoustid_api_key_set",
+    tailField: "acoustid_api_key_tail",
+    // A key AcoustID refused is almost always the user key from the profile
+    // page, which only submits fingerprints.
+    refusedDetail: "AcoustID does not accept this key",
+    keys: "settings.acoustid",
+  });
+}
+
+function wireDiscogsSetting(overlay) {
+  return wireSecretSetting(overlay, {
+    input: ".set-discogs-token",
+    save: ".set-discogs-save",
+    clear: ".set-discogs-clear",
+    msg: ".discogs-token-msg",
+    field: "discogs_token",
+    setField: "discogs_token_set",
+    tailField: "discogs_token_tail",
+    refusedDetail: "Discogs does not accept this token",
+    keys: "settings.discogs",
+  });
 }
 
 // General settings: max track length (minutes), playlist import limit, and
@@ -4409,6 +4440,7 @@ function openLibraryEditor() {
       </div>
       <div class="settings-tabs" role="tablist">
         <button class="settings-tab active" type="button" data-tab="general" role="tab" data-i18n="settings.tab.general">General</button>
+        <button class="settings-tab" type="button" data-tab="details" role="tab" data-i18n="settings.tab.songDetails">Song details</button>
         <button class="settings-tab" type="button" data-tab="network" role="tab" data-i18n="settings.tab.network">Network</button>
         <button class="settings-tab" type="button" data-tab="export" role="tab" data-i18n="settings.tab.export">Export</button>
         <button class="settings-tab" type="button" data-tab="logs" role="tab" data-i18n="settings.tab.logs">Logs</button>
@@ -4446,19 +4478,6 @@ function openLibraryEditor() {
             </div>
             <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
             <div class="cookies-file-msg" role="status" aria-live="polite"></div>
-          </div>
-          <div class="settings-row settings-row-stack acoustid-row">
-            <div class="settings-row-text">
-              <div class="settings-row-title" data-i18n="settings.acoustid.title">Song identification</div>
-              <div class="settings-row-desc" data-i18n="settings.acoustid.desc">Optional. With a free AcoustID key, each import is identified by its audio fingerprint. Only the fingerprint is sent to AcoustID, never the audio. Without a key, tracks are identified by their tags on MusicBrainz.</div>
-            </div>
-            <div class="acoustid-key">
-              <input type="password" class="settings-text-input set-acoustid-key" spellcheck="false" autocomplete="off" maxlength="64" placeholder="AcoustID API key" data-i18n-placeholder="settings.acoustid.placeholder" aria-label="AcoustID API key" data-i18n-aria-label="settings.acoustid.placeholder" />
-              <button class="settings-btn set-acoustid-save" type="button" data-i18n="settings.acoustid.save">Save</button>
-              <button class="settings-btn set-acoustid-clear" type="button" data-i18n="settings.acoustid.clear">Clear</button>
-            </div>
-            <div class="acoustid-key-msg" role="status" aria-live="polite"></div>
-            <a class="acoustid-register" href="https://acoustid.org/new-application" target="_blank" rel="noopener noreferrer" data-i18n="settings.acoustid.register">Register a free key at acoustid.org</a>
           </div>
           <div class="settings-row settings-row-stack">
             <div class="settings-row-text">
@@ -4526,19 +4545,6 @@ function openLibraryEditor() {
             </select>
           </div>
         </div>
-        <div class="settings-section">
-          <div class="settings-row">
-            <div class="settings-row-text">
-              <div class="settings-row-title" data-i18n="settings.transcribe.title">Transcribe lyrics</div>
-              <div class="settings-row-desc" data-i18n="settings.transcribe.desc">When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.</div>
-            </div>
-            <select class="settings-select settings-select-wide set-transcribe-lyrics" aria-label="Transcribe lyrics" data-i18n-aria-label="settings.transcribe.title">
-              <option value="auto" data-i18n="settings.transcribe.auto">Auto (NVIDIA GPU only)</option>
-              <option value="on" data-i18n="settings.transcribe.on">On</option>
-              <option value="off" data-i18n="settings.transcribe.off">Off</option>
-            </select>
-          </div>
-        </div>
         <div class="settings-subhead" data-i18n="settings.outOfSync.subhead">Out of sync tracks</div>
         <div class="library-editor-table-wrap">
           <table class="library-editor-table">
@@ -4567,6 +4573,52 @@ function openLibraryEditor() {
               <div class="settings-row-desc" data-i18n="settings.resetData.desc">Permanently deletes every track, job, and library entry. On a shared server this affects everyone who uses it. Cannot be undone.</div>
             </div>
             <button class="settings-reset-btn" type="button" data-i18n="settings.resetData.button">Reset app data…</button>
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane hidden" data-pane="details">
+        <div class="settings-section">
+          <div class="settings-row settings-row-stack acoustid-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.acoustid.title">Song identification</div>
+              <div class="settings-row-desc" data-i18n="settings.acoustid.desc">Optional. With a free AcoustID key, each import is identified by its audio fingerprint. Only the fingerprint is sent to AcoustID, never the audio. Without a key, tracks are identified by their tags on MusicBrainz.</div>
+            </div>
+            <div class="acoustid-key">
+              <input type="password" class="settings-text-input set-acoustid-key" spellcheck="false" autocomplete="off" maxlength="64" placeholder="AcoustID API key" data-i18n-placeholder="settings.acoustid.placeholder" aria-label="AcoustID API key" data-i18n-aria-label="settings.acoustid.placeholder" />
+              <button class="settings-btn set-acoustid-save" type="button" data-i18n="settings.acoustid.save">Save</button>
+              <button class="settings-btn set-acoustid-clear" type="button" data-i18n="settings.acoustid.clear">Clear</button>
+            </div>
+            <div class="acoustid-key-msg" role="status" aria-live="polite"></div>
+            <a class="acoustid-register" href="https://acoustid.org/new-application" target="_blank" rel="noopener noreferrer" data-i18n="settings.acoustid.register">Register a free key at acoustid.org</a>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row settings-row-stack discogs-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.discogs.title">Discogs</div>
+              <div class="settings-row-desc" data-i18n="settings.discogs.desc">Band profiles, members and releases for bands Wikipedia does not cover, from Discogs. Optional.</div>
+              <div class="settings-row-desc discogs-privacy" data-i18n="settings.discogs.privacy">Band names are sent to Discogs only when a token is saved and Wikipedia has no history, members or albums for the band.</div>
+            </div>
+            <div class="discogs-token">
+              <input type="password" class="settings-text-input set-discogs-token" spellcheck="false" autocomplete="off" maxlength="80" placeholder="Discogs personal access token" data-i18n-placeholder="settings.discogs.placeholder" aria-label="Discogs personal access token" data-i18n-aria-label="settings.discogs.placeholder" />
+              <button class="settings-btn set-discogs-save" type="button" data-i18n="settings.discogs.save">Save</button>
+              <button class="settings-btn set-discogs-clear" type="button" data-i18n="settings.discogs.clear">Clear</button>
+            </div>
+            <div class="discogs-token-msg" role="status" aria-live="polite"></div>
+            <a class="discogs-register" href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener noreferrer" data-i18n="settings.discogs.register">Get a free token at discogs.com</a>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.transcribe.title">Transcribe lyrics</div>
+              <div class="settings-row-desc" data-i18n="settings.transcribe.desc">When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.</div>
+            </div>
+            <select class="settings-select settings-select-wide set-transcribe-lyrics" aria-label="Transcribe lyrics" data-i18n-aria-label="settings.transcribe.title">
+              <option value="auto" data-i18n="settings.transcribe.auto">Auto (NVIDIA GPU only)</option>
+              <option value="on" data-i18n="settings.transcribe.on">On</option>
+              <option value="off" data-i18n="settings.transcribe.off">Off</option>
+            </select>
           </div>
         </div>
       </div>
@@ -4721,6 +4773,7 @@ function openLibraryEditor() {
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
   wireAcoustidSetting(overlay);
+  wireDiscogsSetting(overlay);
   wireStemsLocation(overlay);
   wireExportsLocation(overlay);
   wireNetworkSetting(overlay);

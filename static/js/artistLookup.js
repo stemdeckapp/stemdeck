@@ -672,6 +672,20 @@ export function officialLinks(claims) {
   return links;
 }
 
+const DISCOGS_ARTIST_ID = "P1953";
+
+/**
+ * The Discogs artist id an item names (P1953), as a string of digits, or ""
+ * when it names none or more than one.
+ */
+export function discogsArtistId(claims) {
+  const ids = new Set((Array.isArray(claims?.[DISCOGS_ARTIST_ID]) ? claims[DISCOGS_ARTIST_ID] : [])
+    .filter((s) => s?.rank !== "deprecated")
+    .map((s) => s?.mainsnak?.datavalue?.value)
+    .filter((v) => typeof v === "string" && /^[1-9][0-9]{0,11}$/.test(v)));
+  return ids.size === 1 ? [...ids][0] : "";
+}
+
 // Latin accents, as the combining marks NFKD leaves them as, so a file tagged
 // "Beyonce" still matches "Beyoncé". Only this block: the marks in a Japanese
 // or Korean name are part of it, and folding them could make two names one.
@@ -1057,6 +1071,9 @@ export async function lookupArtist(name, appLang, { id = "", fetchJson = default
       albumsStudioOnly: studioOnly,
       links: officialLinks(artist.claims),
       articleUrl: article.url,
+      // The Discogs artist the item names, which tells the box whether a
+      // Discogs profile from the server is this band's (artistDiscogs.js).
+      discogsId: discogsArtistId(artist.claims),
     };
   } finally {
     done();

@@ -41,6 +41,7 @@ test.describe("the error box", () => {
   test("Escape closes it alone, leaving a popup beneath it open", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="details"]').click();
     const settings = page.locator(".set-acoustid-key");
     await expect(settings).toBeVisible();
     await page.evaluate(async () => (await import("/js/job.js")).showError("Something failed.", null, { retry: false }));

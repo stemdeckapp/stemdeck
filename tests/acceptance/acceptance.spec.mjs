@@ -252,11 +252,11 @@ test(title("V3"), async ({ app }, testInfo) => {
 
 // ─── Settings: song identification ──────────────────────────────────────────
 
-// Steps: Settings, General, Song identification: paste a key AcoustID refuses,
+// Steps: Settings, Song details, Song identification: paste a key AcoustID refuses,
 // Save. Expect: the red refusal text; the key stays in the field; nothing saved.
 test(title("A1"), async ({ app }, testInfo) => {
   const { page } = app;
-  const dialog = await openSettings(page, "general");
+  const dialog = await openSettings(page, "details");
   const input = dialog.locator(".set-acoustid-key");
   await input.scrollIntoViewIfNeeded();
   // Made up. AcoustID answers an unknown key with its code 4.
@@ -291,7 +291,7 @@ test(title("A1"), async ({ app }, testInfo) => {
 test(title("A2"), async ({ app }, testInfo) => {
   test.skip(!ACOUSTID_KEY, "No STEMDECK_ACCEPTANCE_ACOUSTID_KEY in the environment: this needs a real AcoustID application key.");
   const { page } = app;
-  const dialog = await openSettings(page, "general");
+  const dialog = await openSettings(page, "details");
   const input = dialog.locator(".set-acoustid-key");
   await input.scrollIntoViewIfNeeded();
   // Masked before a single character goes in.
@@ -311,7 +311,7 @@ test(title("A2"), async ({ app }, testInfo) => {
   await shot(page, testInfo, "saved");
   await closeSettings(page);
 
-  const again = await openSettings(page, "general");
+  const again = await openSettings(page, "details");
   await expect(again.locator(".acoustid-key-msg")).toHaveText(`A key ending in ${tail} is saved.`);
   expect(await again.locator(".set-acoustid-key").evaluate((el) => el.value === ""), "the field is empty on reopen").toBe(true);
   const settings = JSON.stringify(await api("/api/settings"));
@@ -322,11 +322,11 @@ test(title("A2"), async ({ app }, testInfo) => {
   writeState({ ...readState(), keySavedAt: Date.now() });
 });
 
-// Steps: Settings, General, Transcribe lyrics. Expect: Auto (NVIDIA GPU only),
+// Steps: Settings, Song details, Transcribe lyrics. Expect: Auto (NVIDIA GPU only),
 // On and Off, on Auto by default.
 test(title("A3"), async ({ app }, testInfo) => {
   const { page } = app;
-  const dialog = await openSettings(page, "general");
+  const dialog = await openSettings(page, "details");
   const select = dialog.locator(".set-transcribe-lyrics");
   await select.scrollIntoViewIfNeeded();
   await expect(select.locator("option")).toHaveText(["Auto (NVIDIA GPU only)", "On", "Off"]);

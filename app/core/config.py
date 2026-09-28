@@ -383,6 +383,15 @@ ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
 # silence. 0 turns the check off, for the browser tests, which must never
 # reach AcoustID.
 ACOUSTID_CHECK_KEY = _env_int("STEMDECK_ACOUSTID_CHECK_KEY", 1) != 0
+# Discogs: the user's own personal access token, set in Settings, for band
+# profiles Wikipedia does not cover. A token is tried once when it is saved
+# (discogs_auth.discogs_token_works), as an AcoustID key is, so one Discogs
+# refuses is caught in Settings. 0 turns the check off, for the browser tests,
+# which must never reach Discogs. The check is abandoned after
+# TIMEOUT_DISCOGS_CHECK seconds a read, and twice that in all.
+DISCOGS_IDENTITY_URL = "https://api.discogs.com/oauth/identity"
+DISCOGS_CHECK_TOKEN = _env_int("STEMDECK_DISCOGS_CHECK_TOKEN", 1) != 0
+TIMEOUT_DISCOGS_CHECK = _env_int("STEMDECK_TIMEOUT_DISCOGS_CHECK", 8)
 FINGERPRINT_LENGTH_SEC = 120
 # Decoding two minutes of audio for the fingerprint takes about a second; past
 # this the fingerprint is abandoned and identification goes on without it.
@@ -467,6 +476,29 @@ IDENTIFY_MAX_BYTES = 4 * 1024 * 1024
 # re-identifying a track (a re-split, a backfill) asks nothing twice.
 MUSICBRAINZ_CACHE_DIR = CACHE_DIR / "musicbrainz"
 MUSICBRAINZ_CACHE_TTL_SEC = 30 * 24 * 3600
+# Discogs band profiles (app/pipeline/discogs.py), for bands Wikipedia has no
+# article on, asked only with the user's own token (settings.discogs_token).
+# Discogs allows 60 requests a minute to a client with a token, so one a
+# second across the process. Each request is abandoned after
+# TIMEOUT_DISCOGS_REQUEST seconds; a 429 (or a 502/503) is asked again up to
+# DISCOGS_RETRIES times, waiting what Retry-After says up to
+# DISCOGS_RETRY_MAX_WAIT_SEC, never past DISCOGS_REQUEST_BUDGET_SEC for the
+# one request. GET /api/jobs/{id}/artist-extra gives the whole lookup (a
+# search, a few releases to check, the artist and its releases: about seven
+# requests) DISCOGS_LOOKUP_BUDGET_SEC before it answers without.
+DISCOGS_API = "https://api.discogs.com"
+DISCOGS_MIN_INTERVAL_SEC = 1.0
+TIMEOUT_DISCOGS_REQUEST = _env_int("STEMDECK_TIMEOUT_DISCOGS_REQUEST", 8)
+DISCOGS_RETRIES = 2
+DISCOGS_RETRY_BACKOFF_SEC = 2.0
+DISCOGS_RETRY_MAX_WAIT_SEC = 10.0
+DISCOGS_REQUEST_BUDGET_SEC = 20.0
+DISCOGS_LOOKUP_BUDGET_SEC = _env_int("STEMDECK_DISCOGS_LOOKUP_BUDGET_SEC", 45)
+# An artist's release list at 100 a page is well under a megabyte.
+DISCOGS_MAX_BYTES = 2 * 1024 * 1024
+# Answers kept on disk, one file per request, as MusicBrainz's are.
+DISCOGS_CACHE_DIR = CACHE_DIR / "discogs"
+DISCOGS_CACHE_TTL_SEC = 30 * 24 * 3600
 # The work behind a soundtrack or cast recording (app/pipeline/work_lookup.py):
 # the musical, film or series a job's song is from, found on Wikidata beside
 # the band. Past this many seconds the tag backfill answers without it.

@@ -15,6 +15,7 @@ at startup), so the Settings UI can change them without a restart:
 - `auto_delete_jobs`  — whether finished jobs are deleted after a while (off).
 - `auto_delete_days`  — how long they are kept when that is on.
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
+- `discogs_token`     - the user's Discogs token, for band profiles.
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
@@ -699,3 +700,50 @@ def acoustid_api_key_hint() -> str | None:
     """The last two characters of the key, for the Settings field, or None."""
     key = get_acoustid_api_key()
     return key[-ACOUSTID_KEY_HINT_CHARS:] if key else None
+
+
+# ── discogs_token ──
+# The user's own Discogs personal access token, for band profiles, members and
+# releases of bands Wikipedia has no article on. Entered in Settings and never
+# shipped: Discogs tokens are per user and free. Without one, Discogs is never
+# asked.
+#
+# A secret as the AcoustID key is: never logged, never put in a URL, and never
+# handed back by the API, which publishes only whether one is set and its last
+# two characters. Discogs tokens are 40 letters and digits; the range is kept
+# loose so a change in their length does not lock anyone out.
+_DISCOGS_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{20,80}$")
+DISCOGS_TOKEN_HINT_CHARS = 2
+
+
+def discogs_token_format_ok(token: str) -> bool:
+    """Whether ``token`` has the shape of a Discogs personal access token."""
+    return bool(_DISCOGS_TOKEN_RE.match(token))
+
+
+def get_discogs_token() -> str | None:
+    with _LOCK:
+        value = _ensure().get("discogs_token")
+        return value if isinstance(value, str) and _DISCOGS_TOKEN_RE.match(value) else None
+
+
+def set_discogs_token(value: str | None) -> str | None:
+    """Persist the token, or clear it when given empty/None. Raises ValueError,
+    without the value in the message, when it cannot be a Discogs token."""
+    with _LOCK:
+        if value is None or not str(value).strip():
+            _ensure().pop("discogs_token", None)
+            _save()
+            return None
+        token = str(value).strip()
+        if not _DISCOGS_TOKEN_RE.match(token):
+            raise ValueError("discogs_token must be 20 to 80 letters or digits")
+        _ensure()["discogs_token"] = token
+        _save()
+        return token
+
+
+def discogs_token_hint() -> str | None:
+    """The last two characters of the token, for the Settings field, or None."""
+    token = get_discogs_token()
+    return token[-DISCOGS_TOKEN_HINT_CHARS:] if token else None

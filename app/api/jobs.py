@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -18,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import (
+    DISCOGS_LOOKUP_BUDGET_SEC,
     JOB_ID_RE,
     JOBS_DIR,
     LYRICS_LOOKUP_BUDGET_SEC,
@@ -41,9 +43,14 @@ from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
 from app.core.registry import set_trashed as registry_set_trashed
-from app.core.settings import get_acoustid_api_key, get_auto_sections, get_max_duration_sec
+from app.core.settings import (
+    get_acoustid_api_key,
+    get_auto_sections,
+    get_discogs_token,
+    get_max_duration_sec,
+)
 from app.core.stems_location import is_relocating
-from app.pipeline import jobqueue
+from app.pipeline import discogs, jobqueue
 from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
@@ -1021,6 +1028,67 @@ def _job_dir(job_id: str) -> Path:
     if not job_dir.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="job not found")
     return job_dir
+
+
+# One Discogs lookup per job at a time: a second request for the same job
+# (the box opened twice, two tabs) waits for the first one's answer.
+_DISCOGS_LOOKUPS: dict[str, asyncio.Task] = {}
+
+
+@router.get("/{job_id}/artist-extra")
+async def get_artist_extra(job_id: str) -> dict:
+    """The Discogs profile of the band a track is by (app/pipeline/discogs.py),
+    for the artist box, when Wikipedia has no article on it or leaves gaps.
+
+    Answers {"id", "name", "real_name", "profile": [...], "members":
+    {"current", "former"}, "groups", "links": [{"kind", "url"}], "releases":
+    [{"year", "title"}], "url"}, or 404 when no Discogs token is set or no
+    artist is confidently the track's. The token never leaves the server: the
+    page asks here, and this asks Discogs.
+
+    Outside _pipeline_lock, as the tag backfill is: a few metadata requests
+    must not wait behind a separation. Bounded by DISCOGS_LOOKUP_BUDGET_SEC.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    token = get_discogs_token()
+    if not token:
+        raise HTTPException(status_code=404, detail="no artist details")
+
+    task = _DISCOGS_LOOKUPS.get(job_id)
+    if task is None:
+        deadline = time.monotonic() + DISCOGS_LOOKUP_BUDGET_SEC
+
+        def cancelled() -> bool:
+            return registry_get(job_id) is not job or time.monotonic() > deadline
+
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                discogs.artist_for_track,
+                job.identity,
+                job.audio_tags,
+                job.artist,
+                token,
+                cancelled=cancelled,
+            )
+        )
+        _DISCOGS_LOOKUPS[job_id] = task
+        task.add_done_callback(lambda _t: _DISCOGS_LOOKUPS.pop(job_id, None))
+    try:
+        # Shielded, so one caller giving up does not cancel another's answer.
+        answer = await asyncio.wait_for(asyncio.shield(task), DISCOGS_LOOKUP_BUDGET_SEC + 1)
+    except asyncio.TimeoutError:
+        logger.info("[%s] Discogs lookup timed out", job_id)
+        answer = None
+    except Exception:
+        logger.exception("[%s] Discogs lookup failed", job_id)
+        answer = None
+    if answer is None or registry_get(job_id) is not job:
+        raise HTTPException(status_code=404, detail="no artist details")
+    return answer
 
 
 @router.get("/{job_id}/lyrics")

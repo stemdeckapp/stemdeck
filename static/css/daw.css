@@ -4142,6 +4142,10 @@ input, textarea { font-family: inherit; }
 }
 .artist-more { color: var(--accent); font-weight: 600; text-decoration: none; }
 .artist-more:hover { text-decoration: underline; }
+/* A band filled from Discogs credits it beside Wikipedia: three items can
+   share the row, so it wraps rather than squeezing them. */
+.artist-foot { flex-wrap: wrap; }
+.artist-discogs-credit { font-weight: 500; }
 @media (max-width: 560px) { .artist-albums { columns: 1; } }
 
 /* The musical or film a song is from: a section below the band, or the whole
@@ -4517,18 +4521,21 @@ input, textarea { font-family: inherit; }
   margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--danger);
 }
 
-/* AcoustID key: a masked field with its Save and Clear beside it. */
-.acoustid-key {
+/* AcoustID key and Discogs token: a masked field with its Save and Clear
+   beside it. */
+.acoustid-key, .discogs-token {
   display: flex; align-items: center; gap: 8px; margin-top: 8px;
 }
-.acoustid-key .settings-text-input { flex: 1; min-width: 0; margin-top: 0; }
-.acoustid-key-msg {
+.acoustid-key .settings-text-input,
+.discogs-token .settings-text-input { flex: 1; min-width: 0; margin-top: 0; }
+.acoustid-key-msg, .discogs-token-msg {
   margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--muted);
 }
-.acoustid-key-msg.error { color: var(--danger); }
-.acoustid-register {
+.acoustid-key-msg.error, .discogs-token-msg.error { color: var(--danger); }
+.acoustid-register, .discogs-register {
   display: inline-block; margin-top: 4px; font-size: 11px; color: var(--accent);
 }
+.discogs-privacy { margin-top: 4px; }
 
 /* Logs sub-navigation: Location / Application / Setup. */
 .settings-subtabs {

@@ -1,4 +1,4 @@
-// The lyrics transcription setting in Settings > General.
+// The lyrics transcription setting in Settings > Song details.
 //
 // Driven in a real browser because the control is the risk: the select has to
 // show what the server holds (Auto by default), and a change has to reach the
@@ -12,6 +12,7 @@ async function openSettings(page) {
   await seedLibrary(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
+  await page.locator('.settings-tab[data-tab="details"]').click();
   await expect(page.locator(".set-transcribe-lyrics")).toBeVisible();
 }
 
@@ -42,6 +43,7 @@ test.describe("transcribe lyrics", () => {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="details"]').click();
     await expect(page.locator(".set-transcribe-lyrics")).toHaveValue("off");
   });
 });

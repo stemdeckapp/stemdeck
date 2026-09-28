@@ -1,4 +1,4 @@
-// The AcoustID key in Settings > General (song identification).
+// The AcoustID key in Settings > Song details (song identification).
 //
 // Driven in a browser because the risk is the control, not the value: the
 // key is the user's, so the field is masked, it is never filled back in (the
@@ -16,6 +16,7 @@ async function openSettings(page) {
   await seedLibrary(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
+  await page.locator('.settings-tab[data-tab="details"]').click();
   await expect(page.locator(".set-acoustid-key")).toBeVisible();
 }
 
@@ -68,6 +69,7 @@ test.describe("AcoustID key", () => {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="details"]').click();
     await expect(page.locator(".acoustid-key-msg")).toHaveText("A key ending in Ed is saved.");
     await expect(page.locator(".set-acoustid-key")).toHaveValue("");
   });

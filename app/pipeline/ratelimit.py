@@ -18,6 +18,7 @@ from collections.abc import Callable
 
 from app.core.config import (
     ACOUSTID_MIN_INTERVAL_SEC,
+    DISCOGS_MIN_INTERVAL_SEC,
     MUSICBRAINZ_MIN_INTERVAL_SEC,
     RATE_LIMIT_MAX_WAIT_SEC,
 )
@@ -74,3 +75,5 @@ class RateLimiter:
 
 MUSICBRAINZ = RateLimiter(MUSICBRAINZ_MIN_INTERVAL_SEC)
 ACOUSTID = RateLimiter(ACOUSTID_MIN_INTERVAL_SEC)
+# Discogs allows 60 requests a minute with a token (app/pipeline/discogs.py).
+DISCOGS = RateLimiter(DISCOGS_MIN_INTERVAL_SEC)

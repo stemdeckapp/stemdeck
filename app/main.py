@@ -28,6 +28,7 @@ from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddlewar
 from app.core.config import (
     ACOUSTID_CHECK_KEY,
     DEMUCS_MODEL,
+    DISCOGS_CHECK_TOKEN,
     FFMPEG_BIN,
     HTTPS_PORT,
     JOBS_DIR,
@@ -53,6 +54,8 @@ from app.core.settings import (
     DURATION_MIN_SEC,
     acoustid_api_key_hint,
     acoustid_key_format_ok,
+    discogs_token_format_ok,
+    discogs_token_hint,
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
@@ -75,6 +78,7 @@ from app.core.settings import (
     set_auto_sections,
     set_cookies_file,
     set_demucs_device,
+    set_discogs_token,
     set_export_sample_rate,
     set_jobs_dir,
     set_max_duration_sec,
@@ -378,6 +382,10 @@ def _settings_payload() -> dict[str, object]:
         # characters so the field can show which one.
         "acoustid_api_key_set": acoustid_api_key_hint() is not None,
         "acoustid_api_key_tail": acoustid_api_key_hint(),
+        # The same for the Discogs token: whether one is set, and its last two
+        # characters, never the token.
+        "discogs_token_set": discogs_token_hint() is not None,
+        "discogs_token_tail": discogs_token_hint(),
         "port": get_port(),
         # The user's choice ("auto" | "cuda" | "mps" | "cpu") drives the UI
         # select; the resolved value shows what jobs will actually run on;
@@ -419,6 +427,8 @@ def get_settings(request: Request) -> dict[str, object]:
 # The detail for a key AcoustID refuses, which the Settings field tells apart
 # from a key of the wrong shape to say which key it wants.
 ACOUSTID_KEY_REFUSED = "AcoustID does not accept this key"
+# The same for a Discogs token Discogs answers 401.
+DISCOGS_TOKEN_REFUSED = "Discogs does not accept this token"
 
 
 @app.post("/api/settings", tags=["settings"])
@@ -480,6 +490,23 @@ async def update_settings(request: Request) -> dict[str, object]:
             # A fixed message: the rejected value is the user's key, and
             # nothing here echoes it back or logs it.
             raise HTTPException(status_code=422, detail="invalid AcoustID key") from None
+    if "discogs_token" in body:
+        value = body["discogs_token"]
+        if value is not None and not isinstance(value, str):
+            raise HTTPException(status_code=422, detail="invalid Discogs token") from None
+        token = (value or "").strip()
+        if token and DISCOGS_CHECK_TOKEN and discogs_token_format_ok(token):
+            # Tried once before it is kept, as the AcoustID key is. Bounded:
+            # the Save button waits on it.
+            from app.pipeline.discogs_auth import discogs_token_works
+
+            if await asyncio.to_thread(discogs_token_works, token) is False:
+                raise HTTPException(status_code=422, detail=DISCOGS_TOKEN_REFUSED) from None
+        try:
+            set_discogs_token(value)
+        except ValueError:
+            # A fixed message: the rejected value is the user's token.
+            raise HTTPException(status_code=422, detail="invalid Discogs token") from None
     if "demucs_device" in body:
         try:
             set_demucs_device(str(body["demucs_device"]))

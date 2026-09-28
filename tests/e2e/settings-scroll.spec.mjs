@@ -14,7 +14,7 @@
 import { test, expect } from "@playwright/test";
 import { seedLibrary } from "./helpers.mjs";
 
-const TABS = ["general", "network", "export", "logs", "registry"];
+const TABS = ["general", "details", "network", "export", "logs", "registry"];
 
 async function openSettings(page) {
   await seedLibrary(page);
