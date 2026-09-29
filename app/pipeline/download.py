@@ -113,6 +113,9 @@ def _cancellable(job: Job, fn):
     def run() -> None:
         try:
             result["value"] = fn()
+        # BaseException on purpose: it is raised again on the job's thread
+        # below. Narrower, a SystemExit from yt-dlp would end this thread
+        # quietly and the import would go on with no answer.
         except BaseException as exc:
             result["error"] = exc
 
