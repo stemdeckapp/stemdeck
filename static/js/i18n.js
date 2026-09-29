@@ -669,6 +669,7 @@ const en = {
   "release.restartUpdate": "Restart to update",
   "release.applying": "Applying update…",
   "release.updateFailed": "Update failed",
+  "release.fullDownload": "This version is a full download rather than an update: press Download, unzip it, and run it. Your library stays as it is.",
 
   "failure.title": "Something failed",
   "failure.closeAria": "Close failure dialog",
@@ -1464,6 +1465,7 @@ const pl = {
   "release.restartUpdate": "Uruchom ponownie, aby zaktualizować",
   "release.applying": "Instalowanie aktualizacji…",
   "release.updateFailed": "Aktualizacja nie powiodła się",
+  "release.fullDownload": "Ta wersja to pełne pobranie, a nie aktualizacja: kliknij Pobierz, rozpakuj plik i uruchom go. Twoja biblioteka zostaje bez zmian.",
 
   "failure.title": "Coś poszło nie tak",
   "failure.closeAria": "Zamknij okno błędu",
@@ -2250,6 +2252,7 @@ const ja = {
   "release.restartUpdate": "再起動して更新",
   "release.applying": "アップデートを適用中…",
   "release.updateFailed": "アップデートに失敗しました",
+  "release.fullDownload": "このバージョンはアップデートではなく、フルダウンロードです。「ダウンロード」を押して展開し、実行してください。ライブラリはそのまま残ります。",
 
   "failure.title": "エラーが発生しました",
   "failure.closeAria": "エラーダイアログを閉じる",
@@ -3012,6 +3015,7 @@ const zhHans = {
   "release.restartUpdate": "重启以更新",
   "release.applying": "正在应用更新…",
   "release.updateFailed": "更新失败",
+  "release.fullDownload": "此版本需要完整下载，而不是更新：点击“下载”，解压后运行即可。你的曲库保持不变。",
 
   "failure.title": "出现故障",
   "failure.closeAria": "关闭故障对话框",
@@ -3775,6 +3779,7 @@ const de = {
   "release.restartUpdate": "Zum Aktualisieren neu starten",
   "release.applying": "Update wird angewendet…",
   "release.updateFailed": "Update fehlgeschlagen",
+  "release.fullDownload": "Diese Version ist ein vollständiger Download statt eines Updates: Klicke auf Herunterladen, entpacke die Datei und starte StemDeck. Deine Bibliothek bleibt, wie sie ist.",
 
   "failure.title": "Etwas ist fehlgeschlagen",
   "failure.closeAria": "Fehlerdialog schließen",
@@ -4548,6 +4553,7 @@ const pt = {
   "release.restartUpdate": "Reiniciar para atualizar",
   "release.applying": "Aplicando atualização…",
   "release.updateFailed": "Falha na atualização",
+  "release.fullDownload": "Esta versão é um download completo, não uma atualização: clique em Baixar, descompacte e execute. Sua biblioteca continua como está.",
 
   "failure.title": "Algo falhou",
   "failure.closeAria": "Fechar diálogo de falha",
@@ -5322,6 +5328,7 @@ const id = {
   "release.restartUpdate": "Mulai ulang untuk memperbarui",
   "release.applying": "Menerapkan pembaruan…",
   "release.updateFailed": "Pembaruan gagal",
+  "release.fullDownload": "Versi ini berupa unduhan lengkap, bukan pembaruan: tekan Unduh, ekstrak, lalu jalankan. Pustaka Anda tetap seperti semula.",
 
   "failure.title": "Terjadi kesalahan",
   "failure.closeAria": "Tutup dialog kesalahan",
@@ -6085,6 +6092,7 @@ const fr = {
   "release.restartUpdate": "Redémarrer pour mettre à jour",
   "release.applying": "Application de la mise à jour…",
   "release.updateFailed": "Échec de la mise à jour",
+  "release.fullDownload": "Cette version est un téléchargement complet plutôt qu'une mise à jour : cliquez sur Télécharger, décompressez-la et lancez-la. Votre bibliothèque reste telle quelle.",
   "release.viewDownload": "Voir le téléchargement",
 
   "failure.title": "Un problème est survenu",
@@ -6543,6 +6551,7 @@ const ptPT = {
   "sections.clearAria": "Limpar todas as secções",
   "aria.download": "Transferir {name}",
   "release.download": "Transferir",
+  "release.fullDownload": "Esta versão é uma transferência completa, não uma atualização: clique em Transferir, descomprima e execute. A sua biblioteca fica como está.",
   "release.downloading": "A transferir atualização…",
   "release.pullImage": "Transfira a nova imagem e reinicie o contentor:",
   "settings.exportLogs.desc": "Transfira todos os ficheiros de log num único zip, o que anexar a um relatório de erro. Veja o separador Logs para saber onde ficam.",
@@ -7029,6 +7038,7 @@ const es = {
   "release.restartUpdate": "Reinicia para actualizar",
   "release.applying": "Aplicando la actualización…",
   "release.updateFailed": "La actualización falló",
+  "release.fullDownload": "Esta versión es una descarga completa, no una actualización: pulsa Descargar, descomprímela y ejecútala. Tu biblioteca se queda como está.",
 
   "failure.title": "Algo falló",
   "failure.closeAria": "Cerrar el diálogo de error",
@@ -7824,6 +7834,7 @@ const ko = {
   "release.restartUpdate": "다시 시작해서 업데이트",
   "release.applying": "업데이트 적용 중…",
   "release.updateFailed": "업데이트에 실패했어요",
+  "release.fullDownload": "이번 버전은 업데이트가 아니라 전체 다운로드예요. 다운로드를 누르고 압축을 푼 다음 실행하세요. 라이브러리는 그대로 유지돼요.",
 
   "failure.title": "무언가 실패했어요",
   "failure.closeAria": "오류 창 닫기",

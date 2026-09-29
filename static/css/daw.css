@@ -3728,6 +3728,7 @@ input, textarea { font-family: inherit; }
 }
 .release-inapp-progress-text { margin: 0; font-size: 11px; color: var(--muted); }
 .release-inapp-error { margin: 0; font-size: 12px; color: #e54e4e; }
+.release-full-download { margin: 0 0 12px; font-size: 13px; line-height: 1.45; text-align: left; color: var(--fg); }
 
 /* The release dialog lives outside `.daw`, so the scoped `.daw .hidden` rule
    does not reach its inner elements and base.css's global `.hidden` is not
@@ -3738,6 +3739,7 @@ input, textarea { font-family: inherit; }
 .release-inapp.hidden,
 .release-inapp-progress.hidden,
 .release-inapp-error.hidden,
+.release-full-download.hidden,
 .release-card .about-link.hidden {
   display: none !important;
 }

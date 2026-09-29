@@ -2942,6 +2942,12 @@ function updaterAssetNames(target) {
 // objects.githubusercontent.com hosts that serve release *assets*. Fetching
 // them from JS is blocked outright; Rust's HTTP client is not bound by the page
 // CSP, so the policy stays as tight as it is today.
+// check_app_update's reason when the release needs Python packages this
+// install's runtime does not have (main.rs). The download is then a full
+// package to unzip and run rather than an update, and the dialog says so
+// (#720): without it, a missing "Update now" read as a broken update.
+const RUNTIME_CHANGED = /^python dependencies changed\b/;
+
 async function resolveInAppUpdatePlan(release, target) {
   const names = updaterAssetNames(target);
   if (!names) return null;
@@ -2958,6 +2964,8 @@ async function resolveInAppUpdatePlan(release, target) {
   });
   if (!check?.supported) {
     console.info("[catalog] in-app update unavailable:", check?.reason || "unknown");
+    document.getElementById("releaseFullDownload")
+      ?.classList.toggle("hidden", !RUNTIME_CHANGED.test(String(check?.reason || "")));
     return null;
   }
 
@@ -3053,6 +3061,8 @@ async function openReleaseDialog() {
   const dockerCmd = document.getElementById("releaseDockerCmd");
 
   if (version) version.textContent = `v${normalizeVersion(latestRelease.tag_name)}`;
+  // Shown again only when this release is found to need a full download.
+  document.getElementById("releaseFullDownload")?.classList.add("hidden");
   if (notes) {
     const body = (latestRelease.body || "").trim();
     notes.innerHTML = body
