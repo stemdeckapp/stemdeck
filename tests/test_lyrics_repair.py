@@ -101,6 +101,17 @@ def test_a_lone_letter_is_not_given_any():
     assert restore_letters(text, ["Że", "tak", "niewiele", "jest"]).text == text
 
 
+def test_a_lone_letter_between_two_paired_neighbours_gets_them_back():
+    # Found in W biegu: "Ciągle się dziwię / E tak niewiele jest".
+    text = "[00:01.00]Ciagle sie dziwie\n[00:04.00]E tak niewiele jest\n"
+    heard = ["ciągle", "się", "dziwię", "że", "tak", "niewiele", "jest"]
+    mended = restore_letters(text, heard).text
+    assert "[00:04.00]Że tak niewiele jest" in mended
+    # With only one neighbour paired it stays as it is.
+    lone = "[00:01.00]Ciagle sie dziwie\n[00:04.00]E niewiele jest\n"
+    assert "E niewiele" in restore_letters(lone, ["dziwię", "że", "tak", "jest"]).text
+
+
 def test_a_pair_with_no_neighbour_paired_does_not_count_on_its_own():
     # Two words that merely strip down alike, far apart and alone, are not
     # the same word sung.

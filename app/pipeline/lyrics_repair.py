@@ -228,8 +228,23 @@ class _Stripper:
             return True
         return word == "".join(ch if ch.isascii() else _base(ch) for ch in reference)
 
+    def restores_short(self, reference: str, word: str) -> bool:
+        """Whether ``word`` is shorter than restores() allows yet strips
+        down from ``reference``: "e" from "że". Taken only between two
+        neighbours paired in order, where no sung vowel is heard as "że"."""
+        return (
+            reference != word
+            and not reference.isascii()
+            and _strips_to(reference, word)
+            and not self.restores(reference, word)
+        )
+
     def matches(self, reference: str, word: str) -> bool:
-        return reference == word or self.restores(reference, word)
+        return (
+            reference == word
+            or self.restores(reference, word)
+            or self.restores_short(reference, word)
+        )
 
 
 def _align(words: list[str], reference: list[str], stripper: _Stripper) -> list[tuple[int, int]]:
@@ -320,7 +335,10 @@ def restore_letters(text: str, reference: list[str]) -> Restoration:
         anchored = paired.get(i - 1) == j - 1 or paired.get(i + 1) == j + 1
         if anchored or ref[j] == lower[i]:
             spelled.setdefault(lower[i], Counter())[ref[j]] += 1
-        if anchored and stripper.restores(ref[j], lower[i]):
+        both = paired.get(i - 1) == j - 1 and paired.get(i + 1) == j + 1
+        if (anchored and stripper.restores(ref[j], lower[i])) or (
+            both and stripper.restores_short(ref[j], lower[i])
+        ):
             replaced[i] = ref[j]
     for i, word in enumerate(lower):
         if i in replaced or not word.isascii():
