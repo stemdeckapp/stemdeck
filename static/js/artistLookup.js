@@ -796,18 +796,19 @@ function sparqlQuery(qid, languages) {
   return url.toString();
 }
 
-// Chinese in traditional script, or in the plain "zh" that mixes both.
-const TRADITIONAL = /^zh(-(hant|tw|hk|mo))?$/;
+// Any Chinese: a "zh-hans" label is sometimes typed in traditional script,
+// and folding one already simplified changes nothing.
+const CHINESE = /^zh(-|$)/;
 
 /**
  * A term in the reader's script: for a simplified-Chinese reader
- * (`simplify`), one Wikidata only has in traditional or mixed Chinese is
- * folded to simplified, so Mayday's first album is 五月天第一张创作专辑 and
+ * (`simplify`), one Wikidata has in traditional or mixed Chinese, under any
+ * Chinese code, is folded to simplified, so Mayday's first album is 五月天第一张创作专辑 and
  * not 五月天第一張創作專輯. Only Chinese is folded: the same characters in a
  * Japanese title are Japanese, and stay as they are.
  */
 function inScript(value, language, simplify) {
-  return simplify && TRADITIONAL.test(String(language || "").toLowerCase()) ? toSimplified(value) : value;
+  return simplify && CHINESE.test(String(language || "").toLowerCase()) ? toSimplified(value) : value;
 }
 
 /** The first of `chain` an entity has a label in, or "". */

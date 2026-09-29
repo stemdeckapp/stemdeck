@@ -381,6 +381,10 @@ check(
   same(folded.albums.map((a) => a.title), ["五月天第一张创作专辑", "裏町酒場", "范特西"]),
   JSON.stringify(folded.albums),
 );
+check(
+  "a simplified label typed in traditional script is folded too",
+  albumList({ results: { bindings: [zhRow("Q1", "11月的蕭邦", "zh-hans")] } }, { simplify: true }).albums[0].title === "11月的萧邦",
+);
 check("nobody else has titles folded", albumList({ results: { bindings: [zhRow("Q1", "五月天第一張創作專輯", "zh")] } }).albums[0].title === "五月天第一張創作專輯");
 check("an answer with no studio column is all studio albums", albumList({ results: { bindings: [row("Q9", "Awake", "1994")] } }).albums.length === 1);
 
