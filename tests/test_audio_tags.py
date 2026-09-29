@@ -299,3 +299,17 @@ def test_an_upload_keeps_its_tags(upload_client):
     job_id = r.json()["job_id"]
     state = upload_client.get(f"/api/jobs/{job_id}").json()
     assert state["audio_tags"] == {"artist": "Dream Theater", "title": "Pull Me Under"}
+
+
+@pytest.mark.parametrize("damaged", [["Queen"], "Queen", {"artist": 7}, {"artist": ""}])
+def test_damaged_tags_read_back_are_none_not_a_crash(damaged):
+    # Found in review: a list here made the lyrics lookup raise AttributeError.
+    job = Job.from_record({"id": "abc123abc123", "audio_tags": damaged})
+    assert job.audio_tags is None
+
+
+def test_tags_read_back_keep_known_keys_within_their_limits():
+    job = Job.from_record(
+        {"id": "abc123abc123", "audio_tags": {"artist": "Queen", "x": "y", "title": "t" * 999}}
+    )
+    assert job.audio_tags == {"artist": "Queen", "title": "t" * AUDIO_TAG_MAX_CHARS}

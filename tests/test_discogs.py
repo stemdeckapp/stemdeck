@@ -252,6 +252,8 @@ def test_a_request_names_the_app_and_carries_the_token_only_in_a_header(monkeypa
     assert session.get("artists/555501")["id"] == 555501
     (request,) = fake.requests
     assert request.get_header("Authorization") == f"Discogs token={TOKEN}"
+    # Not sent on to whatever host a redirect names.
+    assert "Authorization" in request.unredirected_hdrs and "Authorization" not in request.headers
     assert request.get_header("User-agent").startswith("StemDeck/")
     assert request.full_url.startswith("https://api.discogs.com/artists/555501")
     assert TOKEN not in request.full_url

@@ -31,12 +31,13 @@ def _ask_identity(token: str) -> int:
     request = urllib.request.Request(
         DISCOGS_IDENTITY_URL,
         headers={
-            "Authorization": f"Discogs token={token}",
             "Accept": "application/json",
             # Discogs refuses clients that do not name themselves.
             "User-Agent": MUSICBRAINZ_USER_AGENT,
         },
     )
+    # Never sent on to where a redirect points (discogs.py _get).
+    request.add_unredirected_header("Authorization", f"Discogs token={token}")
     try:
         # A fixed https URL, never one from a request or a tag (B310).
         with urllib.request.urlopen(  # nosec B310

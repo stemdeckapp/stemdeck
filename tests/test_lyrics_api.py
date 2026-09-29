@@ -601,6 +601,29 @@ def test_an_artist_in_another_script_stands(client):
     assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 200
 
 
+def test_lyrics_found_under_another_of_the_artists_names_stand(client):
+    """The lookup held them to the artist's other names (Cat Stevens for
+    Yusuf Islam), which this check cannot ask for again: it takes the mark
+    the lookup left."""
+    job = _done_job(has_lyrics=True, audio_tags={"artist": "Yusuf Islam", "title": "Wild World"})
+    alias = {**LYRICS, "track": "Wild World", "artist": "Cat Stevens", "by_alias": True}
+    _lyrics_file(job).write_text(json.dumps(alias), encoding="utf-8")
+    assert client.get(f"/api/jobs/{job.id}/lyrics").status_code == 200
+    assert _lyrics_file(job).exists()
+
+
+@pytest.mark.parametrize(
+    "work", [{"offset_sec": 2.5}, {"user_synced": LYRICS["synced"]}], ids=["offset", "user_synced"]
+)
+def test_lyrics_the_user_worked_on_are_never_dropped(client, work):
+    job = _done_job(has_lyrics=True, audio_tags=TAGS)
+    cover = {**LYRICS, "track": "Metropolis", "artist": "Motorhead", **work}
+    _lyrics_file(job).write_text(json.dumps(cover), encoding="utf-8")
+    client.get(f"/api/jobs/{job.id}/lyrics")
+    assert _lyrics_file(job).exists()
+    assert job.has_lyrics is True
+
+
 def test_the_tracks_own_lyrics_and_a_transcription_are_kept(client):
     job = _done_job(has_lyrics=True, audio_tags=TAGS)
     _lyrics_file(job).write_text(json.dumps(LYRICS), encoding="utf-8")

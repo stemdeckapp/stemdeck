@@ -479,6 +479,8 @@ async def _run_async(
         if not isinstance(e, JobCancelled) and not job.cancel_requested:
             logger.exception("pipeline failed for job %s: %s", job.id, e)
             _set(job, status="error", stage="Error: Processing failed", error=error_msg)
+            # A fingerprint may still have the source open (Windows).
+            release_source(job.id)
             _quarantine_failed_job(job, job_dir, jobs_dir, e)
             persist_registry(jobs_dir)
             return
@@ -489,6 +491,7 @@ async def _run_async(
         )
         _set(job, status="cancelled", stage="Cancelled")
         persist_registry(jobs_dir)
+        release_source(job.id)
         _rmtree(job_dir)
         return
     _set(job, status="done", progress=1.0, stage="Done")

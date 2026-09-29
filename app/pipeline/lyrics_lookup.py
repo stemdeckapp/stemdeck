@@ -154,6 +154,21 @@ def _text(value: Any, limit: int) -> str:
     return value[:limit] if isinstance(value, str) else ""
 
 
+# Every line break but "\n", and the byte order mark. The page splits lyrics
+# on "\n" alone (parseLrc) and Python's splitlines() on all of these: text
+# carrying one parsed into different lines on each side, and the user's own
+# timing of it was refused as not of these lines.
+_OTHER_BREAKS = re.compile(r"\r\n?|[\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
+
+
+def _lyric_text(value: Any, limit: int) -> str:
+    """Lyrics text with one kind of line break, so every reader splits it
+    into the same lines."""
+    if not isinstance(value, str):
+        return ""
+    return _OTHER_BREAKS.sub("\n", value.replace("\ufeff", ""))[:limit]
+
+
 def normalise(row: Any) -> dict[str, Any]:
     """One LRCLIB row as a version of lyrics.json, without ``others``."""
     row = row if isinstance(row, dict) else {}
@@ -165,8 +180,8 @@ def normalise(row: Any) -> dict[str, Any]:
         "artist": _text(row.get("artistName"), _NAME_MAX_CHARS),
         "album": _text(row.get("albumName"), _NAME_MAX_CHARS),
         "duration": _number(row.get("duration")),
-        "synced": _text(row.get("syncedLyrics"), _TEXT_MAX_CHARS),
-        "plain": _text(row.get("plainLyrics"), _TEXT_MAX_CHARS),
+        "synced": _lyric_text(row.get("syncedLyrics"), _TEXT_MAX_CHARS),
+        "plain": _lyric_text(row.get("plainLyrics"), _TEXT_MAX_CHARS),
         "instrumental": bool(row.get("instrumental")),
         "lrclib_id": lrclib_id if lrclib_id > 0 else None,
     }
@@ -545,20 +560,23 @@ def saved_lyrics_belong(entry: dict[str, Any], query: LyricsQuery | None) -> boo
     neither the track's name nor any of its other titles is never this
     track's. An artist in another script ("Jay Chou" for the credit 周杰倫)
     was matched through the artist's aliases when the lyrics were found, and
-    stands; in the same script it has to match. Anything not from LRCLIB, or
-    a track known by no name, is left alone."""
+    stands; in the same script it has to match, unless the lookup found it
+    under another of the artist's names ("by_alias": Cat Stevens for Yusuf
+    Islam). Anything not from LRCLIB, or a track known by no name, is left
+    alone."""
     if query is None or entry.get("source") != "lrclib":
         return True
     songs = [s for s in (query.track, *query.track_aliases) if s]
     if songs and not any(same_song(entry.get("track"), s) for s in songs):
         return False
     names = tuple(n for n in (query.artist, *query.album_artists) if n)
-    if not names or same_artist(entry.get("artist"), names):
+    if not names or entry.get("by_alias") is True or same_artist(entry.get("artist"), names):
         return True
     return has_cjk(str(entry.get("artist") or "")) != has_cjk(query.artist)
 
 
-_LRC_STAMP = re.compile(r"^\s*\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]", re.MULTILINE)
+# Spaces and tabs, not \s: \s crosses lines, and blank ones made it quadratic.
+_LRC_STAMP = re.compile(r"^[ \t]*\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]", re.MULTILINE)
 
 
 def has_synced_lines(text: str) -> bool:
@@ -992,10 +1010,20 @@ def lookup_lyrics(
         if match["lrclib_id"] not in seen:
             seen.add(match["lrclib_id"])
             others.append(match)
-    others = others[:LYRICS_OTHERS_MAX]
+    others = [_alias_stamped(m, query) for m in others[:LYRICS_OTHERS_MAX]]
     if chosen is None:
         return LookupAnswer(None, others)
-    return LookupAnswer({**chosen, "timing": timing, "others": others}, [])
+    return LookupAnswer({**_alias_stamped(chosen, query), "timing": timing, "others": others}, [])
+
+
+def _alias_stamped(match: dict[str, Any], query: LyricsQuery) -> dict[str, Any]:
+    """``match`` marked "by_alias" when it is credited to none of the names
+    the track itself carries: it was held to the artist's other names, which
+    saved_lyrics_belong has no way to ask for again."""
+    names = tuple(n for n in (query.artist, *query.album_artists) if n)
+    if names and not same_artist(match.get("artist"), names):
+        return {**match, "by_alias": True}
+    return match
 
 
 def find_lyrics(
@@ -1051,8 +1079,8 @@ def _clean_version(value: Any) -> dict[str, Any] | None:
         "artist": _text(value.get("artist"), _NAME_MAX_CHARS),
         "album": _text(value.get("album"), _NAME_MAX_CHARS),
         "duration": float(duration),
-        "synced": _text(value.get("synced"), _TEXT_MAX_CHARS),
-        "plain": _text(value.get("plain"), _TEXT_MAX_CHARS),
+        "synced": _lyric_text(value.get("synced"), _TEXT_MAX_CHARS),
+        "plain": _lyric_text(value.get("plain"), _TEXT_MAX_CHARS),
         "instrumental": value.get("instrumental") is True,
         "lrclib_id": lrclib_id,
     }
@@ -1063,6 +1091,9 @@ def _clean_version(value: Any) -> dict[str, Any] | None:
     language = value.get("language")
     if isinstance(language, str) and _LANGUAGE_RE.match(language):
         version["language"] = language
+    # Found under another of the artist's names (lookup step (d)).
+    if value.get("by_alias") is True:
+        version["by_alias"] = True
     return version
 
 

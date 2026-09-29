@@ -1932,6 +1932,9 @@ def retime_job(
             again = retime_lines(pairs, merged, voice, duration)
             if better(again, result, pairs):
                 result, words = again, merged
+            # Refined either way: the same clips of the same vocals would be
+            # heard the same, so a re-listen that did not help is not tried
+            # again on the next run.
             save_transcript(job_dir, words=words, language=language or None, refined=True)
         if cancelled():
             raise JobCancelled()

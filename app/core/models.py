@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS
+
 
 class JobCancelled(Exception):
     """Raised inside a pipeline stage when the job's cancel flag is set."""
@@ -41,6 +43,30 @@ def clean_artist(value: Any) -> dict[str, str] | None:
     if not names["name"] and not names["englishName"]:
         return None
     return {"id": band_id, **names}
+
+
+# The tags a file or a video names (audio_tags.py), and how long each may be:
+# the lyrics a tag can carry are longer than any name.
+_AUDIO_TAG_LIMITS = {
+    "artist": AUDIO_TAG_MAX_CHARS,
+    "title": AUDIO_TAG_MAX_CHARS,
+    "album": AUDIO_TAG_MAX_CHARS,
+    "lyrics": AUDIO_TAG_LYRICS_MAX_CHARS,
+}
+
+
+def clean_audio_tags(value: Any) -> dict[str, str] | None:
+    """A job's tags as read back from disk, or None: known keys only, each a
+    non-empty string within its limit. A damaged file must not reach the
+    lyrics lookup, which reads them as a dict of strings."""
+    if not isinstance(value, dict):
+        return None
+    tags = {
+        key: text[:limit]
+        for key, limit in _AUDIO_TAG_LIMITS.items()
+        if isinstance(text := value.get(key), str) and text.strip()
+    }
+    return tags or None
 
 
 # A MusicBrainz id (recording, artist, release group): a lower-case UUID.
@@ -373,6 +399,7 @@ class Job:
         job.artist = clean_artist(job.artist)
         job.identity = clean_identity(job.identity)
         job.work = clean_work(job.work)
+        job.audio_tags = clean_audio_tags(job.audio_tags)
         job.cancel_requested = False
         return job
 

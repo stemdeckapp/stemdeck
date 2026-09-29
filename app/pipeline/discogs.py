@@ -123,13 +123,14 @@ def _fetch(path: str, params: dict[str, str], token: str, cancelled: Cancelled) 
     request = urllib.request.Request(
         url,
         headers={
-            # The token lives here and nowhere else: not in the URL, which a
-            # proxy or an exception could log.
-            "Authorization": f"Discogs token={token}",
             "User-Agent": MUSICBRAINZ_USER_AGENT,
             "Accept": "application/vnd.discogs.v2.discogs+json",
         },
     )
+    # The token lives here and nowhere else: not in the URL, which a proxy or
+    # an exception could log, and not on a redirect, which urllib would
+    # otherwise send it on to whatever host the redirect names.
+    request.add_unredirected_header("Authorization", f"Discogs token={token}")
     deadline = time.monotonic() + DISCOGS_REQUEST_BUDGET_SEC
     for attempt in range(DISCOGS_RETRIES + 1):
         ratelimit.DISCOGS.wait(cancelled=cancelled)

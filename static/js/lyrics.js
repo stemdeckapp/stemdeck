@@ -1176,6 +1176,10 @@ function isTyping(target) {
 function anotherEditorOpen() {
   if (document.querySelector('#t-metro-edit[aria-pressed="true"], dialog[open]')) return true;
   const panel = document.getElementById("lyricsPanel");
+  // The app's dialogs are role="dialog" elements, hidden by a class or
+  // removed when closed, not native <dialog>s: one showing owns the keys.
+  const modals = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+  if ([...modals].some((el) => el.getClientRects().length > 0 && !panel?.contains(el))) return true;
   // Popups only: a button that opens a menu or panel and has it open. The
   // sidebar's collapse button is aria-expanded whenever the sidebar shows.
   return [...document.querySelectorAll('[aria-haspopup][aria-expanded="true"]')].some((el) => !panel?.contains(el));

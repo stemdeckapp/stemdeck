@@ -217,6 +217,8 @@ def test_the_token_goes_only_in_the_authorization_header(monkeypatch):
     assert request.full_url == "https://api.discogs.com/oauth/identity"
     assert TOKEN not in request.full_url
     assert request.get_header("Authorization") == f"Discogs token={TOKEN}"
+    # Not sent on to whatever host a redirect names.
+    assert "Authorization" in request.unredirected_hdrs and "Authorization" not in request.headers
     assert request.get_header("User-agent", "").startswith("StemDeck/")
 
 

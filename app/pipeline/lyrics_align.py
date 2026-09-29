@@ -102,7 +102,8 @@ def line_starts(text: str) -> list[float]:
         stamps = _LINE_STAMPS.match(line)
         if not stamps:
             continue
-        words = re.sub(r"<[^>]*>", "", line[stamps.end() :]).strip()
+        # [^<>]: an unclosed "<" cannot make this quadratic.
+        words = re.sub(r"<[^<>]*>", "", line[stamps.end() :]).strip()
         if not words:
             continue
         for m in _STAMP.finditer(stamps.group(0)):
@@ -228,7 +229,7 @@ def align_lyrics(job: Job, job_dir: Path) -> str | None:
     lyrics.json is left with, or None when it has none to align. Never
     raises."""
     # Imported here: lyrics_lookup imports this module.
-    from app.pipeline.lyrics_lookup import read_lyrics, write_lyrics
+    from app.pipeline.lyrics_lookup import _OFFSET_LOCK, read_lyrics, write_lyrics
 
     try:
         entry = read_lyrics(job_dir)
@@ -250,12 +251,18 @@ def align_lyrics(job: Job, job_dir: Path) -> str | None:
             return timing
         if timing == "exact" and abs(shift) < LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC:
             return timing
-        logger.info("[%s] lyrics timing moved by %+.2fs", job.id, shift)
-        write_lyrics(
-            job,
-            job_dir,
-            {**entry, "synced": shift_lrc(entry["synced"], shift), "timing": "shifted"},
-        )
+        # Written under the lock the Lyrics tab's own edits take, and only if
+        # nothing changed the lyrics while the shift was worked out: an
+        # offset or timing the user set meanwhile is theirs.
+        with _OFFSET_LOCK:
+            if read_lyrics(job_dir) != entry:
+                return timing
+            logger.info("[%s] lyrics timing moved by %+.2fs", job.id, shift)
+            write_lyrics(
+                job,
+                job_dir,
+                {**entry, "synced": shift_lrc(entry["synced"], shift), "timing": "shifted"},
+            )
         return "shifted"
     except Exception:
         logger.warning("[%s] lyrics alignment failed", job.id, exc_info=True)

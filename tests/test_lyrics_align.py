@@ -210,3 +210,36 @@ def test_a_pipeline_keeping_a_version_of_another_length_moves_it_onto_the_track(
     kept = read_lyrics(tmp_path)
     assert (kept["lrclib_id"], kept["timing"]) == (5, "shifted")
     assert np.allclose(line_starts(kept["synced"]), [t + 7 for t in LINES], atol=0.05)
+
+
+def test_markup_that_never_closes_is_read_in_linear_time():
+    # Found in review: r"<[^>]*>" took seconds on a line of 100,000 "<",
+    # which anyone can send to /lyrics/align.
+    import time
+
+    from app.pipeline.lyrics_align import line_starts
+    from app.pipeline.lyrics_lookup import has_synced_lines
+
+    started = time.perf_counter()
+    line_starts("[00:01.00]" + "<" * 100_000)
+    assert not has_synced_lines(" \n" * 20_000 + "x")
+    assert time.perf_counter() - started < 1.0
+
+
+def test_an_offset_set_while_the_shift_is_worked_out_is_kept(tmp_path: Path, monkeypatch):
+    # Found in review: the shift was written over whatever the Lyrics tab
+    # saved while it was being worked out.
+    import app.pipeline.lyrics_align as la
+    from app.pipeline.lyrics_lookup import set_lyrics_offset
+
+    job = _job_with_lyrics(tmp_path, "unverified", [t + 7 for t in LINES])
+    real = la.estimate_offset
+
+    def slow(*args, **kwargs):
+        set_lyrics_offset(job, tmp_path, 2.5)  # the user, meanwhile
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(la, "estimate_offset", slow)
+    assert align_lyrics(job, tmp_path) == "unverified"
+    kept = read_lyrics(tmp_path)
+    assert kept["offset_sec"] == 2.5 and kept["timing"] == "unverified"

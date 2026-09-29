@@ -308,6 +308,20 @@ def test_its_other_names_are_searched_by_when_nothing_else_found_it():
     assert lrclib.asked == ["Jay Chou", "q:晴天", "周杰倫"], "stops at the first one found"
 
 
+def test_lyrics_found_under_another_name_carry_the_mark_and_stand_when_read_back():
+    from app.pipeline.lyrics_lookup import clean_lyrics, saved_lyrics_belong
+
+    lrclib = Lrclib({"周杰倫": [row(5, 269, artist="周杰倫", track="晴天")]})
+    answer = lookup_lyrics(jay_query(), fetch_json=lrclib, aliases=aliases_of("周杰倫", "周杰伦"))
+    assert answer.lyrics["by_alias"] is True
+    kept = clean_lyrics({**answer.lyrics, "v": 1})
+    assert kept["by_alias"] is True
+    # Same script, other name: the mark is what lets it stand.
+    latin = {**kept, "artist": "Chou Jie-lun"}
+    assert saved_lyrics_belong(latin, jay_query())
+    assert not saved_lyrics_belong({**latin, "by_alias": False}, jay_query())
+
+
 def test_a_korean_name_finds_the_song_filed_under_the_latin_one():
     q = LyricsQuery(
         artist="아이유", track="밤편지", album="", duration=253.0, artist_ids=(IU_MBID,)

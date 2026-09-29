@@ -509,4 +509,20 @@ test.describe("syncing lyrics line by line", () => {
     await page.keyboard.press("Escape");
     await expect(panel(page)).toBeHidden();
   });
+
+  test("Escape closes a dialog open over Sync lines, and only then Sync lines", async ({ page }) => {
+    await setUp(page);
+    await openSync(page);
+    await page.locator("#aboutBtn").click();
+    const about = page.locator("#aboutDialog");
+    await expect(about).toBeVisible();
+    // The dialog takes Escape from inside it, as when using its close button.
+    await page.locator("#aboutClose").focus();
+    await page.keyboard.press("Escape");
+    // The dialog closed; Sync lines stayed open.
+    await expect(about).toBeHidden();
+    await expect(panel(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(panel(page)).toBeHidden();
+  });
 });

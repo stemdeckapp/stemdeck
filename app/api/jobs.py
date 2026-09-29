@@ -58,7 +58,7 @@ from app.pipeline.audio_tags import probe_tags
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
-from app.pipeline.identify import can_identify_title, identify_and_find_band
+from app.pipeline.identify import can_identify_title, identify_and_find_band, release_source
 from app.pipeline.lyrics_align import detect_offset
 from app.pipeline.lyrics_lookup import (
     _TEXT_MAX_CHARS,
@@ -1148,7 +1148,12 @@ def get_lyrics(job_id: str) -> Response:
     job = registry_get(job_id)
     query = build_query(job) if job is not None else None
     others = [o for o in others if saved_lyrics_belong(o, query)]
-    if entry is not None and not saved_lyrics_belong(entry, query):
+    # Never lyrics timed by the user, moved by them, or found line by line
+    # in the vocals: each says they are the track's, whatever the names say.
+    worked_on = entry is not None and any(
+        k in entry for k in ("user_synced", "aligned", "offset_sec")
+    )
+    if entry is not None and not worked_on and not saved_lyrics_belong(entry, query):
         logger.info("[%s] dropping kept lyrics of another song", job_id)
         path.unlink(missing_ok=True)
         if job is not None:
@@ -1710,6 +1715,8 @@ def delete_job(job_id: str) -> dict[str, str]:
         if not wait_run_ended(job_id, RETIME_DELETE_WAIT_SEC):
             logger.warning("[%s] lyrics timing still stopping; removing files anyway", job_id)
     forget_run(job_id)
+    # A fingerprint of its audio may still have a file open (Windows).
+    release_source(job_id)
     removed = _rmtree_job(job_id)
     # Recorded whether or not the files went away. The user asked for this job
     # to be gone; without the record, a directory that outlived the delete is

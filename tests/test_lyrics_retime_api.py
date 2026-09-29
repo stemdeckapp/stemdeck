@@ -281,6 +281,23 @@ def test_deleting_waits_for_the_run_to_let_go_of_the_vocals(client, monkeypatch)
     assert seen == {"ended": True}
 
 
+def test_deleting_stops_a_fingerprint_before_removing_the_files(client, monkeypatch):
+    """Found in review: a fingerprint of the track's audio could still have a
+    file open, and on Windows the delete then failed."""
+    done_job(entry())
+    order = []
+    real_rmtree = jobs_mod._rmtree_job
+    monkeypatch.setattr(jobs_mod, "release_source", lambda job_id: order.append("released"))
+
+    def rmtree(job_id):
+        order.append("removed")
+        return real_rmtree(job_id)
+
+    monkeypatch.setattr(jobs_mod, "_rmtree_job", rmtree)
+    assert client.delete(f"/api/jobs/{JOB_ID}").status_code == 200
+    assert order == ["released", "removed"]
+
+
 # ── user-synced ──
 
 GOOD = "[00:20.00]znowu to samo\n[00:24.00]\n[00:25.00]<00:25.00>chciałabym <00:25.60>bardzo"

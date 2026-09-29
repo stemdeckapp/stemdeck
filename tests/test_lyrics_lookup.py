@@ -1137,3 +1137,18 @@ def test_other_failures_are_not_asked_again(monkeypatch):
     found = kept(query(), fetch_json=lrclib)
     assert found["lrclib_id"] == 1, "the exact match failed; the search found it"
     assert lrclib.calls == 2
+
+
+@pytest.mark.parametrize(
+    "brk",
+    ["\r", "\r\n", "\u2028", "\x85", "\x0b", "\x1c"],
+    ids=["cr", "crlf", "line-separator", "nel", "vt", "fs"],
+)
+def test_every_kind_of_line_break_reads_as_the_page_splits_it(brk):
+    # Found in review: the page splits on "\n" alone and Python on all of
+    # these, so the user's own timing of such lyrics was refused.
+    text = "\ufeff[00:01.00]One line" + brk + "[00:02.00]Two line"
+    entry = ll.clean_lyrics(
+        {"v": 1, "source": "lrclib", "duration": 10.0, "lrclib_id": 1, "synced": text}
+    )
+    assert entry["synced"] == "[00:01.00]One line\n[00:02.00]Two line"
