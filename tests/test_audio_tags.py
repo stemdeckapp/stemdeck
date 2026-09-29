@@ -163,6 +163,15 @@ def test_a_label_channel_is_not_the_artist_of_what_it_uploads():
             "Dawid Podsiadlo - Małomiasteczkowy",
             {"artist": "Dawid Podsiadło", "title": "Małomiasteczkowy"},
         ),
+        # A handle that runs the words together keeps the title's spacing:
+        # "NataliaKukulska" found nothing on MusicBrainz or LRCLIB.
+        (
+            "NataliaKukulska",
+            "Natalia Kukulska - W Biegu",
+            {"artist": "Natalia Kukulska", "title": "W Biegu"},
+        ),
+        # Accents without the spaces: the readable name wins.
+        ("DawidPodsiadło", "Dawid Podsiadlo - Małomiasteczkowy", {"artist": "Dawid Podsiadlo"}),
         # A suffix that is part of the name is not lost.
         ("Roxy Music", "Roxy Music - More Than This", {"artist": "Roxy Music"}),
     ],

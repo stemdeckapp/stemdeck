@@ -333,6 +333,22 @@ def _channel_keys(channel: str) -> list[str]:
     return keys
 
 
+def _better_spelling(title_name: str, channel: str) -> str:
+    """The better of two spellings of one name: the channel's when it has the
+    accents a title typed without them lost ("Beyonce" on the channel
+    "Beyoncé") and keeps its words apart; the title's otherwise. A channel
+    handle runs the words together ("NataliaKukulska" for the title's
+    "Natalia Kukulska"), and a name with its spaces gone finds nothing on
+    MusicBrainz or LRCLIB."""
+
+    def accents(text: str) -> int:
+        return sum(1 for ch in text if not ch.isascii())
+
+    if accents(channel) > accents(title_name) and len(channel.split()) >= len(title_name.split()):
+        return channel
+    return title_name
+
+
 def _artist_from_channel(info: dict[str, Any]) -> tuple[str, str] | None:
     """(artist, title) from the channel, only when something corroborates it.
 
@@ -363,10 +379,10 @@ def _artist_from_channel(info: dict[str, Any]) -> tuple[str, str] | None:
             if prefix and _name_key(prefix) in keys:
                 rest = video_title[match.end() :].strip()
                 if rest:
-                    # The channel's own spelling when it is the name itself
-                    # (a title typed without its accents), else the title's
-                    # ("Nirvana", not "NirvanaVEVO").
-                    return (channel if _name_key(prefix) == keys[0] else prefix), rest
+                    # The title's spelling ("Nirvana", not "NirvanaVEVO"),
+                    # unless the channel is the name itself spelt better.
+                    same = _name_key(prefix) == keys[0]
+                    return (_better_spelling(prefix, channel) if same else prefix), rest
                 break
     return None
 
