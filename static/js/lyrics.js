@@ -26,6 +26,13 @@
 // beside the synced text, never the text: on the server for lyrics it keeps
 // (POST .../lyrics/offset), in the track's store entry for lyrics kept here.
 //
+// Sync lines times the lines one by one: tap along with playback, drag a
+// line's marker in the lane over the waveform (lyricsLane.js), nudge the line
+// in hand, or re-time every line from the vocals. The user's timing takes
+// precedence over the server's fitted to the vocals, which takes precedence
+// over the lyrics' own at the Align offset (lyricsSync.js timingOf); the
+// offset applies to the last only, and the Align panel says so.
+//
 // Everything that came from the network or a file's tags goes in with
 // textContent, never as HTML: anyone can edit LRCLIB or a tag, and this page
 // can reach the desktop app's native commands.
@@ -34,6 +41,7 @@ import { t, getLanguage } from "./i18n.js";
 import { storeGet, storeSet } from "./utils.js";
 import { getCurrentTrackInfo, getCurrentTrackArtist } from "./catalog.js";
 import { transport, setPlayheadTime } from "./transport.js";
+import { totalDuration } from "./state.js";
 import {
   searchLyrics,
   rankVersions,
@@ -49,7 +57,25 @@ import {
   shiftLines,
   firstSungIndex,
   offsetToStart,
+  alignedFrom,
 } from "./lyricsLookup.js";
+import {
+  timingOf,
+  serializeLrc,
+  snapToVoice,
+  applyTime,
+  SyncSession,
+} from "./lyricsSync.js";
+import {
+  showLane,
+  hideLane,
+  updateLane,
+  setLaneSelected,
+  setLaneCurrent,
+  setLanePlayhead,
+  revealLaneSelected,
+  formatClock,
+} from "./lyricsLane.js";
 
 // One store entry per track rather than a field in the library store: a song's
 // lyrics run to a few kilobytes, and the library is rewritten whole on every
@@ -69,15 +95,30 @@ let bodyEl = null;
 
 let visible = false;
 let shownTrackId = null; // the track whose lyrics are on screen
-let lines = []; // synced lines of what is shown, at the offset, [] for plain text
-let baseLines = []; // the same lines at their own timing
+let lines = []; // timed lines of what is shown, in the timing in effect, [] for plain text
+let baseLines = []; // the lyrics' own lines at their own timing
 let offset = 0; // seconds the lines are moved later (earlier when negative)
+// Which timing is in effect (lyricsSync.js timingOf): "user" (Sync lines),
+// "aligned" (fitted to the vocals by the server) or "offset" (the lyrics' own,
+// moved by the Align panel's offset, which applies to this one only).
+let timingKind = "offset";
 // What is on screen and where it is kept: "server" for lyrics.json, "store"
 // for the track's entry here. The Align panel saves to the same place.
 let shownEntry = null;
 let shownOthers = [];
 let shownFrom = "store";
 let pickedIndex = -1; // the line last clicked, which Start lyrics here moves
+// Sync lines (lyricsSync.js, lyricsLane.js): the mode, kept on while the
+// track is; its panel, session and elements while it is on screen.
+let syncOpen = false;
+let sync = null;
+let syncToggleEl = null; // the Sync lines link in the tools row
+let userSave = null; // the user's timing waiting to be saved, or its removal
+let userSaveTimer = 0;
+let userSaveChain = Promise.resolve();
+let retimeToken = 0; // guards a re-time's polling against a switch or a close
+let leadIn = false; // a line taken in hand puts the playhead a little before it
+let snapOn = true; // taps and drops snap to where the singing starts
 let alignOpen = false; // the Align panel, kept open while the track is
 let align = null; // the Align panel's elements while it is on screen
 let alignToggleEl = null; // the Align link in the tools row
@@ -122,8 +163,10 @@ function fmtLength(seconds) {
 }
 
 function clearLyrics() {
+  closeSync(false, { keepOpen: true });
   flushSave();
   lines = [];
+  timingKind = "offset";
   baseLines = [];
   offset = 0;
   shownEntry = null;
@@ -136,7 +179,7 @@ function clearLyrics() {
   lineWords = [];
   currentIndex = -1;
   bodyEl.replaceChildren();
-  bodyEl.classList.remove("synced", "aligning");
+  bodyEl.classList.remove("synced", "aligning", "syncing");
   versionsEl.replaceChildren();
 }
 
@@ -167,7 +210,14 @@ function lineButton(line, nextTime, index) {
   row.type = "button";
   row.title = t("lyrics.seekTitle");
   row.addEventListener("click", (e) => {
-    // Its time at the offset now, not when the button was made.
+    if (sync) {
+      // In Sync lines a line is taken in hand, and the playhead goes to it
+      // (a little before, with the lead-in, to hear into it).
+      selectLine(index, { seek: true });
+      if (e.detail > 0) row.blur();
+      return;
+    }
+    // Its time in the timing in effect now, not when the button was made.
     setPlayheadTime(Math.max(0, lines[index]?.time ?? line.time));
     pickedIndex = index;
     showAlignTarget();
@@ -176,6 +226,13 @@ function lineButton(line, nextTime, index) {
     // key press (detail 0) keeps focus there for whoever is using the keys.
     if (e.detail > 0) row.blur();
   });
+  lineWords.push(fillLine(row, line, nextTime));
+  return row;
+}
+
+/** A line's words as spans in `row`, timed for the wipe: [{ el, start, end }]. */
+function fillLine(row, line, nextTime) {
+  row.replaceChildren();
   const words = [];
   for (const word of wordTimings(line, nextTime, envelopeFor === shownTrackId ? envelope : null)) {
     const span = el("span", "lw", word.text);
@@ -184,8 +241,7 @@ function lineButton(line, nextTime, index) {
   }
   // An empty stamp marks an instrumental gap in LRC; a note keeps its place.
   if (!words.length) row.textContent = "♪";
-  lineWords.push(words);
-  return row;
+  return words;
 }
 
 /**
@@ -218,11 +274,9 @@ function show(entry, others = [], from = "store") {
   );
   const tools = el("div", "lyrics-tools");
   versionsEl.append(head, tools);
-  if (entry.synced) {
-    baseLines = parseLrc(entry.synced);
-    offset = clampOffset(entry.offsetSec);
-    lines = shiftLines(baseLines, offset);
-  }
+  baseLines = entry.synced ? parseLrc(entry.synced) : [];
+  offset = clampOffset(entry.offsetSec);
+  applyTiming();
   if (others.length) {
     const toggle = el("button", "lyrics-link", t("lyrics.otherVersions", { count: others.length }));
     toggle.type = "button";
@@ -239,23 +293,65 @@ function show(entry, others = [], from = "store") {
   }
   // Words to align, or to say why they cannot be: not for an instrumental.
   // The panel goes under the tools row, above the versions list.
-  if (entry.synced || entry.plain) tools.append(alignToggle());
-  if (lines.length && alignOpen) tools.after(alignPanel());
+  if (entry.synced || entry.plain) tools.append(syncToggle(), alignToggle());
+  if (baseLines.length && alignOpen && !syncOpen) tools.after(alignPanel());
   const remove = el("button", "lyrics-link", t("lyrics.remove"));
   remove.type = "button";
   remove.addEventListener("click", () => removeLyrics());
   tools.append(remove);
 
-  if (entry.synced) {
-    lineEls = lines.map((line, i) => lineButton(line, lines[i + 1]?.time ?? null, i));
-    bodyEl.append(...lineEls);
-    bodyEl.classList.add("synced");
-    if (lines.length) loadEnvelope(shownTrackId);
+  if (lines.length) {
+    renderLines();
+    loadEnvelope(shownTrackId);
   } else if (entry.plain) {
     // Composed, as parseLrc does for synced lines.
     for (const text of entry.plain.normalize("NFC").split(/\r?\n/)) bodyEl.append(tagLang(el("p", "lyrics-text", text || " "), text));
   }
   bodyEl.scrollTop = 0;
+  if (syncOpen && lines.length) openSync();
+}
+
+/** The timing in effect for what is shown, into `lines`: the user's own, the
+ * server's fitted to the vocals, or the lyrics' own at the offset. */
+function applyTiming() {
+  const timing = shownEntry ? timingOf({ ...shownEntry, offsetSec: offset }) : { kind: "offset", lines: [] };
+  timingKind = timing.kind;
+  lines = timing.lines;
+}
+
+/** Draw `lines` as the synced list, afresh. */
+function renderLines() {
+  lineWords = [];
+  currentIndex = -1;
+  lineEls = lines.map((line, i) => lineButton(line, lines[i + 1]?.time ?? null, i));
+  bodyEl.replaceChildren(...lineEls);
+  bodyEl.classList.add("synced");
+  showLineTimes();
+}
+
+/** Show `next` as the lines' timing at once: the list, the wipe, a line
+ * click and the lane all follow. The list is drawn again only when its lines
+ * are not the same ones (a reset to a timing with other lines). */
+function setDisplayLines(next) {
+  const same = next.length === lines.length && next.every((line, i) => line.text === lines[i].text);
+  lines = next;
+  if (!same) {
+    renderLines();
+    if (sync) placeLineTools();
+    return;
+  }
+  retime();
+  showLineTimes();
+}
+
+/** In Sync lines, each line says when it starts (drawn by CSS from
+ * data-time, so it is not part of the line's text). */
+function showLineTimes() {
+  if (!sync) return;
+  lineEls.forEach((row, i) => {
+    const time = formatClock(lines[i]?.time ?? 0);
+    if (row.dataset.time !== time) row.dataset.time = time;
+  });
 }
 
 /**
@@ -288,7 +384,12 @@ function retime() {
   lines.forEach((line, i) => {
     const words = lineWords[i];
     const timed = wordTimings(line, lines[i + 1]?.time ?? null, levels);
-    if (!words || timed.length !== words.length) return;
+    if (!words) return;
+    if (timed.length !== words.length) {
+      // Timing with word stamps where there were none, or the other way.
+      if (lineEls[i]) lineWords[i] = fillLine(lineEls[i], line, lines[i + 1]?.time ?? null);
+      return;
+    }
     timed.forEach((word, k) => {
       words[k].start = word.start;
       words[k].end = word.end;
@@ -305,16 +406,16 @@ const NUDGES = [-0.5, -0.1, 0.1, 0.5];
 const SAVE_DELAY_MS = 400;
 
 /** Seconds to a tenth, in the app's language: "+15.9", "-0.5", "0.0". */
-function formatSeconds(seconds, signDisplay = "exceptZero") {
+function formatSeconds(seconds, signDisplay = "exceptZero", digits = 1) {
   try {
     return new Intl.NumberFormat(getLanguage(), {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
       signDisplay,
     }).format(seconds);
   } catch (err) {
     console.warn("number format failed", err);
-    return (signDisplay !== "never" && seconds > 0 ? "+" : "") + seconds.toFixed(1);
+    return (signDisplay !== "never" && seconds > 0 ? "+" : "") + seconds.toFixed(digits);
   }
 }
 
@@ -325,7 +426,7 @@ function alignToggle() {
   const toggle = el("button", "lyrics-link lyrics-align-toggle", t("lyrics.align.button"));
   toggle.type = "button";
   alignToggleEl = toggle;
-  if (!lines.length) {
+  if (!baseLines.length) {
     toggle.setAttribute("aria-disabled", "true");
     toggle.title = t("lyrics.align.syncedOnly");
     return toggle;
@@ -341,7 +442,8 @@ function alignToggle() {
 }
 
 function openAlign() {
-  if (!lines.length || align) return;
+  if (!baseLines.length || align) return;
+  if (sync) closeSync(false);
   alignOpen = true;
   alignToggleEl?.setAttribute("aria-expanded", "true");
   alignToggleEl?.closest(".lyrics-tools")?.after(alignPanel());
@@ -405,17 +507,36 @@ function alignPanel() {
   const message = el("p", "lyrics-align-message");
   message.setAttribute("aria-live", "polite");
 
-  panel.append(el("p", "lyrics-align-hint", t("lyrics.align.hint")), start, target, nudges, actions, message);
+  // The offset moves the lyrics' own timing only. Lines timed one by one (by
+  // hand, or fitted to the vocals) take precedence, and the panel says so
+  // rather than moving nothing.
+  const note = el("p", "lyrics-align-note");
+  note.setAttribute("aria-live", "polite");
+  const syncBtn = alignButton(t("lyrics.sync.open"), () => openSync({ focus: true }));
+  syncBtn.title = t("lyrics.sync.openTitle");
+  const offsetControls = [start, ...steps, detect, reset];
+
+  panel.append(el("p", "lyrics-align-hint", t("lyrics.align.hint")), note, start, target, nudges, actions, syncBtn, message);
   panel.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
     closeAlign(true);
   });
-  align = { panel, target, readout, detect, message };
+  align = { panel, target, readout, detect, message, note, offsetControls };
   bodyEl.classList.add("aligning");
+  showAlignApplies();
   showOffset();
   showAlignTarget();
   return panel;
+}
+
+/** Whether the offset is what times the lines now, and the panel's controls
+ * and note to match. */
+function showAlignApplies() {
+  if (!align) return;
+  const applies = timingKind === "offset";
+  for (const btn of align.offsetControls) btn.disabled = !applies;
+  align.note.textContent = applies ? "" : t(timingKind === "user" ? "lyrics.align.perLineUser" : "lyrics.align.perLineAligned");
 }
 
 function showOffset() {
@@ -464,9 +585,13 @@ function startHere() {
 function applyOffset(seconds, { save = true } = {}) {
   if (!baseLines.length) return;
   offset = clampOffset(seconds);
-  lines = shiftLines(baseLines, offset);
   if (shownEntry) shownEntry.offsetSec = offset;
-  retime();
+  // Only the lyrics' own timing moves with the offset; lines timed one by one
+  // keep their times.
+  if (timingKind === "offset") {
+    lines = shiftLines(baseLines, offset);
+    retime();
+  }
   showOffset();
   setAlignMessage();
   if (save) scheduleSave();
@@ -484,7 +609,7 @@ function flushSave() {
   saveTimer = 0;
   const save = pendingSave;
   pendingSave = null;
-  return save ? saveOffset(save) : Promise.resolve();
+  return Promise.all([save ? saveOffset(save) : null, flushUserSave()]);
 }
 
 /** Forget an offset waiting to be saved in the store: the entry it belongs
@@ -495,6 +620,11 @@ function dropStoreSave() {
     clearTimeout(saveTimer);
     saveTimer = 0;
     pendingSave = null;
+  }
+  if (userSave?.from === "store") {
+    clearTimeout(userSaveTimer);
+    userSaveTimer = 0;
+    userSave = null;
   }
   return flushSave();
 }
@@ -560,6 +690,542 @@ async function autoDetect() {
   }
 }
 
+// ── Sync lines ──
+//
+// Timing the lines one by one, for lyrics whose own timing is off in places
+// rather than as a whole. Tap along with playback (T or Enter at the start of
+// each line), or drag a line's marker in the lane over the waveform, or nudge
+// the line in hand. What is set is the user's timing, which takes precedence
+// over the server's fitted to the vocals and over the Align offset
+// (lyricsSync.js timingOf). It is kept where the lyrics are: PUT
+// .../lyrics/user-synced for lyrics.json, the track's store entry for lyrics
+// kept here.
+
+// The arrows' steps, in seconds, and Shift's.
+const NUDGE_FINE = 0.05;
+const NUDGE_COARSE = 0.25;
+// The lead-in: how far before a line the playhead goes when it is taken in hand.
+const LEAD_IN_SEC = 2;
+// How often a re-time from the vocals is asked how it is getting on, and how
+// many answers of "idle" are taken for "not started yet" rather than lost.
+const RETIME_POLL_MS = 1000;
+const RETIME_IDLE_POLLS = 3;
+
+const now = () => transport()?.getCurrentTime?.() ?? 0;
+const levels = () => (envelopeFor === shownTrackId ? envelope : null);
+const laneLength = () => totalDuration || (lines.at(-1)?.time ?? 0) + 10;
+
+/** The Sync lines link in the tools row. Disabled, and saying why, for
+ * lyrics with no timing at all. */
+function syncToggle() {
+  const toggle = el("button", "lyrics-link lyrics-sync-toggle", t("lyrics.sync.button"));
+  toggle.type = "button";
+  syncToggleEl = toggle;
+  if (!lines.length) {
+    toggle.setAttribute("aria-disabled", "true");
+    toggle.title = t("lyrics.sync.syncedOnly");
+    return toggle;
+  }
+  toggle.title = t("lyrics.sync.openTitle");
+  toggle.setAttribute("aria-controls", "lyricsSync");
+  toggle.setAttribute("aria-expanded", String(Boolean(sync)));
+  toggle.addEventListener("click", (e) => {
+    if (sync) closeSync(false);
+    else openSync({ focus: e.detail === 0 });
+    if (e.detail > 0) toggle.blur();
+  });
+  return toggle;
+}
+
+function openSync({ focus = false } = {}) {
+  if (!lines.length || sync) return;
+  if (align) closeAlign(false);
+  syncOpen = true;
+  const session = new SyncSession(lines, {
+    // The lyrics' own timing is usually right line to line and off as a
+    // whole, so a tap carries the lines after it along; timing already fitted
+    // line by line is left where it is.
+    ripple: timingKind === "offset",
+    max: totalDuration || Infinity,
+    meta: { kind: timingKind },
+  });
+  sync = buildSyncPanel(session);
+  syncToggleEl?.closest(".lyrics-tools")?.after(sync.panel);
+  syncToggleEl?.setAttribute("aria-expanded", "true");
+  bodyEl.classList.add("syncing");
+  showLineTimes();
+  showLane(lines, laneLength(), {
+    select: (i) => selectLine(i),
+    click: (i) => selectLine(i, { seek: true }),
+    drag: (i, time, { free }) => applyTime(sync.session.lines, i, snapped(time, free), {
+      mode: sync.session.ripple ? "ripple" : "clamp",
+      fixed: sync.session.touched,
+      max: sync.session.max,
+    }),
+    drop: (i, time, { free, cancelled }) => {
+      if (!cancelled && sync.session.move(i, snapped(time, free))) edited();
+      else updateLane(sync.session.lines, sync.session.cursor);
+    },
+    done: () => closeSync(true),
+  });
+  onCursor();
+  showSyncState();
+  if (focus) sync.tap.focus();
+}
+
+/** Leave Sync lines: what is waiting to be saved is saved now. `keepOpen`
+ * leaves the mode on for when the same track's lyrics are drawn again. */
+function closeSync(focusToggle, { keepOpen = false } = {}) {
+  if (!keepOpen) syncOpen = false;
+  if (!sync) return;
+  retimeToken++;
+  flushUserSave();
+  sync.panel.remove();
+  sync.lineTools.remove();
+  for (const row of lineEls) {
+    row.classList.remove("selected");
+    delete row.dataset.time;
+  }
+  bodyEl.classList.remove("syncing");
+  hideLane();
+  sync = null;
+  syncToggleEl?.setAttribute("aria-expanded", "false");
+  if (focusToggle) syncToggleEl?.focus();
+}
+
+/** One of the panel's options, a checkbox that lets go of focus once
+ * changed, so Space goes back to play and pause. */
+function syncOption(key, checked, onChange, titleKey) {
+  const label = el("label", "lyrics-sync-opt");
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = checked;
+  box.addEventListener("change", () => {
+    onChange(box.checked);
+    box.blur();
+  });
+  label.title = t(titleKey);
+  label.append(box, el("span", "", t(key)));
+  return label;
+}
+
+function buildSyncPanel(session) {
+  const panel = el("div", "lyrics-sync");
+  panel.id = "lyricsSync";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-label", t("lyrics.sync.title"));
+
+  const head = el("div", "lyrics-sync-head");
+  const kind = el("span", "lyrics-sync-kind");
+  const saveState = el("span", "lyrics-sync-kind lyrics-sync-save");
+  saveState.setAttribute("aria-live", "polite");
+  head.append(el("h3", "lyrics-sync-title", t("lyrics.sync.title")), kind, saveState);
+
+  const next = el("p", "lyrics-sync-next");
+  const nextLabel = el("span", "lyrics-sync-next-label");
+  const nextText = el("span", "lyrics-sync-next-text");
+  next.append(nextLabel, nextText);
+  next.setAttribute("aria-live", "polite");
+
+  const tap = alignButton(t("lyrics.sync.tap"), tapNow, "lyrics-sync-tap");
+  tap.append(el("kbd", "", t("lyrics.sync.tapKey")));
+  tap.title = t("lyrics.sync.tapTitle");
+
+  const undo = alignButton(t("lyrics.sync.undo"), undoSync);
+  undo.title = t("lyrics.sync.undoTitle");
+  const edits = el("div", "lyrics-sync-row");
+  edits.append(undo);
+
+  const opts = el("div", "lyrics-sync-opts");
+  opts.append(
+    syncOption("lyrics.sync.leadIn", leadIn, (on) => { leadIn = on; }, "lyrics.sync.leadInTitle"),
+    syncOption("lyrics.sync.snap", snapOn, (on) => { snapOn = on; }, "lyrics.sync.snapTitle"),
+    syncOption("lyrics.sync.ripple", session.ripple, (on) => { session.ripple = on; }, "lyrics.sync.rippleTitle"),
+  );
+
+  const retimeBtn = alignButton(t("lyrics.sync.retime"), retimeFromVocals);
+  retimeBtn.title = t("lyrics.sync.retimeTitle");
+  const detected = alignButton(t("lyrics.sync.resetDetected"), resetToDetected);
+  detected.title = t("lyrics.sync.resetDetectedTitle");
+  const original = alignButton(t("lyrics.sync.resetOriginal"), resetToOriginal);
+  original.title = t("lyrics.sync.resetOriginalTitle");
+  // No timing of their own (plain lyrics fitted to the vocals): nothing to
+  // go back to.
+  original.disabled = !baseLines.length;
+  const resets = el("div", "lyrics-sync-row");
+  resets.append(retimeBtn, detected, original);
+
+  const message = el("p", "lyrics-align-message");
+  message.setAttribute("aria-live", "polite");
+  const keys = el("p", "lyrics-sync-keys", t("lyrics.sync.keys"));
+  const done = alignButton(t("lyrics.sync.done"), () => closeSync(true), "lyrics-align-done");
+  done.title = t("lyrics.sync.doneTitle");
+
+  panel.append(head, next, tap, edits, opts, resets, message, keys, done);
+
+  // The line in hand's own controls, shown under it in the list.
+  const lineTools = el("div", "lyrics-line-tools");
+  lineTools.setAttribute("role", "group");
+  lineTools.setAttribute("aria-label", t("lyrics.sync.lineToolsAria"));
+  const lineStep = (step) => {
+    // Hundredths: the steps are 0.05 and 0.25 s.
+    const btn = alignButton(formatSeconds(step, "always", 2), () => nudgeLine(step), "lyrics-align-nudge");
+    const label = t(step < 0 ? "lyrics.align.earlier" : "lyrics.align.later", { seconds: formatSeconds(Math.abs(step), "never", 2) });
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    return btn;
+  };
+  const here = alignButton(t("lyrics.sync.here"), lineToPlayhead, "lyrics-line-here");
+  here.title = t("lyrics.sync.hereTitle");
+  lineTools.append(lineStep(-NUDGE_COARSE), lineStep(-NUDGE_FINE), lineStep(NUDGE_FINE), lineStep(NUDGE_COARSE), here);
+
+  return { panel, session, kind, saveState, nextLabel, nextText, tap, undo, retimeBtn, message, lineTools };
+}
+
+/** Where the singing starts near `time`, with Snap on and Alt not held. */
+function snapped(time, free = false) {
+  return snapOn && !free ? snapToVoice(levels(), time) : time;
+}
+
+/** Take line `index` in hand; with `seek`, the playhead goes to it. */
+function selectLine(index, { seek = false } = {}) {
+  if (!sync || index < 0 || index >= lines.length) return;
+  sync.session.select(index);
+  onCursor({ reveal: true });
+  if (seek) setPlayheadTime(Math.max(0, lines[index].time - (leadIn ? LEAD_IN_SEC : 0)));
+}
+
+/** Show which line is in hand: framed in the list with its controls under
+ * it, lit in the lane, named as the next to tap. */
+function onCursor({ reveal = false } = {}) {
+  if (!sync) return;
+  const index = sync.session.cursor;
+  lineEls.forEach((row, i) => row.classList.toggle("selected", i === index));
+  setLaneSelected(index);
+  placeLineTools();
+  const line = lines[index];
+  sync.tap.disabled = !line;
+  sync.nextText.removeAttribute("lang");
+  if (line) {
+    sync.nextLabel.textContent = t("lyrics.sync.next", { n: index + 1, count: lines.length });
+    sync.nextText.textContent = line.text || "♪";
+    tagLang(sync.nextText, line.text);
+  } else {
+    sync.nextLabel.textContent = t("lyrics.sync.allSetLabel");
+    sync.nextText.textContent = t("lyrics.sync.allSet");
+  }
+  if (!reveal) return;
+  const row = lineEls[index];
+  if (row && (row.offsetTop < bodyEl.scrollTop || row.offsetTop + row.offsetHeight > bodyEl.scrollTop + bodyEl.clientHeight)) {
+    bodyEl.scrollTo({ top: row.offsetTop - bodyEl.clientHeight / 3, behavior: "auto" });
+  }
+  revealLaneSelected();
+}
+
+function placeLineTools() {
+  if (!sync) return;
+  const row = lineEls[sync.session.cursor];
+  if (row) row.after(sync.lineTools);
+  else sync.lineTools.remove();
+}
+
+/** What Sync lines says about the timing in effect. */
+function showSyncState() {
+  if (!sync) return;
+  sync.kind.textContent = t(`lyrics.sync.kind.${timingKind}`);
+  sync.undo.disabled = !sync.session.canUndo;
+}
+
+function setSyncMessage(text = "", kind = "") {
+  if (!sync) return;
+  sync.message.textContent = text;
+  sync.message.className = `lyrics-align-message${kind ? ` ${kind}` : ""}`;
+}
+
+/**
+ * The session changed: show its lines as the timing in effect everywhere,
+ * and keep them. Which timing they are is the session's (meta.kind): the
+ * user's own after an edit, or what a reset or an undo went back to, in
+ * which case the user's timing is dropped rather than saved.
+ */
+function syncChanged({ reveal = false } = {}) {
+  if (!sync) return;
+  const { session } = sync;
+  setDisplayLines(session.lines);
+  updateLane(lines, session.cursor);
+  onCursor({ reveal });
+  if (session.meta.kind === "user") {
+    saveUserTiming(serializeLrc(lines));
+  } else if (shownEntry?.userSynced) {
+    saveUserTiming(null);
+  }
+  timingKind = session.meta.kind;
+  showSyncState();
+  showAlignApplies();
+}
+
+/** An edit by hand: the lines are now the user's own timing. */
+function edited(options) {
+  sync.session.meta.kind = "user";
+  setSyncMessage();
+  syncChanged(options);
+}
+
+function tapNow() {
+  if (!sync || sync.session.done) return;
+  sync.session.tap(snapped(now()));
+  // The tap is seen as well as heard: the button flashes.
+  sync.tap.classList.remove("tapped");
+  void sync.tap.offsetWidth;
+  sync.tap.classList.add("tapped");
+  edited({ reveal: true });
+}
+
+function nudgeLine(delta) {
+  if (!sync || sync.session.done) return;
+  if (sync.session.nudge(sync.session.cursor, delta)) edited({ reveal: true });
+}
+
+/** The line in hand starts at the playhead, exactly; it stays in hand. */
+function lineToPlayhead() {
+  if (!sync || sync.session.done) return;
+  if (sync.session.setTime(sync.session.cursor, now(), "push")) edited();
+}
+
+function undoSync() {
+  if (sync?.session.undo()) {
+    setSyncMessage();
+    syncChanged({ reveal: true });
+  }
+}
+
+function redoSync() {
+  if (sync?.session.redo()) {
+    setSyncMessage();
+    syncChanged({ reveal: true });
+  }
+}
+
+/** Reset to detected: the user's timing goes, and what was there before it
+ * shows again, the server's fitted to the vocals or the lyrics' own at the
+ * Align offset. Undo brings it back. */
+function resetToDetected() {
+  if (!sync || !shownEntry) return;
+  const detected = timingOf({ ...shownEntry, userSynced: "", offsetSec: offset });
+  if (!detected.lines.length) {
+    setSyncMessage(t("lyrics.sync.nothingDetected"), "muted");
+    return;
+  }
+  sync.session.replace(detected.lines);
+  sync.session.meta.kind = detected.kind;
+  syncChanged();
+  setSyncMessage(t(`lyrics.sync.backTo.${detected.kind}`));
+}
+
+/** Reset to original: the lyrics' own timing, as they came, with no offset,
+ * kept as the user's timing so it takes precedence over any other. */
+function resetToOriginal() {
+  if (!sync || !baseLines.length) return;
+  sync.session.replace(baseLines);
+  edited();
+  setSyncMessage(t("lyrics.sync.backTo.original"));
+}
+
+/** Keep the user's timing (`lrc`), or drop it (null), a moment after the last
+ * change: a run of taps or nudges is one request. */
+function saveUserTiming(lrc) {
+  if (!shownEntry) return;
+  if (lrc == null) delete shownEntry.userSynced;
+  else shownEntry.userSynced = lrc;
+  userSave = { trackId: shownTrackId, entry: shownEntry, others: shownOthers, from: shownFrom, lrc };
+  if (sync) sync.saveState.textContent = t("lyrics.sync.saving");
+  clearTimeout(userSaveTimer);
+  userSaveTimer = setTimeout(flushUserSave, SAVE_DELAY_MS);
+}
+
+function flushUserSave() {
+  clearTimeout(userSaveTimer);
+  userSaveTimer = 0;
+  const save = userSave;
+  userSave = null;
+  if (!save) return userSaveChain;
+  // In order: a removal sent after a save must land after it.
+  userSaveChain = userSaveChain.then(() => sendUserTiming(save));
+  return userSaveChain;
+}
+
+async function sendUserTiming({ trackId, entry, others, from, lrc }) {
+  try {
+    if (from === "server") {
+      const url = `/api/jobs/${encodeURIComponent(trackId)}/lyrics/user-synced`;
+      const res = lrc == null
+        ? await fetch(url, { method: "DELETE", keepalive: true })
+        : await fetch(url, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ synced: lrc }),
+          keepalive: true,
+        });
+      // Nothing to remove is what a removal wanted.
+      if (!res.ok && !(lrc == null && res.status === 404)) throw new Error(`HTTP ${res.status}`);
+    } else {
+      const kept = { ...entry };
+      if (lrc == null) delete kept.userSynced;
+      else kept.userSynced = lrc;
+      await storeSet(storeKey(trackId), { entry: kept, others });
+    }
+    if (trackId === shownTrackId && sync && !userSave) sync.saveState.textContent = t("lyrics.sync.saved");
+  } catch (err) {
+    console.warn("lyrics timing save failed", err);
+    if (trackId === shownTrackId && sync) {
+      sync.saveState.textContent = "";
+      setSyncMessage(t("lyrics.sync.saveFailed"), "error");
+    }
+  }
+}
+
+/**
+ * Re-time from vocals: the server fits every line to the vocals stem (POST
+ * .../lyrics/retime), which takes a while, so it is asked how it is getting
+ * on until it is done. Done, its timing replaces what is shown and the user's
+ * is dropped, which Undo brings back. Unsure or failed, nothing changes and
+ * the panel says so.
+ */
+async function retimeFromVocals() {
+  if (!sync || sync.retimeBtn.getAttribute("aria-busy") === "true") return;
+  const trackId = shownTrackId;
+  const from = shownFrom;
+  const entry = shownEntry;
+  const token = ++retimeToken;
+  const base = `/api/jobs/${encodeURIComponent(trackId)}/lyrics/retime`;
+  sync.retimeBtn.setAttribute("aria-busy", "true");
+  setSyncMessage(t("lyrics.sync.retiming"), "loading");
+  const live = () => token === retimeToken && trackId === shownTrackId && sync;
+  const finish = (text, kind) => {
+    if (!live()) return;
+    sync.retimeBtn.removeAttribute("aria-busy");
+    setSyncMessage(text, kind);
+  };
+  let started = false;
+  try {
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Lyrics kept here are not in lyrics.json: they go along.
+      body: JSON.stringify(from === "server" ? {} : { synced: entry?.synced || "", plain: entry?.plain || "" }),
+    });
+    started = res.ok;
+    if (!started) console.warn("lyrics re-time refused", res.status);
+  } catch (err) {
+    console.warn("lyrics re-time failed", err);
+  }
+  if (!started) return finish(t("lyrics.sync.retimeFailed"), "error");
+
+  let idle = 0;
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, RETIME_POLL_MS));
+    if (!live()) return;
+    let status = null;
+    try {
+      const res = await fetch(base);
+      if (res.ok) status = await res.json();
+    } catch (err) {
+      console.warn("lyrics re-time status failed", err);
+    }
+    if (!live()) return;
+    const state = status?.state;
+    if (state === "running" || (state === "idle" && ++idle <= RETIME_IDLE_POLLS)) {
+      const p = Number(status?.progress);
+      const percent = Number.isFinite(p) && p > 0 ? Math.round(p <= 1 ? p * 100 : p) : 0;
+      setSyncMessage(percent ? t("lyrics.sync.retimingProgress", { percent }) : t("lyrics.sync.retiming"), "loading");
+      continue;
+    }
+    if (state === "unsure") return finish(t("lyrics.sync.retimeUnsure"), "muted");
+    if (state !== "done") return finish(t("lyrics.sync.retimeFailed"), "error");
+    // Lyrics.json holds the new timing; lyrics kept here get it in the answer.
+    const aligned = from === "server"
+      ? (await serverLyrics(trackId))?.entry?.aligned ?? null
+      : alignedFrom(status.aligned);
+    if (!live()) return;
+    const next = aligned ? parseLrc(aligned.synced) : [];
+    if (!next.length) return finish(t("lyrics.sync.retimeFailed"), "error");
+    entry.aligned = aligned;
+    sync.session.replace(next);
+    sync.session.meta.kind = "aligned";
+    syncChanged();
+    // Kept here: the new timing is saved with the entry (the user's own
+    // timing went with the change above).
+    if (from === "store") {
+      storeSet(storeKey(trackId), { entry: { ...entry }, others: shownOthers })
+        .catch((err) => console.warn("lyrics timing save failed", err));
+    }
+    return finish(aligned.lines
+      ? t("lyrics.sync.retimed", { matched: aligned.linesMatched, count: aligned.lines })
+      : t("lyrics.sync.retimedPlain"));
+  }
+}
+
+/** Whether a key press is typing into a field, which Sync lines leaves be. */
+function isTyping(target) {
+  if (target instanceof HTMLInputElement) return !["checkbox", "radio", "button"].includes(target.type);
+  return target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || Boolean(target?.isContentEditable);
+}
+
+/** Whether an editor, dialog or popover other than the Lyrics panel's own is
+ * open, and so owns Escape and undo. */
+function anotherEditorOpen() {
+  if (document.querySelector('#t-metro-edit[aria-pressed="true"], dialog[open]')) return true;
+  const panel = document.getElementById("lyricsPanel");
+  // Popups only: a button that opens a menu or panel and has it open. The
+  // sidebar's collapse button is aria-expanded whenever the sidebar shows.
+  return [...document.querySelectorAll('[aria-haspopup][aria-expanded="true"]')].some((el) => !panel?.contains(el));
+}
+
+/** The Sync lines keys, while the mode is on. On the window, ahead of every
+ * other handler: Backspace also moves the open track to the Trash, and the
+ * arrows would scroll the list. */
+function onSyncKey(e) {
+  if (!sync || !visible || isTyping(e.target)) return;
+  const mod = e.ctrlKey || e.metaKey;
+  // The keyboard belongs to whatever else is open on top: the beat-grid
+  // editor, a dialog, a menu or panel outside the Lyrics panel. Heard first
+  // here (capture), Escape would close Sync lines and leave that stuck open,
+  // undo would undo the lyrics instead of the grid, and the arrows would move
+  // the lyrics instead of the menu.
+  if (anotherEditorOpen()) return;
+  let handled = true;
+  if (mod && e.code === "KeyZ") {
+    if (e.shiftKey) redoSync();
+    else undoSync();
+  } else if (mod && e.code === "KeyY") {
+    redoSync();
+  } else if (mod || e.altKey) {
+    handled = false;
+  } else if (e.code === "KeyT") {
+    tapNow();
+  } else if (e.key === "Enter") {
+    // Enter on another button presses that button.
+    const control = e.target?.closest?.("button, a, [role='button']");
+    if (control && control !== sync.tap) handled = false;
+    else tapNow();
+  } else if (e.key === "Backspace") {
+    undoSync();
+  } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    nudgeLine((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? NUDGE_COARSE : NUDGE_FINE));
+  } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    const at = Math.min(sync.session.cursor, lines.length);
+    selectLine(Math.max(0, Math.min(lines.length - 1, at + (e.key === "ArrowUp" ? -1 : 1))));
+  } else if (e.key === "Escape") {
+    closeSync(true);
+  } else {
+    handled = false;
+  }
+  if (handled) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}
+
 function versionList(matches, all) {
   const list = el("ul", "lyrics-version-list");
   for (const match of matches) {
@@ -595,8 +1261,11 @@ async function keep(match, others) {
   const info = getCurrentTrackInfo();
   if (!info) return;
   const entry = { v: 1, source: "lrclib", ...match, savedAt: Date.now() };
-  // Another version, at its own timing: the offset was the old one's.
+  // Another version, at its own timing: the offset and the timing line by
+  // line were the old one's.
   delete entry.offsetSec;
+  delete entry.userSynced;
+  delete entry.aligned;
   await dropStoreSave();
   await storeSet(storeKey(info.id), { entry, others });
   answered.delete(info.id);
@@ -768,7 +1437,10 @@ function keptForAnotherSong(entry, info) {
 async function loadForCurrentTrack() {
   const info = getCurrentTrackInfo();
   // The Align panel stays open while the same track is shown again.
-  if ((info?.id ?? null) !== shownTrackId) alignOpen = false;
+  if ((info?.id ?? null) !== shownTrackId) {
+    alignOpen = false;
+    syncOpen = false;
+  }
   shownTrackId = info?.id ?? null;
   nothingKnownFor = null;
   searchController?.abort();
@@ -861,10 +1533,13 @@ function tick() {
   if (lines.length) {
     // 50ms ahead: a click on a line seeks to its exact stamp, and the time read
     // back can land a hair before it, which would mark the line above.
-    const now = (transport()?.getCurrentTime?.() ?? 0) + 0.05;
+    const time = transport()?.getCurrentTime?.() ?? 0;
+    const now = time + 0.05;
     const index = currentLineIndex(lines, now);
     if (index !== currentIndex) moveTo(index);
     fillWords(index, now);
+    // One transform, and only when playback has moved.
+    if (sync) setLanePlayhead(time);
   }
   frame = requestAnimationFrame(tick);
 }
@@ -881,6 +1556,7 @@ function moveTo(index) {
   }
   lineEls[currentIndex + 1]?.classList.remove("next");
   currentIndex = index;
+  if (sync) setLaneCurrent(index);
   lineEls[index + 1]?.classList.add("next");
   const line = lineEls[index];
   if (!line) return;
@@ -909,6 +1585,9 @@ function fillWords(index, now) {
 
 function setVisible(on) {
   visible = on;
+  // Sync lines works with the list in view; another view of the sidebar
+  // leaves it, and what it set is saved.
+  if (!on) closeSync(false);
   if (on) {
     loadForCurrentTrack();
     if (!frame) frame = requestAnimationFrame(tick);
@@ -925,10 +1604,12 @@ export function initLyrics() {
   bodyEl = document.getElementById("lyricsBody");
   if (!panel || !statusEl || !versionsEl || !bodyEl) return;
 
-  // An offset still waiting to be saved goes before the page does.
+  // An offset or a timing still waiting to be saved goes before the page does.
   window.addEventListener("pagehide", () => {
     flushSave();
   });
+  // Capture, on the window: ahead of the app's own keys (see onSyncKey).
+  window.addEventListener("keydown", onSyncKey, true);
   document.addEventListener("catalogviewchange", (e) => setVisible(e.detail?.view === "lyrics"));
   document.addEventListener("tracktags", (e) => {
     if (visible && nothingKnownFor && e.detail?.id === nothingKnownFor) loadForCurrentTrack();

@@ -579,10 +579,34 @@ LYRICS_ALIGN_MIN_HITS = 0.6
 # later or earlier: a copy of the right length can still be timed to another
 # cut (Green Day "Basket Case": the video's lines start 16 s after the copy's).
 LYRICS_ALIGN_EXACT_MIN_SHIFT_SEC = 1.0
+# How long deleting a job waits for its lyrics timing to stop and let go of
+# the vocals stem (the worker is terminated, then killed after 5 s).
+RETIME_DELETE_WAIT_SEC = 15
 # How far the Lyrics tab's Align panel may move a track's lyrics, either way
 # ("offset_sec" in lyrics.json, POST /api/jobs/{id}/lyrics/offset): a long
 # intro or a medley's later verse, and no further.
 LYRICS_OFFSET_MAX_SEC = 600
+# Lyrics timed line by line to the singing (app/pipeline/lyrics_retime.py).
+# The words Whisper heard in the vocals are kept beside lyrics.json in this
+# file, so timing them again costs no second pass.
+LYRICS_TRANSCRIPT_FILE = "lyrics_transcript.json"
+# The result is kept only when at least this share of the lyrics' syllables
+# was matched to heard words, and this share of the lines anchored where they
+# are sung. Measured on 58 songs in ten languages: every one timed well
+# matched 0.48 or more and anchored 0.52 or more of its lines; the timings
+# that must not be kept (a romanised Japanese copy, a remix's lyrics, German
+# transcribed as English, a transcription led astray by a prompt of the
+# lyrics) matched 0.00 to 0.26 and anchored 0.00 to 0.32.
+LYRICS_RETIME_MIN_MATCHED = 0.35
+LYRICS_RETIME_MIN_LINES_SHARE = 0.45
+# The alignment's size cap, lyric tokens times heard tokens: its back
+# pointers take two bytes a cell. A long Chinese song is about 1500 x 1500.
+LYRICS_RETIME_MAX_CELLS = 12_000_000
+# A manual timing (PUT .../lyrics/user-synced) has at most this many lines,
+# and it or a line-by-line timing at most this many characters: word stamps
+# add ten a word to lyrics of up to 100000.
+LYRICS_USER_SYNCED_MAX_LINES = 2000
+LYRICS_TIMED_MAX_CHARS = 400_000
 # Lyrics that lost their letters outside ASCII, mended from a reference that
 # has them (app/pipeline/lyrics_repair.py). A copy with no intact twin on
 # LRCLIB is checked against the audio only when it has at least this many

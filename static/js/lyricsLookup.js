@@ -64,6 +64,23 @@ function fromServerVersion(v) {
 }
 
 /**
+ * The server's timing of the lines fitted to the vocals, its "aligned" field
+ * ({ synced, method, matched, lines_matched, lines, at }), in the tab's shape;
+ * null when it holds no timed lines.
+ */
+export function alignedFrom(aligned) {
+  if (!aligned || typeof aligned.synced !== "string" || !aligned.synced.trim()) return null;
+  return {
+    synced: aligned.synced,
+    method: typeof aligned.method === "string" ? aligned.method : "",
+    matched: typeof aligned.matched === "number" ? aligned.matched : null,
+    linesMatched: Number(aligned.lines_matched) || 0,
+    lines: Number(aligned.lines) || 0,
+    at: aligned.at ?? null,
+  };
+}
+
+/**
  * The lyrics the server found for a track (GET /api/jobs/{id}/lyrics) as the
  * tab keeps them: { entry, others }, `others` being the LRCLIB versions to
  * offer. `entry` is null when the server kept none but has versions to offer
@@ -75,9 +92,24 @@ export function fromServerLyrics(data) {
   const others = (Array.isArray(data.others) ? data.others : [])
     .map(fromServerVersion)
     .filter((m) => m?.id && m.id !== found?.id);
-  // The user's alignment (the Align panel), on the kept version only.
+  // The user's alignment (the Align panel), on the kept version only, and its
+  // timing line by line: the user's own (Sync lines), and the server's fitted
+  // to the vocals. lyricsSync.js timingOf() says which is in effect.
   const offsetSec = clampOffset(data.offset_sec);
-  if (found) return { entry: { v: 1, ...found, ...(offsetSec ? { offsetSec } : {}) }, others };
+  const userSynced = typeof data.user_synced === "string" && data.user_synced.trim() ? data.user_synced : "";
+  const aligned = alignedFrom(data.aligned);
+  if (found) {
+    return {
+      entry: {
+        v: 1,
+        ...found,
+        ...(offsetSec ? { offsetSec } : {}),
+        ...(userSynced ? { userSynced } : {}),
+        ...(aligned ? { aligned } : {}),
+      },
+      others,
+    };
+  }
   return others.length ? { entry: null, others } : null;
 }
 

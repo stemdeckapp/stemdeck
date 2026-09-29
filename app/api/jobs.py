@@ -24,8 +24,10 @@ from app.core.config import (
     JOBS_DIR,
     LYRICS_LOOKUP_BUDGET_SEC,
     LYRICS_OFFSET_MAX_SEC,
+    LYRICS_TIMED_MAX_CHARS,
     MAX_PENDING_UPLOAD_JOBS,
     MAX_PENDING_URL_JOBS,
+    RETIME_DELETE_WAIT_SEC,
     STEM_NAMES,
     TIMEOUT_FETCH_TAGS,
     TIMEOUT_IDENTIFY_BACKFILL,
@@ -33,7 +35,7 @@ from app.core.config import (
     TIMEOUT_WORK_BACKFILL,
     ffprobe_executable,
 )
-from app.core.models import Job, _set
+from app.core.models import Job, JobCancelled, _set
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
@@ -60,6 +62,7 @@ from app.pipeline.identify import can_identify_title, identify_and_find_band
 from app.pipeline.lyrics_align import detect_offset
 from app.pipeline.lyrics_lookup import (
     _TEXT_MAX_CHARS,
+    NotTheseLyrics,
     build_query,
     candidates_path,
     copy_lyrics,
@@ -71,7 +74,20 @@ from app.pipeline.lyrics_lookup import (
     read_lyrics,
     saved_lyrics_belong,
     set_lyrics_offset,
+    set_user_synced,
 )
+from app.pipeline.lyrics_retime import (
+    RetimeFailed,
+    RetimeRun,
+    cancel_run,
+    claim_run,
+    current_run,
+    forget_run,
+    lyric_pairs,
+    retime_job,
+    wait_run_ended,
+)
+from app.pipeline.lyrics_retime import saved_view as saved_retime_view
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.vocal_split import split_vocals
 from app.pipeline.work_lookup import find_work, might_have_work
@@ -430,6 +446,13 @@ def cancel_job(job_id: str) -> dict:
         # split's own error path marks it failed and releases the lock.
         if job.vocal_split == "running":
             job.cancel_requested = True
+            proc = registry_get_proc(job_id)
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+        # A line-by-line timing of its lyrics (POST .../lyrics/retime) stops
+        # the same way: the run sees its own flag, never the job's, and
+        # leaves the lyrics as they were.
+        elif cancel_run(job_id):
             proc = registry_get_proc(job_id)
             if proc is not None and proc.poll() is None:
                 proc.terminate()
@@ -1193,16 +1216,25 @@ def _synced_lyrics(job_dir: Path) -> dict:
 _LYRICS_BODY_MAX_BYTES = 4 * _TEXT_MAX_CHARS + 1024
 
 
-async def _lyrics_body(request: Request, model: type[BaseModel], empty_ok: bool = False):
+# A manual timing's body: LYRICS_TIMED_MAX_CHARS of LRC, as UTF-8.
+_TIMED_BODY_MAX_BYTES = 4 * LYRICS_TIMED_MAX_CHARS + 1024
+
+
+async def _lyrics_body(
+    request: Request,
+    model: type[BaseModel],
+    empty_ok: bool = False,
+    max_bytes: int = _LYRICS_BODY_MAX_BYTES,
+):
     """A lyrics edit's JSON body as ``model``: None for no body at all when
     ``empty_ok``. 413 past _LYRICS_BODY_MAX_BYTES, else 422 for anything that
     is not the model, with NaN and Infinity refused while parsing (see
     _reject_non_finite) and nothing sent back of what was submitted."""
     declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > _LYRICS_BODY_MAX_BYTES:
+    if declared.isdigit() and int(declared) > max_bytes:
         raise HTTPException(status_code=413, detail="body too large")
     raw = await request.body()
-    if len(raw) > _LYRICS_BODY_MAX_BYTES:
+    if len(raw) > max_bytes:
         raise HTTPException(status_code=413, detail="body too large")
     if not raw.strip() and empty_ok:
         return None
@@ -1272,6 +1304,157 @@ async def align_lyrics_route(job_id: str, request: Request) -> dict:
             raise HTTPException(status_code=500, detail="could not save lyrics")
         shift = entry["offset_sec"]
     return {"confident": True, "offset_sec": shift}
+
+
+# Line-by-line timing runs in flight, held so the loop does not drop them.
+_retime_tasks: set[asyncio.Task] = set()
+
+
+def _retime_ready(job_dir: Path, lyrics: dict | None) -> None:
+    """Blocking: 404 without lyrics (kept, or given), 409 when they have no
+    lines to time (an instrumental) or there is no vocals stem to time them
+    to."""
+    if lyrics is None:
+        lyrics = read_lyrics(job_dir) if lyrics_path(job_dir).is_file() else None
+        if lyrics is None:
+            raise HTTPException(status_code=404, detail="no lyrics")
+    if not lyric_pairs(lyrics):
+        raise HTTPException(status_code=409, detail="lyrics have no lines")
+    vocals = (job_dir / "stems" / "vocals.wav").resolve()
+    if not vocals.is_relative_to(JOBS_DIR.resolve()) or not vocals.is_file():
+        raise HTTPException(status_code=409, detail="no vocals stem")
+
+
+async def _retime_task(job: Job, job_dir: Path, run: RetimeRun, lyrics: dict | None) -> None:
+    """One on-demand run: behind _pipeline_lock, so it never shares the GPU
+    with a separation, and stopped by a cancel or the job's deletion."""
+
+    def cancelled() -> bool:
+        return run.cancel.is_set() or registry_get(job.id) is not job
+
+    def report(share: float) -> None:
+        run.progress = share
+
+    try:
+        async with _pipeline_lock:
+            run.started = True
+            if cancelled():
+                raise JobCancelled()
+            outcome = await asyncio.to_thread(
+                retime_job, job, job_dir, cancelled=cancelled, report=report, lyrics=lyrics
+            )
+        run.outcome = outcome
+        run.state = outcome.state
+    except JobCancelled:
+        run.state = "idle"
+    except RetimeFailed as exc:
+        logger.info("[%s] lyrics not timed: %s", job.id, exc)
+        run.state = "failed"
+    except Exception:
+        logger.exception("[%s] lyrics timing failed", job.id)
+        run.state = "failed"
+    finally:
+        run.ended.set()
+
+
+class LyricsRetimeBody(BaseModel):
+    """Lyrics the browser keeps (found by the tab's own LRCLIB lookup), to
+    time without saving anything. Omitted for the lyrics the server keeps."""
+
+    synced: str | None = Field(default=None, max_length=_TEXT_MAX_CHARS)
+    plain: str | None = Field(default=None, max_length=_TEXT_MAX_CHARS)
+
+
+@router.post("/{job_id}/lyrics/retime")
+async def start_lyrics_retime(job_id: str, request: Request) -> JSONResponse:
+    """Time the track's lyrics line by line to its vocals
+    (app/pipeline/lyrics_retime.py), in the background: 202 with the run's
+    state, which GET .../lyrics/retime then follows.
+
+    Without a body, the lyrics the server keeps: the result is kept in
+    lyrics.json as "aligned" when it is good enough, and nothing changes
+    when it is not ("unsure"). With {"synced", "plain"}, lyrics the browser
+    keeps: the result comes back as "aligned" in GET's "done" answer and
+    nothing is saved but the transcript.
+
+    Runs behind the pipeline lock, after any import in progress, and takes a
+    transcription of the vocals the first time (about 30 s on a GPU, a few
+    minutes on a CPU; asked for here, it runs on either). One run at a time
+    per track: 409 while one is running. POST .../cancel stops it."""
+    job, job_dir = _lyrics_job(job_id)
+    body = await _lyrics_body(request, LyricsRetimeBody, empty_ok=True)
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail="job not ready")
+    lyrics = None
+    if body is not None and (body.synced or body.plain):
+        lyrics = {"synced": body.synced or "", "plain": body.plain or ""}
+    await asyncio.to_thread(_retime_ready, job_dir, lyrics)
+    run = claim_run(job_id)
+    if run is None:
+        raise HTTPException(status_code=409, detail="lyrics timing already running")
+    task = asyncio.create_task(_retime_task(job, job_dir, run, lyrics))
+    _retime_tasks.add(task)
+    task.add_done_callback(_retime_tasks.discard)
+    return JSONResponse(run.view(), status_code=202)
+
+
+@router.get("/{job_id}/lyrics/retime")
+def get_lyrics_retime(job_id: str) -> dict:
+    """Where the line-by-line timing of the track's lyrics stands:
+    {"state": "idle" | "running" | "done" | "failed" | "unsure"}, with
+    "progress" (0 to 1) while running and "matched" (the share of the
+    lyrics heard), "lines_matched" and "lines" once there is a result; for
+    lyrics the browser sent, "done" carries the timing itself, "aligned"."""
+    job, job_dir = _lyrics_job(job_id)
+    run = current_run(job_id)
+    if run is not None and (
+        run.state not in ("done", "idle")
+        or (run.outcome is not None and run.outcome.aligned is not None)
+    ):
+        return run.view()
+    entry = read_lyrics(job_dir) if lyrics_path(job_dir).is_file() else None
+    saved = saved_retime_view(entry)
+    if run is not None and run.state == "idle" and saved["state"] != "done":
+        return run.view()
+    return saved
+
+
+class UserSyncedBody(BaseModel):
+    """The user's own timing of the lyrics, from the sync editor: LRC whose
+    lines are the lyrics' own, one to one."""
+
+    synced: str = Field(min_length=1, max_length=LYRICS_TIMED_MAX_CHARS)
+
+
+@router.put("/{job_id}/lyrics/user-synced")
+async def put_user_synced(job_id: str, request: Request) -> dict:
+    """Keep the user's own timing of the track's lyrics, shown before any
+    other (see app/pipeline/lyrics_retime.py). 422 when it is not LRC, its
+    stamps go back in time, or its lines are not exactly the lyrics' own:
+    it can time them, never change them."""
+    job, job_dir = _lyrics_job(job_id)
+    body = await _lyrics_body(request, UserSyncedBody, max_bytes=_TIMED_BODY_MAX_BYTES)
+    try:
+        entry = await asyncio.to_thread(set_user_synced, job, job_dir, body.synced)
+    except NotTheseLyrics as exc:
+        raise HTTPException(status_code=422, detail="not a timing of these lyrics") from exc
+    if entry is None:
+        if not lyrics_path(job_dir).is_file():
+            raise HTTPException(status_code=404, detail="no lyrics")
+        raise HTTPException(status_code=500, detail="could not save lyrics")
+    return {"user_synced": entry["user_synced"]}
+
+
+@router.delete("/{job_id}/lyrics/user-synced")
+async def delete_user_synced(job_id: str) -> dict:
+    """Drop the user's own timing of the track's lyrics. Idempotent."""
+    job, job_dir = _lyrics_job(job_id)
+    if not lyrics_path(job_dir).is_file():
+        raise HTTPException(status_code=404, detail="no lyrics")
+    entry = await asyncio.to_thread(set_user_synced, job, job_dir, None)
+    if entry is None:
+        raise HTTPException(status_code=500, detail="could not save lyrics")
+    return {"user_synced": None}
 
 
 # Upper bound on an edited grid. A 20-minute track at 300 BPM is ~6000 beats;
@@ -1517,6 +1700,16 @@ def delete_job(job_id: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in ("done", "error", "cancelled"):
         raise HTTPException(status_code=409, detail="job is still running")
+    # A timing of its lyrics in flight stops rather than write into a
+    # directory being removed (it also checks the job is still registered).
+    if cancel_run(job_id) and job.vocal_split != "running":
+        proc = registry_get_proc(job_id)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        # The worker may still have the vocals open while it stops.
+        if not wait_run_ended(job_id, RETIME_DELETE_WAIT_SEC):
+            logger.warning("[%s] lyrics timing still stopping; removing files anyway", job_id)
+    forget_run(job_id)
     removed = _rmtree_job(job_id)
     # Recorded whether or not the files went away. The user asked for this job
     # to be gone; without the record, a directory that outlived the delete is

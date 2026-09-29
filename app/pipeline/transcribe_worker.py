@@ -49,7 +49,33 @@ def _parser() -> argparse.ArgumentParser:
     # accents (transcribe.py), which only a language written with them can.
     parser.add_argument("--languages", default="")
     parser.add_argument("--min-language-probability", type=float, default=0.0)
+    # Known lyrics being timed (lyrics_retime.py): the language they are
+    # in, which skips detection.
+    parser.add_argument("--language", default="")
+    # Only these stretches of the stem ("start:end,start:end", seconds), each
+    # heard on its own: the lines a first pass did not find, heard again
+    # without the rest of the song around them. Times stay the stem's.
+    parser.add_argument("--clips", default="")
     return parser
+
+
+# At most this many clips, each at most this long: a clip is a few lines.
+_MAX_CLIPS = 32
+_MAX_CLIP_SEC = 120.0
+
+
+def parse_clips(text: str) -> list[tuple[float, float]]:
+    """The --clips argument as (start, end) seconds, in order, each within
+    _MAX_CLIP_SEC; malformed pieces are left out."""
+    clips: list[tuple[float, float]] = []
+    for piece in text.split(",")[:_MAX_CLIPS]:
+        try:
+            a, b = (float(x) for x in piece.split(":"))
+        except ValueError:
+            continue
+        if math.isfinite(a) and math.isfinite(b) and 0 <= a < b:
+            clips.append((a, min(b, a + _MAX_CLIP_SEC)))
+    return sorted(clips)
 
 
 def _phase(name: str) -> None:
@@ -156,7 +182,10 @@ def transcribe(args: argparse.Namespace) -> dict:
         _phase("load")
     model = load_model(whisper, torch, model_name, device, args.download_root)
 
-    if model.is_multilingual:
+    forced = args.language if model.is_multilingual else ""
+    if forced:
+        language, probs = forced, {forced: 1.0}
+    elif model.is_multilingual:
         start, end = loudest_window(audio)
         mel = whisper.log_mel_spectrogram(
             whisper.pad_or_trim(audio[start:end]), n_mels=model.dims.n_mels
@@ -183,28 +212,40 @@ def transcribe(args: argparse.Namespace) -> dict:
         }
 
     _phase("transcribe")
-    result = model.transcribe(
-        audio,
-        language=language,
-        word_timestamps=True,
-        fp16=device == "cuda",
-        # Progress bars (to stderr), but not every decoded line.
-        verbose=False,
-        # Carrying the previous window's text forward is what makes Whisper
-        # repeat a line forever over a long instrumental; lyrics lose little
-        # without it.
-        condition_on_previous_text=False,
-        hallucination_silence_threshold=args.silence_sec,
-    )
+
+    def hear(samples):
+        return model.transcribe(
+            samples,
+            language=language,
+            word_timestamps=True,
+            fp16=device == "cuda",
+            # Progress bars (to stderr), but not every decoded line.
+            verbose=False,
+            # Carrying the previous window's text forward is what makes
+            # Whisper repeat a line forever over a long instrumental; lyrics
+            # lose little without it.
+            condition_on_previous_text=False,
+            hallucination_silence_threshold=args.silence_sec,
+        )
+
+    clips = parse_clips(args.clips)
+    heard: list[tuple[float, dict]] = []
+    if clips:
+        for a, b in clips:
+            piece = audio[int(a * _SAMPLE_RATE) : int(b * _SAMPLE_RATE)]
+            if piece.size >= _SAMPLE_RATE // 2:
+                heard.extend((a, seg) for seg in hear(piece).get("segments", []))
+    else:
+        heard = [(0.0, seg) for seg in hear(audio).get("segments", [])]
     peak = None
     if device == "cuda":
         peak = int(torch.cuda.max_memory_allocated() // (1024 * 1024))
     segments = []
-    for seg in result.get("segments", []):
+    for offset, seg in heard:
         words = [
             {
-                "start": float(w["start"]),
-                "end": float(w["end"]),
+                "start": float(w["start"]) + offset,
+                "end": float(w["end"]) + offset,
                 "word": str(w["word"]),
                 "probability": float(w.get("probability", 0.0)),
             }
@@ -212,8 +253,8 @@ def transcribe(args: argparse.Namespace) -> dict:
         ]
         segments.append(
             {
-                "start": float(seg["start"]),
-                "end": float(seg["end"]),
+                "start": float(seg["start"]) + offset,
+                "end": float(seg["end"]) + offset,
                 "text": str(seg.get("text", "")),
                 "words": words,
                 "no_speech_prob": float(seg.get("no_speech_prob", 0.0)),

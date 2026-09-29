@@ -38,6 +38,7 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ from app.core.registry import set_proc
 from app.core.settings import lyrics_mending_enabled, transcribe_lyrics_enabled
 from app.pipeline.lyrics_lookup import lyrics_path, read_lyrics, write_lyrics
 from app.pipeline.lyrics_repair import looks_stripped, mend_from_transcript, words_of
+from app.pipeline.lyrics_retime import save_transcript
 
 logger = logging.getLogger("stemdeck.transcribe")
 
@@ -176,10 +178,26 @@ def _stage_for(phase: str, pct: int | None) -> str:
     return _STAGE
 
 
-def _run_worker(job: Job, cmd: list[str]) -> dict[str, Any] | None:
+def _run_worker(
+    job: Job,
+    cmd: list[str],
+    *,
+    cancelled: Callable[[], bool] | None = None,
+    report: Callable[[str, int | None], None] | None = None,
+) -> dict[str, Any] | None:
     """Run the worker with cancellation, a total timeout and stall detection.
     Returns its JSON answer, or None when it failed, timed out or stalled.
-    Raises JobCancelled when the job was cancelled meanwhile."""
+    Raises JobCancelled when the job was cancelled meanwhile.
+
+    ``cancelled`` says when to stop (by default, the job's own cancel), and
+    ``report`` hears each phase and percentage (by default, the job's stage
+    text shows them): a run on a finished job (lyrics_retime.py) keeps its own
+    cancel and progress and leaves the job's stage alone."""
+    if cancelled is None:
+
+        def cancelled() -> bool:
+            return job.cancel_requested
+
     env = os.environ.copy()
     # The worker hard-exits when this process disappears, so a Force Quit
     # cannot leave it holding the GPU (#519).
@@ -235,21 +253,27 @@ def _run_worker(job: Job, cmd: list[str]) -> dict[str, Any] | None:
         reader.start()
 
     started = time.monotonic()
-    shown = _STAGE
+    shown: Any = _STAGE if report is None else None
     failed = None
     set_proc(job.id, proc)
     try:
         while proc.poll() is None:
-            if job.cancel_requested:
+            if cancelled():
                 _terminate(proc)
                 raise JobCancelled()
             now = time.monotonic()
             with lock:
                 silent_for = now - last_output[0]
-                stage = _stage_for(progress[0], progress[1])
-            if stage != shown:
-                shown = stage
-                _set(job, stage=stage)
+                phase, pct = progress[0], progress[1]
+            if report is not None:
+                if (phase, pct) != shown:
+                    shown = (phase, pct)
+                    report(phase, pct)
+            else:
+                stage = _stage_for(phase, pct)
+                if stage != shown:
+                    shown = stage
+                    _set(job, stage=stage)
             if now - started > TIMEOUT_TRANSCRIBE:
                 failed = f"timed out after {TIMEOUT_TRANSCRIBE}s"
                 _terminate(proc)
@@ -264,7 +288,7 @@ def _run_worker(job: Job, cmd: list[str]) -> dict[str, Any] | None:
         for reader in readers:
             reader.join(timeout=2)
 
-    if job.cancel_requested:
+    if cancelled():
         raise JobCancelled()
     if failed is None and proc.returncode != 0:
         failed = f"exit {proc.returncode}"
@@ -551,6 +575,10 @@ def mend_lyrics(job: Job, job_dir: Path) -> bool:
     result = _run_worker(job, _spawn_worker_cmd(vocals, _device(job)) + _language_gate())
     if result is None:
         return False
+    if not result.get("skipped"):
+        # The same words time the lyrics line by line (lyrics_retime.py)
+        # without a second pass.
+        save_transcript(job_dir, result)
     language = result.get("language")
     probability = _number(result.get("language_probability")) or 0.0
     if (

@@ -299,13 +299,15 @@ def test_the_shows_name_is_held_to_the_tracks_length():
     assert 20 in ids(found["others"])
 
 
-def test_the_name_alone_is_kept_only_within_three_seconds():
+def test_the_name_alone_keeps_the_artists_song_timed_by_its_length():
+    """Only the artist's own song is taken from the name search: within three
+    seconds its timing is the track's, else it is timed from the vocals."""
     lrclib = Lrclib(searches={"q:Metropolis": [row(40, 575.5), row(41, 600)]})
-    answer = lookup_lyrics(query(), fetch_json=lrclib)
-    assert answer.lyrics is None
-    assert ids(answer.others) == [40, 41], "kept to offer instead"
+    found = kept(query(), fetch_json=lrclib)
+    assert (found["lrclib_id"], found["timing"]) == (40, "unverified")
     lrclib = Lrclib(searches={"q:Metropolis": [row(40, 574.9), row(41, 600)]})
-    assert kept(query(), fetch_json=lrclib)["lrclib_id"] == 40
+    found = kept(query(), fetch_json=lrclib)
+    assert (found["lrclib_id"], found["timing"]) == (40, "exact")
 
 
 def test_the_name_alone_is_never_asked_without_the_tracks_length():
@@ -431,10 +433,18 @@ def test_the_shows_song_in_another_length_is_kept_too():
     assert "Wicked (Original Broadway Cast Recording)" not in lrclib.searched
 
 
-def test_the_name_alone_in_another_length_is_never_kept():
+def test_the_artists_song_the_name_alone_finds_in_another_length_is_timed_from_the_vocals():
+    """LRCLIB's artist search can miss a name its name search holds: Natalia
+    Kukulska's "W biegu", asked for as "NataliaKukulska"."""
     lrclib = Lrclib(searches={"q:Metropolis": [row(40, 600)]})
+    found = kept(query(), fetch_json=lrclib)
+    assert (found["lrclib_id"], found["timing"]) == (40, "unverified")
+
+
+def test_another_artists_song_the_name_alone_finds_is_never_kept():
+    lrclib = Lrclib(searches={"q:Metropolis": [row(40, 572, artist="Someone Else")]})
     answer = lookup_lyrics(query(), fetch_json=lrclib)
-    assert answer.lyrics is None and ids(answer.others) == [40]
+    assert answer.lyrics is None and answer.others == []
 
 
 def test_an_exact_match_of_another_length_is_not_preferred():
@@ -582,7 +592,9 @@ def test_a_damaged_file_is_not_lyrics(damage):
 
 def test_nothing_kept_leaves_the_versions_and_when_lrclib_was_asked(tmp_path: Path):
     job = Job(id="abcdefabc312")
-    answer = lookup_lyrics(query(), fetch_json=Lrclib(searches={"q:Metropolis": [row(1, 769)]}))
+    # Versions to offer and nothing kept, as a lookup that ran out of time
+    # with only those in hand answers.
+    answer = ll.LookupAnswer(None, ll.rank_matches([row(1, 769)], 572))
     before = time.time()
     assert keep_answer(job, tmp_path, answer) is False
     data = json.loads((tmp_path / "lyrics_candidates.json").read_text(encoding="utf-8"))
@@ -693,11 +705,13 @@ def test_an_answer_too_late_is_dropped(tmp_path: Path, monkeypatch):
 
 
 def test_a_lookup_that_keeps_nothing_leaves_the_candidates(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(ll, "_fetch_json", Lrclib(searches={"q:Metropolis": [row(1, 769)]}))
+    # LRCLIB answers only with another artist's song of that name.
+    other = row(1, 769, artist="Someone Else")
+    monkeypatch.setattr(ll, "_fetch_json", Lrclib(searches={"q:Metropolis": [other]}))
     job = _tagged_job("abcdefabc328")
     LyricsLookup.start(job, tmp_path).finish(job, tmp_path, 5)
     assert not (tmp_path / "lyrics.json").exists() and job.has_lyrics is False
-    assert ids(read_candidates(tmp_path)["others"]) == [1]
+    assert read_candidates(tmp_path)["others"] == []
 
 
 def test_nothing_to_look_for_starts_nothing(tmp_path: Path, monkeypatch):

@@ -767,6 +767,9 @@ export function syncRulerScroll() {
   // document at module scope and that test installs its stub afterwards.
   const sectionsTrack = document.getElementById("daw-sections-track");
   if (sectionsTrack) sectionsTrack.style.transform = shift;
+  // The lyrics lane (lyricsLane.js), the same kind of strip again.
+  const lyricsTrack = document.getElementById("daw-lyrics-track");
+  if (lyricsTrack) lyricsTrack.style.transform = shift;
 }
 
 export function applyWaveZoom() {

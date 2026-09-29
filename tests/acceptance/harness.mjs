@@ -361,3 +361,56 @@ if ($h -eq [IntPtr]::Zero) { exit 3 }
   const out = spawnSync("powershell.exe", ["-NoProfile", "-Command", script], { encoding: "utf8" });
   return out.status === 0;
 }
+
+/**
+ * Drag with the real Windows cursor (desktop only): SendInput through the
+ * app's window, so WebView2 gets the same input a hand gives. `points` are
+ * page (CSS) pixels, the first where the button goes down, the last where it
+ * comes up. The cursor moves on the tester's screen while this runs. False
+ * when there is no app window to drag in.
+ */
+export function osDrag(points, dpr = 1) {
+  const state = readState();
+  if (state?.mode !== "desktop" || !state.pid || points.length < 2) return false;
+  const path = points.map(([x, y]) => `@(${Math.round(x * dpr)},${Math.round(y * dpr)})`).join(",");
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class Mouse {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+}
+"@
+[Mouse]::SetProcessDPIAware() | Out-Null
+$h = (Get-Process -Id ${state.pid}).MainWindowHandle
+if ($h -eq [IntPtr]::Zero) { exit 3 }
+# An Alt tap lets this process bring the window to the front.
+[Mouse]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [Mouse]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+[Mouse]::SetForegroundWindow($h) | Out-Null
+Start-Sleep -Milliseconds 300
+$o = New-Object Mouse+POINT
+[Mouse]::ClientToScreen($h, [ref]$o) | Out-Null
+$pts = @(${path})
+[Mouse]::SetCursorPos($o.X + $pts[0][0], $o.Y + $pts[0][1]) | Out-Null
+Start-Sleep -Milliseconds 150
+[Mouse]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 150
+for ($i = 1; $i -lt $pts.Count; $i++) {
+  $a = $pts[$i - 1]; $b = $pts[$i]
+  for ($s = 1; $s -le 8; $s++) {
+    [Mouse]::SetCursorPos($o.X + $a[0] + ($b[0] - $a[0]) * $s / 8, $o.Y + $a[1] + ($b[1] - $a[1]) * $s / 8) | Out-Null
+    Start-Sleep -Milliseconds 25
+  }
+}
+Start-Sleep -Milliseconds 150
+[Mouse]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+`;
+  const out = spawnSync("powershell.exe", ["-NoProfile", "-Command", script], { encoding: "utf8" });
+  return out.status === 0;
+}

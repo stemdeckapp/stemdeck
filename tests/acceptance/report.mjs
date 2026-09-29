@@ -71,6 +71,8 @@ export default class AcceptanceReporter {
   }
 
   onEnd(fullResult) {
+    // A dry listing (--list) runs nothing: the last run's report stays.
+    if (process.argv.includes("--list")) return;
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
     const state = readState() || {};
     const rows = CHECKS.map((c) => ({

@@ -34,6 +34,7 @@ from app.pipeline.download import download
 from app.pipeline.errors import classify_failure
 from app.pipeline.identify import IdentifyLookup, release_source
 from app.pipeline.lyrics_lookup import LyricsLookup
+from app.pipeline.lyrics_retime import retime_after_separation
 from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
 from app.pipeline.transcribe import transcribe_lyrics
@@ -325,6 +326,12 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     mark = time.monotonic()
     transcribe_lyrics(job, job_dir)
     _lap(job, "transcribe", mark)
+    # LRCLIB lyrics whose timing nothing confirmed, timed line by line to the
+    # vocals (lyrics_retime.py): after the above, whose transcript it reuses.
+    # Never raises but for a cancel.
+    mark = time.monotonic()
+    retime_after_separation(job, job_dir)
+    _lap(job, "retime", mark)
 
 
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:

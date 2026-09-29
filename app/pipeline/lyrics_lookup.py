@@ -94,6 +94,7 @@ from app.core.models import Job, _set, clean_identity
 from app.pipeline.artist_lookup import _ssl_context, artist_name_key
 from app.pipeline.lyrics_align import align_lyrics
 from app.pipeline.lyrics_repair import restore_letters, words_of
+from app.pipeline.lyrics_retime import clean_aligned, clean_user_synced, lyric_line_texts
 from app.pipeline.name_aliases import artist_aliases, fold, has_cjk, name_key, name_weight
 from app.pipeline.title_parse import TitleReading, coverage, resolvable, song_key, work_hint
 
@@ -919,8 +920,14 @@ def lookup_lyrics(
                     break
         if chosen is None and duration and names:
             # (c) The name alone, which answers with anybody's song of that
-            # name: only one by a name the track is known by is kept.
-            rows = held(search({"q": query.track}))
+            # name: only one by a name the track is known by is kept. A
+            # version of another length is still this artist's song, kept to
+            # be timed from the vocals as one the artist search found would be
+            # (LRCLIB's artist search can miss a name it holds under the name
+            # search).
+            rows = search({"q": query.track})
+            song.extend(rows)
+            rows = held(rows)
             chosen = rows[0] if rows else None
         if chosen is None and query.artist:
             # (d) The artist's other names. First what the searches above
@@ -1093,6 +1100,17 @@ def clean_lyrics(value: Any) -> dict[str, Any] | None:
     offset = clean_offset(value.get("offset_sec"))
     if offset is not None:
         entry["offset_sec"] = offset
+    # Timing made for these lines by lyrics_retime.py, and the user's own
+    # from the sync editor: each dropped when it is malformed or is not of
+    # these lines any more (another version, letters mended since).
+    if "aligned" in value or "user_synced" in value:
+        lines = lyric_line_texts(entry)
+        aligned = clean_aligned(value.get("aligned"), lines)
+        if aligned is not None:
+            entry["aligned"] = aligned
+        user = clean_user_synced(value.get("user_synced"), lines)
+        if user is not None:
+            entry["user_synced"] = user
     others = value.get("others")
     cleaned = [_clean_version(o) for o in (others if isinstance(others, list) else [])]
     entry["others"] = [o for o in cleaned if o is not None][:LYRICS_OTHERS_MAX]
@@ -1218,6 +1236,30 @@ def set_lyrics_offset(job: Job, job_dir: Path, offset: float) -> dict[str, Any] 
         if entry is None or not entry["synced"]:
             return None
         entry = {**entry, "offset_sec": cleaned}
+        return entry if write_lyrics(job, job_dir, entry) else None
+
+
+class NotTheseLyrics(ValueError):
+    """A manual timing whose lines are not the lyrics' own, or not LRC."""
+
+
+def set_user_synced(job: Job, job_dir: Path, synced: str | None) -> dict[str, Any] | None:
+    """Keep ``synced`` as the user's own timing of the job's lyrics (the sync
+    editor), or drop it with None, and return the entry as written. None when
+    the job has no lyrics or they could not be written. Raises
+    NotTheseLyrics when ``synced`` is not a timing of exactly their lines
+    (lyrics_retime.clean_user_synced): nothing else can be put in front of
+    the page this way."""
+    with _OFFSET_LOCK:
+        entry = read_lyrics(job_dir)
+        if entry is None:
+            return None
+        entry = {k: v for k, v in entry.items() if k != "user_synced"}
+        if synced is not None:
+            cleaned = clean_user_synced(synced, lyric_line_texts(entry))
+            if cleaned is None:
+                raise NotTheseLyrics("not a timing of these lyrics")
+            entry["user_synced"] = cleaned
         return entry if write_lyrics(job, job_dir, entry) else None
 
 

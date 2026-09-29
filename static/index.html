@@ -579,6 +579,23 @@
             </div>
           </div>
 
+          <!-- Lyrics lane: one marker per lyric line, where it starts. Shown
+               only while the Lyrics tab's Sync lines mode is on; lyricsLane.js
+               fills it. Its track is the zoomed waveform's width and slides
+               with it, as the sections ribbon's does. -->
+          <div class="daw-lyrics-ribbon hidden" id="lyricsLane">
+            <div class="daw-mixer-label daw-lyrics-header">
+              <span class="daw-lyrics-title-group">
+                <span class="daw-label-title" data-i18n="lyrics.sync.laneTitle">Lyrics</span>
+                <span class="uplabel daw-label-sub" data-i18n="lyrics.sync.laneHint">Drag a line · ← → nudge</span>
+              </span>
+              <button class="lyrics-lane-done" id="lyricsLaneDone" type="button" data-i18n="lyrics.sync.done" title="Leave Sync lines. Changes are saved as you make them." data-i18n-title="lyrics.sync.doneTitle">Done</button>
+            </div>
+            <div class="daw-lyrics-area">
+              <div class="daw-lyrics-track" id="daw-lyrics-track"></div>
+            </div>
+          </div>
+
           <!-- Waveform header / ruler -->
           <div class="daw-wave-header">
             <div class="daw-wave-label">

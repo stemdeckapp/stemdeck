@@ -588,3 +588,68 @@ export async function spyOnInvoke(page) {
     return window.__TAURI__.core.invoke !== window.__acceptance.original;
   }, passThrough);
 }
+
+// ─── Lyrics timing ──────────────────────────────────────────────────────────
+
+/**
+ * An LRC's lines as { time, text, words }: `text` without its word stamps,
+ * `words` the times of its enhanced-LRC word stamps (<mm:ss.xx>), in order.
+ * Lines with no words (a stamp alone marks a pause) come back with text "".
+ */
+export function lrcLines(lrc) {
+  const out = [];
+  for (const raw of String(lrc || "").split(/\r?\n/)) {
+    const m = /^\s*\[(\d+):(\d+(?:\.\d+)?)\](.*)$/.exec(raw);
+    if (!m) continue;
+    const rest = m[3];
+    const words = [...rest.matchAll(/<(\d+):(\d+(?:\.\d+)?)>/g)].map((w) => Number(w[1]) * 60 + Number(w[2]));
+    const text = rest.replace(/<\d+:\d+(?:\.\d+)?>/g, "").trim();
+    out.push({ time: Number(m[1]) * 60 + Number(m[2]), text, words });
+  }
+  return out;
+}
+
+/** Seconds from the Sync lines readout, "m:ss.cc" (lyricsLane.js formatClock). */
+export function clockSeconds(text) {
+  const m = /^(\d+):(\d{2})\.(\d{2})$/.exec(String(text || "").trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) + Number(m[3]) / 100 : NaN;
+}
+
+/**
+ * Where the voice starts in the vocals stem, from its envelope as the app
+ * serves it (GET /api/jobs/{id}/vocal-envelope: { hop, db }): the rise of the
+ * level over 120 ms, where the voice is singing, as in
+ * app/pipeline/lyrics_align.py onset_strength. Written again here, not
+ * called, so the check does not grade the code with itself: an onset is a
+ * rise of 6 dB or more (_HIT_RISE_DB) within 20 dB of the stem's loud parts.
+ *
+ * Returns near(t, within): whether the voice rises within `within` s of t.
+ */
+export async function voiceOnsets(jobId) {
+  const { hop, db } = await api(`/api/jobs/${encodeURIComponent(jobId)}/vocal-envelope`);
+  const levels = (db || []).map(Number);
+  const n = levels.length;
+  const strength = new Float64Array(n);
+  if (n > 3 && hop > 0) {
+    // numpy's percentile, linear between neighbours.
+    const sorted = [...levels].sort((a, b) => a - b);
+    const pos = (n - 1) * 0.95;
+    const lo = Math.floor(pos);
+    const loud = sorted[lo] + (sorted[Math.min(n - 1, lo + 1)] - sorted[lo]) * (pos - lo);
+    if (loud >= -45) {
+      const floor = Math.max(loud - 20, -50);
+      // np.convolve(levels, ones(3)/3, "same"): zeros past the ends.
+      const smooth = levels.map((_, i) => ((levels[i - 1] ?? 0) + levels[i] + (levels[i + 1] ?? 0)) / 3);
+      for (let i = 3; i < n; i++) {
+        if (smooth[i] < floor) continue;
+        strength[i] = Math.max(0, smooth[i] - smooth[i - 3]);
+      }
+    }
+  }
+  const frame = (t) => Math.min(Math.max(0, Math.round(t / hop)), Math.max(0, n - 1));
+  const near = (t, within) => {
+    for (let i = frame(t - within); i <= frame(t + within); i++) if (strength[i] >= 6) return true;
+    return false;
+  };
+  return { hop, frames: n, near };
+}

@@ -22,6 +22,7 @@ import {
   PACKAGE_DIR,
   connect,
   launchApp,
+  osDrag,
   readState,
   stopRecordedApp,
   writeState,
@@ -33,10 +34,12 @@ import {
   aboutOutline,
   api,
   closeAbout,
+  clockSeconds,
   closeSettings,
   importFile,
   importLink,
   job,
+  lrcLines,
   lyricsState,
   makeAudio,
   note,
@@ -57,6 +60,7 @@ import {
   songJob,
   spyOnInvoke,
   tidy,
+  voiceOnsets,
   waitForJob,
   watchNetwork,
   wideWindow,
@@ -795,6 +799,87 @@ test(title("L2"), async ({ app }, testInfo) => {
   partly(testInfo, "Whether any correct word was broken by the repair needs a Polish reader: the program only counted the five words.");
 });
 
+// ─── Lyrics timed line by line ──────────────────────────────────────────────
+
+/**
+ * A track's lyrics as the server keeps them, and the timing in effect, first
+ * present wins (lyricsSync.js timingOf): "user" (Sync lines), "aligned"
+ * (fitted line by line to the vocals) or "offset" (their own at the Align
+ * offset). `sung` is the lines with words.
+ */
+async function keptTiming(id) {
+  const entry = await api(`/api/jobs/${id}/lyrics`);
+  let kind = "offset";
+  let lines = lrcLines(entry.synced).map((l) => ({ ...l, time: l.time + (entry.offset_sec || 0) }));
+  if (entry.user_synced) {
+    kind = "user";
+    lines = lrcLines(entry.user_synced);
+  } else if (entry.aligned?.synced) {
+    kind = "aligned";
+    lines = lrcLines(entry.aligned.synced);
+  }
+  return { entry, kind, lines, sung: lines.filter((l) => l.text) };
+}
+
+/** The first sung line whose words include `words`, folded for case and accents. */
+function lineWith(lines, words) {
+  const fold = (s) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ");
+  return lines.find((l) => fold(l.text).includes(fold(words)));
+}
+
+/** Click the list's line holding `words` and read where the playhead went. */
+async function clickLineAt(page, words) {
+  const row = page.locator("#lyricsBody .lyrics-line", { hasText: words }).first();
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
+  await page.waitForTimeout(400);
+  return seconds(await page.locator("#t-time").textContent());
+}
+
+// Steps: import Natalia Kukulska, W biegu; wait for the import to finish
+// (it times LRCLIB's lyrics to the vocals line by line); open Lyrics, click
+// "Znowu to samo". Expect: the lines start where she sings them; "Znowu to
+// samo" starts near 0:24, not at LRCLIB's 0:50.
+//
+// Measured against the vocals stem's own envelope (GET .../vocal-envelope),
+// with the onset rule written again in helpers.mjs voiceOnsets, not the
+// app's: at least 85% of the sung lines start within 0.5 s of a rise of the
+// voice.
+test(title("L5"), async ({ app }, testInfo) => {
+  const { page } = app;
+  await wideWindow(page);
+  const id = await trackFor(page, "polish");
+  const { entry, kind, lines, sung } = await keptTiming(id);
+  const aligned = entry.aligned;
+  note(testInfo, `Lyrics from ${entry.source}, timing "${entry.timing}"; in effect: ${kind}`
+    + (aligned ? `; fitted to the vocals: ${Math.round(aligned.matched * 100)}% heard, ${aligned.lines_matched} of ${aligned.lines} lines found.` : "; nothing fitted to the vocals."));
+  expect(kind, `the lyrics carry a timing line by line from the vocals (source ${entry.source}, timing ${entry.timing})`).toBe("aligned");
+  expect(sung.length, "sung lines").toBeGreaterThan(8);
+
+  const voice = await voiceOnsets(id);
+  expect(voice.frames, "a vocals envelope").toBeGreaterThan(100);
+  const off = sung.filter((l) => !voice.near(l.time, 0.5));
+  const share = 1 - off.length / sung.length;
+  note(testInfo, `${sung.length - off.length} of ${sung.length} line starts (${Math.round(share * 100)}%) within 0.5 s of a rise of the voice`
+    + (off.length ? `; not: ${off.slice(0, 6).map((l) => `${l.time.toFixed(2)} s "${l.text.slice(0, 24)}"`).join(", ")}` : "") + ".");
+  expect(share, "line starts on the singing").toBeGreaterThanOrEqual(0.85);
+
+  const own = lineWith(lrcLines(entry.synced), "Znowu to samo");
+  const znowu = lineWith(lines, "Znowu to samo");
+  expect(znowu, `a line "Znowu to samo" (first lines: ${sung.slice(0, 4).map((l) => l.text).join(" / ")})`).toBeTruthy();
+  note(testInfo, `"Znowu to samo" starts at ${znowu.time.toFixed(2)} s; LRCLIB's copy has it at ${own ? `${own.time.toFixed(2)} s` : "no such line"}.`);
+  expect(Math.abs(znowu.time - 24), "Znowu to samo near 0:24").toBeLessThanOrEqual(1.5);
+
+  // The page shows the same timing: a click on the line plays from there.
+  await openTrack(page, id);
+  await openLyrics(page);
+  const at = await clickLineAt(page, "Znowu to samo");
+  note(testInfo, `A click on the line put the playhead at ${at} s.`);
+  expect(Math.abs(at - Math.floor(znowu.time)), "the playhead went to the line's start").toBeLessThanOrEqual(1);
+  await shot(page, testInfo, "lyrics");
+  partly(testInfo, "Whether each line lands with her voice is for ears: the program measured the line starts against the vocals' rises and one line's place.");
+});
+
 // ─── Local files ────────────────────────────────────────────────────────────
 
 // Steps: upload a local MP3 and open it; narrow the window until the card's
@@ -891,7 +976,19 @@ test(title("V2"), async ({ app }, testInfo) => {
   await page.mouse.up();
   await page.waitForTimeout(500);
   let now = await order();
+  let how = "the DevTools mouse";
   if (JSON.stringify(now) === JSON.stringify(was)) {
+    // WebView2 leaves a DevTools mouse drag undelivered: the real cursor.
+    const dpr = await page.evaluate(() => devicePixelRatio);
+    const from = [grip.x + grip.width / 2, grip.y + grip.height / 2];
+    if (osDrag([from, [from[0], from[1] + 6], [to.x, to.y - 12], [to.x, to.y]], dpr)) {
+      await page.waitForTimeout(800);
+      now = await order();
+      how = "the Windows cursor";
+    }
+  }
+  if (JSON.stringify(now) === JSON.stringify(was)) {
+    how = "DOM drag events";
     // WebView2 did not deliver the mouse drag over the DevTools protocol, so
     // the same gesture is replayed as the drag events the library listens
     // to, at the same point on the Unsorted row.
@@ -910,7 +1007,7 @@ test(title("V2"), async ({ app }, testInfo) => {
     now = await order();
     partly(testInfo, "The drag was replayed as DOM drag events (the WebView2 does not take a mouse drag over the DevTools protocol); a hand drag in the window is the remaining check.");
   }
-  note(testInfo, `Top-level folders before ${was.join(", ")}; after ${now.join(", ")}.`);
+  note(testInfo, `Dragged with ${how}. Top-level folders before ${was.join(", ")}; after ${now.join(", ")}.`);
   const inside = await page.evaluate((id) => Boolean(document.querySelector('.folder[data-id="f-unsorted"] .folder[data-id="' + id + '"]')), mineId);
   expect(inside, "the folder did not go inside Unsorted").toBe(false);
   expect(now.indexOf(mineId), "it moved to just before Unsorted").toBe(now.indexOf("f-unsorted") - 1);
@@ -975,6 +1072,56 @@ test(title("L3"), async ({ app }, testInfo) => {
   await shot(page, testInfo, "lyrics");
 });
 
+// Steps: import Green Day, Basket Case (the video); wait for the import to
+// finish; open Lyrics and play from the first line. Expect: the lines are
+// timed one by one to the video, "Do you have the time" near 0:16, and each
+// word lights as it is sung.
+//
+// Runs before L4, whose Auto-detect would move the lyrics' own timing: this
+// reads what the import left.
+test(title("L6"), async ({ app }, testInfo) => {
+  const { page } = app;
+  await wideWindow(page);
+  const id = await trackFor(page, "basketCase");
+  const { entry, kind, sung } = await keptTiming(id);
+  const aligned = entry.aligned;
+  note(testInfo, `Lyrics from ${entry.source}, timing "${entry.timing}"; in effect: ${kind}`
+    + (aligned ? `; fitted to the vocals: ${Math.round(aligned.matched * 100)}% heard, ${aligned.lines_matched} of ${aligned.lines} lines found.` : "; nothing fitted to the vocals."));
+  expect(kind, `the lyrics carry a timing line by line from the vocals (source ${entry.source}, timing ${entry.timing})`).toBe("aligned");
+  expect(sung.length, "sung lines").toBeGreaterThan(8);
+
+  const first = sung[0];
+  note(testInfo, `First line "${first.text}" at ${first.time.toFixed(2)} s.`);
+  expect(first.time, "the first line starts where the video's singing does").toBeGreaterThan(14.5);
+  expect(first.time).toBeLessThan(17.5);
+
+  // Word stamps: on most lines, in order, and inside their own line. The
+  // last stamp of a line is where it ends (lyrics_retime.to_lrc), which may
+  // run a moment into the next line's lead-in; the words' own may not.
+  const next = (i) => sung[i + 1]?.time ?? Infinity;
+  const stamped = sung.filter((l) => l.words.length > 1);
+  const bad = sung.filter((l, i) => l.words.some((w, k) => {
+    const last = k === l.words.length - 1;
+    return w < l.time - 0.01 || w > next(i) + (last ? 0.5 : 0.01) || (k && w < l.words[k - 1]);
+  }));
+  note(testInfo, `${stamped.length} of ${sung.length} lines carry word stamps; ${bad.length} out of order or outside their line.`);
+  expect(stamped.length / sung.length, "word stamps on most lines").toBeGreaterThanOrEqual(0.8);
+  expect(bad.map((l) => `${l.time.toFixed(2)} ${l.text}`), "word stamps in order, inside their line").toEqual([]);
+
+  // The page follows: the first line plays from there, and the words fill.
+  await openTrack(page, id);
+  await openLyrics(page);
+  const at = await clickLineAt(page, first.text.slice(0, 12));
+  note(testInfo, `A click on the first line put the playhead at ${at} s.`);
+  expect(at, "the playhead went to the first line").toBeGreaterThanOrEqual(14);
+  expect(at).toBeLessThanOrEqual(17);
+  const samples = await playAndWatch(page, 6000);
+  expect(Math.max(...samples.map((x) => x.sung)), "words were marked as sung").toBeGreaterThan(0);
+  expect(samples.some((x) => x.singing > 0), "a word was part-filled while it was sung").toBe(true);
+  await shot(page, testInfo, "karaoke");
+  partly(testInfo, "Whether each word lights with the voice is for ears: the program checked the line and word stamps and saw the fill advance.");
+});
+
 // Steps: import Green Day, Basket Case (the video); Lyrics, Align, Auto-detect.
 // Expect: the first line, "Do you have the time", starts near 16 s, where
 // the video's singing does, not at LRCLIB's 0:00; a click on it plays from
@@ -994,6 +1141,24 @@ test(title("L4"), async ({ app }, testInfo) => {
   const toggle = page.locator("#lyricsVersions .lyrics-align-toggle");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
   await expect(page.locator("#lyricsAlign")).toBeVisible();
+
+  // Timed line by line on import (L6): a whole-song offset no longer applies,
+  // and the Align panel says so instead of offering Auto-detect.
+  if (saved.aligned?.synced || saved.user_synced) {
+    const key = saved.user_synced ? "lyrics.align.perLineUser" : "lyrics.align.perLineAligned";
+    await expect(page.locator("#lyricsAlign")).toContainText(await tr(page, "en", key));
+    await expect(page.locator("#lyricsAlign .lyrics-align-btn", { hasText: await tr(page, "en", "lyrics.align.detect") })).toBeDisabled();
+    const timed = (saved.user_synced || saved.aligned.synced).split(/\r?\n/)
+      .map((line) => /^\[(\d+):(\d+(?:\.\d+)?)\]\s*(?:<[^>]*>)?\s*(\S.*)$/.exec(line.trim()))
+      .find(Boolean);
+    const start = Number(timed[1]) * 60 + Number(timed[2]);
+    note(testInfo, `Timed line by line; the offset is off, as it should be. First line "${timed[3].replace(/<[^>]*>/g, "")}" at ${start.toFixed(2)} s.`);
+    expect(start, "the first line starts where the video's singing does").toBeGreaterThan(14.5);
+    expect(start).toBeLessThan(17.5);
+    await shot(page, testInfo, "per-line");
+    return;
+  }
+
   const message = page.locator("#lyricsAlign .lyrics-align-message");
   await page.locator("#lyricsAlign .lyrics-align-btn", { hasText: await tr(page, "en", "lyrics.align.detect") }).click();
   const checking = await tr(page, "en", "lyrics.align.detecting");
@@ -1024,6 +1189,213 @@ test(title("L4"), async ({ app }, testInfo) => {
   expect(seconds(await page.locator("#t-time").textContent())).toBeLessThanOrEqual(17);
   await shot(page, testInfo, "aligned");
   partly(testInfo, "Whether the words now land with the voice is for ears: the program saw the first line move to the video's first sung line.");
+});
+
+// ─── Sync lines ─────────────────────────────────────────────────────────────
+
+/** Open the Lyrics tab's Sync lines mode: its panel and the lane over the waveform. */
+async function openSync(page) {
+  const toggle = page.locator("#lyricsVersions .lyrics-sync-toggle");
+  await expect(toggle, "a Sync lines link").toBeVisible();
+  expect(await toggle.getAttribute("aria-disabled"), "Sync lines is enabled for these lyrics").not.toBe("true");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  const panel = page.locator("#lyricsSync");
+  await expect(panel).toBeVisible();
+  await expect(page.locator("#lyricsLane")).toBeVisible();
+  return panel;
+}
+
+/** A button of the Sync lines panel, by its English label. */
+async function syncButton(page, key) {
+  return page.locator("#lyricsSync .lyrics-align-btn", { hasText: await tr(page, "en", key) }).first();
+}
+
+/** Set one of the panel's options (Snap to voice, Move later lines too). */
+async function syncOption(page, key, on) {
+  const box = page.locator("#lyricsSync .lyrics-sync-opt", { hasText: await tr(page, "en", key) }).locator("input");
+  if ((await box.isChecked()) !== on) await box.click();
+  await expect(box).toBeChecked({ checked: on });
+}
+
+/** Each line's start as the list shows it in Sync lines (data-time), in seconds. */
+function listTimes(page) {
+  return page.locator("#lyricsBody .lyrics-line").evaluateAll((rows) => rows.map((r) => r.dataset.time || ""))
+    .then((texts) => texts.map(clockSeconds));
+}
+
+/** The playhead now, from the app's own transport. */
+function playhead(page) {
+  return page.evaluate(async () => (await import("/js/transport.js")).transport()?.getCurrentTime?.() ?? NaN);
+}
+
+/** Wait for the panel to say the timing is saved. */
+async function waitSaved(page) {
+  const saved = await tr(page, "en", "lyrics.sync.saved");
+  await expect(page.locator("#lyricsSync .lyrics-sync-save")).toHaveText(saved, { timeout: 15_000 });
+}
+
+// Steps: open Wicked, Dancing Through Life; Lyrics, Sync lines; play; tap T
+// at the start of three lines; drag a line's marker in the lane over the
+// waveform; Undo; Done; open Sync lines again and Reset to detected.
+// Expect: each tapped line starts where the playhead was, the list says so;
+// the drag moves one line and Undo puts it back; Done keeps the timing
+// (GET .../lyrics shows user_synced); Reset to detected drops it and the
+// lines are as they were.
+//
+// Snap to voice is turned off so a tap lands exactly on the playhead, and
+// Move later lines too so a drag moves one line only.
+test(title("L7"), async ({ app }, testInfo) => {
+  const { page } = app;
+  await wideWindow(page);
+  const id = await trackFor(page, "wicked");
+  const before = await keptTiming(id);
+  note(testInfo, `Timing in effect before: ${before.kind}${before.entry.user_synced ? " (a timing by hand was already kept)" : ""}.`);
+  await openTrack(page, id);
+  await openLyrics(page);
+  const s = await lyricsState(page);
+  expect(s.synced, `synced lyrics (status: "${s.status}")`).toBeGreaterThan(8);
+  await openSync(page);
+  await syncOption(page, "lyrics.sync.snap", false);
+  await syncOption(page, "lyrics.sync.ripple", false);
+  const initial = await listTimes(page);
+  expect(initial.every(Number.isFinite), "every line shows its start").toBe(true);
+  await shot(page, testInfo, "sync-open");
+
+  // Tap three lines while playing, each after putting the playhead 0.6 s
+  // into it: the tap is read between the playhead just before and just after.
+  const rows = page.locator("#lyricsBody .lyrics-line");
+  const selected = () => rows.evaluateAll((els) => els.findIndex((r) => r.classList.contains("selected")));
+  const play = page.locator("#t-play");
+  await play.click();
+  const taps = [];
+  try {
+    for (let k = 0; k < 3; k++) {
+      const index = await selected();
+      expect(index, "a line in hand").toBeGreaterThanOrEqual(0);
+      const target = (await listTimes(page))[index] + 0.6;
+      await page.evaluate(async (t) => (await import("/js/transport.js")).setPlayheadTime(t), target);
+      await page.waitForTimeout(300);
+      const from = await playhead(page);
+      await page.keyboard.press("t");
+      const to = await playhead(page);
+      await expect.poll(selected, { timeout: 5000 }).not.toBe(index);
+      taps.push({ index, target, from, to, shown: (await listTimes(page))[index] });
+    }
+  } finally {
+    await play.click();
+  }
+  note(testInfo, `Taps: ${taps.map((x) => `line ${x.index + 1} at ${x.shown.toFixed(2)} s (playhead ${x.from.toFixed(2)} to ${x.to.toFixed(2)} s)`).join("; ")}.`);
+  for (const x of taps) {
+    expect(x.shown, `line ${x.index + 1} starts where the playhead was`).toBeGreaterThanOrEqual(x.from - 0.03);
+    expect(x.shown).toBeLessThanOrEqual(x.to + 0.03);
+    expect(Math.abs(x.shown - x.target), `line ${x.index + 1} near the seek target`).toBeLessThan(1);
+  }
+  await expect(page.locator("#lyricsSync .lyrics-sync-kind").first()).toHaveText(await tr(page, "en", "lyrics.sync.kind.user"));
+  await waitSaved(page);
+  await shot(page, testInfo, "tapped");
+
+  // Drag: the marker of a later line with room on both sides, moved right
+  // by half its room (at most 3 s).
+  const tapped = await listTimes(page);
+  const last = taps.at(-1).index;
+  let j = -1;
+  let room = 0;
+  for (let i = last + 1; i < tapped.length - 1; i++) {
+    const gap = Math.min(tapped[i + 1] - tapped[i], tapped[i] - tapped[i - 1]);
+    if (gap > room) { room = gap; j = i; }
+    if (room >= 4) break;
+  }
+  expect(j, "a line with room to move").toBeGreaterThan(last);
+  const shift = Math.min(3, (tapped[j + 1] - tapped[j]) / 2);
+  // Taking the line in hand scrolls the waveform to its marker.
+  await rows.nth(j).scrollIntoViewIfNeeded();
+  await rows.nth(j).click();
+  const mark = page.locator(`#daw-lyrics-track .lyr-mark[data-index="${j}"]`);
+  await expect(mark).toBeVisible();
+  const trackWidth = await page.locator("#daw-lyrics-track").evaluate((el) => el.getBoundingClientRect().width);
+  // The lane spans the track's length as the studio has it (lyrics.js laneLength).
+  const duration = await page.evaluate(async () => (await import("/js/state.js")).totalDuration);
+  expect(duration, "the track's length").toBeGreaterThan(0);
+  const box = await mark.boundingBox();
+  const dx = (shift / duration) * trackWidth;
+  const x0 = box.x + Math.min(4, box.width / 2);
+  const y0 = box.y + box.height / 2;
+  let how = "mouse";
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x0 + dx / 2, y0, { steps: 4 });
+  await page.mouse.move(x0 + dx, y0, { steps: 4 });
+  await page.mouse.up();
+  let dragged = (await listTimes(page))[j];
+  if (Math.abs(dragged - tapped[j]) < 0.01) {
+    // WebView2 leaves a DevTools mouse drag undelivered: the real cursor.
+    const dpr = await page.evaluate(() => devicePixelRatio);
+    if (osDrag([[x0, y0], [x0 + dx / 2, y0], [x0 + dx, y0]], dpr)) {
+      await page.waitForTimeout(500);
+      dragged = (await listTimes(page))[j];
+      how = "the Windows cursor";
+    }
+  }
+  if (Math.abs(dragged - tapped[j]) < 0.01) {
+    // The pointer did not reach the marker through WebView2: the same
+    // gesture as pointer events on the marker itself.
+    how = "pointer events";
+    await mark.evaluate((el, [x, y, d]) => {
+      const fire = (type, cx) => el.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: cx, clientY: y,
+      }));
+      fire("pointerdown", x);
+      fire("pointermove", x + d / 2);
+      fire("pointermove", x + d);
+      fire("pointerup", x + d);
+    }, [x0, y0, dx]);
+    dragged = (await listTimes(page))[j];
+  }
+  const px = duration / trackWidth;
+  note(testInfo, `Dragged line ${j + 1}'s marker by ${dx.toFixed(0)} px (${shift.toFixed(2)} s) with ${how}: ${tapped[j].toFixed(2)} s to ${dragged.toFixed(2)} s.`);
+  expect(Math.abs(dragged - (tapped[j] + shift)), "the dragged line moved by the drag").toBeLessThanOrEqual(Math.max(0.15, 3 * px));
+  const afterDrag = await listTimes(page);
+  expect(afterDrag.filter((t, i) => i !== j && Math.abs(t - tapped[i]) > 0.005), "no other line moved").toEqual([]);
+  if (how === "pointer events") partly(testInfo, "The drag was made with pointer events on the marker, because the mouse over CDP did not move it: dragging with a real mouse is for a person.");
+  await shot(page, testInfo, "dragged");
+
+  // Undo takes the drag back.
+  await (await syncButton(page, "lyrics.sync.undo")).click();
+  await expect.poll(async () => (await listTimes(page))[j], { timeout: 5000 }).toBeCloseTo(tapped[j], 2);
+  expect(await listTimes(page), "every line as before the drag").toEqual(tapped);
+  await waitSaved(page);
+
+  // Done: the timing is kept on the server.
+  await page.locator("#lyricsSync .lyrics-align-done").click();
+  await expect(page.locator("#lyricsSync")).toHaveCount(0);
+  await expect(page.locator("#lyricsLane")).toBeHidden();
+  let kept = null;
+  await expect.poll(async () => {
+    kept = await keptTiming(id);
+    return kept.kind;
+  }, { timeout: 15_000 }).toBe("user");
+  for (const x of taps) {
+    expect(kept.lines[x.index]?.time, `line ${x.index + 1} kept as tapped`).toBeCloseTo(x.shown, 1);
+  }
+  expect(kept.lines[j]?.time, `line ${j + 1} kept as before the drag`).toBeCloseTo(tapped[j], 1);
+  note(testInfo, `Kept: user_synced with ${kept.lines.length} lines.`);
+
+  // Reset to detected: the timing by hand goes, and the lines are as they were.
+  await openSync(page);
+  await (await syncButton(page, "lyrics.sync.resetDetected")).click();
+  const back = await page.locator("#lyricsSync .lyrics-align-message").textContent();
+  note(testInfo, `Reset to detected said "${back.trim()}".`);
+  expect(back.trim()).toBe(await tr(page, "en", `lyrics.sync.backTo.${before.entry.aligned ? "aligned" : "offset"}`));
+  await waitSaved(page);
+  const reset = await listTimes(page);
+  if (before.kind !== "user") {
+    expect(reset.map((t, i) => Math.abs(t - initial[i]) <= 0.011).every(Boolean), "every line back where it was").toBe(true);
+  }
+  await page.locator("#lyricsSync .lyrics-align-done").click();
+  await expect.poll(async () => (await keptTiming(id)).kind, { timeout: 15_000 }).not.toBe("user");
+  expect((await api(`/api/jobs/${id}/lyrics`)).user_synced, "no user_synced kept").toBeUndefined();
+  await shot(page, testInfo, "reset");
+  partly(testInfo, "Whether tapping feels in time while listening is for a person: the program tapped at known playhead times.");
 });
 
 // ─── The hour-long compilation ──────────────────────────────────────────────
@@ -1081,6 +1453,57 @@ test(title("T1"), async ({ app }, testInfo) => {
   expect(r.overlaps).toBe(0);
   await shot(page, testInfo, "song", { locator: page.locator("#ruler-time") });
   if (SKIP_LONG) partly(testInfo, "The hour-long half was skipped (STEMDECK_ACCEPTANCE_SKIP_LONG=1); only the normal song's 0:30 steps were checked.");
+});
+
+// Steps: open Wicked, Dancing Through Life; Lyrics, Sync lines, Re-time from
+// vocals; wait. Expect: the panel says it is listening, then either that the
+// lines were timed from the vocals (how many matched) or that the vocals did
+// not match well enough and nothing changed; never stuck, never an error.
+//
+// The run waits behind any import in progress (the pipeline lock), so this
+// check waits for an idle queue first and then gives the run 10 minutes.
+test(title("L8"), async ({ app }, testInfo) => {
+  const { page } = app;
+  await waitForIdleQueue();
+  await wideWindow(page);
+  const id = await trackFor(page, "wicked");
+  const before = await keptTiming(id);
+  await openTrack(page, id);
+  await openLyrics(page);
+  await openSync(page);
+  const retime = await syncButton(page, "lyrics.sync.retime");
+  const message = page.locator("#lyricsSync .lyrics-align-message");
+  const t0 = Date.now();
+  await retime.click();
+  await expect(retime).toHaveAttribute("aria-busy", "true", { timeout: 5000 });
+  const listening = await tr(page, "en", "lyrics.sync.retiming");
+  await expect.poll(async () => (await message.textContent()).trim(), { timeout: 10_000 }).toContain(listening.replace(/…$/, ""));
+  await shot(page, testInfo, "listening");
+  await expect(retime).not.toHaveAttribute("aria-busy", "true", { timeout: 10 * 60_000 });
+  const took = (Date.now() - t0) / 1000;
+  const said = (await message.textContent()).trim();
+  const state = await api(`/api/jobs/${id}/lyrics/retime`);
+  note(testInfo, `Re-time took ${took.toFixed(0)} s and said "${said}"; the server: ${JSON.stringify(state)}.`);
+  expect(said, "not a failure").not.toBe(await tr(page, "en", "lyrics.sync.retimeFailed"));
+  expect(["done", "unsure"], "the server's answer").toContain(state.state);
+  if (state.state === "done") {
+    const want = (await tr(page, "en", "lyrics.sync.retimed"))
+      .replace("{matched}", String(state.lines_matched)).replace("{count}", String(state.lines));
+    expect(said, "the panel reports the result").toBe(want);
+    await expect(page.locator("#lyricsSync .lyrics-sync-kind").first()).toHaveText(await tr(page, "en", "lyrics.sync.kind.aligned"));
+    const after = await keptTiming(id);
+    expect(after.kind, "the new timing is the one in effect").toBe("aligned");
+    const shown = await listTimes(page);
+    expect(shown.map((t, i) => Math.abs(t - (after.lines[i]?.time ?? NaN)) <= 0.011).every(Boolean), "the list shows the new timing").toBe(true);
+  } else {
+    expect(said, "the panel says the vocals did not match").toBe(await tr(page, "en", "lyrics.sync.retimeUnsure"));
+    const after = await keptTiming(id);
+    expect(after.kind, "the timing is as it was").toBe(before.kind);
+    note(testInfo, "The vocals did not match the lines well enough, so the timing was left as it was: an allowed answer.");
+  }
+  await shot(page, testInfo, "result");
+  await page.locator("#lyricsSync .lyrics-align-done").click();
+  await expect(page.locator("#lyricsSync")).toHaveCount(0);
 });
 
 // ─── Errors and cancel, on an idle queue ────────────────────────────────────

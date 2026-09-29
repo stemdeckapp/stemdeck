@@ -4023,6 +4023,96 @@ input, textarea { font-family: inherit; }
 }
 .lyrics-text { margin: 0; padding: 1px 8px; font-size: 13.5px; line-height: 1.55; color: var(--fg-2); }
 
+/* The Align panel's note when the lines are timed one by one, so the offset
+   is not what is in effect. */
+.lyrics-align-note { margin: 0; font-size: 11px; line-height: 1.4; color: var(--fg-2); }
+.lyrics-align-note:empty { display: none; }
+.lyrics-align-btn:disabled { opacity: 0.45; cursor: default; }
+.lyrics-align-btn:disabled:hover { background: var(--panel-2); color: var(--fg-2); }
+
+/* ── Sync lines (lyrics.js) ──
+   The panel under the tools row while the mode is on: which line is next,
+   one big Tap, the options, the resets. Built for a glance mid-song. */
+.lyrics-sync {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel);
+}
+.lyrics-sync-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lyrics-sync-title { margin: 0; font-size: 12px; font-weight: 700; color: var(--fg); }
+.lyrics-sync-kind { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lyrics-sync-next {
+  margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--bg-2);
+  font-size: 13px; line-height: 1.35; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lyrics-sync-next-label { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.lyrics-sync-tap {
+  min-height: 44px; font-size: 15px; letter-spacing: 0.04em;
+  background: var(--accent); border-color: var(--accent); color: var(--bg);
+}
+.lyrics-sync-tap:hover { background: var(--accent); color: var(--bg); filter: brightness(1.08); }
+.lyrics-sync-tap:disabled, .lyrics-sync-tap:disabled:hover { background: var(--panel-2); border-color: var(--border-strong); color: var(--muted); filter: none; }
+.lyrics-sync-tap kbd { font-family: var(--font-mono); font-size: 10px; font-weight: 600; opacity: 0.75; margin-left: 6px; }
+/* A tap lands: the button flashes, so a tap can be seen as well as heard. */
+.lyrics-sync-tap.tapped { animation: lyrics-tap 180ms ease-out; }
+@keyframes lyrics-tap { from { filter: brightness(1.6); } to { filter: none; } }
+@media (prefers-reduced-motion: reduce) { .lyrics-sync-tap.tapped { animation: none; } }
+.lyrics-sync-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lyrics-sync-row .lyrics-align-btn { flex: 1 1 auto; }
+.lyrics-sync-opts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.lyrics-sync-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-2); cursor: pointer; }
+.lyrics-sync-opt input { margin: 0; accent-color: var(--accent); }
+.lyrics-sync-keys { margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+.lyrics-sync-keys kbd {
+  font-family: var(--font-mono); font-size: 10px; padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--fg-2);
+}
+/* In the mode each line shows when it starts, and the line in hand is framed
+   and carries its own nudges. The time is drawn by CSS from data-time, so it
+   is not part of the line's text. */
+.lyrics-body.syncing .lyrics-line::before {
+  content: attr(data-time);
+  display: inline-block; min-width: 4.6em; margin-right: 6px;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.lyrics-body.syncing .lyrics-line.selected { background: var(--panel); outline: 1px solid var(--accent); outline-offset: -1px; }
+.lyrics-line-tools { display: flex; align-items: center; gap: 4px; padding: 2px 8px 6px; }
+.lyrics-line-tools .lyrics-align-btn { min-height: 22px; padding: 0 6px; font-size: 10.5px; }
+.lyrics-line-tools .lyrics-align-nudge { font-family: var(--font-mono); }
+.lyrics-line-tools .lyrics-line-here { margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent); border-color: var(--accent); }
+
+/* The lyrics lane over the waveform (lyricsLane.js), shaped like the
+   Sections ribbon above it: markers at percentages of a track that is the
+   zoomed waveform's width. */
+.daw-lyrics-ribbon { display: flex; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.daw-lyrics-ribbon.hidden { display: none; }
+.daw-lyrics-header { justify-content: space-between; gap: 8px; }
+.daw-lyrics-title-group { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
+.daw-lyrics-title-group .daw-label-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lyrics-lane-done {
+  flex-shrink: 0; min-height: 22px; padding: 0 10px; border-radius: 5px;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--bg);
+  font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.lyrics-lane-done:hover { filter: brightness(1.08); }
+.daw-lyrics-area { flex: 1; position: relative; height: 34px; background: var(--bg-2); overflow: clip; user-select: none; }
+.daw-lyrics-track { position: absolute; inset: 0; right: auto; width: calc(100% * var(--zoom, 1)); }
+.lyr-mark {
+  position: absolute; top: 4px; bottom: 4px; min-width: 6px;
+  display: flex; align-items: center; padding: 0 6px 0 7px; margin: 0;
+  background: none; border: none; border-left: 2px solid var(--fg-2); border-radius: 0;
+  color: var(--fg-2); font: inherit; font-size: 10.5px; text-align: left;
+  cursor: grab; overflow: hidden;
+}
+.lyr-mark:hover { background: rgba(255, 255, 255, 0.05); color: var(--fg); }
+.lyr-mark-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.lyr-mark.current { color: var(--fg); border-left-color: var(--fg); background: rgba(255, 255, 255, 0.06); }
+.lyr-mark.selected { color: var(--accent); border-left-color: var(--accent); background: rgba(244, 183, 64, 0.12); z-index: 2; }
+.lyr-mark.dragging { cursor: grabbing; z-index: 3; background: rgba(244, 183, 64, 0.2); }
+.lyr-lane-playhead { position: absolute; inset: 0; pointer-events: none; will-change: transform; z-index: 4; }
+.lyr-lane-playhead i { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--accent); opacity: 0.8; }
+
 /* ── Artist box (#699) ──
    The About dialog's frame, left-aligned and wider, because it holds prose
    and lists rather than a logo and two buttons. The body scrolls on its own

@@ -163,7 +163,7 @@ test.describe("lyrics from the server", () => {
     await setUp(page, { server: whisper });
     await expect(page.locator(".lyrics-line")).toHaveText(["Heard words"]);
     await expect(page.locator(".lyrics-match-meta")).toHaveText("Fixture Band · Transcribed");
-    await expect(page.locator(".lyrics-tools .lyrics-link")).toHaveText(["Align", "Remove lyrics"]);
+    await expect(page.locator(".lyrics-tools .lyrics-link")).toHaveText(["Sync lines", "Align", "Remove lyrics"]);
   });
 
   test("Polish is shown letter for letter, a word to a span, even when it came decomposed", async ({ page }) => {
