@@ -185,6 +185,92 @@ pub fn commit(site: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    fn tree_hashes(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        use sha2::{Digest, Sha256};
+        let mut out = std::collections::BTreeMap::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let digest = Sha256::digest(fs::read(&path).unwrap()).to_vec();
+                    out.insert(path.strip_prefix(root).unwrap().to_path_buf(), digest);
+                }
+            }
+        }
+        out
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        if from.is_dir() {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                copy_tree(&entry.path(), &to.join(entry.file_name()));
+            }
+        } else {
+            fs::copy(from, to).unwrap();
+        }
+    }
+
+    /// The rollback on a real torch install rather than a fake one: gigabytes,
+    /// thousands of files, real RECORDs. Run by hand, with a site-packages to
+    /// copy from and a folder to work in (left behind, so the result can be
+    /// imported afterwards):
+    ///
+    /// STEMDECK_REAL_TORCH_SITE=<site-packages> STEMDECK_REAL_TORCH_WORK=<dir>
+    ///     cargo test real_torch -- --ignored
+    #[test]
+    #[ignore]
+    fn a_real_torch_comes_back_byte_for_byte() {
+        let (Ok(source), Ok(work)) = (
+            std::env::var("STEMDECK_REAL_TORCH_SITE"),
+            std::env::var("STEMDECK_REAL_TORCH_WORK"),
+        ) else {
+            panic!("set STEMDECK_REAL_TORCH_SITE and STEMDECK_REAL_TORCH_WORK");
+        };
+        let source = PathBuf::from(source);
+        let site = PathBuf::from(work).join("Lib").join("site-packages");
+        if site.exists() {
+            fs::remove_dir_all(&site).unwrap();
+        }
+        let _ = fs::remove_dir_all(backup_root(&site));
+        fs::create_dir_all(&site).unwrap();
+        let owned = owned_entries(&source).unwrap();
+        assert!(owned.contains("torch"), "no torch in {}", source.display());
+        for name in &owned {
+            copy_tree(&source.join(name), &site.join(name));
+        }
+        let before = tree_hashes(&site);
+
+        let moved = snapshot(&site).unwrap();
+        assert_eq!(moved, owned.len());
+        // A CUDA build laid into the clean directories, with a DLL the CPU
+        // build does not have.
+        let lib = site.join("torch").join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("c10_cuda.dll"), "cuda").unwrap();
+        fs::write(lib.join("c10.dll"), "cuda c10").unwrap();
+        let dist = site.join("torch-2.8.0+cu128.dist-info");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(
+            dist.join("RECORD"),
+            "torch/lib/c10.dll,,\ntorch/lib/c10_cuda.dll,,\ntorch-2.8.0+cu128.dist-info/RECORD,,\n",
+        )
+        .unwrap();
+
+        restore(&site).unwrap();
+
+        assert_eq!(
+            tree_hashes(&site),
+            before,
+            "the restored torch differs from the original"
+        );
+        assert!(!has_backup(&site));
+    }
+
     /// A site-packages with torch as pip lays it out, plus a neighbour that
     /// must never be touched.
     fn fake_site(root: &Path, version: &str, extra_lib: Option<&str>) -> PathBuf {
