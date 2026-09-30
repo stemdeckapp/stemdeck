@@ -894,16 +894,9 @@ function applyTrackInfoToPanel(track) {
   // The now-playing square shows the same format icon the library row does.
   paintNowPlayingArt(trackFormat(track));
   if (favBtn) {
-    favBtn.classList.toggle("active", Boolean(track.favorite));
-    favBtn.setAttribute("aria-pressed", String(Boolean(track.favorite)));
+    paintFavButton(favBtn, Boolean(track.favorite));
     favBtn.onclick = () => {
-      if (!_currentTrackId) return;
-      const t = tracks[_currentTrackId];
-      if (!t) return;
-      t.favorite = !t.favorite;
-      favBtn.classList.toggle("active", t.favorite);
-      favBtn.setAttribute("aria-pressed", String(t.favorite));
-      saveState();
+      if (_currentTrackId) toggleFavorite(_currentTrackId);
     };
   }
 
@@ -1425,6 +1418,53 @@ function dropOnFolder(folderId, trackId) {
   render();
 }
 
+function paintFavButton(btn, on) {
+  btn.classList.toggle("active", on);
+  btn.setAttribute("aria-pressed", String(on));
+}
+
+/**
+ * Flip a track's favourite, from whichever heart was pressed.
+ *
+ * The Now Playing heart used to be the only one, and it disappears with its
+ * card below 1460 px (#724), which left no way to favourite at all. Library
+ * rows have one too now, and every heart goes through here so none of them can
+ * disagree with the store or with each other.
+ */
+export function toggleFavorite(trackId) {
+  const track = tracks[trackId];
+  if (!track) return;
+  track.favorite = !track.favorite;
+  saveState();
+  if (trackId === _currentTrackId) {
+    const favBtn = document.getElementById("fav-btn");
+    if (favBtn) paintFavButton(favBtn, track.favorite);
+  }
+  // Rows show the state at rest, and the Favorites view lists by it.
+  render();
+}
+
+function favButtonHtml(track) {
+  const on = Boolean(track.favorite);
+  const label = i18nT(on ? "track.unfavoriteTitle" : "track.favoriteTitle", {
+    title: track.title ?? i18nT("track.unknown"),
+  });
+  return `<button class="cat-fav${on ? " active" : ""}" type="button" aria-pressed="${on}"
+      title="${esc(i18nT(on ? "track.unfavorite" : "track.favorite"))}" aria-label="${esc(label)}">
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+    </button>`;
+}
+
+function wireFavButton(el, trackId) {
+  el.querySelector(".cat-fav")?.addEventListener("click", (e) => {
+    // The row itself loads the track on click.
+    e.stopPropagation();
+    toggleFavorite(trackId);
+  });
+}
+
 function wireTrackDragAndLoad(el, trackId) {
   el.draggable = true;
   el.addEventListener("dragstart", (e) => {
@@ -1432,7 +1472,7 @@ function wireTrackDragAndLoad(el, trackId) {
   });
   el.addEventListener("dragend", () => endDrag(el));
   el.addEventListener("click", (e) => {
-    if (e.target.closest(".cat-del")) return;
+    if (e.target.closest(".cat-del, .cat-fav")) return;
     loadTrackIntoStudio(trackId);
   });
 }
@@ -1635,7 +1675,7 @@ function renderRecentItem(trackId) {
   if (!track) return null;
   const el = document.createElement("div");
   const isUnavailable = track.status === "unavailable";
-  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}`;
+  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${track.favorite ? " is-fav" : ""}`;
   el.dataset.id = trackId;
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
@@ -1644,7 +1684,9 @@ function renderRecentItem(trackId) {
       <div class="cat-sub">${trackSublineHtml(track)}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
+    <div class="cat-actions">${favButtonHtml(track)}</div>
   `;
+  wireFavButton(el, trackId);
   wireTrackDragAndLoad(el, trackId);
   return el;
 }
@@ -1702,7 +1744,7 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
 
   const el = document.createElement("div");
   const isUnavailable = track.status === "unavailable";
-  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}`;
+  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${!inTrash && track.favorite ? " is-fav" : ""}`;
   el.dataset.id = trackId;
 
   el.innerHTML = `
@@ -1712,12 +1754,12 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
       <div class="cat-sub">${trackSublineHtml(track, { inTrash })}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
-    ${inTrash ? "" : `<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
+    ${inTrash ? "" : `<div class="cat-actions">${favButtonHtml(track)}<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="3 6 5 6 21 6"></polyline>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
       </svg>
-    </button>`}
+    </button></div>`}
   `;
   el.querySelector(".cat-del")?.setAttribute("aria-label", i18nT("track.moveTitleToTrash", { title: track.title ?? i18nT("track.unknown") }));
 
@@ -1725,6 +1767,7 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
     e.stopPropagation();
     moveTrackToTrash(trackId);
   });
+  wireFavButton(el, trackId);
 
   wireTrackDragAndLoad(el, trackId);
 

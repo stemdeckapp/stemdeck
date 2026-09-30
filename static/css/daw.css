@@ -782,6 +782,7 @@ input, textarea { font-family: inherit; }
 
 /* cat-item (legacy catalog items JS creates) */
 .cat-item {
+  position: relative;
   display: flex;
   gap: 9px;
   align-items: center;
@@ -905,14 +906,36 @@ input, textarea { font-family: inherit; }
 .queue-row:hover .queue-top { opacity: 0.65; }
 .queue-top:hover { background: rgba(232, 168, 56, 0.16); color: var(--accent); opacity: 1; }
 .queue-top:disabled { opacity: 0.3; cursor: default; }
-.cat-del {
+/* A row's actions float over its right edge and show on hover or keyboard
+   focus (#724). In the flow they cost the title their width on every row at
+   rest, which is where titles were being cut short, and a second button in
+   the flow would have cost it again. The fade lets a long title run under
+   them instead of stopping at a hard edge. */
+.cat-actions {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  display: flex; gap: 2px; padding-left: 16px;
+  background: linear-gradient(to right, transparent, var(--panel-2) 14px);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--t-fast);
+}
+.cat-item:hover .cat-actions,
+.cat-item:focus-within .cat-actions { opacity: 1; pointer-events: auto; }
+.cat-del, .cat-fav {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); cursor: pointer;
-  opacity: 0; display: flex; align-items: center; justify-content: center;
-  padding: 0; flex-shrink: 0; transition: opacity var(--t-fast), background var(--t-fast);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast);
 }
-.cat-item:hover .cat-del { opacity: 1; }
 .cat-del:hover { background: rgba(21,31,39,0.8); color: var(--danger); }
+.cat-fav:hover { background: rgba(21,31,39,0.8); color: var(--fg); }
+.cat-fav.active, .cat-fav.active:hover { color: #e54e4e; }
+/* A favourite says so at rest, in the subline, where it takes no title room. */
+.cat-item.is-fav .cat-sub::before {
+  content: ""; flex-shrink: 0; align-self: center;
+  width: 9px; height: 9px; background: #e54e4e;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
 
 /* Folder items (legacy catalog) */
 .folder { display: flex; flex-direction: column; }
@@ -5433,8 +5456,8 @@ input, textarea { font-family: inherit; }
  * So the two things that were moved up here give way, in the order they can be
  * done without: the card first, since the track is also named in the library
  * and the mixer, then the toggles drop to a line of their own, which is where
- * they lived before. Nothing is lost at any width, it just stops being one
- * line.
+ * they lived before. The card's favourite heart is also on every library row
+ * (#724). Its About this song button has no second home yet (#735).
  */
 @media (max-width: 1460px) {
   .daw-composer > #nowPlayingPanel { display: none; }
