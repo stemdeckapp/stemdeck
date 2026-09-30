@@ -224,12 +224,9 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     _check_cancel(job)
     # The key was first estimated from the mix, before separation. The stems
     # are better evidence, the bass line above all (#726). Keeps the first
-    # estimate on any failure.
-    # Timed on its own, and still inside "post" as before, so post timings
-    # from earlier versions compare like for like.
-    key_start = time.monotonic()
+    # estimate on any failure. Counted in "post", not as a stage of its own:
+    # the timings' order is a contract (tests/test_identify_regressions.py).
     refine_key_from_stems(job, stems_dir)
-    _lap(job, "key", key_start)
     _check_cancel(job)
     _set(job, stage="Mixing tracks...")
     original_path = make_original_track(job, job_dir, stems_dir)
