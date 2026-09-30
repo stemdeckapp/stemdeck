@@ -39,6 +39,7 @@ from app.core.config import (
     available_torch_devices,
     configure_portable_environment,
     ensure_runtime_dirs,
+    torch_load_error,
 )
 from app.core.logging_setup import configure_logging
 from app.core.process import process_exists as _process_exists
@@ -393,6 +394,9 @@ def _settings_payload() -> dict[str, object]:
         "demucs_device": get_demucs_device_choice(),
         "demucs_device_resolved": get_demucs_device(),
         "demucs_devices_available": available_torch_devices(),
+        # Set when torch is installed but cannot load, which stops separation
+        # on every device (#730). Read after the probe above refreshed it.
+        "torch_error": torch_load_error(),
     }
 
 

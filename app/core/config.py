@@ -28,11 +28,23 @@ def _env_path_opt(name: str) -> Path | None:
     return Path(raw).expanduser().resolve() if raw else None
 
 
+# Why torch could not be loaded at the last probe, or None if it loaded (#730).
+# Refreshed on every probe rather than decided once, so a repaired install
+# clears it without a restart.
+_torch_load_error: str | None = None
+
+
+def torch_load_error() -> str | None:
+    """The last probe's reason torch is installed but unusable, if any."""
+    return _torch_load_error
+
+
 def available_torch_devices() -> list[str]:
     """Compute devices this machine can actually use, best-first. CPU is always
     present; cuda/mps depend on the hardware + installed torch build. The
     Settings UI uses this to disable options that aren't available/detected so
     a user can't pick an impossible device."""
+    global _torch_load_error
     devices: list[str] = []
     try:
         import torch
@@ -41,8 +53,21 @@ def available_torch_devices() -> list[str]:
             devices.append("cuda")
         if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             devices.append("mps")
+        _torch_load_error = None
     except ImportError:
         pass
+    except Exception as exc:  # noqa: BLE001 -- any failure here must not stop the server
+        # Installed but unloadable: on Windows a CUDA DLL left behind by a
+        # half-reverted install raises OSError (WinError 127) from torch's own
+        # DLL loader (#723). Catching only ImportError let that kill startup
+        # and every /api/settings call. The server has to come up so it can
+        # say what is wrong. Logged loudly once per distinct cause, because
+        # separation cannot run on any device until torch is repaired, CPU
+        # included, and a quiet fallback would hide exactly that.
+        reason = f"{type(exc).__name__}: {exc}"
+        if reason != _torch_load_error:
+            logger.error("torch is installed but could not be loaded: %s", reason, exc_info=True)
+        _torch_load_error = reason
     devices.append("cpu")
     return devices
 

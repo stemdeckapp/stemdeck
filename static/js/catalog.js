@@ -4006,7 +4006,13 @@ async function wireGeneralSettings(overlay) {
     }
     if (deviceDesc) {
       const resolved = d.demucs_device_resolved ? i18nT("settings.device.currently", { device: d.demucs_device_resolved }) : "";
-      deviceDesc.textContent = i18nT("settings.device.desc", { resolved });
+      // torch installed but unloadable stops separation on every device, CPU
+      // included, so this replaces the usual line rather than sitting under a
+      // device list that looks healthy (#730).
+      deviceDesc.textContent = d.torch_error
+        ? i18nT("settings.device.torchBroken")
+        : i18nT("settings.device.desc", { resolved });
+      deviceDesc.classList.toggle("is-broken", !!d.torch_error);
     }
   };
 
