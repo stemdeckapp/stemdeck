@@ -2325,13 +2325,23 @@ fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
 /// on the GPU and then fail at separation time.
 #[cfg(any(not(target_os = "macos"), test))]
 fn wheel_candidates(compute_cap: Option<&str>, cuda_version: &str) -> Vec<&'static str> {
-    let blackwell = compute_cap
-        .and_then(|cap| cap.split('.').next()?.parse::<u32>().ok())
-        .is_some_and(|major| major >= 10);
+    let cap_major = compute_cap.and_then(|cap| cap.split('.').next()?.parse::<u32>().ok());
+    let blackwell = cap_major.is_some_and(|major| major >= 10);
     if blackwell {
         return vec!["cu128"];
     }
+    // torch 2.8 (cu128) dropped Maxwell and Pascal: its Windows builds start
+    // at sm_61 and its Linux builds at sm_70 (TORCH_CUDA_ARCH_LIST in
+    // pytorch's release/2.8 .ci scripts). The 2.6 line keeps sm_50 in both
+    // cu124 and cu118, and an sm_50 binary runs on any 5.x card. A GTX 970
+    // under a CUDA 13 driver was offered cu128 alone, failed verification with
+    // "no kernel image is available", and dropped to CPU (#732).
+    let pre_volta = cap_major.is_some_and(|major| major < 7);
     match cuda_tag(cuda_version) {
+        "cu128" if pre_volta => vec!["cu124", "cu118"],
+        // A CUDA 13 driver runs the 2.6 builds too, so they are a second
+        // chance when cu128 installs but does not verify.
+        "cu128" => vec!["cu128", "cu124", "cu118"],
         // cu118 as a second chance for a CUDA 12 driver. cu124 is the right
         // first answer for all of them (see cuda_tag), but minor-version
         // compatibility is the thing being relied on there, and when it does
@@ -6211,6 +6221,46 @@ mod tests {
         assert_eq!(super::wheel_candidates(None, "11.8"), vec!["cu118"]);
     }
 
+    /// The reporter's GTX 970 (sm_52) under a CUDA 13 driver (#723, #732).
+    /// torch 2.8's cu128 builds have no kernels below sm_61 on Windows or
+    /// sm_70 on Linux, so every pre-Volta card goes to the 2.6 builds.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_pre_volta_card_is_never_offered_cu128() {
+        for cap in ["5.0", "5.2", "6.0", "6.1", "6.2"] {
+            for driver in ["13.0", "12.8", "12.4", "11.8"] {
+                let tags = super::wheel_candidates(Some(cap), driver);
+                assert!(
+                    !tags.is_empty(),
+                    "cap {cap}, driver {driver}: nothing offered"
+                );
+                assert!(
+                    !tags.contains(&"cu128"),
+                    "cap {cap}, driver {driver}: offered {tags:?}"
+                );
+            }
+        }
+        assert_eq!(
+            super::wheel_candidates(Some("5.2"), "13.0"),
+            vec!["cu124", "cu118"]
+        );
+    }
+
+    /// A card cu128 does support still starts there, with the 2.6 builds
+    /// behind it instead of CPU.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_cuda_13_driver_falls_back_to_the_2_6_builds() {
+        assert_eq!(
+            super::wheel_candidates(Some("8.6"), "13.0"),
+            vec!["cu128", "cu124", "cu118"]
+        );
+        assert_eq!(
+            super::wheel_candidates(None, "13.0"),
+            vec!["cu128", "cu124", "cu118"]
+        );
+    }
+
     /// Every wheel tag setup can offer publishes the torch line it installs.
     ///
     /// The tag comes from the driver and the version from a table, and nothing
@@ -6234,6 +6284,8 @@ mod tests {
         ];
         let caps = [
             None,
+            Some("5.2"),
+            Some("6.1"),
             Some("7.5"),
             Some("8.6"),
             Some("8.9"),
