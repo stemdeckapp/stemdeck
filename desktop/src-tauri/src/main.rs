@@ -1959,6 +1959,9 @@ fn ensure_torch_device(
                 // reads in a bug report and sends them after the wrong thing
                 // (#502: the install had been killed mid-download).
                 let mut cuda_installed = false;
+                // One entry per candidate tried: None when it did not install,
+                // otherwise what verification said. Decides the reason below.
+                let mut outcomes: Vec<Option<CudaVerify>> = Vec::new();
                 for tag in &candidates {
                     append_to_setup_log(
                         &data_dir,
@@ -1970,10 +1973,13 @@ fn ensure_torch_device(
                     let index_url = format!("https://download.pytorch.org/whl/{tag}");
                     if let Err(e) = install_cuda_torch(&python, &index_url, &state, &app) {
                         append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
+                        outcomes.push(None);
                         continue;
                     }
                     cuda_installed = true;
-                    if verify_cuda_torch(&python) {
+                    let outcome = verify_cuda_torch(&python);
+                    outcomes.push(Some(outcome));
+                    if outcome == CudaVerify::Verified {
                         append_to_setup_log(&data_dir, &format!("{tag} verified"));
                         cuda_verified = true;
                         break;
@@ -1988,11 +1994,7 @@ fn ensure_torch_device(
                     // module scope, so a wheel that cannot load keeps the
                     // backend from starting at all. Put the CPU wheels back
                     // (#324).
-                    let stage = if cuda_installed {
-                        "cuda-verify-failed"
-                    } else {
-                        "cuda-install-failed"
-                    };
+                    let stage = cuda_failure_stage(&outcomes);
                     match restore_cpu_torch(&python, &state, &app) {
                         Ok(()) => stage,
                         Err(e) => {
@@ -2931,7 +2933,7 @@ fn install_cuda_torch(
 ) -> Result<(), String> {
     // Skip only when CUDA torch is already active — torch.version.cuda is
     // None for CPU-only wheels, so this correctly re-installs when needed.
-    if verify_cuda_torch(python) {
+    if verify_cuda_torch(python) == CudaVerify::Verified {
         return Ok(());
     }
 
@@ -3025,8 +3027,49 @@ fn cuda_install_passes<'a>(
 /// an unbounded wait is an unbounded hang (#502).
 const GPU_VERIFY_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// What a CUDA verification run showed.
+#[cfg(any(not(target_os = "macos"), test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CudaVerify {
+    Verified,
+    /// The build has no kernels for this GPU. Another build might, but trying
+    /// the same builds again on the next launch never will (#733).
+    NoKernelImage,
+    /// Anything else, including a timeout. Worth retrying next launch.
+    Failed,
+}
+
+/// Whether a failed verification was the "this build has no kernels for your
+/// GPU" error. Matched on CUDA's exact wording, because a looser match would
+/// settle a driver or install problem as permanent.
+#[cfg(any(not(target_os = "macos"), test))]
+fn is_no_kernel_image(stderr: &str) -> bool {
+    stderr.contains("no kernel image is available for execution on the device")
+}
+
+/// The reason recorded when CUDA setup does not end on the GPU.
+///
+/// `cuda-unsupported-gpu` means every build that installed was refused for
+/// having no kernels for this card, and nothing else went wrong. The setup
+/// screen treats it as settled, so the same builds are not downloaded and
+/// refused again on every launch (#733). A new app version re-runs setup
+/// anyway, which is when different builds could be on offer.
+#[cfg(any(not(target_os = "macos"), test))]
+fn cuda_failure_stage(outcomes: &[Option<CudaVerify>]) -> &'static str {
+    let installed: Vec<CudaVerify> = outcomes.iter().flatten().copied().collect();
+    if installed.is_empty() {
+        "cuda-install-failed"
+    } else if installed.len() == outcomes.len()
+        && installed.iter().all(|o| *o == CudaVerify::NoKernelImage)
+    {
+        "cuda-unsupported-gpu"
+    } else {
+        "cuda-verify-failed"
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
-fn verify_cuda_torch(python: &Path) -> bool {
+fn verify_cuda_torch(python: &Path) -> CudaVerify {
     // Don't trust torch.cuda.is_available() alone: it returns True even when the
     // installed wheel has no kernels for the device (e.g. sm_120 on a cu124
     // build), which then crashes mid-extraction with "no kernel image is
@@ -3060,7 +3103,7 @@ fn verify_cuda_torch(python: &Path) -> bool {
     };
 
     match command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "CUDA verify") {
-        Ok(out) if out.status.success() => true,
+        Ok(out) if out.status.success() => CudaVerify::Verified,
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             if !stderr.trim().is_empty() {
@@ -3070,7 +3113,11 @@ fn verify_cuda_torch(python: &Path) -> bool {
                 // torch loaded but reported no usable device.
                 log("CUDA verify failed: torch reported no usable CUDA device");
             }
-            false
+            if is_no_kernel_image(&stderr) {
+                CudaVerify::NoKernelImage
+            } else {
+                CudaVerify::Failed
+            }
         }
         Err(e) => {
             // The timeout path lands here, and it is the one worth naming
@@ -3081,7 +3128,7 @@ fn verify_cuda_torch(python: &Path) -> bool {
                  and falling back to CPU. A driver that does not match the installed \
                  CUDA wheel is the usual cause."
             ));
-            false
+            CudaVerify::Failed
         }
     }
 }
@@ -6244,6 +6291,44 @@ mod tests {
             super::wheel_candidates(Some("5.2"), "13.0"),
             vec!["cu124", "cu118"]
         );
+    }
+
+    /// The reporter's setup log: the GPU was refused by every build for having
+    /// no kernels, and setup repeated the whole install on each of six
+    /// launches (#733). That outcome, and only that one, is settled.
+    #[test]
+    fn a_gpu_every_build_refuses_is_settled_as_unsupported() {
+        use super::CudaVerify::{Failed, NoKernelImage, Verified};
+        let stage = super::cuda_failure_stage;
+        assert_eq!(stage(&[Some(NoKernelImage)]), "cuda-unsupported-gpu");
+        assert_eq!(
+            stage(&[Some(NoKernelImage), Some(NoKernelImage)]),
+            "cuda-unsupported-gpu"
+        );
+        // Anything that might go differently next time is not settled.
+        assert_eq!(
+            stage(&[Some(NoKernelImage), Some(Failed)]),
+            "cuda-verify-failed"
+        );
+        assert_eq!(stage(&[Some(NoKernelImage), None]), "cuda-verify-failed");
+        assert_eq!(stage(&[Some(Failed)]), "cuda-verify-failed");
+        assert_eq!(stage(&[None, None]), "cuda-install-failed");
+        assert_eq!(stage(&[]), "cuda-install-failed");
+        // Verified never reaches here, but must not read as unsupported.
+        assert_eq!(stage(&[Some(Verified)]), "cuda-verify-failed");
+    }
+
+    #[test]
+    fn only_cudas_own_wording_counts_as_no_kernel_image() {
+        // The line from the reporter's setup.log.
+        assert!(super::is_no_kernel_image(
+            "torch.AcceleratorError: CUDA error: no kernel image is available for execution on the device"
+        ));
+        assert!(!super::is_no_kernel_image("CUDA error: out of memory"));
+        assert!(!super::is_no_kernel_image(
+            "RuntimeError: CUDA kernel launch timed out"
+        ));
+        assert!(!super::is_no_kernel_image(""));
     }
 
     /// A card cu128 does support still starts there, with the 2.6 builds

@@ -322,10 +322,17 @@ async function runSetup() {
     // that predates reason tracking -- re-runs the GPU step on this launch, so
     // a single bad first run can't pin the install to CPU forever (#247).
     // Cost when nothing changed: one fast nvidia-smi probe.
+    //
+    // A GPU that every offered CUDA build refused for having no kernels for it
+    // is settled too: trying the same builds again cannot go differently, and
+    // did cost about 45 s of download and install on every launch (#733). A
+    // new version re-runs setup through versionMismatch below, which is when
+    // different builds could be on offer.
     const torchDeviceSettled =
       runtime.torchDevice === "cuda" ||
       runtime.torchDevice === "mps" ||
-      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cpu-only-package");
+      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cpu-only-package") ||
+      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cuda-unsupported-gpu");
 
     if (runtime.pythonReady && runtime.ffmpegReady && torchDeviceSettled && !versionMismatch) {
       for (const step of steps) {
@@ -449,7 +456,11 @@ async function runSetup() {
               ? `${gpu.gpuName} acceleration enabled`
               : "MPS acceleration unavailable - stem separation will use CPU";
         } else {
-          if (gpu.gpuDetected && !gpu.cudaVerified) {
+          if (gpu.gpuDetected && !gpu.cudaVerified && gpu.reason === "cuda-unsupported-gpu") {
+            showError(
+              `GPU detected (${gpu.gpuName}), but none of the CUDA builds StemDeck can install support it - stem separation will use CPU. StemDeck will not try again until the next update.`
+            );
+          } else if (gpu.gpuDetected && !gpu.cudaVerified) {
             showError(
               `GPU detected (${gpu.gpuName}) but CUDA setup failed - stem separation will use CPU.\nCheck logs/setup.log in the StemDeck data folder for details.`
             );
