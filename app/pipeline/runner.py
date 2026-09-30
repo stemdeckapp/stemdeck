@@ -21,7 +21,7 @@ from app.core.models import Job, JobCancelled, _set
 from app.core.redact import redact
 from app.core.registry import is_upload, set_proc
 from app.core.registry import persist as persist_registry
-from app.pipeline.analyze import analyze
+from app.pipeline.analyze import analyze, refine_key_from_stems
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.collect import (
     cleanup_source,
@@ -221,6 +221,15 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
         release_source(job.id)
         cleanup_source(job_dir)
     job.stems = [{"name": name, "url": f"/api/jobs/{job.id}/stems/{name}.wav"} for name in found]
+    _check_cancel(job)
+    # The key was first estimated from the mix, before separation. The stems
+    # are better evidence, the bass line above all (#726). Keeps the first
+    # estimate on any failure.
+    # Timed on its own, and still inside "post" as before, so post timings
+    # from earlier versions compare like for like.
+    key_start = time.monotonic()
+    refine_key_from_stems(job, stems_dir)
+    _lap(job, "key", key_start)
     _check_cancel(job)
     _set(job, stage="Mixing tracks...")
     original_path = make_original_track(job, job_dir, stems_dir)
