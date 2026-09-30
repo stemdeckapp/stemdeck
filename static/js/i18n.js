@@ -466,10 +466,13 @@ const en = {
   "trash.noSearchMatch": "No deleted tracks match your search",
 
   "meta.key": "Key",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "major",
+  "key.mode.minor": "minor",
+  "key.mode.harmonicMinor": "harmonic minor",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Duration",
-  "meta.scale": "Scale",
   "meta.dynamicRange": "Dynamic Range",
   "meta.tempoStability": "Tempo Stability",
 
@@ -1269,10 +1272,13 @@ const pl = {
   "trash.noSearchMatch": "Żadne usunięte utwory nie pasują do wyszukiwania",
 
   "meta.key": "Tonacja",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "dur",
+  "key.mode.minor": "moll",
+  "key.mode.harmonicMinor": "moll harmoniczna",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Czas",
-  "meta.scale": "Skala",
   "meta.dynamicRange": "Zakres dynamiki",
   "meta.tempoStability": "Stabilność tempa",
 
@@ -2062,10 +2068,13 @@ const ja = {
   "trash.noSearchMatch": "検索に一致する削除済みトラックはありません",
 
   "meta.key": "キー",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "メジャー",
+  "key.mode.minor": "マイナー",
+  "key.mode.harmonicMinor": "ハーモニック・マイナー",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "長さ",
-  "meta.scale": "スケール",
   "meta.dynamicRange": "ダイナミックレンジ",
   "meta.tempoStability": "テンポ安定性",
 
@@ -2830,10 +2839,13 @@ const zhHans = {
   "trash.noSearchMatch": "没有已删除的曲目与你的搜索匹配",
 
   "meta.key": "调性",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "大调",
+  "key.mode.minor": "小调",
+  "key.mode.harmonicMinor": "和声小调",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "时长",
-  "meta.scale": "音阶",
   "meta.dynamicRange": "动态范围",
   "meta.tempoStability": "速度稳定性",
 
@@ -3598,10 +3610,13 @@ const de = {
   "trash.noSearchMatch": "Keine gelöschten Tracks entsprechen deiner Suche",
 
   "meta.key": "Tonart",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "Dur",
+  "key.mode.minor": "Moll",
+  "key.mode.harmonicMinor": "harmonisches Moll",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Dauer",
-  "meta.scale": "Tonleiter",
   "meta.dynamicRange": "Dynamikumfang",
   "meta.tempoStability": "Tempostabilität",
 
@@ -4377,10 +4392,13 @@ const pt = {
   "trash.noSearchMatch": "Nenhuma faixa excluída corresponde à sua pesquisa",
 
   "meta.key": "Tom",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "maior",
+  "key.mode.minor": "menor",
+  "key.mode.harmonicMinor": "menor harmônica",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Duração",
-  "meta.scale": "Escala",
   "meta.dynamicRange": "Faixa dinâmica",
   "meta.tempoStability": "Estabilidade de tempo",
 
@@ -5158,10 +5176,13 @@ const id = {
   "trash.noSearchMatch": "Tidak ada trek terhapus yang cocok dengan pencarian Anda",
 
   "meta.key": "Nada Dasar",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "mayor",
+  "key.mode.minor": "minor",
+  "key.mode.harmonicMinor": "minor harmonik",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Durasi",
-  "meta.scale": "Tangga Nada",
   "meta.dynamicRange": "Rentang Dinamis",
   "meta.tempoStability": "Stabilitas Tempo",
 
@@ -5926,10 +5947,13 @@ const fr = {
   "trash.noSearchMatch": "Aucun morceau supprimé ne correspond à votre recherche",
 
   "meta.key": "Tonalité",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "majeur",
+  "key.mode.minor": "mineur",
+  "key.mode.harmonicMinor": "mineur harmonique",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Durée",
-  "meta.scale": "Gamme",
   "meta.dynamicRange": "Plage dynamique",
   "meta.tempoStability": "Stabilité du tempo",
 
@@ -6462,6 +6486,7 @@ const fr = {
 // through pt (see FALLBACK), so the two variants cannot drift and a key
 // added to pt later is picked up here rather than reverting to English.
 const ptPT = {
+  "key.mode.harmonicMinor": "menor harmónica",
   "lyrics.align.hint": "Coloque o cursor de reprodução onde a primeira linha é cantada e prima Começar a letra aqui. Para usar outra linha, clique nela primeiro e depois leve o cursor até onde é cantada.",
   "lyrics.align.targetPicked": "Move a linha em que clicou: “{line}”",
   "lyrics.align.detecting": "A verificar a voz…",
@@ -6877,10 +6902,13 @@ const es = {
   "trash.noSearchMatch": "Ninguna pista eliminada coincide con tu búsqueda",
 
   "meta.key": "Tonalidad",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "mayor",
+  "key.mode.minor": "menor",
+  "key.mode.harmonicMinor": "menor armónica",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "Duración",
-  "meta.scale": "Escala",
   "meta.dynamicRange": "Rango dinámico",
   "meta.tempoStability": "Estabilidad del tempo",
 
@@ -7679,10 +7707,13 @@ const ko = {
   "trash.noSearchMatch": "검색과 맞는 삭제된 트랙이 없어요",
 
   "meta.key": "키",
+  "key.label": "{tonic} {mode}",
+  "key.mode.major": "메이저",
+  "key.mode.minor": "마이너",
+  "key.mode.harmonicMinor": "하모닉 마이너",
   "meta.bpm": "BPM",
   "meta.lufs": "LUFS",
   "meta.duration": "길이",
-  "meta.scale": "음계",
   "meta.dynamicRange": "다이내믹 레인지",
   "meta.tempoStability": "템포 안정성",
 

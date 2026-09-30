@@ -1388,6 +1388,20 @@ input, textarea { font-family: inherit; }
   grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid var(--border);
 }
+/* Key takes the column the Scale card had (#736). "F# harmonisches Moll" has to
+   fit, and two columns keep the seven edges the presence row lines up with. */
+.daw-meta-card[data-meta="key"] { grid-column: span 2; }
+/* Even two columns are 115 px of text at a 950 px window, and "F# harmonisches
+   Moll" needs 155. Clipping it would hide the mode, which is the part the
+   label exists to say, so the key wraps instead: a short key still sits on
+   one line at any width, a long one takes two. */
+.daw-meta-card[data-meta="key"] .meta-card-main { align-items: center; }
+.daw-meta-card[data-meta="key"] .meta-card-value {
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.15;
+  text-wrap: balance;
+}
 
 /* Track card */
 .daw-track-card {

@@ -5,6 +5,7 @@ import { initSections } from "./sections.js";
 import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
+import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
   cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -856,18 +857,13 @@ function applyTrackInfoToPanel(track) {
 
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
-  const summaryScale = document.getElementById("summary-scale");
-  const summaryScaleName = document.getElementById("summary-scale-name");
   const summaryConfidence = document.getElementById("summary-confidence");
-  const summaryConfidenceLabel = document.getElementById("summary-confidence-label");
   const summaryLufs = document.getElementById("summary-lufs");
   const summaryPeak = document.getElementById("summary-peak");
   const summaryDuration = document.getElementById("summary-duration");
 
-  if (summaryKey) summaryKey.textContent = track.key || "—";
+  if (summaryKey) summaryKey.textContent = formatKey(track.key, track.scale, i18nT) || "—";
   if (summaryBpm) summaryBpm.textContent = track.bpm ? String(track.bpm) : "—";
-  if (summaryScale) summaryScale.textContent = track.scale || "";
-  if (summaryScaleName) summaryScaleName.textContent = track.scale || "—";
   if (summaryLufs) summaryLufs.textContent = track.lufs != null ? Number(track.lufs).toFixed(1) : "—";
   if (summaryPeak) summaryPeak.textContent = track.peakDb != null ? i18nT("job.peakDb", { value: Number(track.peakDb).toFixed(1) }) : "";
   if (summaryDuration) summaryDuration.textContent = track.duration ? fmtTime(track.duration) : "—";
@@ -916,7 +912,6 @@ function applyTrackInfoToPanel(track) {
     summaryConfidence.textContent = "";
     summaryConfidence.style.removeProperty("--confidence-pct");
     summaryConfidence.classList.add("hidden");
-    summaryConfidenceLabel?.classList.add("hidden");
     if (track.keyConfidence != null) {
       const confidence = Math.max(0, Math.min(100, Number(track.keyConfidence)));
       const confSpan = document.createElement("span");
@@ -924,7 +919,6 @@ function applyTrackInfoToPanel(track) {
       summaryConfidence.appendChild(confSpan);
       summaryConfidence.style.setProperty("--confidence-pct", confidence);
       summaryConfidence.classList.remove("hidden");
-      summaryConfidenceLabel?.classList.remove("hidden");
     }
   }
 }

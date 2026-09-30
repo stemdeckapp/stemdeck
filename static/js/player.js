@@ -223,19 +223,15 @@ function clearStemSelectionFilter() {
 function resetAnalysisCards() {
   const summaryKey = document.getElementById("summary-key");
   const summaryBpm = document.getElementById("summary-bpm");
-  const summaryScale = document.getElementById("summary-scale");
   const summaryConfidence = document.getElementById("summary-confidence");
-  const summaryConfidenceLabel = document.getElementById("summary-confidence-label");
   const loudnessCard = document.getElementById("loudness-card");
   if (summaryKey) summaryKey.textContent = "—";
   if (summaryBpm) summaryBpm.innerHTML = "— <small>BPM</small>";
-  if (summaryScale) summaryScale.textContent = "";
   if (summaryConfidence) {
     summaryConfidence.textContent = "";
     summaryConfidence.style.removeProperty("--confidence-pct");
     summaryConfidence.classList.add("hidden");
   }
-  if (summaryConfidenceLabel) summaryConfidenceLabel.classList.add("hidden");
   if (loudnessCard) loudnessCard.classList.add("hidden");
 }
 
