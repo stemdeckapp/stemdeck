@@ -306,6 +306,16 @@ class Job:
     # A timestamp rather than a bool so the Trash can say when, and so a future
     # auto-purge has something to work from.
     trashed_at: float | None = None
+    # Whether the user marked this track as a favourite, or None if no
+    # client has said either way yet (#734).
+    #
+    # Server-side for the same reason as trashed_at: favourites lived only in
+    # the desktop page's catalog store, so the phone, which builds its library
+    # from GET /api/jobs, had no way to set one or to filter by them. None
+    # rather than False lets the desktop tell "never recorded here" from
+    # "taken back out", so it can hand up favourites it set before this field
+    # existed without undoing one removed on the phone.
+    favorite: bool | None = None
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
@@ -366,6 +376,7 @@ class Job:
             "stage_timings": self.stage_timings,
             "vocal_split": self.vocal_split,
             "trashed_at": self.trashed_at,
+            "favorite": self.favorite,
             "created_at": self.created_at,
         }
 

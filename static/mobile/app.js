@@ -66,6 +66,7 @@ const ICON = {
   search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#65656d" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>',
   link: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#65656d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
   upload: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
+  heart: (on) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
   check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   scissors: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>',
   tabLib: '<svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
@@ -541,8 +542,15 @@ function libraryBody() {
   if (state.libState === "empty") {
     return `<div class="lib-note">No tracks yet. Head to <b>Extract</b> to split your first song.</div>`;
   }
-  return `<div class="eyebrow">RECENT</div>
-    ${state.tracks.map((t) => {
+  // The Favorites chip used to set a filter nothing read, so it listed every
+  // track (#734). Favourites are on the server now, so it can filter for real.
+  const favOnly = state.filter === "Favorites";
+  const shown = favOnly ? state.tracks.filter((t) => t.favorite) : state.tracks;
+  if (favOnly && !shown.length) {
+    return `<div class="lib-note">No favourites yet. Tap the heart on a track to add it here.</div>`;
+  }
+  return `<div class="eyebrow">${favOnly ? "FAVORITES" : "RECENT"}</div>
+    ${shown.map((t) => {
       const unavailable = t.status === "unavailable";
       const canReimport = unavailable && t.sourceUrl && !t.sourceUrl.startsWith("local:");
       const infoHtml = unavailable
@@ -556,6 +564,7 @@ function libraryBody() {
         <div class="track-art" style="${artStyle(t)}">${artLabel(t)}</div>
         <div class="track-info">${infoHtml}</div>
         <div class="track-dot ${t.status}"></div>
+        <button class="track-fav${t.favorite ? " on" : ""}" data-action="favorite" data-id="${esc(t.id)}" aria-pressed="${t.favorite}" aria-label="${t.favorite ? "Remove from Favorites" : "Add to Favorites"}">${ICON.heart(t.favorite)}</button>
         <button class="track-load" data-action="${unavailable ? "reimport" : "open"}" data-id="${esc(t.id)}">${unavailable ? "Fix" : "Load"}</button>
       </div>
     </div>`;
@@ -841,6 +850,29 @@ function closeSwipe() {
   closeOtherSwipes(null);
 }
 
+// The same flag the desktop's hearts set (#734). The row changes at once and
+// goes back if the server refuses, so a tap never shows a state that was not
+// kept.
+async function toggleFavorite(id) {
+  const track = state.tracks.find((t) => t.id === id);
+  if (!track) return;
+  track.favorite = !track.favorite;
+  render();
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(id)}/favorite`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite: track.favorite }),
+    });
+    if (!res.ok) throw new Error(`PUT favorite -> ${res.status}`);
+  } catch (e) {
+    console.warn("[mobile] could not save the favourite:", e);
+    track.favorite = !track.favorite;
+    toast("Could not save the favourite");
+    render();
+  }
+}
+
 async function deleteTrack(id) {
   state.swipedTrackId = null;
   try {
@@ -961,6 +993,11 @@ app.addEventListener("click", (e) => {
   switch (a) {
     case "delete":
       deleteTrack(t.dataset.id);
+      return;
+    case "favorite":
+      // The row underneath opens the track; the heart is its own button.
+      e.stopPropagation();
+      toggleFavorite(t.dataset.id);
       return;
     case "tab":
       state.tab = t.dataset.tab;

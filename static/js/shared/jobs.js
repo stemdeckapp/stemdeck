@@ -76,5 +76,8 @@ export function jobToCard(state) {
     // can be reimported without a second fetch for its own source URL/stems.
     sourceUrl: state.source_url || null,
     selectedStems: state.selected_stems || [],
+    // Kept on the server since #734, so a heart set on either screen shows on
+    // the other. null (never said) reads as not a favourite.
+    favorite: state.favorite === true,
   };
 }

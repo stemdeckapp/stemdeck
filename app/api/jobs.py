@@ -16,7 +16,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 from app.core.config import (
     DISCOGS_LOOKUP_BUDGET_SEC,
@@ -44,6 +44,7 @@ from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
+from app.core.registry import set_favorite as registry_set_favorite
 from app.core.registry import set_trashed as registry_set_trashed
 from app.core.settings import (
     get_acoustid_api_key,
@@ -421,6 +422,25 @@ def restore_job(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
+
+
+class FavoriteBody(BaseModel):
+    """Strict, so a string such as "false" is refused rather than read as true."""
+
+    favorite: StrictBool
+
+
+@router.put("/{job_id}/favorite")
+def set_favorite(job_id: str, body: FavoriteBody) -> dict:
+    """Mark a job as a favourite or take it back out (#734). Kept on the server
+    so the desktop and the phone share one answer."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_set_favorite(job_id, body.favorite)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    registry_persist(JOBS_DIR)
+    return {"job_id": job.id, "favorite": job.favorite}
 
 
 @router.get("/{job_id}")

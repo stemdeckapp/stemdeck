@@ -778,6 +778,19 @@ button {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+.track-fav {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-right: 2px;
+  border: none;
+  background: none;
+  color: #7a7a82;
+  cursor: pointer;
+}
+.track-fav.on { color: #e54e4e; }
 .track-load {
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);

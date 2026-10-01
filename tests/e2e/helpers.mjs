@@ -253,8 +253,37 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
 }
 
 /** Open the fixture track in the studio and wait until the transport is live. */
-export async function openStudio(page, { tauri = false, updateAvailable = false } = {}) {
+/**
+ * Keep favourites off the shared e2e backend (#734).
+ *
+ * A heart now writes to the server, and every spec shares one server, so a
+ * favourite set by one test would come back through GET /api/jobs into the
+ * next one's library. Writes are answered here instead, and the server's
+ * value stays null, which the desktop reads as "never said". A test about the
+ * sync itself passes `serverFavorites` to stand in for what the server knows.
+ */
+export async function stubFavorites(page, serverFavorites = {}) {
+  const writes = [];
+  await page.route("**/api/jobs/*/favorite", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/")[3];
+    const { favorite } = JSON.parse(route.request().postData() || "{}");
+    writes.push({ id, favorite });
+    serverFavorites[id] = favorite;
+    await route.fulfill({ json: { job_id: id, favorite } });
+  });
+  await page.route(/\/api\/jobs(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const jobs = await res.json();
+    for (const j of jobs) j.favorite = serverFavorites[j.job_id] ?? null;
+    await route.fulfill({ response: res, json: jobs });
+  });
+  return writes;
+}
+
+export async function openStudio(page, { tauri = false, updateAvailable = false, serverFavorites = {} } = {}) {
   await seedLibrary(page);
+  const favoriteWrites = await stubFavorites(page, serverFavorites);
   if (tauri) await stubTauri(page);
   await stubExportEndpoints(page);
   await stubUpdateCheck(page, { available: updateAvailable });
@@ -268,6 +297,7 @@ export async function openStudio(page, { tauri = false, updateAvailable = false 
     null,
     { timeout: 20000 },
   );
+  return { favoriteWrites };
 }
 
 /**

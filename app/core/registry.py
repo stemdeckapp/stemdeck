@@ -107,6 +107,16 @@ def set_trashed(job_id: str, trashed: bool) -> Job | None:
         return job
 
 
+def set_favorite(job_id: str, favorite: bool) -> Job | None:
+    """Mark a job as a favourite, or take it back out (#734)."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return None
+        job.favorite = favorite
+        return job
+
+
 def all_jobs() -> dict[str, Job]:
     """Return a snapshot of the registry for sweep / cleanup."""
     with _lock:
