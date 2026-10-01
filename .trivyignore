@@ -35,3 +35,20 @@ DS-0002
 # update. Take the bump the next time the lock moves for another reason, and
 # drop this entry then.
 CVE-2026-63374
+
+# CVE-2026-97687 (traffic interception through an HTTPS proxy's TLS
+# configuration) and CVE-2026-97689 (denial of service through unbounded
+# memory): urllib3, fixed in 2.8.0; the lock pins 2.7.0.
+#
+# StemDeck's own requests all go through the standard library's urllib.
+# urllib3 is here only through requests, which audio-separator, librosa's
+# pooch and Whisper's tiktoken use to download models and data from fixed
+# hosts (GitHub, Hugging Face, OpenAI's CDN). The first needs an HTTPS proxy
+# configured, the second a hostile server on one of those downloads.
+#
+# Not bumped now for the same reason as CVE-2026-63374: any uv.lock change
+# sends every existing desktop install to a full download instead of an
+# in-app update, and 0.19.0 already did that two days before 0.19.1. Take the
+# bump the next time the lock moves for another reason, and drop these then.
+CVE-2026-97687
+CVE-2026-97689
