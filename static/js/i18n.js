@@ -583,6 +583,7 @@ const en = {
   "pitch.downTitle": "Transpose down a semitone",
   "pitch.upTitle": "Transpose up a semitone",
   "speed.ariaLabel": "Playback speed",
+  "speed.slowTitle": "Slow practice speed. Scroll over it, or press the up and down arrow keys, to set it anywhere from 0.50x to 0.99x.",
 
   "click.group": "Click track",
   "click.toggleTitle": "Click track (K)",
@@ -1387,6 +1388,7 @@ const pl = {
   "pitch.downTitle": "Transponuj w dół o półton",
   "pitch.upTitle": "Transponuj w górę o półton",
   "speed.ariaLabel": "Prędkość odtwarzania",
+  "speed.slowTitle": "Wolne tempo do ćwiczeń. Przewiń nad nim kółkiem myszy albo naciśnij strzałki w górę i w dół, aby ustawić je od 0.50x do 0.99x.",
 
   "click.group": "Metronom",
   "click.toggleTitle": "Metronom (K)",
@@ -2182,6 +2184,7 @@ const ja = {
   "pitch.downTitle": "半音下げる",
   "pitch.upTitle": "半音上げる",
   "speed.ariaLabel": "再生速度",
+  "speed.slowTitle": "練習用のスロー速度。上でスクロールするか、上下の矢印キーを押すと、0.50x から 0.99x の間で設定できます。",
 
   "click.group": "クリックトラック",
   "click.toggleTitle": "クリックトラック (K)",
@@ -2953,6 +2956,7 @@ const zhHans = {
   "pitch.downTitle": "降低半音",
   "pitch.upTitle": "升高半音",
   "speed.ariaLabel": "播放速度",
+  "speed.slowTitle": "慢速练习速度。在上面滚动鼠标滚轮，或按上下方向键，可设置为 0.50x 到 0.99x 之间的任意值。",
 
   "click.group": "节拍器",
   "click.toggleTitle": "节拍器 (K)",
@@ -3725,6 +3729,7 @@ const de = {
   "pitch.downTitle": "Einen Halbton tiefer transponieren",
   "pitch.upTitle": "Einen Halbton höher transponieren",
   "speed.ariaLabel": "Wiedergabegeschwindigkeit",
+  "speed.slowTitle": "Langsames Übungstempo. Darüber scrollen oder die Pfeiltasten nach oben und unten drücken, um es zwischen 0.50x und 0.99x einzustellen.",
 
   "click.group": "Click-Track",
   "click.toggleTitle": "Click-Track (K)",
@@ -4507,6 +4512,7 @@ const pt = {
   "pitch.downTitle": "Transpor um semitom para baixo",
   "pitch.upTitle": "Transpor um semitom para cima",
   "speed.ariaLabel": "Velocidade de reprodução",
+  "speed.slowTitle": "Velocidade lenta para praticar. Role o mouse sobre ela ou pressione as setas para cima e para baixo para ajustá-la entre 0.50x e 0.99x.",
 
   "click.group": "Clique de referência",
   "click.toggleTitle": "Clique de referência (K)",
@@ -5290,6 +5296,7 @@ const id = {
   "pitch.downTitle": "Turunkan satu semitone",
   "pitch.upTitle": "Naikkan satu semitone",
   "speed.ariaLabel": "Kecepatan putar",
+  "speed.slowTitle": "Kecepatan lambat untuk latihan. Gulir di atasnya, atau tekan tombol panah atas dan bawah, untuk mengaturnya antara 0.50x dan 0.99x.",
 
   "click.group": "Click Track",
   "click.toggleTitle": "Click track (K)",
@@ -6062,6 +6069,7 @@ const fr = {
   "pitch.downTitle": "Transposer d'un demi-ton vers le bas",
   "pitch.upTitle": "Transposer d'un demi-ton vers le haut",
   "speed.ariaLabel": "Vitesse de lecture",
+  "speed.slowTitle": "Vitesse lente d’entraînement. Faites défiler dessus, ou appuyez sur les flèches haut et bas, pour la régler entre 0.50x et 0.99x.",
 
   "click.group": "Métronome",
   "click.toggleTitle": "Métronome (K)",
@@ -6486,6 +6494,7 @@ const fr = {
 // through pt (see FALLBACK), so the two variants cannot drift and a key
 // added to pt later is picked up here rather than reverting to English.
 const ptPT = {
+  "speed.slowTitle": "Velocidade lenta para praticar. Desloque a roda do rato sobre ela ou prima as setas para cima e para baixo para a ajustar entre 0.50x e 0.99x.",
   "key.mode.harmonicMinor": "menor harmónica",
   "lyrics.align.hint": "Coloque o cursor de reprodução onde a primeira linha é cantada e prima Começar a letra aqui. Para usar outra linha, clique nela primeiro e depois leve o cursor até onde é cantada.",
   "lyrics.align.targetPicked": "Move a linha em que clicou: “{line}”",
@@ -7017,6 +7026,7 @@ const es = {
   "pitch.downTitle": "Transponer un semitono hacia abajo",
   "pitch.upTitle": "Transponer un semitono hacia arriba",
   "speed.ariaLabel": "Velocidad",
+  "speed.slowTitle": "Velocidad lenta para practicar. Desplázate sobre ella, o pulsa las flechas arriba y abajo, para ajustarla entre 0.50x y 0.99x.",
 
   "click.group": "Click",
   "click.toggleTitle": "Click (K)",
@@ -7821,6 +7831,7 @@ const ko = {
   "pitch.downTitle": "반음 내리기",
   "pitch.upTitle": "반음 올리기",
   "speed.ariaLabel": "재생 속도",
+  "speed.slowTitle": "연습용 느린 속도입니다. 위에서 스크롤하거나 위아래 화살표 키를 눌러 0.50x에서 0.99x 사이로 설정할 수 있습니다.",
 
   "click.group": "클릭 트랙",
   "click.toggleTitle": "클릭 트랙 (K)",
