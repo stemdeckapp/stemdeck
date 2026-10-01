@@ -1,9 +1,10 @@
 // A track can be favourited at any window width (#724).
 //
-// The only heart used to be the Now Playing card's, and daw.css hides that
-// whole card below 1460 px. A maximised laptop window is under that, so there
-// was no way to favourite at all. Library and Favorites rows have one now, and
-// every heart goes through one toggle, so they cannot disagree.
+// The only heart used to be the Now Playing card's, and daw.css hid that whole
+// card below 1460 px. A maximised laptop window is under that, so there was no
+// way to favourite at all. Library and Favorites rows have one now, and every
+// heart goes through one toggle, so they cannot disagree. The card stays in a
+// compact form at narrow widths too since #735, so both hearts are on screen.
 
 import { test, expect } from "@playwright/test";
 import { JOB_ID, SIBLING_JOB_ID, openStudio, readCatalogState } from "./helpers.mjs";
@@ -15,9 +16,8 @@ const favoriteIn = async (page, id) => Boolean((await readCatalogState(page))?.t
 test.describe("favourites at a narrow window", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("a library row can favourite a track the Now Playing card cannot reach", async ({ page }) => {
+  test("a library row can favourite a track that is not the one playing", async ({ page }) => {
     await openStudio(page);
-    await expect(page.locator("#fav-btn")).toBeHidden();
 
     await row(page, SIBLING_JOB_ID).hover();
     await expect(rowHeart(page, SIBLING_JOB_ID)).toBeVisible();

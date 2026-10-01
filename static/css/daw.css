@@ -292,7 +292,7 @@ input, textarea { font-family: inherit; }
   color: var(--color);
 }
 /* Automatic song-structure detection. It sits at the end of the composer next
-   to Split stems and matches its footprint, so the pair reads as two segments
+   to Extract stems and matches its footprint, so the pair reads as two segments
    of one bar rather than a chip loose beside a button. Colour still separates
    them: the timeline blue, never the amber the primary action owns. */
 .structure-toggle {
@@ -4840,19 +4840,27 @@ input, textarea { font-family: inherit; }
      and are therefore exactly the same width. As a flex row the search grew to
      whatever was left over, which is why it ran past the last chip.
 
-     Columns: content | detect | split | rule | card. Row one is the import
-     gesture, row two is what to extract. Split sits straight after the options
-     it acts on, and the loaded track comes after the rule, at the end: in the
-     middle of the row it read as Split's input, when it is only what is
-     playing (#699). */
+     Columns: content | actions | panel toggles | rule | card. Row one is the
+     import gesture, row two is what to extract. The two actions stack in one
+     column, Detect structure over Extract stems, so Extract sits on the chips'
+     row, straight after the options it acts on, and the Collapse toggles stack
+     beside them (#725). Stacked rather than side by side, the right-hand end
+     is about 50px narrower, which is room the card keeps. The loaded track
+     comes after the rule, at the end: in the middle of the row it read as
+     Extract's input, when it is only what is playing (#699). */
   height: auto;
   display: grid;
   /* minmax(0, 1fr), not 1fr: a grid track's automatic minimum is its
      min-content, so a plain 1fr refuses to shrink below the widest thing in
-     it. The card sat at its natural width and pushed Split stems off the right
+     it. The card sat at its natural width and pushed Extract stems off the right
      edge of its own container. Zero as the floor lets the column give way, and
      the card's own text clips with an ellipsis rather than forcing the row. */
-  grid-template-columns: minmax(0, max-content) auto auto auto minmax(0, 1fr);
+  /* The card's floor is its compact form, the heart and the About this song
+     button and nothing else (#735). Below what the whole card needs, the
+     chips fold into their overflow button first (fitStemChips), so the card
+     is never squeezed out of the row the way display: none once took it. */
+  --np-min: 72px;
+  grid-template-columns: minmax(0, max-content) auto auto auto minmax(var(--np-min), 1fr);
   align-items: center;
   row-gap: 8px;
   column-gap: 10px;
@@ -5003,8 +5011,13 @@ input, textarea { font-family: inherit; }
   border-left: none;
 }
 .daw-composer > .daw-process-btn {
-  grid-column: 3;
-  grid-row: 1;
+  grid-column: 2;
+  grid-row: 2;
+  /* As wide as Detect structure above it, and as tall as the chips beside
+     it, so the bar keeps its height. */
+  justify-self: stretch;
+  min-height: 30px;
+  height: 30px;
 }
 
 /* 2. Ten percent off the waveform: REMOVED.
@@ -5024,31 +5037,30 @@ input, textarea { font-family: inherit; }
    and it would need the strip and the footer inset to match, or something
    given the freed space. */
 
-/* Row two, under the two actions: on the chips' line rather than below it.
+/* The Collapse toggles, a column of their own beside the two actions (#725):
+   the label on top, then one toggle per panel, spanning both rows. Beside the
+   actions rather than under them, which is what lets Extract stems take the
+   chips' row.
 
-   Columns 2 to 4, the two action columns only, not the rule's: a spanning
-   item's minimum lands in the first track it covers, and the 1px rule column
-   would have been handed the toggles' whole width. The action columns are
-   already as wide as Detect structure and Split stems, which is more than the
-   toggles need, so spanning only those costs the row nothing.
-
-   A grid item rather than absolutely positioned: out of flow it sat on the
-   right line and would have landed on top of the Extract chips the moment a
-   window was narrow enough for the two to meet. */
+   A grid item rather than absolutely positioned: out of flow it would land on
+   top of the Extract chips the moment a window was narrow enough for the two
+   to meet. */
 .daw-composer > .daw-panel-toggles {
-  grid-column: 2 / 4;
-  grid-row: 2;
-  justify-self: end;
+  grid-column: 3;
+  grid-row: 1 / 3;
   align-self: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
   width: auto;
   min-width: 0;
   margin: 0;
-  /* The wrapper stops being a box of its own: each toggle is a chip now, so a
+  /* The wrapper stops being a box of its own: each toggle is a chip, so a
      frame around the group would be a box inside a box. */
   padding: 0;
   background: none;
   border: none;
-  gap: 6px;
+  gap: 4px;
 }
 
 /* 4. The toggles become chips, the same size as the Extract ones.
@@ -5057,7 +5069,10 @@ input, textarea { font-family: inherit; }
    The colours stay theirs, including the strike-through that means a panel is
    put away. */
 .daw-composer-stack .daw-panel-toggle {
-  height: 30px;
+  /* 26, not the chips' 30: three to a column have to fit in the height of
+     the two rows beside them. */
+  height: 26px;
+  justify-content: center;
   padding: 0 11px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -5075,7 +5090,8 @@ input, textarea { font-family: inherit; }
   font-size: 12px;
   letter-spacing: -0.005em;
   text-transform: none;
-  margin-right: 4px;
+  text-align: center;
+  margin: 0;
   padding: 0;
   border: none;
 }
@@ -5130,7 +5146,7 @@ input, textarea { font-family: inherit; }
   align-self: stretch;
   /* .footer-track-slot is `width: var(--daw-col-w)`, which is the gutter width
      it was built to fill in the footer. Here the column decides the width, so
-     the fixed one has to go or the card never shrinks and pushes Split stems
+     the fixed one has to go or the card never shrinks and pushes Extract stems
      out of the composer on a narrow window. */
   width: auto;
   min-width: 0;
@@ -5459,25 +5475,25 @@ input, textarea { font-family: inherit; }
   display: none;
 }
 
-/* Below about 1450px the two rows cannot hold everything.
- *
- * Measured rather than picked: the chips need 655px at their widest, the
- * toggles 280, Detect structure 164 and Split stems 140. With gaps and the
- * bar's own padding that is 1299px of composer before the card gets a pixel,
- * which is a window of roughly 1450 once the rail and the margins are paid
- * for.
- *
- * So the two things that were moved up here give way, in the order they can be
- * done without: the card first, since the track is also named in the library
- * and the mixer, then the toggles drop to a line of their own, which is where
- * they lived before. The card's favourite heart is also on every library row
- * (#724). Its About this song button has no second home yet (#735).
- */
-@media (max-width: 1460px) {
-  .daw-composer > #nowPlayingPanel { display: none; }
-  /* The rule only divides the extraction from the card. Without the card it
-     would divide the row from nothing. */
-  .daw-composer > .daw-composer-sep { display: none; }
+/* A narrow card keeps what can be done from it (#735).
+
+   It used to leave the bar entirely below a 1460px window, and with it the
+   only way to open About this song. Now it gives way in steps as its column
+   narrows, which happens after the Extract chips have folded what they can:
+   first the artwork and the meta line, then the title, until only the heart
+   and the About button are left, each still a full-height segment at its
+   edge. Container queries, because how wide the card ends up depends on the
+   language as much as on the window. */
+@container (max-width: 239px) {
+  #nowPlayingPanel .track-panel-cover,
+  #nowPlayingPanel .daw-track-meta-line,
+  #nowPlayingPanel .np-artist { display: none; }
+  #nowPlayingPanel .track-panel-head { padding-left: calc(var(--np-fav) + 2px); }
+  #nowPlayingPanel .np-legend { left: calc(var(--np-fav) + 8px); }
+}
+@container (max-width: 129px) {
+  #nowPlayingPanel .track-panel-info,
+  #nowPlayingPanel .np-legend { display: none; }
 }
 
 /* The click-track options with nothing to act on.

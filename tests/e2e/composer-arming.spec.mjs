@@ -1,4 +1,4 @@
-// What the Split stems button is allowed to be pointed at (#635).
+// What the Extract stems button is allowed to be pointed at (#635).
 //
 // The composer is an input the button submits, not a caption for whatever
 // track is open. Opening a track writes its source back into it, and for an

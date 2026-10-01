@@ -1,4 +1,4 @@
-// Which track sources the Split stems button may be pointed at (#635).
+// Which track sources the Extract stems button may be pointed at (#635).
 //
 // The composer is an input that button submits, not a caption for the open
 // track. An uploaded file's source is the synthetic "local:my song.mp3", and

@@ -26,7 +26,7 @@
   --other:  #9ca3af;
 
   /* Width shared by the composer's two end segments (Song structure and
-     Split stems) so they match. See .daw-process-btn / .structure-toggle. */
+     Extract stems) so they match. See .daw-process-btn / .structure-toggle. */
   --composer-action-w: 140px;
 
   /* Accent */

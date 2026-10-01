@@ -342,7 +342,7 @@ test(title("A3"), async ({ app }, testInfo) => {
 // ─── Now playing and song details ───────────────────────────────────────────
 
 // Steps: import any song and open it. Expect, left to right: the link field,
-// the Extract options, Split stems, then the Now playing card with the
+// the Extract options, Extract stems, then the Now playing card with the
 // artwork, the heart on its left and the (i) on its right.
 test(title("N1"), async ({ app }, testInfo) => {
   const { page } = app;
@@ -367,8 +367,8 @@ test(title("N1"), async ({ app }, testInfo) => {
   // chips under the field; everything else follows them to the right.
   const besideOrUnder = url.right <= extract.left || (Math.abs(extract.left - url.left) < 40 && extract.top >= url.bottom - 2);
   expect(besideOrUnder, "the Extract options follow the link field").toBe(true);
-  expect(Math.max(url.right, extract.right) <= split.left, "Split stems follows them").toBe(true);
-  expect(split.right <= card.left, "the card comes after Split stems").toBe(true);
+  expect(Math.max(url.right, extract.right) <= split.left, "Extract stems follows them").toBe(true);
+  expect(split.right <= card.left, "the card comes after Extract stems").toBe(true);
   // One row: every one of them overlaps the card's height.
   for (const b of [url, extract, split]) expect(b.top < card.bottom && b.bottom > card.top, "one row").toBe(true);
   await expect(page.locator("#nowPlayingPanel .np-legend")).toHaveText("Now playing");

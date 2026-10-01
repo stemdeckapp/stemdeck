@@ -394,7 +394,7 @@ const en = {
   "lyrics.sync.laneHint": "Drag a line · ← → nudge",
   "extract.all": "All",
   "extract.moreAria": "Choose stems",
-  "process.splitStems": "Split stems",
+  "process.extractStems": "Extract stems",
 
   "stem.original": "Original",
   "stem.vocals": "Vocals",
@@ -1200,7 +1200,7 @@ const pl = {
   "lyrics.sync.laneHint": "Przeciągnij wers · ← → przesuń",
   "extract.all": "Wszystko",
   "extract.moreAria": "Wybierz ścieżki",
-  "process.splitStems": "Rozdziel ścieżki",
+  "process.extractStems": "Wyodrębnij ścieżki",
 
   "stem.original": "Oryginał",
   "stem.vocals": "Wokal",
@@ -1996,7 +1996,7 @@ const ja = {
   "lyrics.sync.laneHint": "行をドラッグ · ← → で微調整",
   "extract.all": "すべて",
   "extract.moreAria": "抽出するパートを選ぶ",
-  "process.splitStems": "パートを分離",
+  "process.extractStems": "パートを抽出",
 
   "stem.original": "オリジナル",
   "stem.vocals": "ボーカル",
@@ -2767,7 +2767,7 @@ const zhHans = {
   "lyrics.sync.laneHint": "拖动歌词行 · ← → 微调",
   "extract.all": "全部",
   "extract.moreAria": "选择要提取的音轨",
-  "process.splitStems": "分离音轨",
+  "process.extractStems": "提取音轨",
 
   "stem.original": "原始",
   "stem.vocals": "人声",
@@ -3538,7 +3538,7 @@ const de = {
   "lyrics.sync.laneHint": "Zeile ziehen · ← → verschieben",
   "extract.all": "Alle",
   "extract.moreAria": "Stems auswählen",
-  "process.splitStems": "Stems trennen",
+  "process.extractStems": "Stems extrahieren",
 
   "stem.original": "Original",
   "stem.vocals": "Gesang",
@@ -4320,7 +4320,7 @@ const pt = {
   "lyrics.sync.laneHint": "Arraste uma linha · ← → ajustar",
   "extract.all": "Todos",
   "extract.moreAria": "Escolher as faixas",
-  "process.splitStems": "Separar stems",
+  "process.extractStems": "Extrair stems",
 
   "stem.original": "Original",
   "stem.vocals": "Vocais",
@@ -5104,7 +5104,7 @@ const id = {
   "lyrics.sync.laneHint": "Seret baris · ← → geser",
   "extract.all": "Semua",
   "extract.moreAria": "Pilih stem",
-  "process.splitStems": "Pisahkan stem",
+  "process.extractStems": "Ekstrak stem",
 
   "stem.original": "Asli",
   "stem.vocals": "Vokal",
@@ -5875,7 +5875,7 @@ const fr = {
   "lyrics.sync.laneHint": "Glissez une ligne · ← → ajuster",
   "extract.all": "Tout",
   "extract.moreAria": "Choisir les pistes",
-  "process.splitStems": "Séparer les pistes",
+  "process.extractStems": "Extraire les pistes",
 
   "stem.original": "Original",
   "stem.vocals": "Voix",
@@ -6830,7 +6830,7 @@ const es = {
   "lyrics.sync.laneHint": "Arrastra una línea · ← → mover",
   "extract.all": "Todo",
   "extract.moreAria": "Elegir las pistas",
-  "process.splitStems": "Separar stems",
+  "process.extractStems": "Extraer stems",
 
   "stem.original": "Original",
   "stem.vocals": "Voces",
@@ -7635,7 +7635,7 @@ const ko = {
   "lyrics.sync.laneHint": "줄 끌기 · ← → 옮기기",
   "extract.all": "전체",
   "extract.moreAria": "추출할 스템 선택",
-  "process.splitStems": "스템 분리",
+  "process.extractStems": "스템 추출",
 
   "stem.original": "원본",
   "stem.vocals": "보컬",

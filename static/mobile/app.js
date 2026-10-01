@@ -620,7 +620,7 @@ function extractScreen() {
           <button class="${state.selected.vocals && state.vocalSplitMode === "split" ? "on" : ""}" data-action="vocalmode" data-mode="split">Lead + Backing</button>
         </div>
       </div>
-      <button class="cta" style="margin-top:22px" data-action="split">${ICON.scissors}Split stems</button>
+      <button class="cta" style="margin-top:22px" data-action="split">${ICON.scissors}Extract stems</button>
       ${extractProgressCard()}
     </div>
   </div>`;

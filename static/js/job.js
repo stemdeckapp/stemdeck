@@ -113,11 +113,11 @@ function setSubmitProcessing(processing) {
   const label = submitBtn.querySelector("span");
   // Back to the label the markup ships, not a second one that only exists
   // here. This restored t("job.process") -- "Process" -- while index.html
-  // starts the button as t("process.splitStems") -- "Split stems" -- so the
+  // starts the button as t("process.extractStems") -- "Extract stems" -- so the
   // first submit of a session renamed the button for good, on success as much
   // as on failure, and nothing put it back short of a reload or a language
   // switch (#635).
-  if (label) label.textContent = processing ? t("job.processing") : t("process.splitStems");
+  if (label) label.textContent = processing ? t("job.processing") : t("process.extractStems");
 }
 
 /** True when audio is loaded in the studio. Either engine counts: the Web Audio

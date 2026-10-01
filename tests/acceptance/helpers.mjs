@@ -233,7 +233,7 @@ export async function showLibrary(page) {
   await expect(lib).toHaveAttribute("aria-pressed", "true");
 }
 
-/** Paste a link in the top bar's field and press Split stems. Returns the job id. */
+/** Paste a link in the top bar's field and press Extract stems. Returns the job id. */
 export async function importLink(page, url) {
   const field = page.locator("#url");
   await field.fill(url);
@@ -242,7 +242,7 @@ export async function importLink(page, url) {
     page.locator("#submit").click(),
   ]);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok()) throw new Error(`Split stems refused ${url}: ${res.status()} ${body.detail || ""}`);
+  if (!res.ok()) throw new Error(`Extract stems refused ${url}: ${res.status()} ${body.detail || ""}`);
   return body.job_id;
 }
 
@@ -255,7 +255,7 @@ export async function importFile(page, file) {
     page.locator("#submit").click(),
   ]);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok()) throw new Error(`Split stems refused ${path.basename(file)}: ${res.status()} ${body.detail || ""}`);
+  if (!res.ok()) throw new Error(`Extract stems refused ${path.basename(file)}: ${res.status()} ${body.detail || ""}`);
   return body.job_id;
 }
 
@@ -327,7 +327,7 @@ export async function queueImports(page) {
 /**
  * The job id of an import, waiting for it to finish. A link YouTube refused
  * (a 403 on the media now and then) is split once more, as a person would
- * press Split stems again; the retry is recorded in the state file so the
+ * press Extract stems again; the retry is recorded in the state file so the
  * check can say so.
  */
 export async function songJob(page, key) {

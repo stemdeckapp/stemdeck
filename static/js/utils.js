@@ -139,7 +139,7 @@ export function parseTimecode(str) {
 // Everything else is a link the importer can act on.
 //
 // One predicate rather than three spellings of it. The composer arming the
-// Split stems button and the re-import of an unavailable track are asking the
+// Extract stems button and the re-import of an unavailable track are asking the
 // same question, and the answer stopped agreeing between them: the composer
 // showed an uploaded file's bare filename as though it were a link, and the
 // button then submitted it (#635).

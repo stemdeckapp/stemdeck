@@ -150,7 +150,7 @@ test.describe("topbar search", () => {
 
     await expect(page.locator("#url")).toHaveValue(/youtube\.com\/watch\?v=/);
     await expect(panel(page)).toBeHidden();
-    // Extraction is minutes of work. It waits for Split stems.
+    // Extraction is minutes of work. It waits for Extract stems.
     expect(jobPosts).toHaveLength(0);
   });
 

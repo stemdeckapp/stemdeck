@@ -1056,7 +1056,7 @@ async function loadTrackIntoStudio(trackId) {
   applyStoredStemSelection(track);
   setCurrentTrack(trackId);
 
-  // The composer is an input the Split stems button submits, not a caption for
+  // The composer is an input the Extract stems button submits, not a caption for
   // the open track, so it may only ever hold something that can actually be
   // imported. A `local:` source is a file that was uploaded once and is not
   // reachable again; putting its bare filename here armed the button with a
@@ -1079,7 +1079,7 @@ async function loadTrackIntoStudio(trackId) {
     // `required` is the guard for "the button has nothing to act on", and it
     // is a blunt one: the browser refuses the submit before any handler runs,
     // so it must not be set while the button has a track to re-split. Setting
-    // it there made pressing Split stems on an upload answer "please fill out
+    // it there made pressing Extract stems on an upload answer "please fill out
     // this field" instead of separating it.
     if (importable || resplittable) urlInput.removeAttribute("required");
     else urlInput.setAttribute("required", "");
@@ -1098,7 +1098,7 @@ async function loadTrackIntoStudio(trackId) {
 }
 
 /**
- * Aim the Split stems button at a track rather than at the composer.
+ * Aim the Extract stems button at a track rather than at the composer.
  *
  * Carried on the button itself rather than in a module variable so job.js can
  * read it at submit time without the two files having to agree on an import
