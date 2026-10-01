@@ -924,10 +924,11 @@ def download_logs_zip() -> StreamingResponse:
 # it does not re-enable JS eval, new Function or string timers. 'unsafe-inline' is allowed for *styles*
 # only (the UI sets many style attributes). Allowances:
 #   connect-src  -> same-origin API/SSE, the GitHub update check, Tauri IPC,
-#                   Wikidata/Wikipedia for the artist box the now-playing card
-#                   opens, and LRCLIB for the Lyrics tab (#699). All four are
-#                   read-only public APIs, asked only about the open track, and
-#                   sent only an artist and a song name.
+#                   and Wikidata/Wikipedia for the artist box the now-playing
+#                   card opens. Read-only public APIs, asked only about the
+#                   open track, and sent only an artist and a song name. Not
+#                   LRCLIB: the Lyrics tab asks the server to look lyrics up
+#                   (#719), so the page never reaches it.
 #   img-src https: -> remote YouTube/SoundCloud thumbnails
 #   style/font   -> the Google Fonts <link>
 _CSP = (
@@ -942,8 +943,7 @@ _CSP = (
     # (#186). They are inline/same-origin schemes, not network endpoints, so
     # they add no exfiltration channel — script-src below stays locked.
     "connect-src 'self' https://api.github.com ipc: http://ipc.localhost data: blob: "
-    "https://www.wikidata.org https://query.wikidata.org https://*.wikipedia.org "
-    "https://lrclib.net; "
+    "https://www.wikidata.org https://query.wikidata.org https://*.wikipedia.org; "
     "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
 )
 

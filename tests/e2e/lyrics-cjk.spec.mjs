@@ -13,8 +13,8 @@
 // lyrics-from-server.spec.mjs gives them, and the vocals envelope is absent, so
 // the timing is the line's own and does not depend on the fixture's audio.
 //
-// Last, the tab's own lookup (no lyrics from the server) finding a song LRCLIB
-// files only under the band's name in its own script.
+// Last, the tab asking the server to look a track up (no lyrics kept yet),
+// with the band saved in both scripts.
 import { test, expect } from "@playwright/test";
 import {
   JOB_ID,
@@ -24,9 +24,10 @@ import {
   stubAudioTags,
   stubExportEndpoints,
   stubUpdateCheck,
+  stubLyricsLookup,
+  LYRICS_LOOKUP,
 } from "./helpers.mjs";
 
-const LRCLIB = /^https:\/\/lrclib\.net\//;
 const WIKIMEDIA = /^https:\/\/((www|query)\.wikidata\.org|[a-z-]+\.wikipedia\.org)\//;
 
 const LINES = {
@@ -58,18 +59,12 @@ const SERVER = {
   others: [],
 };
 
-async function setUp(page, { server = SERVER, lrclibRows = null, extra = {} } = {}) {
+async function setUp(page, { server = SERVER, extra = {} } = {}) {
+  // Lookups the tab asked the server for (#719). Watched, not answered: a test
+  // that wants an answer stubs the lookup itself.
   const lrclib = [];
-  await page.route(LRCLIB, (route) => {
-    const url = new URL(route.request().url());
-    lrclib.push(url.searchParams.get("artist_name") || `q:${url.searchParams.get("q")}`);
-    if (!lrclibRows) return route.abort("internetdisconnected");
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify(lrclibRows(url.searchParams.get("artist_name"))),
-    });
+  page.on("request", (req) => {
+    if (LYRICS_LOOKUP.test(new URL(req.url()).pathname)) lrclib.push(req.url());
   });
   await page.route(`**/api/jobs/${JOB_ID}/lyrics`, (route) => (server
     ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(server) })
@@ -183,19 +178,19 @@ test.describe("karaoke in Chinese, Japanese and Korean", () => {
     expect(await ko.evaluate((el) => getComputedStyle(el).wordBreak)).toBe("keep-all");
   });
 
-  test("the tab finds a song LRCLIB files under the band's name in its own script", async ({ page }) => {
+  test("the tab asks the server with the band's names, and shows the song it found", async ({ page }) => {
     // Tagged "Jay Chou"; LRCLIB has the song only as 周杰倫's, and the artist
-    // box saved the band with both names. Another singer's 晴天 is never taken.
-    const rows = (artist) => (artist === "周杰倫"
-      ? [{ id: 401, trackName: "晴天", artistName: "周杰倫", albumName: "葉惠美", duration: 6, instrumental: false, syncedLyrics: SYNCED, plainLyrics: "" }]
-      : [{ id: 402, trackName: "晴天", artistName: "张信哲", albumName: "", duration: 6, instrumental: false, syncedLyrics: "[00:00.50]not his", plainLyrics: "" }]);
-    const { lrclib } = await setUp(page, {
+    // box saved the band with both names. Searching by the band's other names
+    // is the server's job now (#719, tests/test_lyrics_lookup.py); the tab
+    // sends the band it saved and shows what came back.
+    const rows = [{ id: 401, trackName: "晴天", artistName: "周杰倫", albumName: "葉惠美", duration: 6, instrumental: false, syncedLyrics: SYNCED, plainLyrics: "" }];
+    const asked = await stubLyricsLookup(page, { rows, artist: "周杰倫", song: "晴天" });
+    await setUp(page, {
       server: null,
-      lrclibRows: rows,
       extra: { artist: { id: "Q238819", name: "周杰倫", englishName: "Jay Chou" } },
     });
     await expect(page.locator(".lyrics-line")).toHaveCount(4);
     await expect(page.locator(".lyrics-match-meta")).toHaveText("周杰倫 · 葉惠美");
-    expect(lrclib).toEqual(["Jay Chou", "周杰倫"]);
+    expect(asked.map((a) => a.body.band)).toEqual([{ id: "Q238819", name: "周杰倫", englishName: "Jay Chou" }]);
   });
 });

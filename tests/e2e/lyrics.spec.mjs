@@ -3,11 +3,13 @@
 // them for the track, and shows them in time with playback, karaoke style.
 // There is no search box.
 //
-// LRCLIB is answered here, so the tests run offline. The fixture track is six
-// seconds long, which is why the synced lines below sit inside it and why the
-// first row below counts as the same recording. Ranking, LRC parsing, word
-// timing and title cleaning are covered in tests/js/lyrics-lookup.test.mjs;
-// this is the page: what is looked up and when, what is kept, what is shown.
+// The tab asks the server to look lyrics up (#719), and the server's answer is
+// given here (stubLyricsLookup), so the tests run offline. The fixture track
+// is six seconds long, which is why the synced lines below sit inside it and
+// why the first row below counts as the same recording. Which version the
+// server keeps is tested against the server in tests/test_lyrics_lookup.py,
+// LRC parsing and word timing in tests/js/lyrics-lookup.test.mjs; this is the
+// page: what is asked and when, what is kept, what is shown.
 import { test, expect } from "@playwright/test";
 import {
   JOB_ID,
@@ -19,9 +21,11 @@ import {
   stubAudioTags,
   stubExportEndpoints,
   stubUpdateCheck,
+  stubLyricsLookup,
+  LYRICS_LOOKUP,
 } from "./helpers.mjs";
 
-const LRCLIB = /^https:\/\/lrclib\.net\//;
+const LRCLIB = LYRICS_LOOKUP;
 
 const ROWS = [
   {
@@ -51,20 +55,16 @@ const TAGS = { audioTags: { artist: "Fixture Band", title: "Fixture Song" } };
 // The first row as another artist's or another song's, for a search that asks for those.
 const rowAs = (artistName, trackName) => [{ ...ROWS[0], artistName, trackName }];
 
-async function stubLrclib(page, { rows = ROWS, offline = false } = {}) {
-  const asked = [];
-  await page.route(LRCLIB, async (route) => {
-    asked.push(route.request().url());
-    if (offline) return route.abort("internetdisconnected");
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify(rows),
-    });
-  });
-  return asked;
-}
+// The tagged artist and song unless a test says otherwise.
+const stubLrclib = (page, options = {}) =>
+  stubLyricsLookup(page, { rows: ROWS, artist: "Fixture Band", song: "Fixture Song", ...options });
+
+/** What the server kept for the fixture track, as GET .../lyrics answers. */
+const serverKept = (page) =>
+  page.evaluate(async (id) => {
+    const res = await fetch(`/api/jobs/${id}/lyrics`);
+    return res.ok ? res.json() : null;
+  }, JOB_ID);
 
 /** Both fixture tracks, the first with `extra` fields (tags, a saved band). */
 async function seedWith(page, extra) {
@@ -162,15 +162,12 @@ test.describe("lyrics tab", () => {
     await expect(page.locator(".lyrics-line")).toHaveText(["First line", "Second line", "Third line"]);
     await expect(page.locator(".lyrics-match-title")).toHaveText("Fixture Song");
 
-    // What went out: the tagged artist and song, to LRCLIB, nothing else.
-    expect(asked).toHaveLength(1);
-    const url = new URL(asked[0]);
-    expect(url.searchParams.get("artist_name")).toBe("Fixture Band");
-    expect(url.searchParams.get("track_name")).toBe("Fixture Song");
-    expect(asked[0]).not.toContain("E2E");
+    // One request, to the server, which looks the tags up itself (#719).
+    expect(asked).toEqual([{ id: JOB_ID, body: {} }]);
 
-    // Kept on this machine, for this track.
-    await expect.poll(async () => (await stored(page))?.entry?.id ?? null).toBe(101);
+    // Kept by the server, for this track, the way an import keeps them.
+    expect((await serverKept(page))?.lrclib_id).toBe(101);
+    expect(await stored(page)).toBeNull();
 
     // The other version is folded away until asked for, then can be taken.
     const toggle = page.locator(".lyrics-tools .lyrics-link").first();
@@ -183,15 +180,14 @@ test.describe("lyrics tab", () => {
   });
 
   test("a saved band is looked up with the song's name taken from the title", async ({ page }) => {
-    const asked = await stubLrclib(page, { rows: rowAs("Dream Theater", "E2E Fixture Track") });
+    const asked = await stubLrclib(page, { rows: rowAs("Dream Theater", "E2E Fixture Track"), artist: "Dream Theater", song: "E2E Fixture Track" });
     await seedWith(page, { artist: { id: "Q162586", name: "Dream Theater", englishName: "Dream Theater" } });
     await open(page);
     await openTrack(page);
     await showLyricsTab(page);
     await expect(page.locator(".lyrics-line")).toHaveCount(3);
-    const url = new URL(asked[0]);
-    expect(url.searchParams.get("artist_name")).toBe("Dream Theater");
-    expect(url.searchParams.get("track_name")).toBe("E2E Fixture Track");
+    // The band lives in the studio's store, so it goes along with the request.
+    expect(asked[0].body.band).toEqual({ id: "Q162586", name: "Dream Theater", englishName: "Dream Theater" });
 
     // Kept, so coming back to the tab asks nothing more.
     await page.locator(".rail-library").click();
@@ -363,9 +359,10 @@ test.describe("lyrics tab", () => {
     await expect(page.locator("#lyricsStatus")).toHaveText("Lyrics removed for this track.");
     expect(asked).toHaveLength(1);
 
+    // Looking up again finds what the server kept, with nothing more asked.
     await page.locator(".lyrics-link", { hasText: "Look up again" }).click();
     await expect(page.locator(".lyrics-line")).toHaveCount(3);
-    expect(asked).toHaveLength(2);
+    expect(asked).toHaveLength(1);
   });
 
   test("nothing found says so", async ({ page }) => {
@@ -422,15 +419,15 @@ test.describe("lyrics tab", () => {
   });
 
   test("a tagged artist with no tagged title is looked up with the song from the title", async ({ page }) => {
-    const asked = await stubLrclib(page, { rows: rowAs("Fixture Band", "E2E Fixture Track") });
+    // The server takes the song from the title (build_query); the page only
+    // has to ask, which it does even with no tagged title.
+    const asked = await stubLrclib(page, { rows: rowAs("Fixture Band", "E2E Fixture Track"), song: "E2E Fixture Track" });
     await seedWith(page, { audioTags: { artist: "Fixture Band" } });
     await open(page);
     await openTrack(page);
     await showLyricsTab(page);
     await expect(page.locator(".lyrics-line")).toHaveCount(3);
-    const url = new URL(asked[0]);
-    expect(url.searchParams.get("artist_name")).toBe("Fixture Band");
-    expect(url.searchParams.get("track_name")).toBe("E2E Fixture Track");
+    expect(asked).toHaveLength(1);
   });
 
   test("another artist's song of the same name is not this track's lyrics", async ({ page }) => {

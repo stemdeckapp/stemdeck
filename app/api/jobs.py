@@ -69,6 +69,7 @@ from app.pipeline.lyrics_lookup import (
     copy_lyrics,
     find_lyrics,
     keep_answer,
+    lookup_lyrics,
     lyrics_path,
     lyrics_settled,
     read_candidates,
@@ -1192,6 +1193,84 @@ def get_lyrics(job_id: str) -> Response:
             {"detail": "no lyrics", "others": others}, status_code=404, headers=headers
         )
     raise HTTPException(status_code=404, detail="no lyrics")
+
+
+class LookupBand(BaseModel):
+    """The band saved on the track from the artist box, which lives in the
+    studio's own store and may not be on the job yet."""
+
+    id: str = Field(pattern=r"^Q\d{1,12}$")
+    name: str = Field(default="", max_length=300)
+    englishName: str = Field(default="", max_length=300)  # noqa: N815 (the store's own key)
+
+
+class LyricsLookupBody(BaseModel):
+    band: LookupBand | None = None
+
+
+# Jobs whose lyrics the tab is looking up now, so a second request for the
+# same track waits for the first rather than asking LRCLIB twice.
+_LYRICS_LOOKUPS: set[str] = set()
+
+
+@router.post("/{job_id}/lyrics/lookup")
+async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None) -> Response:
+    """Look the track's lyrics up on LRCLIB now, for the Lyrics tab (#719).
+
+    The tab used to search LRCLIB itself, with its own copy of the rules that
+    decide which version is this song by this artist and which length fits.
+    The two copies had to be kept equal by hand, and when they drifted the
+    same track could get lyrics at import and none in the tab. This runs the
+    import's own lookup instead, keeps what it finds the way the import does,
+    and answers exactly as GET .../lyrics would afterwards.
+
+    Only ever asked when the tab is opened on a track with no lyrics, or the
+    user presses Look up again: LRCLIB is never reached on its own. 502 when
+    LRCLIB cannot be reached, so the tab can offer to try again; 404 with
+    {"nothing_known": true} when the track says too little to look up.
+    """
+    job, job_dir = _lyrics_job(job_id)
+    if await asyncio.to_thread(lyrics_path(job_dir).is_file):
+        return await asyncio.to_thread(get_lyrics, job_id)
+    if job_id in _LYRICS_LOOKUPS:
+        raise HTTPException(status_code=409, detail="already looking")
+    band = body.band.model_dump() if body and body.band else None
+    query = build_query(job, band=band)
+    if query is None:
+        return JSONResponse(
+            {"detail": "nothing to look up", "others": [], "nothing_known": True}, status_code=404
+        )
+    _LYRICS_LOOKUPS.add(job_id)
+    try:
+        answer = await asyncio.wait_for(
+            asyncio.to_thread(
+                lookup_lyrics,
+                query,
+                cancelled=lambda: registry_get(job_id) is not job,
+                fallback_title=job.title or "",
+            ),
+            timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
+        )
+    except asyncio.TimeoutError:
+        logger.info("[%s] lyrics lookup timed out", job_id)
+        raise HTTPException(status_code=502, detail="lyrics service unreachable") from None
+    except Exception:
+        logger.info("[%s] lyrics lookup failed", job_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="lyrics service unreachable") from None
+    finally:
+        _LYRICS_LOOKUPS.discard(job_id)
+    if registry_get(job_id) is not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if (
+        answer is not None
+        and not lyrics_path(job_dir).is_file()
+        and await asyncio.to_thread(keep_answer, job, job_dir, answer)
+    ):
+        registry_persist(JOBS_DIR)
+    try:
+        return await asyncio.to_thread(get_lyrics, job_id)
+    except HTTPException:
+        return JSONResponse({"detail": "no lyrics", "others": []}, status_code=404)
 
 
 class LyricsOffsetBody(BaseModel):

@@ -113,7 +113,7 @@ window are added, so the karaoke checks do not depend on the window being on
 top. The window is resized with the Win32 API, because the now-playing card
 only shows in a window wider than 1460 px.
 
-E4 blocks `lrclib.net` for the page alone. E6 starts the app a second time
+E4 answers the page's lyrics lookup with the server's "LRCLIB unreachable" (502), for the page alone. E6 starts the app a second time
 with every outside request sent to a proxy that nobody listens on
 (`HTTP(S)_PROXY` for the backend, `--proxy-server` for WebView2), loopback
 excepted: offline for this app, while the machine keeps its network.

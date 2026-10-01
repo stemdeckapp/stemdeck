@@ -43,15 +43,11 @@ import { getCurrentTrackInfo, getCurrentTrackArtist } from "./catalog.js";
 import { transport, setPlayheadTime } from "./transport.js";
 import { totalDuration } from "./state.js";
 import {
-  searchLyrics,
-  rankVersions,
-  otherNames,
   parseLrc,
   currentLineIndex,
   wordTimings,
   songFromTitle,
   fromServerLyrics,
-  belongsTo,
   sameSong,
   clampOffset,
   shiftLines,
@@ -81,11 +77,6 @@ import {
 // lyrics run to a few kilobytes, and the library is rewritten whole on every
 // change to any track.
 const storeKey = (trackId) => `stemdeck.lyrics.${trackId}`;
-
-// Within this many seconds of the track's length, an automatic search keeps a
-// version without asking. LRCLIB lengths come from real releases, so the same
-// recording lands within a second or two; a live cut or a radio edit does not.
-const SAME_RECORDING_SEC = 3;
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -1308,56 +1299,51 @@ function lookAgainButton() {
   return again;
 }
 
-// How many of the artist's other names are searched by when its own finds no
-// version the track's length.
-const OTHER_NAME_SEARCHES = 2;
-
-const sameLength = (match, info) => Boolean(match) && info.duration > 0 && match.duration > 0
-  && Math.abs(match.duration - info.duration) <= SAME_RECORDING_SEC;
-
 /**
- * Look the open track up on LRCLIB by what it is known to be. Only versions of
- * this song by this artist count (belongsTo): LRCLIB's search also answers with
- * other artists' songs, and no lyrics beat another song's. `names` are the
- * other names the artist goes by (the band's, in its own script and in
- * English), which count as its own, and which are searched by too when the
- * artist's name finds no version the track's length: LRCLIB files a song under
- * whichever name its uploader wrote, 周杰倫 or Jay Chou. One the same length as
- * the track is kept straight away; otherwise they are offered to pick from;
- * with none, it says so. What it found is remembered for the session, so
- * opening the tab again does not ask again. A failed connection is not, so the
- * next opening tries again.
+ * Ask the server to look the open track up on LRCLIB (#719).
+ *
+ * The tab used to search LRCLIB itself, with its own copy of the rules that
+ * decide which version is this song by this artist and which length fits.
+ * The two copies were kept equal by hand, and a track could get lyrics at
+ * import and none here. Now there is one copy, the import's, and what it
+ * finds is kept on the server like the import's answer, so the phone sees it
+ * too. The band saved from the artist box goes along: it lives in this side's
+ * store, and the server may not have it yet.
+ *
+ * What came back without lyrics is remembered for the session, so opening the
+ * tab again does not ask again. A failed connection is not, so the next
+ * opening tries again.
  */
-async function lookUp(info, { artist, song, names = [] }) {
+async function lookUp(info, { song }) {
   searchController?.abort();
   const controller = new AbortController();
   searchController = controller;
   setStatus(t("lyrics.loading", { song }), "loading");
   try {
-    const known = { artist, song, names };
-    const search = async (by) => (await searchLyrics({ artist: by, song, duration: info.duration }, { signal: controller.signal }))
-      .filter((m) => belongsTo(m, known));
-    let matches = await search(artist);
-    for (const other of otherNames(artist, names).slice(0, OTHER_NAME_SEARCHES)) {
-      if (sameLength(matches[0], info) || controller.signal.aborted) break;
-      // A failure here keeps what the artist's own name found.
-      const more = await search(other).catch((err) => {
-        console.warn("lyrics lookup by another name failed", err);
-        return [];
-      });
-      matches = rankVersions([...matches, ...more], info.duration);
-    }
+    const band = getCurrentTrackArtist();
+    const res = await fetch(`/api/jobs/${encodeURIComponent(info.id)}/lyrics/lookup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(band ? { band } : {}),
+      signal: controller.signal,
+    });
     if (controller.signal.aborted || getCurrentTrackInfo()?.id !== info.id) return;
-    const best = matches[0];
-    if (sameLength(best, info)) {
-      await keep(best, matches.slice(1, 12));
+    if (!res.ok && res.status !== 404) throw new Error(`lyrics lookup -> ${res.status}`);
+    const data = await res.json().catch(() => null);
+    if (res.status === 404 && data?.nothing_known) {
+      setStatus(t("lyrics.nothingKnown"), "muted");
+      nothingKnownFor = info.id;
       return;
     }
-    answered.set(info.id, { song, matches: matches.slice(0, 12) });
+    const found = fromServerLyrics(data);
+    if (found?.entry) {
+      show(found.entry, found.others, "server");
+      return;
+    }
+    answered.set(info.id, { song, matches: found?.others || [] });
     showAnswer(answered.get(info.id));
   } catch (err) {
-    // Aborted only by another track being opened; a timeout aborts the
-    // lookup's own inner signal and lands below, as a failure.
+    // Aborted only by another track being opened.
     if (controller.signal.aborted) return;
     console.warn("lyrics lookup failed", err);
     setStatus(t("lyrics.offline"), "error");
@@ -1522,7 +1508,7 @@ async function loadForCurrentTrack() {
     showAnswer(answered.get(info.id));
     return;
   }
-  lookUp(info, { artist, song, names });
+  lookUp(info, { song });
 }
 
 // While the tab is on screen: notice a different track being opened, mark the

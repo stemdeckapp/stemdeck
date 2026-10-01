@@ -16,13 +16,13 @@ import {
   stubAudioTags,
   stubExportEndpoints,
   stubUpdateCheck,
+  LYRICS_LOOKUP,
 } from "./helpers.mjs";
 
 // Wide enough for the now-playing card, which the bar hides below 1460px.
 test.use({ viewport: { width: 1600, height: 900 } });
 
 const WIKIMEDIA = /^https:\/\/([a-z]+\.wikipedia\.org|www\.wikidata\.org|query\.wikidata\.org)\//;
-const LRCLIB = /^https:\/\/lrclib\.net\//;
 
 // Longer than artistInfo.js's wait after a track opens.
 const PAST_THE_WAIT_MS = 2000;
@@ -266,15 +266,12 @@ test.describe("tags for tracks imported before they were read", () => {
 
   test("the Lyrics tab, open while the tags arrive, looks them up", async ({ page }) => {
     await stubWikimedia(page);
+    // The tab asks the server to look them up (#719), which has the tags the
+    // read just stored; it is answered here with nothing found.
     const lrclib = [];
-    await page.route(LRCLIB, (route) => {
+    await page.route(LYRICS_LOOKUP, (route) => {
       lrclib.push(route.request().url());
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        headers: { "access-control-allow-origin": "*" },
-        body: "[]",
-      });
+      return route.fulfill({ status: 404, json: { detail: "no lyrics", others: [] } });
     });
     let release;
     const hold = new Promise((resolve) => { release = resolve; });
@@ -287,6 +284,6 @@ test.describe("tags for tracks imported before they were read", () => {
 
     release();
     await expect.poll(() => lrclib.length, { timeout: 15000 }).toBeGreaterThan(0);
-    expect(decodeURIComponent(lrclib[0]).replace(/\+/g, " ")).toContain("Dream Theater");
+    await expect(page.locator("#lyricsStatus")).toContainText("No lyrics found");
   });
 });

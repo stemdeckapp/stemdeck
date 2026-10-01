@@ -648,3 +648,86 @@ def test_other_versions_of_another_song_are_not_offered(client):
     _lyrics_file(job).write_text(json.dumps({**LYRICS, "others": others}), encoding="utf-8")
     got = client.get(f"/api/jobs/{job.id}/lyrics").json()
     assert [o["lrclib_id"] for o in got["others"]] == [8]
+
+
+# ── POST .../lyrics/lookup: the tab asks the server, not LRCLIB (#719) ──
+
+
+def test_lookup_keeps_lyrics_the_way_the_import_does(client):
+    job = _done_job(audio_tags=TAGS)
+    lrclib = Lrclib(ROWS)
+    with patch.object(ll, "_fetch_json", lrclib):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 200
+    assert r.json()["synced"] == "[00:01.00]The smile of dawn"
+    assert _lyrics_file(job).is_file()
+    assert job.has_lyrics is True
+    # And GET answers the same from now on, with no second request.
+    assert client.get(f"/api/jobs/{job.id}/lyrics").json()["synced"] == r.json()["synced"]
+
+
+def test_lookup_uses_the_band_the_studio_saved(client):
+    """No tags: only the band chosen in the artist box, which the studio
+    keeps in its own store, says whose song this is."""
+    job = _done_job()
+    lrclib = Lrclib(ROWS)
+    with patch.object(ll, "_fetch_json", lrclib):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={"band": DT})
+    assert r.status_code == 200
+    assert lrclib.asked
+
+
+def test_lookup_with_nothing_to_go_on_asks_nobody(client):
+    job = _done_job()
+    job.title = ""
+    lrclib = Lrclib(ROWS)
+    with patch.object(ll, "_fetch_json", lrclib):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 404
+    assert r.json()["nothing_known"] is True
+    assert lrclib.asked == []
+
+
+def test_lookup_offers_other_artists_nothing(client):
+    """Another artist's song of the same name is not this track's lyrics:
+    the server's rule, now the only one."""
+    job = _done_job(audio_tags=TAGS)
+    other = [{**ROWS[0], "artistName": "Someone Else"}]
+    with patch.object(ll, "_fetch_json", Lrclib(other)):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 404
+    assert r.json().get("others", []) == []
+    assert not _lyrics_file(job).is_file()
+
+
+def test_lookup_offline_is_502_so_the_tab_can_retry(client):
+    job = _done_job(audio_tags=TAGS)
+    # conftest's stand-in answers every request as offline.
+    r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 502
+    assert r.json() == {"detail": "lyrics service unreachable"}
+
+
+def test_lookup_answers_kept_lyrics_without_asking(client):
+    job = _done_job(has_lyrics=True, audio_tags=TAGS)
+    _lyrics_file(job).write_text(json.dumps(LYRICS), encoding="utf-8")
+    lrclib = Lrclib(ROWS)
+    with patch.object(ll, "_fetch_json", lrclib):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 200
+    assert lrclib.asked == []
+
+
+@pytest.mark.parametrize("band", [{"id": "../etc", "name": "x"}, {"id": "Q1", "name": "x" * 301}])
+def test_lookup_refuses_a_malformed_band(client, band):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={"band": band})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "job_id", ["../../etc/passwd", "..%2F..%2Fetc", "not-a-job", "bbbbbbbbbbbb"]
+)
+def test_lookup_crafted_or_unknown_ids_are_refused_not_500(client, job_id):
+    r = client.post(f"/api/jobs/{job_id}/lyrics/lookup", json={})
+    assert r.status_code in (404, 405)

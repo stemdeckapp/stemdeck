@@ -1,30 +1,20 @@
-// The Lyrics tab's lookup (#699): how LRC text becomes timed lines, which line
-// is being sung at a given moment, which of LRCLIB's many versions of a song
-// is taken as the one, and what is sent to search for it.
-//
-// No network. searchLyrics takes its fetch as an argument.
+// The Lyrics tab's reading of lyrics (#699): how LRC text becomes timed lines,
+// which line is being sung at a given moment, and what the server's answer
+// becomes. Which of LRCLIB's versions is the track's is the server's to decide
+// (#719), and is tested in tests/test_lyrics_lookup.py.
 //
 // Run:  node tests/js/lyrics-lookup.test.mjs
 
 import {
   parseLrc,
   currentLineIndex,
-  rankMatches,
-  searchUrl,
-  searchLyrics,
   wordTimings,
   voicedPhrases,
   syllables,
   songFromTitle,
   fromServerLyrics,
-  strippedCopy,
-  belongsTo,
-  sameArtist,
   sameSong,
-  scriptNames,
-  otherNames,
   fold as foldName,
-  rankVersions,
   clampOffset,
   shiftLines,
   firstSungIndex,
@@ -208,66 +198,6 @@ check("between lines, the one before", currentLineIndex(lines, 25) === 1);
 check("after the last", currentLineIndex(lines, 99) === 2);
 check("no lines", currentLineIndex([], 5) === -1);
 
-// ── rankMatches ──
-const row = (id, duration, kind) => ({
-  id,
-  trackName: `T${id}`,
-  artistName: "A",
-  albumName: "",
-  duration,
-  instrumental: kind === "instrumental",
-  syncedLyrics: kind === "synced" ? "[00:01.00]x" : null,
-  plainLyrics: kind === "synced" || kind === "plain" ? "x" : null,
-});
-const ranked = rankMatches(
-  [row(1, 769, "synced"), row(2, 571, "plain"), row(3, 573, "synced"), row(4, 572, "none"), row(5, 590, "synced")],
-  572,
-);
-check(
-  "closest length first, synced preferred within a few seconds, empty rows dropped",
-  same(ranked.map((m) => m.id), [3, 2, 5, 1]),
-  JSON.stringify(ranked.map((m) => m.id)),
-);
-check("an instrumental row is kept", rankMatches([row(9, 100, "instrumental")], 100).length === 1);
-check(
-  "with no length known, LRCLIB's order, synced first",
-  same(rankMatches([row(1, 10, "plain"), row(2, 500, "synced")], 0).map((m) => m.id), [2, 1]),
-);
-check("not an array gives nothing", same(rankMatches(null), []) && same(rankMatches({ error: 1 }), []));
-
-// ── searchUrl ──
-const withArtist = new URL(searchUrl({ artist: " Dream Theater ", song: " Metropolis " }));
-check("LRCLIB's search", withArtist.origin + withArtist.pathname === "https://lrclib.net/api/search");
-check(
-  "artist and song as their own fields, trimmed",
-  withArtist.searchParams.get("artist_name") === "Dream Theater" && withArtist.searchParams.get("track_name") === "Metropolis",
-);
-const songOnly = new URL(searchUrl({ song: "Metropolis" }));
-check(
-  "no artist: the free-text search, not an empty artist filter",
-  songOnly.searchParams.get("q") === "Metropolis" && !songOnly.searchParams.has("artist_name"),
-);
-
-// ── searchLyrics ──
-const asked = [];
-const found = await searchLyrics(
-  { artist: "Dream Theater", song: "Metropolis", duration: 572 },
-  { fetchJson: async (url) => { asked.push(url); return [row(1, 769, "synced"), row(3, 573, "synced")]; } },
-);
-check("ranked for the track's length", same(found.map((m) => m.id), [3, 1]));
-check("one request, to LRCLIB only", asked.length === 1 && asked[0].startsWith("https://lrclib.net/"));
-check(
-  "no song asks nothing",
-  same(await searchLyrics({ artist: "X", song: " " }, { fetchJson: () => { throw new Error("asked"); } }), []),
-);
-let rejected = false;
-try {
-  await searchLyrics({ song: "x" }, { fetchJson: async () => { throw new Error("offline"); } });
-} catch {
-  rejected = true;
-}
-check("no connection rejects, rather than reading as nothing found", rejected);
-
 // ── fromServerLyrics: lyrics.json from GET /api/jobs/{id}/lyrics ──
 const version = (id, source = "lrclib", extra = {}) => ({
   v: 1,
@@ -319,70 +249,6 @@ check(
 );
 
 // ── letters outside ASCII ──
-// LRCLIB holds some songs as copies that lost those letters on the way in
-// (Kayah's "Nie ma, nie ma ciebie": eleven copies read "Niewinnoci biaym
-// niegiem", one "Niewinnością białym śniegiem"). The anthem stands in for a
-// song, being in the public domain. The same cases as tests/test_lyrics_lookup.py.
-const ANTHEM = [
-  "[00:01.00]Jeszcze Polska nie zginęła,",
-  "[00:04.00]Kiedy my żyjemy.",
-  "[00:07.00]Co nam obca przemoc wzięła,",
-  "[00:10.00]Szablą odbierzemy.",
-  "[00:13.00]Marsz, marsz, Dąbrowski,",
-  "[00:16.00]Z ziemi włoskiej do Polski.",
-  "[00:19.00]Za twoim przewodem",
-  "[00:22.00]Złączym się z narodem.",
-].join("\n");
-const drop = (s) => s.replace(/[^\p{ASCII}]/gu, "");
-const fold = (s) => drop(s.normalize("NFD"));
-const asLrclibDropsThem = (s) => drop(s.replaceAll("ę", "e"));
-const textRow = (id, duration, text, synced = true) => ({
-  id,
-  trackName: `T${id}`,
-  artistName: "A",
-  albumName: "",
-  duration,
-  instrumental: false,
-  syncedLyrics: synced ? text : null,
-  plainLyrics: text.replace(/\[[^\]\n]*\]/g, ""),
-});
-const lyricsOf = (text) => ({ synced: text, plain: "" });
-
-for (const [name, strip] of [["dropped", drop], ["folded", fold], ["as LRCLIB drops them", asLrclibDropsThem]]) {
-  check(`a copy whose Polish letters were ${name} is told from its source`, strippedCopy(lyricsOf(strip(ANTHEM)), lyricsOf(ANTHEM)));
-}
-check("the intact copy is not a stripped one", !strippedCopy(lyricsOf(ANTHEM), lyricsOf(asLrclibDropsThem(ANTHEM))));
-check("a copy is not a stripped copy of itself", !strippedCopy(lyricsOf(ANTHEM), lyricsOf(ANTHEM)));
-for (const [intact, other] of [
-  ["[00:01.00]Группа крови на рукаве, мой порядковый номер на рукаве", "[00:01.00]Gruppa krovi na rukave, moy poryadkovyy nomer na rukave"],
-  ["[00:01.00]夢ならばどれほどよかったでしょう 未だにあなたのことを夢にみる", "[00:01.00]Yume naraba dore hodo yokatta deshou imada ni anata no koto wo yume ni miru"],
-  ["[00:01.00]A café, a naïve smile, and the rest in plain English words", "[00:01.00]A cafe, a naive smile, and the rest in plain English words"],
-  [ANTHEM, "[00:01.00]Jeszcze nic nie jest stracone, moja mila, gdy jestem z toba"],
-]) {
-  check(
-    `not a stripped copy: ${other.slice(10, 30)}`,
-    !strippedCopy(lyricsOf(other), lyricsOf(intact)) && !strippedCopy(lyricsOf(intact), lyricsOf(other)),
-  );
-}
-{
-  const rows = [
-    textRow(5470091, 230, asLrclibDropsThem(ANTHEM)),
-    textRow(28700266, 230, asLrclibDropsThem(ANTHEM)),
-    textRow(10910419, 229.93, ANTHEM),
-    textRow(4291789, 230, ANTHEM, false),
-  ];
-  const want = [10910419, 5470091, 28700266, 4291789];
-  check("the intact copy ranks before stripped ones LRCLIB listed first", same(rankMatches(rows, 230).map((m) => m.id), want));
-  check("and with the length unknown", same(rankMatches(rows).map((m) => m.id), want));
-  const stripped = textRow(1, 230, asLrclibDropsThem(ANTHEM));
-  check(
-    "synced still beats plain, and length beats both",
-    same(rankMatches([stripped, textRow(2, 230, ANTHEM, false)], 230).map((m) => m.id), [1, 2])
-      && same(rankMatches([stripped, textRow(3, 250, ANTHEM)], 230).map((m) => m.id), [1, 3]),
-  );
-}
-
-// Polish through parsing and the wipe: nothing dropped, nothing split.
 {
   const polish = parseLrc("[00:31.72]<00:31.72>Śpiewałem <00:32.40>głośno <00:32.90>pod <00:33.10>prysznicem\n[00:33.97]Ten mój małomiasteczkowy hit");
   check("Polish lines keep every letter", polish[0].text === "Śpiewałem głośno pod prysznicem" && polish[1].text === "Ten mój małomiasteczkowy hit");
@@ -403,52 +269,17 @@ for (const [intact, other] of [
   check("Cyrillic words stay whole", same(cyrillic.map((w) => w.text), ["Группа ", "крови ", "на ", "рукаве"]));
 }
 
-// Whose song a version is: only this song by this artist is ever kept.
+// Whose song kept lyrics are: the check on what the tab kept before the
+// server held versions to the track's song (#719). The rest of the rule is
+// the server's alone (tests/test_lyrics_lookup.py).
 {
-  const ask = { artist: "Keala Settle & The Greatest Showman Ensemble", song: "This Is Me" };
-  const row = (artist, track) => ({ artist, track });
-  check("the same artist and song belong", belongsTo(row("Keala Settle & The Greatest Showman Ensemble", "This Is Me"), ask));
-  check("one credited artist belongs", belongsTo(row("Keala Settle", "This Is Me"), ask));
-  check("the cast filed as a run of the name belongs", belongsTo(row("The Greatest Showman Ensemble", "This Is Me"), ask));
-  check("a song tail belongs", belongsTo(row("Keala Settle", "This Is Me - From The Greatest Showman"), ask));
   check("brackets and featuring are ignored", sameSong("This Is Me (feat. Someone) [Live]", "This Is Me"));
-  check("another artist's song of that name does not", !belongsTo(row("Kesha", "This Is Me"), ask));
-  check("the artist's other song does not", !belongsTo(row("Keala Settle", "This Is Not Me"), ask));
+  check("a song tail belongs", sameSong("This Is Me - From The Greatest Showman", "This Is Me"));
+  check("another song is not this one", !sameSong("This Is Not Me", "This Is Me"));
   check("two different tails are two songs", !sameSong("Part I - Dawn", "Part I - Dusk"));
-  check("no artist known, nothing belongs", !belongsTo(row("Keala Settle", "This Is Me"), { artist: "", song: "This Is Me" }));
-  check("a show's name counts when given", belongsTo(row("Wicked", "Popular"), { artist: "Kristin Chenoweth", song: "Popular", names: ["Wicked"] }));
-  check("a show's name does not count unless given", !belongsTo(row("Wicked", "Popular"), { artist: "Kristin Chenoweth", song: "Popular" }));
-  check("case, accents and a leading The do not matter", sameArtist("the beatles", ["The Beatles"]) && sameArtist("Beyonce", ["Beyoncé"]) && sameArtist("Beatles", ["The Beatles"]));
-  check("Polish names compare letter for letter", sameArtist("Dawid Podsiadło", ["Dawid Podsiadło"]) && !sameArtist("Dawid Podsiadło", ["Dawid Kwiatkowski"]));
-  check("a two-letter credit names nobody", !sameArtist("DJ", ["DJ & Someone Else"]));
-  check("one shared word is not a shared name", !sameArtist("Pink", ["Pink Floyd"]));
 }
 
-// Chinese, Japanese and Korean names: the cases in tests/test_lyrics_names.py.
 {
-  const artists = [
-    ["周杰伦", ["周杰倫"], true],
-    ["邓丽君", ["鄧麗君"], true],
-    ["ＹＯＡＳＯＢＩ", ["YOASOBI"], true],
-    ["ｷﾝｸﾞﾇｰ", ["キングヌー"], true],
-    ["Dawid Podsiadlo", ["Dawid Podsiadło"], true],
-    ["鄧麗君 (Teresa Teng)", ["Teresa Teng"], true],
-    ["五月天 (Mayday)", ["五月天"], true],
-    ["IU", ["IU (아이유)"], true],
-    ["周杰倫", ["周杰倫 Jay Chou"], true],
-    ["Jay Chou", ["周杰倫 Jay Chou"], true],
-    ["周杰倫 & 費玉清", ["周杰倫"], true],
-    ["Jay Chou", ["周杰倫"], false],
-    ["아이유", ["IU"], false],
-    ["张信哲", ["周杰倫"], false],
-    ["五月天 阿信", ["五月天"], false],
-    ["告五人", ["五月天"], false],
-    ["Official", ["Official髭男dism"], false],
-    ["林", ["林 & 周杰倫"], false],
-  ];
-  for (const [found, names, want] of artists) {
-    check(`sameArtist(${found}, ${names}) is ${want}`, sameArtist(found, names) === want);
-  }
   const songs = [
     ["红豆", "紅豆", true],
     ["晴天 (Sunny Day)", "晴天", true],
@@ -465,20 +296,7 @@ for (const [intact, other] of [
   for (const [found, song, want] of songs) {
     check(`sameSong(${found}, ${song}) is ${want}`, sameSong(found, song) === want);
   }
-  check("a name in two scripts gives both", same(scriptNames("周杰倫 Jay Chou"), ["周杰伦", "Jay Chou"]) && same(scriptNames("IU(아이유)"), ["IU", "아이유"]));
-  check("a name mixing scripts in one word is one name", same(scriptNames("Official髭男dism"), []) && same(scriptNames("五月天 阿信"), []));
   check("folding: traditional, width, plain Latin", foldName("鄧麗君 ＩＵ Podsiadło") === "邓丽君 IU Podsiadlo");
-  check("the band's names count as the artist's", belongsTo({ artist: "周杰倫", track: "晴天" }, { artist: "Jay Chou", song: "晴天", names: ["周杰倫", "Jay Chou"] }));
-  check("and never make another artist's song the track's", !belongsTo({ artist: "张信哲", track: "晴天" }, { artist: "Jay Chou", song: "晴天", names: ["周杰倫"] }));
-  check(
-    "other names to search by: a name's own scripts, then the band's, each once",
-    same(otherNames("周杰倫 Jay Chou", ["周杰倫", "Jay Chou", "周杰倫 Jay Chou"]), ["周杰伦", "Jay Chou", "周杰倫"]),
-    JSON.stringify(otherNames("周杰倫 Jay Chou", ["周杰倫", "Jay Chou"])),
-  );
-  check("the artist's own name is not searched again", same(otherNames("IU", ["IU", "아이유"]), ["아이유"]));
-  const a = rankMatches([row(1, 300, "synced"), row(2, 269, "synced")], 269);
-  const b = rankMatches([row(3, 270, "synced"), row(2, 269, "synced")], 269);
-  check("versions from two searches rank together, each once", same(rankVersions([...a, ...b], 269).map((m) => m.id), [2, 3, 1]));
 }
 
 // Karaoke in Chinese, Japanese and Korean.

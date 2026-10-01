@@ -19,9 +19,9 @@ import {
   stubAudioTags,
   stubExportEndpoints,
   stubUpdateCheck,
+  LYRICS_LOOKUP,
 } from "./helpers.mjs";
 
-const LRCLIB = /^https:\/\/lrclib\.net\//;
 const WIKIMEDIA = /^https:\/\/((www|query)\.wikidata\.org|[a-z-]+\.wikipedia\.org)\//;
 
 const version = (id, extra = {}) => ({
@@ -51,10 +51,12 @@ const SERVER = {
 };
 
 async function setUp(page, { server = SERVER, saved = null } = {}) {
+  // Lookups the tab asks the server for (#719), answered as LRCLIB being
+  // out of reach.
   const lrclib = [];
-  await page.route(LRCLIB, (route) => {
+  await page.route(LYRICS_LOOKUP, (route) => {
     lrclib.push(route.request().url());
-    return route.abort("internetdisconnected");
+    return route.fulfill({ status: 502, json: { detail: "lyrics service unreachable" } });
   });
   const served = [];
   await page.route(`**/api/jobs/${JOB_ID}/lyrics`, (route) => {
@@ -208,7 +210,7 @@ test.describe("lyrics from the server", () => {
     expect(lrclib).toEqual([]);
   });
 
-  test("with none on the server, the tab looks them up itself as before", async ({ page }) => {
+  test("with none on the server, the tab asks the server to look them up", async ({ page }) => {
     const { lrclib, served } = await setUp(page, { server: null });
     await expect.poll(() => lrclib.length).toBeGreaterThan(0);
     expect(served.length).toBeGreaterThan(0);

@@ -352,3 +352,60 @@ export const exportUi = (page) => ({
     await page.locator("#t-export-panel:not(.hidden)").waitFor({ timeout: 5000 });
   },
 });
+
+/** The server's lyrics lookup, which the Lyrics tab asks rather than LRCLIB (#719). */
+export const LYRICS_LOOKUP = /\/api\/jobs\/[a-f0-9]{12}\/lyrics\/lookup$/;
+
+/**
+ * Stand in for the server's lyrics lookup, so the lyrics specs run offline and
+ * never reach LRCLIB through the shared backend.
+ *
+ * `rows` are LRCLIB rows. Like the server, it keeps only versions of `song` by
+ * `artist` (brackets and a " - ..." tail aside), keeps the first within 3 s of
+ * the track's `duration` and offers the others with it, or offers them all
+ * when none is that length. What it kept or offered is then what GET
+ * .../lyrics answers, as the server's lyrics.json would. The rule itself is
+ * tested against the real server in tests/test_lyrics_lookup.py; this only
+ * has to answer the way it does. Resolves to the requests the page made:
+ * [{ id, body }].
+ */
+export async function stubLyricsLookup(page, { rows = [], artist = "", song = "", duration = 6, offline = false, nothingKnown = false } = {}) {
+  const asked = [];
+  const kept = {};
+  const offered = {};
+  const jobOf = (route) => new URL(route.request().url()).pathname.split("/")[3];
+  const version = (r) => ({
+    source: "lrclib",
+    lrclib_id: r.id,
+    track: r.trackName,
+    artist: r.artistName,
+    album: r.albumName || "",
+    duration: r.duration,
+    instrumental: Boolean(r.instrumental),
+    synced: r.syncedLyrics || "",
+    plain: r.plainLyrics || "",
+  });
+  const songKey = (s) => String(s || "").replace(/[([{][^)\]}]*[)\]}]/g, "").replace(/\s+-\s+.*$/, "").trim().toLowerCase();
+  await page.route(/\/api\/jobs\/[a-f0-9]{12}\/lyrics$/, (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const id = jobOf(route);
+    if (kept[id]) return route.fulfill({ json: kept[id], headers: { "cache-control": "no-cache" } });
+    if (offered[id]?.length) return route.fulfill({ status: 404, json: { detail: "no lyrics", others: offered[id] } });
+    return route.fallback();
+  });
+  await page.route(LYRICS_LOOKUP, (route) => {
+    const id = jobOf(route);
+    asked.push({ id, body: JSON.parse(route.request().postData() || "{}") });
+    if (offline) return route.fulfill({ status: 502, json: { detail: "lyrics service unreachable" } });
+    if (nothingKnown) return route.fulfill({ status: 404, json: { detail: "nothing to look up", others: [], nothing_known: true } });
+    const mine = rows.filter((r) => r.artistName === artist && songKey(r.trackName) === songKey(song)).map(version);
+    const best = mine.find((v) => Math.abs(v.duration - duration) <= 3);
+    if (best) {
+      kept[id] = { v: 1, ...best, timing: "exact", others: mine.filter((v) => v !== best) };
+      return route.fulfill({ json: kept[id] });
+    }
+    offered[id] = mine;
+    return route.fulfill({ status: 404, json: { detail: "no lyrics", others: mine } });
+  });
+  return asked;
+}

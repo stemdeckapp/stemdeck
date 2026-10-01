@@ -1,6 +1,8 @@
-// JS half of the name parity gate: the page's lyrics matching
-// (static/js/lyricsLookup.js, zhVariants.js) held to what the server's
-// (app/pipeline/lyrics_lookup.py, name_aliases.py, zh_variants.py) says.
+// JS half of the name parity gate: what is left of the page's name
+// handling (static/js/lyricsLookup.js fold and sameSong, zhVariants.js) held
+// to what the server's (app/pipeline/lyrics_lookup.py, name_aliases.py,
+// zh_variants.py) says. The page no longer decides whose song a version is
+// (#719); sameSong only checks lyrics it kept before that rule existed.
 //
 // tests/fixtures/name_parity.json is generated from Python and asserted by
 // tests/test_name_parity.py; this file asserts the page gives the same
@@ -14,7 +16,7 @@
 // Run:  node tests/js/name-parity.test.mjs
 
 import { readFileSync } from 'node:fs';
-import { fold, scriptNames, sameArtist, sameSong } from '../../static/js/lyricsLookup.js';
+import { fold, sameSong } from '../../static/js/lyricsLookup.js';
 import { PAIRS, toSimplified } from '../../static/js/zhVariants.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../fixtures/name_parity.json', import.meta.url), 'utf8'));
@@ -31,21 +33,11 @@ function check(name, condition, detail = '') {
   }
 }
 
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
-check('the fixture is not empty', fixture.fold.length >= 10 && fixture.sameArtist.length >= 20 && fixture.sameSong.length >= 10);
+check('the fixture is not empty', fixture.fold.length >= 10 && fixture.sameSong.length >= 10);
 
 for (const { in: text, out } of fixture.fold) {
   const got = fold(text);
   check(`fold(${JSON.stringify(text)})`, got === out, `page ${JSON.stringify(got)}, server ${JSON.stringify(out)}`);
-}
-for (const { in: name, out } of fixture.scriptNames) {
-  const got = scriptNames(name);
-  check(`scriptNames(${JSON.stringify(name)})`, same(got, out), `page ${JSON.stringify(got)}, server ${JSON.stringify(out)}`);
-}
-for (const { found, names, same: want } of fixture.sameArtist) {
-  const got = sameArtist(found, names);
-  check(`sameArtist(${JSON.stringify(found)}, ${JSON.stringify(names)})`, got === want, `page ${got}, server ${want}`);
 }
 for (const { found, song, same: want } of fixture.sameSong) {
   const got = sameSong(found, song);

@@ -103,10 +103,9 @@ test.afterEach(async ({ app }, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus) return;
   await shot(app.page, testInfo, "failure").catch(() => {});
   const message = testInfo.error?.message || "";
-  const evidence = serviceEvidence(app.page, checkStartedAt, {
-    // Blocked on purpose by E4.
-    ignoreHosts: testInfo.title.startsWith("E4") ? ["lrclib.net"] : [],
-  });
+  // E4's refused lookup is a request to the app's own server, which this does
+  // not count as an outside service.
+  const evidence = serviceEvidence(app.page, checkStartedAt);
   // An outage only explains a failure it could have caused: an import that
   // YouTube refused, or a request from the page itself that failed. A service
   // in the backend log alone is noted, not blamed.
@@ -1021,16 +1020,19 @@ test(title("V2"), async ({ app }, testInfo) => {
 // Expect: "Could not reach LRCLIB. Check your connection and try again." in
 // the Lyrics panel; nothing floats over the top bar.
 //
-// LRCLIB is blocked for the page alone (page.route over CDP): the rest of the
-// machine keeps its network. The page only asks LRCLIB itself for a track the
-// server kept no lyrics for, which the tagged tone file is.
+// The page asks the server to look lyrics up (#719), and the server answers
+// 502 when LRCLIB cannot be reached. That answer is given for the page alone
+// (page.route over CDP), so the rest of the machine keeps its network. The
+// lookup is only asked for a track the server kept no lyrics for, which the
+// tagged tone file is.
 test(title("E4"), async ({ app }, testInfo) => {
   const { page } = app;
   await wideWindow(page);
   const id = await trackFor(page, "localMp3");
   const kept = await fetch(`${readState().baseURL}/api/jobs/${id}/lyrics`);
-  test.skip(kept.status !== 404, `The server kept lyrics for the tone file (HTTP ${kept.status}), so the page would not ask LRCLIB.`);
-  await page.route(/^https:\/\/lrclib\.net\//, (route) => route.abort("internetdisconnected"));
+  test.skip(kept.status !== 404, `The server kept lyrics for the tone file (HTTP ${kept.status}), so the page would not ask for a lookup.`);
+  const LOOKUP = /\/api\/jobs\/[^/]+\/lyrics\/lookup$/;
+  await page.route(LOOKUP, (route) => route.fulfill({ status: 502, json: { detail: "lyrics service unreachable" } }));
   try {
     await openTrack(page, id);
     await openLyrics(page);
@@ -1050,7 +1052,7 @@ test(title("E4"), async ({ app }, testInfo) => {
     expect(floating).toBe(0);
     await shot(page, testInfo, "offline");
   } finally {
-    await page.unroute(/^https:\/\/lrclib\.net\//);
+    await page.unroute(LOOKUP);
   }
 });
 

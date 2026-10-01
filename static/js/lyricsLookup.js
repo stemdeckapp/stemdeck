@@ -1,47 +1,17 @@
-// Lyrics for the open track, from LRCLIB (lrclib.net), for the Lyrics tab in
-// the sidebar (#699).
+// Lyrics for the Lyrics tab (#699): what the server found, read into the
+// tab's shape, and the helpers that parse and time them.
 //
-// LRCLIB because it is free, open and needs no key, and because most of what
-// it holds is time-synced: each line carries the moment it is sung, so the tab
-// can follow playback and a line can be clicked to jump there, which is what
-// practising against the stems wants. The lyrics themselves are copyright of
-// their writers; they are fetched when the Lyrics tab is opened on a track
-// that has none kept, and kept on this machine for that track, never sent on.
+// Finding them is the server's job alone (POST /api/jobs/{id}/lyrics/lookup,
+// app/pipeline/lyrics_lookup.py). The tab used to search LRCLIB itself with
+// its own copy of the rules for which version is this song by this artist,
+// and the two copies drifted (#719). What is left here is the reading and the
+// timing, which the tab and Sync lines need either way, and sameSong, which
+// checks lyrics this tab kept before that rule existed.
 //
-// What is sent is the artist and song the track is known to be (its tags, or
-// the saved band and the song's name from the title), nothing else.
-//
-// No DOM here, and fetch is passed in, so this runs under node for the unit
-// tests (tests/js/lyrics-lookup.test.mjs).
+// No DOM here, so this runs under node for the unit tests.
 
 import { artistNameKey } from "./artistLookup.js";
 import { toSimplified } from "./zhVariants.js";
-
-const LRCLIB_SEARCH = "https://lrclib.net/api/search";
-const TIMEOUT_MS = 12000;
-
-// Among versions this far apart or closer, prefer the one with synced lyrics.
-// LRCLIB holds the same song many times over (live cuts, remasters, a rip with
-// a second of silence trimmed), and a synced copy a second off beats a plain
-// one that matches to the frame.
-const SAME_LENGTH_SEC = 3;
-
-/**
- * One LRCLIB row, reduced to what the tab uses. Rows with neither kind of
- * lyrics and no instrumental flag say nothing, and are dropped by the caller.
- */
-function normalise(row) {
-  return {
-    id: Number(row?.id) || 0,
-    track: String(row?.trackName || ""),
-    artist: String(row?.artistName || ""),
-    album: String(row?.albumName || ""),
-    duration: Number(row?.duration) || 0,
-    instrumental: Boolean(row?.instrumental),
-    synced: typeof row?.syncedLyrics === "string" ? row.syncedLyrics : "",
-    plain: typeof row?.plainLyrics === "string" ? row.plainLyrics : "",
-  };
-}
 
 const SERVER_SOURCES = new Set(["lrclib", "file", "whisper"]);
 
@@ -111,107 +81,6 @@ export function fromServerLyrics(data) {
     };
   }
   return others.length ? { entry: null, others } : null;
-}
-
-/**
- * Best first, for a track `duration` seconds long (0 when unknown):
- * closest in length, then synced over plain among versions within
- * SAME_LENGTH_SEC of each other, then intact over a copy stripped of its
- * accents (strippedCopy), then whatever LRCLIB ranked first.
- */
-export function rankMatches(rows, duration = 0) {
-  const matches = (Array.isArray(rows) ? rows : [])
-    .map(normalise)
-    .filter((m) => m.id && (m.synced || m.plain || m.instrumental));
-  return rankVersions(matches, duration);
-}
-
-/** rankMatches' order over versions it already gave, say from two searches.
- * Each version once, by id. */
-export function rankVersions(versions, duration = 0) {
-  const seen = new Set();
-  const matches = versions.filter((m) => m?.id && !seen.has(m.id) && seen.add(m.id));
-  const off = (m) => (duration && m.duration ? Math.abs(m.duration - duration) : 0);
-  const stripped = strippedIndexes(matches);
-  return matches
-    .map((m, rank) => ({ m, rank }))
-    .sort((a, b) => {
-      const da = off(a.m);
-      const db = off(b.m);
-      if (Math.abs(da - db) > SAME_LENGTH_SEC) return da - db;
-      if (Boolean(a.m.synced) !== Boolean(b.m.synced)) return a.m.synced ? -1 : 1;
-      const sa = stripped.has(a.rank);
-      if (sa !== stripped.has(b.rank)) return sa ? 1 : -1;
-      return da - db || a.rank - b.rank;
-    })
-    .map(({ m }) => m);
-}
-
-// Stripped copies, as _Words in app/pipeline/lyrics_lookup.py. LRCLIB holds
-// many songs more than once, and some copies lost every letter outside ASCII
-// on their way in: "Niewinnoci biaym niegiem" for "Niewinnością białym
-// śniegiem" (Kayah, lrclib 5470091 beside the intact 10910419). Each such
-// letter was either dropped or folded to its base ("się" as "sie"). Such a copy
-// cannot be told from a song written without accents on its own, only beside
-// the copy it was stripped from.
-const LRC_TAGS = /\[[^\]\n]*\]|<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g;
-const NOT_ASCII = /[^\p{ASCII}]/gu;
-const isAscii = (word) => !/[^\p{ASCII}]/u.test(word);
-// The intact copy has at least this many words with a letter outside ASCII,
-// so a stray "café" proves nothing; the stripped one keeps at most a quarter
-// of them; at least 60% of the intact copy's accented words appear in it with
-// those letters dropped or folded; at least 80% of its words are the intact
-// copy's.
-const STRIPPED_MIN_WORDS = 5;
-const STRIPPED_KEPT_MAX = 0.25;
-const STRIPPED_FOUND_MIN = 0.6;
-const STRIPPED_SAME_MIN = 0.8;
-
-/** What an accented word becomes with its letters outside ASCII dropped
- * ("każe" as "kae") or folded to their base first ("się" as "sie"). */
-function strippedForms(word) {
-  const forms = [word.replace(NOT_ASCII, ""), word.normalize("NFD").replace(NOT_ASCII, "")];
-  return forms.filter(Boolean);
-}
-
-/** A version's words, lowercased, time stamps left out, with what they would
- * be stripped: worked out once per version, compared many times. */
-function wordsOf(match) {
-  const text = String(match?.synced || match?.plain || "").normalize("NFC").replace(LRC_TAGS, " ");
-  const words = text.toLowerCase().match(/[\p{L}\p{M}]+/gu) || [];
-  const accented = words.filter((w) => !isAscii(w));
-  const forms = accented.map(strippedForms);
-  return { words, have: new Set(words), accented, forms, known: new Set([...words, ...forms.flat()]) };
-}
-
-function strippedFrom(copy, intact) {
-  const accented = intact.accented.length;
-  if (accented < STRIPPED_MIN_WORDS || !copy.words.length) return false;
-  if (copy.accented.length > accented * STRIPPED_KEPT_MAX) return false;
-  const found = intact.forms.filter((forms) => forms.some((f) => copy.have.has(f))).length;
-  if (found < accented * STRIPPED_FOUND_MIN) return false;
-  const same = copy.words.filter((w) => intact.known.has(w)).length;
-  return same >= copy.words.length * STRIPPED_SAME_MIN;
-}
-
-/**
- * Whether `match` is `other`'s lyrics with the letters outside ASCII lost,
- * dropped or folded to their base letter. Both are versions as rankMatches
- * gives them ({ synced, plain }).
- */
-export function strippedCopy(match, other) {
-  return strippedFrom(wordsOf(match), wordsOf(other));
-}
-
-/** The indexes in `matches` of versions that are a stripped copy of another. */
-function strippedIndexes(matches) {
-  const words = matches.map(wordsOf);
-  const intact = words.map((w, j) => [j, w]).filter(([, w]) => w.accented.length >= STRIPPED_MIN_WORDS);
-  const out = new Set();
-  words.forEach((w, i) => {
-    if (intact.some(([j, other]) => j !== i && strippedFrom(w, other))) out.add(i);
-  });
-  return out;
 }
 
 /**
@@ -615,31 +484,10 @@ export function songFromTitle(title, artist = "") {
     .trim();
 }
 
-// Whose song a version is: belongs_to in app/pipeline/lyrics_lookup.py.
-//
-// LRCLIB's search is fuzzy: asked for one artist's song it also answers with
-// other artists' songs of a similar name. Lyrics that may be another song's are
-// worse than none, so a version is kept only when its song is the one asked for
-// and its artist is one of the names the track is known by: the artist itself,
-// one of the artists credited with it ("Keala Settle" of "Keala Settle & The
-// Greatest Showman Ensemble"), the show a cast recording is filed under, or
-// another name the band goes by (its name in the artist box). Names are
-// compared folded (fold): full-width letters as half-width, traditional
-// Chinese as simplified.
-const NAME_LIST = /\s*(?:[&,+/;]|\band\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bvs\.?)\s*/iu;
-const LEADING_THE = /^\s*the\s+/iu;
+// What sameSong compares: a song's name less brackets and featured artists.
 const SONG_FEATURING = /\s+(?:ft\.?|feat\.?|featuring)\s.*$/iu;
 const SONG_BRACKETS = /[([{【][^()[\]{}【】]*[)\]}】]/gu;
 const SONG_TAIL = /\s+\p{Pd}+\s+.*$/u;
-// What stands between the names a name is written in at once: "周杰倫 Jay
-// Chou", "IU (아이유)", "五月天 (Mayday)".
-const SCRIPT_BREAK = /[\s()[\]{}【】「」『』〈〉《》]+/u;
-// One credited artist matches only when its name weighs at least this much
-// (nameWeight: an ideograph counts two), so an initial or a stray "DJ" names
-// nobody while 王菲 does; a run of words inside a longer name ("The Greatest
-// Showman" in "The Greatest Showman Cast") needs this many.
-const PART_MIN_CHARS = 4;
-const RUN_MIN_WORDS = 2;
 
 // Latin letters Unicode does not build from a base letter and an accent, as a
 // name typed without them has them: "Podsiadlo" for Podsiadło.
@@ -651,85 +499,6 @@ const LATIN_LETTER = /[łŁøØđĐðÐßæÆœŒıþÞ]/gu;
  * traditional Chinese as simplified, and the Latin letters above plain. */
 export function fold(text) {
   return toSimplified(String(text || "").normalize("NFKC").replace(LATIN_LETTER, (ch) => LATIN_LETTERS[ch]));
-}
-
-const isHan = (cp) =>
-  (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0x20000 && cp <= 0x3ffff);
-
-/** A Chinese, Japanese or Korean letter: an ideograph, kana or Hangul. */
-function isCjk(ch) {
-  const cp = ch.codePointAt(0);
-  return isHan(cp)
-    || (cp >= 0x3040 && cp <= 0x30ff) || (cp >= 0x31f0 && cp <= 0x31ff) || (cp >= 0xff66 && cp <= 0xff9f)
-    || (cp >= 0x1100 && cp <= 0x11ff) || (cp >= 0x3130 && cp <= 0x318f) || (cp >= 0xac00 && cp <= 0xd7af);
-}
-
-/** How much of a name a name key is, in Latin letters: name_weight in
- * name_aliases.py. An ideograph counts two, marks nothing. */
-function nameWeight(key) {
-  let weight = 0;
-  for (const ch of key) weight += isHan(ch.codePointAt(0)) ? 2 : /\p{M}/u.test(ch) ? 0 : 1;
-  return weight;
-}
-
-const nameKey = (name) => artistNameKey(fold(name).replace(LEADING_THE, ""));
-const nameWords = (name) => (fold(name).match(/[\p{L}\p{M}\p{N}]+/gu) || []).map(artistNameKey).filter(Boolean);
-const nameParts = (name) => fold(name).split(NAME_LIST).map(nameKey).filter(Boolean);
-
-function scriptOf(token) {
-  const letters = token.match(/\p{L}/gu) || [];
-  if (!letters.length) return "";
-  const cjk = letters.filter(isCjk).length;
-  return cjk === letters.length ? "cjk" : cjk ? "mixed" : "other";
-}
-
-/**
- * The names a name gives in two scripts at once, each on its own: "周杰倫 Jay
- * Chou" as 周杰倫 and "Jay Chou", "IU (아이유)" as IU and 아이유. [] for a name
- * in one script, or with a word that mixes them ("Official髭男dism").
- * script_names in app/pipeline/lyrics_lookup.py.
- */
-export function scriptNames(name) {
-  const tokens = fold(name).split(SCRIPT_BREAK).filter(Boolean);
-  const kinds = tokens.map(scriptOf);
-  if (kinds.includes("mixed") || new Set(kinds.filter(Boolean)).size < 2) return [];
-  const groups = [];
-  let last = "";
-  tokens.forEach((token, i) => {
-    if (!kinds[i]) {
-      last = "";
-      return;
-    }
-    if (kinds[i] !== last) groups.push([]);
-    groups.at(-1).push(token);
-    last = kinds[i];
-  });
-  return groups.map((group) => group.join(" "));
-}
-
-const wholeNames = (name) => [nameKey(name), ...scriptNames(name).map(nameKey)].filter(Boolean);
-
-function containsRun(words, run) {
-  if (run.length < RUN_MIN_WORDS || run.length > words.length) return false;
-  for (let i = 0; i + run.length <= words.length; i++) {
-    if (run.every((w, j) => words[i + j] === w)) return true;
-  }
-  return false;
-}
-
-/** Whether `found`, a version's artist, is one of `names`. */
-export function sameArtist(found, names) {
-  if (!nameKey(found)) return false;
-  const theirs = new Set(wholeNames(found));
-  const theirParts = nameParts(found);
-  const theirWords = nameWords(found);
-  return names.some((name) => {
-    if (!String(name || "").trim()) return false;
-    if (wholeNames(name).some((key) => theirs.has(key))) return true;
-    if (nameParts(name).some((p) => nameWeight(p) >= PART_MIN_CHARS && theirParts.includes(p))) return true;
-    const mine = nameWords(name);
-    return containsRun(mine, theirWords) || containsRun(theirWords, mine);
-  });
 }
 
 function songKeys(name) {
@@ -751,31 +520,6 @@ export function sameSong(found, song) {
   const b = songKeys(song);
   if (!a.full || !b.full) return false;
   return a.full === b.full || a.head === b.full || a.full === b.head;
-}
-
-/** Whether a version is `song` by `artist` or one of `names` (a show's, the
- * band's other names). */
-export function belongsTo(match, { artist = "", song = "", names = [] } = {}) {
-  return sameSong(match?.track, song) && sameArtist(match?.artist, [artist, ...names]);
-}
-
-/**
- * Who else to search LRCLIB by when the artist's own name found no version
- * the track's length: the names it gives at once ("周杰倫 Jay Chou"), then
- * `names` (the band's in the artist box), each once and never the artist's
- * own. An uploader files a song under whichever one they write.
- */
-export function otherNames(artist, names = []) {
-  const asked = new Set([String(artist || "").trim().toLowerCase()]);
-  const out = [];
-  for (const name of [...scriptNames(artist), ...names]) {
-    const text = String(name || "").trim();
-    if (text && !asked.has(text.toLowerCase())) {
-      asked.add(text.toLowerCase());
-      out.push(text);
-    }
-  }
-  return out;
 }
 
 // How far the Align panel moves lyrics either way, as the server bounds it
@@ -833,44 +577,4 @@ export function currentLineIndex(lines, seconds) {
     }
   }
   return found;
-}
-
-/** The request for a search, as a URL. The song is required, the artist not. */
-export function searchUrl({ artist = "", song = "" }) {
-  const url = new URL(LRCLIB_SEARCH);
-  const a = String(artist).trim();
-  const s = String(song).trim();
-  if (a) {
-    url.searchParams.set("track_name", s);
-    url.searchParams.set("artist_name", a);
-  } else {
-    // No artist: the free-text search, which matches the song name against
-    // titles and artists both, rather than an empty artist filter.
-    url.searchParams.set("q", s);
-  }
-  return url.toString();
-}
-
-async function defaultFetchJson(url, signal) {
-  const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).host}`);
-  return res.json();
-}
-
-/**
- * Search LRCLIB and rank what comes back for a track `duration` seconds long.
- * Resolves to [] when nothing matches, and rejects when LRCLIB cannot be
- * reached, so the tab can tell the two apart.
- */
-export async function searchLyrics({ artist = "", song = "", duration = 0 }, { fetchJson = defaultFetchJson, signal } = {}) {
-  if (!String(song).trim()) return [];
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error("timeout")), TIMEOUT_MS);
-  signal?.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
-  try {
-    const rows = await fetchJson(searchUrl({ artist, song }), controller.signal);
-    return rankMatches(rows, duration);
-  } finally {
-    clearTimeout(timer);
-  }
 }
