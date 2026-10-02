@@ -48,3 +48,23 @@ test("the slow speed survives a reload", async ({ page }) => {
   // A track opens at normal speed, as it always has.
   await expect(page.locator("#t-speed-1")).toHaveAttribute("aria-checked", "true");
 });
+
+test("half speed is one press, and never lights with a slow speed set to 0.50x", async ({ page }) => {
+  await openStudio(page);
+  const half = page.locator("#t-speed-05");
+  await expect(half).toHaveText("0.5x");
+  await half.click();
+  await expect.poll(() => rate(page)).toBe(0.5);
+  await expect(half).toHaveAttribute("aria-checked", "true");
+  await expect(slow(page)).toHaveAttribute("aria-checked", "false");
+
+  // The slow speed brought down to the same 0.50x: only the button pressed is lit.
+  await slow(page).focus();
+  for (let i = 0; i < 25; i++) await page.keyboard.press("ArrowDown");
+  await expect(slow(page)).toHaveText("0.50x");
+  await expect(slow(page)).toHaveAttribute("aria-checked", "true");
+  await expect(half).toHaveAttribute("aria-checked", "false");
+
+  await page.locator("#t-speed-1").click();
+  await expect.poll(() => rate(page)).toBe(1);
+});

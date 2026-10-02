@@ -962,8 +962,9 @@ export function wireTransportButtons() {
   wirePitchControl();
 }
 
-// Two buttons, normal and slow, rather than a dial -- practice speeds for
-// slowing a part down, not a general-purpose tempo control (#269 follow-up).
+// Three buttons rather than a dial -- practice speeds for slowing a part
+// down, not a general-purpose tempo control (#269 follow-up): half speed,
+// a slow speed the player sets, and normal.
 //
 // The slow one is set by the player (#701): scroll over it, or press the up
 // and down arrow keys on it, to move it a hundredth at a time between
@@ -983,7 +984,9 @@ const SLOW_APPLY_DELAY_MS = 150;
 const clampSlow = (rate) => Math.round(Math.min(SLOW_MAX, Math.max(SLOW_MIN, rate)) * 100) / 100;
 let _slowRate = SLOW_DEFAULT;
 let _slowApplyTimer = 0;
-const slowBtn = () => speedBtns[0];
+const halfBtn = () => document.getElementById("t-speed-05");
+const slowBtn = () => document.getElementById("t-speed-075");
+const normalBtn = () => document.getElementById("t-speed-1");
 
 function paintSlowButton() {
   const btn = slowBtn();
@@ -993,16 +996,21 @@ function paintSlowButton() {
   btn.title = t("speed.slowTitle");
 }
 
-function applySpeed(rate) {
-  // Normal or the slow speed: nothing in between is offered, so anything
-  // under 1 is the slow button's.
-  const applied = rate >= 1 ? 1 : _slowRate;
+/**
+ * Play at the speed of `btn`, one of the three buttons: half, the slow speed,
+ * or normal. Without one, anything under 1 is the slow button's. The button
+ * pressed is the one lit, so half speed and a slow speed set to 0.50x never
+ * light together.
+ */
+function applySpeed(rate, btn = null) {
+  const pressed = btn ?? (rate >= 1 ? normalBtn() : slowBtn());
+  const applied = pressed === halfBtn() ? 0.5 : pressed === slowBtn() ? _slowRate : 1;
   setPlaybackSpeed(applied);
-  for (const btn of speedBtns) {
-    if (!btn) continue;
-    const on = parseFloat(btn.dataset.speed) === applied;
-    btn.classList.toggle("active", on);
-    btn.setAttribute("aria-checked", on ? "true" : "false");
+  for (const b of speedBtns) {
+    if (!b) continue;
+    const on = b === pressed;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
   }
   audioEngine?.setPlaybackRate?.(applied);
   if (multitrack) {
@@ -1020,7 +1028,7 @@ function nudgeSlowSpeed(steps) {
   paintSlowButton();
   storeSet(_SLOW_SPEED_KEY, _slowRate).catch((e) => console.warn("[transport] failed to save the slow speed:", e));
   clearTimeout(_slowApplyTimer);
-  _slowApplyTimer = setTimeout(() => applySpeed(_slowRate), SLOW_APPLY_DELAY_MS);
+  _slowApplyTimer = setTimeout(() => applySpeed(_slowRate, slowBtn()), SLOW_APPLY_DELAY_MS);
 }
 
 
@@ -1122,7 +1130,7 @@ export function resetSpeed() {
 
 function wireSpeedControl() {
   for (const btn of speedBtns) {
-    btn?.addEventListener("click", () => applySpeed(parseFloat(btn.dataset.speed)));
+    btn?.addEventListener("click", () => applySpeed(parseFloat(btn.dataset.speed), btn));
   }
   const slow = slowBtn();
   if (!slow) return;
@@ -1142,7 +1150,7 @@ function wireSpeedControl() {
     const wasSlow = slow.classList.contains("active");
     _slowRate = clampSlow(saved);
     paintSlowButton();
-    if (wasSlow) applySpeed(_slowRate);
+    if (wasSlow) applySpeed(_slowRate, slow);
   }).catch(() => {});
 }
 
