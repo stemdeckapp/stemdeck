@@ -97,16 +97,16 @@ def _run_local_extract(tmp_path: Path, returncode: int, raises=None) -> Job:
     source = job_dir / "in.mp4"
     source.write_bytes(b"x")
 
-    # Stubs _run_registered_ffmpeg rather than subprocess.run: the extract goes
+    # Stubs run_registered rather than subprocess.run: the extract goes
     # through Popen + set_proc now, so cancel can reach it (#519).
     def fake_run(job_arg, cmd, timeout):
         if raises is not None:
             raise raises
         if returncode == 0:
             Path(cmd[-1]).write_bytes(b"fake mp4 payload")
-        return returncode, b""
+        return subprocess.CompletedProcess(cmd, returncode, b"", b"")
 
-    with patch.object(runner_mod, "_run_registered_ffmpeg", fake_run):
+    with patch.object(runner_mod, "run_registered", fake_run):
         runner_mod._extract_video_track(job, source, job_dir)
     return job
 

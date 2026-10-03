@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 
 from app.core.config import JOBS_DIR, TIMEOUT_ANALYZE, ffmpeg_executable
-from app.core.models import Job, _set
+from app.core.models import Job, JobCancelled, _set
+from app.pipeline.cancel import check_cancel, run_registered
 
 logger = logging.getLogger("stemdeck.analyze")
 
@@ -258,13 +259,18 @@ def _load_audio_ffmpeg(
     sr: int = 22050,
     duration: float | None = 180.0,
     timeout: int = TIMEOUT_ANALYZE,
+    job: Job | None = None,
 ) -> tuple[object, int] | None:
     """Decode `source` to a mono float32 numpy array at `sr` via ffmpeg.
     Bypasses librosa's deprecated audioread fallback (which fires a
     FutureWarning on .webm/.m4a/.opus inputs because soundfile can't
     read those directly). `duration=None` decodes the whole file (used by
     the beat-grid stage, which must cover the full track). Returns
-    (samples, sr) or None on failure."""
+    (samples, sr) or None on failure.
+
+    With `job`, ffmpeg is registered against it so a cancel can terminate the
+    decode rather than wait it out (#748). A terminated decode reads as a
+    failure here; the caller's own cancel check is what turns it into one."""
     import numpy as np
 
     # Defence in depth: even though `source` is constructed by the server
@@ -302,7 +308,10 @@ def _load_audio_ffmpeg(
         cmd += ["-t", str(duration)]  # cap input duration
     cmd.append("-")  # write to stdout
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=True, timeout=timeout)
+        if job is not None:
+            result = run_registered(job, cmd, timeout, capture_stdout=True)
+        else:
+            result = subprocess.run(cmd, capture_output=True, timeout=timeout)
     # OSError, not just FileNotFoundError. A missing binary is only one way
     # spawning fails: a portable install whose ffmpeg lost its executable bit
     # raises PermissionError, which is an OSError but not a FileNotFoundError,
@@ -312,7 +321,10 @@ def _load_audio_ffmpeg(
     except (subprocess.SubprocessError, OSError) as e:
         logger.warning("ffmpeg decode failed for %s: %s", source, e)
         return None
-    y = np.frombuffer(proc.stdout, dtype=np.float32)
+    if result.returncode != 0:
+        logger.warning("ffmpeg decode failed for %s: exit %s", source, result.returncode)
+        return None
+    y = np.frombuffer(result.stdout, dtype=np.float32)
     if y.size == 0:
         return None
     return y, sr
@@ -320,7 +332,11 @@ def _load_audio_ffmpeg(
 
 def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
     """Best-effort BPM and key detection. On failure, returns (None, None)
-    and leaves job fields untouched -- the chips stay as placeholders."""
+    and leaves job fields untouched -- the chips stay as placeholders.
+
+    A cancel is the one thing that is not swallowed: it raises JobCancelled.
+    The librosa steps cannot be interrupted, so the flag is checked between
+    them, and the decode is registered so cancel can stop it outright (#748)."""
     logger.info("analyze: entering for job %s, source=%s", job.id, source)
     _set(job, status="analyzing", progress=0.0, stage="Analyzing audio...")
     try:
@@ -333,7 +349,8 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         # Analyse the first 180 s. Decode via ffmpeg directly into numpy
         # to avoid librosa's deprecated audioread fallback for
         # .webm/.m4a/.opus inputs.
-        loaded = _load_audio_ffmpeg(source, sr=22050, duration=180.0)
+        loaded = _load_audio_ffmpeg(source, sr=22050, duration=180.0, job=job)
+        check_cancel(job)
         if loaded is None:
             return None, None
         y, sr = loaded
@@ -343,8 +360,10 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         # cleaner pitch profile on the harmonic component (no cymbal
         # smear, no kick fundamentals leaking in).
         y_harmonic, y_percussive = librosa.effects.hpss(y)
+        check_cancel(job)
 
         tempo_arr, beat_frames = librosa.beat.beat_track(y=y_percussive, sr=sr)
+        check_cancel(job)
         try:
             tempo = float(tempo_arr[0])  # type: ignore[index]
         except (TypeError, IndexError):
@@ -359,6 +378,7 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         whole_song = y.size < 179.5 * sr
         detected = detect_key_from_audio(y_harmonic, None, sr, whole_song=whole_song)
         key, scale, key_confidence = detected if detected else (None, None, None)
+        check_cancel(job)
 
         # LUFS / peak. Computed on the same 22 kHz mono buffer; this
         # loses a few dB of accuracy vs full-sample-rate stereo, but
@@ -396,6 +416,8 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
             stage="Analysis complete",
         )
         return bpm, key
+    except JobCancelled:
+        raise
     except Exception:
         # Full traceback goes to the log; the UI stage line stays generic --
         # raw exception reprs (paths, library internals) must not reach it.
@@ -490,7 +512,7 @@ def refine_key_from_stems(job: Job, stems_dir: Path) -> None:
             path = stems_dir / f"{name}.wav"
             if not path.is_file():
                 continue
-            loaded = _load_audio_ffmpeg(path, sr=sr, duration=_STEM_KEY_MAX_SECONDS)
+            loaded = _load_audio_ffmpeg(path, sr=sr, duration=_STEM_KEY_MAX_SECONDS, job=job)
             if loaded is None:
                 continue
             y = loaded[0] * weight
@@ -503,7 +525,7 @@ def refine_key_from_stems(job: Job, stems_dir: Path) -> None:
         bass = None
         bass_path = stems_dir / "bass.wav"
         if bass_path.is_file():
-            loaded = _load_audio_ffmpeg(bass_path, sr=sr, duration=_STEM_KEY_MAX_SECONDS)
+            loaded = _load_audio_ffmpeg(bass_path, sr=sr, duration=_STEM_KEY_MAX_SECONDS, job=job)
             if loaded is not None:
                 bass = loaded[0]
                 harmony, bass = _pad_pair(harmony, bass)

@@ -15,6 +15,7 @@ import {
   seedCatalogState,
   stubAudioTags,
   stubExportEndpoints,
+  stubImportQueue,
   stubUpdateCheck,
 } from "./helpers.mjs";
 
@@ -323,12 +324,14 @@ test.describe("the work a soundtrack is from", () => {
       route.request().method() === "POST"
         ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ job_id: JOB_ID }) })
         : route.fallback());
-    await page.route(`**/api/jobs/${JOB_ID}/events`, (route) =>
-      route.fulfill({ status: 200, contentType: "text/event-stream", body: `data: ${JSON.stringify(done)}\n\n` }));
+    // The import runs in the background (#747); the queue says when it is done.
+    const queue = await stubImportQueue(page, JOB_ID);
     const tagAsks = await openPage(page, { [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)") });
 
     await page.locator("#url").fill("https://www.youtube.com/watch?v=6Nn8rBmhDjE");
     await page.locator("#submit").click();
+    await queue.run();
+    await queue.settle();
 
     await expect(page.locator("#title")).toHaveText("Popular", { timeout: 15000 });
     await expect(page.locator("#np-artist")).toHaveText("Wicked", { timeout: 15000 });

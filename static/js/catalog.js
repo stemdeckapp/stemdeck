@@ -2,14 +2,14 @@
 import { STEM_NAMES } from "./constants.js";
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { initSections } from "./sections.js";
-import { bpmChip, foregroundJobId, keyChip, saveSelectedStems, selectedStems, titleEl } from "./state.js";
+import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, saveSelectedStems, selectedStems, titleEl } from "./state.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
 import {
-  cancelQueuedJob, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
-  queueCount, queueRowStates, reorderQueuedJob, runningLabel, startQueue,
+  cancelQueuedJob, currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
+  queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
   startQueueStream,
 } from "./queue.js";
 import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
@@ -211,6 +211,9 @@ let _currentTrackId = null;
 // The open track's tags as the last render() saw them. See setCurrentTrack().
 let _renderedTagsKey = "";
 let _loadTrackToken = 0;
+// Imports submitted from the form, mapped to the load token at that moment. A
+// finished one opens in the studio only if nothing has been opened since (#747).
+const _autoOpenTokens = new Map();
 let catalogView = "library";
 let catalogSearchQuery = "";
 
@@ -220,6 +223,13 @@ const TRASH_ID = "trash";
 // The default landing folder for unorganized tracks — protected from deletion.
 const UNSORTED_ID = "f-unsorted";
 const PROCESSING_STATUSES = new Set(["queued", "downloading", "analyzing", "separating", "processing"]);
+
+// One trash can for every "throw this away" button: the library rows and the
+// queue rows (#748), so the queue's cancel reads as the same action.
+const TRASH_ICON_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+      </svg>`;
 const FOLDER_COLORS = ["#d8a84a", "#e85f6f", "#64c86f", "#4f9de8", "#a985f4"];
 const DEFAULT_FOLDER_COLOR = FOLDER_COLORS[0];
 const TRACK_DRAG_TYPE = "application/x-stemdeck-track";
@@ -690,6 +700,8 @@ export function updateTrackStatus(trackId, status) {
     for (const el of document.querySelectorAll(`.cat-item[data-id="${trackId}"]`)) {
       el.classList.toggle("unavailable", status === "unavailable");
     }
+    // A stopped row changes its line and gains Extract (#748), more than a dot.
+    if (status === "stopped") render();
   }
 }
 
@@ -938,7 +950,7 @@ function applyTrackInfoToPanel(track) {
  */
 function syncTrashToServer(trackId, trashed) {
   const action = trashed ? "trash" : "restore";
-  fetch(`/api/jobs/${encodeURIComponent(trackId)}/${action}`, { method: "POST" })
+  return fetch(`/api/jobs/${encodeURIComponent(trackId)}/${action}`, { method: "POST" })
     .catch((e) => console.warn(`[catalog] could not ${action} ${trackId} on the server`, e));
 }
 
@@ -987,7 +999,13 @@ function moveTrackToTrash(trackId) {
   // purgeTrash() does the same on permanent delete, for a job that errors
   // after being trashed but before it's purged.
   dismissFailuresByJobId(trackId);
-  syncTrashToServer(trackId, true);
+  // The server stops a job that is still importing when it is trashed, its
+  // files kept (#748). Ask for the queue again once it has, so the row goes now rather
+  // than whenever the next frame happens to arrive.
+  const wasInQueue = currentIds(getQueueSnapshot()).has(trackId);
+  syncTrashToServer(trackId, true).then(() => {
+    if (wasInQueue) refreshQueue();
+  });
   saveState();
   render();
 }
@@ -1684,6 +1702,8 @@ function trackSublineHtml(track, { inTrash = false } = {}) {
     parts = [i18nT("job.processing")];
   } else if (track.status === "error") {
     parts = [i18nT("notifKind.importFailed")];
+  } else if (track.status === "stopped") {
+    parts = [i18nT("track.stopped")];
   } else {
     // Just the length. The stem count was here too, but every row carrying
     // "6 stems" says the same thing forty times over, and the now-playing card
@@ -1768,13 +1788,43 @@ function makeStripItem({ className = "", id, title, html, color, trackId }) {
   return item;
 }
 
+// A song stopped by the Trash keeps its files (#748). Restore brings it back
+// as it was, and this is the one way to run it again: the user decides when it
+// gets the GPU, never Restore and never a reload.
+function extractButtonHtml(track) {
+  const label = i18nT("track.extractAgainOf", { title: displayTitle(track.title) });
+  return `<button class="cat-extract" type="button" title="${esc(i18nT("track.extractAgain"))}"
+            aria-label="${esc(label)}">${esc(i18nT("track.extractAgain"))}</button>`;
+}
+
+async function extractStoppedTrack(trackId) {
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/extract`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      notifyFailure({ kind: "import", message: body.detail || i18nT("job.audioProcessingFailed") });
+      render();
+      return;
+    }
+    if (tracks[trackId]) tracks[trackId].status = "queued";
+    // Like any import (#747): it opens when done, if the studio is still empty.
+    armAutoOpen(trackId);
+    saveState();
+    render();
+    await refreshQueue();
+  } catch (e) {
+    console.warn("[catalog] could not extract", trackId, e);
+    render();
+  }
+}
+
 function renderTrackItem(trackId, { inTrash = false } = {}) {
   const track = tracks[trackId];
   if (!track) return null;
 
   const el = document.createElement("div");
   const isUnavailable = track.status === "unavailable";
-  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${!inTrash && track.favorite ? " is-fav" : ""}`;
+  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${!inTrash && track.favorite ? " is-fav" : ""}${!inTrash && track.status === "stopped" ? " is-stopped" : ""}`;
   el.dataset.id = trackId;
 
   el.innerHTML = `
@@ -1784,11 +1834,8 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
       <div class="cat-sub">${trackSublineHtml(track, { inTrash })}</div>
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
-    ${inTrash ? "" : `<div class="cat-actions">${favButtonHtml(track)}<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
-      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <polyline points="3 6 5 6 21 6"></polyline>
-        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
-      </svg>
+    ${inTrash ? "" : `<div class="cat-actions">${track.status === "stopped" ? extractButtonHtml(track) : ""}${favButtonHtml(track)}<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
+      ${TRASH_ICON_SVG}
     </button></div>`}
   `;
   el.querySelector(".cat-del")?.setAttribute("aria-label", i18nT("track.moveTitleToTrash", { title: track.title ?? i18nT("track.unknown") }));
@@ -1796,6 +1843,11 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   el.querySelector(".cat-del")?.addEventListener("click", (e) => {
     e.stopPropagation();
     moveTrackToTrash(trackId);
+  });
+  el.querySelector(".cat-extract")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.currentTarget.disabled = true;
+    extractStoppedTrack(trackId);
   });
   wireFavButton(el, trackId);
 
@@ -2232,6 +2284,25 @@ function decorateRow(el, rowState) {
   if (fill) fill.style.width = `${Math.round(rowState.progress * 100)}%`;
 }
 
+/** Remember that this import was started with the studio as it is now. Imports
+ *  never take the studio while they run (#747); this is what lets the first one
+ *  to finish open itself, but only while the studio is still empty and the user
+ *  has not opened anything since. */
+export function armAutoOpen(jobId) {
+  _autoOpenTokens.set(jobId, _loadTrackToken);
+}
+
+/** True when the studio shows no track and no load is under way. Either engine
+ *  counts: the Web Audio path sets audioEngine, the streaming path sets
+ *  multitrack. A load in flight has bumped the token before it has an engine.
+ *  "Sync again" holds the studio through foregroundJobId without either: it
+ *  tears the player down and shows its own overlay, so it counts as busy too. */
+function shouldAutoOpen(jobId) {
+  const armedAt = _autoOpenTokens.get(jobId);
+  _autoOpenTokens.delete(jobId);
+  return armedAt === _loadTrackToken && !audioEngine && !multitrack && !foregroundJobId;
+}
+
 /** A background import has finished (or failed, or was cancelled). It has no
  *  per-job stream, so fetch its final state once and complete its library entry
  *  -- stems, duration and analysis all land here, which is what makes the track
@@ -2248,6 +2319,7 @@ async function completeSettledJob(jobId) {
     }
     const state = await res.json();
     if (state.status === "cancelled") {
+      _autoOpenTokens.delete(jobId);
       // Nothing was produced; drop the placeholder row rather than leaving a
       // track that can never be loaded.
       delete tracks[jobId];
@@ -2282,7 +2354,14 @@ async function completeSettledJob(jobId) {
     const finalState = state.status === "done" ? await runVocalSplitIfWanted(state) : state;
     const track = stateMetadataToTrack(finalState, { ...existing, id: jobId });
     track.id = jobId;
+    // A server that sends "work" looked for it while the job ran, so the track
+    // that opens next never needs to ask again (#747: every import lands here).
+    if (finalState.status === "done" && "work" in finalState) track.workChecked = true;
     addTrackToLibrary(track);
+    // Checked after the split so the stems it makes are there when it opens,
+    // and through the library's own loader so it behaves like a click on the row.
+    if (finalState.status === "done" && shouldAutoOpen(jobId)) loadTrackIntoStudio(jobId);
+    else _autoOpenTokens.delete(jobId);
   } catch (e) {
     console.warn("[catalog] could not finish background job", jobId, e);
   }
@@ -2329,9 +2408,7 @@ function queueRowHtml({ job, running }, place, { paused = false } = {}) {
       </button>`}
       <button class="queue-cancel" type="button" title="${esc(i18nT("queue.cancelImport"))}"
               aria-label="${esc(i18nT("queue.cancelImportOf", { title: displayTitle(job.title || job.source_url) }))}">
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-          <path d="M18 6 6 18 M6 6l12 12"></path>
-        </svg>
+        ${TRASH_ICON_SVG}
       </button>
     </div>`;
 }
@@ -3540,7 +3617,24 @@ async function syncWithServer() {
       if (favBtn && current) paintFavButton(favBtn, Boolean(current.favorite));
     }
     reconcileAvailability(jobs);
+    settleStaleProcessingTracks();
   } catch (e) { console.warn("[catalog] failed to load jobs from backend:", e); }
+}
+
+/**
+ * Ask the server where every track this side still calls "processing" stands.
+ *
+ * A job is only settled here when it leaves the queue while the page watches
+ * it. One that stopped, failed or finished while the app was closed never left
+ * the queue in front of this page, so its row said "processing" for good: the
+ * song trashed mid-extraction in #748 sat in the Trash that way after a
+ * restart. completeSettledJob takes whatever the server says, so a job that
+ * really is still waiting just keeps its status.
+ */
+function settleStaleProcessingTracks() {
+  for (const [id, track] of Object.entries(tracks)) {
+    if (PROCESSING_STATUSES.has(track.status)) completeSettledJob(id);
+  }
 }
 
 // ─── Settings menu + Library editor ───
@@ -4903,7 +4997,7 @@ async function waitForJobTerminal(jobId) {
       const r = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
       if (r.status === 404) return;
       const s = await r.json();
-      if (s.status === "done" || s.status === "error" || s.status === "cancelled") return;
+      if (["done", "error", "cancelled", "stopped"].includes(s.status)) return;
     } catch { /* transient — keep waiting */ }
   }
 }

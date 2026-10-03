@@ -14,6 +14,8 @@ Only emptying the Trash calls DELETE.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -147,3 +149,149 @@ def test_a_registry_written_before_this_existed_still_loads() -> None:
     record = Job(id="666666666666", status="done", title="Old").to_record()
     del record["trashed_at"]
     assert Job.from_record(record).trashed_at is None
+
+
+# ── trashing a job that has not finished (#748) ─────────────────────────────
+#
+# Trashing used to leave an unfinished import running, hidden: the queue kept
+# working on a song the user had thrown away. The server now stops it, so the
+# phone and the desktop both get it. Its files stay: only emptying the Trash
+# deletes anything.
+
+
+class _FakeProc:
+    """Stands in for the registered subprocess: records the terminate."""
+
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def poll(self):
+        return 0 if self.terminated else None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def _queued_upload(job_id: str) -> tuple[Job, Path]:
+    from app.pipeline import jobqueue
+
+    job = Job(id=job_id, status="queued", title="Waiting", source_url="local:Waiting")
+    register(job)
+    jobqueue.enqueue(job.id, autostart=False)
+    job_dir = jobqueue.JOBS_DIR / job.id
+    job_dir.mkdir(parents=True)
+    (job_dir / "source.wav").write_bytes(b"RIFF")
+    return job, job_dir
+
+
+def test_trashing_a_queued_job_stops_it_and_keeps_its_files(client: TestClient) -> None:
+    from app.pipeline import jobqueue
+
+    job, job_dir = _queued_upload("888888888888")
+
+    assert client.post(f"/api/jobs/{job.id}/trash").status_code == 200
+
+    assert job.status == "stopped"
+    assert jobqueue.snapshot() == (None, []), "the queue would still run it"
+    assert (job_dir / "source.wav").is_file(), "only emptying the Trash deletes files"
+
+
+def test_a_plain_cancel_still_removes_a_queued_jobs_files(client: TestClient) -> None:
+    job, job_dir = _queued_upload("888888888887")
+
+    assert client.post(f"/api/jobs/{job.id}/cancel").status_code == 200
+
+    assert job.status == "cancelled"
+    assert not job_dir.exists(), "a waiting upload's source must not stay on disk"
+
+
+def test_emptying_the_trash_deletes_a_stopped_job(client: TestClient) -> None:
+    job, job_dir = _queued_upload("888888888886")
+    client.post(f"/api/jobs/{job.id}/trash")
+
+    assert client.delete(f"/api/jobs/{job.id}").status_code == 200
+
+    assert not job_dir.exists()
+
+
+def test_extract_queues_a_restored_stopped_job_again(client: TestClient) -> None:
+    from app.core.config import DEMUCS_MODEL
+    from app.pipeline import jobqueue
+
+    job, job_dir = _queued_upload("888888888885")
+    client.post(f"/api/jobs/{job.id}/trash")
+    (job_dir / DEMUCS_MODEL).mkdir()  # partial output from the stopped run
+    client.post(f"/api/jobs/{job.id}/restore")
+
+    res = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert res.status_code == 200
+    assert res.json()["status"] == "queued"
+    assert job.cancel_requested is False and job.stop_requested is False
+    assert jobqueue.snapshot() == (None, [job.id])
+    assert (job_dir / "source.wav").is_file()
+    assert not (job_dir / DEMUCS_MODEL).exists(), "collect() would read stale stems"
+
+
+def test_restore_alone_does_not_queue_a_stopped_job(client: TestClient) -> None:
+    from app.pipeline import jobqueue
+
+    job, _ = _queued_upload("888888888884")
+    client.post(f"/api/jobs/{job.id}/trash")
+
+    assert client.post(f"/api/jobs/{job.id}/restore").status_code == 200
+
+    assert job.status == "stopped"
+    assert jobqueue.snapshot() == (None, [])
+
+
+def test_extract_refuses_a_job_still_in_the_trash(client: TestClient) -> None:
+    job, _ = _queued_upload("888888888883")
+    client.post(f"/api/jobs/{job.id}/trash")
+
+    assert client.post(f"/api/jobs/{job.id}/extract").status_code == 409
+    assert job.status == "stopped"
+
+
+def test_extract_refuses_a_job_that_is_not_stopped(client: TestClient) -> None:
+    job = _done("888888888882", "Finished")
+    assert client.post(f"/api/jobs/{job.id}/extract").status_code == 409
+    assert job.status == "done"
+
+
+def test_extract_rejects_a_malformed_or_unknown_id(client: TestClient) -> None:
+    # A traversal normalises away before routing (405), as for trash above.
+    for bad in ("../../etc/passwd", "not a job id", "%2e%2e%2f"):
+        resp = client.post(f"/api/jobs/{bad}/extract")
+        assert 400 <= resp.status_code < 500, (bad, resp.status_code)
+    assert client.post("/api/jobs/aaaaaaaaaaaa/extract").status_code == 404
+
+
+def test_trashing_the_running_job_stops_its_process(client: TestClient) -> None:
+    from app.core.registry import set_proc
+    from app.pipeline import jobqueue
+
+    job = Job(id="999999999990", status="analyzing", title="Running")
+    register(job)
+    jobqueue._set_running(job.id)
+    proc = _FakeProc()
+    set_proc(job.id, proc)
+    try:
+        assert client.post(f"/api/jobs/{job.id}/trash").status_code == 200
+    finally:
+        set_proc(job.id, None)
+        jobqueue._set_running(None)
+
+    assert job.cancel_requested is True
+    assert job.stop_requested is True, "it would settle as cancelled and lose its files"
+    assert proc.terminated, "the pipeline would have kept going in the Trash"
+    # Still in the Trash: the runner, not the endpoint, finalises a running job.
+    assert job.trashed_at is not None
+
+
+def test_trashing_a_finished_job_cancels_nothing(client: TestClient) -> None:
+    """A done job's files are what Restore brings back."""
+    job = _done("999999999991", "Finished")
+    client.post(f"/api/jobs/{job.id}/trash")
+    assert job.status == "done"
+    assert job.cancel_requested is False

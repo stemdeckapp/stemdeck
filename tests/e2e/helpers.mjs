@@ -409,3 +409,38 @@ export async function stubLyricsLookup(page, { rows = [], artist = "", song = ""
   });
   return asked;
 }
+
+/**
+ * Stand in for the import queue, for a test that has to watch an import while
+ * it runs. The e2e backend never separates anything, so a job that stays
+ * "running" long enough to look at cannot be produced for real.
+ *
+ * `run()` reports the job as running and `settle()` as gone, each followed by a
+ * queue read so the page sees it at once. The queue stream is held off, or its
+ * own empty frames would override the stub.
+ */
+export async function stubImportQueue(page, jobId, title = "Importing") {
+  let running = false;
+  await page.route("**/api/queue", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        running: running
+          ? { job_id: jobId, status: "separating", stage: "Separating 40%", progress: 0.4, title }
+          : null,
+        queued: [],
+        paused: false,
+        max_pending_uploads: 5,
+        max_pending_urls: 50,
+        capacity_left_uploads: 5,
+        capacity_left_urls: 50,
+      }),
+    }));
+  await page.route("**/api/queue/events", (route) => route.abort());
+  const read = () => page.evaluate(async () => (await import("/js/queue.js")).refreshQueue());
+  return {
+    run: async () => { running = true; await read(); },
+    settle: async () => { running = false; await read(); },
+  };
+}

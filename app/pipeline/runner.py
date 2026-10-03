@@ -17,18 +17,21 @@ from app.core.config import (
     LYRICS_LOOKUP_GRACE_SEC,
     TIMEOUT_FFMPEG,
 )
-from app.core.models import Job, JobCancelled, _set
+from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
-from app.core.registry import is_upload, set_proc
+from app.core.registry import is_upload
 from app.core.registry import persist as persist_registry
 from app.pipeline.analyze import analyze, refine_key_from_stems
 from app.pipeline.beatgrid import compute_beat_grid
+from app.pipeline.cancel import check_cancel as _check_cancel
+from app.pipeline.cancel import run_registered
 from app.pipeline.collect import (
     cleanup_source,
     collect,
     compute_stem_peaks,
     make_original_track,
     make_selected_mix,
+    remove_job_dir,
 )
 from app.pipeline.download import download
 from app.pipeline.errors import classify_failure
@@ -53,35 +56,6 @@ def _rmtree(path: Path) -> None:
 
 # Only one heavy job runs at a time -- Demucs is GPU/CPU-hungry.
 _pipeline_lock = asyncio.Semaphore(1)
-
-
-def _check_cancel(job: Job) -> None:
-    if job.cancel_requested:
-        raise JobCancelled()
-
-
-def _run_registered_ffmpeg(job: Job, cmd: list[str], timeout: int) -> tuple[int, bytes]:
-    """Run ffmpeg with the process registered, so cancel can reach it.
-
-    subprocess.run() cannot be interrupted: POST /cancel sets the flag, but
-    nothing looks at it until the call returns, so a cancel during a large
-    upload's transcode was a no-op for up to TIMEOUT_FFMPEG per call -- twice
-    over on the .mp4 path, which runs both this and the video extract (#519).
-
-    Mirrors collect._run_ffmpeg, which registers for exactly this reason.
-    """
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    set_proc(job.id, proc)
-    try:
-        try:
-            _, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            raise
-        return proc.returncode, stderr or b""
-    finally:
-        set_proc(job.id, None)
 
 
 def _extract_video_track(job: Job, source: Path, job_dir: Path) -> None:
@@ -111,7 +85,7 @@ def _extract_video_track(job: Job, source: Path, job_dir: Path) -> None:
         str(dest),
     ]
     try:
-        returncode, _ = _run_registered_ffmpeg(job, cmd, TIMEOUT_FFMPEG)
+        returncode = run_registered(job, cmd, TIMEOUT_FFMPEG).returncode
     except (OSError, subprocess.SubprocessError) as e:
         # ffmpeg missing or timed out. Distinct from an .mp4 that simply has no
         # video stream, and the only one of the two worth surfacing (#436).
@@ -162,10 +136,10 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
         "-y",
         str(dest),
     ]
-    returncode, stderr = _run_registered_ffmpeg(job, cmd, TIMEOUT_FFMPEG)
-    if returncode != 0:
+    result = run_registered(job, cmd, TIMEOUT_FFMPEG)
+    if result.returncode != 0:
         raise RuntimeError(
-            "ffmpeg transcode failed: " + stderr.decode("utf-8", errors="replace").strip()
+            "ffmpeg transcode failed: " + result.stderr.decode("utf-8", errors="replace").strip()
         )
     source.unlink(missing_ok=True)
     return dest
@@ -495,11 +469,23 @@ async def _run_async(
             " (wrapped)" if not isinstance(e, JobCancelled) else "",
             job.id,
         )
-        _set(job, status="cancelled", stage="Cancelled")
+        remove_files = settle_cancelled(job)
         persist_registry(jobs_dir)
         release_source(job.id)
-        _rmtree(job_dir)
+        # A job stopped from the Trash keeps its files until the Trash is
+        # emptied (#748). A plain cancel's folder is retried like delete_job's
+        # removal: right after the cancel terminated ffmpeg or the demucs
+        # worker, Windows can still hold one of its files, and a single attempt
+        # left the folder behind for good.
+        if remove_files and not remove_job_dir(job_dir):
+            logger.warning("[%s] cancelled job's folder could not be removed", job.id)
         return
+    # A cancel or a trash that arrived after the last stage checked for it lost
+    # the race, and the job finished anyway. Left set, the flags would make
+    # every later vocal split, section run or lyric timing on this done job
+    # cancel itself at once, until the next restart (#748).
+    job.cancel_requested = False
+    job.stop_requested = False
     _set(job, status="done", progress=1.0, stage="Done")
     _write_metadata(job, job_dir)
     persist_registry(jobs_dir)

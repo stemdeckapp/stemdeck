@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.core.config import JOB_ID_RE
+from app.core.models import FINISHED_STATUSES
 from app.core.registry import get as registry_get
 
 router = APIRouter(tags=["events"])
@@ -108,9 +109,9 @@ async def job_events(job_id: str) -> StreamingResponse:
                     yield f"data: {json.dumps(snapshot)}\n\n"
                     last_v = v
                     keepalive_at = 0
-                    if snapshot["status"] in ("done", "error", "cancelled"):
+                    if snapshot["status"] in FINISHED_STATUSES:
                         return
-                elif job.status in ("done", "error", "cancelled"):
+                elif job.status in FINISHED_STATUSES:
                     # Already-terminal with no pending change (e.g. the job was
                     # done before this connection opened) -- close promptly
                     # instead of idling on int-compares until the SSE cap.

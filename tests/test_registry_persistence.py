@@ -414,3 +414,50 @@ def test_records_without_a_position_still_restore_oldest_first(tmp_path: Path):
 
     restore_registry(tmp_path)
     assert _registry.take_pending_resume() == ["abcdef0000e2", "abcdef0000e1"]
+
+
+# ── a job trashed before the restart (#748) ──────────────────────────────────
+
+
+def test_a_trashed_interrupted_job_is_not_put_back_in_the_queue(tmp_path: Path):
+    """It came back as a Paused row offering to Start a song in the Trash."""
+    job = Job(id="abcdef0000f1", status="analyzing", title="Binned", trashed_at=1.0)
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    (tmp_path / job.id).mkdir()
+    (tmp_path / job.id / "source.wav").write_bytes(b"RIFF")
+    _jobs.clear()
+
+    restore_registry(tmp_path)
+
+    assert _registry.take_pending_resume() == []
+    assert _jobs[job.id].status == "stopped"
+    assert (tmp_path / job.id / "source.wav").is_file(), "only emptying the Trash deletes files"
+
+
+def test_a_stopped_job_survives_a_restart_in_the_trash(tmp_path: Path):
+    """Not persisted, it would vanish from the Trash with its files orphaned."""
+    job = Job(id="abcdef0000f3", status="stopped", trashed_at=1.0)  # no title yet
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    _jobs.clear()
+
+    restore_registry(tmp_path)
+
+    assert _jobs[job.id].status == "stopped"
+    assert _jobs[job.id].trashed_at == 1.0
+    assert _registry.take_pending_resume() == [], "only Extract may queue it again"
+
+
+def test_a_trashed_job_that_finished_before_the_crash_stays_in_the_trash(tmp_path: Path):
+    job = Job(id="abcdef0000f2", status="separating", title="Binned", trashed_at=1.0)
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    _stems_dir(tmp_path, job.id)
+    _jobs.clear()
+
+    restore_registry(tmp_path)
+
+    assert _jobs[job.id].status == "done"
+    assert _jobs[job.id].trashed_at == 1.0, "a song the user binned would reappear"
+    assert _registry.take_pending_resume() == []
