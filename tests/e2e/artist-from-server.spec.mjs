@@ -15,6 +15,7 @@ import {
   seedCatalogState,
   stubAudioTags,
   stubExportEndpoints,
+  stubImportQueue,
   stubUpdateCheck,
 } from "./helpers.mjs";
 
@@ -106,24 +107,22 @@ test.describe("band found by the server during the import", () => {
   test("a finished import shows its band at once, with nothing asked of Wikimedia", async ({ page }) => {
     const asked = await stubWikimedia(page);
     const doneState = await stubServerBand(page, JOB_ID);
-    // The import: the server accepts it as the fixture job, and its event
-    // stream says it is done, carrying the band the pipeline found.
+    // The import: the server accepts it as the fixture job. It runs in the
+    // background (#747), so the queue says when it is done and the page then
+    // fetches its state, which carries the band the pipeline found.
     await page.route("**/api/jobs", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ job_id: JOB_ID }) });
     });
-    await page.route(`**/api/jobs/${JOB_ID}/events`, async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "text/event-stream",
-        body: `data: ${JSON.stringify(await doneState())}\n\n`,
-      }));
-    // Only the sibling is in the library, so nothing is open and the import
-    // takes the studio.
+    const queue = await stubImportQueue(page, JOB_ID);
+    // Only the sibling is in the library, so nothing is open and the finished
+    // import opens itself.
     await openPage(page, { [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)") });
 
     await page.locator("#url").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     await page.locator("#submit").click();
+    await queue.run();
+    await queue.settle();
 
     await expect(page.locator(".app")).not.toHaveClass(/no-track/, { timeout: 15000 });
     await expect(page.locator("#np-artist")).toHaveText("Dream Theater", { timeout: 15000 });

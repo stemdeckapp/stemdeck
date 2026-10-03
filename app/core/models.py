@@ -15,8 +15,21 @@ class JobCancelled(Exception):
 
 
 JobStatus = Literal[
-    "queued", "downloading", "analyzing", "separating", "processing", "done", "error", "cancelled"
+    "queued",
+    "downloading",
+    "analyzing",
+    "separating",
+    "processing",
+    "done",
+    "error",
+    "cancelled",
+    "stopped",
 ]
+
+# Statuses no pipeline will move on from. "stopped" is a job halted because the
+# user put it in the Trash (#748): unlike "cancelled", its files stay on disk,
+# because only emptying the Trash deletes anything.
+FINISHED_STATUSES = frozenset(("done", "error", "cancelled", "stopped"))
 
 # A Wikidata item id. Anything else is not a band this app found.
 _WIKIDATA_ID_RE = re.compile(r"^Q\d{1,12}$")
@@ -195,6 +208,20 @@ def _set(job: Job, **fields: object) -> None:
     job.version += 1
 
 
+def settle_cancelled(job: Job) -> bool:
+    """Mark a job whose cancel took effect. Returns whether its files go too.
+
+    A plain cancel ends "cancelled" and its directory is removed. A stop that
+    came from the Trash ends "stopped" with the directory kept (#748): trashing
+    is reversible, and only emptying the Trash deletes files, the rule the
+    finished tracks in the Trash have always followed."""
+    if job.stop_requested:
+        _set(job, status="stopped", stage="Stopped")
+        return False
+    _set(job, status="cancelled", stage="Cancelled")
+    return True
+
+
 @dataclass
 class Job:
     id: str
@@ -319,6 +346,10 @@ class Job:
     # Set by POST /api/jobs/{id}/cancel; consumed by pipeline stages.
     # Not surfaced via to_state() -- it's internal control state.
     cancel_requested: bool = False
+    # Set alongside cancel_requested when the stop comes from the Trash (#748).
+    # The job then settles as "stopped" with its files kept, not "cancelled"
+    # with its directory removed. Internal, like cancel_requested.
+    stop_requested: bool = False
     # Bumped by _set() on every field write (#289). Internal dirty-flag /
     # tear-detection state for the SSE stream -- not surfaced via to_state()
     # or persisted, same as cancel_requested.
@@ -412,9 +443,12 @@ class Job:
         job.work = clean_work(job.work)
         job.audio_tags = clean_audio_tags(job.audio_tags)
         job.cancel_requested = False
+        job.stop_requested = False
         return job
 
 
 _JOB_FIELDS = frozenset(
-    f.name for f in dataclasses.fields(Job) if f.name not in ("cancel_requested", "version")
+    f.name
+    for f in dataclasses.fields(Job)
+    if f.name not in ("cancel_requested", "stop_requested", "version")
 )

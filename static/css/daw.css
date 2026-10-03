@@ -929,6 +929,16 @@ input, textarea { font-family: inherit; }
 .cat-del:hover { background: rgba(21,31,39,0.8); color: var(--danger); }
 .cat-fav:hover { background: rgba(21,31,39,0.8); color: var(--fg); }
 .cat-fav.active, .cat-fav.active:hover { color: #e54e4e; }
+/* A stopped song (#748) offers Extract at rest: it is the row's only way on. */
+.cat-item.is-stopped .cat-actions { opacity: 1; pointer-events: auto; }
+.cat-extract {
+  height: 20px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 5px;
+  background: transparent; color: var(--accent); cursor: pointer;
+  font: inherit; font-size: 11px; white-space: nowrap; flex-shrink: 0;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.cat-extract:hover, .cat-extract:focus-visible { background: var(--accent); color: var(--panel-2); }
+.cat-extract:disabled { opacity: 0.5; cursor: default; }
 /* A favourite says so at rest, in the subline, where it takes no title room. */
 .cat-item.is-fav .cat-sub::before {
   content: ""; flex-shrink: 0; align-self: center;

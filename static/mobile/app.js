@@ -591,8 +591,10 @@ function extractProgressCard() {
   const pct = Math.round((j.progress || 0) * 100);
   const failed = j.status === "error";
   const cancelled = j.status === "cancelled";
+  // Trashed while it ran (#748): halted, its files kept for the desktop's Trash.
+  const stopped = j.status === "stopped";
   const done = j.status === "done";
-  const line = failed ? "Failed" : cancelled ? "Cancelled" : done ? "Done" : `${j.stage || j.status}…`;
+  const line = failed ? "Failed" : cancelled ? "Cancelled" : stopped ? "Stopped" : done ? "Done" : `${j.stage || j.status}…`;
   return `<div class="eyebrow">IN PROGRESS</div>
     <div class="progress-card">
       <div class="progress-top">
@@ -718,7 +720,7 @@ function _onExtractState(jobId, s) {
   state.extractJob.progress = s.progress || 0;
   state.extractJob.stage = s.stage || s.status;
   if (state.tab === "extract") render();
-  if (s.status === "done" || s.status === "error" || s.status === "cancelled") {
+  if (["done", "error", "cancelled", "stopped"].includes(s.status)) {
     if (s.status === "done" && state.extractJob.vocalSplitMode === "split") {
       _runVocalSplitThenFinish(jobId);
     } else {

@@ -446,3 +446,79 @@ def test_a_silent_track_yields_no_key(job, jobs_dir):
     bpm, key = az.analyze(job, src)
     assert key is None or key.split()[0] in PITCHES
     assert bpm is None or bpm > 0
+
+
+# ── cancel (#748) ────────────────────────────────────────────────────
+
+
+def test_the_analyze_decode_is_registered_so_cancel_can_stop_it(job, jobs_dir, monkeypatch):
+    """subprocess.run() could not be reached by a cancel: a song trashed while
+    analysing stayed "Analyzing" until the decode and every step after it
+    finished (85 s in the report)."""
+    import numpy as np
+
+    src = jobs_dir / "x.wav"
+    src.write_bytes(b"RIFF")
+    calls = []
+
+    def fake_run_registered(job_arg, cmd, timeout, *, capture_stdout=False):
+        calls.append((job_arg, capture_stdout))
+        samples = np.zeros(22050, dtype=np.float32).tobytes()
+        return subprocess.CompletedProcess(cmd, 0, samples, b"")
+
+    monkeypatch.setattr(az, "run_registered", fake_run_registered)
+
+    result = az._load_audio_ffmpeg(src, job=job)
+
+    assert result is not None
+    assert calls == [(job, True)]
+
+
+def test_a_terminated_decode_reads_as_a_failure(job, jobs_dir, monkeypatch):
+    src = jobs_dir / "x.wav"
+    src.write_bytes(b"RIFF")
+    monkeypatch.setattr(
+        az,
+        "run_registered",
+        lambda _j, cmd, _t, **_k: subprocess.CompletedProcess(cmd, 1, b"", b""),
+    )
+    assert az._load_audio_ffmpeg(src, job=job) is None
+
+
+def test_a_cancel_during_the_decode_raises_rather_than_skipping(job, jobs_dir, monkeypatch):
+    """The cancel kills ffmpeg, which looks like a failed decode. Treated as
+    one, the job went on to separate a song the user had thrown away."""
+    from app.core.models import JobCancelled
+
+    pytest.importorskip("librosa")
+    src = jobs_dir / "x.wav"
+    src.write_bytes(b"RIFF")
+
+    def cancelled_decode(job_arg, cmd, _t, **_k):
+        job_arg.cancel_requested = True
+        return subprocess.CompletedProcess(cmd, 1, b"", b"")
+
+    monkeypatch.setattr(az, "run_registered", cancelled_decode)
+
+    with pytest.raises(JobCancelled):
+        az.analyze(job, src)
+
+
+def test_a_cancel_between_steps_is_not_swallowed(job, jobs_dir):
+    """The librosa steps cannot be interrupted, so the flag is checked between
+    them, and the stage's catch-all must let the cancel through."""
+    from app.core.models import JobCancelled
+
+    skip_without_ffmpeg()
+    librosa = pytest.importorskip("librosa")
+    src = _click_wav(jobs_dir / "c.wav", bpm=120.0, seconds=4.0)
+    real_hpss = librosa.effects.hpss
+
+    def hpss_then_cancel(y, *a, **k):
+        job.cancel_requested = True
+        return real_hpss(y, *a, **k)
+
+    with patch.object(librosa.effects, "hpss", hpss_then_cancel), pytest.raises(JobCancelled):
+        az.analyze(job, src)
+
+    assert job.bpm is None, "a cancelled analysis must not write its results"
