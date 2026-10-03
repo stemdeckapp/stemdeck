@@ -361,6 +361,32 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
+            // A portable folder the user cannot write to (Program Files, say)
+            // cannot work at all: setup, the CUDA swap and the updater all
+            // write inside it. Say so and stop, before the window opens and
+            // before anything touches the install (#746).
+            #[cfg(any(windows, target_os = "linux"))]
+            if let Ok(root) = app_root() {
+                let outcome =
+                    portable_root_check(is_portable_package(&root), || app_root_is_writable(&root));
+                if outcome == PortableRootCheck::NotWritable {
+                    use tauri_plugin_dialog::DialogExt;
+                    eprintln!(
+                        "[stemdeck] portable folder is not writable: {}",
+                        root.display()
+                    );
+                    // Non-blocking show: the setup hook runs on the main
+                    // thread, and the callback ends the process once the
+                    // user has read the message.
+                    app.dialog()
+                        .message(not_writable_message(&root))
+                        .title("StemDeck cannot start here")
+                        .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                        .show(|_| std::process::exit(0));
+                    return Ok(());
+                }
+            }
+
             // The main window is built here rather than by Tauri from
             // tauri.conf.json, because one of its settings has to differ by
             // platform and the config file has no way to say so. The config
@@ -1252,6 +1278,45 @@ fn app_root_is_writable(root: &Path) -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// What the startup check decided about the app root (#746).
+#[cfg(any(windows, target_os = "linux"))]
+#[derive(Debug, PartialEq, Eq)]
+enum PortableRootCheck {
+    Proceed,
+    NotWritable,
+}
+
+/// A portable package keeps its runtime, torch swap and updates inside its own
+/// folder, so it is only usable where the user can write. Installs that are not
+/// portable keep their data elsewhere and are never stopped by this.
+///
+/// The probe is a closure so it only runs for a portable package. It creates a
+/// file in the app root, and on any other install, a root-owned /opt one in
+/// particular, writing there at every start is neither needed nor safe.
+#[cfg(any(windows, target_os = "linux"))]
+fn portable_root_check(portable: bool, probe_writable: impl FnOnce() -> bool) -> PortableRootCheck {
+    if portable && !probe_writable() {
+        PortableRootCheck::NotWritable
+    } else {
+        PortableRootCheck::Proceed
+    }
+}
+
+/// Plain wording, with the folder shown. Elevation is deliberately not offered:
+/// an elevated window cannot receive drag and drop from a normal Explorer
+/// (Windows UIPI), and every launch would prompt.
+#[cfg(any(windows, target_os = "linux"))]
+fn not_writable_message(root: &Path) -> String {
+    format!(
+        "StemDeck cannot write to the folder it is in:\n\n{}\n\n\
+         A portable StemDeck must live in a folder you can write to, for example \
+         C:\\StemDeck. It cannot run from Program Files, and Documents or Desktop \
+         can refuse it too when Windows security protects those folders.\n\n\
+         Move the whole folder there and start StemDeck again.",
+        root.display()
+    )
 }
 
 /// Stops the backend and waits for the process to actually exit.
@@ -6946,6 +7011,35 @@ mod tests {
         assert!(super::app_root_is_writable(dir.path()));
         // the probe must not leave anything behind
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    // #746: a portable zip extracted under Program Files is not writable
+    // without admin. Only that combination stops startup.
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn only_an_unwritable_portable_root_stops_startup() {
+        use super::{portable_root_check, PortableRootCheck::*};
+        assert_eq!(portable_root_check(true, || false), NotWritable);
+        assert_eq!(portable_root_check(true, || true), Proceed);
+        assert_eq!(portable_root_check(false, || false), Proceed);
+        assert_eq!(portable_root_check(false, || true), Proceed);
+    }
+
+    // The probe writes a file into the app root, so an install that is not
+    // portable must never run it (security review of #746).
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_non_portable_install_is_never_probed() {
+        let outcome = super::portable_root_check(false, || panic!("probed a non-portable root"));
+        assert_eq!(outcome, super::PortableRootCheck::Proceed);
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn the_not_writable_message_names_the_folder_and_a_fix() {
+        let msg = super::not_writable_message(Path::new(r"C:\Program Files (x86)\Stemdeck"));
+        assert!(msg.contains("Program Files (x86)"));
+        assert!(msg.contains(r"C:\StemDeck"));
     }
 
     // install.sh --global puts the package in /opt, root-owned, while the app
