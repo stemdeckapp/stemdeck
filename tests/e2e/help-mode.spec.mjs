@@ -5,7 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-import { openStudio } from "./helpers.mjs";
+import { openStudio, seedLibrary, stubUpdateCheck } from "./helpers.mjs";
 
 const tip = (page) => page.locator("#helpTip");
 
@@ -27,6 +27,23 @@ test.describe("help mode", () => {
     await expect(page.locator("body")).not.toHaveClass(/help-mode/);
     await expect(page.locator(".help-target")).toHaveCount(0);
     await expect(page.locator(".help-pill")).toBeHidden();
+  });
+
+  test("turning Guide on makes every explainable control glow once, then fade", async ({ page }) => {
+    await openStudio(page);
+    await page.locator("#helpModeBtn").click();
+    const rings = page.locator(".help-intro-ring");
+    expect(await rings.count()).toBeGreaterThan(20);
+    await expect(page.locator(".help-intro")).toBeVisible();
+    // Gone by itself, so the screen is calm again.
+    await expect(rings).toHaveCount(0, { timeout: 4000 });
+    await expect(page.locator(".help-intro")).toBeHidden();
+
+    // Leaving Guide mid-glow clears it at once.
+    await page.keyboard.press("Escape");
+    await page.locator("#helpModeBtn").click();
+    await page.keyboard.press("Escape");
+    await expect(rings).toHaveCount(0);
   });
 
   test("pointing at a control explains it, under its own label", async ({ page }) => {
@@ -51,6 +68,31 @@ test.describe("help mode", () => {
     const drumsKey = page.locator(".lane-key").filter({ has: page.locator('[aria-label*="Drums"]') }).locator(".lane-key-value").first();
     await drumsKey.hover({ force: true });
     await expect(tip(page).locator("b")).toHaveText("Key of Drums");
+  });
+
+  test("each song fact and presence card explains itself", async ({ page }) => {
+    await openStudio(page);
+    await helpOn(page);
+    await page.locator('.daw-meta-card[data-meta="lufs"]').hover();
+    await expect(tip(page)).toContainText("streaming services");
+    await page.locator('.daw-meta-card[data-meta="stability"]').hover();
+    await expect(tip(page)).toContainText("How steady the tempo is");
+    await page.locator('.stem-presence-panel .stem-card[data-stem="drums"]').hover();
+    await expect(tip(page)).toContainText("How loud the Drums part is");
+  });
+
+  test("with no song open, controls the studio switches off still explain themselves", async ({ page }) => {
+    await seedLibrary(page);
+    await stubUpdateCheck(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.locator(".cat-item").first().waitFor();
+    await helpOn(page);
+    for (const sel of ["#t-export-btn", "#np-details-btn", '.daw-meta-card[data-meta="key"]', '.stem-presence-panel .stem-card[data-stem="vocals"]']) {
+      const box = await page.locator(sel).first().boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await expect(tip(page), sel).toBeVisible();
+      await expect(page.locator(sel).first(), sel).toHaveClass(/help-current/);
+    }
   });
 
   test("a click explains instead of acting", async ({ page }) => {
