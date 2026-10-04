@@ -21,6 +21,7 @@ import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n
 import { initFooterFit, refitFooter } from "./footerFit.js";
 import { initArtistInfo } from "./artistInfo.js";
 import { initLyrics } from "./lyrics.js";
+import { initHelpMode } from "./helpMode.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -456,6 +457,7 @@ wireAppShellControls();
 initFooterFit();
 initArtistInfo();
 initLyrics();
+initHelpMode();
 // Re-measure after a language switch. Measured across en/fr/de/pl the strip
 // came out the same width in all four, because the group labels are 10px
 // uppercase and narrower than the controls under them, so this is not the

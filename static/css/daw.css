@@ -5669,3 +5669,39 @@ input, textarea { font-family: inherit; }
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
 }
 .stem-overflow.open { display: flex; }
+
+/* Help mode. The Guide button in the rail, below Trash; while it is pressed,
+   a ring is drawn around what can be seen of the control being explained,
+   and its box sits beside it. The ring is a layer of its own, so nothing in
+   the page moves and no panel clips it. */
+.rail-guide[aria-pressed="true"] { color: var(--accent); background: var(--panel); }
+/* Only the control being explained is marked, so the screen stays calm; the
+   pill at the bottom says help mode is on. */
+.help-mode .help-target { cursor: help; }
+.help-ring {
+  position: fixed; z-index: 9998; pointer-events: none;
+  border: 2px solid var(--accent); border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.help-pill {
+  position: fixed; z-index: 9999; left: 50%; bottom: 18px; transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 7px 16px; box-shadow: var(--shadow-panel);
+  color: var(--fg); font: 500 12.5px/1.4 var(--font-sans); text-align: center;
+  pointer-events: none;
+}
+.help-tip {
+  position: fixed; z-index: 10000;
+  width: max-content; max-width: min(300px, calc(100vw - 16px));
+  background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: 10px 12px; box-shadow: var(--shadow-panel);
+  color: var(--fg-2); font: 400 13px/1.45 var(--font-sans);
+  pointer-events: none;
+}
+.help-tip b { display: block; margin-bottom: 2px; color: var(--fg); font-size: 13.5px; font-weight: 700; }
+.help-tip.long { max-width: min(560px, calc(100vw - 16px)); columns: 2 230px; column-gap: 20px; font-size: 12px; line-height: 1.4; }
+.help-tip.long b { column-span: all; margin-bottom: 6px; }
+.help-tip-h { break-after: avoid; margin-top: 8px; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.help-tip-row { break-inside: avoid; margin-top: 3px; }
+.help-tip-row span { color: var(--fg); font-weight: 600; }

@@ -330,6 +330,15 @@
               <span data-i18n="nav.trash">Trash</span>
               <span class="rail-badge hidden" id="trashBadge" aria-hidden="true"></span>
             </button>
+            <!-- Help mode: the screen explains itself while this is pressed. -->
+            <button class="rail-btn rail-guide" type="button" id="helpModeBtn" aria-pressed="false"
+                    title="Explain the screen" aria-label="Explain the screen"
+                    data-i18n-title="help.button" data-i18n-aria-label="help.button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 5.5c3-1.3 6-1.3 10 1v13c-4-2.3-7-2.3-10-1z M22 5.5c-3-1.3-6-1.3-10 1v13c4-2.3 7-2.3 10-1z"/>
+              </svg>
+              <span data-i18n="help.railLabel">Guide</span>
+            </button>
             <div style="flex:1"></div>
             <!-- Notifications (#636). In the rail rather than at the end
                  of the top bar: that row is the import and split controls, so
