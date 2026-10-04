@@ -29,7 +29,10 @@ _TERMINAL = {"done"}
 # handed back to the queue -- see restore(). _TERMINAL stays narrow because
 # restore() and _recover_done_job() both mean "finished successfully" by it.
 _RESUMABLE = {"queued", "processing", "downloading", "analyzing", "separating"}
-_PERSISTED = _TERMINAL | _RESUMABLE
+# Halted from the Trash with its files kept (#748). Persisted so a restart
+# keeps it in the Trash, and never resumed: only Extract queues it again.
+_STOPPED = {"stopped"}
+_PERSISTED = _TERMINAL | _RESUMABLE | _STOPPED
 
 # One resume only. A job that reliably kills the process (a demucs OOM taking
 # the backend down with it) would otherwise be re-queued on every start,
@@ -63,6 +66,23 @@ def pending_count(*, uploads: bool) -> int:
     """How many jobs of one kind are waiting for their turn."""
     with _lock:
         return sum(1 for j in _jobs.values() if j.status == "queued" and is_upload(j) == uploads)
+
+
+def requeue_if_capacity(job: Job, job_dir: Path, max_pending: int) -> bool:
+    """Reset a stopped job and count it as waiting, if its kind has room.
+
+    The same per-kind limit as a new import, checked and applied under one lock
+    so two Extract presses cannot both squeeze into the last slot (#748)."""
+    uploads = is_upload(job)
+    with _lock:
+        pending = sum(1 for j in _jobs.values() if j.status == "queued" and is_upload(j) == uploads)
+        if pending >= max_pending:
+            return False
+        # Claims the slot. The file work in reset_for_rerun stays outside the
+        # lock; the job is not in the queue until the caller enqueues it.
+        job.status = "queued"
+    reset_for_rerun(job, job_dir)
+    return True
 
 
 def register_if_capacity(job: Job, max_pending: int) -> bool:
@@ -218,7 +238,9 @@ def restore(jobs_dir: Path) -> None:
                 job = Job.from_record(record)
                 if not JOB_ID_RE.match(job.id):
                     continue
-                if job.status in _TERMINAL and job.title:
+                # A stopped job may have no title yet: one trashed before its
+                # download finished still has files and a place in the Trash.
+                if (job.status in _TERMINAL and job.title) or job.status in _STOPPED:
                     to_add[job.id] = job
                 elif job.status in _RESUMABLE:
                     recovered = _resume_or_recover(job, jobs_dir / job.id)
@@ -285,10 +307,24 @@ def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
     library entry. Otherwise the job goes back in the queue from the top, after
     the partial demucs output is cleared so collect() cannot mistake it for
     results. A job that has already burned its resume is failed loudly rather
-    than retried forever."""
+    than retried forever.
+
+    A job the user trashed before the restart is not resumed (#748). It came
+    back as a Paused row in the queue, offered to Start a song that was in the
+    Trash. It is stopped instead, the same end a trash before the restart now
+    has, and its files stay until the Trash is emptied."""
     recovered = _recover_done_job(job_dir)
     if recovered is not None:
+        # Finished after all: keep it where the user put it, or a song they
+        # binned reappears in the library.
+        recovered.trashed_at = job.trashed_at
         return recovered
+
+    if job.trashed_at is not None:
+        reset_for_rerun(job, job_dir)
+        job.status = "stopped"
+        job.stage_message = "Stopped"
+        return job
 
     job.resume_attempts += 1
     if job.resume_attempts > _MAX_RESUME_ATTEMPTS:
@@ -297,14 +333,26 @@ def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
         job.error = "Interrupted by a restart twice. Import it again to retry."
         return job
 
+    reset_for_rerun(job, job_dir)
+    return job
+
+
+def reset_for_rerun(job: Job, job_dir: Path) -> None:
+    """Put a job back to the start of the pipeline, its source kept.
+
+    The partial demucs output is cleared so collect() cannot mistake it for
+    results. Shared by a resume after a restart and by extracting a stopped
+    job again (#748). Bumps version, so a stream watching the job sees it."""
     shutil.rmtree(job_dir / DEMUCS_MODEL, ignore_errors=True)
     job.status = "queued"
     job.stage_message = "Queued"
     job.progress = 0.0
     job.cancel_requested = False
+    job.stop_requested = False
+    job.error = None
     job.stems = []
     job.mix_url = None
-    return job
+    job.version += 1
 
 
 def take_pending_resume() -> list[str]:

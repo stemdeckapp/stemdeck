@@ -35,15 +35,17 @@ from app.core.config import (
     TIMEOUT_WORK_BACKFILL,
     ffprobe_executable,
 )
-from app.core.models import Job, JobCancelled, _set
+from app.core.models import FINISHED_STATUSES, Job, JobCancelled, _set, settle_cancelled
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
+from app.core.registry import is_upload
 from app.core.registry import mark_deleted as registry_mark_deleted
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
 from app.core.registry import remove as registry_remove
+from app.core.registry import requeue_if_capacity as registry_requeue_if_capacity
 from app.core.registry import set_favorite as registry_set_favorite
 from app.core.registry import set_trashed as registry_set_trashed
 from app.core.settings import (
@@ -56,7 +58,7 @@ from app.core.stems_location import is_relocating
 from app.pipeline import discogs, jobqueue
 from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
-from app.pipeline.collect import merge_stem_peaks, presence_for_split
+from app.pipeline.collect import merge_stem_peaks, presence_for_split, remove_job_dir
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
 from app.pipeline.identify import can_identify_title, identify_and_find_band, release_source
@@ -168,23 +170,9 @@ def _rmtree_job(job_id: str) -> bool:
     The outcome used to be swallowed, so delete_job dropped the registry entry
     whether or not anything was actually deleted -- and restore() then adopted
     the surviving directory on the next start, which is how deleted songs came
-    back (#521).
-
-    Retried once: on macOS the common failure is Finder or Spotlight creating
-    a .DS_Store between rmtree's scan and its final rmdir, which leaves
-    "Directory not empty" on a directory that is about to be empty again."""
-    job_dir = JOBS_DIR / job_id
-    for attempt in (1, 2):
-        if not job_dir.is_dir():
-            return True
-        try:
-            shutil.rmtree(job_dir)
-            return True
-        except Exception:
-            logger.warning(
-                "failed to remove job dir %s (attempt %d)", job_dir, attempt, exc_info=True
-            )
-    return not job_dir.is_dir()
+    back (#521). The retry lives in remove_job_dir, shared with the runner's
+    cancel path (#749)."""
+    return remove_job_dir(JOBS_DIR / job_id)
 
 
 def _job_files_missing(job: Job) -> bool:
@@ -403,12 +391,24 @@ def list_jobs(trashed: Literal["exclude", "include", "only"] = "exclude") -> lis
 
 @router.post("/{job_id}/trash")
 def trash_job(job_id: str) -> dict:
-    """Put a job in the Trash. Reversible, and nothing on disk is touched."""
+    """Put a job in the Trash. Reversible, and nothing on disk is touched:
+    only emptying the Trash (DELETE) removes files.
+
+    A job still waiting or running is stopped as well (#748). Trashing used to
+    leave it going, hidden: the queue kept working on a song the user had
+    thrown away, and a stuck one held the queue up with no way to clear it. It
+    settles as "stopped", its files kept, so Restore brings it back and Extract
+    can run it again. Done here rather than in each client so the phone and the
+    desktop behave alike.
+    """
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_set_trashed(job_id, True)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in FINISHED_STATUSES:
+        job.stop_requested = True
+        _cancel_pipeline(job)
     registry_persist(JOBS_DIR)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
 
@@ -423,6 +423,35 @@ def restore_job(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
+
+
+@router.post("/{job_id}/extract")
+def extract_stopped_job(job_id: str) -> dict:
+    """Run a stopped job again from the start, from the source it kept (#748).
+
+    The only way a job stopped by the Trash goes back in the queue. Restore
+    does not do it: taking a song out of the Trash is not a request to spend
+    minutes of GPU on it. It has to be out of the Trash first, so a song the
+    user threw away is never extracted by a stray request.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != "stopped":
+        raise HTTPException(status_code=409, detail="only a stopped job can be extracted again")
+    if job.trashed_at is not None:
+        raise HTTPException(status_code=409, detail="restore it from the Trash first")
+    limit = MAX_PENDING_UPLOAD_JOBS if is_upload(job) else MAX_PENDING_URL_JOBS
+    if not registry_requeue_if_capacity(job, JOBS_DIR / job_id, limit):
+        raise HTTPException(
+            status_code=503,
+            detail=_UPLOAD_QUEUE_FULL_DETAIL if is_upload(job) else _URL_QUEUE_FULL_DETAIL,
+        )
+    registry_persist(JOBS_DIR)
+    jobqueue.enqueue(job_id)
+    return job.to_state()
 
 
 class FavoriteBody(BaseModel):
@@ -459,7 +488,7 @@ def cancel_job(job_id: str) -> dict:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status in ("done", "error", "cancelled"):
+    if job.status in FINISHED_STATUSES:
         # A vocal split only ever runs on a done job, so this early return made
         # it uncancellable by construction: the flag was never even set, while
         # the split held _pipeline_lock and stalled the whole import queue for
@@ -478,6 +507,19 @@ def cancel_job(job_id: str) -> dict:
             if proc is not None and proc.poll() is None:
                 proc.terminate()
         return job.to_state()
+    _cancel_pipeline(job)
+    return job.to_state()
+
+
+def _cancel_pipeline(job: Job) -> None:
+    """Stop a job that is waiting or running. Shared by cancel and trash (#748).
+
+    The caller has checked the job is not finished. A running job is only
+    asked to stop here: the pipeline sees the flag, or its process dies, and
+    the runner then settles it: cancelled with its directory removed, or stopped
+    with its files kept when the stop came from the Trash.
+    """
+    job_id = job.id
     job.cancel_requested = True
 
     # Still waiting: the worker will never pick it up, so finalise it here.
@@ -485,10 +527,10 @@ def cancel_job(job_id: str) -> dict:
     # occupying a capacity slot until then, and a queued upload held its source
     # file (up to 400 MB) for the whole wait.
     if jobqueue.discard(job_id):
-        _set(job, status="cancelled", stage="Cancelled")
-        jobqueue.cleanup_job_dir(job_id)
+        if settle_cancelled(job):
+            jobqueue.cleanup_job_dir(job_id)
         registry_persist(JOBS_DIR)
-        return job.to_state()
+        return
 
     # Only the running job owns the shared demucs worker. Terminating on any
     # other id would kill someone else's separation if a stale set_proc entry
@@ -497,7 +539,6 @@ def cancel_job(job_id: str) -> dict:
         proc = registry_get_proc(job_id)
         if proc is not None and proc.poll() is None:
             proc.terminate()
-    return job.to_state()
 
 
 def _write_vocal_split_error(stems_dir: Path, cause: str, tail: list[str]) -> None:
@@ -1802,7 +1843,7 @@ def delete_job(job_id: str) -> dict[str, str]:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status not in ("done", "error", "cancelled"):
+    if job.status not in FINISHED_STATUSES:
         raise HTTPException(status_code=409, detail="job is still running")
     # A timing of its lyrics in flight stops rather than write into a
     # directory being removed (it also checks the job is still registered).

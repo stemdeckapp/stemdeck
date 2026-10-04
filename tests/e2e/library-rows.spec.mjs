@@ -89,13 +89,35 @@ test.describe("library rows", () => {
     await expect(page.locator(`.cat-item[data-id="${JOB_ID}"]`)).toHaveCount(0);
   });
 
+  // The library asks the server where every "processing" row stands on load
+  // (#748), and the seeded job is done there. These rows test the label of a
+  // job that really is still running, so the server has to say so too.
+  async function serverSaysSeparating(page) {
+    await page.route(`**/api/jobs/${JOB_ID}`, (route) =>
+      route.fulfill({ json: { job_id: JOB_ID, status: "separating", progress: 0.4 } }),
+    );
+  }
+
   test("a track still being processed says so", async ({ page }) => {
+    await serverSaysSeparating(page);
     await seedCatalogState(
       page,
       withTracks({ ...fixtureTrack(JOB_ID, "Busy"), status: "separating" }),
     );
     await open(page);
     expect(await rowText(page, JOB_ID)).toBe("Processing");
+  });
+
+  test("a row left processing by a closed app takes the server's answer", async ({ page }) => {
+    // #748: a job that finished, failed or stopped while the app was closed
+    // never left the queue in front of the page, so its row said Processing
+    // for good. The seeded job is done on the server.
+    await seedCatalogState(
+      page,
+      withTracks({ ...fixtureTrack(JOB_ID, "Stale"), status: "separating" }),
+    );
+    await open(page);
+    await expect.poll(() => rowText(page, JOB_ID)).not.toBe("Processing");
   });
 
   test("a failed import says so", async ({ page }) => {
@@ -108,6 +130,7 @@ test.describe("library rows", () => {
   });
 
   test("the line follows the language rather than keeping the one it was saved in", async ({ page }) => {
+    await serverSaysSeparating(page);
     await page.addInitScript(() =>
       localStorage.setItem("stemdeck.language", JSON.stringify("de")),
     );

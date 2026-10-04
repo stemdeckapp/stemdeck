@@ -15,7 +15,7 @@ from app.core.config import (
     TIMEOUT_FFMPEG,
     ffmpeg_executable,
 )
-from app.core.models import Job
+from app.core.models import FINISHED_STATUSES, Job
 from app.core.registry import all_jobs as registry_all
 from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
@@ -68,7 +68,29 @@ def _run_ffmpeg(job: Job, cmd: list[str]) -> bool:
         set_proc(job.id, None)
 
 
-_TERMINAL = frozenset(("done", "error", "cancelled"))
+def remove_job_dir(job_dir: Path) -> bool:
+    """Remove a job's directory. False means files are still on disk.
+
+    Retried once: on macOS the common failure is Finder or Spotlight creating
+    a .DS_Store between rmtree's scan and its final rmdir, which leaves
+    "Directory not empty" on a directory that is about to be empty again. On
+    Windows it is a handle a process that just exited has not quite let go of,
+    which is what the runner's cancel path meets right after terminating
+    ffmpeg or the demucs worker (#749). Shared by delete_job and that path."""
+    for attempt in (1, 2):
+        if not job_dir.is_dir():
+            return True
+        try:
+            shutil.rmtree(job_dir)
+            return True
+        except Exception:
+            logger.warning(
+                "failed to remove job dir %s (attempt %d)", job_dir, attempt, exc_info=True
+            )
+    return not job_dir.is_dir()
+
+
+_TERMINAL = FINISHED_STATUSES
 
 
 def collect(job: Job, stems_root: Path, job_dir: Path) -> list[str]:

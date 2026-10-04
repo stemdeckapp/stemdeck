@@ -26,7 +26,7 @@ from collections import deque
 from pathlib import Path
 
 from app.core.config import JOBS_DIR
-from app.core.models import Job, _set
+from app.core.models import FINISHED_STATUSES, Job, _set, settle_cancelled
 from app.core.registry import get as registry_get
 from app.core.registry import persist as registry_persist
 
@@ -208,10 +208,10 @@ def _finalise_dropped_job(job: Job) -> None:
     running slot, so a cancel arriving there sets cancel_requested and returns.
     The worker owns the job by then and is the only thing that can close it
     out (#520)."""
-    if not job.cancel_requested or job.status in ("done", "error", "cancelled"):
+    if not job.cancel_requested or job.status in FINISHED_STATUSES:
         return
-    _set(job, status="cancelled", stage="Cancelled")
-    cleanup_job_dir(job.id)
+    if settle_cancelled(job):
+        cleanup_job_dir(job.id)
     registry_persist(JOBS_DIR)
 
 
@@ -234,7 +234,7 @@ async def _worker_loop() -> None:
         job = registry_get(job_id)
         if job is None:
             continue
-        if job.cancel_requested or job.status in ("done", "error", "cancelled"):
+        if job.cancel_requested or job.status in FINISHED_STATUSES:
             # Cancelled or finished while it waited.
             #
             # Finalising here is not optional. Between _pop_next() above and

@@ -4,7 +4,8 @@ StemDeck Windows Portable Alpha
 Run
 ---
 
-1. Extract the zip folder.
+1. Extract the zip folder to a folder you can write to (for example C:\StemDeck),
+   not Program Files.
 2. Double-click StemDeck.exe.
 3. Let first-run setup prepare local runtime assets.
 
