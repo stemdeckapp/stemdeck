@@ -12,6 +12,9 @@ import { t } from "./i18n.js";
 /** Lane controls name their instrument in the text ("Silences the Drums"). */
 const laneName = (el) => el.closest(".mx-row, .lane-header")?.querySelector(".mx-name")?.textContent.trim() || "";
 const chipName = (el) => el.textContent.trim();
+/** The instrument a presence card measures, by its own name ("Drums"), not
+ *  the card's heading ("Drum intensity"), so the sentence reads naturally. */
+const presenceName = (el) => t(`stem.${el.dataset.stem}`);
 
 // Order matters only where selectors overlap: the first match wins.
 const HELP = [
@@ -51,7 +54,13 @@ const HELP = [
   [".mx-btn.mute", "help.mute", laneName],
   [".mx-btn.solo", "help.solo", laneName],
   [".lane-dl", "help.download", laneName],
-  ["#transport .daw-info-row", "help.songFacts", null, "help.songFactsTitle"],
+  ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
+  ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],
+  ['.daw-meta-card[data-meta="lufs"]', "help.meta.lufs"],
+  ['.daw-meta-card[data-meta="duration"]', "help.meta.duration"],
+  ['.daw-meta-card[data-meta="dr"]', "help.meta.dr"],
+  ['.daw-meta-card[data-meta="stability"]', "help.meta.stability"],
+  [".stem-presence-panel .stem-card[data-stem]", "help.presence", presenceName],
   ["#ruler-time", "help.waves", null, "help.wavesTitle"],
   [".waves-column", "help.waves", null, "help.wavesTitle"],
   ["#t-stop", "help.stop"],
@@ -108,6 +117,11 @@ let on = false;
 let tipEl = null;
 let pillEl = null;
 let ringEl = null;
+let introEl = null;
+let introTimer = null;
+// How long the glow on every explainable control lasts when Guide turns on.
+// daw.css reads it through --intro-ms, so the fade and the cleanup agree.
+const INTRO_MS = 1600;
 let current = null;
 
 export function isHelpModeOn() {
@@ -249,6 +263,40 @@ function markTargets() {
   }
 }
 
+/**
+ * When Guide turns on, every control it can explain glows once and fades, so
+ * the user sees where to point without the screen staying busy. One ring per
+ * control, drawn the same way as the pointer's ring, so no panel clips them.
+ * Large areas (the waveforms, the song facts) are left out: a glowing box
+ * across half the screen says nothing about where to point.
+ */
+function playIntro() {
+  stopIntro();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const big = vw * vh * 0.04;
+  for (const el of document.querySelectorAll(".help-target")) {
+    const r = visibleRect(el);
+    if (r.width * r.height > big || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
+    const ring = document.createElement("div");
+    ring.className = "help-intro-ring";
+    ring.style.left = `${Math.round(r.left)}px`;
+    ring.style.top = `${Math.round(r.top)}px`;
+    ring.style.width = `${Math.round(r.width)}px`;
+    ring.style.height = `${Math.round(r.height)}px`;
+    introEl.appendChild(ring);
+  }
+  introEl.hidden = false;
+  introTimer = setTimeout(stopIntro, INTRO_MS);
+}
+
+function stopIntro() {
+  clearTimeout(introTimer);
+  introTimer = null;
+  if (!introEl) return;
+  introEl.hidden = true;
+  introEl.replaceChildren();
+}
+
 function onPointerOver(e) {
   const entry = findEntry(e.target);
   if (entry) show(entry);
@@ -302,6 +350,7 @@ export function setHelpMode(next) {
     window.addEventListener("resize", hide);
     document.addEventListener("scroll", hide, true);
     markTargets();
+    playIntro();
   } else {
     document.removeEventListener("pointerover", onPointerOver, true);
     for (const type of PRESS_EVENTS) document.removeEventListener(type, swallow, true);
@@ -310,6 +359,7 @@ export function setHelpMode(next) {
     window.removeEventListener("resize", hide);
     document.removeEventListener("scroll", hide, true);
     hide();
+    stopIntro();
     markTargets();
   }
 }
@@ -331,6 +381,11 @@ export function initHelpMode() {
   ringEl.className = "help-ring";
   ringEl.setAttribute("aria-hidden", "true");
   ringEl.hidden = true;
-  document.body.append(ringEl, tipEl, pillEl);
+  introEl = document.createElement("div");
+  introEl.className = "help-intro";
+  introEl.setAttribute("aria-hidden", "true");
+  introEl.style.setProperty("--intro-ms", `${INTRO_MS}ms`);
+  introEl.hidden = true;
+  document.body.append(introEl, ringEl, tipEl, pillEl);
   btn.addEventListener("click", () => setHelpMode(!on));
 }
