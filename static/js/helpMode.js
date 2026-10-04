@@ -47,7 +47,7 @@ const HELP = [
   [".mx-fader", "help.volume", laneName],
   [".lane-key-step.up", "help.laneKeyUp", laneName],
   [".lane-key-step.down", "help.laneKeyDown", laneName],
-  [".lane-key-value", "help.laneKey", laneName],
+  [".lane-key-value", "help.laneKey", laneName, "help.laneKeyTitle"],
   [".mx-btn.mute", "help.mute", laneName],
   [".mx-btn.solo", "help.solo", laneName],
   [".lane-dl", "help.download", laneName],
@@ -129,12 +129,14 @@ function isVisible(el) {
   return r.width > 0 && r.height > 0;
 }
 
-/** The control's own label, which the app already translates. */
+/** The control's own label, which the app already translates. Visible text
+ *  first, unless it is a letter or a sign (M, S, +): a heading that repeats
+ *  "M" teaches nothing, so those take their full label ("Mute Drums"). */
 function titleOf(entry) {
-  if (entry.titleKey) return t(entry.titleKey);
   const { el } = entry;
+  if (entry.titleKey) return t(entry.titleKey, { name: entry.nameOf ? entry.nameOf(el) : "" });
   const text = (el.innerText || "").trim().split("\n")[0].trim();
-  if (text && text.length <= 40) return text;
+  if (text.length > 2 && text.length <= 40) return text;
   return el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("title")
     || el.querySelector("[aria-label]")?.getAttribute("aria-label") || text;
 }

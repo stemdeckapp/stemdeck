@@ -45,6 +45,12 @@ test.describe("help mode", () => {
     const drumsMute = page.locator(".mx-row, .lane-header").filter({ hasText: "Drums" }).locator(".mx-btn.mute").first();
     await drumsMute.hover();
     await expect(tip(page)).toContainText("Silences Drums");
+    // Headed by what the button does, not by its one letter.
+    await expect(tip(page).locator("b")).toHaveText("Mute Drums");
+
+    const drumsKey = page.locator(".lane-key").filter({ has: page.locator('[aria-label*="Drums"]') }).locator(".lane-key-value").first();
+    await drumsKey.hover({ force: true });
+    await expect(tip(page).locator("b")).toHaveText("Key of Drums");
   });
 
   test("a click explains instead of acting", async ({ page }) => {
