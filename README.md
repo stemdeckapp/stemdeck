@@ -53,22 +53,23 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 
 | Category | Name | What they do | Link |
 |---|---|---|---|
-| Artists & Creators | Joao Gaspar | Producer, film scorer, touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
-| Artists & Creators | Killah Trakz | Industry Secret Villain and Media Influencer | [@killahtrakz](https://www.instagram.com/killahtrakz/) |
-| Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
+| Artists & Creators | Adrianna Claro | Soul and Contemporary R&B Singer, Songwriter and Composer | [Spotify](https://open.spotify.com/album/10fZ48iJhIe3lWcXSMUlFG) · [Apple Music](https://music.apple.com/us/album/happy/1592026727?i=1592026728) |
 | Artists & Creators | Analog4Lyfe | Analog gear specialist | [@analog4lyfe](https://www.instagram.com/analog4lyfe) |
 | Artists & Creators | Dead röses | Cork-based punk rock band | [@dead_rosesband](https://www.instagram.com/dead_rosesband) |
-| Artists & Creators | NIHIL | Modern alternative metal from Argentina. Fueled by emotionally charged vocals, anger and emptiness | [@somosnihil](https://www.instagram.com/somosnihil/) |
+| Artists & Creators | Joao Gaspar | Producer, film scorer, touring/session musician | [@jay_glaspar](https://www.instagram.com/jay_glaspar) |
+| Artists & Creators | Killah Trakz | Industry Secret Villain and Media Influencer | [@killahtrakz](https://www.instagram.com/killahtrakz/) · [Spotify](https://open.spotify.com/artist/6nePYOqT4E7D4C48twPtKk) · [Apple Music](https://music.apple.com/us/artist/killah-trakz/371296633) |
+| Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
+| Artists & Creators | NIHIL | Modern alternative metal from Argentina. Fueled by emotionally charged vocals, anger and emptiness | [@somosnihil](https://www.instagram.com/somosnihil/) · [Spotify](https://open.spotify.com/artist/1OeKplJxFNM6JHrWeo2SaV) |
 | Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
-| Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
 | Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
-| Music Gear | Empress Effects | Boutique effects pedals | [empresseffects.com](https://empresseffects.com) |
-| Music Gear | Thomann | Large music-equipment retailer | [@thomann.music](https://www.instagram.com/thomann.music) |
+| Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
+| Media & Community | Not Another Audio Podcast | Audio, music and tech industry podcast by working professionals | [Libsyn](https://directory.libsyn.com/shows/view/id/20f5a1e3-6fea-4d41-8cdf-451ce6fc6cda) |
+| Media & Community | r/bass | Bass-player community | [r/Bass](https://www.reddit.com/r/Bass) |
+| Media & Community | slashCAM | Camera, video, and post-production media | [@slashcam.de](https://www.instagram.com/slashcam.de) |
 | Music & Karaoke Technology | Beltr | Local, subscription-free karaoke software | [beltr.app](https://beltr.app/) |
 | Music & Karaoke Technology | Seratone | TV-based karaoke system | [seratone.audio](https://seratone.audio/) |
-| Media & Community | slashCAM | Camera, video, and post-production media | [@slashcam.de](https://www.instagram.com/slashcam.de) |
-| Media & Community | r/bass | Bass-player community | [r/Bass](https://www.reddit.com/r/Bass) |
-| Media & Community | Not Another Audio Podcast | Audio, music and tech industry podcast by working professionals | [Libsyn](https://directory.libsyn.com/shows/view/id/20f5a1e3-6fea-4d41-8cdf-451ce6fc6cda) |
+| Music Gear | Empress Effects | Boutique effects pedals | [empresseffects.com](https://empresseffects.com) |
+| Music Gear | Thomann | Large music-equipment retailer | [@thomann.music](https://www.instagram.com/thomann.music) |
 | Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
 

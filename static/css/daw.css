@@ -4564,6 +4564,19 @@ input, textarea { font-family: inherit; }
 }
 .lib-friend:hover .lib-friend-ig,
 .lib-friend:hover .lib-friend-link { opacity: 1; }
+/* A card with several links: the card itself is not a link, each pill is. */
+.lib-friend-multi:hover { background: var(--panel); border-color: var(--border); color: var(--fg-2); }
+.lib-friend-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: auto; padding-top: 3px; }
+.lib-friend-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--panel-2);
+  color: var(--fg-2); font-size: 9.5px; font-weight: 600; text-decoration: none;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.lib-friend-pill:hover { color: var(--fg); border-color: var(--accent); }
+.lib-friend-pill .lib-friend-link,
+.lib-friend-pill .lib-friend-ig { width: 10px; height: 10px; margin-top: 0; padding-top: 0; opacity: 1; }
 .lib-friend-name {
   width: 100%;
   font-size: 11px;
