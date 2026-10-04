@@ -79,16 +79,33 @@ const FRIEND_GROUPS = [
       {
         name: "Killah Trakz",
         roleKey: "friends.role.killahTrakz",
-        url: "https://www.instagram.com/killahtrakz/",
+        links: [
+          { label: "Instagram", url: "https://www.instagram.com/killahtrakz/" },
+          { label: "Spotify", url: "https://open.spotify.com/artist/6nePYOqT4E7D4C48twPtKk" },
+          { label: "Apple Music", url: "https://music.apple.com/us/artist/killah-trakz/371296633" },
+        ],
         logo: "/img/friends/killah-trakz.jpg",
         avatar: true,
       },
       {
         name: "NIHIL",
         roleKey: "friends.role.nihil",
-        url: "https://www.instagram.com/somosnihil/",
+        links: [
+          { label: "Instagram", url: "https://www.instagram.com/somosnihil/" },
+          { label: "Spotify", url: "https://open.spotify.com/artist/1OeKplJxFNM6JHrWeo2SaV" },
+        ],
         logo: "/img/friends/nihil.jpg",
         avatar: true,
+      },
+      {
+        name: "Adrianna Claro",
+        roleKey: "friends.role.adriannaClaro",
+        logo: "/img/friends/adrianna-claro.webp",
+        avatar: true,
+        links: [
+          { label: "Spotify", url: "https://open.spotify.com/album/10fZ48iJhIe3lWcXSMUlFG" },
+          { label: "Apple Music", url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728" },
+        ],
       },
     ],
   },
@@ -3523,13 +3540,23 @@ function friendGlyph(url) {
   return svg;
 }
 
-// One partner card: image (or initial badge), name, role, link glyph.
-function friendCard(f) {
+/** A link that opens outside the app, as every partner link does. */
+function friendLink(url) {
   const a = document.createElement("a");
-  a.className = "lib-friend";
-  a.href = f.url;
+  a.href = url;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
+  return a;
+}
+
+// One partner card: image (or initial badge), name, role, link glyph. A card
+// with one `url` is a link as a whole. A card with several `links` cannot be:
+// a link inside a link is invalid HTML, and which one a click follows is up to
+// the browser. So it is a plain card with one labelled link per destination.
+function friendCard(f) {
+  const multi = Array.isArray(f.links) && f.links.length > 0;
+  const a = multi ? document.createElement("div") : friendLink(f.url);
+  a.className = multi ? "lib-friend lib-friend-multi" : "lib-friend";
   a.title = f.name;
 
   // A monogram badge (first initial) keeps the card on-brand when an entry has
@@ -3575,7 +3602,20 @@ function friendCard(f) {
     a.appendChild(role);
   }
 
-  a.appendChild(friendGlyph(f.url));
+  if (!multi) {
+    a.appendChild(friendGlyph(f.url));
+    return a;
+  }
+  const row = document.createElement("span");
+  row.className = "lib-friend-links";
+  for (const link of f.links) {
+    const l = friendLink(link.url);
+    l.className = "lib-friend-pill";
+    l.title = `${f.name}: ${link.label}`;
+    l.append(friendGlyph(link.url), link.label);
+    row.appendChild(l);
+  }
+  a.appendChild(row);
   return a;
 }
 
