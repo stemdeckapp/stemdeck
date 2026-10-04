@@ -216,6 +216,13 @@ let _loadTrackToken = 0;
 const _autoOpenTokens = new Map();
 let catalogView = "library";
 let catalogSearchQuery = "";
+// Rows picked in the Trash with a click, Ctrl or Shift. A hold on one of them
+// restores them all. The anchor is where the next Shift+click range starts.
+const _trashSelection = new Set();
+let _trashAnchor = null;
+// How long a Trash row has to be held to restore it. daw.css reads it through
+// --hold-ms, so the fill and the timer cannot drift apart.
+const TRASH_HOLD_MS = 1000;
 
 // ─── Persistence ───
 
@@ -1017,6 +1024,7 @@ function setCatalogView(view) {
   // the collapse button's aria-expanded is left claiming the sidebar is still
   // shut.
   if (catalogView !== "library") setSidebarCollapsed(false);
+  if (catalogView !== "trash") clearTrashSelection();
   render();
   // The lyrics panel (lyrics.js) draws itself; this is how it learns it is on
   // screen, without catalog.js importing it.
@@ -1571,20 +1579,143 @@ function wireRailTrashDrop() {
   });
 }
 
-function restoreTrackFromTrash(trackId) {
-  if (!tracks[trackId]) return;
+/** Take tracks back out of the Trash, with one save and one render however
+ *  many there are. Restore never queues a song again (#748): a stopped one
+ *  comes back stopped, with its Extract button. */
+function restoreTracksFromTrash(trackIds) {
   const trash = getTrashFolder();
-  if (!trash?.items.includes(trackId)) return;
-  trash.items = trash.items.filter((id) => id !== trackId);
+  const ids = trackIds.filter((id) => tracks[id] && trash?.items.includes(id));
+  if (!ids.length) return;
+  trash.items = trash.items.filter((id) => !ids.includes(id));
   let target = folders.find((f) => f.id !== TRASH_ID);
   if (!target) {
     target = makeFolder({ id: "f-unsorted", name: "Unsorted" });
     folders.unshift(target);
   }
-  if (!target.items.includes(trackId)) target.items.push(trackId);
-  syncTrashToServer(trackId, false);
+  for (const id of ids) {
+    _trashSelection.delete(id);
+    if (!target.items.includes(id)) target.items.push(id);
+    syncTrashToServer(id, false);
+  }
   saveState();
   render();
+}
+
+/** The rows a gesture on this one acts on: the whole selection when the row
+ *  is part of it, otherwise the row alone. */
+function trashTargets(trackId) {
+  return _trashSelection.has(trackId) ? [..._trashSelection] : [trackId];
+}
+
+function clearTrashSelection() {
+  _trashSelection.clear();
+  _trashAnchor = null;
+}
+
+function paintTrashSelection() {
+  for (const el of document.querySelectorAll(".cat-item.in-trash")) {
+    const selected = _trashSelection.has(el.dataset.id);
+    el.classList.toggle("selected", selected);
+    el.setAttribute("aria-selected", String(selected));
+  }
+}
+
+/** Click picks rows: alone, Ctrl (Cmd on a Mac) adds or removes one, Shift
+ *  takes the range from the last row picked, in the order on screen. */
+function selectTrashRow(trackId, e) {
+  if (e.shiftKey && _trashAnchor) {
+    const order = [...document.querySelectorAll(".cat-item.in-trash")].map((el) => el.dataset.id);
+    const from = order.indexOf(_trashAnchor);
+    const to = order.indexOf(trackId);
+    if (from !== -1 && to !== -1) {
+      if (!(e.ctrlKey || e.metaKey)) _trashSelection.clear();
+      const [a, b] = from < to ? [from, to] : [to, from];
+      for (const id of order.slice(a, b + 1)) _trashSelection.add(id);
+      paintTrashSelection();
+      return;
+    }
+  }
+  if (e.ctrlKey || e.metaKey) {
+    if (_trashSelection.has(trackId)) _trashSelection.delete(trackId);
+    else _trashSelection.add(trackId);
+  } else {
+    _trashSelection.clear();
+    _trashSelection.add(trackId);
+  }
+  _trashAnchor = trackId;
+  paintTrashSelection();
+}
+
+/** A Trash row: click selects, holding for TRASH_HOLD_MS restores it (or the
+ *  selection it belongs to), and dragging it onto Library still restores. A
+ *  click no longer opens the song: every hold let go early would do that. */
+function wireTrashRow(el, trackId) {
+  el.draggable = true;
+  el.tabIndex = 0;
+  el.style.setProperty("--hold-ms", `${TRASH_HOLD_MS}ms`);
+  let timer = null;
+  let restored = false;
+  // Every row the hold will restore fills together, so a selection shows as
+  // one gesture rather than only the row under the pointer.
+  let held = [];
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+    for (const row of held) row.classList.remove("holding");
+    held = [];
+  };
+  const start = () => {
+    cancel();
+    restored = false;
+    const targets = new Set(trashTargets(trackId));
+    held = [...document.querySelectorAll(".cat-item.in-trash")].filter((row) => targets.has(row.dataset.id));
+    if (!held.includes(el)) held.push(el);
+    for (const row of held) row.classList.add("holding");
+    timer = setTimeout(() => {
+      timer = null;
+      restored = true;
+      for (const row of held) row.classList.remove("holding");
+      held = [];
+      restoreTracksFromTrash([...targets]);
+    }, TRASH_HOLD_MS);
+  };
+  el.addEventListener("pointerdown", (e) => {
+    // Ctrl and Shift are for picking rows, not for restoring them.
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    start();
+  });
+  for (const type of ["pointerup", "pointerleave", "pointercancel"]) el.addEventListener(type, cancel);
+  el.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+      e.preventDefault();
+      start();
+    }
+  });
+  el.addEventListener("keyup", (e) => {
+    if (e.key === "Enter" || e.key === " ") cancel();
+  });
+  el.addEventListener("click", (e) => {
+    if (restored) return;
+    selectTrashRow(trackId, e);
+  });
+  el.addEventListener("dragstart", (e) => {
+    cancel();
+    startDrag(trackId, el, e);
+  });
+  el.addEventListener("dragend", () => endDrag(el));
+}
+
+/** The Trash shows how full it is (#749): the reporter never noticed it was
+ *  there, so nothing told them their deleted songs were still on disk. */
+function updateTrashBadge(count = getTrashFolder()?.items.length ?? 0) {
+  const btn = document.querySelector(".rail-trash");
+  const badge = document.getElementById("trashBadge");
+  if (!btn || !badge) return;
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.classList.toggle("hidden", count === 0);
+  const label = count ? i18nT("nav.trashWithCount", { count }) : i18nT("nav.trash");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 function wireRailLibraryDrop() {
@@ -1607,7 +1738,7 @@ function wireRailLibraryDrop() {
     const trackId = getDraggedTrackId(e);
     if (!trackId || !tracks[trackId]) return;
     e.preventDefault();
-    restoreTrackFromTrash(trackId);
+    restoreTracksFromTrash(trashTargets(trackId));
     setCatalogView("library");
   });
 }
@@ -1824,17 +1955,17 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
 
   const el = document.createElement("div");
   const isUnavailable = track.status === "unavailable";
-  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${!inTrash && track.favorite ? " is-fav" : ""}${!inTrash && track.status === "stopped" ? " is-stopped" : ""}`;
+  el.className = `cat-item${trackId === _currentTrackId ? " active" : ""}${isUnavailable ? " unavailable" : ""}${!inTrash && track.favorite ? " is-fav" : ""}${!inTrash && track.status === "stopped" ? " is-stopped" : ""}${inTrash ? " in-trash" : ""}${inTrash && _trashSelection.has(trackId) ? " selected" : ""}`;
   el.dataset.id = trackId;
 
   el.innerHTML = `
     <div class="cat-thumb">${thumbHtml(track)}</div>
     <div class="cat-meta">
       <div class="cat-title">${esc(displayTitle(track.title))}</div>
-      <div class="cat-sub">${trackSublineHtml(track, { inTrash })}</div>
+      <div class="cat-sub">${trackSublineHtml(track, { inTrash })}</div>${inTrash ? `<div class="cat-sub trash-hint">${esc(i18nT("trash.holdToRestore"))}</div>` : ""}
     </div>
     <div class="cat-status${PROCESSING_STATUSES.has(track.status) ? " processing" : isUnavailable ? " unavailable" : ""}"></div>
-    ${inTrash ? "" : `<div class="cat-actions">${track.status === "stopped" ? extractButtonHtml(track) : ""}${favButtonHtml(track)}<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
+    ${inTrash ? `<div class="trash-hold" aria-hidden="true"></div>` : `<div class="cat-actions">${track.status === "stopped" ? extractButtonHtml(track) : ""}${favButtonHtml(track)}<button class="cat-del" type="button" title="${esc(i18nT("track.moveToTrash"))}">
       ${TRASH_ICON_SVG}
     </button></div>`}
   `;
@@ -1851,7 +1982,13 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   });
   wireFavButton(el, trackId);
 
-  wireTrackDragAndLoad(el, trackId);
+  if (inTrash) {
+    el.title = i18nT("trash.holdToRestore");
+    el.setAttribute("aria-selected", String(_trashSelection.has(trackId)));
+    wireTrashRow(el, trackId);
+  } else {
+    wireTrackDragAndLoad(el, trackId);
+  }
 
   return el;
 }
@@ -2077,6 +2214,8 @@ function render() {
 
   const trash = getTrashFolder();
   const trashIds = new Set(trash?.items || []);
+  for (const id of _trashSelection) if (!trashIds.has(id)) _trashSelection.delete(id);
+  updateTrashBadge(trashIds.size);
   const isTrashView = catalogView === "trash";
   const isFavoritesView = catalogView === "favorites";
   const isQueueView = catalogView === "queue";

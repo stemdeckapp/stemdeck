@@ -578,8 +578,9 @@ input, textarea { font-family: inherit; }
 .rail-btn > span { white-space: nowrap; max-width: 56px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Queue rail button. Only present while something is importing, so the rail
-   stays as it is today for anyone not using the queue. */
-.rail-queue { position: relative; }
+   stays as it is today for anyone not using the queue. The Trash button wears
+   the same badge, with how many songs are in it (#749). */
+.rail-queue, .rail-trash { position: relative; }
 .rail-badge {
   position: absolute; top: 2px; right: 2px;
   min-width: 15px; height: 15px; padding: 0 4px;
@@ -931,6 +932,32 @@ input, textarea { font-family: inherit; }
 .cat-fav.active, .cat-fav.active:hover { color: #e54e4e; }
 /* A stopped song (#748) offers Extract at rest: it is the row's only way on. */
 .cat-item.is-stopped .cat-actions { opacity: 1; pointer-events: auto; }
+
+/* Trash rows look like library rows. On hover the second line becomes the
+   hint, and a hold fills the row from the left over --hold-ms (set from
+   TRASH_HOLD_MS in catalog.js), then restores. */
+.cat-item.in-trash { user-select: none; -webkit-user-select: none; overflow: hidden; }
+.cat-item.in-trash .trash-hint { display: none; color: var(--fg-2); }
+.cat-item.in-trash:hover .trash-hint,
+.cat-item.in-trash:focus-visible .trash-hint,
+.cat-item.in-trash.holding .trash-hint { display: block; overflow: hidden; text-overflow: ellipsis; }
+.cat-item.in-trash:hover .cat-sub:not(.trash-hint),
+.cat-item.in-trash:focus-visible .cat-sub:not(.trash-hint),
+.cat-item.in-trash.holding .cat-sub:not(.trash-hint) { display: none; }
+.trash-hold { position: absolute; inset: 0; pointer-events: none; }
+.trash-hold::before {
+  content: ""; position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  transform: scaleX(0); transform-origin: left center;
+}
+.cat-item.in-trash.holding .trash-hold::before {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms, 1000ms) linear;
+}
+.cat-item.in-trash.selected {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .cat-extract {
   height: 20px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 5px;
   background: transparent; color: var(--accent); cursor: pointer;
