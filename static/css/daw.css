@@ -5677,11 +5677,35 @@ input, textarea { font-family: inherit; }
 .rail-guide[aria-pressed="true"] { color: var(--accent); background: var(--panel); }
 /* Only the control being explained is marked, so the screen stays calm; the
    pill at the bottom says help mode is on. */
-.help-mode .help-target { cursor: help; }
+/* With no song open, the studio turns several controls off for the pointer
+   (Export Mix, the song facts, the presence cards). Help mode still has to hear
+   the pointer over them to explain them, and it takes every click itself, so
+   nothing can be pressed by accident. */
+.help-mode .help-target { cursor: help; pointer-events: auto !important; }
 .help-ring {
   position: fixed; z-index: 9998; pointer-events: none;
   border: 2px solid var(--accent); border-radius: var(--radius-sm);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+/* The glow when Guide turns on: every explainable control at once, fading in
+   and out over --intro-ms (set from INTRO_MS in helpMode.js). With reduced
+   motion it simply shows, still, for the same time. */
+.help-intro { position: fixed; inset: 0; z-index: 9997; pointer-events: none; }
+.help-intro-ring {
+  position: absolute;
+  border: 2px solid var(--accent); border-radius: var(--radius-sm);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  opacity: 0;
+  animation: help-intro-glow var(--intro-ms, 1600ms) ease-in-out forwards;
+}
+@keyframes help-intro-glow {
+  0% { opacity: 0; }
+  25% { opacity: 1; }
+  65% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-intro-ring { animation: none; opacity: 0.8; }
 }
 .help-pill {
   position: fixed; z-index: 9999; left: 50%; bottom: 18px; transform: translateX(-50%);
