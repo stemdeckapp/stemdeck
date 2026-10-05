@@ -28,7 +28,7 @@
 <br>
 
 <p align="center">
-  <b>Drop in a song. Get every instrument on its own track. Practise with them.</b><br>
+  <b>Drop in a song. Get every instrument on its own track. Practice with them.</b><br>
   <sub>Runs on your own computer: no account, no upload, no subscription.</sub>
 </p>
 
@@ -54,7 +54,9 @@ StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano 
 > **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. Link support is a convenience; StemDeck does not store, cache or redistribute downloaded content. See the [Disclaimer](#disclaimer).
 
 
-## Download
+<a name="download"></a>
+
+## <img src="imgs/readme/download.svg" width="26" align="top" alt=""> Download
 
 <p align="center">
   <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/v/release/stemdeckapp/stemdeck?style=for-the-badge&label=latest&color=f4b740" alt="Latest release"></a>
@@ -131,13 +133,15 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </details>
 
 
-## What you can do
+<a name="what-you-can-do"></a>
+
+## <img src="imgs/readme/grid.svg" width="26" align="top" alt=""> What you can do
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### <img src="imgs/readme/stems.svg" width="24" align="top" alt=""> &nbsp;Split any song
+### <img src="imgs/readme/stems.svg" width="22" align="top" alt=""> Split any song
 
 - **Up to six stems** with Meta's open Demucs model: vocals, drums, bass, guitar, piano and other.
 - **Lead and backing vocals** as separate lanes, on demand.
@@ -148,7 +152,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </td>
 <td width="50%" valign="top">
 
-### <img src="imgs/readme/sliders.svg" width="24" align="top" alt=""> &nbsp;Practise with it
+### <img src="imgs/readme/sliders.svg" width="22" align="top" alt=""> Practice with it
 
 - **Mute or solo** any part, and set each one's volume.
 - **Slow it down** to half speed, or anywhere from 0.50x to 0.99x, without changing the pitch.
@@ -164,7 +168,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 <tr>
 <td width="50%" valign="top">
 
-### <img src="imgs/readme/gauge.svg" width="24" align="top" alt=""> &nbsp;Know the song
+### <img src="imgs/readme/gauge.svg" width="22" align="top" alt=""> Know the song
 
 - **Key, tempo, loudness and structure,** found for you.
 - **Synced lyrics** from LRCLIB, or written down from the vocals when none are found.
@@ -173,11 +177,11 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </td>
 <td width="50%" valign="top">
 
-### <img src="imgs/readme/export.svg" width="24" align="top" alt=""> &nbsp;Keep and share
+### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share
 
 - **Export** what you hear as one file, every part as a `.zip`, only the looped part, or a video with the original picture.
 - **Drag a stem or a loop** straight into your other music software.
-- **A library** with folders, tags, favourites and a Trash that only deletes when you empty it.
+- **A library** with folders, tags, favorites and a Trash that only deletes when you empty it.
 
 </td>
 </tr>
@@ -187,7 +191,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 <tr>
 <td width="55%" valign="top">
 
-### <img src="imgs/readme/eye.svg" width="24" align="top" alt=""> &nbsp;It explains itself
+### <img src="imgs/readme/eye.svg" width="22" align="top" alt=""> It explains itself
 
 Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
 
@@ -196,7 +200,7 @@ Click **Guide** in the left rail and point at anything. Every button, lane contr
 </td>
 <td width="45%" valign="top">
 
-### <img src="imgs/readme/phone.svg" width="24" align="top" alt=""> &nbsp;On your phone too
+### <img src="imgs/readme/phone.svg" width="22" align="top" alt=""> On your phone too
 
 Turn on **Make StemDeck available on your network** in Settings and scan the QR code. Your phone opens your library and mixer over your own Wi-Fi, with speed and key controls. No app store, no cloud.
 
@@ -227,7 +231,9 @@ Turn on **Make StemDeck available on your network** in Settings and scan the QR 
 </details>
 
 
-## Honest comparison
+<a name="honest-comparison"></a>
+
+## <img src="imgs/readme/check.svg" width="26" align="top" alt=""> Honest comparison
 
 StemDeck is not trying to beat the commercial stem-separation services. It covers the core well and stops there. This table is here so you can choose knowingly rather than find the gaps later.
 
@@ -250,7 +256,9 @@ StemDeck is not trying to beat the commercial stem-separation services. It cover
 If you need the best quality, speed on any machine, or a store-bought phone app, the commercial products are worth the money. If you want stems for practice and study, keep your audio private, and like software with no strings attached, StemDeck is enough.
 
 
-## We Recommend
+<a name="we-recommend"></a>
+
+## <img src="imgs/readme/person.svg" width="26" align="top" alt=""> We Recommend
 
 StemDeck is free and **does not accept any money, sponsorship, or funding**  from anyone listed below. I share these makers and artists and communities purely for the joy of pointing you toward wonderful people doing beautiful work. Go meet them ❤️
 
@@ -276,7 +284,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
 
-## Star History
+## <img src="imgs/readme/zap.svg" width="26" align="top" alt=""> Star history
 
 <a href="https://www.star-history.com/?repos=stemdeckapp%2Fstemdeck&type=date&legend=top-left">
  <picture>
@@ -287,15 +295,17 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 </a>
 
 
-## For developers
+<a name="for-developers"></a>
 
-| | |
+## <img src="imgs/readme/wrench.svg" width="26" align="top" alt=""> For developers
+
+| Page | What it covers |
 |---|---|
 | **[Build from source](docs/build-from-source.md)** | The macOS app, a web server on any platform, Docker and Unraid |
 | **[Configuration](docs/configuration.md)** | Environment variables, and serving other devices over https |
 | **[HTTP API](docs/api.md)** | The endpoints the web app uses |
 | **[Troubleshooting](docs/troubleshooting.md)** | Common problems, and what lives where on disk |
-| **[Model licences](docs/models.md)** | Where each machine-learning model's licence comes from |
+| **[Model licenses](docs/models.md)** | Where each machine-learning model's license comes from |
 
 <details>
 <summary><b>Built with</b></summary>
@@ -309,18 +319,20 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 </details>
 
 
-## Disclaimer
+<a name="disclaimer"></a>
+
+## <img src="imgs/readme/flag.svg" width="26" align="top" alt=""> Disclaimer
 
 StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. It does not store, cache, or redistribute any audio content. All processing runs on the user's own machine and no audio is transmitted anywhere.
 
-YouTube URL support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
+YouTube and SoundCloud link support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
 
 You are also responsible for following the licenses of the underlying tools this project depends on (yt-dlp, Demucs, FFmpeg, PyTorch, and others listed in `pyproject.toml`).
 
 The author(s) of StemDeck provide this software "as is", without warranty of any kind, and accept no responsibility or liability for how it is used.
 
 
-## License
+## <img src="imgs/readme/shield.svg" width="26" align="top" alt=""> License
 
 StemDeck is [Apache-2.0](LICENSE).
 
@@ -329,18 +341,19 @@ Every download ships a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `lice
 FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executable, so it does not change StemDeck's own license, and `THIRD_PARTY_NOTICES.txt` carries the written offer of source for the exact build your platform receives.
 
 
-## Community
+## <img src="imgs/readme/globe.svg" width="26" align="top" alt=""> Community
 
-| Platform | Link |
-|---|---|
-| GitHub | [stemdeckapp/stemdeck](https://github.com/stemdeckapp/stemdeck) |
-| Discord | [discord.gg/YhCKsjhcwB](https://discord.gg/YhCKsjhcwB) |
-| Reddit | [r/StemDeckApp](https://www.reddit.com/r/StemDeckApp/) |
-| Instagram | [@stemdeck](https://www.instagram.com/stemdeck) |
-| X | [@StemDeckApp](https://x.com/StemDeckApp) |
-| Website | [stemdeck.app](https://stemdeck.app) |
+Questions, ideas and show-and-tell are all welcome.
 
+<div align="center">
+  <a href="https://github.com/stemdeckapp/stemdeck"><img src="https://img.shields.io/badge/GitHub-stemdeckapp-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://discord.gg/YhCKsjhcwB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://www.reddit.com/r/StemDeckApp/"><img src="https://img.shields.io/badge/Reddit-r%2FStemDeckApp-FF4500?style=flat-square&logo=reddit&logoColor=white" alt="Reddit"></a>
+  <a href="https://www.instagram.com/stemdeck"><img src="https://img.shields.io/badge/Instagram-stemdeck-E4405F?style=flat-square&logo=instagram&logoColor=white" alt="Instagram"></a>
+  <a href="https://x.com/StemDeckApp"><img src="https://img.shields.io/badge/X-StemDeckApp-000000?style=flat-square&logo=x&logoColor=white" alt="X"></a>
+  <a href="https://stemdeck.app"><img src="https://img.shields.io/badge/Website-stemdeck.app-000000?style=flat-square&logo=safari&logoColor=white" alt="Website"></a>
+</div>
 
-## Contributing
+## <img src="imgs/readme/link.svg" width="26" align="top" alt=""> Contributing
 
-Issues, feature suggestions, and pull requests are welcome. See open issues for what's planned.
+Issues, feature suggestions and pull requests are welcome. See the [open issues](https://github.com/stemdeckapp/stemdeck/issues) for what is planned, and [Build from source](docs/build-from-source.md) to run it yourself.
