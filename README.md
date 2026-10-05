@@ -139,33 +139,33 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </tr>
 </table>
 
-### It explains itself
-
 <table>
 <tr>
-<td width="62%"><img src="imgs/screenshot/guide.png" alt="Guide explaining the Dynamic Range card in the studio"></td>
-<td width="38%" valign="top">
+<td width="55%" valign="top">
 
-Click **Guide** in the left rail and point at anything. Every button, lane control and number on the screen says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
+### It explains itself
+
+Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
+
+<p align="center"><img src="imgs/screenshot/guide.png" alt="Guide explaining the Dynamic Range card" width="100%"></p>
 
 </td>
-</tr>
-</table>
+<td width="45%" valign="top">
 
 ### On your phone too
 
-<table>
-<tr>
-<td width="30%"><img src="imgs/screenshot/phone.png" alt="StemDeck on a phone: Demo Song with speed and key controls" width="100%"></td>
-<td width="70%" valign="top">
-
 Turn on **Make StemDeck available on your network** in Settings and scan the QR code. Your phone opens your library and mixer over your own Wi-Fi, with speed and key controls. No app store, no cloud.
 
-**Desktop app for Windows, Linux and macOS, a Docker image and an Unraid template, and 11 languages:** English, Deutsch, Español, Français, Bahasa Indonesia, 日本語, 한국어, Polski, Português (Brasil), Português (Portugal) and 简体中文.
+<p align="center"><img src="imgs/screenshot/phone.png" alt="StemDeck on a phone, with speed and key controls" width="190"></p>
 
 </td>
 </tr>
 </table>
+
+<p align="center">
+  <b>Windows, Linux and macOS</b> &nbsp;·&nbsp; <b>Docker and Unraid</b> &nbsp;·&nbsp; <b>11 languages</b><br>
+  <sub>English · Deutsch · Español · Français · Bahasa Indonesia · 日本語 · 한국어 · Polski · Português (Brasil) · Português (Portugal) · 简体中文</sub>
+</p>
 
 <details>
 <summary><b>Keyboard shortcuts</b></summary>
