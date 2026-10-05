@@ -33,6 +33,11 @@
 </p>
 
 <p align="center">
+  <a href="#download"><img src="https://img.shields.io/badge/Download-free-f4b740?style=for-the-badge" alt="Download, free"></a>
+  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/v/release/stemdeckapp/stemdeck?style=for-the-badge&label=latest&color=2e3942" alt="Latest release"></a>
+</p>
+
+<p align="center">
   <a href="#download"><b>Download</b></a> &nbsp;·&nbsp;
   <a href="#what-you-can-do">What you can do</a> &nbsp;·&nbsp;
   <a href="#honest-comparison">Honest comparison</a> &nbsp;·&nbsp;
@@ -48,7 +53,6 @@ StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano 
 
 > **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. Link support is a convenience; StemDeck does not store, cache or redistribute downloaded content. See the [Disclaimer](#disclaimer).
 
----
 
 ## Download
 
@@ -75,17 +79,35 @@ All of it, with credits to the people who reported each problem, is in the [rele
 
 </details>
 
-Pick **one**. Each link always downloads the latest release.
+Pick **one** button. Each one always downloads the latest release.
 
-| Your setup | Download |
-|---|---|
-| **Windows**, NVIDIA GPU | [`StemDeck-Windows-x64.NVIDIA.zip`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) |
-| **Windows**, no NVIDIA GPU | [`StemDeck-Windows-x64.zip`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
-| **Linux**, NVIDIA GPU | [`StemDeck-Linux-x64.NVIDIA.tar.gz`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) |
-| **Linux**, no NVIDIA GPU | [`StemDeck-Linux-x64.tar.gz`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
-| **macOS**, Apple Silicon (M1 and later) | [`StemDeck-macOS-arm64.dmg`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) |
-| **macOS**, Intel | [`StemDeck-macOS-x64.dmg`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
-| **Docker / Unraid** | [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck) (Unraid: search "StemDeck" in Apps) |
+<table>
+<tr>
+<td align="center" width="33%" valign="top">
+<img src="imgs/readme/windows.svg" width="40" alt=""><br>
+<b>Windows</b><br><sub>64-bit, portable</sub><br><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip"><img src="https://img.shields.io/badge/NVIDIA_GPU-download-f4b740?style=for-the-badge" alt="NVIDIA GPU: download"></a><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip"><img src="https://img.shields.io/badge/No_NVIDIA_GPU-download-2e3942?style=for-the-badge" alt="No NVIDIA GPU: download"></a>
+</td>
+<td align="center" width="33%" valign="top">
+<img src="imgs/readme/desktop.svg" width="40" alt=""><br>
+<b>macOS</b><br><sub>disk image</sub><br><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg"><img src="https://img.shields.io/badge/Apple_Silicon-download-f4b740?style=for-the-badge" alt="Apple Silicon: download"></a><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg"><img src="https://img.shields.io/badge/Intel-download-2e3942?style=for-the-badge" alt="Intel: download"></a>
+</td>
+<td align="center" width="33%" valign="top">
+<img src="imgs/readme/penguin.svg" width="40" alt=""><br>
+<b>Linux</b><br><sub>64-bit, portable</sub><br><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz"><img src="https://img.shields.io/badge/NVIDIA_GPU-download-f4b740?style=for-the-badge" alt="NVIDIA GPU: download"></a><br>
+<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz"><img src="https://img.shields.io/badge/No_NVIDIA_GPU-download-2e3942?style=for-the-badge" alt="No NVIDIA GPU: download"></a>
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+<img src="imgs/readme/package.svg" width="22" alt="" align="top"> &nbsp;<b>Docker and Unraid:</b> <a href="https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck"><code>ghcr.io/stemdeckapp/stemdeck:latest</code></a>, or search "StemDeck" in Unraid's Apps
+</td>
+</tr>
+</table>
 
 <details>
 <summary><b>Installing, per platform</b></summary>
@@ -108,7 +130,6 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 
 </details>
 
----
 
 ## What you can do
 
@@ -116,7 +137,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 <tr>
 <td width="50%" valign="top">
 
-### Split any song
+### <img src="imgs/readme/stems.svg" width="24" align="top" alt=""> &nbsp;Split any song
 
 - **Up to six stems** with Meta's open Demucs model: vocals, drums, bass, guitar, piano and other.
 - **Lead and backing vocals** as separate lanes, on demand.
@@ -127,7 +148,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </td>
 <td width="50%" valign="top">
 
-### Practise with it
+### <img src="imgs/readme/sliders.svg" width="24" align="top" alt=""> &nbsp;Practise with it
 
 - **Mute or solo** any part, and set each one's volume.
 - **Slow it down** to half speed, or anywhere from 0.50x to 0.99x, without changing the pitch.
@@ -143,7 +164,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 <tr>
 <td width="50%" valign="top">
 
-### Know the song
+### <img src="imgs/readme/gauge.svg" width="24" align="top" alt=""> &nbsp;Know the song
 
 - **Key, tempo, loudness and structure,** found for you.
 - **Synced lyrics** from LRCLIB, or written down from the vocals when none are found.
@@ -152,7 +173,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 </td>
 <td width="50%" valign="top">
 
-### Keep and share
+### <img src="imgs/readme/export.svg" width="24" align="top" alt=""> &nbsp;Keep and share
 
 - **Export** what you hear as one file, every part as a `.zip`, only the looped part, or a video with the original picture.
 - **Drag a stem or a loop** straight into your other music software.
@@ -166,7 +187,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 <tr>
 <td width="55%" valign="top">
 
-### It explains itself
+### <img src="imgs/readme/eye.svg" width="24" align="top" alt=""> &nbsp;It explains itself
 
 Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
 
@@ -175,7 +196,7 @@ Click **Guide** in the left rail and point at anything. Every button, lane contr
 </td>
 <td width="45%" valign="top">
 
-### On your phone too
+### <img src="imgs/readme/phone.svg" width="24" align="top" alt=""> &nbsp;On your phone too
 
 Turn on **Make StemDeck available on your network** in Settings and scan the QR code. Your phone opens your library and mixer over your own Wi-Fi, with speed and key controls. No app store, no cloud.
 
@@ -205,7 +226,6 @@ Turn on **Make StemDeck available on your network** in Settings and scan the QR 
 
 </details>
 
----
 
 ## Honest comparison
 
@@ -229,7 +249,6 @@ StemDeck is not trying to beat the commercial stem-separation services. It cover
 
 If you need the best quality, speed on any machine, or a store-bought phone app, the commercial products are worth the money. If you want stems for practice and study, keep your audio private, and like software with no strings attached, StemDeck is enough.
 
----
 
 ## We Recommend
 
@@ -256,7 +275,6 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Music Gear | Thomann | Large music-equipment retailer | [@thomann.music](https://www.instagram.com/thomann.music) |
 | Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
----
 
 ## Star History
 
@@ -268,7 +286,6 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
  </picture>
 </a>
 
----
 
 ## For developers
 
@@ -291,7 +308,6 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 </details>
 
----
 
 ## Disclaimer
 
@@ -303,7 +319,6 @@ You are also responsible for following the licenses of the underlying tools this
 
 The author(s) of StemDeck provide this software "as is", without warranty of any kind, and accept no responsibility or liability for how it is used.
 
----
 
 ## License
 
@@ -313,7 +328,6 @@ Every download ships a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `lice
 
 FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executable, so it does not change StemDeck's own license, and `THIRD_PARTY_NOTICES.txt` carries the written offer of source for the exact build your platform receives.
 
----
 
 ## Community
 
@@ -326,7 +340,6 @@ FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executabl
 | X | [@StemDeckApp](https://x.com/StemDeckApp) |
 | Website | [stemdeck.app](https://stemdeck.app) |
 
----
 
 ## Contributing
 
