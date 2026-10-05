@@ -52,17 +52,40 @@ StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano 
 
 ## Download
 
-Every release has a [download page](https://github.com/stemdeckapp/stemdeck/releases/latest) with one file per setup. Pick **one**.
+<p align="center">
+  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/v/release/stemdeckapp/stemdeck?style=for-the-badge&label=latest&color=f4b740" alt="Latest release"></a>
+  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/release-date/stemdeckapp/stemdeck?style=for-the-badge&label=released&color=2e3942" alt="Release date"></a>
+  <br>
+  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><b>Read the release notes</b></a> &nbsp;·&nbsp; <a href="https://github.com/stemdeckapp/stemdeck/releases">Every version</a>
+</p>
+
+<details>
+<summary><b>What's new in 0.20.0</b></summary>
+
+<br>
+
+- **Guide.** A new button in the left rail turns the studio into its own manual: point at anything to see what it does, and every number in the song facts says what it measures.
+- **The Trash.** A count on its icon, hold a song for a second to bring it back, and pick several at once with Ctrl or Shift.
+- **Deleting a song while it extracts stops it,** and keeps its files until you empty the Trash.
+- **Imports stay in the background:** the song you have open stays open.
+- **We Recommend** welcomes Adrianna Claro, and cards can now link to Spotify and Apple Music.
+- **Portable Windows installs** in a folder they cannot write to now say so clearly.
+
+All of it, with credits to the people who reported each problem, is in the [release notes](https://github.com/stemdeckapp/stemdeck/releases/latest).
+
+</details>
+
+Pick **one**. Each link always downloads the latest release.
 
 | Your setup | Download |
 |---|---|
-| **Windows**, NVIDIA GPU | `StemDeck-Windows-x64.NVIDIA.zip` |
-| **Windows**, no NVIDIA GPU | `StemDeck-Windows-x64.zip` |
-| **Linux**, NVIDIA GPU | `StemDeck-Linux-x64.NVIDIA.tar.gz` |
-| **Linux**, no NVIDIA GPU | `StemDeck-Linux-x64.tar.gz` |
-| **macOS**, Apple Silicon (M1 and later) | `StemDeck-macOS-arm64.dmg` |
-| **macOS**, Intel | `StemDeck-macOS-x64.dmg` |
-| **Docker / Unraid** | `ghcr.io/stemdeckapp/stemdeck` (Unraid: search "StemDeck" in Apps) |
+| **Windows**, NVIDIA GPU | [`StemDeck-Windows-x64.NVIDIA.zip`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) |
+| **Windows**, no NVIDIA GPU | [`StemDeck-Windows-x64.zip`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
+| **Linux**, NVIDIA GPU | [`StemDeck-Linux-x64.NVIDIA.tar.gz`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) |
+| **Linux**, no NVIDIA GPU | [`StemDeck-Linux-x64.tar.gz`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
+| **macOS**, Apple Silicon (M1 and later) | [`StemDeck-macOS-arm64.dmg`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) |
+| **macOS**, Intel | [`StemDeck-macOS-x64.dmg`](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
+| **Docker / Unraid** | [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck) (Unraid: search "StemDeck" in Apps) |
 
 <details>
 <summary><b>Installing, per platform</b></summary>
