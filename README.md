@@ -2,7 +2,6 @@
 
 <img src="imgs/stemdeck-svg-assets/stemdeck-logo-stacked.svg" alt="StemDeck" width="515" />
 
-**Free, local stem separation. No account. No upload. No subscription.**
 
 <div align="center">
   <a href="https://github.com/stemdeckapp/stemdeck/actions/workflows/ci.yml"><img src="https://github.com/stemdeckapp/stemdeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -28,26 +27,162 @@
 
 <br>
 
-Drop in an MP3, WAV, FLAC, OGG/Opus, MP4, or M4A file, or paste a YouTube URL, and StemDeck splits the audio into up to six stems (vocals, drums, bass, guitar, piano, other). Play them back in a DAW-style multitrack mixer: mute, solo, balance levels, zoom the waveform, loop a region, and export individual stems or a custom mix. Everything runs locally on your own machine.
+<p align="center">
+  <b>Drop in a song. Get every instrument on its own track. Practice with them.</b><br>
+  <sub>Runs on your own computer: no account, no subscription, and your audio is not uploaded.</sub>
+</p>
 
-> **What is this?** StemDeck is a stem separation tool, not a downloader. Its main job is processing audio you already own: drag an MP3, WAV, FLAC, OGG, or M4A onto the import bar and go. YouTube support is a convenience for content you have the right to process. StemDeck does not store, cache, or redistribute any downloaded content. Everything happens locally and nothing leaves your machine.
+<p align="center">
+  <a href="#download"><img src="https://img.shields.io/badge/Download-free-f4b740?style=for-the-badge" alt="Download, free"></a>
+  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/v/release/stemdeckapp/stemdeck?style=for-the-badge&label=latest&color=2e3942" alt="Latest release"></a>
+</p>
 
-> StemDeck is a free, open alternative to cloud stem-splitters like Moises and LALAL.AI: no account, no quota, no uploads, no subscription. If you want stems for personal study and prefer to keep things local and free, StemDeck has you covered. If you need the polish, a mobile app, or deeper musician tooling, the commercial products are a better fit.
+<p align="center">
+  <a href="#download"><b>Download</b></a> &nbsp;·&nbsp;
+  <a href="#what-you-can-do">What you can do</a> &nbsp;·&nbsp;
+  <a href="#honest-comparison">Honest comparison</a> &nbsp;·&nbsp;
+  <a href="#we-recommend">We Recommend</a> &nbsp;·&nbsp;
+  <a href="#for-developers">For developers</a>
+</p>
 
-![StemDeck screenshot](imgs/screenshot/stemdeck.png)
+<p align="center">
+  <img src="imgs/screenshot/stemdeck.png" alt="The StemDeck studio: a song split into vocals, drums, bass, guitar, piano and other, each on its own lane" width="100%">
+</p>
+
+StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Drop in an audio file or paste a YouTube or SoundCloud link. Separation runs on your own machine, and StemDeck does not upload your audio.
+
+> **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. What you import, and the stems made from it, are saved in your library folder on the machine that runs StemDeck; StemDeck does not upload or share them. See the [Disclaimer](#disclaimer).
 
 
-## Star History
+<a name="download"></a>
 
-<a href="https://www.star-history.com/?repos=stemdeckapp%2Fstemdeck&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&theme=dark&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
- </picture>
-</a>
+## <img src="imgs/readme/download.svg" width="26" align="top" alt=""> Download
 
-## We Recommend
+Each link downloads the latest release. [Release notes](https://github.com/stemdeckapp/stemdeck/releases/latest) · [Every version](https://github.com/stemdeckapp/stemdeck/releases)
+
+| Platform | NVIDIA or Apple Silicon | Everything else |
+|---|---|---|
+| <img src="imgs/readme/os-windows.svg" width="16" align="top" alt=""> &nbsp;**Windows** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
+| <img src="imgs/readme/os-apple.svg" width="16" align="top" alt=""> &nbsp;**macOS** | [Apple Silicon (M1 and later)](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) | [Intel Mac](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
+| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
+
+<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. On Unraid, search "StemDeck" in Apps.
+
+<details>
+<summary><b>What's new in 0.20.0</b></summary>
+
+<br>
+
+- **Guide.** A new button in the left rail turns the studio into its own manual: point at anything to see what it does, and every number in the song facts says what it measures.
+- **The Trash.** A count on its icon, hold a song for a second to bring it back, and pick several at once with Ctrl or Shift.
+- **Deleting a song while it extracts stops it,** and keeps its files until you empty the Trash.
+- **Imports stay in the background:** the song you have open stays open.
+- **We Recommend** welcomes Adrianna Claro, and cards can now link to Spotify and Apple Music.
+- **Portable Windows installs** in a folder they cannot write to now say so clearly.
+
+All of it, with credits to the people who reported each problem, is in the [release notes](https://github.com/stemdeckapp/stemdeck/releases/latest).
+
+</details>
+
+<details>
+<summary><b>Installing, per platform</b></summary>
+
+<br>
+
+**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card sets up GPU support; later launches start in seconds.
+
+**macOS.** Open the DMG and drag StemDeck to Applications. StemDeck is not code-signed yet, so clear the quarantine flag once, or macOS will say the app is damaged:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/StemDeck.app
+```
+
+The first launch downloads the runtime and the model. Apple Silicon separates on its built-in GPU.
+
+**Docker and Unraid.** See [Build from source](docs/build-from-source.md#docker) for the `docker run` line, GPU passthrough and the Unraid volume mapping.
+
+**Updates.** The desktop app tells you when a new version is out and installs it for you.
+
+</details>
+
+<a name="what-you-can-do"></a>
+
+## <img src="imgs/readme/grid.svg" width="26" align="top" alt=""> What you can do
+
+### <img src="imgs/readme/stems.svg" width="22" align="top" alt=""> Split any song
+
+- **Up to six stems** with Meta's open Demucs model: vocals, drums, bass, guitar, piano and other.
+- **Lead and backing vocals** as separate lanes, on demand (not on Intel Macs).
+- **Files or links:** MP3, WAV, FLAC, OGG, Opus, M4A and MP4, or a YouTube or SoundCloud link.
+- **Search without leaving the app:** YouTube songs and playlists, and SoundCloud, with a preview.
+- **Pick only what you need** before you extract.
+- **Whole YouTube playlists** go into an import queue and run one after another.
+
+### <img src="imgs/readme/sliders.svg" width="22" align="top" alt=""> Practice with it
+
+- **Mute or solo** any part, and set each one's volume.
+- **Slow it down** to half speed, or anywhere from 0.50x to 0.99x, without changing the pitch.
+- **Loop the hard part**, by dragging across the waveform.
+- **Change the key**, of the whole song or of one part.
+- **Play with a click** that follows the song, with a count-in, any beats per bar and groupings such as 3+2+2.
+- **Fix the beat grid** when the click drifts: move, add or remove beats and mark the bar lines.
+
+### <img src="imgs/readme/gauge.svg" width="22" align="top" alt=""> Know the song
+
+- **Key, tempo and loudness,** found for you.
+- **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
+- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, StemDeck can also write them down from the vocals when none are found.
+- **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
+
+### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share
+
+- **Export** what you hear as one file, every part as a `.zip`, only the looped part, or, when the song came with a video, a video with the original picture. Add the click or a count-in if you like.
+- **Drag a stem or a loop** from the desktop app straight into your other music software.
+- **A library** with colored folders, tags you can search by (`#tag`), favorites, and a Trash that only deletes when you empty it.
+
+### <img src="imgs/readme/eye.svg" width="22" align="top" alt=""> It explains itself
+
+Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
+
+### <img src="imgs/readme/phone.svg" width="22" align="top" alt=""> On your phone too
+
+Turn on **Make StemDeck available on your network** in Settings and scan the QR code. Your phone opens your library and mixer over your own Wi-Fi, with speed and key controls. No app store, no cloud.
+
+<p align="center">
+  <b>Windows, Linux and macOS</b> &nbsp;·&nbsp; <b>Docker and Unraid</b> &nbsp;·&nbsp; <b>11 languages</b><br>
+  <sub>English · Deutsch · Español · Français · Bahasa Indonesia · 日本語 · 한국어 · Polski · Português (Brasil) · Português (Portugal) · 简体中文</sub>
+</p>
+
+
+
+<a name="honest-comparison"></a>
+
+## <img src="imgs/readme/check.svg" width="26" align="top" alt=""> Honest comparison
+
+StemDeck is not trying to beat the commercial stem-separation services. It covers the core well and stops there. This table is here so you can choose knowingly rather than find the gaps later.
+
+| | StemDeck | Moises, LALAL.AI and similar |
+|---|---|---|
+| **Price** | Free and open source | Usually freemium, with credits or a subscription for regular use |
+| **Where it runs** | On your own machine | Usually in the cloud, so your audio is uploaded |
+| **Account** | None | Usually required |
+| **Internet** | For links, the first model download, update checks, and song details and lyrics | Usually needed to process audio |
+| **Privacy** | Your audio is not uploaded; song names are looked up for details and lyrics | Processed on their servers, under their own retention policy |
+| **Separation model** | Demucs `htdemucs_6s`, open source from Meta | Their own models, which may give better results |
+| **Stems** | 6, plus lead and backing vocals | Varies; some offer more instruments |
+| **Speed** | Depends on your hardware: fast on a GPU, slow on a CPU | Fast on any hardware |
+| **Many songs at once** | An import queue and whole playlists, run one after another | Varies by service and plan |
+| **Phone** | Your phone opens StemDeck over your own Wi-Fi; no app store app | Some offer mobile apps |
+| **Practice tools** | Speed, key change, loops, click track with count-in, synced lyrics; no chord detection | Varies by product; often chords and more |
+| **Polish** | A one-person open-source project | Polished, production-grade apps |
+| **Source code** | Open source, forkable, self-hostable | Closed |
+
+If you need the best quality, speed on any machine, or a store-bought phone app, the commercial products are worth the money. If you want stems for practice and study, keep your audio private, and like software with no strings attached, StemDeck is enough.
+
+
+<a name="we-recommend"></a>
+
+## <img src="imgs/readme/person.svg" width="26" align="top" alt=""> We Recommend
 
 StemDeck is free and **does not accept any money, sponsorship, or funding**  from anyone listed below. I share these makers and artists and communities purely for the joy of pointing you toward wonderful people doing beautiful work. Go meet them ❤️
 
@@ -73,93 +208,31 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Writers & Storytellers | Alexandre Borges | Portuguese writer, screenwriter, and cultural commentator | [Books & author profile](https://www.instagram.com/alexgram_b/) |
 
 
----
+## <img src="imgs/readme/zap.svg" width="26" align="top" alt=""> Star history
 
-## Features
+<a href="https://www.star-history.com/?repos=stemdeckapp%2Fstemdeck&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&theme=dark&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=stemdeckapp/stemdeck&type=date&legend=top-left&sealed_token=ZCLzbiDb9k7qGcBlGZ4Y7ztZz0mepkiAVraLOc4qeVQjSM_MfPIQD7P9n2wvwBM8mw8EKfkSAQfM2vByzi3mEPklzgSWtYnVzZsfexzb7LxwoATlrgSmWesQiwczpg4xa32nF4_Np1Qpe62s5eFsl0o46JzPuwwd5M6pwShbj1PfDMFD4b0Yuu0jH3rD" />
+ </picture>
+</a>
 
-**6-stem separation** via Demucs `htdemucs_6s`, with auto-detection of the best Torch device (CUDA on NVIDIA, MPS on Apple Silicon, CPU fallback).
 
-**YouTube and local file import.** Paste a YouTube URL or drop an MP3, WAV, FLAC, OGG/Opus, MP4, or M4A directly onto the import bar.
+<a name="for-developers"></a>
 
-**DAW-style waveform editor** with min/max sample rendering across all stems, shared normalization, zoom in/out/Fit, loop drag on the ruler, gold playhead overlay, and stem-aligned lanes.
+## <img src="imgs/readme/wrench.svg" width="26" align="top" alt=""> For developers
 
-**Stem subset extraction.** Click stem chips to choose which stems to keep. Clicking from "all selected" snaps to "only this one"; subsequent clicks add or remove.
+| Page | What it covers |
+|---|---|
+| **[Build from source](docs/build-from-source.md)** | The macOS app, a web server on any platform, Docker and Unraid |
+| **[Configuration](docs/configuration.md)** | Environment variables, and serving other devices over https |
+| **[HTTP API](docs/api.md)** | The endpoints the web app uses |
+| **[Troubleshooting](docs/troubleshooting.md)** | Common problems, and what lives where on disk |
+| **[Model licenses](docs/models.md)** | Where each machine-learning model's license comes from |
 
-**"Original" backing track.** When you pick a subset, a 7th lane contains the complement (full song minus selected stems), perfect for A/B reference without doubling.
-
-**Downloadable selected mix.** A single `mix.wav` of just your selected stems, summed via ffmpeg amix.
-
-**Per-stem mixer** with volume fader, mute, solo, and "monitor" (solo-only) per stem. State syncs between the preview mixer and the stems sidebar.
-
-**Live VU meters** per stem. Post-gain RMS via Web Audio analysers with peak hold and slow falloff.
-
-**Song analysis** including BPM (librosa beat tracker), key, scale, and confidence (Albrecht-Shanahan profiles), integrated LUFS (BS.1770), and sample peak in dBFS.
-
-**Cancellable jobs.** Cancel mid-pipeline and the runner terminates the active subprocess immediately, deletes the partial job dir, and returns to ready.
-
-**Library panel** with folder-based track organisation, drag-and-drop, search, and trash.
-
----
-
-## Honest Comparison
-
-StemDeck is not trying to compete with commercial stem-separation products. It covers the core use case well and stops there. This table exists so you can make an informed choice rather than discover the gaps after the fact.
-
-| | StemDeck | Moises / LALAL.AI / similar |
-|---|---|---|
-| **Price** | Free, forever | Freemium; credits or subscription required for regular use |
-| **Hosting** | Runs entirely on your machine | Cloud; audio must be uploaded to their servers |
-| **Account / login** | None | Required |
-| **Internet required** | Only for YouTube download and first model fetch (~170 MB, cached after) | Always; no offline use |
-| **Privacy** | Audio never leaves your machine | Audio is uploaded and processed on third-party servers |
-| **Data retention** | You control it; delete anytime | Governed by their privacy policy and retention period |
-| **Stem model** | Demucs `htdemucs_6s` (open source, Meta AI) | Proprietary models, regularly updated, generally higher quality |
-| **Stem count** | 6 (vocals, drums, bass, guitar, piano, other) | Up to 10 depending on service and plan |
-| **Input formats** | YouTube URL, MP3, WAV, FLAC, OGG/Opus, MP4, M4A | MP3, WAV, FLAC, M4A, and more depending on service |
-| **Processing speed** | Depends on your hardware; fast with a GPU, slow on CPU only | Fast regardless of your hardware (runs on their servers) |
-| **Batch processing** | One job at a time | Yes, on paid plans |
-| **Mobile app** | No | iOS and Android |
-| **Extra features** | No (no pitch shift, chord detection, lyrics, click track, BPM tap) | Yes, varies by product |
-| **Polish** | Functional, hobby-grade UI | Polished, production-grade apps |
-| **Source code** | Open source, forkable, self-hostable | Closed source |
-
-If you need speed, quality, mobile access, or the extra musician tooling, the commercial products are worth the money. If you want stems for personal study, prefer to keep audio private, or just want something that runs locally with no strings attached, StemDeck is enough.
-
----
-
-## Download
-
-Pre-built installers and zips are attached to each [GitHub Release](https://github.com/stemdeckapp/stemdeck/releases).
-
-**macOS**
-
-| DMG | GPU | Chip |
-|---|---|---|
-| `StemDeck-macOS-arm64.dmg` | Apple Silicon (MPS) | M1 and later |
-| `StemDeck-macOS-x64.dmg` | CPU only | Intel |
-
-Open the DMG, drag StemDeck to Applications, and launch it. On first launch the setup screen downloads the Python runtime (~500 MB), FFmpeg, and the Demucs model (~170 MB). Subsequent launches skip setup and start in seconds. No Python or system dependencies required.
-
-macOS may show a Gatekeeper prompt on first open — right-click the app and choose Open to bypass it.
-
-**Windows**
-
-| Zip | GPU | Approx. size |
-|---|---|---|
-| `StemDeck-Windows-x64.zip` | CPU only | ~700 MB |
-| `StemDeck-Windows-x64.NVIDIA.zip` | NVIDIA CUDA | ~1.6 GB |
-
-Extract the zip anywhere, run `StemDeck.exe`. FFmpeg, the Demucs model, config, and logs live in a `data/` folder next to `StemDeck.exe`, not in AppData; move or copy the whole extracted folder anywhere and it keeps working. On first launch the app verifies the bundled Python runtime and downloads FFmpeg and the Demucs model (~170 MB) into that folder. Subsequent launches skip this and start in seconds. Everything is self-contained; no Python or system dependencies required. Your job/library data stays in its usual location (`~/Documents/StemDeck` by default) and is relocatable anytime from Settings → StemData location.
-
----
-
-## Technologies
-
-<div align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6?style=flat-square&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Powered_by-Demucs-FF6B35?style=flat-square" alt="Powered by Demucs">
-  <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" alt="CI: GitHub Actions">
-</div>
+<details>
+<summary><b>Built with</b></summary>
 
 <br>
 
@@ -167,320 +240,23 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 *Thanks to the creators and maintainers of all the open-source libraries that make StemDeck possible.*
 
----
+</details>
 
-## Build from Source
 
-### macOS Native App
+<a name="disclaimer"></a>
 
-Requires Rust, Node.js, and Python 3.12. Builds a self-contained `.app` that downloads its own runtime on first launch.
+## <img src="imgs/readme/flag.svg" width="26" align="top" alt=""> Disclaimer
 
-```sh
-# First time only — add the cross-compilation targets
-rustup target add aarch64-apple-darwin   # Apple Silicon
-rustup target add x86_64-apple-darwin    # Intel
+StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. Audio you import, and the stems made from it, are saved only in the library folder on the machine that runs StemDeck, and StemDeck does not upload, share or redistribute them. To find song details and lyrics it sends the song's name to the services named in its Settings and, only if you add an AcoustID key, an audio fingerprint; it does not send the audio itself.
 
-# Build Apple Silicon
-ARCH=arm64 scripts/macos/make-runtime-pack.sh
-ARCH=arm64 scripts/macos/make-app.sh
-ARCH=arm64 scripts/macos/make-dmg.sh
-
-# Build Intel (requires Rosetta 2 and an x86_64 Python)
-ARCH=x64 scripts/macos/make-runtime-pack.sh
-ARCH=x64 scripts/macos/make-app.sh
-ARCH=x64 scripts/macos/make-dmg.sh
-```
-
-The `.app` lands at `desktop/src-tauri/target/<target>/release/bundle/macos/StemDeck.app`. The DMG lands at `.build/macos-dist/StemDeck-macOS-<arch>.dmg`.
-
-To run a fresh build directly without the DMG:
-
-```sh
-open desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/StemDeck.app
-```
-
-If macOS blocks the app with a Gatekeeper prompt, run:
-
-```sh
-xattr -dr com.apple.quarantine desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/StemDeck.app
-```
-
-> **Note:** To test a clean first-launch during development, you can wipe previous app data first: `rm -rf ~/Library/Application\ Support/StemDeck`. Don't do this on a real install.
-
----
-
-### Web Server (macOS / Linux / Windows with Python 3.12+)
-
-#### Prerequisites
-
-Python 3.12 or newer, `ffmpeg` on your PATH, and [uv](https://github.com/astral-sh/uv). Around 170 MB of free disk for the Demucs model, which downloads automatically on first run.
-
-Optional, for song identification with an AcoustID key: an FFmpeg built with chromaprint (Debian and Ubuntu's `ffmpeg` is), or Chromaprint's `fpcalc` on your PATH (`brew install chromaprint`, `apt install libchromaprint-tools`, or your distro's `chromaprint` package). `./run.sh setup` installs it when your FFmpeg needs it. Without either, songs are identified by their tags only.
-
-#### macOS / Linux (one-shot)
-
-```sh
-git clone https://github.com/stemdeckapp/stemdeck stemdeck && cd stemdeck
-./run.sh setup     # installs ffmpeg + uv, runs uv sync
-./run.sh start
-```
-
-Open <http://localhost:8000>.
-
-`setup` uses Homebrew on macOS and `apt-get` on Debian/Ubuntu. For other Linux distros, install `ffmpeg` and [uv](https://github.com/astral-sh/uv) manually, then run `uv sync` followed by `./run.sh start`.
-
-#### Windows (PowerShell)
-
-Install prerequisites:
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — `winget install astral-sh.uv`
-- [ffmpeg](https://ffmpeg.org/download.html) — `winget install Gyan.FFmpeg` (or Chocolatey: `choco install ffmpeg`)
-
-```powershell
-git clone https://github.com/stemdeckapp/stemdeck stemdeck; cd stemdeck
-uv sync
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
-```
-
-Open <http://localhost:8000>.
-
-> `run.sh` is macOS/Linux only. On Windows use the PowerShell commands above, or run inside WSL.
-
-**NVIDIA GPU (CUDA):** install the CUDA-enabled torch build before starting:
-
-```powershell
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-$env:STEMDECK_DEMUCS_DEVICE = "cuda"
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
-```
-
----
-
-#### Manual (any platform)
-
-```sh
-git clone https://github.com/stemdeckapp/stemdeck stemdeck && cd stemdeck
-uv sync
-uv run uvicorn app.main:app --reload --timeout-graceful-shutdown 5
-```
-
-> `--timeout-graceful-shutdown` bounds how long uvicorn waits for open
-> connections when you stop it. StemDeck keeps a long-lived SSE stream open
-> for the import queue while a browser tab is on the app, so without it
-> Ctrl-C waits for that stream instead of exiting.
-
-#### Docker
-
-```sh
-docker compose -f build/docker-compose.yml up --build
-```
-
-Stems land in `./jobs/` on the host. Demucs weights are cached in a named volume so they don't re-download on rebuild. Note: no GPU passthrough on macOS Docker.
-
-A prebuilt image is published to GHCR. Tags: `edge` (rolling, rebuilt on every merge to main), `latest` (newest stable release), and `X.Y.Z` (pinned to a release).
-
-```sh
-docker run -d --name stemdeck -p 8000:8000 \
-  -v /path/to/jobs:/app/jobs \
-  -v /path/to/cache:/cache \
-  -e STEMDECK_PERSIST_LIBRARY=1 \
-  ghcr.io/stemdeckapp/stemdeck:edge
-```
-
-On a Linux host with an NVIDIA GPU (driver + NVIDIA Container Toolkit installed), add `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all` and StemDeck auto-detects CUDA. The image already bundles CUDA-enabled torch, so no separate CUDA install is needed.
-
-#### Unraid
-
-StemDeck is available in Unraid Community Applications: open **Apps**, search "StemDeck", and install. Map the two volumes to persistent appdata paths:
-
-- `/app/jobs` -> `/mnt/user/appdata/stemdeck/jobs` (library + stems)
-- `/cache` -> `/mnt/user/appdata/stemdeck/cache` (model weights)
-
-The library is persistent by default (`STEMDECK_PERSIST_LIBRARY=1`), so tracks are never auto-deleted. For GPU acceleration, install the **Nvidia Driver** plugin, then set the container's Extra Parameters to `--runtime=nvidia` (the `NVIDIA_VISIBLE_DEVICES` and `NVIDIA_DRIVER_CAPABILITIES` variables are already in the template). CPU-only works with no extra configuration.
-
-#### `run.sh` control script
-
-```sh
-./run.sh setup      # one-shot: install ffmpeg + uv, then uv sync
-./run.sh start      # boots uvicorn in the background
-./run.sh stop       # graceful shutdown
-./run.sh restart    # stop + start
-./run.sh status     # is it running?
-```
-
----
-
-## How to Use
-
-1. On the import bar, click stem chips to choose which stems to extract (defaults to all 6).
-2. Paste a YouTube URL **or** drop an audio file (MP3, WAV, FLAC, OGG, MP4, M4A), then click **Process**.
-3. Wait through `Uploading...` / `Downloading...` → `Analyzing...` → `Separating...` → `Mixing tracks...`.
-4. When done, the studio dashboard appears. If you picked a subset, the first lane is **Original** (full song minus your selection); the rest are your isolated stems.
-5. Mix: **Play/Pause/Stop** controls the master transport. **M** mutes a stem, **S** solos it (additive; multiple solos stay audible), **Monitor** solos only that stem and clears others. The volume fader moves 1:1 with drag; double-click resets to 0 dB; `Shift+wheel` gives coarse adjustment and plain wheel gives fine. The **Reset**, **Mute**, and **Solo** toolbar buttons act on all stems at once.
-6. Drag on the ruler to define a loop region; click `Loop` to enable. Use `+` / `-` / `Fit` or `Ctrl/Cmd+wheel` to zoom.
-7. **Download Mix** in the footer gives you a WAV of your selected stems summed together.
-
-**Keyboard shortcuts:** `Space` play/pause · `[` seek -5s · `]` seek +5s · `L` loop · `I` loop in · `O` loop out
-
----
-
-## Configuration
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `STEMDECK_DEMUCS_DEVICE` | auto | Force Torch device: `cuda`, `mps`, or `cpu`. |
-| `STEMDECK_DEMUCS_MODEL` | `htdemucs_6s` | Demucs model name. |
-| `STEMDECK_JOBS_DIR` | `./jobs` | Where job directories land. |
-| `STEMDECK_DATA_DIR` | (none) | Portable mode root; sets all sub-dirs below to live inside it. |
-| `STEMDECK_CACHE_DIR` | `<data>/cache` | Torch model cache directory. |
-| `STEMDECK_DOWNLOADS_DIR` | `<data>/downloads` | yt-dlp download scratch space. |
-| `STEMDECK_MODELS_DIR` | `<data>/models` | Demucs model weights directory. |
-| `STEMDECK_LOGS_DIR` | `<data>/logs` | Log file output directory. |
-| `STEMDECK_FFMPEG_DIR` | (none) | Directory containing a bundled ffmpeg binary. |
-| `STEMDECK_FFMPEG` | `ffmpeg` | Path to the ffmpeg executable. |
-| `STEMDECK_FFPROBE` | `ffprobe` | Path to the ffprobe executable. |
-| `STEMDECK_FPCALC` | `fpcalc` | Path to Chromaprint's fpcalc, used for song fingerprinting when FFmpeg has no chromaprint muxer. |
-| `STEMDECK_MAX_DURATION_SEC` | `1200` | Reject audio longer than this (seconds). |
-| `STEMDECK_JOB_TTL_SECONDS` | `86400` | How long to keep job dirs on disk. |
-| `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |
-| `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
-| `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
-| `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |
-| `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
-| `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
-| `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
-
-`run.sh` also reads: `HOST` (default `127.0.0.1`), `PORT` (default `8765`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
-
-### Serving other devices: why https is not optional
-
-Transpose is built on `AudioWorklet`, and browsers grant that only to a
-**secure context**. `https://` and `localhost` qualify. A plain
-`http://192.168.1.20:8000` does not, so a phone reaching StemDeck over plain
-http gets working playback and a key control that cannot do anything. There is
-no fallback worth shipping: driving the same DSP from a `ScriptProcessorNode`
-measured around 5% of the audio missing, because that node type drops buffers
-on its own at every size.
-
-So a server that other devices will use terminates TLS, one of three ways:
-
-1. **A reverse proxy** (SWAG, Nginx Proxy Manager, Traefik, Caddy). The usual
-   self-hosted shape, and the best one if you already run it. StemDeck reads
-   `X-Forwarded-Proto` and the RFC 7239 `Forwarded` header, so an https browser
-   over a plain-http upstream hop is recognised as secure and served normally.
-2. **StemDeck itself**, by pointing `STEMDECK_SSL_CERT` and `STEMDECK_SSL_KEY`
-   at a certificate and key. uvicorn serves them directly; no extra package is
-   installed for this.
-3. **A private overlay network** such as Tailscale, whose addresses are already
-   https.
-
-Reaching a plaintext non-local origin with none of those in place is refused
-with a 403 that explains this, rather than served as an app that is quietly
-half-broken. Loopback is always served, so turning this on can never lock the
-host out of its own server.
-
-### The desktop app runs two listeners
-
-The desktop app does the same thing without being configured, because it has
-two audiences that need opposite things.
-
-- **Plain http on `127.0.0.1`** for its own window. Loopback is already a
-  secure context, so nothing is lost, and it is the only scheme that works: a
-  self-signed certificate would raise a warning page the app window has no way
-  to click through.
-- **https on the LAN**, port 8443 by default, for phones and other computers.
-  This is the address Settings shows and the QR code points at.
-
-Both listeners serve the same process, so there is one library, one queue and
-one Demucs worker either way.
-
-The certificate is generated on your own machine the first time you enable
-network access, and lives in `<data>/certs/` beside `jobs/` and
-`settings.json`. Nothing is shipped in the download: a certificate in the
-release would publish its private key to everyone who downloaded it, which is
-worse than plain http because it looks secure. It is regenerated automatically
-when your machine's addresses change or the certificate is close to expiring.
-
-Because it is signed by nobody, **your phone will show a "your connection is
-not private" warning the first time**. Tap Advanced, then Continue. Once per
-device, per computer. Settings says so, in red, next to the toggle.
-
-
----
-
-## API
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/health` | Server health and version info |
-| POST | `/api/jobs` | JSON `{url, stems?}` or multipart `file + stems` → `{job_id}` |
-| GET | `/api/jobs` | List completed (library) jobs |
-| GET | `/api/jobs/{id}` | Job state snapshot |
-| GET | `/api/jobs/{id}/events` | SSE stream of job state |
-| POST | `/api/jobs/{id}/cancel` | Terminate active subprocess and cancel job |
-| PATCH | `/api/jobs/{id}/sections` | Save waveform section markers for a job |
-| GET | `/api/jobs/{id}/stems/{name}.wav` | Stream a single stem WAV file |
-| GET | `/api/jobs/{id}/stems/{name}.mp3` | Transcode and stream a stem as MP3 |
-| GET | `/api/jobs/{id}/video.mp4` | Mux the current mix with the source video (MP4 upload or YouTube) into an MP4 |
-| DELETE | `/api/jobs/{id}` | Remove job dir from disk (terminal jobs only) |
-
----
-
-## Troubleshooting
-
-**`ffmpeg: command not found`:** install ffmpeg and restart with `./run.sh restart`.
-
-**`WARNING: [youtube] No supported JavaScript runtime`:** install deno (`brew install deno` on macOS) and restart. Downloads still work without it but may pick suboptimal formats.
-
-**First separation is very slow:** Demucs downloads `htdemucs_6s` weights (~170 MB) on first run; cached afterwards.
-
-**Demucs runs on CPU only:** check the startup log for `device=mps` or `device=cuda`. If you see `cpu`, your torch install may be CPU-only.
-
-**Transpose is greyed out on another machine:** the pitch stage is built on `AudioWorklet`, which browsers only expose on a *secure context*. `https://` and `localhost` count. A plain `http://192.168.x.x` does not, so a client opening StemDeck over the network is never given the API and transpose cannot work there. Changing the speed still works on such a client, but it resamples instead, so the key moves with it.
-
-Three ways to get a secure context, in order of least effort:
-
-- **Tunnel to localhost.** On the client: `ssh -N -L 8000:localhost:8000 user@host`, then open `http://localhost:8000`. The origin is now localhost, so everything works, including transpose.
-- **Tailscale Serve.** `tailscale serve 8000` on the host publishes StemDeck on your tailnet over real HTTPS with a genuine certificate, no warnings and nothing to install on the client beyond Tailscale itself. Note the plain Tailscale IP (`100.x.y.z`) is *not* a secure context; it has to go through `serve`.
-- **Any HTTPS reverse proxy** in front of StemDeck: Caddy, nginx, or a tunnel like Cloudflare Tunnel.
-
-**Page reloaded mid-job:** the job keeps running server-side. Wait for it to finish, then resubmit.
-
-**`./run.sh: Permission denied`:** run `chmod +x run.sh`.
-
----
-
-## Layout on Disk
-
-```
-jobs/<job_id>/
-└── stems/
-    ├── vocals.wav      # the 6 Demucs stems (always present)
-    ├── drums.wav
-    ├── bass.wav
-    ├── guitar.wav
-    ├── piano.wav
-    ├── other.wav
-    ├── original.wav    # sum of un-selected stems (subset only)
-    └── mix.wav         # ffmpeg amix of selected stems (subset only)
-```
-
-Job state is in-memory. Restart the server and the job list resets, but files persist on disk. Old dirs are swept automatically (TTL 24 h, configurable).
-
----
-
-## Disclaimer
-
-StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. It does not store, cache, or redistribute any audio content. All processing runs on the user's own machine and no audio is transmitted anywhere.
-
-YouTube URL support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
+YouTube and SoundCloud link support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
 
 You are also responsible for following the licenses of the underlying tools this project depends on (yt-dlp, Demucs, FFmpeg, PyTorch, and others listed in `pyproject.toml`).
 
 The author(s) of StemDeck provide this software "as is", without warranty of any kind, and accept no responsibility or liability for how it is used.
 
----
 
-## License
+## <img src="imgs/readme/shield.svg" width="26" align="top" alt=""> License
 
 StemDeck is [Apache-2.0](LICENSE).
 
@@ -488,35 +264,20 @@ Every download ships a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `lice
 
 FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executable, so it does not change StemDeck's own license, and `THIRD_PARTY_NOTICES.txt` carries the written offer of source for the exact build your platform receives.
 
----
 
-## Community
+## <img src="imgs/readme/globe.svg" width="26" align="top" alt=""> Community
 
-| Platform | Link |
-|---|---|
-| GitHub | [stemdeckapp/stemdeck](https://github.com/stemdeckapp/stemdeck) |
-| Discord | [discord.gg/YhCKsjhcwB](https://discord.gg/YhCKsjhcwB) |
-| Reddit | [r/StemDeckApp](https://www.reddit.com/r/StemDeckApp/) |
-| Instagram | [@stemdeck](https://www.instagram.com/stemdeck) |
-| X | [@StemDeckApp](https://x.com/StemDeckApp) |
-| Website | [stemdeck.app](https://stemdeck.app) |
+Questions, ideas and show-and-tell are all welcome.
 
----
+<div align="center">
+  <a href="https://github.com/stemdeckapp/stemdeck"><img src="https://img.shields.io/badge/GitHub-stemdeckapp-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://discord.gg/YhCKsjhcwB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://www.reddit.com/r/StemDeckApp/"><img src="https://img.shields.io/badge/Reddit-r%2FStemDeckApp-FF4500?style=flat-square&logo=reddit&logoColor=white" alt="Reddit"></a>
+  <a href="https://www.instagram.com/stemdeck"><img src="https://img.shields.io/badge/Instagram-stemdeck-E4405F?style=flat-square&logo=instagram&logoColor=white" alt="Instagram"></a>
+  <a href="https://x.com/StemDeckApp"><img src="https://img.shields.io/badge/X-StemDeckApp-000000?style=flat-square&logo=x&logoColor=white" alt="X"></a>
+  <a href="https://stemdeck.app"><img src="https://img.shields.io/badge/Website-stemdeck.app-000000?style=flat-square&logo=safari&logoColor=white" alt="Website"></a>
+</div>
 
-## Environment Variables
+## <img src="imgs/readme/link.svg" width="26" align="top" alt=""> Contributing
 
-These are for development and testing. Release builds only recognize the variables marked "release".
-
-| Variable | Platform | Scope | Description |
-|---|---|---|---|
-| `STEMDECK_DATA_DIR` | all | release | Override the user data directory (default: platform-standard location) |
-| `STEMDECK_ROOT` | all | release | Override the app root directory (default: derived from executable path) |
-| `STEMDECK_PYTHON` | all | **debug builds only** | Override the Python executable path |
-| `STEMDECK_FFMPEG_URL` | Windows, macOS | release | Override the FFmpeg download URL |
-| `STEMDECK_FFPROBE_URL` | macOS | release | Override the ffprobe download URL |
-
----
-
-## Contributing
-
-Issues, feature suggestions, and pull requests are welcome. See open issues for what's planned.
+Issues, feature suggestions and pull requests are welcome. See the [open issues](https://github.com/stemdeckapp/stemdeck/issues) for what is planned, and [Build from source](docs/build-from-source.md) to run it yourself.
