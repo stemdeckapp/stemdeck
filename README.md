@@ -29,7 +29,7 @@
 
 <p align="center">
   <b>Drop in a song. Get every instrument on its own track. Practice with them.</b><br>
-  <sub>Runs on your own computer: no account, no upload, no subscription.</sub>
+  <sub>Runs on your own computer: no account, no subscription, and your audio is not uploaded.</sub>
 </p>
 
 <p align="center">
@@ -49,21 +49,24 @@
   <img src="imgs/screenshot/stemdeck.png" alt="The StemDeck studio: a song split into vocals, drums, bass, guitar, piano and other, each on its own lane" width="100%">
 </p>
 
-StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Drop in an audio file or paste a YouTube or SoundCloud link. Everything runs on your machine; nothing is uploaded.
+StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Drop in an audio file or paste a YouTube or SoundCloud link. Separation runs on your own machine, and StemDeck does not upload your audio.
 
-> **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. Link support is a convenience; StemDeck does not store, cache or redistribute downloaded content. See the [Disclaimer](#disclaimer).
+> **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. What you import, and the stems made from it, are saved in your library folder on the machine that runs StemDeck; StemDeck does not upload or share them. See the [Disclaimer](#disclaimer).
 
 
 <a name="download"></a>
 
 ## <img src="imgs/readme/download.svg" width="26" align="top" alt=""> Download
 
-<p align="center">
-  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/v/release/stemdeckapp/stemdeck?style=for-the-badge&label=latest&color=f4b740" alt="Latest release"></a>
-  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><img src="https://img.shields.io/github/release-date/stemdeckapp/stemdeck?style=for-the-badge&label=released&color=2e3942" alt="Release date"></a>
-  <br>
-  <a href="https://github.com/stemdeckapp/stemdeck/releases/latest"><b>Read the release notes</b></a> &nbsp;·&nbsp; <a href="https://github.com/stemdeckapp/stemdeck/releases">Every version</a>
-</p>
+Each link downloads the latest release. [Release notes](https://github.com/stemdeckapp/stemdeck/releases/latest) · [Every version](https://github.com/stemdeckapp/stemdeck/releases)
+
+| Platform | NVIDIA or Apple Silicon | Everything else |
+|---|---|---|
+| <img src="imgs/readme/os-windows.svg" width="16" align="top" alt=""> &nbsp;**Windows** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
+| <img src="imgs/readme/os-apple.svg" width="16" align="top" alt=""> &nbsp;**macOS** | [Apple Silicon (M1 and later)](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) | [Intel Mac](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
+| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
+
+<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. On Unraid, search "StemDeck" in Apps.
 
 <details>
 <summary><b>What's new in 0.20.0</b></summary>
@@ -81,36 +84,6 @@ All of it, with credits to the people who reported each problem, is in the [rele
 
 </details>
 
-Pick **one** button. Each one always downloads the latest release.
-
-<table>
-<tr>
-<td align="center" width="33%" valign="top">
-<img src="imgs/readme/windows.svg" width="40" alt=""><br>
-<b>Windows</b><br><sub>64-bit, portable</sub><br><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip"><img src="https://img.shields.io/badge/NVIDIA_GPU-download-f4b740?style=for-the-badge" alt="NVIDIA GPU: download"></a><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip"><img src="https://img.shields.io/badge/No_NVIDIA_GPU-download-2e3942?style=for-the-badge" alt="No NVIDIA GPU: download"></a>
-</td>
-<td align="center" width="33%" valign="top">
-<img src="imgs/readme/desktop.svg" width="40" alt=""><br>
-<b>macOS</b><br><sub>disk image</sub><br><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg"><img src="https://img.shields.io/badge/Apple_Silicon-download-f4b740?style=for-the-badge" alt="Apple Silicon: download"></a><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg"><img src="https://img.shields.io/badge/Intel-download-2e3942?style=for-the-badge" alt="Intel: download"></a>
-</td>
-<td align="center" width="33%" valign="top">
-<img src="imgs/readme/penguin.svg" width="40" alt=""><br>
-<b>Linux</b><br><sub>64-bit, portable</sub><br><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz"><img src="https://img.shields.io/badge/NVIDIA_GPU-download-f4b740?style=for-the-badge" alt="NVIDIA GPU: download"></a><br>
-<a href="https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz"><img src="https://img.shields.io/badge/No_NVIDIA_GPU-download-2e3942?style=for-the-badge" alt="No NVIDIA GPU: download"></a>
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-<img src="imgs/readme/package.svg" width="22" alt="" align="top"> &nbsp;<b>Docker and Unraid:</b> <a href="https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck"><code>ghcr.io/stemdeckapp/stemdeck:latest</code></a>, or search "StemDeck" in Unraid's Apps
-</td>
-</tr>
-</table>
-
 <details>
 <summary><b>Installing, per platform</b></summary>
 
@@ -124,33 +97,26 @@ Pick **one** button. Each one always downloads the latest release.
 xattr -dr com.apple.quarantine /Applications/StemDeck.app
 ```
 
-The first launch downloads the runtime and the model. Apple Silicon separates on the GPU; Intel Macs use the CPU.
+The first launch downloads the runtime and the model. Apple Silicon separates on its built-in GPU.
 
 **Docker and Unraid.** See [Build from source](docs/build-from-source.md#docker) for the `docker run` line, GPU passthrough and the Unraid volume mapping.
 
-**Updates.** The desktop app tells you when a new version is out and updates itself.
+**Updates.** The desktop app tells you when a new version is out and installs it for you.
 
 </details>
-
 
 <a name="what-you-can-do"></a>
 
 ## <img src="imgs/readme/grid.svg" width="26" align="top" alt=""> What you can do
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
 ### <img src="imgs/readme/stems.svg" width="22" align="top" alt=""> Split any song
 
 - **Up to six stems** with Meta's open Demucs model: vocals, drums, bass, guitar, piano and other.
-- **Lead and backing vocals** as separate lanes, on demand.
+- **Lead and backing vocals** as separate lanes, on demand (not on Intel Macs).
 - **Files or links:** MP3, WAV, FLAC, OGG, Opus, M4A and MP4, or a YouTube or SoundCloud link.
+- **Search without leaving the app:** YouTube songs and playlists, and SoundCloud, with a preview.
 - **Pick only what you need** before you extract.
-- **Whole playlists** go into an import queue and run one after another.
-
-</td>
-<td width="50%" valign="top">
+- **Whole YouTube playlists** go into an import queue and run one after another.
 
 ### <img src="imgs/readme/sliders.svg" width="22" align="top" alt=""> Practice with it
 
@@ -158,77 +124,35 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 - **Slow it down** to half speed, or anywhere from 0.50x to 0.99x, without changing the pitch.
 - **Loop the hard part**, by dragging across the waveform.
 - **Change the key**, of the whole song or of one part.
-- **Play with a click** that follows the song, with a count-in.
-
-</td>
-</tr>
-<tr>
-<td colspan="2" align="center"><img src="imgs/screenshot/practice.png" alt="The bottom bar: play, loop, speed, global key and click track" width="100%"></td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+- **Play with a click** that follows the song, with a count-in, any beats per bar and groupings such as 3+2+2.
+- **Fix the beat grid** when the click drifts: move, add or remove beats and mark the bar lines.
 
 ### <img src="imgs/readme/gauge.svg" width="22" align="top" alt=""> Know the song
 
-- **Key, tempo, loudness and structure,** found for you.
-- **Synced lyrics** from LRCLIB, or written down from the vocals when none are found.
+- **Key, tempo and loudness,** found for you.
+- **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
+- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, StemDeck can also write them down from the vocals when none are found.
 - **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
-
-</td>
-<td width="50%" valign="top">
 
 ### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share
 
-- **Export** what you hear as one file, every part as a `.zip`, only the looped part, or a video with the original picture.
-- **Drag a stem or a loop** straight into your other music software.
-- **A library** with folders, tags, favorites and a Trash that only deletes when you empty it.
-
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="55%" valign="top">
+- **Export** what you hear as one file, every part as a `.zip`, only the looped part, or, when the song came with a video, a video with the original picture. Add the click or a count-in if you like.
+- **Drag a stem or a loop** from the desktop app straight into your other music software.
+- **A library** with colored folders, tags you can search by (`#tag`), favorites, and a Trash that only deletes when you empty it.
 
 ### <img src="imgs/readme/eye.svg" width="22" align="top" alt=""> It explains itself
 
 Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
 
-<p align="center"><img src="imgs/screenshot/guide.png" alt="Guide explaining the Dynamic Range card" width="100%"></p>
-
-</td>
-<td width="45%" valign="top">
-
 ### <img src="imgs/readme/phone.svg" width="22" align="top" alt=""> On your phone too
 
 Turn on **Make StemDeck available on your network** in Settings and scan the QR code. Your phone opens your library and mixer over your own Wi-Fi, with speed and key controls. No app store, no cloud.
-
-<p align="center"><img src="imgs/screenshot/phone.png" alt="StemDeck on a phone, with speed and key controls" width="190"></p>
-
-</td>
-</tr>
-</table>
 
 <p align="center">
   <b>Windows, Linux and macOS</b> &nbsp;·&nbsp; <b>Docker and Unraid</b> &nbsp;·&nbsp; <b>11 languages</b><br>
   <sub>English · Deutsch · Español · Français · Bahasa Indonesia · 日本語 · 한국어 · Polski · Português (Brasil) · Português (Portugal) · 简体中文</sub>
 </p>
 
-<details>
-<summary><b>Keyboard shortcuts</b></summary>
-
-<br>
-
-| Key | Does |
-|---|---|
-| `Space` | Play or pause |
-| `[` and `]` | Jump back or forward 5 seconds |
-| `L` | Loop on or off |
-| `I` and `O` | Set the loop start or end at the playhead, while looping |
-| `K` | Click track on or off |
-
-</details>
 
 
 <a name="honest-comparison"></a>
@@ -239,16 +163,16 @@ StemDeck is not trying to beat the commercial stem-separation services. It cover
 
 | | StemDeck | Moises, LALAL.AI and similar |
 |---|---|---|
-| **Price** | Free, for good | Freemium; credits or a subscription for regular use |
-| **Where it runs** | On your own machine | In the cloud; your audio is uploaded |
-| **Account** | None | Required |
-| **Internet** | Only for links and the first model download | Always |
-| **Privacy** | Your audio never leaves your machine | Processed on their servers, under their retention policy |
-| **Separation model** | Demucs `htdemucs_6s`, open source from Meta | Proprietary, updated often, generally higher quality |
-| **Stems** | 6, plus lead and backing vocals | Up to 10, depending on the service and plan |
+| **Price** | Free and open source | Usually freemium, with credits or a subscription for regular use |
+| **Where it runs** | On your own machine | Usually in the cloud, so your audio is uploaded |
+| **Account** | None | Usually required |
+| **Internet** | For links, the first model download, update checks, and song details and lyrics | Usually needed to process audio |
+| **Privacy** | Your audio is not uploaded; song names are looked up for details and lyrics | Processed on their servers, under their own retention policy |
+| **Separation model** | Demucs `htdemucs_6s`, open source from Meta | Their own models, which may give better results |
+| **Stems** | 6, plus lead and backing vocals | Varies; some offer more instruments |
 | **Speed** | Depends on your hardware: fast on a GPU, slow on a CPU | Fast on any hardware |
-| **Many songs at once** | An import queue and whole playlists, run one after another | Yes, on paid plans |
-| **Phone** | Your phone opens StemDeck over your own Wi-Fi; no app store app | iOS and Android apps |
+| **Many songs at once** | An import queue and whole playlists, run one after another | Varies by service and plan |
+| **Phone** | Your phone opens StemDeck over your own Wi-Fi; no app store app | Some offer mobile apps |
 | **Practice tools** | Speed, key change, loops, click track with count-in, synced lyrics; no chord detection | Varies by product; often chords and more |
 | **Polish** | A one-person open-source project | Polished, production-grade apps |
 | **Source code** | Open source, forkable, self-hostable | Closed |
@@ -323,7 +247,7 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 ## <img src="imgs/readme/flag.svg" width="26" align="top" alt=""> Disclaimer
 
-StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. It does not store, cache, or redistribute any audio content. All processing runs on the user's own machine and no audio is transmitted anywhere.
+StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. Audio you import, and the stems made from it, are saved only in the library folder on the machine that runs StemDeck, and StemDeck does not upload, share or redistribute them. To find song details and lyrics it sends the song's name to the services named in its Settings and, only if you add an AcoustID key, an audio fingerprint; it does not send the audio itself.
 
 YouTube and SoundCloud link support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
 
