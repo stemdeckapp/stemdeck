@@ -89,7 +89,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --shard=${{ matrix.shard }}/3
       - if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           # Per shard: a second upload under the same name fails the job.
           name: playwright-report-${{ matrix.shard }}
