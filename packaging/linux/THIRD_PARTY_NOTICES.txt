@@ -1,6 +1,11 @@
 THIRD-PARTY NOTICES
 ===================
 
+StemDeck itself is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only). The full text is in LICENSE.txt beside
+this file, and the source code is at
+https://github.com/stemdeckapp/stemdeck
+
 StemDeck includes third-party open-source software. Each component is
 copyrighted by its respective authors and distributed under its own license.
 

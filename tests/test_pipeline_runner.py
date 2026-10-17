@@ -686,3 +686,29 @@ def test_section_flag_is_captured_at_submit_not_at_the_sections_stage(tmp_path: 
 
     detect.assert_called_once()
     assert job.sections == suggested
+
+
+@pytest.mark.parametrize(
+    ("auto_lyrics", "looks"),
+    [(False, False), (True, True), (None, True)],
+)
+def test_lyrics_stages_run_only_when_detect_lyrics_was_on(tmp_path: Path, auto_lyrics, looks):
+    """Detect lyrics off must stop every lyrics stage, not hide their result:
+    no LRCLIB lookup, no transcript, no retime. A job made before the setting
+    existed (None) looks for lyrics as it always did."""
+    from app.pipeline import runner
+
+    job = Job(id="abcdefabc120", duration_sec=60.0, auto_lyrics=auto_lyrics)
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    with (
+        patch.object(runner.IdentifyLookup, "start", return_value=None),
+        patch.object(runner.LyricsLookup, "start") as lookup,
+        patch.object(runner, "_run_common"),
+        patch.object(runner, "transcribe_lyrics") as transcribe,
+        patch.object(runner, "retime_after_separation") as retime,
+    ):
+        runner._run_with_band_lookup(job, job_dir / "source.wav", job_dir)
+    assert lookup.called is looks
+    assert transcribe.called is looks
+    assert retime.called is looks

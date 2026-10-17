@@ -1,3 +1,5 @@
+// The studio mode first: it sets the class the DAW controls are hidden by.
+import "./mode.js";
 import {
   playBtn, loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
@@ -22,6 +24,14 @@ import { initFooterFit, refitFooter } from "./footerFit.js";
 import { initArtistInfo } from "./artistInfo.js";
 import { initLyrics } from "./lyrics.js";
 import { initHelpMode } from "./helpMode.js";
+import { initVideoTake } from "./video/videoTake.js";
+import { initMasterPanel } from "./masterPanel.js";
+import { initModeUi } from "./modeUi.js";
+import { initKaraoke } from "./karaoke/karaoke.js";
+import { initStreamer } from "./streamer/streamer.js";
+import { initMixMode } from "./mixMode.js";
+import { initModeStems } from "./modeStems.js";
+import { initStemsControl } from "./stemsControl.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -156,6 +166,39 @@ function wireAutoSectionsToggle() {
       return forceOff();
     })
     .catch((e) => console.warn("[structure] could not read the setting:", e));
+}
+
+// Detect lyrics: whether the next imports look for lyrics (LRCLIB, then a
+// transcript of the vocals). Off by default. Unlike Detect structure it is a
+// standing choice, kept on the server until changed, so the button shows the
+// server's answer at startup and writes back on click.
+function wireAutoLyricsToggle() {
+  const btn = document.getElementById("autoLyricsBtn");
+  if (!btn) return;
+  const paint = (on) => btn.setAttribute("aria-pressed", String(!!on));
+  btn.addEventListener("click", async () => {
+    const next = btn.getAttribute("aria-pressed") !== "true";
+    paint(next);
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_lyrics: next }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      paint((await r.json()).auto_lyrics);
+    } catch (e) {
+      console.warn("[lyrics] could not save the setting:", e);
+      paint(!next); // the server did not take it, so do not claim it did
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  fetch("/api/settings", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => { if (d) paint(d.auto_lyrics); })
+    .catch((e) => console.warn("[lyrics] could not read the setting:", e));
 }
 
 function handleStemChoiceClick(stem) {
@@ -452,12 +495,23 @@ wireAllButton();
 wireVocalModeToggle();
 wireStemChipsPopover();
 wireAutoSectionsToggle();
+wireAutoLyricsToggle();
 wireFileDrop();
 wireAppShellControls();
 initFooterFit();
 initArtistInfo();
 initLyrics();
 initHelpMode();
+// Camera in the record flow and "Make video" (static/js/video/). Async only to
+// load the capture modules; a failure there must not stop the studio.
+initVideoTake().catch((err) => console.warn("[video] init failed:", err));
+initMasterPanel();
+initModeUi();
+initMixMode();
+initModeStems();
+initStemsControl();
+initKaraoke();
+initStreamer();
 // Re-measure after a language switch. Measured across en/fr/de/pl the strip
 // came out the same width in all four, because the group labels are 10px
 // uppercase and narrower than the controls under them, so this is not the

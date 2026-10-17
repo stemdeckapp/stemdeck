@@ -1,0 +1,813 @@
+/* EQ tab on each lane and the EQ panel row it opens (static/js/eq/).
+   Colours and sizes are tokens from variables.css. */
+
+/* ── The tab, in a lane's header (the mixer column) ──
+   At the start of the fader's line, in the slot mixer.js leaves for it
+   (daw.css .mx-eq-slot): the M/S buttons' height, corner and mono face. */
+
+.eq-tab {
+  height: var(--eq-tab-h);
+  width: 100%;
+  padding: 0 6px 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--eq-tab-radius);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--mx-ctl-font);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.eq-tab:hover { color: var(--fg); border-color: var(--muted-2); }
+/* A small chevron: down when closed, up when the panel is open. */
+.eq-tab::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--t-fast);
+  opacity: 0.8;
+}
+.eq-tab.open::after { transform: translateY(2px) rotate(-135deg); }
+.eq-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.eq-tab.open {
+  color: var(--accent);
+  border-color: var(--gold-line);
+  background: color-mix(in srgb, var(--bg-2) 80%, var(--accent));
+}
+
+/* "EQ on": a gold dot when the EQ changes the sound, a hollow one when it is
+   set but bypassed, nothing when it is flat. */
+.eq-tab-dot {
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  flex-shrink: 0;
+}
+.eq-tab.active .eq-tab-dot {
+  background: var(--accent);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.eq-tab.bypassed:not(.active) .eq-tab-dot { border-color: var(--muted); }
+
+/* ── The panel row, waveform side ── */
+
+.stem-waveform-row.eq-panel-lane {
+  background: var(--eq-panel-bg);
+  border-bottom: 2px solid var(--border);
+  box-sizing: border-box;
+  min-height: 0;
+}
+
+/* Spans the visible waveform area at any zoom: sticky to the scroller's
+   left edge, as wide as the scroller's viewport (--eq-view-w, eqRows.js). */
+.eq-panel-body {
+  position: sticky;
+  /* Above the lanes' playhead line (waves.css), which stops at the panel:
+     opaque, so the line does not show through. */
+  z-index: 2;
+  background: var(--eq-panel-bg);
+  left: 0;
+  width: var(--eq-view-w, 100%);
+  max-width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  pointer-events: auto;
+  overflow: hidden;
+  box-shadow: inset 3px 0 0 var(--stem-color, var(--accent));
+}
+
+/* ── The panel row, mixer side ── */
+
+.lane-header.mx-row.eq-panel-row {
+  align-items: stretch;
+  padding: 8px 10px 8px 12px;
+  background: var(--eq-panel-bg);
+  max-height: none;
+}
+.lane-header.mx-row.eq-panel-row::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--stem-color, var(--accent));
+  opacity: 0.8;
+}
+
+.eq-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.eq-side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.eq-side-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.eq-side-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.eq-side-lane {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eq-side-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+  flex: 1;
+}
+
+/* Small buttons of the panel, in the M/S family. */
+.eq-btn,
+.eq-power {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.eq-btn:hover:not(:disabled),
+.eq-power:hover { color: var(--fg); border-color: var(--muted-2); }
+.eq-btn:disabled { opacity: 0.4; cursor: default; }
+.eq-btn:focus-visible,
+.eq-power:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.eq-btn[aria-pressed="true"] {
+  background: var(--gold-soft);
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+
+/* On: gold, like an engaged S. Bypassed: muted, struck through by its label. */
+.eq-power { min-width: 64px; }
+.eq-power.on {
+  background: var(--gold-soft);
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+.eq-power::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+}
+.eq-power.on::before { background: currentColor; }
+
+/* ── Mixer side: toolbar, presets, output, analyser ── */
+
+.eq-toolbar {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.eq-toolbar .eq-undo,
+.eq-toolbar .eq-redo,
+.eq-toolbar .eq-ab { width: 26px; padding: 0; font-size: 12px; }
+.eq-toolbar .eq-reset { margin-left: auto; }
+
+.eq-preset {
+  height: 22px;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  padding: 0 6px;
+}
+.eq-preset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.eq-out,
+.eq-analyzer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.eq-out-name,
+.eq-analyzer-name {
+  width: 52px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.eq-out-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 14px;
+}
+.eq-out-val {
+  width: 56px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.eq-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.eq-seg-btn {
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.eq-seg-btn:last-child { border-right: 0; }
+.eq-seg-btn:hover { color: var(--fg); }
+.eq-seg-btn[aria-pressed="true"] { background: var(--gold-soft); color: var(--accent); }
+.eq-seg-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+.eq-note {
+  margin: auto 0 0;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--muted);
+  padding-left: 16px;
+  position: relative;
+}
+.eq-note::before {
+  content: "i";
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--muted-2);
+  font-size: 8px;
+  line-height: 11px;
+  text-align: center;
+  font-style: italic;
+  font-weight: 700;
+}
+
+/* ── Waveform side: the graphical editor ── */
+
+.eq-graph-panel {
+  display: flex;
+  height: 100%;
+  gap: 0;
+}
+.eq-graph-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin: 8px 0 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--eq-graph-bg);
+  overflow: hidden;
+}
+.eq-spectrum-canvas,
+.eq-curve-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.eq-curve-canvas { touch-action: none; }
+
+.eq-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.eq-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+.eq-handle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.eq-readout {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.eq-graph-hint {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  font-size: 10px;
+  color: var(--eq-label);
+  pointer-events: none;
+  max-width: calc(100% - 50px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eq-graph-hint.flash { color: var(--accent); }
+
+.eq-popover {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 128px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-panel);
+}
+.eq-pop-item {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.eq-pop-item:hover,
+.eq-pop-item:focus-visible { background: var(--panel-3); color: var(--fg); outline: none; }
+.eq-pop-item[aria-checked="true"] { color: var(--accent); }
+.eq-pop-on { border-top: 1px solid var(--border); border-radius: 0; margin-top: 3px; }
+.eq-pop-del { color: var(--danger); }
+.eq-pop-slopes {
+  display: flex;
+  gap: 3px;
+  padding: 3px 4px;
+}
+.eq-pop-slope {
+  flex: 1;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.eq-pop-slope[aria-checked="true"] { color: var(--accent); border-color: var(--gold-line); background: var(--gold-soft); }
+
+/* The band list, beside the graph. */
+.eq-band-list {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 8px 10px 8px 8px;
+  min-height: 0;
+}
+.eq-band-head,
+.eq-band-row {
+  display: grid;
+  grid-template-columns: 16px 16px minmax(0, 1fr) 62px 54px 40px 20px 18px;
+  align-items: center;
+  gap: 4px;
+}
+.eq-band-head {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-2);
+  font-weight: 600;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.eq-band-head .eq-band-add {
+  grid-column: 7 / span 2;
+  height: 18px;
+  padding: 0;
+  font-size: 13px;
+}
+.eq-band-rows {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding-top: 3px;
+}
+.eq-band-row {
+  padding: 2px;
+  border-radius: 4px;
+}
+.eq-band-row.selected { background: var(--panel-2); }
+.eq-band-row.off { opacity: 0.55; }
+.eq-band-num {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--band-color);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.eq-band-on { margin: 0; accent-color: var(--accent); }
+.eq-band-type,
+.eq-num {
+  height: 20px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 10px;
+  padding: 0 4px;
+}
+.eq-num {
+  font-family: var(--font-mono);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.eq-num:disabled { opacity: 0.3; }
+.eq-band-type:focus-visible,
+.eq-num:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.eq-band-solo,
+.eq-band-del {
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.eq-band-solo[aria-pressed="true"] { background: var(--gold-soft); color: var(--accent); border-color: var(--gold-line); }
+.eq-band-del { border-color: transparent; font-size: 13px; }
+.eq-band-solo:hover,
+.eq-band-del:hover { color: var(--fg); }
+.eq-band-solo:focus-visible,
+.eq-band-del:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.eq-band-empty {
+  margin: 10px 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Pedal and keys panels: a faceplate of knobs and a small curve ── */
+
+.eq-pedal-panel {
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  padding: 8px 12px 8px 10px;
+  box-sizing: border-box;
+}
+.eq-plate {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border: 1px solid var(--eq-plate-edge);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--eq-plate) 100%, var(--fg) 3%), var(--eq-plate));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 10px rgba(0, 0, 0, 0.35);
+  padding: 6px 12px 8px;
+  min-height: 0;
+}
+.eq-plate-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--eq-plate-edge);
+  margin-bottom: 6px;
+}
+.eq-plate-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--stem-color, var(--accent));
+}
+/* The pedal's "on" light: lit while the EQ is not bypassed. */
+.eq-plate-led {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.eq-plate-led.on {
+  background: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.eq-plate-body {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+.eq-plate-sec {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-right: 1px solid color-mix(in srgb, var(--eq-plate-edge) 70%, transparent);
+}
+.eq-plate-sec:last-child { border-right: 0; }
+.eq-plate-sec-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+.eq-plate-knobs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.eq-plate-sec.grid .eq-plate-knobs {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px 10px;
+}
+.eq-pedal-keys .eq-plate-knobs { flex-direction: row; align-items: flex-end; gap: 8px; }
+
+.eq-knob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 52px;
+}
+.eq-knob-dial {
+  border-radius: 50%;
+  cursor: ns-resize;
+  touch-action: none;
+  line-height: 0;
+}
+.eq-knob-dial:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.eq-knob-track { fill: none; stroke: var(--eq-knob); stroke-width: 3; stroke-linecap: round; }
+.eq-knob-fill { fill: none; stroke: var(--stem-color, var(--accent)); stroke-width: 3; stroke-linecap: round; }
+.eq-knob-cap {
+  fill: var(--eq-knob-cap);
+  stroke: rgba(0, 0, 0, 0.45);
+  stroke-width: 1;
+}
+.eq-knob-pointer { stroke: var(--fg); stroke-width: 2; stroke-linecap: round; }
+.eq-knob.turning .eq-knob-cap,
+.eq-knob-dial:hover .eq-knob-cap { fill: color-mix(in srgb, var(--eq-knob-cap) 85%, var(--fg)); }
+.eq-knob.is-off .eq-knob-pointer { stroke: var(--muted); }
+.eq-knob.no-name .eq-knob-name { display: none; }
+.eq-knob-name {
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.eq-knob-val {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.eq-knob.is-off .eq-knob-val { color: var(--muted-2); }
+
+.eq-pedal-curve {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+.eq-mini-curve { width: 100%; height: 100%; display: block; }
+
+/* ── Suggest: the button and the card ── */
+
+.eq-toolbar .eq-suggest-btn[aria-pressed="true"] {
+  background: var(--gold-soft);
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+
+/* The card takes the band list's place (graphical panels) or sits right of
+   the small curve (pedal and keys panels); the row keeps its height. */
+.eq-graph-panel.is-suggesting .eq-band-list { display: none; }
+.eq-suggest-card {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 10px 8px 8px;
+  min-height: 0;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.eq-suggest-card[hidden] { display: none; }
+.master-eq-body .eq-suggest-card { width: 300px; }
+.eq-pedal-panel .eq-suggest-card {
+  width: 300px;
+  flex-shrink: 1;
+  min-width: 220px;
+  margin: 0;
+}
+.eq-suggest-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.eq-suggest-title {
+  margin: 0;
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--eq-ghost);
+}
+.eq-suggest-close { width: 20px; padding: 0; font-size: 13px; }
+.eq-suggest-pick,
+.eq-suggest-listen {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.eq-suggest-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.eq-suggest-label-text {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.eq-suggest-target { flex: 1; min-width: 0; width: auto; }
+.eq-suggest-status {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg);
+}
+.eq-suggest-card.is-loading .eq-suggest-status { color: var(--muted); }
+.eq-suggest-preset {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.eq-suggest-preset[hidden] { display: none; }
+.eq-suggest-why {
+  margin: 0;
+  padding: 0 0 0 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  line-height: 1.35;
+  color: var(--fg-2);
+}
+.eq-suggest-why li { margin: 0 0 2px; }
+.eq-suggest-taste {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.eq-suggest-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.eq-suggest-apply {
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+.eq-suggest-apply:hover:not(:disabled) { background: var(--gold-soft); color: var(--accent); }
+
+/* ── Voice placeholder ── */
+
+.eq-voice-panel {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 100%;
+  padding: 10px 24px;
+  box-sizing: border-box;
+  color: var(--stem-color, var(--accent));
+}
+.eq-voice-art {
+  width: 180px;
+  height: 100px;
+  flex-shrink: 0;
+}
+.eq-voice-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.eq-voice-sub {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 46ch;
+  line-height: 1.4;
+}
+.eq-voice-side {
+  margin: 0;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* A lane's graphical panel reads like the knob panels: the controls (the
+   band list, or the Suggest card in its place) on the left, the graph on the
+   right. The master's panel keeps the list on the right. */
+.eq-panel-lane .eq-graph-panel .eq-band-list,
+.eq-panel-lane .eq-graph-panel .eq-suggest-card {
+  order: -1;
+  margin: 8px 0 8px 10px;
+}
+/* The band list in the knob panels' faceplate box, so the two panels match. */
+.eq-panel-lane .eq-graph-panel .eq-band-list {
+  border: 1px solid var(--eq-plate-edge);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--eq-plate) 100%, var(--fg) 3%), var(--eq-plate));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 10px rgba(0, 0, 0, 0.35);
+  padding: 6px 10px 8px;
+  box-sizing: border-box;
+}
+.eq-panel-lane .eq-graph-panel .eq-graph-wrap { margin: 8px 12px 8px 12px; }

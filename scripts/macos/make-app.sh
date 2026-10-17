@@ -69,6 +69,8 @@ fi
 if [[ -f "$REPO_ROOT/packaging/macos/THIRD_PARTY_NOTICES.txt" ]]; then
   cp "$REPO_ROOT/packaging/macos/THIRD_PARTY_NOTICES.txt" "$RESOURCES/THIRD_PARTY_NOTICES.txt"
 fi
+# The AGPL asks for a copy of the license with every copy of the program.
+cp "$REPO_ROOT/LICENSE" "$RESOURCES/LICENSE.txt"
 
 echo "$APP_DIR" > "$BUILD_DIR/app-path-${ARCH}.txt"
 echo "==> App ready: $APP_DIR"

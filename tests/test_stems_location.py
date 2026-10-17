@@ -527,3 +527,226 @@ def test_a_refused_move_reopens_the_door(client, tmp_path):
 
     assert r.status_code == 409
     assert stems_location.is_relocating() is False, "imports would be blocked forever"
+
+
+# ── a move that fails partway, and the targets that must be refused ──────────
+
+
+def _fail_on(monkeypatch, entry_name: str) -> dict[str, bool]:
+    """shutil.move as the stems move calls it, failing for one entry the way a
+    full disk or a file held open by another program does, while the returned
+    switch's "fail" is on."""
+    import shutil
+
+    from app.core import stems_location
+
+    real = shutil.move
+    switch = {"fail": True}
+
+    def flaky(src, dst):
+        if switch["fail"] and Path(src).name == entry_name:
+            raise OSError(28, "No space left on device")
+        return real(src, dst)
+
+    monkeypatch.setattr(stems_location.shutil, "move", flaky)
+    return switch
+
+
+def test_a_half_failed_move_names_the_entry_and_keeps_the_setting(client, tmp_path, monkeypatch):
+    """The second of two songs cannot be moved. The first is already in the new
+    folder and stays there (no rollback of a multi-gigabyte copy); the setting
+    is not written, so this process keeps reading the old folder, and the app
+    stays usable rather than waiting for a restart that would change nothing."""
+    import app.core.settings as settings_mod
+    from app.core import stems_location
+
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    _job_dir(client.jobs_dir, "bbbbbbbbbbbb")
+    target = tmp_path / "elsewhere"
+    _fail_on(monkeypatch, "bbbbbbbbbbbb")
+
+    r = client.post("/api/settings/stems-location", json={"path": str(target)})
+
+    assert r.status_code == 500
+    detail = r.json()["detail"]
+    assert "bbbbbbbbbbbb" in detail and "already moved is in the new folder" in detail
+    assert str(tmp_path) not in detail, "no paths in errors"
+    assert (target / "aaaaaaaaaaaa").is_dir()
+    assert (client.jobs_dir / "bbbbbbbbbbbb").is_dir(), "the failed entry is not lost"
+    assert settings_mod.get_jobs_dir() is None
+    assert stems_location.is_relocating() is False
+
+
+def test_a_half_failed_move_can_be_finished_by_trying_again(client, tmp_path, monkeypatch):
+    """The target now holds one of our songs, which validation accepts as a
+    folder StemDeck already uses; the retry moves the rest and writes the
+    setting."""
+    import app.core.settings as settings_mod
+
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    _job_dir(client.jobs_dir, "bbbbbbbbbbbb")
+    target = tmp_path / "elsewhere"
+    disk = _fail_on(monkeypatch, "bbbbbbbbbbbb")
+    assert (
+        client.post("/api/settings/stems-location", json={"path": str(target)}).status_code == 500
+    )
+    disk["fail"] = False  # the disk has room again
+
+    r = client.post("/api/settings/stems-location", json={"path": str(target)})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["moved_entries"] == 1
+    assert (target / "aaaaaaaaaaaa").is_dir() and (target / "bbbbbbbbbbbb").is_dir()
+    assert settings_mod.get_jobs_dir() == str(target.resolve())
+
+
+def test_an_unexpected_error_while_moving_is_a_500_that_reopens_the_door(
+    client, tmp_path, monkeypatch
+):
+    import app.core.settings as settings_mod
+    import app.main as main_mod
+    from app.core import stems_location
+
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+
+    def boom(_current, _target):
+        raise RuntimeError("C:\\secret\\path exploded")
+
+    monkeypatch.setattr(main_mod, "move_library", boom)
+
+    r = client.post("/api/settings/stems-location", json={"path": str(tmp_path / "elsewhere")})
+
+    assert r.status_code == 500
+    assert r.json()["detail"] == "Could not move the stems folder"
+    assert stems_location.is_relocating() is False
+    assert settings_mod.get_jobs_dir() is None
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="known gap, decision pending: move_library skips our registry.json when the "
+    "target has one, so moving into another StemDeck library drops our job records",
+)
+def test_moving_into_another_stemdeck_library_keeps_both_registries_records(tmp_path):
+    """Validation accepts a folder StemDeck already uses. When that folder has
+    its own registry.json, the move skips ours as "already at the target", and
+    our favourites, Trash and delete records stay behind in the old folder."""
+    import json
+
+    from app.core import registry as _registry
+    from app.core.registry import _jobs as jobs
+
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    mine = Job(id="aaaaaaaaaaaa", status="done", title="Mine", favorite=True)
+    (current / "registry.json").write_text(
+        json.dumps({"version": 1, "jobs": [mine.to_record()]}), encoding="utf-8"
+    )
+    target = tmp_path / "other-library"
+    _job_dir(target, "cccccccccccc")
+    theirs = Job(id="cccccccccccc", status="done", title="Theirs")
+    (target / "registry.json").write_text(
+        json.dumps({"version": 1, "jobs": [theirs.to_record()]}), encoding="utf-8"
+    )
+
+    validate_target(target, current)
+    move_library(current, target)
+    jobs.clear()
+    _registry.restore(target)
+
+    restored = _registry.get("aaaaaaaaaaaa")
+    assert restored is not None
+    assert restored.favorite is True, "our favourite was left behind in the old registry"
+
+
+def test_a_destination_inside_the_library_is_refused_and_nothing_moves(client):
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    inside = client.jobs_dir / "aaaaaaaaaaaa" / "deeper"
+
+    r = client.post("/api/settings/stems-location", json={"path": str(inside)})
+
+    assert r.status_code == 422
+    assert "outside the current stems folder" in r.json()["detail"]
+    assert (client.jobs_dir / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
+    assert not inside.exists()
+
+
+def test_a_folder_with_our_registry_and_someone_elses_file_is_refused(client, tmp_path):
+    """One stranger among our own entries is enough: the folder is not ours."""
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    mixed = tmp_path / "mixed"
+    _job_dir(mixed, "cccccccccccc")
+    (mixed / "registry.json").write_text('{"jobs": []}', encoding="utf-8")
+    (mixed / "tax-return.pdf").write_bytes(b"%PDF")
+
+    r = client.post("/api/settings/stems-location", json={"path": str(mixed)})
+
+    assert r.status_code == 422
+    assert (client.jobs_dir / "aaaaaaaaaaaa").is_dir()
+    assert not (mixed / "aaaaaaaaaaaa").exists()
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[]", b'{"path": 5}'])
+def test_a_body_without_a_path_string_is_a_422(client, body):
+    r = client.post(
+        "/api/settings/stems-location",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code == 422
+
+
+def test_a_blank_path_is_refused_with_its_own_message(client):
+    r = client.post("/api/settings/stems-location", json={"path": "   "})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Pick a folder to store stems in."
+
+
+def test_a_folder_that_cannot_be_created_is_refused(tmp_path, monkeypatch):
+    current = tmp_path / "old"
+    current.mkdir()
+
+    def denied(self, *a, **k):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(Path, "mkdir", denied)
+    with pytest.raises(StemsLocationError, match="Cannot create that folder: Access is denied"):
+        validate_target(tmp_path / "locked" / "stems", current)
+
+
+def test_a_folder_that_is_not_writable_is_refused(tmp_path, monkeypatch):
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    current.mkdir()
+    target = tmp_path / "read-only"
+    target.mkdir()
+    monkeypatch.setattr(stems_location.os, "access", lambda _p, _mode: False)
+    with pytest.raises(StemsLocationError, match="not writable"):
+        validate_target(target, current)
+
+
+def test_directory_size_skips_a_file_it_cannot_stat(tmp_path, monkeypatch):
+    _job_dir(tmp_path, "aaaaaaaaaaaa", size=100)
+    _job_dir(tmp_path, "bbbbbbbbbbbb", size=50)
+    real_stat = Path.stat
+
+    def stat(self, *a, **k):
+        if self.parent.parent.name == "bbbbbbbbbbbb" and self.name == "vocals.wav":
+            raise PermissionError(13, "locked")
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert directory_size(tmp_path) == 100
+
+
+def test_same_filesystem_assumes_the_slow_case_when_it_cannot_tell(tmp_path, monkeypatch):
+    from app.core import stems_location
+
+    assert stems_location._same_filesystem(tmp_path, tmp_path / "new") is True
+
+    def broken(self, *a, **k):
+        raise OSError("gone")
+
+    monkeypatch.setattr(Path, "stat", broken)
+    assert stems_location._same_filesystem(tmp_path, tmp_path / "new") is False

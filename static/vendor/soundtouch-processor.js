@@ -715,9 +715,16 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this._bypassing = true;
     this._lastTempo = 1;
     this._resetRequested = false;
+    // Set by the engine's teardown (tempoStage.js disposeStretchNode). Chromium
+    // keeps a node whose processor is still active alive, and the node keeps
+    // its context: closed contexts piled up, one per song load, until the page
+    // went away. A processor that has returned false is inactive, so both can go.
+    this._disposed = false;
     if (this.port) {
       this.port.onmessage = (event) => {
-        if (event?.data?.type === 'reset') this._resetRequested = true;
+        const type = event?.data?.type;
+        if (type === 'reset') this._resetRequested = true;
+        else if (type === 'dispose') this._disposed = true;
       };
     }
     this._primeUnpitched();
@@ -780,6 +787,14 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs, parameters) {
+    if (this._disposed) {
+      // Once, then never called again: the output stays silent.
+      if (this.port && !this._disposedSent) {
+        this._disposedSent = true;
+        this.port.postMessage({ type: 'disposed' });
+      }
+      return false;
+    }
     const frames = 128;
     const tempo = parameters.tempo[0];
     const tempoActive = Math.abs(tempo - 1) >= EPS;

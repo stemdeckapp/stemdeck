@@ -282,13 +282,21 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     failure raises out of _run_common, past finish(), and nothing is written.
     """
     lookup = IdentifyLookup.start(job, [source])
+    # Lyrics only when Detect lyrics was on for this job (False skips all
+    # three stages below; None, a job from before the setting, looks as it
+    # always did).
+    want_lyrics = job.auto_lyrics is not False
     # The lyrics, on the same terms: LRCLIB beside separation, lyrics.json
     # written only by a pipeline that got to the end. Looked up by the
     # identity once the identification has it, else by the tags.
-    lyrics = LyricsLookup.start(
-        job,
-        job_dir,
-        identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+    lyrics = (
+        LyricsLookup.start(
+            job,
+            job_dir,
+            identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+        )
+        if want_lyrics
+        else None
     )
     _run_common(job, source, job_dir)
     if lookup is not None:
@@ -300,6 +308,8 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
         mark = time.monotonic()
         lyrics.finish(job, job_dir, LYRICS_LOOKUP_GRACE_SEC)
         _lap(job, "lyrics_wait", mark)
+    if not want_lyrics:
+        return
     # Lyrics from the vocals stem, only when the lookup found none: last,
     # because it needs both the stem and the lookup's answer. Never raises
     # but for a cancel.
@@ -346,6 +356,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "lufs": job.lufs,
         "peak_db": job.peak_db,
         "dynamic_range": job.dynamic_range,
+        "loudness_version": job.loudness_version,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "sections": job.sections,

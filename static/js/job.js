@@ -6,9 +6,13 @@ import {
   selectedStems, vocalSplitMode,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
+import { prepareLayout, extractIntoOpenSong } from "./modeStems.js";
+import { stemsReasonKey } from "./partChoice.js";
+import { getMode } from "./mode.js";
+import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen } from "./catalog.js";
+import { getCurrentTrackInfo, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen } from "./catalog.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
@@ -373,6 +377,14 @@ function applyStudioSummary(state) {
 // stems (the vocals lane), same as if the user had never asked for a split.
 async function finishDoneJob(state) {
   const finalState = await runVocalSplitIfWanted(state);
+  // The open mode's lanes for the new song: its own selection unless a mode
+  // already chose (modeStems.js), never the Extract chips as they are now.
+  await prepareLayout(
+    finalState.job_id,
+    finalState.selected_stems || [],
+    (finalState.stems || []).filter((s) => s?.url).map((s) => s.name),
+    finalState.vocal_split || "none",
+  );
   wireUpAudio(
     finalState.job_id,
     finalState.stems || [],
@@ -757,6 +769,29 @@ export function wireJobForm() {
     // Prefer _file cache: browsers (WKWebView, Chromium) silently clear
     // fileInput.files after a fetch() submission, breaking re-submits.
     const file = fileInput?._file ?? fileInput?.files?.[0] ?? null;
+
+    // The open song is already separated and the button is aimed at it (its
+    // own link in the box, or the upload it re-splits): different chips change
+    // the open mode's lanes and nothing is separated again (modeStems.js). The
+    // same chips as on screen still separate again, as they always did.
+    const open = getCurrentTrackInfo();
+    const typed = urlInput.value.trim();
+    const aimedAtOpen = !file && open?.status === "done"
+      && (typed ? typed === open.sourceUrl : submitBtn.dataset.resplitJob === open.id);
+    if (aimedAtOpen) {
+      const res = await extractIntoOpenSong(
+        [...selectedStems],
+        selectedStems.has("vocals") && vocalSplitMode === "split" ? "split" : "combined",
+        getMode(),
+      );
+      if (res.handled) {
+        setSubmitProcessing(false);
+        // Success is said only for a change that was made (#793).
+        const refused = stemsReasonKey(res.reason);
+        showTrackNote(refused ? t(refused) : t("stems.extractApplied", { mode: t(`mode.${res.mode}`) }));
+        return;
+      }
+    }
 
     // A playlist is its own flow: expand, confirm the count, then queue every
     // track into a folder named after it. Nothing takes the studio.

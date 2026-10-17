@@ -21,6 +21,7 @@
 #     cpu-only                 # marker read by is_cpu_only_package
 #     README-LINUX.txt
 #     THIRD_PARTY_NOTICES.txt
+#     LICENSE.txt              # StemDeck's own license (AGPL-3.0-only)
 #     backend/{app,static,pyproject.toml,uv.lock}
 #     python/{bin/python,lib/pythonX.Y/...}   # full PBS install
 
@@ -180,6 +181,8 @@ printf '{ "version": "%s" }\n' "$RESOLVED_VERSION" > "$BACKEND_DIR/static/versio
 
 cp "$REPO_ROOT/packaging/linux/README-LINUX.txt" "$STAGE/README-LINUX.txt"
 cp "$REPO_ROOT/packaging/linux/THIRD_PARTY_NOTICES.txt" "$STAGE/THIRD_PARTY_NOTICES.txt"
+# The AGPL asks for a copy of the license with every copy of the program.
+cp "$REPO_ROOT/LICENSE" "$STAGE/LICENSE.txt"
 
 # Desktop-entry assets for the optional installer (#360). Carried inside the
 # package so the installer needs no second download and no asset URL that could

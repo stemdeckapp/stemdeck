@@ -310,15 +310,6 @@ input, textarea { font-family: inherit; }
   line-height: 1.15;
 }
 .structure-toggle-main { display: inline-flex; align-items: center; gap: 6px; }
-/* Says what the feature is, quietly and where the choice is actually made,
-   rather than as a badge on the results after the fact. */
-.structure-toggle-note {
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.62;
-}
 
 /* "All" toggle */
 .stem-choice-all {
@@ -907,13 +898,13 @@ input, textarea { font-family: inherit; }
 .queue-row:hover .queue-top { opacity: 0.65; }
 .queue-top:hover { background: rgba(232, 168, 56, 0.16); color: var(--accent); opacity: 1; }
 .queue-top:disabled { opacity: 0.3; cursor: default; }
-/* A row's actions float over its right edge and show on hover or keyboard
-   focus (#724). In the flow they cost the title their width on every row at
-   rest, which is where titles were being cut short, and a second button in
-   the flow would have cost it again. The fade lets a long title run under
-   them instead of stopping at a hard edge. */
+/* A row's actions float over its bottom-right corner and show on hover or
+   keyboard focus (#724). In the flow they cost the title their width on every
+   row at rest, which is where titles were being cut short. In the corner they
+   sit beside the second line (the duration, short) rather than over the
+   title, and the fade lets a long line run under them. */
 .cat-actions {
-  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  position: absolute; bottom: 4px; right: 6px;
   display: flex; gap: 2px; padding-left: 16px;
   background: linear-gradient(to right, transparent, var(--panel-2) 14px);
   opacity: 0; pointer-events: none;
@@ -921,17 +912,16 @@ input, textarea { font-family: inherit; }
 }
 .cat-item:hover .cat-actions,
 .cat-item:focus-within .cat-actions { opacity: 1; pointer-events: auto; }
-.cat-del, .cat-fav {
+.cat-del {
   width: 20px; height: 20px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   padding: 0; flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast);
 }
 .cat-del:hover { background: rgba(21,31,39,0.8); color: var(--danger); }
-.cat-fav:hover { background: rgba(21,31,39,0.8); color: var(--fg); }
-.cat-fav.active, .cat-fav.active:hover { color: #e54e4e; }
 /* A stopped song (#748) offers Extract at rest: it is the row's only way on. */
-.cat-item.is-stopped .cat-actions { opacity: 1; pointer-events: auto; }
+.cat-item.is-stopped .cat-actions,
+.cat-item.can-retry .cat-actions { opacity: 1; pointer-events: auto; }
 
 /* Trash rows look like library rows. On hover the second line becomes the
    hint, and a hold fills the row from the left over --hold-ms (set from
@@ -1056,169 +1046,11 @@ input, textarea { font-family: inherit; }
 .folder-editor-colors { display: flex; align-items: center; gap: 9px; }
 .folder-editor-colors .folder-color-dot { width: 22px; height: 22px; }
 .folder-editor-msg { color: var(--danger); font-size: 11px; margin-top: 8px; }
-/* The separation engine cannot load at all (#730). */
-.set-demucs-desc.is-broken { color: var(--danger); }
 .folder-editor-msg:empty { display: none; }
 .folder-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .folder-editor-actions button { min-height: 30px; border-radius: 7px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; padding: 0 11px; }
 .folder-editor-cancel { border: 1px solid var(--border); background: rgba(21,31,39,0.52); color: var(--muted); }
 .folder-editor-save { border: 1px solid rgba(244,183,64,0.3); background: rgba(244,183,64,0.16); color: var(--accent); }
-
-/* Edit Library modal (Settings → opens this centered window) */
-.library-editor-backdrop {
-  position: fixed; inset: 0; z-index: 80;
-  display: grid; place-items: center;
-  background: rgba(3,8,13,0.42); backdrop-filter: blur(2px);
-}
-.library-editor {
-  width: min(560px, calc(100vw - 32px));
-  /* Fixed height (not max-height) so the dialog stays one size across all tabs
-     -- each pane fills it via flex:1, so switching tabs never resizes it. */
-  height: min(70vh, 540px);
-  display: flex; flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(28,39,48,0.98), rgba(13,21,29,0.98));
-  box-shadow: var(--shadow-panel);
-  padding: 12px; color: var(--fg); font-family: var(--font-mono);
-}
-.library-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
-.library-editor-close { width: 24px; height: 24px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; }
-.library-editor-close:hover { background: rgba(21,31,39,0.8); color: var(--fg); }
-.library-editor-table-wrap { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 7px; background: rgba(10,17,24,0.5); }
-.library-editor-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-.library-editor-table thead th {
-  position: sticky; top: 0;
-  text-align: left; font-weight: 600; font-size: 10px;
-  text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); background: rgba(13,21,29,0.96);
-  padding: 8px 10px; border-bottom: 1px solid var(--border);
-}
-.library-editor-table tbody td { padding: 7px 10px; border-bottom: 1px solid rgba(148,163,184,0.07); color: var(--fg-2); vertical-align: middle; }
-.library-editor-table tbody tr:last-child td { border-bottom: none; }
-.library-editor-table .le-name { color: var(--fg); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.library-editor-table .le-loc { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.library-editor-table tr.unavailable .le-name { color: var(--danger); }
-.le-badge { margin-left: 7px; padding: 1px 6px; border-radius: 5px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(214,90,74,0.16); color: var(--danger); }
-.library-editor-empty { color: var(--muted); text-align: center; padding: 22px 10px !important; }
-/* Settings → tabs */
-.settings-tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
-.settings-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 5px 12px 9px; cursor: pointer; margin-bottom: -1px; }
-.settings-tab:hover { color: var(--fg-2); }
-.settings-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
-/* Every pane fills the fixed dialog body so all tabs are the same size, and
-   every pane scrolls inside it.
-   Only General used to scroll, which was a bet that no other tab would ever
-   grow past the dialog's 540px. Network did, once it gained the secure-origin
-   warning and one QR card per network interface: the content simply ran on
-   underneath the footer, with the Done button sitting on top of the Port
-   setting. A pane that cannot scroll does not clip, it overlaps. */
-.settings-pane {
-  display: flex; flex-direction: column; min-height: 0; flex: 1;
-  overflow-y: auto;
-  /* Reserve a gutter for the scrollbar so it never overlaps the right-aligned
-     controls (Compute device, Out of sync tracks). padding-right insets the
-     content; the equal negative margin lets that gutter sit in the card's own
-     12px padding, so scrolling content stays aligned with the fixed
-     header/tabs/footer. Handles overlay scrollbars (macOS/WebKit, which draw
-     over the padding box) and reserves space for classic scrollbars
-     (Windows/Linux). */
-  scrollbar-gutter: stable;
-  padding-right: 12px; margin-right: -12px;
-}
-.settings-pane.hidden { display: none; }
-.settings-pane[data-pane="general"] .library-editor-table-wrap { flex: none; max-height: 240px; margin-bottom: 2px; }
-.settings-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 28px 10px; }
-/* flex-shrink: 0 so a tall pane squeezes itself, never the footer. */
-.settings-foot {
-  display: flex; justify-content: flex-end; flex-shrink: 0;
-  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
-}
-.settings-done { min-height: 32px; border-radius: 7px; border: 1px solid rgba(244,183,64,0.35); background: rgba(244,183,64,0.16); color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 0 22px; cursor: pointer; }
-.settings-done:hover { background: rgba(244,183,64,0.24); }
-/* Right-aligned form controls share a fixed width so they line up down the column. */
-.settings-num-input, .settings-select { flex-shrink: 0; width: 84px; background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 6px 9px; }
-.settings-num-input { text-align: right; }
-.settings-select { cursor: pointer; }
-/* Wider variant for options whose text doesn't fit the shared 84px column --
-   currently just the language picker (flag + native name, up to "Bahasa Indonesia"). */
-.settings-select-wide { width: 190px; }
-.settings-num-input:focus, .settings-select:focus { outline: none; border-color: rgba(244,183,64,0.5); }
-
-/* Settings → network access section */
-.settings-section { margin-bottom: 12px; }
-.settings-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
-.settings-row-text { min-width: 0; }
-.settings-row-title { font-size: 12.5px; font-weight: 600; color: var(--fg); }
-.settings-row-desc { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
-.settings-lock-note { font-style: italic; opacity: 0.85; margin-top: 5px; }
-.settings-switch { position: relative; flex-shrink: 0; width: 42px; height: 24px; cursor: pointer; }
-.settings-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
-.settings-switch-track { position: absolute; inset: 0; border-radius: 999px; background: rgba(148,163,184,0.22); border: 1px solid var(--border-strong); transition: background 0.15s ease; }
-.settings-switch-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--fg); transition: transform 0.15s ease; }
-.settings-switch input:checked + .settings-switch-track { background: rgba(244,183,64,0.55); border-color: rgba(244,183,64,0.5); }
-.settings-switch input:checked + .settings-switch-track .settings-switch-thumb { transform: translateX(18px); background: var(--accent); }
-.settings-switch.disabled { cursor: default; opacity: 0.7; }
-.settings-switch.disabled input { cursor: default; }
-/* A row whose setting only applies while another one is on. Dimmed and inert
-   rather than removed, so the value stays readable: someone deciding whether to
-   switch automatic deletion on can see how long tracks would be kept before
-   committing to it, instead of having to turn the destructive setting on to
-   find out. Note that `hidden` would not work here anyway -- base.css is not
-   loaded by index.html and daw.css scopes its rule to `.daw`, while the
-   settings overlay is appended to document.body. */
-.settings-row.disabled { opacity: 0.45; }
-.settings-row.disabled input { cursor: not-allowed; }
-.settings-net { margin-top: 10px; font-size: 11px; color: var(--muted); }
-.settings-net.hidden { display: none; }
-.settings-net-empty { color: var(--muted); }
-/* Transpose-over-the-network warning. Red because the consequence is a control
-   that does nothing, or a browser page that says the connection is not
-   private: both look like the app is broken, and both are worth reading before
-   the user hands the address to their phone. */
-.settings-net-warn {
-  margin: 8px 0 10px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--danger);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  color: var(--danger);
-  font-size: 11px;
-  line-height: 1.5;
-}
-.settings-net-warn.hidden { display: none; }
-.settings-net-qr { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
-.qr-hint { font-size: 10px; color: var(--muted); margin: 0; line-height: 1.4; }
-.qr-cards-row { display: flex; flex-wrap: wrap; gap: 28px; }
-.qr-card { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
-.qr-img-wrap { width: 130px; height: 130px; border-radius: 6px; border: 3px solid var(--accent); overflow: hidden; box-sizing: border-box; }
-.qr-card img { width: 100%; height: 100%; display: block; transition: filter 0.25s ease, scale 0.25s ease; }
-.qr-card.qr-blurred img { filter: blur(10px); scale: 1.12; }
-.qr-label { font-size: 9.5px; color: var(--muted); text-align: center; max-width: 130px; word-break: break-all; }
-.settings-server-note { font-size: 10.5px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
-.settings-subhead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; margin: 4px 0 7px; }
-
-/* Settings → registry (read-only viewer) */
-.settings-registry-refresh { flex-shrink: 0; min-height: 28px; border-radius: 6px; border: 1px solid var(--border-strong); background: rgba(10,17,24,0.6); color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; padding: 0 12px; cursor: pointer; }
-.settings-registry-refresh:hover { color: var(--fg); border-color: rgba(148,163,184,0.4); }
-.settings-registry-view {
-  flex: 1; min-height: 0; margin-top: 10px; resize: none;
-  background: rgba(10,17,24,0.5); border: 1px solid var(--border); border-radius: 7px;
-  color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-  padding: 10px 12px; white-space: pre; overflow: auto;
-}
-.settings-registry-view:focus { outline: none; }
-
-/* Settings → General → danger zone (reset app data) */
-.settings-danger-zone { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-.settings-danger-subhead { color: var(--danger); }
-.settings-reset-btn {
-  flex-shrink: 0; min-height: 30px; border-radius: 7px;
-  border: 1px solid rgba(214,90,74,0.35); background: rgba(214,90,74,0.12);
-  color: var(--danger); font-family: var(--font-mono); font-size: 11px; font-weight: 600;
-  padding: 0 12px; cursor: pointer;
-}
-.settings-reset-btn:hover { background: rgba(214,90,74,0.2); }
 
 /* Reset app data — confirm dialog (nested above the Settings dialog) */
 .reset-confirm-backdrop {
@@ -1262,12 +1094,6 @@ input, textarea { font-family: inherit; }
   color: var(--accent);
 }
 .playlist-confirm-go:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.library-editor-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 11px; }
-.library-editor-status { font-size: 10.5px; color: var(--muted); }
-.library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
-.library-editor-sync { min-height: 30px; border-radius: 7px; border: 1px solid rgba(244,183,64,0.3); background: rgba(244,183,64,0.16); color: var(--accent); font-family: var(--font-mono); font-size: 11px; padding: 0 13px; cursor: pointer; }
-.library-editor-sync:disabled { opacity: 0.55; cursor: default; }
 
 /* Color picker popover */
 .color-picker-popover {
@@ -2160,7 +1986,7 @@ input, textarea { font-family: inherit; }
 .lane-header.mx-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   padding: 0 10px;
   height: var(--lane-h, 72px);
   min-height: 72px;
@@ -2181,13 +2007,15 @@ input, textarea { font-family: inherit; }
 /* The name and its meter share a fixed column, and the fader takes whatever is
    left of the row. So this width is the fader's length: every pixel taken off
    here is a pixel the fader gains. 76px left the fader badly compressed once
-   the key stepper joined the row. */
+   the key stepper joined the row. The controls now sit on two lines beside
+   it (.mx-strip), so the name has the room to be read from across a room. */
 .lane-name-vu {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: var(--lane-name-vu-gap, 5px);
-  width: 58px;
+  width: var(--mx-name-w);
+  min-width: 0;
   flex-shrink: 0;
   /* Centres the NAME on the row, not the name-and-meter pair. The row centres
      its children, so a stacked pair puts the name above the centre line by half
@@ -2204,11 +2032,30 @@ input, textarea { font-family: inherit; }
 
 /* Stem name */
 .mx-name {
-  font-size: 13px; font-weight: 500;
+  font-size: var(--mx-name-font); font-weight: 600;
+  line-height: 1.2;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* In a lane's header a long name ("Backing-Gesang", "Voix principale") takes
+   a second line rather than an ellipsis; the name stays centred on the row
+   either way (.lane-name-vu's margin). */
+.lane-name-vu .mx-name {
+  white-space: normal;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+/* Rows are taller than the controls need whenever the window has the
+   height (the lanes share it): the name grows into the room. A size
+   container: the row's height is set (--lane-h), never its content's. */
+.lane-header.mx-row[data-stem] { container: mxrow / size; }
+@container mxrow (min-height: 108px) {
+  .lane-name-vu .mx-name { font-size: calc(var(--mx-name-font) + 2px); }
 }
 
 /* Fader (horizontal, native range input) */
@@ -2223,15 +2070,15 @@ input, textarea { font-family: inherit; }
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 22px;
+  height: var(--mx-ctl-h);
   background: transparent;
   cursor: ew-resize;
   outline: none;
   margin: 0;
 }
 .mx-fader-input::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   background: linear-gradient(
     to right,
     var(--fader-color, #888) 0%,
@@ -2241,20 +2088,20 @@ input, textarea { font-family: inherit; }
 }
 .mx-fader-input::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   border-radius: 50%;
   background: var(--fader-color, #888);
-  margin-top: -5px;
+  margin-top: -6px;
   border: 2px solid rgba(0,0,0,0.35);
   box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
   cursor: ew-resize;
 }
 .mx-fader-input::-moz-range-track {
-  height: 4px; border-radius: 2px;
+  height: 6px; border-radius: 3px;
   background: rgba(255,255,255,0.08);
 }
 .mx-fader-input::-moz-range-thumb {
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   border-radius: 50%;
   background: var(--fader-color, #888);
   border: 2px solid rgba(0,0,0,0.35);
@@ -2293,10 +2140,10 @@ input, textarea { font-family: inherit; }
 /* dB value */
 .mx-val {
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--mx-ctl-font);
+  font-weight: 700;
   color: var(--fg);
-  width: 36px;
+  width: 46px;
   text-align: right;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -2305,13 +2152,15 @@ input, textarea { font-family: inherit; }
 /* M/S buttons (JS-built) */
 .lane-icon-toggle.mx-btn,
 .ms-btn.mx-btn,
+.track-arm.mx-btn,
 .lane-dl.mx-btn {
-  width: 22px; height: 20px;
+  width: var(--mx-ctl-w); height: var(--mx-ctl-h);
+  box-sizing: border-box;
   background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
-  color: var(--muted);
-  font-size: 10px; font-weight: 700;
+  color: var(--fg-2);
+  font-size: var(--mx-ctl-font); font-weight: 700;
   font-family: var(--font-mono);
   letter-spacing: 0.05em;
   cursor: pointer;
@@ -2323,7 +2172,8 @@ input, textarea { font-family: inherit; }
   opacity: 1;
 }
 .lane-icon-toggle.mx-btn:hover,
-.ms-btn.mx-btn:hover { color: var(--fg); border-color: #3a4550; }
+.ms-btn.mx-btn:hover,
+.track-arm.mx-btn:hover { color: var(--fg); border-color: #3a4550; }
 
 /* Mute button: "active" = NOT muted (normal). Engaged (muted) lights up blue,
    mirroring the solo button's own lit-up treatment below. */
@@ -2337,18 +2187,340 @@ input, textarea { font-family: inherit; }
 /* Solo button: "active" = soloed */
 .ms-btn.mx-btn.active { background: rgba(244,183,64,0.18); color: var(--accent); border-color: rgba(244,183,64,0.4); }
 
-/* Download button */
-.lane-dl.mx-btn {
-  color: var(--muted);
-  border-color: transparent;
+/* Arm (record-enable) on a recording track, the M/S button's twin: a red
+   dot, hollow when idle, filled and glowing when armed. Red is --danger, the
+   Record button's colour, so the two read as one control. */
+.track-arm.mx-btn { color: var(--danger); }
+.track-arm.mx-btn::before {
+  content: "";
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  box-sizing: border-box;
+  transition: background var(--t-fast), box-shadow var(--t-fast);
 }
-.lane-dl.mx-btn:hover { color: var(--fg); border-color: var(--border); }
-.lane-dl.mx-btn svg { width: 13px; height: 13px; }
+.track-arm.mx-btn:hover { color: var(--danger); }
+.track-arm.mx-btn.on { background: rgba(214,90,74,0.14); border-color: rgba(214,90,74,0.35); }
+.track-arm.mx-btn.on::before { background: currentColor; box-shadow: 0 0 6px currentColor; }
 
-/* Unavailable stems — gray entire mixer row and waveform row */
-.lane-header.unavailable { opacity: 0.25; pointer-events: none; }
-.stem-waveform-row.unavailable { opacity: 0.2; pointer-events: none; }
+/* Download button: the same box as M and S, so it reads as one of them
+   from a distance; it was a borderless 13px glyph. */
+.lane-dl.mx-btn { color: var(--fg-2); }
+.lane-dl.mx-btn:hover { color: var(--fg); border-color: var(--muted-2); }
+.lane-dl.mx-btn svg { width: 17px; height: 17px; }
+
+/* The two lines of controls beside the name (mixer.js renderMixerRow):
+   the EQ tab, the fader and its level; then key, M, S and download, at the
+   right end so they line up from row to row. Centred as a pair on the row's
+   middle, the name's line. */
+.mx-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--mx-ctl-gap);
+}
+.mx-line {
+  display: flex;
+  align-items: center;
+  gap: var(--mx-ctl-gap);
+  min-width: 0;
+  height: var(--mx-ctl-h);
+}
+.mx-line-b { justify-content: flex-end; }
+/* Holds the EQ tab (eq/eqRows.js). The same width with or without it, so
+   the fader does not move when the audio engine comes up and the tab
+   appears. */
+.mx-eq-slot {
+  width: 52px;
+  flex-shrink: 0;
+  display: flex;
+}
+
 .mx-fader-input { touch-action: pan-y; }
+
+/* ── The side-rail header (mixer.js renderMixerRow) ──
+   A card on the left and a rail on the right edge. The card: the lane's
+   swatch and name, the fader with its level, two thin meter bars under the
+   fader, then the key. The rail: mute, solo, the EQ tab and download
+   stacked, the full height of the row, so they sit in the same place on every
+   row. Colours are the app's own: the lane's colour (--lane-color, set by
+   mixer.js from STEM_COLORS) and the existing M/S/EQ state colours. */
+.lane-header.mx-row.mx-row-rail {
+  position: relative;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0 0 0 12px;
+}
+.mx-card {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "head head"
+    "fader fader"
+    "meter meter"
+    "actions actions";
+  align-content: center;
+  row-gap: 7px;
+  padding: 8px 0;
+}
+.mx-head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mx-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--lane-color, var(--muted));
+  flex-shrink: 0;
+}
+.mx-card .mx-name {
+  font-size: calc(var(--mx-name-font) + 3px);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mx-faderline {
+  grid-area: fader;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: var(--mx-ctl-h);
+}
+/* The fader and its meter are short, enough travel to set a level, and the
+   level reads right beside the fader. */
+.mx-faderline .lane-knob { flex: 0 0 84px; width: 84px; }
+.mx-faderline .mx-val {
+  width: auto;
+  min-width: 58px;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 3px;
+}
+.mx-val-unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* The meter: one thin line under the fader, as long as the fader's track.
+   The level and its peak hold share it, the hold fainter behind the level. */
+.mx-card .lane-vu.mx-meter {
+  grid-area: meter;
+  height: auto;
+  width: 84px;
+  display: grid;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.mx-meter-track {
+  grid-area: 1 / 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.mx-card .lane-vu-bar.mx-meter-fill,
+.mx-card .lane-vu-bar.mx-meter-hold {
+  display: block;
+  position: static;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #22c55e 0%, #86efac 80%, #f97316 95%, #ef4444 100%);
+  transition: width 40ms linear;
+}
+.mx-card .lane-vu-bar.mx-meter-fill { width: var(--vu-level, 0%); }
+.mx-card .lane-vu-bar.mx-meter-hold { width: var(--vu-peak, 0%); opacity: 0.55; }
+.mx-meter-track:has(.mx-meter-fill) { background: transparent; position: relative; z-index: 1; }
+
+.mx-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* The key: a column of its own beside the rail, in four equal cells level
+   with the rail's M, S, EQ and download: plus, KEY, the offset, minus. The
+   reading's wrapper steps aside (display: contents) so its label and number
+   are cells of their own; `order` sets the top-to-bottom sequence, since the
+   DOM keeps minus, reading, plus for the horizontal stepper. */
+.mx-keyrail {
+  display: flex;
+  width: 34px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+}
+.mx-keyrail .lane-key {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: auto;
+}
+.mx-keyrail .lane-key-value { display: contents; }
+.mx-keyrail .lane-key-step,
+.mx-keyrail .lane-key-label,
+.mx-keyrail .lane-key-num {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.mx-keyrail .lane-key-step.up { order: 1; }
+.mx-keyrail .lane-key-label { order: 2; }
+.mx-keyrail .lane-key-num { order: 3; }
+.mx-keyrail .lane-key-step.down { order: 4; }
+.mx-keyrail .lane-key-step {
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  font-size: var(--mx-ctl-font);
+  color: var(--fg-2);
+}
+.mx-keyrail .lane-key-step:hover { background: var(--panel-2); color: var(--fg); }
+.mx-keyrail .lane-key-label { font-size: 8px; letter-spacing: 0.06em; text-indent: 0.06em; }
+.mx-keyrail .lane-key-num {
+  font-family: var(--font-mono);
+  font-size: var(--mx-ctl-font);
+  font-weight: 700;
+}
+.lane-key-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.lane-key-num { color: var(--fg-2); }
+.mx-keyrail .lane-key.active .lane-key-value { background: transparent; border: 0; }
+.mx-keyrail .lane-key.active .lane-key-num { color: var(--lane-color, var(--accent)); }
+/* Drums: the control stays whole, dimmed, explaining itself on hover. */
+.mx-keyrail .lane-key.locked { opacity: 0.45; }
+
+/* The rail: four equal cells the full height of the row. */
+.mx-rail {
+  display: flex;
+  flex-direction: column;
+  width: 46px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+}
+.mx-rail > .mx-btn {
+  flex: 1;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+.mx-rail > .mx-btn:hover { background: var(--panel-2); }
+/* The EQ tab as a rail cell: the M/S face, its dot after the label, no
+   chevron. The slot keeps its cell while the tab is not there yet. */
+.mx-rail > .mx-eq-slot {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+.mx-rail .eq-tab {
+  height: 100%;
+  padding: 0;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mx-rail .eq-tab:hover { background: var(--panel-2); }
+.mx-rail .eq-tab::after { display: none; }
+.mx-rail .eq-tab:not(.active):not(.bypassed) .eq-tab-dot { display: none; }
+.mx-rail .eq-tab-dot { width: 6px; height: 6px; }
+
+/* What the ear hears, on both columns (mixer.js paintLaneSilence): a muted
+   lane fades; while any lane is soloed, every other lane goes dark and
+   blurred. The row's contents fade, never the row itself: each row draws the
+   separator under it, and fading the row took the line between it and the
+   next lane with it. Hovering a dimmed mixer row, or reaching it with the
+   keyboard, brings it back into focus so its M and S stay easy to find. Not
+   :focus-within: a clicked S keeps focus, so the row it just un-soloed stayed
+   lit after the pointer left. */
+.mx-row-rail > *,
+.stem-waveform-row > * {
+  transition: opacity var(--t-base) var(--easing), filter var(--t-base) var(--easing);
+}
+.lane-header.mx-row.mx-row-rail.muted { opacity: 1; }
+.mx-row-rail.muted > * { opacity: 0.45; }
+.stem-waveform-row.lane-muted > * { opacity: 0.3; }
+.mx-row-rail.solo-dimmed > *,
+.stem-waveform-row.solo-dimmed > * {
+  opacity: 0.35;
+  filter: blur(1.5px) brightness(0.6);
+}
+.mx-row-rail.solo-dimmed:hover > *,
+.mx-row-rail.solo-dimmed:has(:focus-visible) > * {
+  opacity: 0.8;
+  filter: none;
+}
+
+/* Short rows (when many lanes share the height): the same parts on fewer
+   lines. The EQ tab and the key go beside the name, the fader and its meter
+   under them. */
+@container mxrow (max-height: 107px) {
+  .mx-card {
+    row-gap: 3px;
+    padding: 4px 0;
+  }
+  .mx-card .mx-name { font-size: var(--mx-name-font); }
+  .mx-faderline { height: 22px; }
+  .mx-meter-track { height: 2px; }
+  .mx-actions { gap: 5px; }
+}
+/* A stem has nothing on the actions line; it takes no room. */
+.mx-actions:empty { display: none; }
+
+/* A recording track's take folder arrow sits in the row's left gutter, so
+   the track's name lines up with every stem's. */
+.lane-header.mx-row.mx-row-rail > .take-folder-toggle {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 12px;
+  margin: 0;
+  transform: translateY(-50%);
+}
+
+/* A recording track in the same card (capture/takeLanes.js): the arm button
+   and the input picker where a stem has its key, the track menu at the end of
+   the name's line. */
+.mx-head .take-menu-btn { margin-left: auto; flex-shrink: 0; }
+.mx-actions .track-input-wrap { flex: 1 1 auto; min-width: 0; }
+@container mxrow (max-height: 107px) {
+  /* A track's arm and picker on the card's bottom line, low enough that the
+     four lines fit the row. */
+  .track-lane .mx-card { row-gap: 2px; padding: 1px 0; }
+  .track-lane .mx-faderline { height: 18px; }
+  /* The fader's box as tall as its line (its 18 px thumb still fits), not
+     reaching into the name's line above. */
+  .track-lane .mx-faderline .mx-fader-input { height: 18px; }
+  .track-lane .mx-actions { height: 22px; }
+  .track-lane .mx-actions > * { max-height: 22px; }
+  /* The picker and the menu at the arm button's 22 px: at their own 28 px
+     the four lines were taller than a 72 px row and spilled out of it
+     (the menu above the row, the picker below it). */
+  .track-lane .mx-actions .track-input { height: 22px; }
+  .lane-header.mx-row.track-lane .mx-head .take-menu-btn.mx-btn { height: 22px; }
+}
 
 /* ── Waveform panel (right) ── */
 /* Layout only — waves.css handles all visual styling inside (.wave-scroll bg,
@@ -2898,6 +3070,15 @@ input, textarea { font-family: inherit; }
   border-color: var(--border-strong);
   color: var(--fg-2);
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+/* Record keeps its own colours inside the transport group, whose rule above
+   (three classes) outranked .rec-btn.recording in recording.css: the button
+   showed neither its red dot nor the solid red of a take being recorded. */
+.footer-group-transport .daw-iconbtn.btn-transport.rec-btn { color: var(--danger); }
+.footer-group-transport .daw-iconbtn.btn-transport.rec-btn.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--fg);
 }
 .footer-group-transport .daw-iconbtn.btn-transport:hover {
   background: var(--panel-3);
@@ -3684,6 +3865,11 @@ input, textarea { font-family: inherit; }
 /* Where song details, lyrics and transcription come from, and their
    licences: small print under the socials. */
 .about-credits { margin: 16px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+/* StemDeck's own license and a link to its source: the AGPL asks a network
+   service to offer its users the source, and the server version is one. */
+.about-license { margin: 6px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+.about-license a { color: inherit; text-decoration: underline; }
+.about-license a:hover { color: var(--fg-2); }
 
 /* ── Release notes dialog ── */
 .release-card {
@@ -4646,157 +4832,25 @@ input, textarea { font-family: inherit; }
   .stem-card[data-stem="vocals"] { grid-column: span 1; }
 }
 
-/* Settings -> Logs. Read-only: paths, sizes and what writes each file. Log
-   *contents* are deliberately not served -- a traceback can capture anything,
-   and the files are on the machine the user is already sitting at. */
-.settings-logs-dir {
-  margin: 2px 2px 10px;
-  padding: 8px 10px;
-  background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 6px;
-}
-.settings-logs-path {
-  font-size: 11.5px; color: var(--fg-2); word-break: break-all; user-select: all;
-}
-.settings-logs-list { display: flex; flex-direction: column; gap: 6px; }
-.settings-log-row {
-  padding: 8px 10px;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.settings-log-main {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-}
-.settings-log-name { font-size: 12px; font-weight: 600; color: var(--fg); }
-.settings-log-meta {
-  font-size: 10.5px; color: var(--muted); white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.settings-log-desc { margin-top: 3px; font-size: 11px; color: var(--muted); line-height: 1.4; }
-.settings-logs-empty { font-size: 11.5px; color: var(--muted); padding: 6px 2px; }
-
-.settings-export-logs {
-  padding: 6px 12px;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: 7px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.settings-export-logs:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
-.settings-export-logs:disabled { opacity: 0.5; cursor: default; }
-
-/* Stems location (#354). The path is long, so this row stacks instead of
-   sitting on one line with the label. */
-.settings-row-stack { display: block; }
-.settings-btn {
-  padding: 6px 12px;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: 7px; color: var(--fg-2); cursor: pointer;
-  font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.settings-btn:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); }
-.settings-btn:disabled { opacity: 0.5; cursor: default; }
-.stems-location {
-  display: flex; align-items: center; gap: 8px; margin-top: 8px;
-}
-.stems-location-path {
-  flex: 1; min-width: 0;
-  padding: 6px 8px; border-radius: 6px;
-  background: var(--panel); border: 1px solid var(--border);
-  color: var(--fg-2); font-family: var(--font-mono); font-size: 11px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.stems-location-size {
-  flex-shrink: 0; font-size: 11px; color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.stems-location-msg {
-  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--muted);
-}
-.stems-location-msg.error { color: var(--danger); }
-.stems-location-msg.ok { color: var(--accent); }
-
-/* Cookies path field (#432). Full width rather than the 84px num input: this
-   holds an absolute filesystem path, which is long and worth reading back. */
-.settings-text-input {
-  width: 100%; box-sizing: border-box; margin-top: 8px;
-  background: rgba(10,17,24,0.6); border: 1px solid var(--border-strong);
-  border-radius: 7px; color: var(--fg);
-  font-family: var(--font-mono); font-size: 12px; padding: 6px 9px;
-}
-.settings-text-input:focus { outline: none; border-color: rgba(244,183,64,0.5); }
-.cookies-file-msg {
-  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--danger);
-}
-
-/* AcoustID key and Discogs token: a masked field with its Save and Clear
-   beside it. */
-.acoustid-key, .discogs-token {
-  display: flex; align-items: center; gap: 8px; margin-top: 8px;
-}
-.acoustid-key .settings-text-input,
-.discogs-token .settings-text-input { flex: 1; min-width: 0; margin-top: 0; }
-.acoustid-key-msg, .discogs-token-msg {
-  margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--muted);
-}
-.acoustid-key-msg.error, .discogs-token-msg.error { color: var(--danger); }
-.acoustid-register, .discogs-register {
-  display: inline-block; margin-top: 4px; font-size: 11px; color: var(--accent);
-}
-.discogs-privacy { margin-top: 4px; }
-
-/* Logs sub-navigation: Location / Application / Setup. */
-.settings-subtabs {
-  display: flex; gap: 2px; margin: 0 0 10px;
-  border-bottom: 1px solid var(--border-strong);
-}
-.settings-subtab {
-  padding: 5px 10px; background: none; border: none;
-  border-bottom: 2px solid transparent; margin-bottom: -1px;
-  color: var(--muted); cursor: pointer;
-  font-family: inherit; font-size: 11.5px; font-weight: 600;
-  transition: color var(--t-fast), border-color var(--t-fast);
-}
-.settings-subtab:hover { color: var(--fg-2); }
-.settings-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
-/* The pane is a flex column and the registry/log textareas rely on flex:1 to
-   fill it, so the subpane has to be one too -- otherwise the textarea collapses
-   to its default character width and the lines get cut off. */
-.settings-subpane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.settings-subpane.hidden { display: none; }
-/* The tail views are monospace and taller than the registry dump: log lines
-   are long and wrap badly. */
-.settings-logtail-view {
-  width: 100%; box-sizing: border-box;
-  min-height: 260px; white-space: pre; overflow-wrap: normal; overflow-x: auto;
-}
-
 /* ── Per-lane transpose (the K stepper) ────────────────────────────────────
-   Sits in the row just left of M, with its arrows stacked above and below the
-   reading, and drawn from the same kit as M and S: same border, same radius,
-   same mono face, same width. It reads as one more control in that cluster
-   rather than as a different kind of thing parked next to it.
-
-   Stacked rather than inline because the lane row only has about 300px, and at
-   the inline width the fader collapsed to 10px. The vertical form costs 22px
-   instead of 55px, and the row has the height spare. */
+   On the second line of the header, just left of M: minus, the reading,
+   plus. The reading is the button, the same box as M and S (same border,
+   radius, mono face and size), so it reads as one more control in that
+   cluster. The arrows around it are the stepper, not two more buttons: no
+   border, so they stay quiet beside the boxes, and the row's full height
+   to hit. They used to stack 11px high above and below a 20px box. */
 .lane-key {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  width: 22px;
+  gap: 1px;
   flex-shrink: 0;
 }
-/* The K is the button, and it is the same box as M and S: same size, same
-   border, same radius, same mono face. Boxing the arrows instead put two
-   look-alike buttons around a floating letter, which is the opposite of the
-   family it belongs to -- M and S are each one box with one character in it. */
 .lane-key-value {
-  width: 22px;
-  height: 20px;
+  min-width: calc(var(--mx-ctl-w) + 4px);
+  height: var(--mx-ctl-h);
+  padding: 0 2px;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -4804,11 +4858,11 @@ input, textarea { font-family: inherit; }
   background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
-  color: var(--muted);
+  color: var(--fg-2);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--mx-ctl-font);
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
@@ -4820,17 +4874,15 @@ input, textarea { font-family: inherit; }
   border-color: rgba(244, 183, 64, 0.4);
 }
 
-/* The arrows are the stepper around it, not two more buttons: no border, so
-   they stay quiet next to the three boxes they sit beside. */
 .lane-key-step {
-  width: 22px;
-  height: 11px;
+  width: 20px;
+  height: var(--mx-ctl-h);
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 3px;
-  color: var(--muted);
-  font-size: 11px;
+  border-radius: 4px;
+  color: var(--fg-2);
+  font-size: 16px;
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1;
@@ -4995,55 +5047,66 @@ input, textarea { font-family: inherit; }
   background: var(--border-strong);
 }
 
-/* Detect structure reads as a switch rather than a word you press. The button
-   keeps its markup and its aria-pressed, so nothing about how it works
-   changes; the pill and its knob are drawn from the two pseudo elements.
-   Grid because the switch sits left of the label and spans both the label and
-   the EXPERIMENTAL note under it. */
-.daw-composer > .structure-toggle {
+/* Detect structure and Detect lyrics read as switches rather than words you
+   press, stacked in the one segment above Extract stems. Each button keeps
+   its aria-pressed, so nothing about how it works changes; the pill and its
+   knob are drawn from the two pseudo elements, the label beside them. */
+.daw-composer > .detect-toggles {
   grid-column: 2;
   grid-row: 1;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: var(--composer-action-w);
+}
+.detect-toggles > .structure-toggle {
   position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  column-gap: 9px;
-  padding: 0 14px;
+  column-gap: 8px;
+  min-width: 0;
+  width: 100%;
+  height: 18px;
+  min-height: 0;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
   text-align: left;
+  font-size: 11.5px;
 }
-.daw-composer > .structure-toggle::before {
+.detect-toggles > .structure-toggle::before {
   content: "";
-  grid-row: 1 / 3;
-  width: 34px;
-  height: 19px;
+  width: 26px;
+  height: 14px;
   border-radius: 999px;
   background: var(--panel-3);
   border: 1px solid var(--border-strong);
+  box-sizing: border-box;
   transition: background var(--t-fast);
 }
-.daw-composer > .structure-toggle::after {
+.detect-toggles > .structure-toggle::after {
   content: "";
   position: absolute;
-  left: 17px;
-  width: 15px;
-  height: 15px;
+  left: 12px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
   border-radius: 50%;
   background: var(--fg-2);
   transition: transform var(--t-fast), background var(--t-fast);
 }
-.daw-composer > .structure-toggle[aria-pressed="true"]::before {
+.detect-toggles > .structure-toggle[aria-pressed="true"]::before {
   background: var(--accent);
   border-color: var(--accent);
 }
-.daw-composer > .structure-toggle[aria-pressed="true"]::after {
-  transform: translateX(15px);
+.detect-toggles > .structure-toggle[aria-pressed="true"]::after {
+  transform: translateX(12px);
   background: #1a1a1a;
 }
-.daw-composer > .structure-toggle .structure-toggle-main { grid-column: 2; }
-.daw-composer > .structure-toggle .structure-toggle-note {
-  grid-column: 2;
-  text-align: left;
-}
+.detect-toggles > .structure-toggle .structure-toggle-main { grid-column: 2; }
 
 /* Row two, and the only thing on it. A 100% basis is what forces the wrap. */
 .daw-composer > .daw-stem-section {
@@ -5052,8 +5115,7 @@ input, textarea { font-family: inherit; }
   min-width: 0;
 }
 
-/* The two actions keep their shared width and stop being full-bleed. */
-.daw-composer > .structure-toggle,
+/* The action keeps the toggles' width and stops being full-bleed. */
 .daw-composer > .daw-process-btn {
   align-self: center;
   min-height: 40px;
@@ -5549,8 +5611,8 @@ input, textarea { font-family: inherit; }
 /* The click-track options with nothing to act on.
  *
  * They stay on the row and go quiet rather than leaving it, which is how the
- * metronome button beside them and every unavailable lane in the mixer already
- * behave. Half a control strip appearing and vanishing reads as a fault. */
+ * metronome button beside them and the empty studio's placeholder lanes
+ * already behave. Half a control strip appearing and vanishing reads as a fault. */
 .footer-metro-panel.unavailable {
   opacity: 0.4;
   pointer-events: none;
@@ -5742,3 +5804,193 @@ input, textarea { font-family: inherit; }
 .help-tip-h { break-after: avoid; margin-top: 8px; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
 .help-tip-row { break-inside: avoid; margin-top: 3px; }
 .help-tip-row span { color: var(--fg); font-weight: 600; }
+
+/* ── Modes (static/js/mode.js) ──
+   The DAW controls show only with mode-daw on <html>: hidden by default, so a
+   page in Practice never shows them while it loads. Practice is the simple
+   practice studio: no Record, no adding tracks (a song's existing tracks
+   still play, without their arm and input controls), no EQ, no master. */
+html:not(.mode-daw) #t-rec,
+html:not(.mode-daw) #t-rec-opts,
+html:not(.mode-daw) #recPanel,
+html:not(.mode-daw) .add-track-row,
+html:not(.mode-daw) .add-track-spacer,
+html:not(.mode-daw) .mx-rail > .mx-eq-slot,
+html:not(.mode-daw) .track-lane .mx-actions,
+html:not(.mode-daw) #t-master-btn,
+html:not(.mode-daw) #t-export-master,
+html:not(.mode-daw) #master-drawer {
+  display: none !important;
+}
+
+.rail-mode[aria-expanded="true"] { background: var(--panel); color: var(--fg-2); }
+
+.mode-menu {
+  position: fixed;
+  z-index: 70;
+  width: 250px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.mode-menu[hidden] { display: none; }
+.mode-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.mode-item:hover,
+.mode-item:focus-visible { background: var(--panel-2); color: var(--fg); outline: none; }
+.mode-item-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+.mode-item-check { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted-2); box-sizing: border-box; }
+.mode-item[aria-checked="true"] .mode-item-check { background: var(--accent); border-color: var(--accent); }
+.mode-item[aria-checked="true"] .mode-item-name { color: var(--accent); }
+.mode-item-desc { padding-left: 15px; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.mode-note { margin: 4px 6px 2px; font-size: 11px; color: var(--accent); }
+.mode-note[hidden] { display: none; }
+
+/* ── Stems per mode (static/js/stemsControl.js) ──
+   A small button beside the Mixer title, and a popover in the Mode menu's
+   style. The button takes the space the title leaves and never pushes the
+   hint out of the 300px column: it shrinks first (label hidden under 250px
+   of label width by the container query below). */
+.daw-wave-label { container-type: inline-size; gap: 8px; }
+.daw-wave-label .daw-label-sub { margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-stems-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.lane-stems-btn[hidden] { display: none; }
+.lane-stems-btn:hover,
+.lane-stems-btn[aria-expanded="true"] { background: var(--panel-2); color: var(--fg); border-color: var(--muted-2); }
+.lane-stems-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* A choice of its own in this mode: the accent says it differs from the song's. */
+.lane-stems-btn.chosen { color: var(--accent); border-color: var(--accent-2); }
+.lane-stems-btn svg { flex-shrink: 0; }
+@container (max-width: 210px) {
+  .lane-stems-btn > span { display: none; }
+}
+
+.stems-pop {
+  position: fixed;
+  z-index: 70;
+  width: 270px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+}
+.stems-pop[hidden] { display: none; }
+.stems-pop-title { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.stems-pop-hint { margin: 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.stems-pop-list { display: flex; flex-direction: column; gap: 1px; margin: 2px 0; }
+.stems-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.stems-pop-row:hover:not(.missing) { background: var(--panel-2); color: var(--fg); }
+.stems-pop-row.missing { cursor: default; opacity: 0.5; }
+.stems-pop-row input { margin: 0; accent-color: var(--accent); cursor: inherit; }
+.stems-pop-row input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.stems-pop-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--stem-c); }
+.stems-pop-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stems-pop-missing { font-size: 10px; color: var(--muted); }
+.stems-pop-voice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.stems-pop-voice[hidden] { display: none; }
+.stems-pop-voice-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.stems-pop-seg { display: flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+.stems-pop-seg[hidden] { display: none; }
+.stems-pop-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.stems-pop-seg-btn + .stems-pop-seg-btn { border-left: 1px solid var(--border-strong); }
+.stems-pop-seg-btn[aria-checked="true"] { background: var(--panel-2); color: var(--accent); font-weight: 600; }
+.stems-pop-seg-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.stems-pop-split,
+.stems-pop-reset,
+.stems-pop-apply {
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.stems-pop-split[hidden], .stems-pop-reset[hidden] { display: none; }
+.stems-pop-split:hover:not(:disabled),
+.stems-pop-reset:hover:not(:disabled) { background: var(--panel-2); color: var(--fg); }
+.stems-pop-split:focus-visible,
+.stems-pop-reset:focus-visible,
+.stems-pop-apply:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.stems-pop-split:disabled,
+.stems-pop-reset:disabled,
+.stems-pop-apply:disabled { opacity: 0.45; cursor: default; }
+.stems-pop-split-note { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+.stems-pop-split-note[hidden] { display: none; }
+.stems-pop-holds { margin: 0; font-size: 11px; line-height: 1.35; color: var(--fg-2); }
+.stems-pop-status { margin: 0; font-size: 11px; line-height: 1.35; color: var(--accent); }
+.stems-pop-status:empty { display: none; }
+.stems-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.stems-pop-apply { border-color: var(--accent-2); color: var(--accent); font-weight: 600; }
+.stems-pop-apply:hover:not(:disabled) { background: var(--panel-2); }

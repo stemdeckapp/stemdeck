@@ -1,0 +1,1063 @@
+/* Streamer Mode (static/js/streamer/streamer.js): a view over the workspace,
+   from the design "StemDeck Streamer Mode" (1800 x 1020 artboard). Sizes are
+   the design's; colours are the app's tokens where it has one (--accent,
+   --fg, --muted), the design's own otherwise, named once below.
+   As in Karaoke, the app's footer is hidden while the view is open and the
+   layer covers its place; Stop and Play / Pause sit in the mode header.
+   The layer's width depends on the
+   sidebar, not the window, so the narrow layouts are container queries on
+   the layer itself. */
+
+.streamer, .sm-note {
+  --sm-yellow: var(--accent);
+  --sm-button: #f0b130;
+  --sm-on-yellow: #1a1205;
+  --sm-ws: #0b0f14;
+  --sm-card: #0e1319;
+  --sm-panel: #0f151c;
+  --sm-row: #111821;
+  --sm-field: #121820;
+  --sm-line: #1f2832;
+  --sm-edge: #27303b;
+  --sm-strong: #2b3542;
+  --sm-text: var(--fg);
+  --sm-text-2: #c3c9d1;
+  --sm-icon: #c9cfd7;
+  --sm-muted: var(--muted);
+  --sm-faint: #59636e;
+  --sm-red: #e5484d;
+  --sm-blue: #3e7be0;
+}
+.streamer {
+  position: fixed;
+  z-index: 25; /* over everything in the lanes (up to 20), under every menu and dialog */
+  display: flex;
+  box-sizing: border-box;
+  background: var(--sm-ws);
+  color: var(--sm-text);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  container-type: size;
+  container-name: streamer;
+}
+.streamer[hidden] { display: none; }
+/* The footer's transport, speed, key and click are not Streamer's: Stop and
+   Play / Pause in the mode header stand in for what it needs. !important
+   because daw.css forces the footer to display: flex !important. */
+html.streamer-open .daw-footer { display: none !important; }
+.streamer h2, .streamer h3 { margin: 0; }
+.streamer button { font-family: inherit; }
+.streamer :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sm-spacer { flex: 1; }
+
+.sm-card {
+  box-sizing: border-box;
+  border: 1px solid var(--sm-line);
+  border-radius: 10px;
+  background: var(--sm-card);
+}
+
+/* ── Centre column ──
+   Every control fits the window without scrolling: the live window is the
+   elastic part. Its width comes from the builder's own size (the builder is
+   a size container, so a mode header that wraps is counted), held by the
+   height the strip under it and the timeline's smallest height leave (the
+   --sm-* heights below, tighter in a short window). Under 360 px of window
+   the column scrolls instead of squeezing it further. */
+.sm-center {
+  --sm-gap: 8px;
+  --sm-head-h: 56px;
+  --sm-head-pad: 10px 12px;
+  --sm-ctl-h: 36px;
+  --sm-strip-h: 40px;
+  --sm-col-gap: 12px;
+  /* The take timeline's rows (zoom row, markers, ruler, gap, video, gap,
+     stems; the stem lanes take what height is left, up to twice the
+     design's) and its smallest height: those rows at their least, the
+     card's padding, and 8 px for the scrollbar a zoomed song shows. */
+  --sm-tl-pad: 6px;
+  --sm-video-h: 34px;
+  --sm-tl-rows: 32px minmax(34px, 46px) 24px 5px var(--sm-video-h) 4px minmax(64px, 136px);
+  --sm-tl-min: 217px;
+  --sm-ctl-top: 8px;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sm-gap);
+  padding: 10px 8px 8px 10px;
+  /* Only when the window is too short for a 360 px preview. */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Mode header: title, aspect, Safe Zones, Output (narrow), Stop and Play */
+.sm-head {
+  flex: none;
+  height: var(--sm-head-h);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--sm-head-pad);
+}
+.sm-head-row { height: var(--sm-ctl-h); display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sm-head-icon { flex: none; }
+.sm-head-title { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.sm-head-sep { flex: none; width: 1px; height: 20px; background: var(--sm-edge); }
+.sm-head-sub {
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--sm-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-aspect { flex: none; width: 184px; }
+
+.sm-ib {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+  color: var(--sm-icon);
+  cursor: pointer;
+}
+.sm-ib:hover { border-color: #3a4552; color: #fff; }
+.sm-output-btn { display: none; width: auto; padding: 0 10px; font-size: 12.5px; font-weight: 600; }
+.sm-output-btn[aria-expanded="true"] { border-color: var(--sm-yellow); color: var(--sm-yellow); }
+
+/* Selects */
+.sm-select { position: relative; min-width: 0; }
+.sm-sel {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+  color: var(--sm-text);
+  font: 500 13px var(--font-sans);
+  padding: 0 34px 0 12px;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.sm-sel:focus { border-color: #6b5317; }
+.sm-sel:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sm-select-icon .sm-sel { padding-left: 40px; }
+.sm-sel-caret { position: absolute; right: 12px; top: 11px; color: var(--sm-icon); pointer-events: none; }
+.sm-sel-lead { position: absolute; left: 13px; top: 8px; color: var(--sm-icon); pointer-events: none; }
+
+/* Switches: the design's 40 x 22 track (38 x 20 in the header) */
+.sm-switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--sm-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  max-width: 100%;
+}
+/* A long label wraps to two lines rather than being cut. */
+.sm-switch-label { min-width: 0; overflow-wrap: anywhere; }
+.sm-switch {
+  --sm-sw-w: 40px;
+  --sm-sw-h: 22px;
+  flex: none;
+  position: relative;
+  width: var(--sm-sw-w);
+  height: var(--sm-sw-h);
+  border-radius: calc(var(--sm-sw-h) / 2);
+  background: #2a333e;
+  transition: background var(--t-base) var(--easing);
+}
+.sm-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(var(--sm-sw-h) - 6px);
+  height: calc(var(--sm-sw-h) - 6px);
+  border-radius: 50%;
+  background: var(--sm-icon);
+  transition: left .18s ease;
+}
+[aria-checked="true"] > .sm-switch { background: var(--sm-yellow); }
+[aria-checked="true"] > .sm-switch .sm-knob { left: calc(var(--sm-sw-w) - var(--sm-sw-h) + 3px); background: #1b2430; }
+.sm-safe { gap: 10px; height: 34px; padding: 0 6px; color: var(--sm-text-2); white-space: nowrap; }
+.sm-safe .sm-switch { --sm-sw-w: 38px; --sm-sw-h: 20px; }
+
+/* ── The windows, the strip and the timeline ── */
+.sm-builder {
+  flex: 1;
+  /* A 360 px preview, the strip under it and the timeline at its least. */
+  min-height: calc(203px + var(--sm-col-gap) + var(--sm-strip-h) + var(--sm-gap) + var(--sm-tl-min));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sm-gap);
+  container-type: size;
+}
+.sm-builder[hidden] { display: none; }
+/* The windows' column, centred over the timeline. */
+.sm-row { flex: none; display: flex; gap: 12px; justify-content: center; }
+.sm-preview-col {
+  flex: none;
+  /* The whole width, as long as the window's 16:9 height still leaves the
+     strip under it and the timeline's smallest height (cqw and cqh are the
+     builder's); never under 360 px. */
+  width: max(360px, min(100cqw, (100cqh - var(--sm-col-gap) - var(--sm-strip-h) - var(--sm-gap) - var(--sm-tl-min)) * 16 / 9));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sm-col-gap);
+}
+/* Room for the live window and the take review side by side (tiers a and
+   b, reviewModel.reviewTier, set from the builder's size): the column
+   holds two windows of --sm-win-w. Tier c keeps one window, sized as above. */
+.sm-builder:is([data-tier="a"], [data-tier="b"]) .sm-preview-col { width: calc(2 * var(--sm-win-w, 360px) + 12px); }
+
+/* The windows: live (the camera as it is now) and review (the recorded take). */
+.sm-screens { position: relative; display: flex; gap: 12px; }
+.sm-screens > .sm-preview, .sm-screens > .sm-review { flex: 1 1 0; min-width: 0; }
+/* One window: the review only while it shows the take, in the live one's place. */
+.sm-screens[data-tier="c"] > .sm-review,
+.sm-screens:not([data-tier]) > .sm-review { display: none; }
+.sm-screens[data-tier="c"][data-shows="take"] > .sm-review { display: block; }
+.sm-screens[data-tier="c"][data-shows="take"] > .sm-preview { display: none; }
+
+/* The live window: 16:9 on screen whatever the scene's aspect (pillarboxed). */
+.sm-preview, .sm-review {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  box-sizing: border-box;
+  border: 1px solid var(--sm-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+.sm-canvas, .sm-review-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* The take review: a calm dark frame with a note until Play, then the take. */
+.sm-review:not([data-view="play"], [data-view="still"]) { background: var(--sm-panel); border-style: dashed; border-color: var(--sm-line); }
+.sm-review-tag {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 1;
+  max-width: calc(100% - 20px);
+  box-sizing: border-box;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 6px;
+  background: rgba(10, 12, 16, .78);
+  color: var(--sm-text-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-review-note {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px 16px;
+  box-sizing: border-box;
+  text-align: center;
+  color: var(--sm-muted);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.sm-review-note[hidden] { display: none; }
+
+/* Live | Take: which picture the one window shows (tier c, while a take plays). */
+/* Top centre: the corners carry the REC badge or the review tag, and a
+   scene's default Track Info (top right). */
+.sm-view-switch {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 7px;
+  background: rgba(10, 12, 16, .82);
+}
+.sm-view-switch[hidden] { display: none; }
+.sm-view-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sm-text-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sm-view-btn[aria-pressed="true"] { background: var(--sm-yellow); color: #1b2430; }
+.sm-view-btn:hover:not([aria-pressed="true"]) { background: rgba(255, 255, 255, .08); }
+
+/* REC badge: the editor's, never in the video. */
+.sm-rec {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  background: rgba(10, 12, 16, .78);
+  color: #fff;
+  cursor: pointer;
+}
+.sm-rec-pill {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 9px 0 6px;
+  border: 1px solid #3a4552;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--sm-text-2);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.sm-rec-ring {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--sm-muted);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sm-rec-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sm-muted); }
+.sm-rec-time { font: 500 12px var(--font-mono); color: var(--sm-text); padding: 0 9px; }
+
+/* Under the preview: Take Timeline, undo and redo, the clock */
+.sm-strip { flex: none; height: var(--sm-strip-h); display: flex; gap: 8px; }
+.sm-strip .sm-card { border-radius: 8px; background: var(--sm-panel); }
+.sm-strip-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sm-text);
+  white-space: nowrap;
+}
+.sm-strip-title svg { color: var(--sm-icon); flex: none; }
+.sm-history { display: flex; overflow: hidden; }
+.sm-history-btn {
+  width: 40px;
+  border: 0;
+  background: none;
+  color: var(--sm-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sm-history-btn + .sm-history-btn { border-left: 1px solid var(--sm-line); }
+.sm-history-btn:disabled { color: #4a535e; cursor: default; }
+/* Stop and Play / Pause (Karaoke's buttons, in the tabs' height), at the
+   right of the tabs row so every tab has them. */
+.sm-transport { flex: none; display: flex; gap: 8px; margin-left: auto; }
+.sm-tp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: var(--sm-ctl-h);
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+  color: var(--sm-icon);
+  cursor: pointer;
+}
+.sm-tp-btn:hover:not(:disabled) { border-color: #3a4552; color: #fff; }
+.sm-tp-btn.sm-play { width: 56px; border-color: var(--sm-yellow); background: var(--sm-yellow); color: var(--bg); }
+.sm-tp-btn.sm-play:hover:not(:disabled) { filter: brightness(1.08); color: var(--bg); }
+.sm-tp-btn:disabled { opacity: .4; cursor: default; }
+.sm-clock {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.sm-clock-now { font: 700 18px var(--font-mono); }
+.sm-clock-dur { font: 500 13px var(--font-mono); color: var(--sm-faint); }
+
+.sm-primary {
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--sm-button);
+  color: var(--sm-on-yellow);
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sm-primary:hover { background: #ffc24a; }
+/* ── Take timeline ──
+   One scrolling grid: a label column that stays put (sticky, over a mask)
+   and the song's column, as wide as the zoom makes it (--sm-tl-w, set by
+   streamer.js). Everything in the song's column is placed from one scale. */
+.sm-tl {
+  /* The label column (56 px in a narrow workspace): room for "Guitar (you)"
+     and the take lane's mute. */
+  --sm-label-w: 104px;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  padding: var(--sm-tl-pad) 14px var(--sm-tl-pad) 10px;
+  display: flex;
+}
+.sm-tl-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  /* A short timeline scrolls down to the second stem lane. */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2a333e transparent;
+}
+.sm-tl-grid {
+  position: relative;
+  height: 100%;
+  min-width: max-content;
+  display: grid;
+  grid-template-columns: var(--sm-label-w) var(--sm-tl-w, 100%);
+  /* zoom row, markers, ruler, gap, video, gap, stems (see .sm-center) */
+  grid-template-rows: var(--sm-tl-rows);
+  column-gap: 8px;
+  align-content: start;
+}
+.sm-tl-mask {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  margin-right: -8px;
+  background: var(--sm-card);
+}
+.sm-zoom { position: absolute; right: 12px; top: var(--sm-ctl-top); display: flex; align-items: center; gap: 8px; z-index: 4; }
+.sm-zoom-btn { width: 30px; height: 28px; }
+.sm-zoom-btn:disabled { opacity: .4; cursor: default; }
+.sm-zoom-track { width: 110px; position: relative; height: 3px; border-radius: 2px; background: #2a333e; cursor: pointer; touch-action: none; }
+.sm-zoom-track::before { content: ""; position: absolute; inset: -8px 0; }
+.sm-zoom-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: #3a4552; }
+.sm-zoom-thumb { position: absolute; top: -5px; left: 0; width: 13px; height: 13px; margin-left: -6px; border-radius: 50%; background: var(--sm-yellow); }
+.sm-fit { width: auto; height: 28px; padding: 0 12px; font-size: 12px; font-weight: 600; }
+
+.sm-tl-markers { grid-column: 2; grid-row: 2; position: relative; min-height: 0; }
+.sm-marker {
+  position: absolute;
+  top: 0;
+  margin-left: -7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  z-index: 1;
+}
+.sm-marker-pin {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--sm-sec);
+}
+.sm-marker-text { display: flex; flex-direction: column; gap: 2px; text-align: left; padding-top: 1px; }
+.sm-marker-name { font-size: 12px; font-weight: 500; color: var(--sm-text); white-space: nowrap; }
+.sm-marker-time { font: 500 10.5px var(--font-mono); color: var(--sm-muted); }
+.sm-marker-stem { position: absolute; top: 17px; bottom: 0; width: 1.5px; background: var(--sm-sec); }
+
+.sm-tl-ruler {
+  grid-column: 2;
+  grid-row: 3;
+  position: relative;
+  border-bottom: 1px solid var(--sm-edge);
+  cursor: pointer;
+  touch-action: none;
+}
+.sm-tick-label {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  font: 500 10.5px var(--font-mono);
+  color: var(--sm-muted);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.sm-tick-label.first { transform: none; }
+.sm-tick-label.last { transform: translateX(-90%); }
+.sm-tick { position: absolute; bottom: 0; width: 1px; height: 5px; background: #3a4552; pointer-events: none; }
+
+.sm-tl-label {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  width: var(--sm-label-w);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 9px;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sm-tl-label svg { flex: none; }
+/* The stem lanes are told apart by colour and name ("Backing track" needs
+   the room the icon took). */
+.sm-tl-label-stem > svg { display: none; }
+.sm-tl-label[hidden] { display: none; }
+.sm-tl-label-video { grid-column: 1; grid-row: 5; height: var(--sm-video-h); border-color: #2f5ba8; background: #121c2b; color: #8cb8ff; }
+.sm-tl-audio-labels {
+  grid-column: 1;
+  grid-row: 7;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-height: 0;
+}
+.sm-tl-audio-labels .sm-tl-label { position: static; }
+.sm-tl-label-stem {
+  --sm-lane: #9aa3ad;
+  flex: 0 1 30px;
+  min-height: 16px;
+  color: var(--sm-lane);
+  border-color: color-mix(in srgb, var(--sm-lane) 42%, transparent);
+  background: color-mix(in srgb, var(--sm-lane) 8%, var(--sm-card));
+}
+
+.sm-tl-video {
+  grid-column: 2;
+  grid-row: 5;
+  display: flex;
+  box-sizing: border-box;
+  border: 1.5px solid var(--sm-blue);
+  border-radius: 6px;
+  background: #0b1422;
+  overflow: hidden;
+  position: relative;
+}
+/* The take on the video lane: red while it records, then its frames. */
+.sm-tl-take {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  box-sizing: border-box;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  background-color: #1d3557;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+.sm-tl-take.live { background-color: rgba(229, 72, 77, .55); border-color: #ff6b70; }
+.sm-tl-take.failed { border-style: dashed; border-color: #ff9a6b; }
+.sm-tl-take[hidden] { display: none; }
+/* The take's frames, drawn from its filmstrip (video/videoLane.js). */
+.sm-tl-film { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 3px; }
+.sm-tl-film[hidden] { display: none; }
+/* What the lane cannot show, in words, over the lane's right part. */
+.sm-tl-video-note {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 60%;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(11, 20, 34, .88);
+  color: #c9d8ee;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 1;
+}
+.sm-tl-video[data-state="failed"] .sm-tl-video-note { color: #ffb08a; }
+.sm-tl-video-note[hidden] { display: none; }
+/* The take lane's mute, at the label's right end. */
+.sm-tl-mute {
+  flex: none;
+  margin-left: auto;
+  margin-right: 3px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+.sm-tl-mute:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
+.sm-tl-mute:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-tl-mute:disabled { opacity: .45; cursor: default; }
+.sm-tl-mute.off { color: #8b949e; }
+.sm-tl-mute.off::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 2px;
+  background: #ff6b70;
+  transform: rotate(-40deg);
+}
+.sm-tl-mute[hidden] { display: none; }
+.sm-tl-label-stem > .sm-tl-mute > svg { display: block; }
+/* A long name gives way to the mute button, cut with an ellipsis (its full
+   name is the label's title). */
+.sm-tl-label-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sm-tl-label-stem:has(> .sm-tl-mute:not([hidden])) { gap: 2px; padding-left: 6px; }
+.sm-tl-grip {
+  flex: none;
+  width: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sm-blue);
+  color: #0b1422;
+  font-size: 12px;
+  font-weight: 800;
+}
+.sm-tl-video-body { flex: 1; min-width: 0; }
+.sm-tl-audio {
+  grid-column: 2;
+  grid-row: 7;
+  position: relative;
+  box-sizing: border-box;
+  border: 1px solid var(--sm-line);
+  border-radius: 6px;
+  background: #0d1117;
+  min-height: 0;
+  overflow: hidden;
+}
+/* "I play": the part left out of the backing track, top left of the
+   timeline card, level with the zoom control on the right. */
+/* Over the playhead's time label when the playhead is near the start (the
+   clock under the preview shows the time too). */
+.sm-part { position: absolute; left: 12px; top: var(--sm-ctl-top); z-index: 6; display: flex; align-items: center; gap: 8px; padding-right: 6px; background: var(--sm-card); }
+.sm-part-label { font-size: 12.5px; font-weight: 600; color: var(--sm-text-2); white-space: nowrap; }
+.sm-part-select { width: 170px; }
+.sm-part-select .sm-sel { height: 28px; padding: 0 30px 0 10px; font-size: 12.5px; }
+.sm-part-select .sm-sel-caret { top: 9px; right: 10px; }
+.sm-part-select .sm-sel:disabled { opacity: .6; cursor: default; }
+/* A song without stems or sections: said in the row, no layout change. */
+.sm-tl-note { margin: 0; font-size: 12px; color: var(--sm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.sm-tl-note[hidden] { display: none; }
+.sm-tl-no-stems { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 2; }
+.sm-tl-no-sections { grid-column: 2; grid-row: 2; align-self: center; padding-left: 4px; position: sticky; left: calc(var(--sm-label-w) + 8px); width: max-content; max-width: 100%; }
+.sm-tl-lane { position: absolute; left: 16px; height: calc(50% - 6px); display: block; pointer-events: none; }
+.sm-tl-lane-0 { top: 4px; }
+.sm-tl-lane-1 { bottom: 4px; }
+/* The kept range: yellow box, an in and an out handle. */
+.sm-tl-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  border: 2px solid var(--sm-yellow);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 1;
+}
+.sm-tl-trim {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sm-yellow);
+  color: var(--sm-on-yellow);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+.sm-tl-trim-l { left: -2px; border-radius: 6px 0 0 6px; }
+.sm-tl-trim-r { right: -2px; border-radius: 0 6px 6px 0; }
+.sm-tl-dims { grid-column: 2; grid-row: 5 / 8; position: relative; pointer-events: none; z-index: 1; }
+.sm-tl-dim { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: rgba(11, 15, 20, .62); }
+.sm-tl-tip {
+  position: absolute;
+  top: 2px;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border: 1px solid var(--sm-strong);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--sm-text);
+  font: 600 11.5px var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sm-tl-tip[hidden] { display: none; }
+
+.sm-tl-overlay { grid-column: 2; grid-row: 1 / -1; position: relative; pointer-events: none; z-index: 1; }
+.sm-tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; left: 0; }
+.sm-tl-playhead-time {
+  position: absolute;
+  top: 0;
+  left: -34px;
+  width: 68px;
+  height: 24px;
+  border-radius: 5px;
+  background: var(--sm-red);
+  color: #fff;
+  font: 700 12px var(--font-mono);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sm-tl-playhead-line { position: absolute; top: 24px; bottom: 0; left: -1px; width: 2px; background: var(--sm-red); }
+
+.sm-rec { z-index: 2; }
+
+/* ── Right panel: Recording & Output ── */
+.sm-side {
+  flex: none;
+  width: 300px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 8px 0;
+  overflow-y: auto;
+}
+/* The panel's one card (export to a file is the only way out for now):
+   it fills the panel, and the export sits at its foot. */
+.sm-out { flex: 1 0 auto; display: flex; flex-direction: column; }
+/* Compact rows, so every control and the export fit without scrolling in a
+   short window and in the drawer. */
+.sm-out-head { padding: 11px 14px; border-bottom: 1px solid var(--sm-line); font-size: 15px; font-weight: 600; }
+.sm-out-body { flex: 1 0 auto; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 7px; }
+.sm-side .sm-sel { height: 32px; }
+.sm-side .sm-sel-caret { top: 10px; }
+.sm-side .sm-sel-lead { top: 7px; }
+.sm-flabel { font-size: 13px; font-weight: 500; color: var(--sm-text-2); }
+.sm-flabel + .sm-select { margin-top: -3px; }
+/* The input meter: two rows of 36 segments (10 px in all), green to 70%,
+   yellow to 86%, red above, as the design's. */
+.sm-meter-row { display: flex; align-items: center; gap: 10px; }
+.sm-meter-row .sm-ib { width: 30px; height: 30px; }
+.sm-meter { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; height: 10px; }
+.sm-meter-bar { flex: 1; display: flex; gap: 2px; }
+.sm-meter-seg { flex: 1; min-width: 0; border-radius: 1px; background: #1a222c; }
+.sm-meter-seg.on.sm-seg-green { background: #3fcb5b; }
+.sm-meter-seg.on.sm-seg-yellow { background: #e9c23a; }
+.sm-meter-seg.on.sm-seg-red { background: #e5484d; }
+.sm-meter-db { flex: none; width: 44px; white-space: nowrap; text-align: right; font: 500 12px var(--font-mono); color: var(--sm-text-2); }
+
+/* A device's state under its select: why it is not working, Allow or Retry. */
+.sm-dev-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: -2px; font-size: 12px; line-height: 1.4; color: var(--sm-muted); }
+.sm-dev-state[hidden] { display: none; }
+.sm-dev-state.sm-dev-bad { color: #f0a3a6; }
+.sm-dev-text { flex: 1 1 170px; min-width: 0; overflow-wrap: break-word; }
+.sm-dev-act { width: auto; height: 26px; padding: 0 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sm-dev-act[hidden] { display: none; }
+.sm-heavy { margin: -2px 0 0; font-size: 12px; color: #e9c23a; }
+.sm-heavy[hidden] { display: none; }
+
+/* Over the preview while the camera is not showing. */
+.sm-cam-state {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: min(420px, 80%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--sm-strong);
+  border-radius: 8px;
+  background: rgba(11, 15, 20, .86);
+  text-align: center;
+}
+.sm-cam-state[hidden] { display: none; }
+.sm-cam-text { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--sm-text-2); }
+.sm-cam-act { height: 32px; font-size: 12.5px; }
+.sm-cam-act[hidden] { display: none; }
+/* The camera's video: decoded and drawn into the canvas, never seen itself. */
+.sm-cam-source { position: fixed; left: -10000px; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+/* Resolution and frame rate side by side: the frame rate's column is as
+   narrow as "60 fps" needs, so "1080p (1920 x 1080)" keeps its room. */
+.sm-out-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(84px, auto); gap: 8px; }
+.sm-out-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sm-out-col .sm-flabel + .sm-select { margin-top: 0; }
+.sm-out-col .sm-flabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-out-col .sm-sel { padding: 0 28px 0 10px; font-size: 12.5px; }
+.sm-out-col .sm-sel-caret { right: 10px; }
+.sm-out-switches { display: flex; flex-direction: column; gap: 5px; margin-top: 1px; }
+.sm-out-switches .sm-switch-row { gap: 12px; padding: 1px 0; font-size: 12.5px; line-height: 1.3; }
+.sm-out-switches .sm-switch { --sm-sw-w: 36px; --sm-sw-h: 20px; }
+
+.sm-scrim { display: none; }
+
+/* No song open. */
+.sm-no-track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 18px;
+  color: var(--sm-text-2);
+  background: var(--sm-ws);
+  z-index: 10;
+}
+.sm-no-track[hidden] { display: none; }
+
+/* A short note beside a control (or the Mode button). */
+.sm-note {
+  position: fixed;
+  z-index: 300;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 13px var(--font-sans);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  pointer-events: none;
+}
+.sm-note[hidden] { display: none; }
+
+/* ── Shorter workspaces ──
+   Under 760 px of height (a 1366 x 768 or 1280 x 720 window, or a larger one
+   at 125% zoom): the header, the strip and the timeline rows a little
+   tighter, so the preview keeps more of its size. */
+@container streamer (max-height: 760px) {
+  .sm-center {
+    --sm-gap: 6px;
+    --sm-head-h: 46px;
+    --sm-head-pad: 7px 12px;
+    --sm-ctl-h: 32px;
+    --sm-strip-h: 34px;
+    --sm-col-gap: 8px;
+    --sm-tl-pad: 4px;
+    --sm-video-h: 28px;
+    --sm-tl-rows: 30px minmax(32px, 46px) 22px 4px var(--sm-video-h) 4px minmax(56px, 136px);
+    --sm-tl-min: 190px;
+    --sm-ctl-top: 5px;
+    padding-top: 8px;
+    padding-bottom: 6px;
+  }
+  .sm-head-title { font-size: 16px; }
+  .sm-head .sm-sel, .sm-head .sm-ib { height: 32px; }
+  .sm-head .sm-ib:not(.sm-output-btn) { width: 32px; }
+  .sm-head .sm-sel-caret { top: 10px; }
+  .sm-safe { height: 32px; }
+  .sm-strip-title { font-size: 14px; }
+  .sm-clock-now { font-size: 16px; }
+}
+
+/* Under 600 px of height (a very short window): tighter still; below this
+   the column scrolls rather than squeeze the preview under 360 px. */
+@container streamer (max-height: 600px) {
+  .sm-center {
+    --sm-gap: 5px;
+    --sm-head-h: 44px;
+    --sm-head-pad: 6px 12px;
+    --sm-strip-h: 32px;
+    --sm-video-h: 26px;
+    --sm-tl-rows: 28px minmax(30px, 46px) 20px 4px var(--sm-video-h) 4px minmax(52px, 136px);
+    --sm-tl-min: 180px;
+  }
+}
+
+/* ── Narrower workspaces ── */
+/* 1000 to 1199: the output panel is a drawer, opened by Output. */
+@container streamer (max-width: 1199px) {
+  .sm-output-btn { display: inline-flex; }
+  /* Below the mode header, so Output stays in reach to close it. It scrolls
+     only when the window is too short for it, Export staying in view. */
+  .sm-side {
+    position: absolute;
+    top: var(--sm-drawer-top, 74px);
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    width: 400px;
+    max-width: calc(100% - 40px);
+    padding: 10px;
+    border-left: 1px solid var(--sm-line);
+    background: var(--sm-ws);
+    box-shadow: -12px 0 32px rgba(0, 0, 0, .45);
+    display: none;
+  }
+  .sm-drawer-open .sm-side { display: flex; }
+  /* In the drawer each source's label sits beside its select, which keeps
+     every control and Export in view in a short window. */
+  .sm-side .sm-out-head { padding: 9px 14px; }
+  .sm-side .sm-out-body { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; align-content: start; }
+  .sm-side .sm-out-body > :not(.sm-flabel, .sm-select) { grid-column: 1 / -1; }
+  .sm-side .sm-out-body > .sm-flabel + .sm-select { margin-top: 0; }
+  .sm-side .sm-out-body > .sm-export { align-self: end; }
+  .sm-drawer-open .sm-scrim { display: block; position: absolute; inset: var(--sm-drawer-top, 74px) 0 0; z-index: 5; background: rgba(0, 0, 0, .35); }
+}
+/* Under 1000: the header wraps rather than cutting Safe Zones, Output,
+   Stop and Play. */
+@container streamer (max-width: 999px) {
+  .sm-head, .sm-tl { min-width: 0; }
+  .sm-tl { --sm-label-w: 56px; }
+  .sm-tl-label { gap: 4px; padding-left: 6px; font-size: 11.5px; }
+  .sm-tl-label > svg { display: none; }
+  .sm-head { height: auto; gap: 6px; }
+  .sm-head-row { height: auto; min-height: var(--sm-ctl-h); flex-wrap: wrap; gap: 6px 8px; }
+  .sm-head-sep, .sm-head-sub { display: none; }
+  .sm-aspect { width: 150px; }
+  /* I play and the zoom share the timeline's top row: the zoom keeps its
+     buttons, its slider goes. */
+  .sm-part-select { width: 140px; }
+  .sm-zoom-track { display: none; }
+}
+/* Under 680: the column scrolls. */
+@container streamer (max-width: 679px) {
+  /* The header and the timeline fit any width (they wrap or scroll
+     themselves); only the live window keeps its 480 px, so a workspace
+     narrower than that scrolls sideways under the header, never squeezing
+     the window or hiding a control. */
+  .sm-center { overflow: auto; }
+  .sm-builder { flex: none; min-height: 0; container-type: inline-size; }
+  .sm-row { flex-direction: column; justify-content: flex-start; }
+  /* cqw is the builder's width here. */
+  .sm-preview-col { width: clamp(480px, min(100cqw, 716px), 716px); }
+  .sm-tl { flex: none; height: 217px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-switch, .sm-knob { transition: none; }
+}
+
+/* ── Recording and export ── */
+.sm-rec.recording .sm-rec-pill { border-color: rgba(229, 72, 77, .55); background: rgba(229, 72, 77, .16); color: #fff; }
+.sm-rec.recording .sm-rec-ring { border-color: #ff6b70; }
+.sm-rec.recording .sm-rec-dot { background: #ff4d55; animation: sm-rec-blink 1s steps(2, start) infinite; }
+@keyframes sm-rec-blink { to { visibility: hidden; } }
+.sm-export {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--sm-line);
+  /* Where the panel must scroll (a very short window), Export stays in view. */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--sm-card);
+}
+.sm-export[hidden] { display: none; }
+.sm-export-text { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--sm-text-2); overflow-wrap: break-word; }
+.sm-export-bar { width: 100%; height: 6px; accent-color: var(--sm-yellow); }
+.sm-export-bar[hidden] { display: none; }
+.sm-export-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.sm-export-row .sm-ib { width: auto; height: 30px; padding: 0 10px; font-size: 12.5px; font-weight: 600; }
+.sm-export-row [hidden] { display: none; }
+/* The primary action of the panel: full width, the yellow button. */
+.sm-export-go { flex: 1 1 auto; min-width: 120px; height: 38px; font-size: 14px; }
+/* Show in folder or Save the raw recording beside it when they fit. */
+.sm-export-row .sm-ib.sm-export-reveal, .sm-export-row .sm-ib.sm-export-raw { height: 38px; }
+.sm-export-go:disabled { opacity: .45; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .sm-rec.recording .sm-rec-dot { animation: none; }
+}
+.streamer:focus { outline: none; }
+
+/* The input level along the REC badge's bottom while a take records. */
+.sm-rec-level { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #4ade80; transform: scaleX(0); transform-origin: left; pointer-events: none; }
+/* The empty take lane's hint: in its half of the stem row (the second lane). */
+.sm-tl-take-hint { position: absolute; left: 0; right: 0; bottom: 4px; height: calc(50% - 6px); display: flex; align-items: center; justify-content: center; z-index: 2; }
+
+/* Under a small preview the strip tightens, so the clock never runs into
+   undo and redo. */
+.sm-strip { container-type: inline-size; }
+/* (Last in the file: it overrides the header-height tiers too.) */
+@container (max-width: 480px) {
+  .sm-strip-title { gap: 6px; padding: 0 10px; font-size: 13px; }
+  .sm-history-btn { width: 32px; }
+  .sm-clock { gap: 5px; }
+  .sm-clock-now { font-size: 14px; }
+  .sm-clock-dur { font-size: 11.5px; }
+}

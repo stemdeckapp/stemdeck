@@ -1,12 +1,15 @@
 {
   "name": "stemdeck-frontend-tests",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Browser tests for static/js. The app itself has no build step and no runtime dependencies; this exists only so CI can drive a real browser (#339).",
   "scripts": {
     "test:e2e": "playwright test",
+    "test:e2e:parallel": "node scripts/test-e2e-parallel.mjs",
     "test:e2e:headed": "playwright test --headed",
     "test:acceptance": "playwright test -c tests/acceptance/playwright.acceptance.config.mjs",
+    "test:desktop": "playwright test -c tests/desktop/playwright.desktop.config.mjs",
     "test:js": "for f in tests/js/*.test.mjs; do node \"$f\"; done"
   },
   "devDependencies": {

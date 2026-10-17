@@ -12,6 +12,11 @@ on:
   release:
     types: [published]
 
+# No job writes to the repository, so the token gets nothing. Checkout of this
+# public repository and the artifact upload work without it, as in the other
+# workflows.
+permissions: {}
+
 env:
   UV_LINK_MODE: copy
   # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
@@ -25,7 +30,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # diffq (a mandatory transitive dependency of audio-separator, #275) has
       # no prebuilt wheel for Python 3.11+ on Linux -- its last release only
       # ever shipped cp310 wheels -- so uv sync must compile it from source.
@@ -43,7 +48,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # build-essential: see the matching comment in the lint job above.
       - run: apt-get update && apt-get install -y --no-install-recommends ffmpeg build-essential
       - run: uv sync --frozen --all-extras
@@ -54,7 +59,7 @@ jobs:
     container:
       image: node:20-alpine
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
@@ -77,8 +82,8 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "20"
           cache: npm
@@ -87,9 +92,13 @@ jobs:
       - run: uv sync --frozen --all-extras
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      # The backend under test is real, and finishing a recorded take renders
+      # it with ffmpeg (app/pipeline/take_render.py). The runner image has no
+      # ffmpeg, so without this the take specs get a 500 and time out.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npx playwright test --shard=${{ matrix.shard }}/3
       - if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           # Per shard: a second upload under the same name fails the job.
           name: playwright-report-${{ matrix.shard }}
@@ -104,7 +113,7 @@ jobs:
   linux-installer:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: bash -n packaging/linux/install.sh
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils
       - run: shellcheck -S warning packaging/linux/install.sh
@@ -115,7 +124,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: uv tool install bandit
       - run: uv tool run bandit -r app/ -ll  # fail on medium+ severity
 
@@ -124,7 +133,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: uv tool install pip-audit
       - run: uv pip compile pyproject.toml -o /tmp/requirements.txt
       # Ignored CVEs (review when upgrading torch or demucs):
@@ -185,7 +194,7 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # Scans the source tree for: known CVEs in deps, leaked secrets,
       # and Dockerfile / compose misconfigurations. Skips .venv (it can
       # be left over from earlier steps in the shared workspace; trivy

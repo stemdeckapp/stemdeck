@@ -9,7 +9,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/css/variables.css" />
     <link rel="stylesheet" href="/css/waves.css" />
+    <link rel="stylesheet" href="/css/recording.css" />
     <link rel="stylesheet" href="/css/daw.css" />
+    <link rel="stylesheet" href="/css/eq.css" />
+    <link rel="stylesheet" href="/css/mastering.css" />
+    <link rel="stylesheet" href="/css/video.css" />
+    <link rel="stylesheet" href="/css/karaoke.css" />
+    <link rel="stylesheet" href="/css/streamer.css" />
+    <link rel="stylesheet" href="/css/settings.css" />
   </head>
   <body>
 
@@ -159,12 +166,21 @@
                broken: nothing moved, because nothing it controls belongs to a
                track that has already been separated (#634). The bar has its
                own control, "Sections" in the Collapse row. -->
-          <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental. Labels intro, verse and chorus while a track is imported. Applies to the next import, not to a track that is already open. To hide the sections bar, use Collapse > Sections." aria-label="Detect song structure on import (experimental)" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleAria">
-            <span class="structure-toggle-main">
-              <span data-i18n="structure.toggle">Detect structure</span>
-            </span>
-            <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
-          </button>
+          <!-- The two import-time detections, as switches stacked in one
+               segment. Detect lyrics: LRCLIB and the transcript of the vocals
+               run only when it is on (off by default, kept until changed). -->
+          <div class="detect-toggles">
+            <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Labels intro, verse and chorus while a track is imported. Applies to the next import, not to a track that is already open. To hide the sections bar, use Collapse > Sections." aria-label="Detect song structure on import" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleAria">
+              <span class="structure-toggle-main">
+                <span data-i18n="structure.toggle">Detect structure</span>
+              </span>
+            </button>
+            <button class="stem-choice structure-toggle lyrics-toggle" type="button" id="autoLyricsBtn" aria-pressed="false" title="Finds the lyrics while a track is imported, and transcribes the vocals when none are found. Applies to the next import, not to a track that is already open." aria-label="Detect lyrics on import" data-i18n-title="lyricsToggle.title" data-i18n-aria-label="lyricsToggle.aria">
+              <span class="structure-toggle-main">
+                <span data-i18n="lyricsToggle.label">Detect lyrics</span>
+              </span>
+            </button>
+          </div>
 
           <!-- The loaded track, named where the two rows leave room for it.
                It used to fill the gutter beside the footer timeline. That
@@ -293,6 +309,18 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
+            </button>
+            <!-- The studio mode (static/js/modeUi.js): Practice or Advanced. The
+                 brain is the maintainer's choice of icon, drawn in the rail's
+                 line style (18 px, 1.6 stroke, the text colour). -->
+            <button class="rail-btn rail-mode" id="modeBtn" type="button" title="Mode" aria-label="Mode" aria-haspopup="menu" aria-expanded="false" aria-controls="modeMenu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5.2C11.4 3.6 9.9 2.8 8.4 3.1 6.9 3.4 6 4.6 6 6c-1.6.3-2.7 1.7-2.6 3.3-1.1.7-1.6 2-1.3 3.3.3 1.1 1 1.8 1.9 2.1-.3 1.5.4 3 1.8 3.6.6 1.6 2.2 2.6 3.9 2.4 1.1-.1 1.9-.8 2.3-1.7z"/>
+                <path d="M12 5.2c.6-1.6 2.1-2.4 3.6-2.1 1.5.3 2.4 1.5 2.4 2.9 1.6.3 2.7 1.7 2.6 3.3 1.1.7 1.6 2 1.3 3.3-.3 1.1-1 1.8-1.9 2.1.3 1.5-.4 3-1.8 3.6-.6 1.6-2.2 2.6-3.9 2.4-1.1-.1-1.9-.8-2.3-1.7z"/>
+                <path d="M12 5.2v13.8"/>
+                <path d="M6 6c.4 1 1.3 1.6 2.3 1.6M18 6c-.4 1-1.3 1.6-2.3 1.6M4 12.6c1-.4 2.1-.2 2.8.5M20 12.6c-1-.4-2.1-.2-2.8.5M7.2 17.1c.8-.6 1.9-.7 2.8-.2M16.8 17.1c-.8-.6-1.9-.7-2.8-.2"/>
+              </svg>
+              <span data-i18n="mode.label">Mode</span>
             </button>
             <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false" data-i18n-title="nav.favorites" data-i18n-aria-label="nav.favorites">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -601,7 +629,20 @@
           <div class="daw-wave-header">
             <div class="daw-wave-label">
               <span class="daw-label-title" data-i18n="mixer.title">Mixer</span>
+              <!-- Which stems are lanes in this mode, and which play inside
+                   Original (static/js/stemsControl.js, modeStems.js). Practice
+                   and Advanced only, each with its own choice. -->
+              <button class="lane-stems-btn" id="laneStemsBtn" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Choose which stems get their own lane" data-i18n-title="stems.button"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="stems.button">Stems</span><svg class="lane-stems-caret" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+              <!-- A recording track: its own row and lane, armed to record into
+                   (static/js/capture/takeLanes.js). An audio track records
+                   sound; a video track also films with the camera. The row is
+                   moved under the last extracted stem once a song is open. -->
+              <div class="add-track-row" id="addTrackRow" hidden>
+                <button class="add-track-btn" id="addTrackBtn" type="button" disabled title="Add a track that records sound" data-i18n-title="rec.track.addAudioTitle"><span aria-hidden="true">+</span> <span data-i18n="rec.track.addAudio">Audio track</span></button>
+                <button class="add-track-btn add-track-video" id="addVideoTrackBtn" type="button" disabled title="Add a track that films with the camera and records sound" data-i18n-title="rec.track.addVideoTitle"><span aria-hidden="true">+</span> <svg class="add-track-cam" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg> <span data-i18n="rec.track.addVideo">Video track</span></button>
+              </div>
               <span class="uplabel daw-label-sub" data-i18n="mixer.hint">Drag fader · M/S</span>
+              <p class="track-note" id="trackNote" role="status" aria-live="polite" hidden></p>
             </div>
             <div class="daw-ruler-area">
               <div class="lanes-ruler" data-position="top">
@@ -810,6 +851,20 @@
 
         </div><!-- /#lanes -->
 
+      <!-- The Master drawer (static/js/masterPanel.js): between the lanes and
+           the footer, in the layout, so the lanes give it room rather than
+           being covered. Built on first open. -->
+      <section class="master-drawer" id="master-drawer" hidden aria-label="Master" data-i18n-aria-label="master.regionAria"></section>
+
+      <!-- Karaoke Mode (static/js/karaoke/karaoke.js): a fixed layer over the
+           lanes and the master drawer while open, built on first open. -->
+      <section class="karaoke" id="karaoke" hidden aria-label="Karaoke Mode"></section>
+
+      <!-- Performance Mode (id "streamer", static/js/streamer/streamer.js): a fixed layer over
+           the lanes and the master drawer while open, down to the top of the
+           footer (which stays visible), built on first open. -->
+      <section class="streamer" id="streamer" hidden aria-label="Performance Mode"></section>
+
       <!-- ══ FOOTER — sibling of #lanes inside .daw-main-col, not clipped ══ -->
       <footer class="daw-footer">
 
@@ -836,6 +891,18 @@
                 </svg>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
                   <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
+                </svg>
+              </button>
+              <!-- Record a take over the song (static/js/capture/recordUi.js).
+                   The arrow beside it opens the recording panel below. -->
+              <button class="daw-iconbtn btn-transport rec-btn" id="t-rec" type="button" title="Record a take over the song" aria-label="Record" aria-pressed="false" data-i18n-title="rec.recordTitle" data-i18n-aria-label="rec.record">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7" fill="currentColor"/>
+                </svg>
+              </button>
+              <button class="rec-opts-btn" id="t-rec-opts" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="recPanel" title="Recording options" aria-label="Recording options" data-i18n-title="rec.optionsTitle" data-i18n-aria-label="rec.optionsTitle">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <path d="M6 15l6-6 6 6"/>
                 </svg>
               </button>
             </div>
@@ -993,6 +1060,17 @@
                act on the track rather than on playback, and they have to stay
                reachable when the clusters are too wide for the window. -->
           <div class="footer-track-actions">
+            <!-- Opens the Master drawer: loudness, glue compressor, limiter and
+                 the master EQ for the whole mix (exports carry it). The icon
+                 alone, like the click toggle (#681): gold with a dot when the
+                 master is on; the name and the preset are in the tooltip and
+                 the aria-label, and in the Export Mix menu's Master row. -->
+            <button class="track-chip master-chip" id="t-master-btn" type="button" aria-expanded="false" aria-controls="master-drawer" title="Master" aria-label="Master">
+              <svg class="master-chip-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M2 4h20" stroke-dasharray="2 2"/>
+              </svg>
+              <span class="master-chip-dot" aria-hidden="true"></span>
+            </button>
             <div class="track-chip-wrap" id="footer-export-wrap">
               <button class="track-chip track-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
                 <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -1023,6 +1101,16 @@
                   <input type="checkbox" id="t-export-count-in">
                   <span data-i18n="export.addCountIn">Add count-in (1 bar)</span>
                 </label>
+                <button class="chip-panel-item export-item export-master-row" id="t-export-master" type="button" role="menuitem" title="Open the master settings" data-i18n-title="master.exportRowTitle">
+                  <span class="chip-item-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M2 4h20" stroke-dasharray="2 2"/></svg>
+                  </span>
+                  <span class="chip-item-text">
+                    <span class="chip-item-title">Master: off</span>
+                    <span class="chip-item-desc"></span>
+                  </span>
+                  <svg class="export-master-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
                   <span class="chip-item-icon" aria-hidden="true">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
@@ -1137,6 +1225,7 @@
           </a>
         </div>
         <p class="about-credits" data-i18n="about.credits">Song details from AcoustID, MusicBrainz (CC0), Wikipedia (CC BY-SA) and Wikidata (CC0). Band profiles from Discogs, with a Discogs token set. Lyrics from LRCLIB. Transcription by OpenAI Whisper (MIT).</p>
+        <p class="about-license"><span data-i18n="about.license">StemDeck is free software under the GNU AGPL-3.0.</span> <a href="https://github.com/stemdeckapp/stemdeck" target="_blank" rel="noopener noreferrer" data-i18n="about.source">Source code</a></p>
       </div>
     </div>
 
@@ -1244,6 +1333,37 @@
 
     <!-- First, so its handlers are installed before main.js is evaluated and
          can report a failure to parse, resolve an import, or wire the UI. -->
+    <!-- Recording panel, opened from the arrow beside Record. A popover over
+         the footer, so it lives outside it. -->
+    <div class="rec-panel" id="recPanel" role="dialog" aria-labelledby="recPanelTitle" hidden>
+      <div class="rec-panel-head">
+        <span class="rec-panel-title" id="recPanelTitle" data-i18n="rec.panelTitle">Record a take</span>
+        <!-- Input, camera and the latency test are set once, in Settings. -->
+        <button class="rec-link" id="recSettingsLink" type="button" data-i18n="rec.settingsLink">Input and camera settings</button>
+      </div>
+      <div class="rec-permission" id="recPermission" hidden></div>
+      <div class="rec-meter" aria-hidden="true"><div class="rec-meter-fill" id="recMeterFill"></div></div>
+      <label class="rec-check">
+        <input type="checkbox" id="recMonitor">
+        <span data-i18n="rec.monitor">Hear myself through StemDeck</span>
+      </label>
+      <p class="rec-note rec-monitor-delay" id="recMonitorDelay"></p>
+      <p class="rec-note" data-i18n="rec.headphonesNote">Use headphones. With speakers the song bleeds into the take, and hearing yourself can feed back.</p>
+      <fieldset class="rec-mute">
+        <legend data-i18n="rec.muteDuring">Mute while recording</legend>
+        <div class="rec-mute-list" id="recMuteList"></div>
+      </fieldset>
+      <div id="videoPanel" class="video-panel" hidden></div>
+      <div class="rec-review" id="recReview" hidden>
+        <p class="rec-review-text" id="recReviewText"></p>
+        <div class="rec-actions">
+          <button class="rec-small-btn primary" id="recKeep" type="button" data-i18n="rec.review.keep">Keep</button>
+          <button class="rec-small-btn" id="recDiscard" type="button" data-i18n="rec.review.discard">Discard</button>
+        </div>
+      </div>
+      <p class="rec-status" id="recStatus" role="status" aria-live="polite"></p>
+    </div>
+
     <script type="module" src="/js/boot-diagnostics.js"></script>
     <script type="module" src="/js/main.js"></script>
     <script type="module" src="/js/ui-chrome.js"></script>

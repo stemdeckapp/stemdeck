@@ -1,0 +1,132 @@
+/* Camera in the record flow, and "Make video" for takes with a camera file.
+   Markup is built by static/js/video/videoTake.js inside #videoPanel. Every
+   value is a token from variables.css, so reduced motion and the palette
+   apply without anything here. */
+
+.video-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+.video-panel[hidden] { display: none; }
+
+.vid-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.vid-toggle,
+.vid-make,
+.vid-stop,
+.vid-download,
+.vid-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.vid-toggle:hover:not(:disabled),
+.vid-make:hover:not(:disabled),
+.vid-stop:hover:not(:disabled),
+.vid-download:hover,
+.vid-step:hover:not(:disabled) { background: var(--panel-3); color: var(--fg); border-color: var(--border-strong); }
+.vid-toggle:disabled,
+.vid-make:disabled,
+.vid-stop:disabled,
+.vid-step:disabled { opacity: 0.5; cursor: default; }
+.vid-toggle.on { color: var(--accent); border-color: var(--accent); }
+.vid-toggle:focus-visible,
+.vid-make:focus-visible,
+.vid-stop:focus-visible,
+.vid-download:focus-visible,
+.vid-step:focus-visible,
+.vid-select:focus-visible,
+.vid-offset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.vid-step { width: 28px; padding: 0; justify-content: center; }
+.vid-make { color: var(--fg); }
+.vid-download[hidden],
+.vid-stop[hidden],
+.vid-progress[hidden] { display: none; }
+
+.vid-select,
+.vid-offset {
+  height: 28px;
+  max-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font: inherit;
+  padding: 0 6px;
+}
+.vid-offset { width: 72px; font-family: var(--font-mono); text-align: right; }
+
+.vid-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* 16:9 tile at most 320 px wide: enough to check framing, small enough to
+   keep the lanes in view while playing. */
+.vid-preview-wrap {
+  position: relative;
+  width: min(320px, 100%);
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.vid-preview-wrap[hidden] { display: none; }
+.vid-preview-wrap.recording { border-color: var(--danger); }
+.vid-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vid-preview.vid-mirrored { transform: scaleX(-1); }
+.vid-rec-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--danger);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 600;
+}
+.vid-rec-badge[hidden] { display: none; }
+
+.vid-status { margin: 0; color: var(--muted); }
+.vid-status[hidden] { display: none; }
+
+.vid-takes { display: flex; flex-direction: column; gap: 6px; }
+.vid-takes[hidden] { display: none; }
+.vid-takes-head { color: var(--fg); font-weight: 600; }
+.vid-take {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.vid-take-name { color: var(--fg); min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.vid-nudge { display: inline-flex; align-items: center; gap: 4px; }
+.vid-span { display: inline-flex; align-items: center; gap: 4px; }
+.vid-nudge-label,
+.vid-span-label,
+.vid-unit { color: var(--muted); }
+.vid-select:disabled { opacity: 0.5; }
+.vid-progress { width: 120px; accent-color: var(--accent); }
+.vid-state { color: var(--muted); }
+.vid-note { margin: 0; color: var(--muted-2); font-size: 11px; }

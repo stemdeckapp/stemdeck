@@ -823,6 +823,36 @@ def test_submit_captures_the_song_structure_setting_on_the_job(client, monkeypat
     assert registry.get(r.json()["job_id"]).auto_sections is False
 
 
+def test_submit_captures_the_detect_lyrics_setting_on_the_job(client, monkeypatch):
+    """Detect lyrics is read when the job is created, so turning it off while
+    a song waits in the queue does not change what that song gets."""
+    from app.core import registry
+
+    monkeypatch.setattr("app.api.jobs.get_auto_lyrics", lambda: True)
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    assert r.status_code == 200
+    job = registry.get(r.json()["job_id"])
+    assert job.auto_lyrics is True
+    assert job.to_state()["auto_lyrics"] is True
+
+    monkeypatch.setattr("app.api.jobs.get_auto_lyrics", lambda: False)
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/oHg5SJYRHA0"})
+    assert r.status_code == 200
+    assert registry.get(r.json()["job_id"]).auto_lyrics is False
+
+
+def test_detect_lyrics_setting_defaults_off_and_is_kept(client, monkeypatch):
+    """Off until turned on, and kept until changed (unlike Detect structure,
+    which clears itself)."""
+    monkeypatch.delenv("STEMDECK_AUTO_LYRICS", raising=False)
+    assert client.get("/api/settings").json()["auto_lyrics"] is False
+    r = client.post("/api/settings", json={"auto_lyrics": True})
+    assert r.status_code == 200 and r.json()["auto_lyrics"] is True
+    assert client.get("/api/settings").json()["auto_lyrics"] is True
+    client.post("/api/settings", json={"auto_lyrics": False})
+    assert client.get("/api/settings").json()["auto_lyrics"] is False
+
+
 # --- POST /api/jobs/{id}/resplit (#635) -------------------------------------
 #
 # Re-separating a finished upload from the source kept beside it. A

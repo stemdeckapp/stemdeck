@@ -199,6 +199,39 @@ def test_peaks_404_when_file_missing(client, tmp_path):
     assert r.status_code == 404
 
 
+def test_peaks_are_built_on_first_request_when_missing(client, tmp_path, monkeypatch):
+    """An old or hand-made job has stems and no peaks.json. The first request
+    builds it (the stems and the job's takes), so the studio streams the song
+    instead of decoding every stem and swapping engines under a take."""
+    import numpy as np
+    import soundfile as sf
+
+    from app.core import takes as takes_mod
+
+    monkeypatch.setattr(takes_mod, "JOBS_DIR", tmp_path)
+    job = Job(id="abcdefabcd10")
+    job.status = "done"
+    job.takes = [{"id": "t0000aaaa"}, {"id": "../escape"}]
+    _jobs[job.id] = job
+    stems_dir = tmp_path / job.id / "stems"
+    stems_dir.mkdir(parents=True)
+    tone = (0.5 * np.sin(np.linspace(0, 200 * np.pi, 22050))).astype("float32")
+    for name in ("vocals", "drums"):
+        sf.write(stems_dir / f"{name}.wav", tone, 44100, subtype="PCM_16")
+    take = tmp_path / job.id / "takes" / "t0000aaaa"
+    take.mkdir(parents=True)
+    sf.write(take / "audio.wav", tone * 0.5, 44100, subtype="FLOAT")
+
+    r = client.get(f"/api/jobs/{job.id}/peaks")
+
+    assert r.status_code == 200
+    assert set(r.json()) == {"vocals", "drums", "t0000aaaa"}
+    assert (stems_dir / "peaks.json").is_file()
+    # Built once: the next request is the ordinary cached answer.
+    again = client.get(f"/api/jobs/{job.id}/peaks", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304
+
+
 def test_peaks_404_for_non_done_job(client):
     job = Job(id="abcdefabcdec")
     job.status = "separating"

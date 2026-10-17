@@ -1,6 +1,8 @@
+mod backendjob;
 mod certs;
 mod dragout;
 mod dropin;
+mod mediaperm;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -145,6 +147,10 @@ const DEFAULT_LINUX_FFMPEG_SHA256: &str =
 struct BackendHandles {
     child: Child,
     url: String,
+    /// Windows: the kill-on-close job the backend runs in. Dropping it (the
+    /// backend stopped, or StemDeck gone) ends every process the backend
+    /// started, ffmpeg renders included (#790). Always None elsewhere.
+    _job: Option<backendjob::KillOnCloseJob>,
 }
 
 #[derive(Default)]
@@ -167,6 +173,12 @@ struct BackendStateInner {
     /// secret. Every live token maps to a path the user chose in a native
     /// dialog, so guessing one only ever yields another approved destination.
     next_save_token: u64,
+    /// The files completed exports were written to, by the token of their
+    /// save, for Streamer Mode's "Show in folder": a caller can reveal only
+    /// the file its own save wrote, never another caller's later one. Set
+    /// only by download_to_path after the whole file is on disk; JS never
+    /// hands Rust a path to reveal.
+    saved_files: HashMap<String, PathBuf>,
 }
 
 /// Cap on unconsumed destinations. A pick whose download never runs (the user
@@ -176,6 +188,15 @@ const MAX_PENDING_SAVES: usize = 16;
 
 struct BackendState {
     inner: Mutex<BackendStateInner>,
+}
+
+/// The URL of the backend this process is running, if any. Read by the media
+/// permission handlers each time a page asks, because a restart can move the
+/// backend to another port.
+fn current_backend_url(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.try_state::<BackendState>()?;
+    let inner = state.inner.lock().ok()?;
+    inner.handles.as_ref().map(|h| h.url.clone())
 }
 
 impl Default for BackendState {
@@ -412,6 +433,12 @@ fn main() {
             // recoverable from inside the app.
             fit_min_size_to_screen(&window);
 
+            // Microphone and camera for the studio page, which records takes
+            // and performance videos. Granted to the running backend's origin
+            // only; see mediaperm.rs for what each webview needs.
+            let handle = app.handle().clone();
+            mediaperm::install(&window, move || current_backend_url(&handle));
+
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
                 Err(e) => {
@@ -529,6 +556,7 @@ fn main() {
             save_audio_file,
             pick_export_destination,
             download_to_path,
+            reveal_saved,
             pick_stems_folder,
             pick_exports_folder,
             current_exports_dir,
@@ -1864,15 +1892,9 @@ fn start_backend(
         #[cfg(unix)]
         spawn_fpcalc_setup(data_dir.clone());
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let mut child = cmd
-            .spawn()
+        // On Windows also without a console window, and inside a job that
+        // ends the whole backend tree with StemDeck (see backendjob.rs).
+        let (mut child, job) = backendjob::spawn_backend_process(&mut cmd)
             .map_err(|e| format!("failed to start backend: {e}"))?;
         // Release the reserved ports immediately after spawn so uvicorn can
         // bind them. Both, or the companion listener finds its own port held.
@@ -1891,17 +1913,18 @@ fn start_backend(
             return Err(err);
         }
 
-        Ok((child, url))
+        Ok((child, url, job))
     })();
 
     // Atomically update state: clear starting flag whether spawn succeeded or failed.
     let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
     inner.starting = false;
     match spawn_result {
-        Ok((child, url)) => {
+        Ok((child, url, job)) => {
             inner.handles = Some(BackendHandles {
                 child,
                 url: url.clone(),
+                _job: job,
             });
             Ok(BackendStarted { url })
         }
@@ -3559,7 +3582,90 @@ async fn download_to_path(
 ) -> Result<(), String> {
     validate_download_url(&url)?;
     let dest = take_pending_save(&state, &token)?;
-    stream_url_to_file(&url, &dest).await
+    stream_url_to_file(&url, &dest).await?;
+    record_saved(&state, &token, dest)
+}
+
+/// Remembers the file the save `token` just wrote, for reveal_saved. At most
+/// MAX_PENDING_SAVES are kept (the oldest token goes first).
+fn record_saved(state: &BackendState, token: &str, dest: PathBuf) -> Result<(), String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
+    if guard.saved_files.len() >= MAX_PENDING_SAVES && !guard.saved_files.contains_key(token) {
+        if let Some(oldest) = guard
+            .saved_files
+            .keys()
+            .min_by_key(|k| k.parse::<u64>().unwrap_or(u64::MAX))
+            .cloned()
+        {
+            guard.saved_files.remove(&oldest);
+        }
+    }
+    guard.saved_files.insert(token.to_string(), dest);
+    Ok(())
+}
+
+/// The file the save `token` wrote, if it is still there.
+fn saved_file(state: &BackendState, token: &str) -> Result<PathBuf, String> {
+    let path = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?
+        .saved_files
+        .get(token)
+        .cloned()
+        .ok_or_else(|| "nothing was saved by this export".to_string())?;
+    if !path.is_file() {
+        return Err("the saved file is no longer there".to_string());
+    }
+    Ok(path)
+}
+
+/// The program and arguments that show `path` in the system's file manager:
+/// selected in Explorer and Finder, its folder opened on Linux (xdg-open has
+/// no "select"). Arguments, never a shell string, so no part of the path is
+/// ever interpreted.
+fn reveal_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
+    #[cfg(target_os = "windows")]
+    {
+        // Explorer takes "/select," and the path as the next argument.
+        let args = vec![
+            std::ffi::OsString::from("/select,"),
+            path.as_os_str().to_owned(),
+        ];
+        ("explorer", args)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let args = vec![std::ffi::OsString::from("-R"), path.as_os_str().to_owned()];
+        ("open", args)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let dir = path.parent().unwrap_or(path);
+        ("xdg-open", vec![dir.as_os_str().to_owned()])
+    }
+}
+
+/// Shows the file an export saved in the system's file manager (Streamer
+/// Mode's "Show in folder"). Takes the save's token, never a path: only a file
+/// this app wrote for that caller's own save can be revealed. Async, so the
+/// command never holds the main thread; the file manager's process is waited
+/// on in a thread of its own so it never lingers as a zombie.
+#[tauri::command]
+async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> Result<(), String> {
+    let path = saved_file(&state, &token)?;
+    let (program, args) = reveal_command(&path);
+    let mut child = Command::new(program)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("could not open the file manager: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Streams a URL to `dest`, via a temp file so a failure never leaves a
@@ -3695,6 +3801,9 @@ fn stop_backend(state: &BackendState) {
                 thread::sleep(Duration::from_millis(100));
             }
         }
+        // Windows has no graceful stop: the kill is hard, and the backend's
+        // own shutdown (which stops video renders) does not run. Dropping
+        // `handles` closes its job, which ends what it started (#790).
         let _ = handles.child.kill();
         let _ = handles.child.wait();
     });
@@ -7696,6 +7805,74 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert!(held <= super::MAX_PENDING_SAVES, "held {held}");
         // The stalest pick is the one dropped.
         assert!(super::take_pending_save(&state, &first).is_err());
+    }
+
+    #[test]
+    fn reveal_needs_a_file_this_app_saved() {
+        let state = super::BackendState::default();
+        assert!(super::saved_file(&state, "1").is_err(), "nothing saved yet");
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Song - Artist (Streamer).mp4");
+        std::fs::write(&file, b"x").unwrap();
+        super::record_saved(&state, "1", file.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "1").unwrap(), file);
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            super::saved_file(&state, "1").is_err(),
+            "a file that has gone is not revealed"
+        );
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_shows_only_the_callers_own_save() {
+        let state = super::BackendState::default();
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join("Streamer take.mp4");
+        let later = dir.join("A mix export.wav");
+        std::fs::write(&mine, b"x").unwrap();
+        std::fs::write(&later, b"y").unwrap();
+        super::record_saved(&state, "7", mine.clone()).unwrap();
+        // Another export saved afterwards does not change what token 7 reveals.
+        super::record_saved(&state, "8", later.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "7").unwrap(), mine);
+        assert_eq!(super::saved_file(&state, "8").unwrap(), later);
+        assert!(
+            super::saved_file(&state, "9").is_err(),
+            "an unknown token reveals nothing"
+        );
+        // Bounded: the oldest tokens go first.
+        for i in 10..(10 + super::MAX_PENDING_SAVES) {
+            super::record_saved(&state, &i.to_string(), later.clone()).unwrap();
+        }
+        assert!(state.inner.lock().unwrap().saved_files.len() <= super::MAX_PENDING_SAVES);
+        assert!(
+            super::saved_file(&state, "7").is_err(),
+            "the oldest save was dropped"
+        );
+        let _ = std::fs::remove_file(&mine);
+        let _ = std::fs::remove_file(&later);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_passes_the_path_as_one_argument() {
+        let path = PathBuf::from("/tmp/a b; echo pwned & \"quoted\".mp4");
+        let (program, args) = super::reveal_command(&path);
+        assert!(!program.is_empty());
+        // The path is never split or interpreted: it is one argument, or its
+        // folder is (Linux).
+        let joined: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            joined.iter().any(|a| a == path.to_string_lossy().as_ref())
+                || joined.iter().any(|a| a == "/tmp"),
+            "{joined:?}"
+        );
     }
 
     #[test]

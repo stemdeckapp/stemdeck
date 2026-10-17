@@ -52,3 +52,38 @@ CVE-2026-63374
 # bump the next time the lock moves for another reason, and drop these then.
 CVE-2026-97687
 CVE-2026-97689
+
+# CVE-2026-104851 (added 2026-10-11): fsspec runs arbitrary code from a
+# crafted reference document. Fixed in fsspec 2026.6.0; the lock pins 2026.3.0.
+#
+# StemDeck never opens a reference:// filesystem. fsspec is here transitively,
+# through torch and huggingface-hub. huggingface-hub uses it only in
+# HfFileSystem, and StemDeck downloads models with hf_hub_download (see
+# allin1_infer/models/loaders.py), which does not go through fsspec.
+#
+# Deferred on purpose: any uv.lock change sends every existing Windows and
+# Linux desktop install to a full download instead of an in-app update (see
+# the desktop-update-gate skill). Take the bump in a release that already
+# requires a reinstall, and drop this entry then.
+CVE-2026-104851
+
+# CVE-2026-106439, CVE-2026-106441 and CVE-2026-106442 (added 2026-10-11):
+# hydra-core runs arbitrary code from an attacker-controlled config, through
+# the execution policy, the logging configuration and a bypass of the
+# instantiate target blocklist. Fixed in hydra-core 1.3.7 (106439) and 1.3.6
+# (106441, 106442); the lock pins 1.3.5.
+#
+# StemDeck never hands hydra a config it did not ship. hydra-core is here
+# transitively: allin1_infer/config.py imports only ConfigStore, and the
+# allin1 model config comes from the fixed Hugging Face checkpoint through
+# OmegaConf.create, not hydra. dora uses hydra only for demucs/train.py,
+# which StemDeck never runs. No runtime path calls hydra.utils.instantiate
+# or hydra.main.
+#
+# Deferred on purpose for the same reason as CVE-2026-104851: any uv.lock
+# change sends every existing Windows and Linux desktop install to a full
+# download. Take the bump in a release that already requires a reinstall, and
+# drop these entries then.
+CVE-2026-106439
+CVE-2026-106441
+CVE-2026-106442

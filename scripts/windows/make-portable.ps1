@@ -237,6 +237,8 @@ Copy-Item -Force (Join-Path $Root "pyproject.toml") (Join-Path $BackendDir "pypr
 Copy-Item -Force (Join-Path $Root "uv.lock") (Join-Path $BackendDir "uv.lock")
 Copy-Item -Force (Join-Path $Root "packaging\windows\README-WINDOWS.txt") (Join-Path $Stage "README-WINDOWS.txt")
 Copy-Item -Force (Join-Path $Root "packaging\windows\THIRD_PARTY_NOTICES.txt") (Join-Path $Stage "THIRD_PARTY_NOTICES.txt")
+# The AGPL asks for a copy of the license with every copy of the program.
+Copy-Item -Force (Join-Path $Root "LICENSE") (Join-Path $Stage "LICENSE.txt")
 
 if (Get-Command "py" -ErrorAction SilentlyContinue) {
   & py -3.12 -m venv $PythonDir

@@ -24,6 +24,8 @@
   --guitar: #22c55e;
   --piano:  #a855f7;
   --other:  #9ca3af;
+  /* Recorded takes (constants.js TAKE_COLOR must match) */
+  --take:   #5ec8c0;
 
   /* Width shared by the composer's two end segments (Song structure and
      Extract stems) so they match. See .daw-process-btn / .structure-toggle. */
@@ -68,6 +70,49 @@
   --radius:   10px;
   --radius-sm: 8px;
   --radius-xs: 6px;
+
+  /* Track header controls (the mixer column's rows): K, M, S, download, arm,
+     the track menu, the input picker and the EQ tab are one size, large
+     enough to read across a room (a practice screen seen from the drum
+     stool). The row keeps its height and the column its width: the controls
+     sit on two lines, centred on the row's middle where the name sits. */
+  --mx-ctl-h:      28px;
+  --mx-ctl-w:      28px;
+  --mx-ctl-font:   13px;
+  --mx-ctl-gap:    6px;
+  --mx-name-font:  15px;
+  --mx-name-w:     88px;
+
+  /* EQ tab and panels (eq.css). The tab is the M/S buttons' family: the
+     same 5px corner and height, at the start of the fader's line. */
+  --eq-tab-h:      var(--mx-ctl-h);
+  --eq-tab-radius: 5px;
+  --eq-panel-bg:   #0d1216;
+  --eq-graph-bg:   #090c0f;
+  --eq-grid:       rgba(148,163,184,0.09);
+  --eq-grid-zero:  rgba(148,163,184,0.26);
+  --eq-label:      #6b757e;
+  --eq-spectrum:   rgba(148,163,184,0.20);
+  --eq-spectrum-line: rgba(148,163,184,0.42);
+  --eq-curve-fill: rgba(244,183,64,0.10);
+  /* A suggested EQ under review, drawn dashed over the current curve. */
+  --eq-ghost:      rgba(125,211,252,0.90);
+  --eq-plate:      #161d23;
+  --eq-plate-edge: #26313a;
+  --eq-knob:       #222c34;
+  --eq-knob-cap:   #2c3741;
+  /* Band handles, in turn (a band keeps its colour while it exists). */
+  --eq-band-1: #f4b740;
+  --eq-band-2: #5ec8c0;
+  --eq-band-3: #e97a6a;
+  --eq-band-4: #8fb4ff;
+  --eq-band-5: #b9e07a;
+  --eq-band-6: #d49cf0;
+  /* The Master drawer (mastering.css): its settings column fits without
+     scrolling at this height. */
+  /* A third of the window, so the lanes keep room above it (364 px fixed left
+     no lane at all on a 720 px tall window). The settings column scrolls. */
+  --master-drawer-h: clamp(250px, 34vh, 340px);
 
   /* Motion */
   --t-fast: 80ms;

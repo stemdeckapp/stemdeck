@@ -17,6 +17,7 @@ at startup), so the Settings UI can change them without a restart:
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
 - `discogs_token`     - the user's Discogs token, for band profiles.
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
+- `video_encoder`     - H.264 encoder of the take render: auto | cpu | an encoder.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -37,6 +38,7 @@ from app.core.config import (
     DATA_DIR,
     MAX_DURATION_SEC,
     PLAYLIST_MAX_ITEMS,
+    VIDEO_ENCODER_CHOICES,
     VIDEO_MAX_HEIGHT,
     available_torch_devices,
     detect_torch_device,
@@ -126,18 +128,30 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     return True
 
 
-def _quarantine_corrupt(path: Path) -> None:
-    """Move an unusable settings file aside rather than leaving it to be
-    overwritten by the next save.
+def quarantine_corrupt(path: Path, what: str = "settings") -> Path | None:
+    """Move an unusable file aside rather than leaving it to be overwritten by
+    the next save. Returns where it went, or None if it could not be moved.
 
     Renaming keeps the bytes for diagnosis. Deleting or writing over them
-    destroys the only remaining evidence of what the user had configured."""
+    destroys the only remaining evidence of what the user had configured.
+    Shared with the registry (app/core/registry.py), whose file has the same
+    problem; `what` only names the file in the log."""
     try:
-        target = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        stamp = int(time.time())
+        target = path.with_name(f"{path.name}.corrupt-{stamp}")
+        n = 1
+        while target.exists():  # a second quarantine within the same second
+            target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+            n += 1
         path.replace(target)
-        _log.warning("settings at %s were unreadable; moved aside to %s", path, target)
+        _log.warning("%s at %s were unreadable; moved aside to %s", what, path, target)
+        return target
     except OSError:
-        _log.warning("could not move unreadable settings at %s aside", path, exc_info=True)
+        _log.warning("could not move unreadable %s at %s aside", what, path, exc_info=True)
+        return None
+
+
+_quarantine_corrupt = quarantine_corrupt
 
 
 def _load() -> dict:
@@ -298,6 +312,30 @@ def _default_auto_sections() -> bool:
     wants it from first boot.
     """
     return os.environ.get("STEMDECK_AUTO_SECTIONS", "").strip() == "1"
+
+
+def _default_auto_lyrics() -> bool:
+    """Lyrics found while a song is imported (LRCLIB, then a Whisper
+    transcript of the vocals), off until the user turns Detect lyrics on.
+
+    Unlike Detect structure this is a standing choice, kept until changed.
+    STEMDECK_AUTO_LYRICS=1 turns it on for a deployment that wants it from
+    first boot.
+    """
+    return os.environ.get("STEMDECK_AUTO_LYRICS", "").strip() == "1"
+
+
+def get_auto_lyrics() -> bool:
+    with _LOCK:
+        v = _ensure().get("auto_lyrics")
+        return v if isinstance(v, bool) else _default_auto_lyrics()
+
+
+def set_auto_lyrics(value: bool) -> bool:
+    with _LOCK:
+        _ensure()["auto_lyrics"] = bool(value)
+        _save()
+        return bool(value)
 
 
 def get_auto_sections() -> bool:
@@ -593,6 +631,29 @@ def set_separation_quality(value: str) -> str:
         raise ValueError("separation_quality must be one of: " + ", ".join(_QUALITY_CHOICES))
     with _LOCK:
         _ensure()["separation_quality"] = choice
+        _save()
+        return choice
+
+
+# ── video_encoder ──
+# The H.264 encoder of the take render (app/pipeline/video_encoder.py): "auto"
+# (default) uses a GPU encoder that passed a real test encode on this machine,
+# "cpu" always libx264, an encoder name only that one (libx264 when it fails).
+# Read per render. STEMDECK_VIDEO_ENCODER overrides it (video_encoder.policy).
+def get_video_encoder() -> str:
+    with _LOCK:
+        v = _ensure().get("video_encoder")
+        return v if isinstance(v, str) and v in VIDEO_ENCODER_CHOICES else "auto"
+
+
+def set_video_encoder(value: str) -> str:
+    choice = (value or "").strip().lower()
+    if choice not in VIDEO_ENCODER_CHOICES:
+        raise ValueError("video_encoder must be one of: " + ", ".join(VIDEO_ENCODER_CHOICES))
+    # The stored value is the whitelist's own string, never the request's.
+    choice = VIDEO_ENCODER_CHOICES[VIDEO_ENCODER_CHOICES.index(choice)]
+    with _LOCK:
+        _ensure()["video_encoder"] = choice
         _save()
         return choice
 

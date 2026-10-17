@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -11,9 +12,12 @@ import tempfile
 import uuid
 import zipfile
 from collections import deque
+from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import NamedTuple
 
+import soundfile as sf
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
@@ -24,14 +28,49 @@ from app.core.config import (
     JOB_ID_RE,
     JOBS_DIR,
     STEM_NAMES,
+    TAKE_ID_RE,
     TIMEOUT_FFMPEG,
+    TRACK_ID_RE,
     ffmpeg_executable,
 )
 from app.core.registry import get as registry_get
 from app.core.settings import get_export_sample_rate
+from app.core.takes import take_dir
 from app.pipeline.audio_stats import vocal_envelope
 from app.pipeline.click_render import cache_key as click_cache_key
 from app.pipeline.click_render import count_in_beats, render_click_wav, render_count_in_wav
+from app.pipeline.collect import fill_missing_peaks
+from app.pipeline.fx_filters import (
+    FX_PARAM_MAX_CHARS,
+    FxError,
+    FxRequest,
+    check_section_budget,
+    parse_fx_param,
+    slot_filter,
+    slot_section_count,
+)
+from app.pipeline.mastering import (
+    MASTER_PARAM_MAX_CHARS,
+    Loudness,
+    MasterError,
+    MasterPlan,
+    MasterSettings,
+    MeasureError,
+    comp_ratio,
+    effective_ceiling,
+    measure_file,
+    parse_master_param,
+    plan_chain,
+    plan_graph,
+    run_plan,
+    trim_filter,
+)
+from app.pipeline.take_render import (
+    AAC_ENCODE_ARGS,
+    AAC_ENCODE_ARGS_ALT,
+    EXPORT_LIMITER_LOSSY,
+    export_limiter,
+)
 
 logger = logging.getLogger("stemdeck.api")
 
@@ -50,6 +89,10 @@ _ALLOWED_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"origina
 # endpoint replaces. Gains are linear; the studio caps a lane at 2.0, so this
 # generous bound just rejects abusive values.
 _MIXDOWN_NAMES = frozenset(STEM_NAMES) | frozenset(EXTRA_STEM_NAMES) | {"original"}
+# A recorded take is a lane too, named by its id (^t[0-9a-f]{8}$, never a stem
+# name) and resolved to takes/<take_id>/audio.wav, which is already in the
+# stems' format, aligned to song 0 and the song's length: export applies no
+# offset and no resample to it.
 _MIXDOWN_MAX_GAIN = 4.0
 # lead_vocals/backing_vocals are a decomposition of vocals, not an independent
 # signal -- summing vocals alongside either would double-count the vocal
@@ -66,6 +109,9 @@ _ENCODE_ARGS = {
     "ogg": ["-c:a", "libvorbis", "-q:a", "6"],
 }
 MIXDOWN_CODECS = {ext: [*args, "-f", ext] for ext, args in _ENCODE_ARGS.items()}
+# Mixdowns whose encoder adds peak of its own, so they end in the true-peak
+# limiter (EXPORT_LIMITER_LOSSY) rather than the bit-transparent one.
+_LOSSY_MIXDOWN_EXTS = frozenset({"mp3", "ogg"})
 
 # Containers whose muxer finishes the file by seeking back to a header it wrote
 # earlier, which is impossible on a pipe (#458):
@@ -109,7 +155,38 @@ _MIXDOWN_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
 # is still reachable, and _prune_mixdown_cache evicts by age rather than
 # validity -- so without this a user who exported before upgrading would be
 # handed the same broken file back for the same parameters indefinitely.
-_RENDER_CACHE_VERSION = "2"
+#
+# "3": every mixdown now ends in the export limiter (EXPORT_LIMITER), so a mix
+# that summed above -1 dBFS renders differently from the cached clipped file.
+#
+# "4": MP3 and OGG mixdowns now end in the true-peak limiter at -1.5 dBTP
+# (EXPORT_LIMITER_LOSSY) instead of the -1 dBFS sample-peak one.
+#
+# "5": exports take the studio EQ (fx=), and its filters are part of the key.
+#
+# "6": exports take the master (master=): loudness target, glue compressor and
+# true-peak limiter; the master chain with its measured gain is in the key.
+_RENDER_CACHE_VERSION = "6"
+
+# Measured masters (app/pipeline/mastering.py), one small JSON per mix and
+# master setting, so the export, the region export, the "render and listen"
+# excerpt and the loudness readout share one measurement of the whole song.
+# The key holds every input of the measurement; bump the version when the
+# plan's maths change.
+_MASTER_PLAN_DIR = CACHE_DIR / "master"
+_MASTER_PLAN_MAX_FILES = 200
+_MASTER_PLAN_VERSION = "1"
+# At most two songs measured at once on this server; one mix is never
+# measured twice at the same time (the export and the readout often ask
+# together).
+_master_plan_slots = asyncio.Semaphore(2)
+_master_plan_locks: dict[str, asyncio.Lock] = {}
+# A mastered lossy export is decoded and measured; over the ceiling, it is
+# rendered again with its output trimmed (_render_master_verified).
+LOSSY_RETRIES = 3
+LOSSY_RETRY_MARGIN_DB = 0.1
+# How often a loudness request checks that its client is still there.
+_DISCONNECT_POLL_SEC = 0.5
 
 
 def _mixdown_cache_key(
@@ -121,32 +198,49 @@ def _mixdown_cache_key(
     end: float | None,
     click_lane: tuple[Path, float] | None = None,
     pitches: list[int] | None = None,
+    lane_versions: list[str] | None = None,
+    fx_fragment: str = "",
+    master_fragment: str = "",
+    lanes_fragment: str = "",
 ) -> str:
     """Every render input is in the key, so a different mixer state, region,
     or a Settings change (export sample rate) misses cleanly -- never a stale
     hit. Stems are immutable once a job reaches "done", so job_id alone pins
     the underlying audio; gains are formatted to match the %.6f precision
     already used in the ffmpeg volume filter, so cosmetically-different but
-    ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry."""
-    raw = "|".join(
-        [
-            _RENDER_CACHE_VERSION,
-            job_id,
-            ext,
-            ",".join(names),
-            ",".join(f"{g:.6f}" for g in gains),
-            "" if start is None else f"{start:.6f}",
-            "" if end is None else f"{end:.6f}",
-            str(get_export_sample_rate()),
-            # The click's own cache key already encodes the grid, rate and
-            # accent mode, so its filename plus gain fully identifies it.
-            "" if click_lane is None else f"{click_lane[0].name}:{click_lane[1]:.6f}",
-            # Appended only when something is actually transposed, so every
-            # export made before #592 keeps the exact key it already had and
-            # the cache survives the change.
-            "" if not (pitches and any(pitches)) else "p" + ",".join(str(p) for p in pitches),
-        ]
-    )
+    ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry.
+
+    `lanes_fragment` (the mode's lanes, which decide what Original holds) is
+    appended only when given, so every key made before lanes= is unchanged."""
+    parts = [
+        _RENDER_CACHE_VERSION,
+        job_id,
+        ext,
+        ",".join(names),
+        ",".join(f"{g:.6f}" for g in gains),
+        "" if start is None else f"{start:.6f}",
+        "" if end is None else f"{end:.6f}",
+        str(get_export_sample_rate()),
+        # The click's own cache key already encodes the grid, rate and
+        # accent mode, so its filename plus gain fully identifies it.
+        "" if click_lane is None else f"{click_lane[0].name}:{click_lane[1]:.6f}",
+        # Appended only when something is actually transposed, so every
+        # export made before #592 keeps the exact key it already had and
+        # the cache survives the change.
+        "" if not (pitches and any(pitches)) else "p" + ",".join(str(p) for p in pitches),
+        # A take is not immutable like a stem: a nudge re-renders its
+        # audio.wav under the same name. Its size and mtime pin the file
+        # the render read, so a nudged take misses the cache.
+        ",".join(lane_versions or []),
+        # The EQ as the exact filter strings the render runs (RenderFx),
+        # empty when no EQ changes the sound.
+        fx_fragment,
+        # The master chain with its measured gain, empty when off.
+        master_fragment,
+    ]
+    if lanes_fragment:
+        parts.append(lanes_fragment)
+    raw = "|".join(parts)
     # Cache key, not a security context -- usedforsecurity=False documents
     # that for both readers and static analysis (bandit flags bare sha1()).
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -190,6 +284,60 @@ def _prune_mixdown_cache(cache_dir: Path, keep: Path | None = None) -> None:
             oldest.unlink()
         except OSError:
             logger.debug("mixdown cache prune: could not remove %s", oldest, exc_info=True)
+
+
+def _is_recorded_lane(name: str) -> bool:
+    """A take id or a recording track id: lanes resolved to a take's file."""
+    return bool(TAKE_ID_RE.match(name) or TRACK_ID_RE.match(name))
+
+
+def _lane_take_id(job_id: str, name: str) -> str:
+    """The take a recorded lane plays: a take id is itself, a track id is its
+    active take. A track with no take yet is a 422, like an unknown name."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not ready")
+    if TRACK_ID_RE.match(name):
+        track = next((t for t in job.tracks if t.get("id") == name), None)
+        if track is None:
+            raise HTTPException(status_code=422, detail="unknown stem requested")
+        if not track.get("active_take_id"):
+            raise HTTPException(status_code=422, detail="track has no take")
+        return str(track["active_take_id"])
+    return name
+
+
+def _take_lane_path(job_id: str, name: str) -> Path:
+    """A take or track lane's audio.wav, with the same guards as a stem. Only
+    a finished take (one listed in job.takes) is a lane; anything else is the
+    same 422 as an unknown stem name."""
+    name = _lane_take_id(job_id, name)
+    job = registry_get(job_id)
+    if not TAKE_ID_RE.match(name) or not any(t.get("id") == name for t in job.takes):
+        raise HTTPException(status_code=422, detail="unknown stem requested")
+    folder = take_dir(job_id, name, JOBS_DIR)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="stem not found")
+    path = (folder / "audio.wav").resolve()
+    if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="stem not found")
+    return path
+
+
+def _take_versions(job_id: str, names: list[str]) -> list[str]:
+    """Cache-key fragments for the recorded lanes in `names`, the only lanes
+    whose file can change in place. A track's fragment names its active take,
+    so switching the active take misses the cache."""
+    out: list[str] = []
+    for name in names:
+        if not _is_recorded_lane(name):
+            continue
+        take_id = _lane_take_id(job_id, name)
+        st = _take_lane_path(job_id, name).stat()
+        out.append(f"{name}={take_id}@{st.st_size}:{st.st_mtime_ns}")
+    return out
 
 
 def _validate_stem_path(job_id: str, name: str):
@@ -514,7 +662,7 @@ def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
         raise HTTPException(status_code=422, detail="gains must be numbers") from None
     if any(g < 0 or g > _MIXDOWN_MAX_GAIN for g in parsed_gains):
         raise HTTPException(status_code=422, detail="gain out of range")
-    if not set(names) <= _MIXDOWN_NAMES:
+    if not all(n in _MIXDOWN_NAMES or _is_recorded_lane(n) for n in names):
         raise HTTPException(status_code=422, detail="unknown stem requested")
     if "vocals" in names and _VOCAL_DECOMPOSITION_NAMES & set(names):
         raise HTTPException(
@@ -524,12 +672,303 @@ def _parse_lane_gains(stems: str, gains: str) -> tuple[list[str], list[float]]:
     return names, parsed_gains
 
 
+# The longest lanes= value: the six base stem names and their commas.
+LANES_PARAM_MAX_CHARS = 64
+LANES_QUERY_DESCRIPTION = (
+    "The base stems that are lanes of their own in the mode exported, muted or "
+    "not, comma-separated (may be empty). With it, Original is rebuilt as every "
+    "other stem, as playback builds it. Absent: Original is the job's own file."
+)
+
+
+def parse_lanes_param(lanes: str | None) -> frozenset[str] | None:
+    """The `lanes=` value: None when absent (behaviour exactly as before it
+    existed), else the set of base stems with a lane of their own. Unknown or
+    repeated names are refused, never ignored: a dropped name would put its
+    stem into Original and the export would carry it twice."""
+    # Not a string: absent, or the Query default of a route called directly
+    # as a function (tests do), which is absent too.
+    if not isinstance(lanes, str):
+        return None
+    names = [n for n in lanes.split(",") if n]
+    if len(names) != len(set(names)) or any(n not in STEM_NAMES for n in names):
+        raise HTTPException(status_code=422, detail="lanes: unknown or repeated stem")
+    return frozenset(names)
+
+
 class _RenderLane(NamedTuple):
-    """One ffmpeg input in the mixdown graph: a file, its gain, its shift."""
+    """One ffmpeg input in the mixdown graph: a file, its gain, its shift, and
+    the mixer lane it belongs to (whose EQ it gets; "" for the click)."""
 
     path: Path
     gain: float
     pitch: int
+    name: str = ""
+
+
+def parse_fx_query(fx: str) -> FxRequest:
+    """The fx= parameter, validated, or a 422 with a safe message."""
+    try:
+        return parse_fx_param(fx)
+    except FxError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _input_rate(path: Path) -> int:
+    """The sample rate an input file is decoded at: the rate the EQ is
+    designed for, because the filter runs on the file's own samples (before
+    any resample to the export rate). Stems and takes are 44.1 kHz; reading the
+    header keeps an older job at another rate right."""
+    try:
+        return int(sf.info(str(path)).samplerate)
+    except Exception:
+        logger.debug("could not read the sample rate of %s; assuming 44100", path, exc_info=True)
+        return 44100
+
+
+class RenderFx(NamedTuple):
+    """The EQ of one render: per input a filter prefix ("" or "biquad=...,"),
+    the master prefix, and the cache key fragment."""
+
+    lanes: list[str]
+    master: str
+    fragment: str
+
+
+def build_render_fx(
+    lane_names: list[str], lane_paths: list[Path], fx_req: FxRequest, extra_sections: int = 0
+) -> RenderFx:
+    """Filter prefixes for each input (by its lane name) and for the mix.
+
+    An input whose lane has no EQ gets "" and the graph is exactly the one
+    built before the EQ existed. The master EQ is designed at the first
+    input's rate, which is the rate amix runs at."""
+    prefixes: list[str] = []
+    sections = extra_sections
+    for name, path in zip(lane_names, lane_paths, strict=True):
+        effects = fx_req.lanes.get(name, []) if name else []
+        chain = slot_filter(effects, _input_rate(path)) if effects else ""
+        sections += slot_section_count(effects)
+        prefixes.append(f"{chain}," if chain else "")
+    master_chain = ""
+    if fx_req.master and lane_paths:
+        master_chain = slot_filter(fx_req.master, _input_rate(lane_paths[0]))
+        sections += slot_section_count(fx_req.master)
+    try:
+        check_section_budget(sections)
+    except FxError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    master = f"{master_chain}," if master_chain else ""
+    fragment = ""
+    if master or any(prefixes):
+        fragment = "fx:" + "|".join(prefixes) + "#" + master
+    return RenderFx(prefixes, master, fragment)
+
+
+def parse_master_query(master: str) -> MasterSettings | None:
+    """The master= parameter, validated, or a 422 with a safe message."""
+    try:
+        return parse_master_param(master)
+    except MasterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _read_master_plan(path: Path) -> MasterPlan | None:
+    try:
+        return MasterPlan.from_json(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.debug("unreadable master plan %s", path, exc_info=True)
+        return None
+
+
+def _write_master_plan(path: Path, plan: MasterPlan) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(plan.to_json()), encoding="utf-8")
+    os.replace(tmp, path)
+    try:
+        entries = sorted(
+            (p for p in path.parent.iterdir() if p.is_file() and not p.name.startswith(".")),
+            key=lambda p: p.stat().st_mtime,
+        )
+        for old in entries[: max(0, len(entries) - _MASTER_PLAN_MAX_FILES)]:
+            if old != path:
+                old.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("master plan prune failed", exc_info=True)
+
+
+async def master_plan(
+    job_id: str,
+    lane_paths: list[Path],
+    lane_chains: list[str],
+    master_eq: str,
+    settings: MasterSettings,
+    lossy: bool,
+    versions: list[str],
+) -> tuple[MasterPlan, int]:
+    """The measured master of the whole song for these lanes, and the rate the
+    master chain runs at (the first input's, which amix runs at).
+
+    ``lane_chains[i]`` is input i's chain as the export runs it (EQ, pitch
+    shift, gain), ``master_eq`` the master EQ prefix, ``versions`` the take
+    fragments that pin files which can change in place. Cached on disk; a
+    mix measured once is never measured again, and never twice at once."""
+    rate = await asyncio.to_thread(_input_rate, lane_paths[0])
+    ceiling = effective_ceiling(settings, lossy)
+    inputs: list[str] = []
+    for p in lane_paths:
+        inputs += ["-i", str(p)]
+    graph = plan_graph(lane_chains, master_eq)
+    raw = "|".join(
+        [
+            _MASTER_PLAN_VERSION,
+            job_id,
+            ";".join(str(p) for p in lane_paths),
+            graph,
+            ",".join(versions),
+            settings.fragment(),
+            f"{ceiling:.1f}",
+            str(rate),
+        ]
+    )
+    key = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
+    path = _MASTER_PLAN_DIR / f"{key}.json"
+    cached = await asyncio.to_thread(_read_master_plan, path)
+    if cached is not None:
+        return cached, rate
+    lock = _master_plan_locks.setdefault(key, asyncio.Lock())
+    try:
+        async with lock:
+            cached = await asyncio.to_thread(_read_master_plan, path)
+            if cached is not None:
+                return cached, rate
+            async with _master_plan_slots:
+                try:
+                    plan = await run_plan(inputs, graph, settings, ceiling, rate)
+                except MeasureError as exc:
+                    logger.warning("master measurement failed [job=%s]: %s", job_id, exc)
+                    raise HTTPException(
+                        status_code=500, detail="loudness measurement failed"
+                    ) from None
+            await asyncio.to_thread(_write_master_plan, path, plan)
+            return plan, rate
+    finally:
+        if not lock.locked():
+            _master_plan_locks.pop(key, None)
+
+
+def master_headers(plan: MasterPlan, out: Loudness | None = None) -> dict[str, str]:
+    """The measured loudness before and after the master, for API clients.
+    ``out`` is the decoded file's own measurement (lossy exports), otherwise
+    the plan's (lossless output is the plan's signal, quantised)."""
+
+    def fmt(v: float | None) -> str:
+        return "none" if v is None else f"{v:.2f}"
+
+    post = out or plan.post
+    return {
+        "X-StemDeck-Loudness-Pre": f"i={fmt(plan.pre.i)};tp={fmt(plan.pre.tp)}",
+        "X-StemDeck-Loudness-Post": f"i={fmt(post.i)};tp={fmt(post.tp)}",
+        "X-StemDeck-Master-Gain": f"{plan.gain_db:.2f}",
+    }
+
+
+def _output_note_path(cache_key: str) -> Path:
+    return _MASTER_PLAN_DIR / f"out-{cache_key}.json"
+
+
+def _read_master_output(cache_key: str) -> Loudness | None:
+    try:
+        data = json.loads(_output_note_path(cache_key).read_text(encoding="utf-8"))
+        return Loudness(**data)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError):
+        logger.debug("unreadable master output note %s", cache_key, exc_info=True)
+        return None
+
+
+def _write_master_output(cache_key: str, out: Loudness) -> None:
+    path = _output_note_path(cache_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(asdict(out)), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+async def _render_master_verified(
+    build_cmd: Callable[[float, bool], list[str]],
+    suffix: str,
+    context: str,
+    ceiling: float,
+    cache_path: Path | None,
+    cache_key: str | None,
+    has_alt_encoder: bool = False,
+) -> tuple[Path, Loudness]:
+    """Render a mastered lossy export, decode it and measure its true peak.
+
+    The master limits the signal at the lossy ceiling, but an encoder adds
+    peak of its own: up to 1.0 dB for MP3 and OGG on dense limited material,
+    and the AAC encoder sometimes sends a single block several dB over (task F
+    measured +3.6 dBFS on one song at a -1.6 dB limit, not monotonic in the
+    input level). So the file is checked as a player would decode it, and when
+    it is over the user's ceiling the master's output is trimmed by the
+    overshoot plus LOSSY_RETRY_MARGIN_DB and the file rendered again, up to
+    LOSSY_RETRIES times. With ``has_alt_encoder`` (AAC) the first retry keeps
+    the level and switches to the alternative encoder settings instead: an AAC
+    glitch is one block, and trimming the whole song by it cost up to 4.9 LU
+    (measured), where the fast coder stayed within 0.8 dB of its input on
+    every song tried. Returns the file (the cache entry when ``cache_path``
+    is given, otherwise a temp file the caller removes) and its measurement."""
+    trim = 0.0
+    alt = False
+    path: Path | None = None
+    out = Loudness(None, None)
+    for attempt in range(LOSSY_RETRIES + 1):
+        path = await _render_to_file(build_cmd(trim, alt), suffix, context=context)
+        try:
+            out = await measure_file(str(path))
+        except MeasureError as exc:
+            path.unlink(missing_ok=True)
+            logger.warning("master output measurement failed [%s]: %s", context, exc)
+            raise HTTPException(status_code=500, detail="export failed") from None
+        if out.tp is None or out.tp <= ceiling:
+            break
+        if attempt == LOSSY_RETRIES:
+            logger.warning(
+                "mastered export still %.2f dBTP over its ceiling after %d retries [%s]",
+                out.tp - ceiling,
+                LOSSY_RETRIES,
+                context,
+            )
+            break
+        if has_alt_encoder and not alt:
+            alt = True
+        else:
+            trim += out.tp - ceiling + LOSSY_RETRY_MARGIN_DB
+        path.unlink(missing_ok=True)
+    assert path is not None
+    if cache_path is not None and cache_key is not None:
+        os.replace(path, cache_path)
+        _prune_mixdown_cache(cache_path.parent, keep=cache_path)
+        await asyncio.to_thread(_write_master_output, cache_key, out)
+        path = cache_path
+    return path, out
+
+
+def master_plan_view(plan: MasterPlan) -> dict:
+    """The plan as the studio reads it (the readout and the live preview)."""
+    view = plan.to_json()
+    view["comp_ratio"] = comp_ratio(plan.comp) if plan.comp_threshold_db is not None else None
+    return view
+
+
+def _lane_chain(eq: str, pitch: int, gain: float) -> str:
+    """One input's chain as every export runs it: EQ, pitch shift, gain."""
+    return f"{eq}{_pitch_filter(pitch)}volume={gain:.6f}"
 
 
 def _expand_render_lanes(
@@ -537,6 +976,8 @@ def _expand_render_lanes(
     names: list[str],
     gains: list[float],
     pitches: list[int],
+    remove: frozenset[str] = frozenset(),
+    lanes: frozenset[str] | None = None,
 ) -> tuple[list[_RenderLane], list[str]]:
     """Lanes to render, with "original" rebuilt from its parts when it is
     transposed. Returns the lanes and the names of any lane left unpitched.
@@ -552,8 +993,25 @@ def _expand_render_lanes(
     -- the lane cannot be taken apart, so it stays at its original key. That is
     deliberately the same conservative choice playback makes: melodic content
     stays in the old key rather than the drums being resampled.
+
+    `remove` (Streamer Mode's "I play": the stems the musician plays) is left
+    out: a lane of that name is dropped, and "original" is always rebuilt
+    from its components without it, as playback does (playbackStems.js), so
+    the export carries exactly the backing that was heard. A job that cannot
+    be taken apart then gets a 422 rather than the removed part back.
+
+    `lanes` (the mode's own lanes: every base stem shown as a lane, muted or
+    not) makes Original exactly what playback plays: every base stem that is
+    neither a lane nor removed. Without it Original is the complement of the
+    *requested* names, and the client leaves muted and solo-silenced lanes out
+    of the request, so a transposed export with a muted lane put that stem
+    back inside Original (tests/test_mode_stems.py). With it, a mode whose
+    lanes differ from the job's selection never exports a stem twice: at key 0
+    the job's original.wav is used only when it holds exactly that set.
     """
-    lanes: list[_RenderLane] = []
+    if lanes is not None:
+        return _expand_mode_lanes(job_id, names, gains, pitches, remove, lanes)
+    lanes_out: list[_RenderLane] = []
     unpitched: list[str] = []
     selected = set(names)
     # A completed lead/backing split stands in for the base vocals source, so
@@ -567,12 +1025,20 @@ def _expand_render_lanes(
         # never produced would 404 untransposed and be synthesised from
         # components when transposed, so the same URL was valid or not
         # depending on the pitch attached to it.
+        if _is_recorded_lane(name):
+            lanes_out.append(_RenderLane(_take_lane_path(job_id, name), gain, pitch, name))
+            continue
+        if name in remove:
+            continue
         path = _validate_stem_path(job_id, name)
-        if name != "original" or pitch == 0:
-            lanes.append(_RenderLane(path, gain, pitch))
+        if name != "original" or (pitch == 0 and not remove):
+            lanes_out.append(_RenderLane(path, gain, pitch, name))
             continue
 
-        components = [n for n in STEM_NAMES if n not in selected]
+        components = [n for n in STEM_NAMES if n not in selected and n not in remove]
+        if not components:
+            # Everything the lane held is removed or has a lane of its own.
+            continue
         # Deliberately not `path`: that name holds the validated "original.wav"
         # this lane falls back to, and reusing it here left the fallback
         # pointing at whichever component was tried last.
@@ -585,16 +1051,102 @@ def _expand_render_lanes(
             paths.append(comp_path)
 
         if not paths:
-            lanes.append(_RenderLane(path, gain, 0))
+            if remove:
+                raise HTTPException(
+                    status_code=422, detail="this song's stems cannot be mixed without one part"
+                )
+            lanes_out.append(_RenderLane(path, gain, 0, name))
             unpitched.append(name)
             continue
 
         # Each component carries the lane's own gain; amix sums them back to
         # what the single file would have been. effective_pitch keeps drums at 0.
         for comp, path in zip(components, paths, strict=True):
-            lanes.append(_RenderLane(path, gain, effective_pitch(comp, pitch)))
+            lanes_out.append(_RenderLane(path, gain, effective_pitch(comp, pitch), name))
 
-    return lanes, unpitched
+    return lanes_out, unpitched
+
+
+def _job_original_set(job_id: str) -> frozenset[str] | None:
+    """The stems the job's own original.wav holds (make_original_track: every
+    base stem not selected), or None when it has no such file."""
+    job = registry_get(job_id)
+    path = (JOBS_DIR / job_id / "stems" / "original.wav").resolve()
+    if job is None or not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        return None
+    selected = set(job.selected_stems)
+    return frozenset(n for n in STEM_NAMES if n not in selected)
+
+
+def _expand_mode_lanes(
+    job_id: str,
+    names: list[str],
+    gains: list[float],
+    pitches: list[int],
+    remove: frozenset[str],
+    lanes: frozenset[str],
+) -> tuple[list[_RenderLane], list[str]]:
+    """_expand_render_lanes for a request that names its mode's lanes.
+
+    Original = every base stem that is neither in `lanes` nor removed, always,
+    whatever was muted. A base stem requested as a lane must be in `lanes`:
+    otherwise it would also be inside Original and play twice."""
+    laned = set(lanes)
+    if {"lead_vocals", "backing_vocals"} & set(names):
+        # The split halves are the Voice lane: vocals is not in Original.
+        laned.add("vocals")
+    for name in names:
+        if name in STEM_NAMES and name not in laned and name not in remove:
+            raise HTTPException(status_code=422, detail="lanes: a requested stem is not a lane")
+    components = [n for n in STEM_NAMES if n not in laned and n not in remove]
+    own_set = _job_original_set(job_id)
+
+    out: list[_RenderLane] = []
+    unpitched: list[str] = []
+    for name, gain, pitch in zip(names, gains, pitches, strict=True):
+        if _is_recorded_lane(name):
+            out.append(_RenderLane(_take_lane_path(job_id, name), gain, pitch, name))
+            continue
+        if name in remove:
+            continue
+        if name != "original":
+            out.append(_RenderLane(_validate_stem_path(job_id, name), gain, pitch, name))
+            continue
+        # The job id and state, as _validate_stem_path checks them; the file
+        # itself may not exist (a song extracted with all six stems).
+        if not JOB_ID_RE.match(job_id):
+            raise HTTPException(status_code=404, detail="job not found")
+        job = registry_get(job_id)
+        if job is None or job.status != "done":
+            raise HTTPException(status_code=404, detail="job not ready")
+        if not components:
+            continue
+        if pitch == 0 and own_set is not None and own_set == frozenset(components):
+            # The job's own file holds exactly this set: the export made
+            # before lanes= existed, byte for byte.
+            out.append(_RenderLane(_validate_stem_path(job_id, "original"), gain, 0, name))
+            continue
+        paths: list[Path] = []
+        for comp in components:
+            comp_path = (JOBS_DIR / job_id / "stems" / f"{comp}.wav").resolve()
+            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
+                paths = []
+                break
+            paths.append(comp_path)
+        if not paths:
+            if own_set is not None and own_set == frozenset(components):
+                # An older job whose parts are gone: its file, unpitched,
+                # the conservative choice playback makes.
+                path = _validate_stem_path(job_id, "original")
+                out.append(_RenderLane(path, gain, 0, name))
+                unpitched.append(name)
+                continue
+            raise HTTPException(
+                status_code=422, detail="this song's stems cannot be mixed for these lanes"
+            )
+        for comp, path in zip(components, paths, strict=True):
+            out.append(_RenderLane(path, gain, effective_pitch(comp, pitch), name))
+    return out, unpitched
 
 
 async def _drain_stderr(stream: asyncio.StreamReader, sink: deque[str]) -> None:
@@ -810,7 +1362,35 @@ async def _ensure_cached_mp3(src: Path) -> Path:
     return dest
 
 
-def _peaks_response(job_id: str, request: Request) -> Response:
+# One build at a time per job: the catalog and the player can both ask for
+# the peaks of a song that has none in the same moment.
+_peaks_build_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _build_missing_peaks(job_id: str, job_takes: list[dict]) -> None:
+    """Build peaks.json for a finished job that has none (see
+    fill_missing_peaks). Failures leave the job as it was: the studio then
+    decodes the stems in the browser, as it always did for such a job."""
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    if not stems_dir.is_dir() or not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        return
+    lock = _peaks_build_locks.setdefault(job_id, asyncio.Lock())
+    async with lock:
+        if (stems_dir / "peaks.json").is_file():
+            return
+        sources: dict[str, Path] = {}
+        for take in job_takes:
+            folder = take_dir(job_id, str(take.get("id") or ""))
+            if folder is not None:
+                sources[take["id"]] = folder / "audio.wav"
+        try:
+            await asyncio.to_thread(fill_missing_peaks, stems_dir, sources)
+        except Exception:
+            logger.exception("could not build peaks for %s", job_id)
+    _peaks_build_locks.pop(job_id, None)
+
+
+async def _peaks_response(job_id: str, request: Request) -> Response:
     """Pre-computed waveform peaks for every stem, revalidated on each use.
 
     Not cacheable forever, because it is not fixed once a job is done. The
@@ -823,6 +1403,10 @@ def _peaks_response(job_id: str, request: Request) -> Response:
     `no-cache` keeps a copy but asks before using it. The ETag makes asking
     cheap: an unchanged file is a 304 with no body, which FileResponse does not
     do by itself.
+
+    A finished job with no peaks.json (older or hand-made) has it built on
+    this first request, about a second for a three minute song, so it opens
+    on the streaming engine like any other. 404 only when that fails.
     """
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
@@ -830,6 +1414,8 @@ def _peaks_response(job_id: str, request: Request) -> Response:
     if job is None or job.status != "done":
         raise HTTPException(status_code=404, detail="job not ready")
     path = (JOBS_DIR / job_id / "stems" / "peaks.json").resolve()
+    if not path.is_file():
+        await _build_missing_peaks(job_id, list(job.takes or []))
     if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="peaks not found")
     st = path.stat()
@@ -858,7 +1444,7 @@ async def get_peaks(job_id: str, request: Request) -> Response:
     them, and this one is known before the job's state is, so the peaks fetch
     can still start in parallel with it.
     """
-    return _peaks_response(job_id, request)
+    return await _peaks_response(job_id, request)
 
 
 @router.get("/jobs/{job_id}/stems/peaks.json")
@@ -868,7 +1454,7 @@ async def get_stem_peaks(job_id: str, request: Request) -> Response:
     Kept for anything that still asks here. It no longer claims to be
     immutable, since that was never true once splits could rewrite it.
     """
-    return _peaks_response(job_id, request)
+    return await _peaks_response(job_id, request)
 
 
 # The vocals stem's level every 40ms: fine enough to find the gap between two
@@ -1127,6 +1713,25 @@ async def get_mixdown(
         le=4,
         description="Count-in bars before the audio (0 off)",
     ),
+    fx: str = Query(
+        default="",
+        max_length=FX_PARAM_MAX_CHARS,
+        description=(
+            "The studio EQ: base64url JSON {v: 1, lanes: {name: [eq]}, master: [eq]}. "
+            "Empty means no EQ. See app/pipeline/fx_filters.py."
+        ),
+    ),
+    master: str = Query(
+        default="",
+        max_length=MASTER_PARAM_MAX_CHARS,
+        description=(
+            "The master: base64url JSON {v: 1, target: LUFS or null, ceiling: dBTP, "
+            "comp: 0..1}. Empty means no master. See app/pipeline/mastering.py."
+        ),
+    ),
+    lanes: str | None = Query(
+        default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
+    ),
 ) -> FileResponse | StreamingResponse:
     """Render a mixdown of the given lanes at the given gains, streamed as WAV,
     MP3, FLAC, or OGG. Mirrors the studio mixer (per-stem volume, mute, solo) so the
@@ -1147,6 +1752,9 @@ async def get_mixdown(
 
     names, parsed_gains = _parse_lane_gains(stems, gains)
     parsed_pitches = _parse_pitches(pitches, names)
+    fx_req = parse_fx_query(fx)
+    master_settings = parse_master_query(master)
+    lane_set = parse_lanes_param(lanes)
     if (start is None) != (end is None) or (start is not None and start >= end):
         raise HTTPException(
             status_code=422,
@@ -1167,8 +1775,37 @@ async def get_mixdown(
     # stem -- deliberately before the cache lookup below, so a deleted or
     # not-yet-done job 404s the same way it always has instead of serving a
     # stale cache entry from before the job was removed.
-    render_lanes, unpitched = _expand_render_lanes(job_id, names, parsed_gains, parsed_pitches)
+    render_lanes, unpitched = _expand_render_lanes(
+        job_id, names, parsed_gains, parsed_pitches, lanes=lane_set
+    )
     paths = [lane.path for lane in render_lanes]
+    # Each lane's EQ as biquad filters with the live engine's coefficients;
+    # "" for a lane without EQ, so its graph is unchanged.
+    render_fx = await asyncio.to_thread(
+        build_render_fx, [lane.name for lane in render_lanes], paths, fx_req
+    )
+
+    # The master: measured on the whole song (so a region gets the full
+    # master's gain), then its chain replaces the export limiter.
+    lossy = ext in _LOSSY_MIXDOWN_EXTS
+    plan: MasterPlan | None = None
+    limiter = export_limiter(lossy=lossy)
+    master_fragment = ""
+    if master_settings is not None:
+        plan, rate_in = await master_plan(
+            job_id,
+            paths,
+            [
+                _lane_chain(render_fx.lanes[i], lane.pitch, lane.gain)
+                for i, lane in enumerate(render_lanes)
+            ],
+            render_fx.master,
+            master_settings,
+            lossy,
+            _take_versions(job_id, names),
+        )
+        limiter = plan_chain(plan, rate_in)
+        master_fragment = "m:" + limiter
 
     media_type = MIXDOWN_MEDIA_TYPES[ext]
     click_lane = await asyncio.to_thread(
@@ -1184,19 +1821,32 @@ async def get_mixdown(
         groups=_parse_groups(click_groups, click_accent),
     )
     cache_key = _mixdown_cache_key(
-        job_id, ext, names, parsed_gains, start, end, click_lane, parsed_pitches
+        job_id,
+        ext,
+        names,
+        parsed_gains,
+        start,
+        end,
+        click_lane,
+        parsed_pitches,
+        _take_versions(job_id, names),
+        render_fx.fragment,
+        master_fragment,
+        lanes_fragment="" if lane_set is None else "l:" + ",".join(sorted(lane_set)),
     )
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
+        ),
+        **(master_headers(plan) if plan is not None else {}),
+    }
     cache_path = _MIXDOWN_CACHE_DIR / f"{cache_key}.{ext}"
     if cache_path.is_file():
-        return FileResponse(
-            cache_path,
-            media_type=media_type,
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
-                )
-            },
-        )
+        if plan is not None and lossy:
+            out = await asyncio.to_thread(_read_master_output, cache_key)
+            if out is not None:
+                headers.update(master_headers(plan, out))
+        return FileResponse(cache_path, media_type=media_type, headers=headers)
 
     pre_seek = ["-ss", str(start)] if start is not None else []
 
@@ -1224,42 +1874,66 @@ async def get_mixdown(
     # sum with amix (normalize=0 keeps levels faithful, matching collect.py). The
     # click lane is never delayed -- its lead-in is baked in. A single audible
     # lane skips amix (a 1-input amix is a no-op).
+    #
+    # Then the export limiter, always. Six stems at unity summed to +0.9 dBFS
+    # on a real song and the encoder clamped 77 samples to full scale. For WAV
+    # and FLAC the limiter holds the sample peak at -1 dBFS and is
+    # bit-transparent below it, so an export that never reached the ceiling is
+    # unchanged (EXPORT_LIMITER). MP3 and OGG get the true-peak limiter at
+    # -1.5 dBTP, because their encoders add peak of their own
+    # (EXPORT_LIMITER_LOSSY). With a master, its chain (compressor, gain,
+    # true-peak limiter) takes the limiter's place (set above).
     filters = []
     for i, lane in enumerate(render_lanes):
         delay = f"adelay={delay_ms}:all=1," if delay_ms > 0 else ""
         # Shift before the delay: rubberband would otherwise chew through the
-        # silent lead-in padding for nothing.
-        filters.append(f"[{i}:a]{_pitch_filter(lane.pitch)}{delay}volume={lane.gain:.6f}[a{i}]")
+        # silent lead-in padding for nothing. EQ before the shift, because the
+        # live engine's EQ sits before its pitch stage too (between the lane
+        # gain and the pitch bus): a boost at 1 kHz on a lane moved up two
+        # semitones is heard at 1.12 kHz, and the export must agree.
+        eq = render_fx.lanes[i]
+        filters.append(f"[{i}:a]{eq}{_pitch_filter(lane.pitch)}{delay}volume={lane.gain:.6f}[a{i}]")
     if click_lane is not None:
         filters.append(f"[{stem_count}:a]volume={click_lane.gain:.6f}[a{stem_count}]")
     n = stem_count + (1 if click_lane is not None else 0)
-    if n > 1:
-        labels = "".join(f"[a{i}]" for i in range(n))
-        filters.append(f"{labels}amix=inputs={n}:normalize=0[mix]")
-        out_label = "[mix]"
-    else:
-        out_label = "[a0]"
+    # Master EQ on the sum (click included, as live: the click joins upstream
+    # of the master slot), then the limiter last.
+    master = render_fx.master
+    out_label = "[mix]"
     codec = MIXDOWN_CODECS[ext]
     # Resample to the user's chosen export rate (default 44.1 kHz = the stem rate,
     # so a no-op unless changed). Applies to every audio container -- some hardware
     # samplers reject anything but a specific rate.
     rate = ["-ar", str(get_export_sample_rate())]
-    cmd += [
-        "-filter_complex",
-        ";".join(filters),
-        "-map",
-        out_label,
-        *post_seek,
-        *codec,
-        *rate,
-    ]
+
+    def build_cmd(trim_db: float = 0.0, _alt: bool = False) -> list[str]:
+        # trim_db > 0 only on a mastered lossy export the encoder pushed over
+        # the ceiling (_render_master_verified).
+        end_chain = f"{master}{limiter}{trim_filter(trim_db)}[mix]"
+        if n > 1:
+            labels = "".join(f"[a{i}]" for i in range(n))
+            mix = f"{labels}amix=inputs={n}:normalize=0,{end_chain}"
+        else:
+            mix = f"[a0]{end_chain}"
+        return [
+            *cmd,
+            "-filter_complex",
+            ";".join([*filters, mix]),
+            "-map",
+            out_label,
+            *post_seek,
+            *codec,
+            *rate,
+        ]
 
     context = f"mixdown job={job_id} ext={ext} stems={stems}"
-    headers = {
-        "Content-Disposition": (
-            f'attachment; filename="{_mixdown_download_name(job_id, ext, start is not None)}"'
+    if plan is not None and master_settings is not None and lossy:
+        rendered, out = await _render_master_verified(
+            build_cmd, f".{ext}", context, master_settings.ceiling, cache_path, cache_key
         )
-    }
+        headers.update(master_headers(plan, out))
+        return FileResponse(rendered, media_type=media_type, headers=headers)
+    cmd = build_cmd()
     if ext in _SEEKABLE_OUTPUT_EXTS:
         # Rendered to a file so the muxer can seek back and finish its header
         # (#458). It lands in the cache, so nothing is deleted afterwards --
@@ -1274,6 +1948,76 @@ async def get_mixdown(
         media_type=media_type,
         headers=headers,
     )
+
+
+@router.get("/jobs/{job_id}/mixdown/loudness")
+async def get_mixdown_loudness(
+    request: Request,
+    job_id: str,
+    stems: str = Query(..., description="Comma-separated lane names to sum"),
+    gains: str = Query(..., description="Comma-separated linear gains, parallel to stems"),
+    pitches: str = Query(default="", max_length=128, description="As for mixdown"),
+    fx: str = Query(default="", max_length=FX_PARAM_MAX_CHARS, description="As for mixdown"),
+    master: str = Query(..., max_length=MASTER_PARAM_MAX_CHARS, description="As for mixdown"),
+    lossy: bool = Query(default=False, description="Plan for a lossy export's ceiling"),
+    lanes: str | None = Query(
+        default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
+    ),
+) -> dict:
+    """The measured master of this mix (the same plan the export renders):
+    loudness before, after the compressor and after the master, the gain and
+    the compressor threshold. The studio's Master readout and its live
+    preview read it. The whole song is always measured, so there is no
+    start/end; a mix measured once is answered from the cache.
+
+    The studio asks again every time the mix settles and drops the older
+    request, so a measurement whose client has gone away is stopped (its
+    ffmpeg killed) rather than left to delay the one that is wanted."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    names, parsed_gains = _parse_lane_gains(stems, gains)
+    parsed_pitches = _parse_pitches(pitches, names)
+    fx_req = parse_fx_query(fx)
+    settings = parse_master_query(master)
+    if settings is None:
+        raise HTTPException(status_code=422, detail="master: required")
+    lane_set = parse_lanes_param(lanes)
+    if any(parsed_pitches) and not await asyncio.to_thread(_rubberband_available):
+        raise HTTPException(
+            status_code=422,
+            detail="this ffmpeg build cannot transpose (no rubberband filter)",
+        )
+    render_lanes, _unpitched = _expand_render_lanes(
+        job_id, names, parsed_gains, parsed_pitches, lanes=lane_set
+    )
+    paths = [lane.path for lane in render_lanes]
+    render_fx = await asyncio.to_thread(
+        build_render_fx, [lane.name for lane in render_lanes], paths, fx_req
+    )
+    task = asyncio.create_task(
+        master_plan(
+            job_id,
+            paths,
+            [
+                _lane_chain(render_fx.lanes[i], lane.pitch, lane.gain)
+                for i, lane in enumerate(render_lanes)
+            ],
+            render_fx.master,
+            settings,
+            lossy,
+            _take_versions(job_id, names),
+        )
+    )
+    while not task.done():
+        await asyncio.wait({task}, timeout=_DISCONNECT_POLL_SEC)
+        if not task.done() and await request.is_disconnected():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            # Nobody is listening; the status is for the log.
+            raise HTTPException(status_code=499, detail="client went away")
+    plan, _rate = task.result()
+    return master_plan_view(plan)
 
 
 def _title_slug(title: str | None) -> str:
@@ -1307,6 +2051,19 @@ async def get_video_mixdown(
     click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
     click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
     click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
+    fx: str = Query(
+        default="",
+        max_length=FX_PARAM_MAX_CHARS,
+        description="The studio EQ, as for mixdown. Empty means no EQ.",
+    ),
+    master: str = Query(
+        default="",
+        max_length=MASTER_PARAM_MAX_CHARS,
+        description="The master, as for mixdown. Empty means no master.",
+    ),
+    lanes: str | None = Query(
+        default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
+    ),
 ) -> StreamingResponse:
     """Mux a fresh audio mixdown of the current mixer state with the job's preserved
     video into an MP4 (issue #219). Mirrors get_mixdown's audio graph (encoded
@@ -1329,6 +2086,8 @@ async def get_video_mixdown(
 
     names, parsed_gains = _parse_lane_gains(stems, gains)
     parsed_pitches = _parse_pitches(pitches, names)
+    fx_req = parse_fx_query(fx)
+    master_settings = parse_master_query(master)
     # Same refusal as the audio export: a video whose audio came back in the
     # original key would be the same complaint reported again (#592).
     if any(parsed_pitches) and not await asyncio.to_thread(_rubberband_available):
@@ -1338,7 +2097,9 @@ async def get_video_mixdown(
         )
     # Validates job_id (404), job done (404), and path traversal (404) per stem,
     # and rebuilds a transposed "original" lane from its parts.
-    render_lanes, _unpitched = _expand_render_lanes(job_id, names, parsed_gains, parsed_pitches)
+    render_lanes, _unpitched = _expand_render_lanes(
+        job_id, names, parsed_gains, parsed_pitches, lanes=parse_lanes_param(lanes)
+    )
     paths = [lane.path for lane in render_lanes]
 
     # Click is one more audio input. It must be appended before the video input
@@ -1348,7 +2109,29 @@ async def get_video_mixdown(
     )
     if click_lane is not None:
         paths = [*paths, click_lane[0]]
-        render_lanes = [*render_lanes, _RenderLane(click_lane[0], click_lane[1], 0)]
+        render_lanes = [*render_lanes, _RenderLane(click_lane[0], click_lane[1], 0, "")]
+    render_fx = await asyncio.to_thread(
+        build_render_fx, [lane.name for lane in render_lanes], paths, fx_req
+    )
+    # The master, measured on the music lanes (the click is the last input and
+    # is left out of the measurement), replaces the lossy export limiter.
+    limiter = EXPORT_LIMITER_LOSSY
+    plan: MasterPlan | None = None
+    if master_settings is not None:
+        music = len(render_lanes) - (1 if click_lane is not None else 0)
+        plan, rate_in = await master_plan(
+            job_id,
+            paths[:music],
+            [
+                _lane_chain(render_fx.lanes[i], lane.pitch, lane.gain)
+                for i, lane in enumerate(render_lanes[:music])
+            ],
+            render_fx.master,
+            master_settings,
+            True,
+            _take_versions(job_id, names),
+        )
+        limiter = plan_chain(plan, rate_in)
 
     cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
     for p in paths:
@@ -1357,43 +2140,64 @@ async def get_video_mixdown(
     video_idx = len(paths)
     # Per-lane gain then amix (normalize=0 keeps levels faithful). A single audible
     # lane skips amix (a 1-input amix is a no-op), matching get_mixdown.
+    # EQ first in each lane, as in get_mixdown; the click lane has none.
     filters = [
-        f"[{i}:a]{_pitch_filter(lane.pitch)}volume={lane.gain:.6f}[a{i}]"
+        f"[{i}:a]{render_fx.lanes[i]}{_pitch_filter(lane.pitch)}volume={lane.gain:.6f}[a{i}]"
         for i, lane in enumerate(render_lanes)
     ]
     n = len(paths)
-    if n > 1:
-        labels = "".join(f"[a{i}]" for i in range(n))
-        filters.append(f"{labels}amix=inputs={n}:normalize=0[mix]")
-        out_label = "[mix]"
-    else:
-        out_label = "[a0]"
-    cmd += [
-        "-filter_complex",
-        ";".join(filters),
-        "-map",
-        out_label,
-        "-map",
-        f"{video_idx}:v",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-shortest",
-        "-movflags",
-        "frag_keyframe+empty_moov",
-        "-f",
-        "mp4",
-        "pipe:1",
-    ]
+    # Same limiter as an MP3 or OGG mixdown: this is the same mix, encoded
+    # lossy (AAC), so it must not clip where the audio export no longer does.
+    # The master EQ goes before it.
+    master = render_fx.master
+    out_label = "[mix]"
+
+    def build_cmd(trim_db: float = 0.0, alt: bool = False) -> list[str]:
+        end_chain = f"{master}{limiter}{trim_filter(trim_db)}[mix]"
+        if n > 1:
+            labels = "".join(f"[a{i}]" for i in range(n))
+            mix = f"{labels}amix=inputs={n}:normalize=0,{end_chain}"
+        else:
+            mix = f"[a0]{end_chain}"
+        return [
+            *cmd,
+            "-filter_complex",
+            ";".join([*filters, mix]),
+            "-map",
+            out_label,
+            "-map",
+            f"{video_idx}:v",
+            "-c:v",
+            "copy",
+            *(AAC_ENCODE_ARGS_ALT if alt else AAC_ENCODE_ARGS),
+            "-shortest",
+            "-movflags",
+            "frag_keyframe+empty_moov",
+            "-f",
+            "mp4",
+        ]
 
     filename = f"{_safe_title(job.title)}_video.mp4"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    context = f"video-mux job={job_id} stems={stems}"
+    if plan is not None and master_settings is not None:
+        # A mastered video is rendered to a file first, so its decoded true
+        # peak can be checked against the ceiling (_render_master_verified),
+        # then sent and removed.
+        rendered, out = await _render_master_verified(
+            build_cmd, ".mp4", context, master_settings.ceiling, None, None, True
+        )
+        headers.update(master_headers(plan, out))
+        return FileResponse(
+            rendered,
+            media_type="video/mp4",
+            headers=headers,
+            background=BackgroundTask(_unlink_later, rendered),
+        )
     return StreamingResponse(
-        _stream_ffmpeg(cmd, context=f"video-mux job={job_id} stems={stems}"),
+        _stream_ffmpeg([*build_cmd(), "pipe:1"], context=context),
         media_type="video/mp4",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=headers,
     )
 
 
@@ -1463,9 +2267,13 @@ async def get_all_stems_zip(
         raise HTTPException(status_code=404, detail="job not ready")
 
     # Resolve the requested subset (whitelisted) or fall back to all stems.
+    # Takes go in only when asked for by id: "all stems" means the separation.
     all_names = (*STEM_NAMES, *EXTRA_STEM_NAMES)
+    take_names: list[str] = []
     if stems:
         requested = {s for s in stems.split(",") if s}
+        take_names = sorted(n for n in requested if _is_recorded_lane(n))
+        requested -= set(take_names)
         if not requested <= set(all_names):
             raise HTTPException(status_code=422, detail="unknown stem requested")
         if "vocals" in requested and _VOCAL_DECOMPOSITION_NAMES & requested:
@@ -1487,6 +2295,15 @@ async def get_all_stems_zip(
         p = (stems_dir / f"{name}.wav").resolve()
         if p.is_file() and p.is_relative_to(jobs_root):
             sources.append((name, p))
+    labels = {t.get("id"): t.get("label") for t in job.takes}
+    labels.update({t.get("id"): t.get("name") for t in job.tracks})
+    for lane in take_names:
+        path = _take_lane_path(job_id, lane)
+        # Named for the label (take) or name (track) the user gave it, with
+        # the id to keep two called "Take 1" apart. _title_slug keeps it to
+        # [A-Za-z0-9_].
+        label = _title_slug(labels.get(lane))
+        sources.append((f"{label}_{lane}" if label else lane, path))
     if not sources:
         raise HTTPException(status_code=404, detail="no stems found")
 

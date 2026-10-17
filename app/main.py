@@ -23,10 +23,11 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
-from app.core import tls_listener
+from app.core import csrf, tls_listener
 from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddleware
 from app.core.config import (
     ACOUSTID_CHECK_KEY,
+    ALLOWED_HOSTS,
     DEMUCS_MODEL,
     DISCOGS_CHECK_TOKEN,
     FFMPEG_BIN,
@@ -60,6 +61,7 @@ from app.core.settings import (
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
+    get_auto_lyrics,
     get_auto_sections,
     get_cookies_file,
     get_demucs_device,
@@ -71,11 +73,13 @@ from app.core.settings import (
     get_port,
     get_separation_quality,
     get_transcribe_lyrics,
+    get_video_encoder,
     get_video_max_height,
     set_acoustid_api_key,
     set_allow_network,
     set_auto_delete_days,
     set_auto_delete_jobs,
+    set_auto_lyrics,
     set_auto_sections,
     set_cookies_file,
     set_demucs_device,
@@ -87,6 +91,7 @@ from app.core.settings import (
     set_port,
     set_separation_quality,
     set_transcribe_lyrics,
+    set_video_encoder,
     set_video_max_height,
 )
 from app.core.stems_location import (
@@ -221,6 +226,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sweep_orphaned_section_workspaces, JOBS_DIR)
     except Exception:
         _log.exception("could not sweep orphaned section workspaces")
+    # A take render the last process was killed in the middle of left its
+    # temp file beside the take (take_render.run_video_render): nothing is
+    # rendering yet, so any such file is an orphan.
+    try:
+        from app.pipeline.take_render import sweep_render_temps
+
+        await asyncio.to_thread(sweep_render_temps, JOBS_DIR)
+    except Exception:
+        _log.exception("could not sweep stale render files")
 
     resumed = take_pending_resume()
     if resumed:
@@ -254,6 +268,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # blocked in asyncio.to_thread, which cannot be cancelled, so it dies with
     # the process exactly as it did before the queue existed.
     jobqueue.request_stop()
+    # Running take renders (ffmpeg processes) stop with the server.
+    from app.api.takes import cancel_all_renders
+
+    cancel_all_renders()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
     # its own, unlike the desktop backend itself.
@@ -361,6 +379,9 @@ def _settings_payload() -> dict[str, object]:
         # job and produces suggestions rather than ground truth, so the user
         # decides whether to pay for it.
         "auto_sections": get_auto_sections(),
+        # Lyrics on import (LRCLIB and the transcript). Off until the user
+        # turns Detect lyrics on; kept until changed.
+        "auto_lyrics": get_auto_lyrics(),
         "auto_delete_days_min": AUTO_DELETE_DAYS_MIN,
         "auto_delete_days_max": AUTO_DELETE_DAYS_MAX,
         "max_duration_sec": get_max_duration_sec(),
@@ -376,6 +397,9 @@ def _settings_payload() -> dict[str, object]:
         # Whisper lyrics for a job no lookup found any for: "auto" (on a GPU
         # only) | "on" | "off".
         "transcribe_lyrics": get_transcribe_lyrics(),
+        # The take render's H.264 encoder: "auto" | "cpu" | an encoder name.
+        # GET/POST /api/video-encoders list and test what this machine has.
+        "video_encoder": get_video_encoder(),
         # Absent unless the user set one. Only the path is exposed, never the
         # file's contents -- those are the user's YouTube session.
         "cookies_file": get_cookies_file(),
@@ -444,12 +468,16 @@ async def update_settings(request: Request) -> dict[str, object]:
         body = await request.json()
     except Exception:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
     if "allow_network" in body:
         set_allow_network(bool(body["allow_network"]))
     if "auto_delete_jobs" in body:
         set_auto_delete_jobs(bool(body["auto_delete_jobs"]))
     if "auto_sections" in body:
         set_auto_sections(bool(body["auto_sections"]))
+    if "auto_lyrics" in body:
+        set_auto_lyrics(bool(body["auto_lyrics"]))
     for key, setter in (
         ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),
@@ -528,6 +556,14 @@ async def update_settings(request: Request) -> dict[str, object]:
             set_transcribe_lyrics(str(body["transcribe_lyrics"]))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
+    if "video_encoder" in body:
+        if not isinstance(body["video_encoder"], str):
+            raise HTTPException(status_code=422, detail="video_encoder must be a string")
+        try:
+            set_video_encoder(body["video_encoder"])
+        except ValueError as e:
+            # The message lists the whitelist; it never echoes the value.
+            raise HTTPException(status_code=422, detail=str(e)) from None
     return _settings_payload()
 
 
@@ -601,6 +637,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
     try:
         body = await request.json()
     except Exception:
+        body = {}
+    if not isinstance(body, dict):
         body = {}
     raw = body.get("path")
     if not isinstance(raw, str):
@@ -1004,6 +1042,37 @@ async def limit_json_body_size(request: Request, call_next):
                 )
         elif declared.isdigit() and int(declared) > _JSON_BODY_LIMIT:
             return JSONResponse({"detail": "request body too large"}, status_code=413)
+    return await call_next(request)
+
+
+# Cross-site guard (app/core/csrf.py has the reasoning and every rule). Inside
+# the network and secure-origin gates, so a device those gates refuse gets
+# their explanation rather than this one; outside the headers middleware, so a
+# refusal still carries the CSP. Network access is read per request because
+# the Settings toggle changes it live.
+_HOST_REFUSED_MESSAGE = """StemDeck does not answer to this address.
+
+Open it at http://localhost or the machine's own IP address instead. Behind a
+reverse proxy or under another name, add that name to STEMDECK_ALLOWED_HOSTS
+(a comma-separated list) and restart."""
+
+
+@app.middleware("http")
+async def cross_site_guard(request: Request, call_next):
+    refusal = csrf.check_request(
+        request.method,
+        request.url.path,
+        request.headers,
+        allow_network=get_allow_network(),
+        desktop=_is_desktop_shell(),
+        extra_hosts=ALLOWED_HOSTS,
+        local_ips=_local_ips(),
+    )
+    if refusal is not None:
+        _log.info("refused %s %s: %s", request.method, request.url.path, refusal.reason)
+        if refusal.detail == csrf.REFUSED_HOST:
+            return PlainTextResponse(_HOST_REFUSED_MESSAGE, status_code=refusal.status)
+        return JSONResponse({"detail": refusal.detail}, status_code=refusal.status)
     return await call_next(request)
 
 

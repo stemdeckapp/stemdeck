@@ -74,6 +74,12 @@ export function initSections(trackId, sections, duration) {
   _render();
 }
 
+/** The open song's sections in time order, as copies (read only): Streamer
+ * Mode's take timeline draws its markers from them. */
+export function getSections() {
+  return [..._sections].sort((a, b) => a.start - b.start).map((s) => ({ ...s }));
+}
+
 export function destroySections() {
   // Flush any pending debounced save before clearing state so switching tracks
   // never drops unsaved sections. _save() serializes _sections synchronously

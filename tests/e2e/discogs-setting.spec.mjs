@@ -23,20 +23,21 @@ async function openSettings(page) {
 const settings = async (page) => (await page.request.get("/api/settings")).json();
 
 test.describe("Song details tab", () => {
-  test("sits right after General and holds the three sections", async ({ page }) => {
+  test("sits after General and Library and holds the three sections", async ({ page }) => {
     await seedLibrary(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
     const tabs = page.locator(".settings-tab");
     await expect(tabs.nth(0)).toHaveAttribute("data-tab", "general");
-    await expect(tabs.nth(1)).toHaveAttribute("data-tab", "details");
-    await expect(tabs.nth(1)).toHaveText("Song details");
+    await expect(tabs.nth(1)).toHaveAttribute("data-tab", "library");
+    await expect(tabs.nth(2)).toHaveAttribute("data-tab", "details");
+    await expect(tabs.nth(2)).toHaveText("Song details");
 
     // Not on General any more.
     const general = page.locator('.settings-pane[data-pane="general"]');
     await expect(general.locator(".set-acoustid-key, .set-discogs-token, .set-transcribe-lyrics")).toHaveCount(0);
 
-    await tabs.nth(1).click();
+    await tabs.nth(2).click();
     const pane = page.locator('.settings-pane[data-pane="details"]');
     await expect(pane).toBeVisible();
     await expect(general).toBeHidden();

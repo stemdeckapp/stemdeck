@@ -17,7 +17,7 @@ const reset = (page) => page.locator("#t-pitch-reset");
 const laneKey = (page, stem) => page.locator(`.lane-key[data-stem="${stem}"]`);
 const laneUp = (page, stem) => laneKey(page, stem).locator(".lane-key-step.up");
 const laneDown = (page, stem) => laneKey(page, stem).locator(".lane-key-step.down");
-const laneValue = (page, stem) => laneKey(page, stem).locator(".lane-key-value");
+const laneValue = (page, stem) => laneKey(page, stem).locator(".lane-key-num");
 
 // Input 6 is semitone 0, so input (6 + n) is a shift of n semitones.
 const ZERO_INPUT = 6;
@@ -202,7 +202,7 @@ test.describe("per-lane transpose", () => {
     await openStudio(page);
     await expect(laneKey(page, "vocals")).toBeVisible();
     // Reads as a label until it is doing something, then as a number.
-    await expect(laneValue(page, "vocals")).toHaveText("K");
+    await expect(laneValue(page, "vocals")).toHaveText("0");
     await expect(laneKey(page, "vocals")).not.toHaveClass(/active/);
   });
 
@@ -228,7 +228,7 @@ test.describe("per-lane transpose", () => {
     await expect(laneValue(page, "vocals")).toHaveText("-1");
 
     await laneUp(page, "vocals").click();
-    await expect(laneValue(page, "vocals")).toHaveText("K");
+    await expect(laneValue(page, "vocals")).toHaveText("0");
     await expect(laneKey(page, "vocals")).not.toHaveClass(/active/);
   });
 
@@ -252,7 +252,7 @@ test.describe("per-lane transpose", () => {
     await expect(laneValue(page, "vocals")).toHaveText("+2");
     await expect(laneValue(page, "bass")).toHaveText("+2");
     // Except drums, which never move.
-    await expect(laneValue(page, "drums")).toHaveText("K");
+    await expect(laneValue(page, "drums")).toHaveText("0");
   });
 
   test("a lane keeps its distance when the global key moves", async ({ page }) => {
@@ -311,8 +311,8 @@ test.describe("per-lane transpose", () => {
     // individually, stepping the global back to zero cannot undo them.
     await expect(value(page)).toHaveText("0");
     await expect(value(page)).not.toHaveClass(/active/);
-    await expect(laneValue(page, "vocals")).toHaveText("K");
-    await expect(laneValue(page, "bass")).toHaveText("K");
+    await expect(laneValue(page, "vocals")).toHaveText("0");
+    await expect(laneValue(page, "bass")).toHaveText("0");
     await expect(laneKey(page, "vocals")).not.toHaveClass(/active/);
   });
 

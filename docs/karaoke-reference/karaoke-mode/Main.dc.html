@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>StemDeck · Karaoke Mode</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0A0E13}
+a{color:#F5B72A}a:hover{color:#FFD066}
+button{font-family:inherit;cursor:pointer}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.lbl{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#8A94A1}
+.w{transition:color .28s ease}
+.w.on{color:#F5B72A}
+.ib{display:inline-flex;align-items:center;justify-content:center;border:1px solid #27303B;background:#121820;color:#C9CFD7;border-radius:8px}
+.ib:hover{border-color:#3A4552;color:#FFFFFF}
+.rail{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:#7E8894;padding:8px 0;width:56px;border:0;background:none}
+.rail:hover{color:#E8EBEF}
+.rail svg{width:18px;height:18px}
+.secc:hover{border-color:#3A4552}
+input[type=range].fader{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:#2A333E;outline:none}
+input[type=range].fader::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#E8EBEF;border:0}
+.stage-bg{background:
+radial-gradient(ellipse 14% 22% at 22% 12%, rgba(255,176,90,.55), rgba(255,176,90,0) 70%),
+radial-gradient(ellipse 10% 18% at 41% 6%, rgba(255,196,120,.45), rgba(255,196,120,0) 70%),
+radial-gradient(ellipse 12% 20% at 68% 10%, rgba(255,170,80,.5), rgba(255,170,80,0) 70%),
+radial-gradient(ellipse 9% 16% at 86% 18%, rgba(255,150,70,.4), rgba(255,150,70,0) 70%),
+radial-gradient(ellipse 30% 30% at 12% 70%, rgba(170,70,30,.35), rgba(170,70,30,0) 70%),
+radial-gradient(ellipse 30% 30% at 88% 65%, rgba(150,60,30,.32), rgba(150,60,30,0) 70%),
+radial-gradient(ellipse 60% 50% at 50% 45%, rgba(90,45,25,.55), rgba(90,45,25,0) 80%),
+linear-gradient(180deg,#24150D 0%,#140D09 55%,#0C0A09 100%)}
+.stage-veil{background:radial-gradient(ellipse 80% 75% at 50% 45%, rgba(8,10,14,.25), rgba(8,10,14,.78) 100%)}
+</style>
+</helmet>
+<div style="width:1800px;height:1020px;display:flex;background:#0A0E13;color:#E8EBEF;font-family:Inter,system-ui,sans-serif;overflow:hidden">
+
+<!-- ===== Left rail (unchanged shell) ===== -->
+<nav aria-label="App" style="width:60px;flex:none;display:flex;flex-direction:column;align-items:center;border-right:1px solid #161C24;padding-top:22px;background:#0A0E13">
+<div style="height:60px;display:flex;align-items:center;color:#F5B72A">
+<svg width="34" height="34" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 14v6M9.5 10v14M14 6v22M18.5 11v12M23 8v18M27.5 13v8"></path></svg>
+</div>
+<div style="height:24px"></div>
+<button class="rail" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path></svg>Favorites</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M4 10h16"></path></svg>Library</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h11M4 11h11M4 16h6"></path><circle cx="17" cy="17" r="2.5"></circle><path d="M19.5 17V8l2 1"></path></svg>Lyrics</button>
+<button class="rail" style="color:#F5B72A" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>Karaoke</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"></path></svg>Trash</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 5h7a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H3zM21 5h-7a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h7z"></path></svg>Guide</button>
+<div style="flex:1"></div>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20h4"></path></svg>Notifications</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path></svg>We Recommend</button>
+<button class="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"></path></svg>Settings</button>
+<button class="rail" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"></path></svg>Help</button>
+</nav>
+
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+
+<!-- ===== Top header (unchanged shell) ===== -->
+<header style="flex:none;padding:12px 16px 12px 16px;border-bottom:1px solid #161C24">
+<div style="display:flex;align-items:stretch;gap:16px;height:92px;border:1px solid #1E2630;border-radius:10px;background:#0E1319;padding:10px 14px">
+<div style="width:660px;display:flex;flex-direction:column;justify-content:space-between">
+<div style="display:flex;align-items:center;gap:10px;height:34px;border:1px solid #232C37;border-radius:8px;padding:0 10px;background:#0B1015">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="2" stroke-linecap="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg>
+<span style="display:inline-flex;align-items:center;gap:8px;font-size:12px;border:1px solid #2A333E;border-radius:6px;padding:4px 8px;color:#D6DBE1">floorlight_master.wav <span style="color:#8A94A1">38.2 MB</span> <span style="color:#8A94A1">×</span></span>
+</div>
+<div style="display:flex;align-items:center;gap:6px;font-size:12px">
+<span class="lbl" style="margin-right:6px">Extract</span>
+<span style="padding:6px 10px;border:1px solid #3A4552;border-radius:6px;color:#FFFFFF;font-weight:600">All</span>
+<span style="padding:6px 10px;border:1px solid #2A333E;border-radius:6px;color:#7E8894">Vocals</span>
+<span style="padding:6px 10px;border:1px solid #2A333E;border-radius:6px;color:#7E8894">Combined</span>
+<span style="padding:6px 10px;border:1px solid #7A2A35;border-radius:6px;color:#F06A7E;background:rgba(229,86,107,.12);font-weight:600">Lead + Backing</span>
+<span style="padding:6px 10px;border:1px solid #7A4518;border-radius:6px;color:#F09A50;background:rgba(233,138,58,.14);font-weight:600">Drums</span>
+<span style="padding:6px 10px;border:1px solid #7A5A18;border-radius:6px;color:#F5C04A;background:rgba(242,180,60,.14);font-weight:600">Bass</span>
+<span style="padding:6px 10px;border:1px solid #2C6A33;border-radius:6px;color:#6FDB79;background:rgba(95,207,106,.12);font-weight:600">Guitar</span>
+<span style="padding:6px 10px;border:1px solid #4A3480;border-radius:6px;color:#B392FF;background:rgba(154,107,245,.12);font-weight:600">Piano</span>
+<span style="padding:6px 10px;border:1px solid #2A333E;border-radius:6px;color:#7E8894">Other</span>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;align-items:center;width:190px">
+<div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+<span style="width:30px;height:16px;border-radius:9px;background:#2A333E;position:relative;display:inline-block"><span style="position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#C9CFD7"></span></span>
+<span style="font-size:12px;color:#8A94A1;line-height:1.2">Detect structure<br><span style="font-size:8px;letter-spacing:.14em;color:#59636E">EXPERIMENTAL</span></span>
+</div>
+<button style="height:30px;width:170px;border:0;border-radius:6px;background:#F0B130;color:#1A1205;font-weight:700;font-size:14px">Extract stems</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:4px;justify-content:center;font-size:12px;width:76px;align-items:center">
+<span style="color:#8A94A1">Collapse</span>
+<span style="border:1px solid #27303B;border-radius:6px;padding:3px 8px;font-weight:600">Analysis</span>
+<span style="border:1px solid #27303B;border-radius:6px;padding:3px 8px;font-weight:600">Sections</span>
+</div>
+<div style="flex:1"></div>
+<div style="width:540px;display:flex;align-items:center;gap:14px;border:1px solid #1E2630;border-radius:8px;padding:6px 14px;background:#0B1015">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path></svg>
+<div style="width:70px;height:70px;border-radius:4px;position:relative;overflow:hidden;background:radial-gradient(circle at 30% 30%,#D98A3C,#5B2A14 60%,#1C0F09)">
+<div style="position:absolute;inset:14px;border-radius:50%;border:1px solid rgba(255,220,170,.35)"></div>
+<div style="position:absolute;left:31px;top:31px;width:8px;height:8px;border-radius:50%;background:#F5B72A"></div>
+</div>
+<div style="flex:1;min-width:0">
+<div class="lbl" style="font-size:10px">Now playing</div>
+<div style="font-size:15px;font-weight:600;margin-top:4px">Floorlight <span style="color:#8A94A1;font-weight:400"> · The Late Arrivals</span></div>
+<div style="font-size:12px;color:#8A94A1;margin-top:4px;display:flex;gap:12px;align-items:center"><span class="mono">03:06</span><span style="display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#5FCF6A"></span>7 stems</span><span>Upload</span><span>High</span><span>Extracted Oct 7, 10:14 AM</span></div>
+</div>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>
+</div>
+</div>
+</header>
+
+<div style="flex:1;min-height:0;display:flex">
+
+<!-- ===== Library sidebar (unchanged shell) ===== -->
+<aside style="width:300px;flex:none;border-right:1px solid #161C24;padding:14px 14px;display:flex;flex-direction:column;gap:14px">
+<label style="display:flex;align-items:center;gap:8px;height:34px;border:1px solid #232C37;border-radius:8px;padding:0 10px;color:#8A94A1;font-size:13px;background:#0E1319">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path></svg>
+<input aria-label="Search library" placeholder="Search library..." style="flex:1;background:none;border:0;outline:none;color:#E8EBEF;font-size:13px;font-family:inherit">
+<span class="mono" style="font-size:10px;border:1px solid #2A333E;border-radius:4px;padding:1px 5px">⌘K</span>
+</label>
+<div style="display:flex;justify-content:space-between;align-items:center">
+<span class="lbl">Stem collections</span>
+<button class="ib" style="font-size:11px;padding:4px 8px;gap:5px">+ New folder</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+<div style="display:flex;align-items:center;gap:10px;padding:7px 6px;color:#C9CFD7"><span style="color:#59636E">›</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"></path></svg><span style="flex:1">Unsorted</span><span style="color:#59636E;font-size:12px">5</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:7px 6px;color:#C9CFD7"><span style="color:#59636E">›</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"></path></svg><span style="flex:1">Bass</span><span style="color:#59636E;font-size:12px">6</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:7px 6px;color:#C9CFD7"><span style="color:#59636E">⌄</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"></path></svg><span style="flex:1">Karaoke night</span><span style="color:#59636E;font-size:12px">3</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:8px 8px;margin-left:16px;border:1px solid #2B3542;border-radius:8px;background:#121820">
+<div style="width:30px;height:30px;border-radius:4px;background:radial-gradient(circle at 30% 30%,#D98A3C,#5B2A14 60%,#1C0F09)"></div>
+<div style="min-width:0"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">The Late Arrivals – Floorlight</div><div class="mono" style="font-size:10px;color:#8A94A1;margin-top:2px">03:06</div></div>
+</div>
+<div style="display:flex;align-items:center;gap:10px;padding:8px 8px;margin-left:16px">
+<div style="width:30px;height:30px;border-radius:4px;background:radial-gradient(circle at 60% 40%,#4F7FA8,#1C2E40 65%,#0D141C)"></div>
+<div style="min-width:0"><div style="font-size:12px;color:#C9CFD7">Rooftop Takes – Half Past Two</div><div class="mono" style="font-size:10px;color:#8A94A1;margin-top:2px">03:41</div></div>
+</div>
+<div style="display:flex;align-items:center;gap:10px;padding:8px 8px;margin-left:16px">
+<div style="width:30px;height:30px;border-radius:4px;background:radial-gradient(circle at 40% 60%,#8F5BC4,#2E1C40 65%,#120D1C)"></div>
+<div style="min-width:0"><div style="font-size:12px;color:#C9CFD7">The Late Arrivals – Glass House</div><div class="mono" style="font-size:10px;color:#8A94A1;margin-top:2px">04:02</div></div>
+</div>
+<div style="display:flex;align-items:center;gap:10px;padding:7px 6px;color:#C9CFD7"><span style="color:#59636E">›</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"></path></svg><span style="flex:1">Traveler</span><span style="color:#59636E;font-size:12px">8</span></div>
+</div>
+<div style="height:1px;background:#161C24"></div>
+<span class="lbl">Tags</span>
+<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px">
+<span style="border:1px solid #27303B;border-radius:6px;padding:5px 10px;color:#C9CFD7">karaoke <span style="color:#59636E">3</span></span>
+<span style="border:1px solid #27303B;border-radius:6px;padding:5px 10px;color:#C9CFD7">funk <span style="color:#59636E">2</span></span>
+<span style="border:1px solid #27303B;border-radius:6px;padding:5px 10px;color:#C9CFD7">sing along <span style="color:#59636E">1</span></span>
+<span style="border:1px solid #27303B;border-radius:6px;padding:5px 10px;color:#C9CFD7">music <span style="color:#59636E">4</span></span>
+</div>
+</aside>
+
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+
+<!-- ===================== KARAOKE MODE WORKSPACE (editable region) ===================== -->
+<section aria-label="Karaoke Mode" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;padding:14px 16px 12px 16px;background:#0B0F14">
+
+<div style="flex:1;min-height:0;display:flex;gap:12px">
+
+<!-- Main stage -->
+<div style="flex:1;min-width:0;position:relative;border-radius:12px;overflow:hidden;border:1px solid #1C232C">
+<div class="stage-bg" style="position:absolute;inset:0;filter:blur(2px)"></div>
+<div class="stage-veil" style="position:absolute;inset:0"></div>
+
+<div style="position:relative;height:100%;display:flex;flex-direction:column;padding:22px 26px 18px 26px;box-sizing:border-box">
+
+<!-- Stage header -->
+<div style="display:flex;align-items:center;gap:16px">
+<div style="width:62px;height:62px;border-radius:6px;position:relative;overflow:hidden;flex:none;box-shadow:0 4px 18px rgba(0,0,0,.45);background:radial-gradient(circle at 30% 30%,#D98A3C,#5B2A14 60%,#1C0F09)">
+<div style="position:absolute;inset:12px;border-radius:50%;border:1px solid rgba(255,220,170,.35)"></div>
+<div style="position:absolute;left:27px;top:27px;width:8px;height:8px;border-radius:50%;background:#F5B72A"></div>
+</div>
+<div style="flex:1;min-width:0">
+<div style="font-size:26px;font-weight:700;letter-spacing:-.01em">Floorlight</div>
+<div style="font-size:16px;color:#C3C9D1;margin-top:3px">The Late Arrivals</div>
+</div>
+<a href="Fullscreen.dc.html" aria-label="Enter fullscreen karaoke" style="width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #2B3542;border-radius:8px;background:rgba(11,15,20,.72);color:#E8EBEF">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
+</a>
+</div>
+
+<!-- LYRICS VIEW -->
+<sc-if value="{{isLyrics}}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:0;padding:0 40px">
+<div style="font-size:22px;font-weight:500;color:rgba(232,235,239,.32);min-height:30px;margin-bottom:34px">{{prevLine}}</div>
+<sc-if value="{{inIntro}}" hint-placeholder-val="{{ false }}">
+<div style="font-size:24px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#F5B72A">Instrumental</div>
+<div style="font-size:18px;color:#C3C9D1;margin-top:12px">Vocals start in <span class="mono">{{countdown}}</span></div>
+<div style="display:flex;gap:10px;margin-top:22px"><span style="{{dot1}}"></span><span style="{{dot2}}"></span><span style="{{dot3}}"></span></div>
+</sc-if>
+<sc-if value="{{inLyric}}" hint-placeholder-val="{{ true }}">
+<div style="font-size:64px;line-height:1.14;font-weight:800;letter-spacing:-.02em;color:#F4F5F7;text-shadow:0 2px 24px rgba(0,0,0,.5)">
+<div><sc-for list="{{line1}}" as="wd" hint-placeholder-count="5"><span class="{{wd.cls}}" style="margin:0 .12em">{{wd.w}}</span></sc-for></div>
+<div><sc-for list="{{line2}}" as="wd" hint-placeholder-count="5"><span class="{{wd.cls}}" style="margin:0 .12em">{{wd.w}}</span></sc-for></div>
+</div>
+</sc-if>
+<div style="margin-top:52px;font-size:38px;line-height:1.28;font-weight:500;color:rgba(232,235,239,.58)">
+<div>{{next1}}</div>
+<div>{{next2}}</div>
+</div>
+</div>
+</sc-if>
+
+<!-- Progress -->
+<div style="padding:0 120px">
+<div onClick="{{seekBar}}" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="186" aria-valuenow="{{tInt}}" style="position:relative;height:18px;cursor:pointer">
+<div style="position:absolute;left:0;right:0;top:7px;height:4px;border-radius:2px;background:rgba(232,235,239,.22)"></div>
+<div style="{{fillStyle}}"></div>
+<div style="{{thumbStyle}}"></div>
+</div>
+<div class="mono" style="display:flex;justify-content:space-between;font-size:15px;color:#E8EBEF;margin-top:8px"><span>{{posLabel}}</span><span>03:06</span></div>
+</div>
+
+</div>
+</div>
+
+<!-- Sections panel -->
+<aside style="width:330px;flex:none;display:flex;flex-direction:column;gap:12px;border-left:1px solid #161C24;padding-left:12px">
+<div role="tablist" aria-label="Side panel" style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:8px">
+<button role="tab" aria-selected="{{queueSel}}" onClick="{{showQueue}}" style="{{queueTabStyle}}">Queue</button>
+<button role="tab" aria-selected="{{sectionsSel}}" onClick="{{showSections}}" style="{{sectionsTabStyle}}">Sections</button>
+</div>
+<sc-if value="{{isSections}}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px">
+<sc-for list="{{sections}}" as="sec" hint-placeholder-count="7">
+<div class="secc" style="{{sec.cardStyle}}">
+<button onClick="{{sec.seek}}" aria-label="{{sec.aria}}" style="flex:1;min-width:0;display:flex;align-items:center;gap:14px;background:none;border:0;padding:0;text-align:left;color:inherit">
+<span style="{{sec.tileStyle}}">
+<sc-if value="{{sec.active}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="#F5B72A"></path></svg></sc-if>
+<sc-if value="{{sec.inactive}}" hint-placeholder-val="{{ true }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A94A1" stroke-width="1.8" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4"></path></svg></sc-if>
+</span>
+<span style="display:flex;flex-direction:column;gap:5px">
+<span style="{{sec.titleStyle}}">{{sec.name}}</span>
+<span class="mono" style="{{sec.timeStyle}}">{{sec.range}}</span>
+</span>
+</button>
+<button aria-label="Section options" style="width:32px;height:40px;background:none;border:0;color:#8A94A1;display:inline-flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="19" r="1.7"></circle></svg></button>
+</div>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{isQueue}}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:8px">
+<span class="lbl" style="margin:4px 2px">Up next</span>
+<div style="display:flex;align-items:center;gap:12px;border:1px solid #1F2832;border-radius:10px;padding:12px;background:#10161D">
+<div style="width:44px;height:44px;border-radius:6px;background:radial-gradient(circle at 60% 40%,#4F7FA8,#1C2E40 65%,#0D141C)"></div>
+<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600">Half Past Two</div><div style="font-size:13px;color:#8A94A1;margin-top:3px">Rooftop Takes · <span class="mono">03:41</span></div></div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;border:1px solid #1F2832;border-radius:10px;padding:12px;background:#10161D">
+<div style="width:44px;height:44px;border-radius:6px;background:radial-gradient(circle at 40% 60%,#8F5BC4,#2E1C40 65%,#120D1C)"></div>
+<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600">Glass House</div><div style="font-size:13px;color:#8A94A1;margin-top:3px">The Late Arrivals · <span class="mono">04:02</span></div></div>
+</div>
+<button class="ib" style="height:44px;font-size:13px;margin-top:4px;border-style:dashed">+ Add from library</button>
+</div>
+</sc-if>
+</aside>
+</div>
+
+<!-- ===== Karaoke bottom controls: KEY · SPEED · STEMS ===== -->
+<div style="flex:none;height:132px;display:flex;gap:12px">
+
+<div style="width:240px;flex:none;box-sizing:border-box;border:1px solid #1F2832;border-radius:10px;background:#0F151C;padding:14px 18px;display:flex;flex-direction:column;justify-content:space-between">
+<span class="lbl">Key</span>
+<div style="display:flex;align-items:center;gap:10px"><span style="font-size:24px;font-weight:600">{{keyName}}</span><span title="Transpose (semitones)" class="mono" style="min-width:28px;height:28px;padding:0 4px;box-sizing:border-box;border-radius:14px;border:1.5px solid #F5B72A;color:#F5B72A;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">{{semisLabel}}</span></div>
+<div style="display:flex;gap:8px">
+<button class="ib" aria-label="Transpose down a semitone" onClick="{{keyDown}}" style="width:44px;height:36px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"></path></svg></button>
+<button class="ib" aria-label="Transpose up a semitone" onClick="{{keyUp}}" style="width:44px;height:36px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg></button>
+<button class="ib" onClick="{{keyReset}}" style="flex:1;height:36px;font-size:13px;font-weight:500">Reset</button>
+</div>
+</div>
+
+<div style="width:380px;flex:none;box-sizing:border-box;border:1px solid #1F2832;border-radius:10px;background:#0F151C;padding:14px 18px;display:flex;flex-direction:column;justify-content:space-between">
+<span class="lbl">Speed</span>
+<div style="display:flex;align-items:center;gap:14px">
+<span style="font-size:24px;font-weight:600;width:84px">{{speedPct}}</span>
+<div style="display:flex">
+<button class="ib" aria-label="Slower" onClick="{{speedDown}}" style="width:44px;height:32px;border-radius:8px 0 0 8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"></path></svg></button>
+<button class="ib" aria-label="Faster" onClick="{{speedUp}}" style="width:44px;height:32px;border-radius:0 8px 8px 0;margin-left:-1px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg></button>
+</div>
+</div>
+<div style="display:flex">
+<sc-for list="{{speedPresets}}" as="p" hint-placeholder-count="5"><button onClick="{{p.pick}}" aria-pressed="{{p.pressed}}" style="{{p.style}}">{{p.label}}</button></sc-for>
+</div>
+</div>
+
+<div style="flex:1;min-width:0;box-sizing:border-box;border:1px solid #1F2832;border-radius:10px;background:#0F151C;padding:14px 16px;display:flex;flex-direction:column;justify-content:space-between">
+<span class="lbl">Stems</span>
+<div style="display:flex;gap:8px;height:64px">
+<sc-for list="{{stems}}" as="s" hint-placeholder-count="7">
+<div style="{{s.cardStyle}}">
+<span style="display:inline-flex;flex:none;color:{{s.iconColor}}">
+<sc-if value="{{s.isLeadOn}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"></path></svg></sc-if>
+<sc-if value="{{s.isLeadOff}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8M3 3l18 18"></path></svg></sc-if>
+<sc-if value="{{s.isBacking}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="8" r="3"></circle><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"></path><circle cx="17" cy="9" r="2.5"></circle><path d="M16.5 14.2c2.6.5 4.5 2.9 4.5 5.8"></path></svg></sc-if>
+<sc-if value="{{s.isDrums}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><ellipse cx="12" cy="10" rx="8" ry="3"></ellipse><path d="M4 10v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6M7 3l4 5M17 3l-4 5"></path></svg></sc-if>
+<sc-if value="{{s.isBass}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10l6-6M18 2l4 4M17 3l1 1M20 6l1 1"></path><path d="M13.5 10.5a3 3 0 0 0-3.5-.5l-1 .9a4 4 0 0 0-4.6 1C2.6 13.7 3 16.6 5 18.8s5.1 2.6 6.9.8a4 4 0 0 0 1-4.6l.9-1a3 3 0 0 0-.3-3.5z"></path><path d="M8 16l2-2"></path></svg></sc-if>
+<sc-if value="{{s.isGuitar}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10l5-5M18 3l3 3"></path><path d="M13.5 10.5a3 3 0 0 0-3.5-.5l-1 .9a4 4 0 0 0-4.6 1C2.6 13.7 3 16.6 5 18.8s5.1 2.6 6.9.8a4 4 0 0 0 1-4.6l.9-1a3 3 0 0 0-.3-3.5z"></path><circle cx="9" cy="15" r="1.4"></circle></svg></sc-if>
+<sc-if value="{{s.isPiano}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M8 13v7M12 13v7M16 13v7M6.5 4v9h3V4M14.5 4v9h3V4"></path></svg></sc-if>
+<sc-if value="{{s.isOther}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-6 3 12 3-9 2 6 1-3h4"></path></svg></sc-if>
+</span>
+<span style="flex:1;min-width:0;font-size:12.5px;line-height:1.15;font-weight:500;color:{{s.labelColor}}">{{s.label}}</span>
+<button role="switch" aria-checked="{{s.ariaOn}}" aria-label="{{s.toggleAria}}" onClick="{{s.toggle}}" style="{{s.trackStyle}}"><span style="{{s.knobStyle}}"></span></button>
+</div>
+</sc-for>
+</div>
+</div>
+
+</div>
+</section>
+
+<!-- ===== Transport (unchanged shell, bound to the same player state) ===== -->
+<footer style="flex:none;height:96px;box-sizing:border-box;border-top:1px solid #161C24;padding:10px 18px 8px 18px;display:flex;flex-direction:column;justify-content:space-between;background:#0A0E13">
+<div style="display:flex;align-items:flex-end;gap:22px">
+<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl" style="font-size:10px">Transport</span>
+<div style="display:flex;gap:8px">
+<button class="ib" aria-label="Stop" onClick="{{stop}}" style="width:34px;height:32px"><svg width="12" height="12" viewBox="0 0 12 12"><rect width="12" height="12" rx="1.5" fill="currentColor"></rect></svg></button>
+<button aria-label="{{playAria}}" onClick="{{togglePlay}}" style="width:44px;height:32px;border:0;border-radius:6px;background:#F0B130;color:#1A1205;display:inline-flex;align-items:center;justify-content:center">
+<sc-if value="{{isPaused}}" hint-placeholder-val="{{ true }}"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"></path></svg></sc-if>
+<sc-if value="{{isPlaying}}" hint-placeholder-val="{{ false }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+</button>
+</div></div>
+<div style="width:1px;height:44px;background:#1C232C"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl" style="font-size:10px">Position</span>
+<div style="display:flex;align-items:center;gap:12px"><span class="mono" style="font-size:20px;font-weight:700">{{posLabel}}</span><span class="mono" style="font-size:12px;color:#59636E">/ 03:06</span>
+<button class="ib" style="width:42px;height:32px;font-size:9px;flex-direction:column">Loop</button>
+<span class="mono" style="border:1px solid #27303B;border-radius:6px;padding:6px 10px;font-size:13px">{{posSecs}}</span><span style="color:#59636E">-</span><span class="mono" style="border:1px solid #27303B;border-radius:6px;padding:6px 10px;font-size:13px">{{posSecs}}</span>
+</div></div>
+<div style="width:1px;height:44px;background:#1C232C"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl" style="font-size:10px">Speed</span>
+<div style="display:flex">
+<sc-for list="{{transportSpeeds}}" as="p" hint-placeholder-count="3"><button onClick="{{p.pick}}" class="mono" style="{{p.style}}">{{p.label}}</button></sc-for>
+</div></div>
+<div style="width:1px;height:44px;background:#1C232C"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl" style="font-size:10px">Global key</span>
+<div style="display:flex;gap:4px;align-items:center">
+<button class="ib" aria-label="Transpose down" onClick="{{keyDown}}" style="width:30px;height:32px">-</button>
+<span class="mono" style="width:34px;text-align:center;font-size:13px">{{semisPlain}}</span>
+<button class="ib" aria-label="Transpose up" onClick="{{keyUp}}" style="width:30px;height:32px">+</button>
+<button class="ib" aria-label="Reset key" onClick="{{keyReset}}" style="width:32px;height:32px;margin-left:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"></path></svg></button>
+</div></div>
+<div style="width:1px;height:44px;background:#1C232C"></div>
+<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl" style="font-size:10px">Click track</span>
+<div style="display:flex;gap:6px;align-items:center;font-size:12px">
+<button class="ib" aria-label="Metronome" style="width:34px;height:32px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 3h6l3 18H6zM12 15l5-8"></path></svg></button>
+<button class="ib" aria-label="Click volume" style="width:34px;height:32px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z"></path></svg></button>
+<span class="ib" style="height:32px;padding:0 12px;gap:28px;font-weight:600">Count-in: off <span style="color:#8A94A1">▾</span></span>
+<span class="ib" style="height:32px;padding:0 12px;gap:36px;font-weight:600">Auto <span style="color:#8A94A1">▾</span></span>
+<span class="ib" style="height:32px;padding:0 12px;font-weight:600">Grid</span>
+<span class="ib" style="height:32px;padding:0 10px">/2</span><span class="ib" style="height:32px;padding:0 10px;color:#6EA8FF;background:#14223A">1x</span><span class="ib" style="height:32px;padding:0 10px">x2</span>
+</div></div>
+<div style="flex:1"></div>
+<button style="height:34px;border:0;border-radius:6px;background:#F0B130;color:#1A1205;font-weight:700;font-size:13px;padding:0 14px;display:inline-flex;align-items:center;gap:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>Export Mix ▾</button>
+</div>
+<div style="font-size:11px;color:#7E8894">Clicking 112.0 BPM — 91% of beats sit on a drum hit, accenting 8 detected meter regions. Use /2 or x2 if the click feels half or double speed.</div>
+</footer>
+
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"hasOther":{"editor":"boolean","default":true},"startAt":{"editor":"int","min":0,"max":185,"default":58},"$preview":{"width":1800,"height":1020}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      t: (props && props.startAt != null) ? props.startAt : 58,
+      playing: false,
+      rate: 1,
+      semis: 0,
+      view: 'lyrics',
+      tab: 'sections',
+      solo: null,
+      // Karaoke defaults: lead off, everything else on
+      on: { lead: false, backing: true, drums: true, bass: true, guitar: true, piano: true, other: true },
+      vol: { lead: 80, backing: 72, drums: 80, bass: 80, guitar: 76, piano: 70, other: 64 }
+    };
+  }
+  componentDidMount() {
+    this._iv = setInterval(() => {
+      if (!this.state.playing) return;
+      let t = this.state.t + 0.1 * this.state.rate;
+      if (t >= 186) t = 0;
+      this.setState({ t: t });
+    }, 100);
+  }
+  componentWillUnmount() { clearInterval(this._iv); }
+
+  data() {
+    if (this._d) return this._d;
+    const sections = [
+      { name: 'Intro', s: 0, e: 18 }, { name: 'Verse 1', s: 18, e: 48 }, { name: 'Chorus', s: 48, e: 78 },
+      { name: 'Verse 2', s: 78, e: 108 }, { name: 'Chorus', s: 108, e: 138 }, { name: 'Bridge', s: 138, e: 164 },
+      { name: 'Chorus', s: 164, e: 186 }
+    ];
+    const chorus = [
+      ['Move into the light now', 'Shine until the night is gone'],
+      ['Move into the light now', 'Keep it moving, keep it strong'],
+      ["Don't you stop the feeling", 'Let it carry us along'],
+      ['Move into the light now', 'Shine until the night is gone']
+    ];
+    const lyr = {
+      'Verse 1': [
+        ['Lights come low across the city', 'Every window humming in the heat'],
+        ['I can feel the bassline in the pavement', 'Pulling at the rhythm in my feet'],
+        ["Nobody's watching, nobody's leaving", 'Turn it up and let the night begin'],
+        ['Hold that groove until the morning', 'Let the music pull you in']
+      ],
+      'Chorus': chorus,
+      'Verse 2': [
+        ['Snare cracks open like a doorway', 'Horns are calling from the other side'],
+        ['Shoulders loose and hearts are racing', 'Ride the pocket, let it slide'],
+        ['Every step a little brighter', 'Every turn a little more'],
+        ['Find the downbeat, feel it rising', 'Meet me in the middle of the floor']
+      ],
+      'Bridge': [
+        ['Breathe it in, breathe it out', 'Let the drums do the talking'],
+        ['Breathe it in, breathe it out', 'Keep your feet, keep them walking'],
+        ['Hands up high, hold it there', 'Feel the room start rising']
+      ]
+    };
+    const phrases = [];
+    sections.forEach((sec) => {
+      const L = lyr[sec.name];
+      if (!L) return;
+      const step = (sec.e - sec.s) / L.length;
+      L.forEach((p, i) => phrases.push({ t: sec.s + i * step, end: sec.s + (i + 1) * step, l1: p[0], l2: p[1] }));
+    });
+    const stems = [
+      { id: 'lead', label: 'Lead Vocals', color: '#E5566B' },
+      { id: 'backing', label: 'Backing Vocals', color: '#F07A8A' },
+      { id: 'drums', label: 'Drums', color: '#E98A3A' },
+      { id: 'bass', label: 'Bass', color: '#F2B43C' },
+      { id: 'guitar', label: 'Guitar', color: '#5FCF6A' },
+      { id: 'piano', label: 'Piano', color: '#9A6BF5' },
+      { id: 'other', label: 'Other', color: '#9AA3AD' }
+    ];
+    stems.forEach((s, k) => {
+      s.heights = [];
+      for (let i = 0; i < 26; i++) {
+        const v = 0.35 + 0.35 * Math.abs(Math.sin(i * 0.9 + k * 1.7)) + 0.3 * Math.abs(Math.sin(i * 2.3 + k));
+        s.heights.push(Math.round(v * 100));
+      }
+    });
+    this._d = { sections: sections, phrases: phrases, stems: stems };
+    return this._d;
+  }
+
+  renderVals() {
+    const d = this.data();
+    const st = this.state;
+    const t = st.t;
+    const Y = '#F5B72A';
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const mss = (x) => Math.floor(x / 60) + ':' + pad(Math.floor(x % 60));
+    const mmss = (x) => pad(Math.floor(x / 60)) + ':' + pad(Math.floor(x % 60));
+
+    // --- sections (existing section detection → seek) ---
+    let secIdx = 0;
+    d.sections.forEach((s, i) => { if (t >= s.s) secIdx = i; });
+    const sections = d.sections.map((s, i) => {
+      const a = i === secIdx;
+      return {
+        name: s.name, range: mss(s.s) + ' – ' + mss(s.e), active: a, inactive: !a,
+        aria: 'Jump to ' + s.name + ' at ' + mss(s.s),
+        cardStyle: 'display:flex;align-items:center;gap:6px;border-radius:10px;padding:12px 8px 12px 14px;' + (a ? 'border:1.5px solid ' + Y + ';background:rgba(245,183,42,.07)' : 'border:1px solid #1F2832;background:#10161D'),
+        tileStyle: 'width:44px;height:44px;flex:none;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;' + (a ? 'background:rgba(245,183,42,.12)' : 'background:#161D26'),
+        titleStyle: 'font-size:16px;font-weight:600;color:' + (a ? Y : '#E8EBEF'),
+        timeStyle: 'font-size:13px;color:' + (a ? '#E9C063' : '#8A94A1'),
+        seek: () => this.setState({ t: s.s })
+      };
+    });
+
+    // --- lyrics (existing synced lyrics; word timing where available) ---
+    let pi = -1;
+    d.phrases.forEach((p, i) => { if (t >= p.t) pi = i; });
+    const inIntro = pi < 0;
+    let line1 = [], line2 = [], prevLine = '', next1 = '', next2 = '';
+    if (!inIntro) {
+      const p = d.phrases[pi];
+      const w1 = p.l1.split(' '), w2 = p.l2.split(' ');
+      const n = w1.length + w2.length;
+      const start = p.t + 0.4, end = p.end - 1.2;
+      const prog = Math.max(0, Math.min(1, (t - start) / (end - start)));
+      const k = Math.floor(prog * n);
+      const cls = (i) => ((t >= start && i <= k) ? 'w on' : 'w');
+      line1 = w1.map((w, i) => ({ w: w, cls: cls(i) }));
+      line2 = w2.map((w, i) => ({ w: w, cls: cls(w1.length + i) }));
+      if (pi > 0) prevLine = d.phrases[pi - 1].l2;
+      const nx = d.phrases[pi + 1];
+      if (nx) { next1 = nx.l1; next2 = nx.l2; }
+    } else {
+      next1 = d.phrases[0].l1; next2 = d.phrases[0].l2;
+    }
+    const cd = Math.max(0, Math.ceil(d.phrases[0].t - t));
+    const beat = Math.floor(t * 2) % 3;
+    const dot = (i) => 'width:12px;height:12px;border-radius:50%;background:' + (beat === i ? Y : 'rgba(232,235,239,.25)');
+
+    // --- stems (existing per-stem mute + volume state) ---
+    const hasOther = this.props.hasOther ?? true;
+    const list = d.stems.filter((s) => hasOther || s.id !== 'other');
+    let audible = 0;
+    const stems = list.map((s) => {
+      const on = !!st.on[s.id];
+      const heard = on && (!st.solo || st.solo === s.id);
+      if (heard) audible++;
+      const isLead = s.id === 'lead';
+      const iconColor = on ? s.color : (isLead ? '#E5566B' : '#5B6570');
+      return {
+        label: s.label,
+        isLeadOn: isLead && on, isLeadOff: isLead && !on,
+        isBacking: s.id === 'backing', isDrums: s.id === 'drums', isBass: s.id === 'bass',
+        isGuitar: s.id === 'guitar', isPiano: s.id === 'piano', isOther: s.id === 'other',
+        iconColor: iconColor,
+        labelColor: on ? '#E8EBEF' : '#7E8894',
+        ariaOn: on ? 'true' : 'false',
+        toggleAria: s.label + (on ? ' on' : ' off'),
+        toggle: () => this.setState({ on: Object.assign({}, st.on, { [s.id]: !on }) }),
+        cardStyle: 'flex:1 1 0;min-width:0;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:10px;' + (on ? 'border:1px solid #2B3542;background:#141B24' : 'border:1px solid #1C232C;background:#0D1218'),
+        trackStyle: 'flex:none;position:relative;width:40px;height:22px;border-radius:11px;border:0;padding:0;' + (on ? 'background:' + Y : 'background:#2A333E'),
+        knobStyle: 'position:absolute;top:3px;width:16px;height:16px;border-radius:50%;transition:left .18s ease;' + (on ? 'left:21px;background:#FFFFFF' : 'left:3px;background:#C9CFD7'),
+        vol: st.vol[s.id],
+        volLabel: st.vol[s.id] + '%',
+        volAria: s.label + ' volume',
+        setVol: (e) => { const v = parseInt(e.target.value, 10); this.setState({ vol: Object.assign({}, this.state.vol, { [s.id]: v }) }); },
+        solo: () => this.setState({ solo: this.state.solo === s.id ? null : s.id }),
+        soloAria: st.solo === s.id ? 'true' : 'false',
+        soloStyle: 'width:32px;height:28px;border-radius:6px;font-size:12px;font-weight:700;' + (st.solo === s.id ? 'border:1px solid ' + Y + ';background:rgba(245,183,42,.16);color:' + Y : 'border:1px solid #2B3542;background:#121820;color:#8A94A1'),
+        stripStyle: 'flex:1 1 0;min-width:0;display:flex;flex-direction:column;border-radius:12px;padding:16px 14px;backdrop-filter:blur(6px);' + (heard ? 'border:1px solid #2B3542;background:rgba(14,19,25,.78)' : 'border:1px solid #1C232C;background:rgba(10,13,17,.7)'),
+        waveOpacity: heard ? '1' : '0.25',
+        bars: s.heights.map((h) => ({ style: 'flex:1;border-radius:2px;background:' + s.color + ';height:' + Math.round(h * st.vol[s.id] / 100) + '%' }))
+      };
+    });
+
+    // --- speed (existing playback-rate state, extended to 1.25x / 1.5x) ---
+    const setRate = (r) => this.setState({ rate: Math.round(Math.max(0.5, Math.min(1.5, r)) * 100) / 100 });
+    const presets = [0.5, 0.75, 1, 1.25, 1.5];
+    const speedPresets = presets.map((r, i) => {
+      const a = Math.abs(st.rate - r) < 0.001;
+      const rad = i === 0 ? '8px 0 0 8px' : (i === presets.length - 1 ? '0 8px 8px 0' : '0');
+      return {
+        label: r + 'x', pressed: a ? 'true' : 'false', pick: () => setRate(r),
+        style: 'flex:1;height:34px;font-size:13px;margin-left:' + (i ? '-1px' : '0') + ';border-radius:' + rad + ';' + (a ? 'border:1px solid #6B5317;background:rgba(245,183,42,.18);color:' + Y + ';font-weight:700;position:relative' : 'border:1px solid #27303B;background:#121820;color:#C9CFD7')
+      };
+    });
+    const transportSpeeds = [0.5, 0.75, 1].map((r, i) => {
+      const a = Math.abs(st.rate - r) < 0.001;
+      return { label: r + 'x', pick: () => setRate(r), style: 'height:32px;padding:0 12px;font-size:12px;margin-left:' + (i ? '-1px' : '0') + ';border:1px solid #27303B;' + (a ? 'background:#2A2414;color:' + Y + ';font-weight:700' : 'background:#121820;color:#8A94A1') };
+    });
+
+    // --- key (existing global transpose state) ---
+    const names = ['A', 'B♭', 'B', 'C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭'];
+    const sm = st.semis;
+    const keyName = names[((sm % 12) + 12) % 12] + ' minor';
+    const setSemis = (v) => this.setState({ semis: Math.max(-12, Math.min(12, v)) });
+
+    // --- tabs ---
+    const segTab = (a) => 'height:38px;padding:0 22px;border-radius:6px;border:0;font-size:15px;font-weight:600;' + (a ? 'background:' + Y + ';color:#1A1205' : 'background:transparent;color:#C3C9D1');
+    const sideTab = (a) => 'height:46px;border-radius:10px;font-size:15px;font-weight:600;' + (a ? 'border:1.5px solid ' + Y + ';background:rgba(245,183,42,.06);color:' + Y : 'border:1px solid #1F2832;background:#10161D;color:#C3C9D1');
+
+    const pct = Math.max(0, Math.min(100, (t / 186) * 100));
+    return {
+      isLyrics: st.view === 'lyrics', isStems: st.view === 'stems',
+      lyricsSel: st.view === 'lyrics' ? 'true' : 'false', stemsSel: st.view === 'stems' ? 'true' : 'false',
+      lyricsTabStyle: segTab(st.view === 'lyrics'), stemsTabStyle: segTab(st.view === 'stems'),
+      showLyrics: () => this.setState({ view: 'lyrics' }), showStems: () => this.setState({ view: 'stems' }),
+      isSections: st.tab === 'sections', isQueue: st.tab === 'queue',
+      sectionsSel: st.tab === 'sections' ? 'true' : 'false', queueSel: st.tab === 'queue' ? 'true' : 'false',
+      sectionsTabStyle: sideTab(st.tab === 'sections'), queueTabStyle: sideTab(st.tab === 'queue'),
+      showSections: () => this.setState({ tab: 'sections' }), showQueue: () => this.setState({ tab: 'queue' }),
+      sections: sections,
+      inIntro: inIntro, inLyric: !inIntro, line1: line1, line2: line2,
+      prevLine: prevLine, next1: next1, next2: next2,
+      countdown: mss(cd), dot1: dot(0), dot2: dot(1), dot3: dot(2),
+      stems: stems, audibleCount: audible,
+      karaokeDefaults: () => this.setState({ solo: null, on: { lead: false, backing: true, drums: true, bass: true, guitar: true, piano: true, other: true } }),
+      allOn: () => this.setState({ solo: null, on: { lead: true, backing: true, drums: true, bass: true, guitar: true, piano: true, other: true } }),
+      speedPct: Math.round(st.rate * 100) + '%',
+      speedDown: () => setRate(st.rate - 0.05), speedUp: () => setRate(st.rate + 0.05),
+      speedPresets: speedPresets, transportSpeeds: transportSpeeds,
+      keyName: keyName,
+      semisLabel: sm === 0 ? '0' : (sm > 0 ? '+' + sm : '−' + Math.abs(sm)),
+      semisPlain: String(sm),
+      keyDown: () => setSemis(sm - 1), keyUp: () => setSemis(sm + 1), keyReset: () => setSemis(0),
+      posLabel: mmss(t), posSecs: t.toFixed(3), tInt: Math.floor(t),
+      fillStyle: 'position:absolute;left:0;top:7px;height:4px;border-radius:2px;background:' + Y + ';width:' + pct + '%',
+      thumbStyle: 'position:absolute;top:1px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:' + Y + ';box-shadow:0 0 0 4px rgba(245,183,42,.18);left:' + pct + '%',
+      seekBar: (e) => { const r = e.currentTarget.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); this.setState({ t: f * 186 }); },
+      isPlaying: st.playing, isPaused: !st.playing, playAria: st.playing ? 'Pause' : 'Play',
+      togglePlay: () => this.setState({ playing: !this.state.playing }),
+      stop: () => this.setState({ playing: false, t: 0 })
+    };
+  }
+}
+</script>
+</body>
+</html>

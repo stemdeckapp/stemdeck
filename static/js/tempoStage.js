@@ -56,3 +56,44 @@ export function pipelineLatencySeconds({ workletFrames, stage, rate, transposed,
   }
   return pitchSeconds + wsolaLatencySeconds(sampleRate);
 }
+
+// How long a teardown waits for the processor to confirm it stopped. It
+// answers within a render quantum (about 3 ms) while the context runs; a
+// suspended context never calls it, and is closed after this anyway.
+const DISPOSE_WAIT_MS = 300;
+
+/**
+ * Tear down the stretch node and, when `closeCtx` is true, the context it
+ * runs in.
+ *
+ * A closed context is not freed while an AudioWorkletNode in it still has an
+ * active processor: Chromium keeps the node alive as a pending activity, and
+ * the node holds the context and, through its port's handler, the engine
+ * that made it. Measured: one closed context kept per song load, for good
+ * (with the probe context audioContext.js used to open, two). So the
+ * processor is told to stop (soundtouch-processor.js returns false from
+ * process()), and the context is closed once it has, or after
+ * DISPOSE_WAIT_MS. Without a node the context is closed at once. Never
+ * throws.
+ */
+export function disposeStretchNode(node, ctx, closeCtx) {
+  const close = () => {
+    if (closeCtx) Promise.resolve().then(() => ctx.close()).catch(() => {});
+  };
+  if (!node) { close(); return; }
+  // Disconnected first, and that matters: a node whose output feeds nodes
+  // that no longer reach the destination is never pulled, so its process()
+  // would never run to see the message. One with no output connected is
+  // rendered on its own (Chromium's automatic pull), so it answers.
+  try { node.disconnect(); } catch { /* already disconnected */ }
+  let timer = 0;
+  const finish = () => {
+    clearTimeout(timer);
+    node.port.onmessage = null;
+    try { node.port.close(); } catch { /* already closed */ }
+    close();
+  };
+  node.port.onmessage = (event) => { if (event?.data?.type === "disposed") finish(); };
+  timer = setTimeout(finish, DISPOSE_WAIT_MS);
+  try { node.port.postMessage({ type: "dispose" }); } catch { finish(); }
+}

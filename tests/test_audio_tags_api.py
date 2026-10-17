@@ -395,3 +395,25 @@ def test_a_lookup_that_takes_too_long_is_nothing_found(client, monkeypatch):
         "work": None,
     }
     assert job.audio_tags is None
+
+
+@pytest.mark.parametrize(
+    ("auto_lyrics", "looked_up"),
+    [(False, False), (True, True), (None, True)],
+    ids=["detect-lyrics-off", "detect-lyrics-on", "made-before-the-setting"],
+)
+def test_opening_a_track_looks_lyrics_up_only_when_detect_lyrics_was_on(
+    client, auto_lyrics, looked_up
+):
+    """The page asks this route when a track opens. A track imported with
+    Detect lyrics off must not get its lyrics fetched that way: the Lyrics tab
+    offers the lookup instead. Tracks from before the setting look as before."""
+    job = _done_job(
+        audio_tags={"artist": "Queen", "title": "Bicycle Race"},
+        artist=QUEEN,
+        auto_lyrics=auto_lyrics,
+    )
+    with patch("app.api.jobs.find_lyrics", return_value=None) as find:
+        r = client.post(f"/api/jobs/{job.id}/audio-tags")
+    assert r.status_code == 200
+    assert find.called is looked_up
