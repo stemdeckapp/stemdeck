@@ -112,6 +112,7 @@ from app.core.config import (
     LYRICS_TRANSCRIPT_FILE,
     LYRICS_USER_SYNCED_MAX_LINES,
 )
+from app.core.stem_files import stem_path
 from app.pipeline.lyrics_align import (
     _HIT_RISE_DB,
     _LOUD_PERCENTILE,
@@ -1458,10 +1459,27 @@ def _vocals_stamp(job_dir: Path) -> list[int] | None:
     was heard from. A stem made again (a re-separation writing it in place)
     no longer matches, and its transcript is heard afresh."""
     try:
-        st = (job_dir / "stems" / "vocals.wav").stat()
+        st = stem_path(job_dir / "stems", "vocals").stat()
     except OSError:
         return None
     return [st.st_size, st.st_mtime_ns]
+
+
+def restamp_transcript(job_dir: Path, old_stamp: list[int]) -> None:
+    """The vocals stem was stored again in another format, same audio (#783):
+    a transcript heard from it (stamped ``old_stamp``) is moved onto the new
+    file's stamp, so it is not heard afresh. Anything else is left as it is."""
+    from app.pipeline.lyrics_lookup import _write_json_atomic
+
+    path = transcript_path(job_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or data.get("vocals") != old_stamp:
+        return
+    data["vocals"] = _vocals_stamp(job_dir)
+    _write_json_atomic(path, data)
 
 
 def save_transcript(
@@ -1820,7 +1838,7 @@ def _hear(
     when the worker failed. Raises RetimeFailed without vocals, JobCancelled."""
     from app.pipeline.transcribe import _device, _run_worker, _spawn_worker_cmd
 
-    vocals = job_dir / "stems" / "vocals.wav"
+    vocals = stem_path(job_dir / "stems", "vocals")
     if not vocals.is_file():
         raise RetimeFailed("no vocals stem")
     cmd = _spawn_worker_cmd(vocals, _device(job))

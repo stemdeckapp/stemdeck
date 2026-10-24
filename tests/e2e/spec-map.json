@@ -1,0 +1,260 @@
+{
+  "_readme": [
+    "Which Playwright specs a pull request to a branch other than main runs. Read by scripts/ci/select-e2e.mjs.",
+    "A pull request to main, a push to main or big-release, a release, the nightly run and a manual run of e2e-full.yml run the whole suite and ignore this file.",
+    "Otherwise the run is: the spec files the PR adds or changes, plus 'smoke', plus the specs of every rule whose paths match a changed file.",
+    "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to big-release catches what core misses.",
+    "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
+    "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
+    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over base.css and --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
+    "Specs are named without tests/e2e/ and .spec.mjs. Paths are globs: * stays inside one folder, ** crosses folders.",
+    "The rules were built from what the specs touch: modules they import with page.evaluate, element ids and classes the module renders, and the API routes they hit or stub."
+  ],
+
+  "smoke": ["modes", "library-rows", "queue-progress", "mode-stems", "settings-nav"],
+
+  "core": [
+    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "slow-speed",
+    "footer-time", "zoom", "lane-alignment", "track-header", "playback-memory", "trash-restore", "job-form-submit",
+    "error-banner", "boot-failure"
+  ],
+
+  "full": [
+    "playwright.config.mjs",
+    "package.json",
+    "package-lock.json",
+    ".github/workflows/ci.yml",
+    ".github/workflows/e2e.yml",
+    ".github/workflows/e2e-full.yml",
+    "scripts/ci/select-e2e.mjs",
+    "tests/e2e/spec-map.json",
+    "tests/e2e/helpers*",
+    "tests/e2e/serve.sh",
+    "tests/e2e/seed.py"
+  ],
+
+  "hubs": [
+    "uv.lock",
+    "pyproject.toml",
+
+    "static/index.html",
+    "static/css/base.css",
+    "static/css/variables.css",
+    "static/css/responsive.css",
+    "static/vendor/multitrack.js",
+    "static/js/main.js",
+    "static/js/state.js",
+    "static/js/player.js",
+    "static/js/catalog.js",
+    "static/js/job.js",
+    "static/js/mixer.js",
+    "static/js/transport.js",
+    "static/js/mode.js",
+    "static/js/audio.js",
+    "static/js/audioEngine.js",
+    "static/js/chunkedAudioEngine.js",
+    "static/js/audioContext.js",
+    "static/js/utils.js",
+    "static/js/constants.js",
+    "static/js/ui-chrome.js",
+
+    "app/__init__.py",
+    "app/main.py",
+    "app/core/**",
+    "app/api/__init__.py",
+    "app/api/router.py",
+    "app/api/jobs.py",
+    "app/api/stems.py",
+    "app/api/events.py"
+  ],
+
+  "rules": [
+    {
+      "why": "The string tables. Specs that switch language or check translated text, the Guide sentences, and the queue strings (#799). A changed English string a spec asserts elsewhere surfaces at the pull request to main.",
+      "paths": ["static/js/i18n.js"],
+      "specs": ["about-license", "artist-languages", "brand-link", "library-rows", "lyrics-cjk", "stem-chip-overflow", "track-header", "help-mode", "queue-progress", "modes", "donate"]
+    },
+    {
+      "why": "Which audio formats the backend's ffmpeg can encode, read through /api/health by the export menu's OGG button (#824)",
+      "paths": ["app/pipeline/audio_encoders.py"],
+      "specs": ["export-ogg", "export-menu"]
+    },
+    {
+      "why": "The main stylesheet. Specs that measure layout (boundingBox, getComputedStyle, scroll and client sizes).",
+      "paths": ["static/css/daw.css"],
+      "specs": [
+        "about-reach", "artist-from-tags", "brand-link", "click-track", "drag-out", "eq-panels", "eq-suggest", "error-banner",
+        "error-box-narrow", "file-drop", "footer-fit", "footer-no-clip", "footer-time", "format-icon", "help-mode", "karaoke", "key-card",
+        "lane-alignment", "live-wave", "lyrics", "lyrics-cjk", "lyrics-sync", "network-transpose-warning", "panel-toggles",
+        "partial-stems", "recording-real-audio", "recording-tracks", "report-failure", "search", "sections-lock",
+        "sections-loop", "sections-zoom", "settings-scroll", "stem-chip-overflow", "streamer", "take-folders",
+        "take-folders-live", "track-header", "trash-restore", "unsorted-head", "work-info", "zoom"
+      ]
+    },
+    {
+      "why": "The import queue view, its library rows, and the stage text a running import shows",
+      "paths": ["static/js/queue.js", "static/js/phrases.js", "app/api/queue.py", "app/pipeline/jobqueue.py"],
+      "specs": ["queue-progress", "queue-remove", "trash-queue", "import-background", "job-form-submit"]
+    },
+    {
+      "why": "The mode switch and the mode menu, the stem picker and the lane stems popover",
+      "paths": [
+        "static/js/modeUi.js", "static/js/mixMode.js", "static/js/modeStems.js", "static/js/partChoice.js",
+        "static/js/stemChoice.js", "static/js/stemsControl.js", "static/js/playbackStems.js", "static/css/appbar.css"
+      ],
+      "specs": ["modes", "help-mode", "mode-stems", "partial-stems", "extract-row", "stem-chip-overflow", "karaoke", "streamer", "streamer-media", "panel-toggles", "transpose-switch-song"]
+    },
+    {
+      "why": "Lead + Backing: whether this install can make it (/api/health vocal_split), and what a split that did not work says and offers (#832). The e2e fixture never runs a real split, so the worker files only reach these specs through the state they report.",
+      "paths": [
+        "static/js/vocalSplitState.js", "app/pipeline/vocal_split.py", "app/pipeline/vocal_split_worker.py",
+        "app/pipeline/vocal_split_status.py", "app/pipeline/warmup.py"
+      ],
+      "specs": ["vocal-split-failure", "mode-stems", "karaoke", "extract-row", "help-mode"]
+    },
+    {
+      "why": "The import form: URL box, search, file drop, playlist import, and the stem choice submitted with it",
+      "paths": ["static/js/search.js", "static/js/playlist.js", "static/js/stemChoice.js", "app/api/search.py", "app/api/playlist.py", "app/pipeline/search.py", "app/pipeline/preview.py", "app/_vendor/**"],
+      "specs": ["search", "file-drop", "native-file-drop", "error-box-narrow", "import-background", "job-form-submit", "composer-arming", "boot-failure", "work-info", "artist-from-server", "about-reach"]
+    },
+    {
+      "why": "The library sidebar: rows, folders, tags, favorites, trash",
+      "paths": ["static/js/libraryDeleteKey.js", "static/css/catalog.css"],
+      "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]
+    },
+    {
+      "why": "Settings: navigation, every settings pane, and the config endpoint behind them",
+      "paths": ["static/js/settingsNav.js", "static/css/settings.css", "app/api/config.py"],
+      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle"]
+    },
+    {
+      "why": "The artist and work dialog, and the lookups behind it",
+      "paths": [
+        "static/js/artistInfo.js", "static/js/artistDiscogs.js", "static/js/artistLookup.js", "static/js/zhVariants.js",
+        "app/pipeline/artist_lookup.py", "app/pipeline/musicbrainz.py", "app/pipeline/work_lookup.py", "app/pipeline/identify.py",
+        "app/pipeline/audio_tags.py", "app/pipeline/title_parse.py", "app/pipeline/zh_variants.py"
+      ],
+      "specs": ["artist-info", "artist-discogs", "artist-from-server", "artist-from-tags", "artist-languages", "audio-tags-backfill", "official-links", "work-info", "about-reach"]
+    },
+    {
+      "why": "Discogs: the artist source and its token setting",
+      "paths": ["app/api/discogs.py", "app/pipeline/discogs.py", "app/pipeline/discogs_auth.py"],
+      "specs": ["artist-discogs", "discogs-setting"]
+    },
+    {
+      "why": "Lyrics: the panel, the lane, sync and alignment, and the lookups",
+      "paths": [
+        "static/js/lyrics.js", "static/js/lyricsLane.js", "static/js/lyricsLookup.js", "static/js/lyricsSync.js",
+        "static/js/artistLookup.js", "static/js/zhVariants.js", "app/pipeline/lyrics_*.py", "app/pipeline/zh_variants.py"
+      ],
+      "specs": ["lyrics", "lyrics-align", "lyrics-cjk", "lyrics-from-server", "lyrics-sync", "lyrics-toggle", "audio-tags-backfill", "karaoke"]
+    },
+    {
+      "why": "Song sections: lock, loop, rename, zoom, and the ruler",
+      "paths": ["static/js/sections.js", "static/js/loopRegion.js", "static/js/rulerTicks.js"],
+      "specs": ["sections-lock", "sections-loop", "sections-rename", "sections-zoom", "song-structure-toggle", "zoom", "footer-time", "karaoke"]
+    },
+    {
+      "why": "Beat grid, metronome and count-in",
+      "paths": ["static/js/beatgrid.js", "static/js/beatgridUi.js", "static/js/metronome.js", "static/js/clickSounds.js", "app/pipeline/click_render.py", "app/pipeline/click_sounds.py"],
+      "specs": ["click-track", "click-sound", "count-in-replay", "lane-alignment", "footer-fit", "zoom", "live-wave"]
+    },
+    {
+      "why": "Speed, pitch and transpose: the stretch stages and the pitch bus",
+      "paths": [
+        "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js",
+        "static/vendor/signalsmith-stretch.js", "static/vendor/soundtouch-processor.js"
+      ],
+      "specs": ["tempo-stage", "slow-speed", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
+    },
+    {
+      "why": "Footer and transport layout",
+      "paths": ["static/js/footerFit.js", "static/css/transport.css"],
+      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "slow-speed"]
+    },
+    {
+      "why": "Recording: capture, takes, take folders, track inputs, meters",
+      "paths": ["static/js/capture/**", "static/js/vuScale.js", "static/css/recording.css", "app/api/takes.py", "app/pipeline/take_render.py", "tests/e2e/recording-helpers.mjs"],
+      "specs": ["recording", "recording-no-peaks", "recording-real-audio", "recording-tracks", "take-folders", "take-folders-live", "live-wave", "video-take", "track-header", "composer-arming", "drag-out", "eq-panels", "streamer-media", "streamer", "video-sync", "error-box-narrow"]
+    },
+    {
+      "why": "Lane headers are built by the take lanes and the record UI, so every lane spec reads them",
+      "paths": ["static/js/capture/takeLanes.js", "static/js/capture/recordUi.js", "static/css/mixer.css", "static/css/waves.css"],
+      "specs": ["help-mode", "mode-stems", "partial-stems", "lane-alignment", "eq-panels", "eq-suggest", "transpose", "karaoke", "drag-out", "track-header", "zoom", "sections-zoom", "live-wave"]
+    },
+    {
+      "why": "EQ: the engine, the panels and the suggestions",
+      "paths": ["static/js/eq/**", "static/js/eqEngine.js", "static/js/eqMath.js", "static/js/fxChain.js", "static/css/eq.css"],
+      "specs": ["eq-engine", "eq-panels", "eq-suggest", "modes", "master-live", "lane-alignment"]
+    },
+    {
+      "why": "Master bus, mastering and export",
+      "paths": [
+        "static/js/masterEngine.js", "static/js/masterFx.js", "static/js/masterMath.js", "static/js/masterPanel.js",
+        "static/css/master.css", "static/css/mastering.css",
+        "app/api/suggest.py", "app/pipeline/eq_*", "app/pipeline/mastering.py", "app/pipeline/fx_filters.py", "app/pipeline/audio_stats.py"
+      ],
+      "specs": ["master-live", "eq-suggest", "eq-engine", "eq-panels", "mode-stems", "export-menu", "modes", "help-mode", "partial-stems", "error-banner"]
+    },
+    {
+      "why": "Stem storage format (#783): the MP3 storage stage and the engine an MP3 song opens on",
+      "paths": ["app/pipeline/stem_storage.py", "static/js/playbackStems.js"],
+      "specs": ["stem-storage", "mode-stems", "karaoke", "streamer"]
+    },
+    {
+      "why": "Karaoke mode",
+      "paths": ["static/js/karaoke/**", "static/css/karaoke.css", "app/api/backing.py", "app/pipeline/backing.py"],
+      "specs": ["karaoke", "streamer", "modes", "help-mode", "mode-stems", "lyrics", "playback-memory", "track-header", "video-sync", "zoom", "transpose-switch-song"]
+    },
+    {
+      "why": "Performance (streamer) mode",
+      "paths": ["static/js/streamer/**", "static/css/streamer.css"],
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke"]
+    },
+    {
+      "why": "Video: camera takes, the video lane and encoder settings",
+      "paths": ["static/js/video/**", "static/js/videoEncoderNote.js", "static/js/videoEncoderSettings.js", "static/css/video.css", "app/api/video_encoders.py", "app/pipeline/video_encoder.py"],
+      "specs": ["video-take", "video-sync", "export-menu", "streamer-media", "recording", "recording-real-audio", "settings-nav"]
+    },
+    {
+      "why": "The Guide (help mode) overlay",
+      "paths": ["static/js/helpMode.js"],
+      "specs": ["help-mode", "master-live", "take-folders", "donate"]
+    },
+    {
+      "why": "The Donate button and dialog, and the two links it reads",
+      "paths": ["static/js/donate.js", "static/js/donateLinks.js"],
+      "specs": ["donate", "help-mode"]
+    },
+    {
+      "why": "Notifications, failure reports and release cards",
+      "paths": ["static/js/notifications.js"],
+      "specs": ["report-failure", "release-full-download", "update-check", "error-banner"]
+    },
+    {
+      "why": "Job page pieces with one owner each",
+      "paths": ["static/css/job.css"],
+      "specs": ["error-box-narrow", "error-banner", "extract-row", "stem-chip-overflow", "job-form-submit", "key-card"]
+    },
+    {
+      "why": "Format icon and cover art",
+      "paths": ["static/js/formatIcon.js", "static/img/**", "static/imgs/**"],
+      "specs": ["format-icon", "now-playing-art", "brand-link", "we-recommend", "about-license"]
+    },
+    {
+      "why": "Where playback resumes after a reload",
+      "paths": ["static/js/reloadPlace.js", "static/js/reloadPlaceCore.js"],
+      "specs": ["playback-memory"]
+    },
+    {
+      "why": "The boot failure screen",
+      "paths": ["static/js/boot-diagnostics.js"],
+      "specs": ["boot-failure"]
+    },
+    {
+      "why": "The phone page and the QR code that opens it",
+      "paths": ["static/mobile/**", "static/js/shared/**", "app/api/qr.py"],
+      "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order"]
+    }
+  ]
+}

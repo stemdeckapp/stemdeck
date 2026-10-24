@@ -1,5 +1,6 @@
 import { $, storeGet, storeSet } from "./utils.js";
 import { STEM_NAMES } from "./constants.js";
+import { DEFAULT_CLICK_SOUND, normaliseClickSound } from "./clickSounds.js";
 
 // ─── DOM refs ───
 
@@ -67,6 +68,7 @@ export const metroHalfBtn = $("t-metro-half");
 export const metroOneBtn = $("t-metro-one");
 export const metroDoubleBtn = $("t-metro-double");
 export const metroCountInEl = $("t-metro-countin");
+export const metroSoundEl = $("t-metro-sound");
 export const metroBarCustomEl = $("t-metro-bar-custom");
 export const metroGroupEl = $("t-metro-group");
 export const metroEditBtn = $("t-metro-edit");
@@ -198,9 +200,14 @@ export function setCurrentJobId(v) { currentJobId = v; }
 export function setForegroundJobId(v) { foregroundJobId = v; }
 export function setTrackIndex(v) { trackIndex = v; }
 export function setTotalDuration(v) { totalDuration = v; }
-export function setLoopEnabled(v) { loopEnabled = v; }
-export function setLoopStart(v) { loopStart = v; }
-export function setLoopEnd(v) { loopEnd = v; }
+// Whoever needs to react to the loop changing (the Sections Add button depends
+// on whether a loop is armed) subscribes here rather than polling.
+const _loopListeners = [];
+export function onLoopChange(fn) { _loopListeners.push(fn); }
+function _loopChanged() { for (const fn of _loopListeners) fn(); }
+export function setLoopEnabled(v) { loopEnabled = v; _loopChanged(); }
+export function setLoopStart(v) { loopStart = v; _loopChanged(); }
+export function setLoopEnd(v) { loopEnd = v; _loopChanged(); }
 export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
 export let playbackSpeed = 1.0;
@@ -242,6 +249,10 @@ export let metronomeEnabled = false;
 export function setMetronomeEnabled(v) { metronomeEnabled = v; }
 export let metronomeVolume = 0.6;
 export function setMetronomeVolume(v) { metronomeVolume = v; }
+// The click sound preset (#805), a global preference like the volume: one of
+// the ids in clickSounds.js, anything else reads as the default (Classic).
+export let metronomeSound = DEFAULT_CLICK_SOUND;
+export function setMetronomeSound(v) { metronomeSound = normaliseClickSound(v); }
 // -1 = follow the bar marks the detector found; 0 = no accent; N = accent
 // every N beats from the top of the track.
 export let metronomeBeatsPerBar = -1;

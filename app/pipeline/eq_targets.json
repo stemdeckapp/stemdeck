@@ -1,0 +1,40 @@
+{
+  "v": 1,
+  "about": "Target curves for Suggest EQ: third-octave band levels (dB, relative; only the shape matters) at the 31 ISO 266 bands 20 Hz to 20 kHz. Pink noise reads flat on this scale. A target is a taste choice, not a measurement of quality. Sources and derivation: app/pipeline/eq_targets.py.",
+  "bands_hz": [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000],
+  "bases": {
+    "mix":    [-22.0, -16.0, -10.5, -6.0, -3.0, -1.0, 0.5, 1.2, 1.8, 2.2, 2.5, 2.7, 2.7, 2.5, 2.3, 1.8, 1.2, 0.5, -0.4, -1.4, -2.5, -3.8, -5.3, -6.9, -8.7, -10.6, -12.6, -14.8, -17.1, -19.6, -22.2],
+    "bass":   [-24.0, -18.0, -12.0, -6.0, -3.0, -1.0, 0.0, 0.0, 0.0, -0.5, -2.0, -4.0, -6.0, -8.0, -10.0, -12.5, -15.0, -17.5, -20.0, -22.0, -24.0, -26.5, -29.0, -32.0, -35.0, -38.0, -41.0, -44.0, -47.0, -50.0, -53.0],
+    "drums":  [-24.0, -17.0, -11.0, -6.0, -2.5, -0.5, 0.0, 0.0, 0.0, -1.0, -2.0, -4.5, -7.0, -9.0, -10.5, -11.0, -11.5, -11.5, -11.5, -11.5, -11.5, -11.5, -11.5, -11.5, -12.0, -12.5, -13.5, -15.0, -17.0, -20.0, -25.0],
+    "guitar": [-36.0, -33.0, -30.0, -27.0, -24.0, -20.0, -15.0, -10.0, -6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.0, 0.0, 0.0, -0.5, -1.0, -2.0, -3.5, -5.5, -8.0, -11.0, -14.0, -18.0, -22.0, -27.0, -33.0],
+    "keys":   [-36.0, -32.0, -28.0, -23.0, -18.0, -13.0, -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.0, 0.0, 0.0, -0.5, -1.5, -2.5, -4.0, -5.5, -7.0, -9.0, -11.0, -13.0, -15.0, -17.5, -20.0, -23.0, -26.0, -30.0, -35.0],
+    "other":  [-40.0, -34.0, -28.0, -22.0, -16.0, -10.0, -5.0, -1.5, 1.8, 2.2, 2.5, 2.7, 2.7, 2.5, 2.3, 1.8, 1.2, 0.5, -0.4, -1.4, -2.5, -3.8, -5.3, -6.9, -8.7, -10.6, -12.6, -14.8, -17.1, -19.6, -22.2]
+  },
+  "variants": {
+    "balanced": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "warm":     [0, 0, 0, 0, 0, 0.3, 0.5, 0.8, 1.0, 1.2, 1.2, 1.0, 0.7, 0.3, 0, 0, 0, 0, -0.2, -0.4, -0.7, -1.0, -1.4, -1.8, -2.2, -2.5, -2.8, -3.0, -3.0, -3.0, -3.0],
+    "bright":   [0, 0, 0, 0, 0.3, 0.5, 0.5, 0.3, 0, -0.3, -0.6, -0.8, -0.8, -0.6, -0.3, 0, 0, 0, 0.2, 0.4, 0.7, 1.0, 1.4, 1.8, 2.2, 2.5, 2.8, 3.0, 3.0, 3.0, 3.0],
+    "bassy":    [3.0, 3.0, 3.0, 3.0, 3.0, 2.8, 2.4, 1.8, 1.2, 0.6, 0.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  },
+  "targets": [
+    {"id": "mix.balanced", "use": "mix", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": -14},
+    {"id": "mix.warm", "use": "mix", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": -14},
+    {"id": "mix.bright", "use": "mix", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": -14},
+    {"id": "mix.bassy", "use": "mix", "variant": "bassy", "label_key": "suggest.target.bassy", "target_lufs": -14},
+    {"id": "bass.balanced", "use": "bass", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": null},
+    {"id": "bass.warm", "use": "bass", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": null},
+    {"id": "bass.bright", "use": "bass", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": null},
+    {"id": "drums.balanced", "use": "drums", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": null},
+    {"id": "drums.warm", "use": "drums", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": null},
+    {"id": "drums.bright", "use": "drums", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": null},
+    {"id": "guitar.balanced", "use": "guitar", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": null},
+    {"id": "guitar.warm", "use": "guitar", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": null},
+    {"id": "guitar.bright", "use": "guitar", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": null},
+    {"id": "keys.balanced", "use": "keys", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": null},
+    {"id": "keys.warm", "use": "keys", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": null},
+    {"id": "keys.bright", "use": "keys", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": null},
+    {"id": "other.balanced", "use": "other", "variant": "balanced", "label_key": "suggest.target.balanced", "target_lufs": null},
+    {"id": "other.warm", "use": "other", "variant": "warm", "label_key": "suggest.target.warm", "target_lufs": null},
+    {"id": "other.bright", "use": "other", "variant": "bright", "label_key": "suggest.target.bright", "target_lufs": null}
+  ]
+}

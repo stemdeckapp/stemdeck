@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS
+from app.core.vocal_split_outcome import INTERRUPTED, message_for
 
 
 class JobCancelled(Exception):
@@ -222,6 +223,12 @@ def settle_cancelled(job: Job) -> bool:
     return True
 
 
+# Bumped when the loudness card's measurement changes, so songs analysed with
+# an older one are measured again. 1 (no field) was the mono 22 kHz, first 180 s
+# reading; 2 is BS.1770-4 on the whole stereo mix (analyze.measure_loudness).
+LOUDNESS_VERSION = 2
+
+
 @dataclass
 class Job:
     id: str
@@ -235,9 +242,13 @@ class Job:
     key: str | None = None
     scale: str | None = None  # "Major" / "Natural Minor"
     key_confidence: int | None = None  # 0-100 percent
-    lufs: float | None = None  # ITU-R BS.1770 integrated loudness (dB)
-    peak_db: float | None = None  # sample peak in dBFS (close to true peak)
-    dynamic_range: float | None = None  # peak_db - integrated LUFS (dB)
+    lufs: float | None = None  # ITU-R BS.1770-4 integrated loudness of the stereo mix (LUFS)
+    peak_db: float | None = None  # true peak in dBTP
+    dynamic_range: float | None = None  # peak_db - lufs: peak-to-loudness ratio (dB), not LRA
+    # Which loudness measurement wrote the three fields above. Songs analysed
+    # before 2 hold a mono 22 kHz first-180-s reading, about 4 LU too low; they
+    # are measured again the first time they are opened (jobs._upgrade_loudness).
+    loudness_version: int | None = None
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     sections: list[dict] | None = None  # [{id, name, kind?, start, end, color}]
@@ -247,9 +258,21 @@ class Job:
     # submit, and the toggle is a per-import choice that clears itself: reading
     # it late let a job lose a pass the user had asked and waited for.
     auto_sections: bool = False
+    # Whether this job looks for lyrics (LRCLIB, the transcript, the retime),
+    # captured from the Detect lyrics setting when the job is created. None
+    # for a job made before the setting existed, which looks as it always did.
+    auto_lyrics: bool | None = None
     sections_source: Literal["automatic", "manual"] | None = None
     tags: list[str] | None = None  # YouTube tags + categories, lowercased, max 8
     stems: list[dict[str, str]] = field(default_factory=list)
+    # Recorded takes, finished ones only, in creation order: the lanes the
+    # studio adds after the stems. Each is app.core.takes.take_entry's shape.
+    # The take itself (raw capture, sidecar, camera) stays in
+    # takes/<take_id>/ beside the stems; this is the index the UI reads.
+    takes: list[dict[str, Any]] = field(default_factory=list)
+    # Recording tracks, sorted by order: each a mixer lane that plays its
+    # active take. Mirrors takes/tracks.json (app.core.takes).
+    tracks: list[dict[str, Any]] = field(default_factory=list)
     # Subset of stems the user chose at submit. The pipeline produces all
     # 6 regardless (Demucs htdemucs_6s is fixed), but after collect we
     # mix down only the selected ones into mix.wav so the user can
@@ -316,12 +339,24 @@ class Job:
     # Wall-clock seconds per pipeline stage ({"download": 12.3, ...}); written
     # to metadata.json and the one-line completion summary in the log.
     stage_timings: dict[str, float] | None = None
+    # How this song's stems are kept on disk (#783): "wav" or "mp3", set when
+    # the job finishes from the Stem storage format setting of that moment,
+    # with the MP3 bitrate (kbps) or None. None for a song finished before the
+    # setting existed, whose stems are WAV. Readers do not branch on it: they
+    # resolve each file through app.core.stem_files, which looks at the disk.
+    stem_format: str | None = None
+    stem_mp3_kbps: int | None = None
     # On-demand lead/backing vocal split (#275) -- a post-hoc action on an
     # already-"done" job, not part of the main pipeline. "none" until the user
     # asks for it; "error" leaves the job's base stems untouched (see
     # app/pipeline/vocal_split.py) and is recorded in stems/vocal_split_error.txt,
     # not job.error_detail, since the job itself did not fail.
     vocal_split: Literal["none", "running", "done", "error"] = "none"
+    # Why the last split did not make its two stems, while vocal_split is
+    # "error": one of app.core.vocal_split_outcome.CODES, so the client can say
+    # what happened and what to do instead of showing one Vocals lane with no
+    # word about it (#832). None otherwise.
+    vocal_split_reason: str | None = None
     # When the user put this job in the Trash, or None if they have not.
     #
     # Server-side on purpose. The Trash used to live only in the browser's
@@ -383,12 +418,16 @@ class Job:
             "lufs": self.lufs,
             "peak_db": self.peak_db,
             "dynamic_range": self.dynamic_range,
+            "loudness_version": self.loudness_version,
             "tempo_stability": self.tempo_stability,
             "stem_presence": self.stem_presence,
             "sections": self.sections,
             "sections_source": self.sections_source,
+            "auto_lyrics": self.auto_lyrics,
             "tags": self.tags,
             "stems": self.stems,
+            "takes": self.takes,
+            "tracks": self.tracks,
             "selected_stems": self.selected_stems,
             "mix_url": self.mix_url,
             "source_url": self.source_url,
@@ -405,7 +444,12 @@ class Job:
             "compute_device": self.compute_device,
             "gpu_fallback": self.gpu_fallback,
             "stage_timings": self.stage_timings,
+            "stem_format": self.stem_format,
+            "stem_mp3_kbps": self.stem_mp3_kbps,
             "vocal_split": self.vocal_split,
+            "vocal_split_reason": self.vocal_split_reason,
+            # A fixed sentence per code, never the worker's own words.
+            "vocal_split_message": message_for(self.vocal_split_reason),
             "trashed_at": self.trashed_at,
             "favorite": self.favorite,
             "created_at": self.created_at,
@@ -444,6 +488,11 @@ class Job:
         job.audio_tags = clean_audio_tags(job.audio_tags)
         job.cancel_requested = False
         job.stop_requested = False
+        # Saved while a split ran, so the process ended before it did. Left
+        # "running", every later attempt was refused as already running.
+        if job.vocal_split == "running":
+            job.vocal_split = "error"
+            job.vocal_split_reason = INTERRUPTED
         return job
 
 

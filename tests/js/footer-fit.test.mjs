@@ -66,14 +66,36 @@ function layout() {
   if (click && style.justifyContent !== 'flex-start' && total < width) {
     step = gap + (width - total) / (widths.length - 1);
   }
+  // At "rows" a cluster that would cross the strip's edge starts a new line.
+  // Every cluster is one item here, dividers included, which is close enough:
+  // footerFit only reads edges, and on a wrapped row none passes the edge.
+  const rows = classes.has('collapse-rows');
   let x = 0;
+  let lines = 1;
   const rects = widths.map((w) => {
+    if (rows && x > 0 && x + w > width) {
+      x = 0;
+      lines++;
+    }
     const r = { left: x, right: x + w, width: w };
     x += w + step;
     return r;
   });
-  return { rects, total, clickLeft: rects[rects.length - 1].left, inline: !click && !wrap };
+  return { rects, total, lines, clickLeft: rects[rects.length - 1].left, inline: !click && !wrap };
 }
+
+// The controls row around the strip. Its height is what decides whether
+// Master and Export Mix move under the strip. Here moving them only adds a
+// line, so the fit has to take it straight back off.
+const rowClasses = new Set();
+const row = {
+  classList: {
+    add: (c) => rowClasses.add(c),
+    remove: (c) => rowClasses.delete(c),
+    contains: (c) => rowClasses.has(c),
+  },
+  getBoundingClientRect: () => ({ height: layout().lines * 64 + (rowClasses.has('collapse-stack') ? 42 : 0) }),
+};
 
 const children = FIXED.concat([0]).map((_, i) => ({
   getBoundingClientRect: () => layout().rects[i],
@@ -82,6 +104,7 @@ const children = FIXED.concat([0]).map((_, i) => ({
 // Integers, as the real ones are: these are what the version before #633 read.
 const strip = {
   isConnected: true,
+  parentElement: row,
   classList,
   style,
   children,
@@ -144,7 +167,8 @@ function resizeTo(w, height = 54) {
   flush();
 }
 
-const levelNow = () => ['collapse-wrap', 'collapse-click', 'collapse-tight'].filter((c) => classes.has(c)).join(' ') || 'inline';
+const levelNow = () =>
+  ['collapse-wrap', 'collapse-click', 'collapse-tight', 'collapse-rows'].filter((c) => classes.has(c)).join(' ') || 'inline';
 
 let passed = 0;
 let failed = 0;
@@ -251,6 +275,30 @@ check('a strip too short for any wrap goes to the popover and tightens', levelNo
   // must not outlive the pass, or the popover level never spreads.
   resizeTo(CLICK_W + 5);
   check('the left-packed hold is released after measuring', style.justifyContent === '', style.justifyContent);
+}
+
+{
+  // Past the tight row, whole clusters wrap instead of the row scrolling out
+  // of sight: the default desktop window with the library open (#842).
+  resizeTo(TIGHT_W - 200);
+  check('a strip too short for the tight row wraps the clusters', levelNow() === 'collapse-click collapse-tight collapse-rows', levelNow());
+  const edge = Math.max(...children.map((c) => c.getBoundingClientRect().right));
+  check('no cluster runs past the strip once wrapped', edge <= width, `right edge ${edge} > ${width}`);
+  check('Master and Export Mix stay beside the strip when moving them adds a line', !rowClasses.has('collapse-stack'));
+}
+
+{
+  // The same two thresholds at the new boundary.
+  resizeTo(TIGHT_W + 200);
+  events.length = 0;
+  const seen = wobble(TIGHT_W - 6, TIGHT_W + 11);
+  check(
+    'a wobble across the tight/rows threshold collapses once and stays',
+    new Set(seen).size === 1 && seen[0] === 'collapse-click collapse-tight collapse-rows' && events.length === 1,
+    `levels=${[...new Set(seen)].join(',')} footerfit events=${events.length}`,
+  );
+  resizeTo(TIGHT_W + 30);
+  check('the clusters go back to one line once the room returns', levelNow() === 'collapse-click collapse-tight', levelNow());
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

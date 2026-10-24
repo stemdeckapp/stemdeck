@@ -19,8 +19,10 @@
 // same function. main.js imports catalog.js, so catalog.js cannot import back
 // into main.js; a shared module is what lets the two of them agree without a
 // cycle.
-import { selectedStems, vocalSplitMode } from "./state.js";
+import { selectedStems } from "./state.js";
 import { STEM_NAMES } from "./constants.js";
+import { t } from "./i18n.js";
+import { effectiveVocalSplitMode, vocalSplitUnavailable } from "./vocalSplitState.js";
 
 /**
  * Point every control in the Extract row at the current selection.
@@ -64,11 +66,22 @@ export function refreshStemChoiceVisuals() {
   // vocals back on returns to the way they were last asked for.
   const wrap = document.getElementById("vocalModeToggle");
   if (!wrap) return;
+  //
+  // Lead + Backing is shown off, with its reason, while this install cannot
+  // make it (#832), the way OGG is in the export menu without its encoder:
+  // choosing it would only ever give one Vocals stem. Combined is lit in its
+  // place, which is what an import then asks for.
   const hasVocals = selectedStems.has("vocals");
+  const mode = effectiveVocalSplitMode();
+  const unavailable = Boolean(vocalSplitUnavailable());
   for (const btn of wrap.querySelectorAll(".vocal-mode-btn")) {
     btn.setAttribute(
       "aria-pressed",
-      String(hasVocals && btn.dataset.mode === vocalSplitMode),
+      String(hasVocals && btn.dataset.mode === mode),
     );
+    if (btn.dataset.mode !== "split") continue;
+    btn.setAttribute("aria-disabled", String(unavailable));
+    if (unavailable) btn.title = t("split.unavailable");
+    else btn.removeAttribute("title");
   }
 }

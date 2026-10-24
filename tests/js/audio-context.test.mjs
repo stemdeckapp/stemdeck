@@ -4,7 +4,7 @@
 // several times the DSP and holds four times the buffers for nothing (#578).
 // These checks pin down that the cap only ever fires above 48 kHz, and that a
 // browser refusing the requested rate still gets a working context.
-import { createPlaybackContext } from '../../static/js/audioContext.js';
+import { createPlaybackContext, resetDeviceRate } from '../../static/js/audioContext.js';
 
 let passed = 0;
 let failed = 0;
@@ -41,17 +41,19 @@ function fakeCtor(deviceRate, { probeThrows = false, cappedThrows = false } = {}
 // Below the cap the graph is left exactly as it is today. Pinning here would
 // only add a resample that nothing asked for.
 for (const rate of [44100, 48000]) {
+  resetDeviceRate();
   const { FakeCtx, built } = fakeCtor(rate);
   const ctx = createPlaybackContext(FakeCtx);
   check(
     `a ${rate} Hz device is left alone`,
-    built.length === 2 && built[1] === undefined && ctx.sampleRate === rate,
+    built.length === 1 && built[0] === undefined && ctx.sampleRate === rate && !ctx.closed,
     `built ${JSON.stringify(built)} at ${ctx.sampleRate}`,
   );
 }
 
 // Above it, the device is asking for more resolution than the material has.
 for (const rate of [88200, 96000, 176400, 192000]) {
+  resetDeviceRate();
   const { FakeCtx, built } = fakeCtor(rate);
   const ctx = createPlaybackContext(FakeCtx);
   check(
@@ -62,8 +64,27 @@ for (const rate of [88200, 96000, 176400, 192000]) {
 }
 
 {
+  // Once the rate is known, no context is opened only to be closed again:
+  // Chromium never frees a context closed before it started, so one probe
+  // per song load was one context kept per song load.
+  for (const rate of [48000, 192000]) {
+    resetDeviceRate();
+    const { FakeCtx, built } = fakeCtor(rate);
+    createPlaybackContext(FakeCtx);
+    const before = built.length;
+    const ctx = createPlaybackContext(FakeCtx);
+    check(
+      `a second context at ${rate} Hz is built once`,
+      built.length === before + 1 && ctx.sampleRate === Math.min(rate, 48000),
+      `built ${JSON.stringify(built)}`,
+    );
+  }
+}
+
+{
   // The probe exists only to read the device rate, and nothing is ever routed
   // into it. Leaving it open would hold a hardware stream open for the session.
+  resetDeviceRate();
   const { FakeCtx } = fakeCtor(192000);
   let probe = null;
   const Wrapped = class extends FakeCtx {
@@ -76,6 +97,7 @@ for (const rate of [88200, 96000, 176400, 192000]) {
 {
   // A browser that will not build a context at all is not a reason to give up
   // on playback: the device's own rate is what we would have used anyway.
+  resetDeviceRate();
   const { FakeCtx, built } = fakeCtor(192000, { probeThrows: true });
   const ctx = createPlaybackContext(FakeCtx);
   check(
@@ -88,6 +110,7 @@ for (const rate of [88200, 96000, 176400, 192000]) {
 {
   // Safari has historically refused rates its device cannot produce. Playing at
   // the device's rate is worse than capping and far better than not playing.
+  resetDeviceRate();
   const { FakeCtx, built } = fakeCtor(192000, { cappedThrows: true });
   const ctx = createPlaybackContext(FakeCtx);
   check(

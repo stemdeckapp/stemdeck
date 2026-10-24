@@ -7,8 +7,9 @@
 // AudioContext clock — sample-accurate, zero streaming connections during playback,
 // no drift. Works identically on WKWebView, Safari, and Chrome.
 //
-// Graph:  per-stem AudioBufferSourceNode -> GainNode (vol/mute/solo) -> AnalyserNode (VU)
-//                                                                    -> masterGain -> SoundTouchNode -> destination
+// Graph:  per-stem AudioBufferSourceNode -> GainNode (vol/mute/solo) -> fx slot (EQ, fxChain.js)
+//          -> AnalyserNode (VU) -> pitch bus -> SoundTouchNode -> masterGain -> master fx slot
+//          -> destination
 //
 // Used behind a feature flag (see player.js) so it can be A/B'd against the legacy
 // streaming path before cutover.
@@ -24,7 +25,8 @@ import {
 } from "./pitchBus.js";
 import { createPlaybackContext } from "./audioContext.js";
 import { createTickLoop } from "./tickLoop.js";
-import { loadStretchWorklet, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
+import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
+import { createEngineFx, engineFxApi } from "./fxChain.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -44,7 +46,13 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // as a lane to transpose, so twelve pitch chains ran on silence for every
   // track at zero transpose (#576, #575).
   const busLanes = new Array(INPUT_COUNT).fill(0);
-  master.connect(ctx.destination);
+  /** @type {Map<string,object>} playback tracks by stem name (filled while decoding) */
+  const tracks = new Map();
+  // Effects: a slot per track between its gain and its analyser, and the
+  // master slot between master and the destination (fxChain.js).
+  const fx = createEngineFx(ctx, (name) => [...tracks.values()]
+    .filter((t) => !t.visualOnly && t.controlName === name));
+  master.connect(fx.masterInput);
 
   let _playbackRate = 1.0;
 
@@ -58,6 +66,8 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let _tempoStage = null;
   const _workletReady = (ctx.audioWorklet
     ? loadStretchWorklet(ctx.audioWorklet).then(() => {
+        // Destroyed while the module loaded: no node, or nothing would close its port.
+        if (destroyed) return;
         stNode = new AudioWorkletNode(ctx, 'soundtouch-processor', {
           numberOfInputs: INPUT_COUNT,
           numberOfOutputs: 1,
@@ -89,8 +99,6 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
         for (const bus of buses) bus.connect(master);
       }));
 
-  /** @type {Map<string,{buffer:AudioBuffer,gain:GainNode,analyser:AnalyserNode,source:AudioBufferSourceNode|null,controlName:string,pitched:boolean,visualOnly:boolean}>} */
-  const tracks = new Map();
   let duration = 0;
   let playing = false;
   let startCtxTime = 0; // ctx.currentTime at playback start
@@ -154,7 +162,6 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
           const gain = ctx.createGain();
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 1024;
-          if (!visualOnly) gain.connect(analyser);
           const track = {
             buffer,
             gain,
@@ -168,8 +175,11 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
             bus: null,
             level: 1,
             visualOnly,
+            fx: null,
           };
           tracks.set(s.name, track);
+          // gain -> fx slot (EQ) -> analyser; the VU reads post-EQ.
+          if (!visualOnly) fx.attachSource(track, gain, analyser);
           routeTrack(track, true);
           duration = Math.max(duration, buffer.duration);
         } catch (e) {
@@ -414,8 +424,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     tickLoop.dispose();
     ctx.removeEventListener("statechange", onCtxStateChange);
     tracks.clear();
-    if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
-    if (ownsCtx) ctx.close().catch(() => {});
+    // The node stops before its context closes (tempoStage.js): an active
+    // processor keeps the node, the closed context and this engine alive.
+    const node = stNode;
+    stNode = null;
+    fx.dispose();
+    disposeStretchNode(node, ctx, ownsCtx);
   }
 
   return {
@@ -439,7 +453,24 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     sourceTimeToCtxTime,
     ctxTimeToSourceTime,
     getScheduleEpoch: () => _epoch,
+    // A take recording into this engine stops when it goes (takeRecorder.js).
+    isDestroyed: () => destroyed,
     isClockReady: () => playing,
+    // The heard-playhead mapping, frozen at one instant, so a recorder can
+    // place a captured frame in song time with the same formula as now():
+    // song = (ctx - startCtxTime - pipelineLatencySeconds) * rate + startOffset.
+    // Read once isClockReady() is true; the epoch says when it stops holding.
+    // The live master's look-ahead is in it too: with the master on, the song
+    // reaches the speakers 12 ms later, and a take played against what was
+    // heard would land 12 ms late without it (the export's master has none).
+    getOutputMapping: () => ({
+      startCtxTime,
+      startOffset,
+      rate: _playbackRate,
+      pipelineLatencySeconds: pipelineLatencySeconds() + fx.masterFxLatency(),
+      epoch: _epoch,
+      playing,
+    }),
     // The click shares the unpitched input with drums. It still passes through
     // the common tempo stage and master gain.
     getMasterNode: () => buses[ZERO_INPUT],
@@ -524,6 +555,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       for (const [name, t] of tracks) m.set(name, t.buffer);
       return m;
     },
+    ...engineFxApi(fx),
     destroy,
     audioContext: ctx,
   };

@@ -32,12 +32,25 @@ export async function storeSet(key, value) {
 // value so no mutation races occur.
 const _storePending = new Map();
 export function storeSetDebounced(key, value, delayMs = 300) {
-  if (_storePending.has(key)) clearTimeout(_storePending.get(key));
+  const prev = _storePending.get(key);
+  if (prev) clearTimeout(prev.timer);
   const snapshot = structuredClone(value);
-  _storePending.set(key, setTimeout(() => {
+  const timer = setTimeout(() => {
     _storePending.delete(key);
     storeSet(key, snapshot);
-  }, delayMs));
+  }, delayMs);
+  _storePending.set(key, { timer, snapshot });
+}
+
+/** Write a debounced value now, if one is waiting for `key`: before something
+ * that reads or replaces that record (a mode switch), so a late write cannot
+ * land after it. Resolves when it is written (at once when nothing waits). */
+export function storeFlushPending(key) {
+  const pending = _storePending.get(key);
+  if (!pending) return Promise.resolve();
+  clearTimeout(pending.timer);
+  _storePending.delete(key);
+  return storeSet(key, pending.snapshot);
 }
 
 // Keys that hold critical user data and must be migrated from localStorage

@@ -86,6 +86,12 @@ def detect_torch_device() -> str:
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = ROOT / "static"
+# The click-sound presets (#805), defined once for the browser and the export
+# renderer: app/pipeline/click_sounds.py parses the JSON block in this file.
+CLICK_SOUNDS_TABLE = STATIC_DIR / "js" / "clickSounds.js"
+# The isolated click track's name in the stems zip (#805). Never a stem name:
+# asserted in app/api/stems.py, so the click cannot overwrite a stem's entry.
+CLICK_STEM_NAME = "click"
 STEM_NAMES: tuple[str, ...] = ("vocals", "drums", "bass", "guitar", "piano", "other")
 # Produced only when a job opts into the lead/backing vocal split (best-effort,
 # additive -- see app/pipeline/vocal_split.py). Kept out of STEM_NAMES itself:
@@ -206,6 +212,19 @@ SSL_KEYFILE = _env_path_opt("STEMDECK_SSL_KEY")
 # listener alongside the first; when it is not, there is only ever one server
 # and TLS (if configured at all) belongs to whoever launched uvicorn.
 HTTPS_PORT = _env_int("STEMDECK_HTTPS_PORT", 0) or None
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    """A comma-separated list setting, lowercased, blanks dropped."""
+    raw = os.environ.get(name, "")
+    return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+# Extra names this server answers to, for the cross-site guard in
+# app/core/csrf.py: the public name of a reverse proxy, a Docker service name, a
+# Tailscale name. Host names only, a port is ignored; "*" accepts any Host.
+# When set, the Host check is strict even with network access on (see csrf.py).
+ALLOWED_HOSTS = _env_csv("STEMDECK_ALLOWED_HOSTS")
 FFMPEG_BIN = _env_path(
     "STEMDECK_FFMPEG",
     FFMPEG_DIR / ("ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"),
@@ -348,9 +367,144 @@ VOCAL_SPLIT_MODEL = os.environ.get("STEMDECK_KARAOKE_MODEL", "").strip() or "UVR
 # A first run downloads the checkpoint (hundreds of MB); generous default so a
 # slow connection isn't mistaken for a stall.
 TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
+# How often the split's stall watchdog looks. Coarse on purpose: the timeout
+# above is half an hour.
+VOCAL_SPLIT_WATCHDOG_POLL_SEC = 30
 # Beat-grid stage decodes the whole drums stem (not the 180 s analyze window),
 # so it gets its own, larger budget.
 TIMEOUT_BEATGRID = _env_int("STEMDECK_TIMEOUT_BEATGRID", 300)
+
+# Recorded takes (docs: audio capture). A take is a folder under
+# jobs/<job_id>/takes/<take_id>/ and lives and dies with the job folder.
+TAKE_ID_RE = re.compile(r"^t[0-9a-f]{8}$")
+TAKES_DIRNAME = "takes"
+# One job can hold this many takes, finished or not. A bound on disk use by a
+# client that creates takes in a loop, not a musical limit.
+TAKE_MAX_PER_JOB = 50
+# Recording tracks (DAW-style): a track is one mixer lane that owns takes and
+# plays its active one. Stored in takes/tracks.json beside the take folders.
+TRACK_ID_RE = re.compile(r"^k[0-9a-f]{8}$")
+TRACKS_FILE = "tracks.json"
+TRACK_MAX_PER_JOB = 32
+# A video take's filmstrip (GET .../takes/{id}/filmstrip): one sprite of
+# frames, this tall, at most this many, from ffmpeg within this long.
+FILMSTRIP_FRAME_HEIGHT = 72
+FILMSTRIP_MAX_FRAMES = 240
+TIMEOUT_FILMSTRIP = _env_int("STEMDECK_TIMEOUT_FILMSTRIP", 120)
+# A part body is capped by the 4 MB JSON body middleware in app/main.py; the
+# route checks the same number while it streams the body, because the header
+# can be absent or wrong.
+TAKE_PART_MAX_BYTES = 4 * 1024 * 1024
+TAKE_MAX_SEQ = 100_000
+# Total size per kind is bounded by the song: its duration plus this much
+# slack (count-in, pickup notes, a late Stop), at the largest capture format.
+TAKE_SLACK_SEC = 120
+TAKE_AUDIO_MAX_BYTES_PER_SEC = 48000 * 2 * 4  # float32 stereo at 48 kHz
+TAKE_CAMERA_MAX_BYTES_PER_SEC = 20_000_000 // 8  # 20 Mbit/s, 2.5x the 8 Mbit/s recorder
+# Streamer Mode's recorder asks for at most 70% of that (recordModel.js
+# BITRATE_MAX), so a busy scene's overshoot still fits.
+# A take render's output: the canvas's short side for each size it offers.
+# No 4K (the maintainer's decision): a 1080p camera only gets bigger, at a
+# large cost in encode time and memory.
+CANVAS_SHORT_SIDES = {"720": 720, "1080": 1080}
+# The click's level in a take render: the export's default (stems.py).
+RENDER_CLICK_GAIN = 0.6
+# A backing track without one stem (app/pipeline/backing.py): a sum of five
+# WAVs, seconds for a song; the ceiling only guards a stuck disk.
+TIMEOUT_BACKING = _env_int("STEMDECK_TIMEOUT_BACKING", 120)
+
+# How a finished song's stems are kept on disk (#783): "wav" (16-bit PCM, as
+# separated) or "mp3" (CBR libmp3lame at one of STEM_MP3_KBPS_CHOICES). The
+# default for an install with no saved choice and no env var. One line to
+# change. 128 kbps is the maintainer's choice: stems summed again in the
+# mixer carry the coding noise of each one.
+DEFAULT_STEM_STORAGE: tuple[str, int] = ("mp3", 128)
+STEM_FORMAT_CHOICES: tuple[str, ...] = ("wav", "mp3")
+STEM_MP3_KBPS_CHOICES: tuple[int, ...] = (128, 192, 256)
+# The MP3 step at the end of the pipeline (app/pipeline/stem_storage.py): one
+# ffmpeg per stem, a few seconds each. Terminated when ffmpeg is silent this
+# long; the song then keeps its WAVs.
+TIMEOUT_STEM_TRANSCODE_STALL = _env_int("STEMDECK_TIMEOUT_STEM_TRANSCODE_STALL", 120)
+# Video render of a take (libx264 + AAC). Slower than any audio export: a
+# 5-minute 1080p30 encode runs about 1x to 3x realtime on a desktop CPU.
+TIMEOUT_VIDEO_RENDER = _env_int("STEMDECK_TIMEOUT_VIDEO_RENDER", 3600)
+
+# The take render's hardware (GPU) H.264 encoders (app/pipeline/video_encoder.py).
+# libx264 stays the default and the fallback for every failure. h264_mf
+# (Windows Media Foundation) is deliberately absent: it refused 4K on the test
+# machine and has no constant-quality mode.
+VIDEO_CPU_ENCODER = "libx264"
+VIDEO_GPU_ENCODERS = ("h264_nvenc", "h264_qsv", "h264_amf", "h264_vaapi", "h264_videotoolbox")
+# The setting's values: "auto" tries the GPU encoders, "cpu" never does, an
+# encoder name tries only that one.
+VIDEO_ENCODER_CHOICES = ("auto", "cpu", *VIDEO_GPU_ENCODERS)
+
+
+def _env_choice(name: str, choices: tuple[str, ...]) -> str:
+    """An env value from a fixed list, lowercased; "" when unset or unknown."""
+    raw = os.environ.get(name, "").strip().lower()
+    return raw if raw in choices else ""
+
+
+# STEMDECK_VIDEO_ENCODER=cpu is the kill switch: it wins over the setting.
+# Any other choice ("auto", an encoder name) also wins; "" leaves the setting.
+VIDEO_ENCODER_OVERRIDE = _env_choice("STEMDECK_VIDEO_ENCODER", VIDEO_ENCODER_CHOICES)
+# A probe is a real 2 s encode of a test picture at the render's size and rate.
+VIDEO_ENCODER_PROBE_SEC = 2
+TIMEOUT_VIDEO_ENCODER_PROBE = _env_int("STEMDECK_TIMEOUT_VIDEO_ENCODER_PROBE", 20)
+# `ffmpeg -encoders` for the audio export capabilities (app/pipeline/
+# audio_encoders.py). Runs once per ffmpeg binary and returns in well under a
+# second; the bound only matters for an ffmpeg that hangs.
+TIMEOUT_AUDIO_ENCODER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_ENCODER_LIST", 15)
+# How long a probe result is trusted. A pass for a week, a failure for a day (a
+# driver installed today is tried tomorrow, or at once with Test encoders), a
+# timeout or a busy device for ten minutes (never as a lasting answer).
+VIDEO_ENCODER_PASS_TTL_SEC = 7 * 24 * 3600
+VIDEO_ENCODER_FAIL_TTL_SEC = 24 * 3600
+VIDEO_ENCODER_RETRY_SEC = 600
+# Failed GPU renders before that encoder is left alone until the next start.
+VIDEO_ENCODER_MAX_FAILURES = 2
+# A GPU render whose progress has not moved for this long is stopped and made
+# again on the CPU (a hung driver never ends on its own).
+TIMEOUT_VIDEO_GPU_STALL = _env_int("STEMDECK_TIMEOUT_VIDEO_GPU_STALL", 60)
+# The check of a GPU file: a full decode, bounded by this floor or this many
+# seconds per second of video, whichever is longer.
+TIMEOUT_VIDEO_VALIDATE_MIN = _env_int("STEMDECK_TIMEOUT_VIDEO_VALIDATE", 120)
+VIDEO_VALIDATE_SEC_PER_SEC = 1.0
+VIDEO_VALIDATE_DURATION_TOL_SEC = 0.5
+# The Settings "Test encoders" run: every candidate at 1080p30 and 4K30,
+# stopped when this much time has gone.
+VIDEO_ENCODER_TEST_BUDGET_SEC = 150
+# The GPU encoders' bitrate ceiling, in bits per pixel per frame (31 Mbps at
+# 1080p30, 124 Mbps at 4K30). Measured on the RTX 3080: NVENC at cq 19 spent
+# 0.5 to 0.9 Mbps on a real 1080p scene take (libx264 crf 20: 0.34) with a
+# higher SSIM, and on pure noise topped out near 35 Mbps whatever the cap, so
+# the cap only guards a runaway file.
+VIDEO_GPU_MAX_BITS_PER_PIXEL = 0.5
+
+# Ceilings of the limiter at the end of every mixdown (export clipping fix).
+# Stems summed at unity measured +0.9 dBFS with 77 clipped samples on a real
+# song (docs/plans 01-mastering 3.3).
+#
+# Lossless exports (WAV, FLAC): a sample-peak limit at -1 dBFS, idle and
+# bit-identical below it. Measured on two real songs with +6 dB boosts, a
+# hot take, transpose and click: sample peak -1.0 dBFS, true peak -0.6 dBTP
+# at worst, no sample at full scale, also after resampling to 48 kHz.
+EXPORT_LIMIT_DBFS = -1.0
+# Lossy exports (MP3, OGG, the AAC in an MP4): the encoder adds peak on top
+# of its input (MP3 measured +0.7 dB in the same document, 4.1), so the
+# limit is a true-peak one (4x oversampled) and lower. Measured on the same
+# songs: decoded peaks -0.9 to -1.3 dBTP, where the -1 dBFS sample limit
+# left -0.4 dBTP for MP3 and OGG and +0.4 dBFS (clipped) for AAC.
+EXPORT_LIMIT_LOSSY_DBTP = -1.5
+
+# Every loudness meter (ffmpeg's ebur128) is run with this framelog level.
+# Without one, ebur128 logs a line per 100 ms frame at "info". "verbose" moves
+# those lines below ffmpeg's default "info" level, so only the summary and any
+# printed metadata reach stderr. Not "quiet": ffmpeg 6.1 knows that value but
+# 5.1 (Debian 12) and 4.4 (Ubuntu 22.04) do not, and they reject the whole
+# filter graph, so nothing is measured at all.
+EBUR128_FRAMELOG = "verbose"
 
 # Reading an upload's tags (artist, title, album, lyrics) with ffprobe for the
 # Lyrics tab and the artist box (#699). Tags are a nicety, so a probe that

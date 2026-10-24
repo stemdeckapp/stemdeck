@@ -1,4 +1,4 @@
-// The automatic-deletion setting in Settings > General (#459).
+// The automatic-deletion setting in Settings > Library (#459).
 //
 // Worth driving in a real browser rather than asserting on the API alone,
 // because the risk here is not the value, it is the control. This setting
@@ -14,11 +14,12 @@
 import { test, expect } from "@playwright/test";
 import { seedLibrary } from "./helpers.mjs";
 
-/** Open Settings on the General tab, which is where this setting lives. */
+/** Open Settings on the Library section, which is where this setting lives. */
 async function openSettings(page) {
   await seedLibrary(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
+  await page.locator('.settings-tab[data-tab="library"]').click();
   await expect(page.locator(".auto-delete-input")).toBeVisible();
 }
 
@@ -71,6 +72,7 @@ test.describe("automatic deletion", () => {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="library"]').click();
     await expect(page.locator(".auto-delete-input")).toBeChecked();
     await expect(page.locator(".auto-delete-days-row")).not.toHaveClass(/disabled/);
     await expect(page.locator(".set-auto-delete-days")).toBeEnabled();

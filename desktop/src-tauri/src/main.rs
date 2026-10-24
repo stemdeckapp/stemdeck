@@ -1,6 +1,10 @@
+mod backendjob;
 mod certs;
+#[cfg(any(target_os = "linux", test))]
+mod dmabuf;
 mod dragout;
 mod dropin;
+mod mediaperm;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -145,6 +149,10 @@ const DEFAULT_LINUX_FFMPEG_SHA256: &str =
 struct BackendHandles {
     child: Child,
     url: String,
+    /// Windows: the kill-on-close job the backend runs in. Dropping it (the
+    /// backend stopped, or StemDeck gone) ends every process the backend
+    /// started, ffmpeg renders included (#790). Always None elsewhere.
+    _job: Option<backendjob::KillOnCloseJob>,
 }
 
 #[derive(Default)]
@@ -167,6 +175,12 @@ struct BackendStateInner {
     /// secret. Every live token maps to a path the user chose in a native
     /// dialog, so guessing one only ever yields another approved destination.
     next_save_token: u64,
+    /// The files completed exports were written to, by the token of their
+    /// save, for Streamer Mode's "Show in folder": a caller can reveal only
+    /// the file its own save wrote, never another caller's later one. Set
+    /// only by download_to_path after the whole file is on disk; JS never
+    /// hands Rust a path to reveal.
+    saved_files: HashMap<String, PathBuf>,
 }
 
 /// Cap on unconsumed destinations. A pick whose download never runs (the user
@@ -176,6 +190,15 @@ const MAX_PENDING_SAVES: usize = 16;
 
 struct BackendState {
     inner: Mutex<BackendStateInner>,
+}
+
+/// The URL of the backend this process is running, if any. Read by the media
+/// permission handlers each time a page asks, because a restart can move the
+/// backend to another port.
+fn current_backend_url(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.try_state::<BackendState>()?;
+    let inner = state.inner.lock().ok()?;
+    inner.handles.as_ref().map(|h| h.url.clone())
 }
 
 impl Default for BackendState {
@@ -357,6 +380,11 @@ fn main() {
         return;
     }
 
+    // Before Tauri, GTK and WebKit start, and before any other thread
+    // exists: the WebKit renderer switch is read once at WebKit init (#780).
+    #[cfg(target_os = "linux")]
+    dmabuf::apply_at_startup();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -404,13 +432,22 @@ fn main() {
                 .cloned()
                 .ok_or("tauri.conf.json describes no main window")?;
             main_window.drag_drop_enabled = dropin::NATIVE_FILE_DROP;
-            let window =
-                tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?.build()?;
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?;
+            // Arms the launch crash guard and clears it once the page loads.
+            #[cfg(target_os = "linux")]
+            let builder = dmabuf::watch_first_load(builder);
+            let window = builder.build()?;
 
             // Before anything else: a minimum the screen cannot satisfy leaves
             // a window the user cannot resize down to fit, and that is not
             // recoverable from inside the app.
             fit_min_size_to_screen(&window);
+
+            // Microphone and camera for the studio page, which records takes
+            // and performance videos. Granted to the running backend's origin
+            // only; see mediaperm.rs for what each webview needs.
+            let handle = app.handle().clone();
+            mediaperm::install(&window, move || current_backend_url(&handle));
 
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
@@ -518,6 +555,7 @@ fn main() {
             apply_app_update,
             ensure_external_assets,
             ensure_torch_device,
+            repair_torchvision,
             warmup_models,
             start_backend,
             local_ip,
@@ -529,6 +567,7 @@ fn main() {
             save_audio_file,
             pick_export_destination,
             download_to_path,
+            reveal_saved,
             pick_stems_folder,
             pick_exports_folder,
             current_exports_dir,
@@ -548,6 +587,8 @@ fn main() {
             {
                 let state = app_handle.state::<BackendState>();
                 stop_backend(&state);
+                #[cfg(target_os = "linux")]
+                dmabuf::clear_on_exit();
                 app_handle.exit(0);
             }
         });
@@ -1864,15 +1905,9 @@ fn start_backend(
         #[cfg(unix)]
         spawn_fpcalc_setup(data_dir.clone());
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let mut child = cmd
-            .spawn()
+        // On Windows also without a console window, and inside a job that
+        // ends the whole backend tree with StemDeck (see backendjob.rs).
+        let (mut child, job) = backendjob::spawn_backend_process(&mut cmd)
             .map_err(|e| format!("failed to start backend: {e}"))?;
         // Release the reserved ports immediately after spawn so uvicorn can
         // bind them. Both, or the companion listener finds its own port held.
@@ -1891,17 +1926,18 @@ fn start_backend(
             return Err(err);
         }
 
-        Ok((child, url))
+        Ok((child, url, job))
     })();
 
     // Atomically update state: clear starting flag whether spawn succeeded or failed.
     let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
     inner.starting = false;
     match spawn_result {
-        Ok((child, url)) => {
+        Ok((child, url, job)) => {
             inner.handles = Some(BackendHandles {
                 child,
                 url: url.clone(),
+                _job: job,
             });
             Ok(BackendStarted { url })
         }
@@ -2521,19 +2557,93 @@ fn torch_version_for_tag(tag: &str) -> &'static str {
 /// nothing updates it on our behalf. The lockfile pins 0.21.0 against torch
 /// 2.6.0, which is why only the cu128 line, the one that moves torch to 2.8.0,
 /// ever broke.
-// Not `any(not(macos), test)` like torch_version_for_tag above. That one is
-// reached by a test which itself runs everywhere, and returns literals. This
-// one returns CPU_TORCHVISION_VERSION, a `not(macos)` constant, and both tests
-// that call it are `not(macos)` too -- so compiling it into a macOS test build
-// asked for a constant that is not there, and `cargo test` could not build on
-// macOS at all. The workflow that would have caught it had been cancelled on
-// every recent run rather than failing, so it went unseen (#643).
-#[cfg(not(target_os = "macos"))]
+// `any(not(macos), test)`, and so are the constants it reads. A macOS test
+// build once compiled this while CPU_TORCHVISION_VERSION was `not(macos)` only,
+// and `cargo test` could not build on macOS at all (#643). Gating both the same
+// way lets the tests that pin them to packaging/torch-versions.json run on
+// every host (#778).
+#[cfg(any(not(target_os = "macos"), test))]
 fn torchvision_version_for_tag(tag: &str) -> &'static str {
-    match tag {
-        "cu128" => "0.23.0",
-        _ => CPU_TORCHVISION_VERSION,
+    torchvision_for_torch(torch_version_for_tag(tag)).unwrap_or(CPU_TORCHVISION_VERSION)
+}
+
+/// The torchvision built for each torch line the desktop shell installs. The
+/// same pairs as `torchvisionForTorch` in packaging/torch-versions.json, which
+/// the packaging scripts read; a test fails when the two differ.
+#[cfg(any(not(target_os = "macos"), test))]
+const TORCHVISION_FOR_TORCH: [(&str, &str); 2] = [("2.6.0", "0.21.0"), ("2.8.0", "0.23.0")];
+
+/// The torchvision for a torch public version ("2.6.0", no `+tag`), if known.
+#[cfg(any(not(target_os = "macos"), test))]
+fn torchvision_for_torch(torch: &str) -> Option<&'static str> {
+    TORCHVISION_FOR_TORCH
+        .iter()
+        .find(|(t, _)| *t == torch)
+        .map(|(_, vision)| *vision)
+}
+
+/// The torch, torchaudio and torchvision specs for one CUDA wheel tag. One
+/// place, so the pair a CUDA install asks for is the pair the tests check.
+#[cfg(any(not(target_os = "macos"), test))]
+fn cuda_torch_specs(tag: &str) -> [String; 3] {
+    let torch = torch_version_for_tag(tag);
+    let vision = torchvision_version_for_tag(tag);
+    [
+        format!("torch=={torch}+{tag}"),
+        format!("torchaudio=={torch}+{tag}"),
+        format!("torchvision=={vision}+{tag}"),
+    ]
+}
+
+/// The string out of a `__version__ = '0.21.0+cu124'` line in a package's
+/// version.py. torch and torchvision both write one. Reading it costs a file
+/// read, where asking Python means importing torchvision, the very thing that
+/// fails on a broken install (#778).
+#[cfg(any(not(target_os = "macos"), test))]
+fn version_from_version_py(src: &str) -> Option<&str> {
+    src.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("__version__")?;
+        // `__version__ = ...` or `__version__: str = ...`, not `__version_info__`.
+        if !rest.starts_with([' ', '\t', ':', '=']) {
+            return None;
+        }
+        let value = rest.split_once('=')?.1.trim();
+        let quote = value.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+        let inner = &value[1..];
+        let version = &inner[..inner.find(quote)?];
+        (!version.is_empty()).then_some(version)
+    })
+}
+
+/// The installed version of `package` in `site`, from its version.py.
+#[cfg(any(not(target_os = "macos"), test))]
+fn installed_version(site: &Path, package: &str) -> Option<String> {
+    let src = fs::read_to_string(site.join(package).join("version.py")).ok()?;
+    version_from_version_py(&src).map(str::to_string)
+}
+
+/// The pip spec that repairs a CUDA torchvision sitting beside CPU torch, or
+/// None when there is nothing to repair.
+///
+/// That pairing is what the 0.20.0 Linux packages shipped: CPU torch, and the
+/// cu124 torchvision PyPI serves by default, whose compiled ops need CUDA
+/// libraries that are not there (#778). The in-app updater never replaces
+/// python/, so those installs keep it until something puts the CPU wheel in.
+///
+/// Decided from the torch beside it, not from the package variant. A CUDA
+/// torch with a CUDA torchvision is a working NVIDIA install and is left
+/// alone; an NVIDIA package that ended up on CPU torch (no GPU, or CUDA did
+/// not verify and the bundled torch went back) has the same broken pair as
+/// the CPU package. A torch line with no known torchvision is left alone
+/// rather than guessed at.
+#[cfg(any(not(target_os = "macos"), test))]
+fn torchvision_repair_spec(torch: &str, torchvision: &str) -> Option<String> {
+    let (torch_public, torch_tag) = torch.split_once('+')?;
+    let (_, vision_tag) = torchvision.split_once('+')?;
+    if torch_tag != "cpu" || !vision_tag.starts_with("cu") {
+        return None;
     }
+    torchvision_for_torch(torch_public).map(|vision| format!("torchvision=={vision}+cpu"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2740,13 +2850,14 @@ fn classify_cuda_install_error(stderr: &str) -> String {
     "CUDA install failed — see logs/setup.log for details.".to_string()
 }
 
-/// Version of the CPU-only torch wheels baked into every package. Kept in sync
-/// with scripts/windows/make-portable.ps1 and scripts/linux/make-portable.sh.
-#[cfg(not(target_os = "macos"))]
+/// Version of the CPU-only torch wheels baked into every package: `cpuTorch`
+/// in packaging/torch-versions.json, which the packaging scripts read. A test
+/// fails when the two differ.
+#[cfg(any(not(target_os = "macos"), test))]
 const CPU_TORCH_VERSION: &str = "2.6.0";
 /// Matches CPU_TORCH_VERSION and the version uv.lock resolves. Move the two
 /// together or the ops registration breaks; see torchvision_version_for_tag.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), test))]
 const CPU_TORCHVISION_VERSION: &str = "0.21.0";
 
 /// What a line of pip's output means, for the setup screen.
@@ -3089,13 +3200,24 @@ fn torch_site_packages(python: &Path) -> Option<PathBuf> {
 /// a failed restore, whatever pip said (#731).
 #[cfg(not(target_os = "macos"))]
 fn verify_torch_imports(python: &Path) -> Result<(), String> {
+    verify_imports(python, "torch")
+}
+
+/// Whether `import <module>` works, with the last lines of the error if not.
+#[cfg(not(target_os = "macos"))]
+fn verify_imports(python: &Path, module: &str) -> Result<(), String> {
+    let code = format!("import {module}");
     let mut command = Command::new(python);
     command
-        .args(["-c", "import torch"])
+        .args(["-c", code.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
-    let out = command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "torch import check")?;
+    let out = command_output_with_timeout(
+        command,
+        GPU_VERIFY_TIMEOUT,
+        &format!("{module} import check"),
+    )?;
     if out.status.success() {
         return Ok(());
     }
@@ -3157,6 +3279,120 @@ fn put_cpu_torch_back(
     Ok(())
 }
 
+/// What the torchvision check on launch found (#778).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TorchvisionRepair {
+    /// "ok" (nothing to do), "repaired", or "failed". The setup screen owns
+    /// the wording; the reason for a failure is in setup.log.
+    outcome: &'static str,
+}
+
+/// Puts the CPU torchvision back on an install that has a CUDA torchvision
+/// beside CPU torch, which is what the 0.20.0 Linux packages shipped (#778).
+///
+/// Runs on every launch, because the in-app updater never replaces python/:
+/// an install that updated from 0.20.0 keeps the broken wheel until something
+/// here replaces it. On a healthy install it asks the interpreter where
+/// site-packages is (no imports), reads two version.py files and returns,
+/// with no network. A failed repair (offline, say) is logged and
+/// reported, never raised: the rest of the app works without torchvision, and
+/// the next launch tries again.
+#[tauri::command]
+fn repair_torchvision(
+    state: tauri::State<BackendState>,
+    app: tauri::AppHandle,
+) -> TorchvisionRepair {
+    #[cfg(target_os = "macos")]
+    {
+        // macOS ships one torch build and never pairs it with a CUDA wheel.
+        let _ = (&state, &app);
+        TorchvisionRepair { outcome: "ok" }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        TorchvisionRepair {
+            outcome: repair_torchvision_if_needed(&state, &app),
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn repair_torchvision_if_needed(state: &BackendState, app: &tauri::AppHandle) -> &'static str {
+    let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) else {
+        return "ok";
+    };
+    let Some(python) = python_path(&root).filter(|p| p.is_file()) else {
+        return "ok";
+    };
+    patch_pyvenv_cfg(&python);
+    let Some(site) = torch_site_packages(&python) else {
+        return "ok";
+    };
+    // An interrupted CUDA swap is put back by ensure_torch_device first; until
+    // then what is installed is not the bundle's to judge.
+    if torchswap::has_backup(&site) {
+        return "ok";
+    }
+    let (Some(torch), Some(vision)) = (
+        installed_version(&site, "torch"),
+        installed_version(&site, "torchvision"),
+    ) else {
+        return "ok";
+    };
+    let Some(spec) = torchvision_repair_spec(&torch, &vision) else {
+        return "ok";
+    };
+
+    log_setup_step("torchvision-repair");
+    append_to_setup_log(
+        &data_dir,
+        &format!("torchvision {vision} is a CUDA build beside torch {torch}; installing {spec}"),
+    );
+    let label = "torchvision repair";
+    // Puts a line on the setup screen before pip has said anything.
+    let _ = app.emit(
+        "setup-progress",
+        SetupProgress {
+            label: label.to_string(),
+            detail: "Repairing the karaoke split".to_string(),
+            received: None,
+            total: None,
+        },
+    );
+    // --force-reinstall, not --ignore-installed: pip uninstalls the CUDA wheel
+    // through its RECORD, which is what removes torchvision.libs/libcudart and
+    // libnvjpeg. pip downloads before it uninstalls, so offline this fails
+    // with the old wheel still in place.
+    let result = run_pip_install(
+        &python,
+        &[
+            &spec,
+            "--index-url",
+            "https://download.pytorch.org/whl/cpu",
+            "--force-reinstall",
+            "--no-deps",
+        ],
+        state,
+        app,
+        label,
+    )
+    .and_then(|()| verify_imports(&python, "torchvision"));
+    match result {
+        Ok(()) => {
+            append_to_setup_log(&data_dir, &format!("torchvision repaired: {spec}"));
+            "repaired"
+        }
+        Err(e) => {
+            append_to_setup_log(
+                &data_dir,
+                &format!("torchvision repair failed, will retry next launch: {e}"),
+            );
+            "failed"
+        }
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn install_cuda_torch(
     python: &Path,
@@ -3182,10 +3418,7 @@ fn install_cuda_torch(
     // cu128 uses 2.8.0: 2.7.1 shipped incomplete sm_120 kernels for Blackwell
     // (RTX 5000 series), causing verify_cuda_torch to fail (#239).
     let tag = cuda_tag_from_url(index_url);
-    let torch_version = torch_version_for_tag(tag);
-    let torch_spec = format!("torch=={torch_version}+{tag}");
-    let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
-    let torchvision_spec = format!("torchvision=={}+{tag}", torchvision_version_for_tag(tag));
+    let [torch_spec, torchaudio_spec, torchvision_spec] = cuda_torch_specs(tag);
     for (label, args) in cuda_install_passes(
         &torch_spec,
         &torchaudio_spec,
@@ -3559,7 +3792,90 @@ async fn download_to_path(
 ) -> Result<(), String> {
     validate_download_url(&url)?;
     let dest = take_pending_save(&state, &token)?;
-    stream_url_to_file(&url, &dest).await
+    stream_url_to_file(&url, &dest).await?;
+    record_saved(&state, &token, dest)
+}
+
+/// Remembers the file the save `token` just wrote, for reveal_saved. At most
+/// MAX_PENDING_SAVES are kept (the oldest token goes first).
+fn record_saved(state: &BackendState, token: &str, dest: PathBuf) -> Result<(), String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
+    if guard.saved_files.len() >= MAX_PENDING_SAVES && !guard.saved_files.contains_key(token) {
+        if let Some(oldest) = guard
+            .saved_files
+            .keys()
+            .min_by_key(|k| k.parse::<u64>().unwrap_or(u64::MAX))
+            .cloned()
+        {
+            guard.saved_files.remove(&oldest);
+        }
+    }
+    guard.saved_files.insert(token.to_string(), dest);
+    Ok(())
+}
+
+/// The file the save `token` wrote, if it is still there.
+fn saved_file(state: &BackendState, token: &str) -> Result<PathBuf, String> {
+    let path = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?
+        .saved_files
+        .get(token)
+        .cloned()
+        .ok_or_else(|| "nothing was saved by this export".to_string())?;
+    if !path.is_file() {
+        return Err("the saved file is no longer there".to_string());
+    }
+    Ok(path)
+}
+
+/// The program and arguments that show `path` in the system's file manager:
+/// selected in Explorer and Finder, its folder opened on Linux (xdg-open has
+/// no "select"). Arguments, never a shell string, so no part of the path is
+/// ever interpreted.
+fn reveal_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
+    #[cfg(target_os = "windows")]
+    {
+        // Explorer takes "/select," and the path as the next argument.
+        let args = vec![
+            std::ffi::OsString::from("/select,"),
+            path.as_os_str().to_owned(),
+        ];
+        ("explorer", args)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let args = vec![std::ffi::OsString::from("-R"), path.as_os_str().to_owned()];
+        ("open", args)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let dir = path.parent().unwrap_or(path);
+        ("xdg-open", vec![dir.as_os_str().to_owned()])
+    }
+}
+
+/// Shows the file an export saved in the system's file manager (Streamer
+/// Mode's "Show in folder"). Takes the save's token, never a path: only a file
+/// this app wrote for that caller's own save can be revealed. Async, so the
+/// command never holds the main thread; the file manager's process is waited
+/// on in a thread of its own so it never lingers as a zombie.
+#[tauri::command]
+async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> Result<(), String> {
+    let path = saved_file(&state, &token)?;
+    let (program, args) = reveal_command(&path);
+    let mut child = Command::new(program)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("could not open the file manager: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Streams a URL to `dest`, via a temp file so a failure never leaves a
@@ -3695,6 +4011,9 @@ fn stop_backend(state: &BackendState) {
                 thread::sleep(Duration::from_millis(100));
             }
         }
+        // Windows has no graceful stop: the kill is hard, and the backend's
+        // own shutdown (which stops video renders) does not run. Dropping
+        // `handles` closes its job, which ends what it started (#790).
         let _ = handles.child.kill();
         let _ = handles.child.wait();
     });
@@ -4135,12 +4454,17 @@ fn download_file(url: &str, target: &Path, timeout: Duration, label: &str) -> Re
     const RETRY_BACKOFF: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(5)];
 
     let mut last_detail = String::new();
+    let mut last_code = None;
     for attempt in 0..MAX_ATTEMPTS {
         let mut command = Command::new("curl");
         command
             .args([
                 "--fail",
                 "--location",
+                // --silent keeps the progress meter out of stderr, which is
+                // all the error below quotes. Without it a failed download
+                // showed the user a screen of transfer statistics (#824).
+                "--silent",
                 "--show-error",
                 "--connect-timeout",
                 CONNECT_TIMEOUT_SECS,
@@ -4158,21 +4482,56 @@ fn download_file(url: &str, target: &Path, timeout: Duration, label: &str) -> Re
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        last_code = output.status.code();
         last_detail = if stderr.is_empty() {
-            format!("curl exited with status {:?}", output.status.code())
+            format!("curl exited with status {last_code:?}")
         } else {
             stderr
         };
-        if !curl_exit_is_retriable(output.status.code()) || attempt + 1 == MAX_ATTEMPTS {
+        if !curl_exit_is_retriable(last_code) || attempt + 1 == MAX_ATTEMPTS {
             break;
         }
         std::thread::sleep(RETRY_BACKOFF[attempt as usize]);
     }
 
-    Err(format!(
-        "Could not reach the download server for {label}. Check your internet \
-         connection and try again. ({last_detail})"
+    Err(describe_download_failure(
+        label,
+        url,
+        last_code,
+        &last_detail,
     ))
+}
+
+// The HTTP status curl's --fail reported, from "The requested URL returned
+// error: 429".
+#[cfg(any(unix, test))]
+fn curl_http_status(detail: &str) -> Option<u16> {
+    let (_, rest) = detail.split_once("returned error: ")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+// Why a download failed, in words that say which side it was on. A server
+// that answered with an HTTP error was reached: telling that user to check
+// their connection or firewall sent them looking in the wrong place, and the
+// URL was never named (#824). curl exit 22 is --fail's HTTP error. A 429 is
+// not retried here (curl_exit_is_retriable), so a busy host is not hammered.
+#[cfg(any(unix, test))]
+fn describe_download_failure(label: &str, url: &str, code: Option<i32>, detail: &str) -> String {
+    match (code, curl_http_status(detail)) {
+        (Some(22), Some(429)) => format!(
+            "The download server for {label} ({url}) is limiting requests right now \
+             (HTTP 429, too many requests). Wait a few minutes, then click Retry."
+        ),
+        (Some(22), Some(status)) => format!(
+            "The download server for {label} ({url}) was reached but refused the \
+             download (HTTP {status})."
+        ),
+        _ => format!(
+            "Could not reach the download server for {label} ({url}). Check your \
+             internet connection and try again. ({detail})"
+        ),
+    }
 }
 
 fn verify_runtime_archive(
@@ -4964,6 +5323,10 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // An explicit STEMDECK_FFMPEG override is exempt. It names a file the user
     // chose, usually outside the data directory, and replacing that is not ours
     // to do -- say what is wrong with it and stop.
+    //
+    // macOS runs its own copy of these first two steps, in ensure_macos_ffmpeg,
+    // because there a pair that runs can still be the wrong one to keep (#771).
+    #[cfg(not(target_os = "macos"))]
     if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
         match verify_ffmpeg_pair(&existing) {
             Ok(()) => return Ok(existing),
@@ -4984,7 +5347,12 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // users on an older OS than our downloaded build assumes (#414): if they
     // already have a working system FFmpeg, we no longer force a potentially
     // incompatible download on top of it.
-    if verify_ffmpeg_pair(Path::new("ffmpeg")).is_ok() {
+    //
+    // Only a system FFmpeg with the optional encoders too (libvorbis) wins
+    // over the download here: the Windows and Linux downloads have them, so
+    // taking a plainer system build would cost OGG export for nothing (#824).
+    #[cfg(not(target_os = "macos"))]
+    if matches!(check_ffmpeg_pair(Path::new("ffmpeg")), Ok(true)) {
         return Ok(PathBuf::from("ffmpeg"));
     }
 
@@ -4999,11 +5367,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
 
     #[cfg(target_os = "macos")]
     {
-        download_macos_ffmpeg(data_dir)?;
-        let portable =
-            ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-        verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        ensure_macos_ffmpeg(data_dir)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -5269,15 +5633,375 @@ fn spawn_fpcalc_setup(data_dir: PathBuf) {
     });
 }
 
+// The macOS FFmpeg decision is split in two. Everything gated
+// `any(target_os = "macos", test)` below is pure (or reads only files a test
+// creates), so the whole order is unit-tested on every host's `cargo test`,
+// not only on a Mac (#824). The `target_os = "macos"` items are the side
+// effects: running binaries, Rosetta, the network.
+
 // "arm64" on Apple Silicon, "x64" everywhere else -- takes the arch string
 // rather than reading std::env::consts::ARCH itself so both branches are
 // unit-testable on any host, not just the one they happen to be running on.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn macos_arch_suffix(arch: &str) -> &'static str {
     match arch {
         "aarch64" => "arm64",
         _ => "x64",
     }
+}
+
+// What an Apple Silicon Mac can do with a binary, read from its Mach-O header
+// without running it (#771). Native: it has an arm64 slice, or the host is
+// Intel, where verification is the only judge. IntelOnly: x86_64 and no
+// arm64, so it runs only through Rosetta. Unknown: not a Mach-O we can read
+// (a wrapper script, a short file); verification decides, as before.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacBinaryArch {
+    Native,
+    IntelOnly,
+    Unknown,
+}
+
+#[cfg(any(target_os = "macos", test))]
+const MACHO_CPU_TYPE_X86_64: u32 = 0x0100_0007;
+#[cfg(any(target_os = "macos", test))]
+const MACHO_CPU_TYPE_ARM64: u32 = 0x0100_000c;
+
+// The CPU types a Mach-O header declares: one for a thin binary, one per
+// slice for a universal one. None when `header` is not a Mach-O.
+#[cfg(any(target_os = "macos", test))]
+fn macho_cpu_types(header: &[u8]) -> Option<Vec<u32>> {
+    let be = |at: usize| -> Option<u32> {
+        let bytes = header.get(at..at + 4)?;
+        Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let le = |at: usize| -> Option<u32> { be(at).map(u32::swap_bytes) };
+    match be(0)? {
+        // Universal: a big-endian list of slices, 20 bytes each (32 for fat64).
+        magic @ (0xcafe_babe | 0xcafe_babf) => {
+            let entry = if magic == 0xcafe_babf { 32 } else { 20 };
+            let count = usize::try_from(be(4)?).ok()?;
+            (0..count).map(|i| be(8 + i * entry)).collect()
+        }
+        // Thin, little-endian (every Mac binary in practice), 64- or 32-bit.
+        0xcffa_edfe | 0xcefa_edfe => Some(vec![le(4)?]),
+        // Thin, big-endian.
+        0xfeed_facf | 0xfeed_face => Some(vec![be(4)?]),
+        _ => None,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn classify_macos_binary(host: &str, header: &[u8]) -> MacBinaryArch {
+    if host != "arm64" {
+        return MacBinaryArch::Native;
+    }
+    match macho_cpu_types(header) {
+        Some(types) if types.contains(&MACHO_CPU_TYPE_ARM64) => MacBinaryArch::Native,
+        Some(types) if types.contains(&MACHO_CPU_TYPE_X86_64) => MacBinaryArch::IntelOnly,
+        _ => MacBinaryArch::Unknown,
+    }
+}
+
+// The pair as a whole: Intel-only if either half is, since StemDeck runs both.
+#[cfg(any(target_os = "macos", test))]
+fn classify_macos_pair(ffmpeg: MacBinaryArch, ffprobe: MacBinaryArch) -> MacBinaryArch {
+    if ffmpeg == MacBinaryArch::IntelOnly || ffprobe == MacBinaryArch::IntelOnly {
+        MacBinaryArch::IntelOnly
+    } else if ffmpeg == MacBinaryArch::Native && ffprobe == MacBinaryArch::Native {
+        MacBinaryArch::Native
+    } else {
+        MacBinaryArch::Unknown
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_binary_arch(host: &str, path: &Path) -> MacBinaryArch {
+    use std::io::Read;
+    let mut header = Vec::with_capacity(4096);
+    let read = fs::File::open(path).and_then(|file| file.take(4096).read_to_end(&mut header));
+    match read {
+        Ok(_) => classify_macos_binary(host, &header),
+        Err(_) => MacBinaryArch::Unknown,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_pair_arch(host: &str, ffmpeg: &Path) -> MacBinaryArch {
+    classify_macos_pair(
+        macos_binary_arch(host, ffmpeg),
+        macos_binary_arch(host, &ffprobe_beside(ffmpeg)),
+    )
+}
+
+// Rosetta's runtime lives here once `softwareupdate --install-rosetta` has
+// run. Checked before downloading an Intel build, so a Mac without it is told
+// so instead of being handed a binary it cannot start (#771).
+#[cfg(target_os = "macos")]
+fn rosetta_installed() -> bool {
+    Path::new("/Library/Apple/usr/libexec/oah/libRosettaRuntime").is_file()
+}
+
+// Whether an Intel-only FFmpeg may be installed on this Mac: always on an
+// Intel Mac, and on Apple Silicon only when Rosetta can run it.
+#[cfg(any(target_os = "macos", test))]
+fn macos_intel_build_allowed(host: &str, rosetta: bool) -> bool {
+    host != "arm64" || rosetta
+}
+
+// Said whenever StemDeck declines to install an Intel-only FFmpeg on an Apple
+// Silicon Mac without Rosetta. setup.js recognises "built for Intel Macs" and
+// adds no hint of its own, since the error around it already says what to do.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_INTEL_REFUSED: &str = "The fallback download is built for Intel Macs, and this Mac \
+     cannot run it without Rosetta, so StemDeck did not install it.";
+
+// Where an FFmpeg already installed on this Mac may be, in the order tried.
+// Apple Silicon: Homebrew's linked ffmpeg, Homebrew's keg-only ffmpeg-full
+// (the Homebrew build with libvorbis; plain `ffmpeg` dropped it), a manual
+// install in /usr/local/bin, MacPorts. Intel: the same from Homebrew's Intel
+// prefix /usr/local, then MacPorts. PATH last on both. Duplicates are dropped.
+//
+// A Mac app opened from Finder gets a PATH of /usr/bin:/bin:/usr/sbin:/sbin,
+// so without the fixed paths an installed FFmpeg was never seen at all: on
+// Apple Silicon for Homebrew (#771), and on Intel for any of them, which is
+// how a Mac with a full FFmpeg in the user's shell PATH was sent to a download
+// that then failed (#824). On Apple Silicon an Intel-only binary in one of
+// these places is skipped without being run (pick_macos_system_ffmpeg).
+#[cfg(any(target_os = "macos", test))]
+fn macos_system_ffmpeg_candidates(host: &str, path_var: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let fixed: &[&str] = if host == "arm64" {
+        &[
+            "/opt/homebrew/bin/ffmpeg",
+            "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    } else {
+        &[
+            "/usr/local/bin/ffmpeg",
+            "/usr/local/opt/ffmpeg-full/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    };
+    let mut candidates: Vec<PathBuf> = fixed.iter().map(PathBuf::from).collect();
+    if let Some(found) = path_var.and_then(|path| resolve_in_paths("ffmpeg", path)) {
+        if !candidates.contains(&found) {
+            candidates.push(found);
+        }
+    }
+    candidates
+}
+
+// The installed pair to use, or None. Intel-only candidates are skipped
+// without being run: on Apple Silicon a system FFmpeg is only worth
+// preferring over a download when it is native. `check` is check_ffmpeg_pair:
+// Ok(true) has the optional encoders too, Ok(false) only the required ones.
+// The first Ok(true) wins at once. Otherwise the first Ok(false) is used, so
+// a Mac with both Homebrew's plain ffmpeg and ffmpeg-full gets OGG export,
+// and a Mac with only the plain one still needs no download (#824).
+#[cfg(any(target_os = "macos", test))]
+fn pick_macos_system_ffmpeg(
+    candidates: &[PathBuf],
+    arch: impl Fn(&Path) -> MacBinaryArch,
+    check: impl Fn(&Path) -> Result<bool, String>,
+) -> Option<PathBuf> {
+    let mut usable = None;
+    for candidate in candidates {
+        if arch(candidate) == MacBinaryArch::IntelOnly {
+            continue;
+        }
+        match check(candidate) {
+            Ok(true) => return Some(candidate.clone()),
+            Ok(false) => {
+                usable.get_or_insert_with(|| candidate.clone());
+            }
+            Err(err) => eprintln!("system FFmpeg at {} not used: {err}", candidate.display()),
+        }
+    }
+    usable
+}
+
+// What to do with the pair already in the data folder (or named by
+// STEMDECK_FFMPEG), given whether it verified and what it is built for.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum ExistingFfmpeg {
+    // Use it and stop.
+    Use,
+    // It runs, but only through Rosetta: keep it unless a native pair is
+    // already installed elsewhere. Never replaced by a download.
+    KeepUnlessNativeFound,
+    // Look for a replacement.
+    Replace,
+    // An explicit STEMDECK_FFMPEG that fails: report it, replace nothing.
+    Fail,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn decide_existing_ffmpeg(verified: bool, arch: MacBinaryArch, explicit: bool) -> ExistingFfmpeg {
+    match (verified, explicit) {
+        (true, true) => ExistingFfmpeg::Use,
+        (true, false) if arch == MacBinaryArch::IntelOnly => ExistingFfmpeg::KeepUnlessNativeFound,
+        (true, false) => ExistingFfmpeg::Use,
+        (false, true) => ExistingFfmpeg::Fail,
+        (false, false) => ExistingFfmpeg::Replace,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum MacFfmpegNext {
+    Use(PathBuf),
+    Download,
+}
+
+// Steps 3 to 5 below, without the side effects: `find_system` is only asked
+// when STEMDECK_FFMPEG_URL is not set, since that names the source to use.
+#[cfg(any(target_os = "macos", test))]
+fn next_macos_ffmpeg(
+    installed_intel: Option<PathBuf>,
+    url_override: bool,
+    find_system: impl FnOnce() -> Option<PathBuf>,
+) -> MacFfmpegNext {
+    if !url_override {
+        if let Some(found) = find_system() {
+            return MacFfmpegNext::Use(found);
+        }
+    }
+    match installed_intel {
+        Some(path) => MacFfmpegNext::Use(path),
+        None => MacFfmpegNext::Download,
+    }
+}
+
+// Where a download may come from, in the order tried.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacDownloadSource {
+    // STEMDECK_FFMPEG_URL: the user chose the source, nothing else is tried.
+    Override,
+    // shaka-project's per-architecture build on GitHub. No libvorbis, which
+    // is optional now, so it passes the check on both architectures (#824).
+    Primary,
+    // evermeet.cx, Intel builds only.
+    Fallback,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl MacDownloadSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Override => "Download from STEMDECK_FFMPEG_URL",
+            Self::Primary => "Download from GitHub (shaka-project build)",
+            Self::Fallback => "Download from evermeet.cx",
+        }
+    }
+}
+
+// The fallback only where its Intel build can run: an Intel Mac, or Apple
+// Silicon with Rosetta. Elsewhere it is not even fetched (#771).
+#[cfg(any(target_os = "macos", test))]
+fn macos_download_sources(url_override: bool, intel_allowed: bool) -> Vec<MacDownloadSource> {
+    if url_override {
+        vec![MacDownloadSource::Override]
+    } else if intel_allowed {
+        vec![MacDownloadSource::Primary, MacDownloadSource::Fallback]
+    } else {
+        vec![MacDownloadSource::Primary]
+    }
+}
+
+// The setup error when no FFmpeg could be found or installed: what happened
+// to each source, then what to do. setup.js recognises "Do one of these" and
+// adds no network hint under it, since this already names the next step.
+#[cfg(any(target_os = "macos", test))]
+fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: bool) -> String {
+    let mut lines = vec![
+        "StemDeck could not set up FFmpeg, which it needs to read and save audio.".to_string(),
+    ];
+    lines.extend(attempts.iter().map(|attempt| format!("- {attempt}")));
+    if fallback_skipped {
+        lines.push(format!("- {MACOS_INTEL_REFUSED}"));
+    }
+    lines.push(String::new());
+    lines.push("Do one of these, then click Retry:".to_string());
+    lines.push(
+        "- Install FFmpeg with Homebrew by running \"brew install ffmpeg\" in Terminal. \
+         StemDeck finds it on its own. For OGG export as well, run \
+         \"brew install ffmpeg-full\" instead."
+            .to_string(),
+    );
+    lines.push(
+        "- Or set the STEMDECK_FFMPEG environment variable to the full path of an ffmpeg \
+         you already have, then open StemDeck again."
+            .to_string(),
+    );
+    if host == "arm64" && fallback_skipped {
+        lines.push(
+            "- Or install Rosetta by running \"softwareupdate --install-rosetta\" in \
+             Terminal, so StemDeck can use the Intel fallback."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+// The macOS order (#771, #824). An explicit setting always wins over anything
+// StemDeck would pick itself:
+//   1. STEMDECK_FFMPEG, a file the user named: used if it verifies, else an error.
+//   2. The pair in the data folder, if it verifies and is native.
+//   3. Unless STEMDECK_FFMPEG_URL is set: a native pair already installed
+//      (macos_system_ffmpeg_candidates) that passes the same verification,
+//      one with libvorbis first.
+//   4. The data-folder pair from step 2 that runs only through Rosetta.
+//      Kept rather than downloaded over.
+//   5. A download (macos_download_sources): STEMDECK_FFMPEG_URL if set, else
+//      the per-architecture primary, else the Intel-only fallback where it
+//      can run.
+// "Verifies" means the required encoders (REQUIRED_FFMPEG_ENCODERS). A pair
+// without libvorbis passes; the backend then reports OGG export unavailable.
+#[cfg(target_os = "macos")]
+fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
+    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
+
+    let mut installed_intel = None;
+    if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
+        let verified = verify_ffmpeg_pair(&existing);
+        let arch = macos_pair_arch(host, &existing);
+        match decide_existing_ffmpeg(verified.is_ok(), arch, explicit) {
+            ExistingFfmpeg::Use => return Ok(existing),
+            ExistingFfmpeg::KeepUnlessNativeFound => installed_intel = Some(existing),
+            ExistingFfmpeg::Fail => return verified.map(|()| existing),
+            ExistingFfmpeg::Replace => eprintln!(
+                "FFmpeg at {} is present but unusable, looking for a replacement: {}",
+                existing.display(),
+                verified.err().unwrap_or_default()
+            ),
+        }
+    }
+
+    let url_override = env_path_override("STEMDECK_FFMPEG_URL").is_some();
+    let find_system = || {
+        let candidates = macos_system_ffmpeg_candidates(host, env::var_os("PATH").as_deref());
+        pick_macos_system_ffmpeg(
+            &candidates,
+            |path| macos_pair_arch(host, path),
+            check_ffmpeg_pair,
+        )
+    };
+    if let MacFfmpegNext::Use(path) = next_macos_ffmpeg(installed_intel, url_override, find_system)
+    {
+        return Ok(path);
+    }
+
+    download_macos_ffmpeg(data_dir)?;
+    let portable =
+        ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
+    verify_ffmpeg_pair(&portable)?;
+    Ok(portable)
 }
 
 // An override hash from `env_var`, trimmed and lowercased, or None if unset/
@@ -5316,7 +6040,8 @@ fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Res
     Ok(())
 }
 
-/// evermeet.cx (zip-wrapped, universal binary) is used both for the fallback
+/// evermeet.cx (zip-wrapped, x86_64 only: it runs on Apple Silicon only
+/// through Rosetta, #771) is used both for the fallback
 /// path and for a custom STEMDECK_FFMPEG_URL override -- that env var has
 /// always pointed at a zip in this shape, so overrides keep working exactly
 /// as before regardless of what the built-in primary source looks like.
@@ -5354,8 +6079,8 @@ fn download_macos_ffmpeg_zip_source(
 }
 
 /// Primary source: shaka-project's per-architecture builds, published as raw
-/// (non-zip) binaries -- downloaded straight to their final path, no
-/// extraction step.
+/// (non-zip) binaries -- downloaded straight into `ffmpeg_dir` (the staging
+/// folder), no extraction step.
 #[cfg(target_os = "macos")]
 fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
     let arch = macos_arch_suffix(std::env::consts::ARCH);
@@ -5397,60 +6122,159 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&ffmpeg_dir)
         .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
 
-    // An explicit override always wins and skips the primary/fallback dance
-    // entirely -- the user has already chosen a source. Goes through the
-    // zip-wrapped path, the shape this override has always expected.
-    if let Some(ffmpeg_override) = env_path_override("STEMDECK_FFMPEG_URL") {
-        let ffmpeg_url = ffmpeg_override.display().to_string();
-        let ffprobe_url = env_path_override("STEMDECK_FFPROBE_URL")
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
-        let ffmpeg_expected = override_sha256("STEMDECK_FFMPEG_SHA256");
-        let ffprobe_expected = override_sha256("STEMDECK_FFPROBE_SHA256");
-        return download_macos_ffmpeg_zip_source(
-            &ffmpeg_url,
-            &ffprobe_url,
-            ffmpeg_expected.as_deref(),
-            ffprobe_expected.as_deref(),
-            &downloads,
-            &ffmpeg_dir,
-        );
-    }
+    // Every source lands in staged/ first and replaces the installed pair only
+    // once it has passed the checks below. Downloading straight over
+    // data/ffmpeg destroyed a pair the user had put there even when what
+    // replaced it was no better, and a locked file there failed the download
+    // itself (#771). Inside data/ffmpeg rather than downloads/, which
+    // prune_downloads empties.
+    let staged = ffmpeg_dir.join("staged");
+    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let result = download_macos_ffmpeg_sources(host, &downloads, &staged)
+        .and_then(|()| install_staged_ffmpeg(&staged, &ffmpeg_dir));
+    let _ = fs::remove_dir_all(&staged);
+    result
+}
 
+// Whether a downloaded pair is refused before it is ever run: Intel-only on
+// an Apple Silicon Mac that has no Rosetta to run it (#771).
+#[cfg(any(target_os = "macos", test))]
+fn refuse_intel_build(host: &str, arch: MacBinaryArch, rosetta: bool) -> bool {
+    arch == MacBinaryArch::IntelOnly && !macos_intel_build_allowed(host, rosetta)
+}
+
+// The architecture check, then the same verification every other FFmpeg gets.
+#[cfg(target_os = "macos")]
+fn check_staged_ffmpeg(host: &str, staged: &Path, refusal: &str) -> Result<(), String> {
+    let ffmpeg = staged.join("ffmpeg");
+    if refuse_intel_build(host, macos_pair_arch(host, &ffmpeg), rosetta_installed()) {
+        return Err(refusal.to_string());
+    }
+    verify_ffmpeg_pair(&ffmpeg)
+}
+
+// Move a checked pair from staged/ into data/ffmpeg.
+#[cfg(any(target_os = "macos", test))]
+fn install_staged_ffmpeg(staged: &Path, ffmpeg_dir: &Path) -> Result<(), String> {
+    for name in ["ffmpeg", "ffprobe"] {
+        let target = ffmpeg_dir.join(name);
+        fs::rename(staged.join(name), &target).map_err(|e| {
+            format!(
+                "StemDeck could not replace {}: {e}. If you locked this file, unlock it, \
+                 or delete the ffmpeg folder in StemDeck's data folder, then click Retry.",
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+// Fetch one source into staged/: nothing is installed from here.
+#[cfg(target_os = "macos")]
+fn fetch_macos_source(
+    source: MacDownloadSource,
+    downloads: &Path,
+    staged: &Path,
+) -> Result<(), String> {
+    match source {
+        // An explicit override always wins and skips the primary/fallback
+        // dance entirely -- the user has already chosen a source. Goes
+        // through the zip-wrapped path, the shape this override has always
+        // expected.
+        MacDownloadSource::Override => {
+            let ffmpeg_url = env_path_override("STEMDECK_FFMPEG_URL")
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            let ffprobe_url = env_path_override("STEMDECK_FFPROBE_URL")
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
+            let ffmpeg_expected = override_sha256("STEMDECK_FFMPEG_SHA256");
+            let ffprobe_expected = override_sha256("STEMDECK_FFPROBE_SHA256");
+            download_macos_ffmpeg_zip_source(
+                &ffmpeg_url,
+                &ffprobe_url,
+                ffmpeg_expected.as_deref(),
+                ffprobe_expected.as_deref(),
+                downloads,
+                staged,
+            )
+        }
+        MacDownloadSource::Primary => download_macos_ffmpeg_primary(staged),
+        MacDownloadSource::Fallback => download_macos_ffmpeg_zip_source(
+            DEFAULT_MACOS_FFMPEG_URL,
+            DEFAULT_MACOS_FFPROBE_URL,
+            Some(DEFAULT_MACOS_FFMPEG_SHA256),
+            Some(DEFAULT_MACOS_FFPROBE_SHA256),
+            downloads,
+            staged,
+        ),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn download_macos_ffmpeg_sources(
+    host: &str,
+    downloads: &Path,
+    staged: &Path,
+) -> Result<(), String> {
     // Primary: shaka-project's per-architecture builds on GitHub Releases
     // (GitHub's global CDN) -- the same class of fix that already solved this
     // for Windows (#248, off gyan.dev's single mirror). evermeet.cx is the
     // fallback: a single host with no CDN behind it, reported unreachable
-    // from multiple regions (#388). A checksum match only proves the bytes are
-    // what we expect, not that the binary actually launches on this machine's
-    // macOS version or has every encoder StemDeck needs -- verify both before
-    // accepting it over the fallback (#414).
+    // from multiple regions (#388) and rate limited with HTTP 429 (#824). A
+    // checksum match only proves the bytes are what we expect, not that the
+    // binary actually launches on this machine's macOS version or has every
+    // encoder StemDeck needs -- verify both before accepting it (#414).
     //
     // Both halves, not just ffmpeg. The primary publishes them as two separate
     // downloads, so "ffmpeg arrived and runs" says nothing about ffprobe, and
     // accepting the pair on half the evidence is how a working ffmpeg came to
     // sit beside an ffprobe that could not run at all (#637).
-    let primary_result = download_macos_ffmpeg_primary(&ffmpeg_dir)
-        .and_then(|()| verify_ffmpeg_pair(&ffmpeg_dir.join("ffmpeg")));
-    if let Err(primary_err) = primary_result {
-        eprintln!("primary FFmpeg source failed, trying the evermeet.cx fallback: {primary_err}");
-        return download_macos_ffmpeg_zip_source(
-            DEFAULT_MACOS_FFMPEG_URL,
-            DEFAULT_MACOS_FFPROBE_URL,
-            Some(DEFAULT_MACOS_FFMPEG_SHA256),
-            Some(DEFAULT_MACOS_FFPROBE_SHA256),
-            &downloads,
-            &ffmpeg_dir,
-        )
-        .map_err(|fallback_err| {
-            format!(
-                "Could not download FFmpeg from either source.\n\
-                 Primary: {primary_err}\n\
-                 Fallback: {fallback_err}"
-            )
+    //
+    // As pinned (n8.1.2-1) this primary has no libvorbis on either
+    // architecture (shaka-project's build-scripts/90-ffmpeg.sh configures no
+    // --enable-libvorbis). That failed the check while libvorbis was
+    // required, so every Mac fell back to evermeet (#771, #824). It is
+    // optional now, so the primary passes and the fallback is only reached
+    // when the primary cannot be fetched or will not run.
+    //
+    // Each failure is reported as either "could not fetch" (describe_download_failure)
+    // or "fetched but rejected", so the user knows which side it was on. No
+    // retries beyond download_file's own, which never retries an HTTP error.
+    let url_override = env_path_override("STEMDECK_FFMPEG_URL").is_some();
+    let intel_allowed = macos_intel_build_allowed(host, rosetta_installed());
+    let refusal = if url_override {
+        "The FFmpeg that STEMDECK_FFMPEG_URL points at is built for Intel Macs, and this \
+         Mac cannot run it without Rosetta, so StemDeck did not install it. Point \
+         STEMDECK_FFMPEG_URL at a build for Apple Silicon, or install Rosetta by running \
+         \"softwareupdate --install-rosetta\" in Terminal, then click Retry."
+    } else {
+        MACOS_INTEL_REFUSED
+    };
+    let mut attempts = Vec::new();
+    for source in macos_download_sources(url_override, intel_allowed) {
+        // A clean staging folder per source, so a half from one source can
+        // never be installed beside a half from another.
+        let _ = fs::remove_dir_all(staged);
+        fs::create_dir_all(staged)
+            .map_err(|e| format!("failed to create {}: {e}", staged.display()))?;
+        let result = fetch_macos_source(source, downloads, staged).and_then(|()| {
+            check_staged_ffmpeg(host, staged, refusal)
+                .map_err(|e| format!("It downloaded, but StemDeck could not use it: {e}"))
         });
+        match result {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                eprintln!("FFmpeg source failed ({}): {err}", source.label());
+                attempts.push(format!("{}: {err}", source.label()));
+            }
+        }
     }
-    Ok(())
+    Err(macos_ffmpeg_setup_error(
+        host,
+        &attempts,
+        !url_override && !intel_allowed,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -5675,23 +6499,50 @@ fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), S
     Ok(())
 }
 
-// Encoders StemDeck's export pipeline actually calls for by name: pcm_s16le
-// (WAV stems), flac (FLAC stems), libmp3lame (MP3 stems/zips), libvorbis (OGG
-// stems), aac (the audio track on MP4 video exports) -- see app/api/stems.py's
-// per-format ffmpeg args. A minimal or distro-stripped FFmpeg build can pass a
-// bare `-version` check yet be missing one of these, which would otherwise
-// only surface later as an export failure deep in the pipeline (#414).
-const REQUIRED_FFMPEG_ENCODERS: &[&str] = &["pcm_s16le", "flac", "libmp3lame", "libvorbis", "aac"];
+// Encoders StemDeck cannot work without: pcm_s16le (WAV stems and exports),
+// flac (FLAC exports), libmp3lame (MP3 stem storage and exports), aac (the
+// audio track on MP4 video exports) -- see app/api/stems.py's per-format
+// ffmpeg args. A minimal or distro-stripped FFmpeg build can pass a bare
+// `-version` check yet be missing one of these, which would otherwise only
+// surface later as an export failure deep in the pipeline (#414).
+const REQUIRED_FFMPEG_ENCODERS: &[&str] = &["pcm_s16le", "flac", "libmp3lame", "aac"];
 
-fn missing_required_encoders(listing: &str) -> Vec<&'static str> {
-    REQUIRED_FFMPEG_ENCODERS
+// Encoders StemDeck uses when they are there and does without when they are
+// not: libvorbis, for OGG export only. The per-architecture macOS download and
+// Homebrew's plain `ffmpeg` have no libvorbis, and requiring it failed first
+// launch on every fresh Mac (#824). Without it the backend reports OGG export
+// as unavailable (app/pipeline/audio_encoders.py). A pair that has these is
+// still preferred where there is a choice (pick_macos_system_ffmpeg).
+const OPTIONAL_FFMPEG_ENCODERS: &[&str] = &["libvorbis"];
+
+fn missing_encoders(listing: &str, wanted: &[&'static str]) -> Vec<&'static str> {
+    wanted
         .iter()
         .copied()
         .filter(|codec| !listing.contains(codec))
         .collect()
 }
 
-fn verify_ffmpeg_encoders(path: &Path) -> Result<(), String> {
+fn missing_required_encoders(listing: &str) -> Vec<&'static str> {
+    missing_encoders(listing, REQUIRED_FFMPEG_ENCODERS)
+}
+
+// Ok(true) when every optional encoder is there too, Ok(false) when only the
+// required ones are, Err when a required one is missing.
+fn check_encoder_listing(path: &Path, listing: &str) -> Result<bool, String> {
+    let missing = missing_required_encoders(listing);
+    if missing.is_empty() {
+        Ok(missing_encoders(listing, OPTIONAL_FFMPEG_ENCODERS).is_empty())
+    } else {
+        Err(format!(
+            "FFmpeg at {} is missing required encoder(s): {}",
+            path.display(),
+            missing.join(", ")
+        ))
+    }
+}
+
+fn verify_ffmpeg_encoders(path: &Path) -> Result<bool, String> {
     let mut command = Command::new(path);
     command
         .args(["-hide_banner", "-encoders"])
@@ -5702,23 +6553,15 @@ fn verify_ffmpeg_encoders(path: &Path) -> Result<(), String> {
         command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg encoder check")
             .map_err(|e| format!("failed to list FFmpeg encoders at {}: {e}", path.display()))?;
     let listing = String::from_utf8_lossy(&output.stdout);
-    let missing = missing_required_encoders(&listing);
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "FFmpeg at {} is missing required encoder(s): {}",
-            path.display(),
-            missing.join(", ")
-        ))
-    }
+    check_encoder_listing(path, &listing)
 }
 
 // A binary is only "compatible with StemDeck's requirements" (#414) if it
 // both runs on this machine and has every encoder the export pipeline needs
 // -- checking just one half would let either a broken-on-this-OS build or a
-// minimal/stripped one through.
-fn verify_ffmpeg(path: &Path) -> Result<(), String> {
+// minimal/stripped one through. Ok(true) when it has the optional encoders
+// as well.
+fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
     let mut command = Command::new(path);
     command
         .arg("-version")
@@ -5771,8 +6614,22 @@ fn verify_ffprobe(path: &Path) -> Result<(), String> {
 // Both halves, which is the only useful question: StemDeck needs ffmpeg *and*
 // ffprobe, and nothing downloads or ships one without the other.
 fn verify_ffmpeg_pair(ffmpeg: &Path) -> Result<(), String> {
-    verify_ffmpeg(ffmpeg)?;
-    verify_ffprobe(&ffprobe_beside(ffmpeg))
+    check_ffmpeg_pair(ffmpeg).map(|_| ())
+}
+
+// verify_ffmpeg_pair, also saying whether the pair has the optional encoders
+// (true) or only the required ones (false).
+fn check_ffmpeg_pair(ffmpeg: &Path) -> Result<bool, String> {
+    let full = verify_ffmpeg(ffmpeg)?;
+    verify_ffprobe(&ffprobe_beside(ffmpeg))?;
+    if !full {
+        eprintln!(
+            "FFmpeg at {} has no {}: OGG export will be unavailable",
+            ffmpeg.display(),
+            OPTIONAL_FFMPEG_ENCODERS.join(", ")
+        );
+    }
+    Ok(full)
 }
 
 fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
@@ -6073,7 +6930,6 @@ fn hide_console_window(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -7278,12 +8134,534 @@ mod tests {
         assert!(f.exists());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn macos_arch_suffix_maps_aarch64_to_arm64_and_everything_else_to_x64() {
         assert_eq!(super::macos_arch_suffix("aarch64"), "arm64");
         assert_eq!(super::macos_arch_suffix("x86_64"), "x64");
         assert_eq!(super::macos_arch_suffix("something-unexpected"), "x64");
+    }
+
+    // A thin little-endian 64-bit Mach-O header with the given CPU type.
+    fn thin_macho(cpu: u32) -> Vec<u8> {
+        let mut header = vec![0xcf, 0xfa, 0xed, 0xfe];
+        header.extend_from_slice(&cpu.to_le_bytes());
+        header.extend_from_slice(&[0; 24]);
+        header
+    }
+
+    // A universal (fat32) header listing the given CPU types.
+    fn fat_macho(cpus: &[u32]) -> Vec<u8> {
+        let mut header = vec![0xca, 0xfe, 0xba, 0xbe];
+        header.extend_from_slice(&u32::try_from(cpus.len()).unwrap().to_be_bytes());
+        for cpu in cpus {
+            header.extend_from_slice(&cpu.to_be_bytes());
+            header.extend_from_slice(&[0; 16]);
+        }
+        header
+    }
+
+    #[test]
+    fn classify_macos_binary_reads_thin_and_universal_headers() {
+        use super::{MacBinaryArch, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        let classify = super::classify_macos_binary;
+        assert_eq!(classify("arm64", &thin_macho(ARM)), MacBinaryArch::Native);
+        assert_eq!(
+            classify("arm64", &thin_macho(X86)),
+            MacBinaryArch::IntelOnly
+        );
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86, ARM])),
+            MacBinaryArch::Native
+        );
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86])),
+            MacBinaryArch::IntelOnly
+        );
+        // Not a Mach-O, or cut short: verification decides, as before.
+        assert_eq!(
+            classify("arm64", b"#!/bin/sh\nexec ffmpeg"),
+            MacBinaryArch::Unknown
+        );
+        assert_eq!(classify("arm64", &[0xcf, 0xfa]), MacBinaryArch::Unknown);
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86, ARM])[..20]),
+            MacBinaryArch::Unknown
+        );
+        // An Intel Mac is never second-guessed here.
+        assert_eq!(classify("x64", &thin_macho(X86)), MacBinaryArch::Native);
+        assert_eq!(classify("x64", &thin_macho(ARM)), MacBinaryArch::Native);
+    }
+
+    #[test]
+    fn macos_pair_arch_reads_both_files_from_disk() {
+        use super::{MacBinaryArch, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        let dir = make_tmp();
+        let ffmpeg = dir.path().join("ffmpeg");
+        // ffprobe_beside names ffprobe.exe when the test runs on Windows.
+        let ffprobe = super::ffprobe_beside(&ffmpeg);
+        fs::write(&ffmpeg, thin_macho(ARM)).unwrap();
+        fs::write(&ffprobe, thin_macho(ARM)).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::Native
+        );
+        // An Intel ffprobe beside a native ffmpeg makes the pair Intel-only (#637).
+        fs::write(&ffprobe, thin_macho(X86)).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::IntelOnly
+        );
+        fs::remove_file(&ffprobe).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::Unknown
+        );
+    }
+
+    #[test]
+    fn intel_build_is_refused_on_apple_silicon_without_rosetta_only() {
+        use super::MacBinaryArch::{IntelOnly, Native, Unknown};
+        assert!(super::refuse_intel_build("arm64", IntelOnly, false));
+        assert!(!super::refuse_intel_build("arm64", IntelOnly, true));
+        assert!(!super::refuse_intel_build("arm64", Native, false));
+        assert!(!super::refuse_intel_build("arm64", Unknown, false));
+        assert!(!super::refuse_intel_build("x64", IntelOnly, false));
+        assert!(!super::macos_intel_build_allowed("arm64", false));
+        assert!(super::macos_intel_build_allowed("arm64", true));
+        assert!(super::macos_intel_build_allowed("x64", false));
+    }
+
+    #[test]
+    fn intel_refusal_is_recognised_by_the_setup_screen() {
+        // setup.js matches this phrase to skip its network hint.
+        assert!(super::MACOS_INTEL_REFUSED.contains("built for Intel Macs"));
+        assert!(super::MACOS_INTEL_REFUSED.is_ascii());
+    }
+
+    #[test]
+    fn existing_ffmpeg_decision_keeps_explicit_and_native_and_holds_intel() {
+        use super::ExistingFfmpeg::{Fail, KeepUnlessNativeFound, Replace, Use};
+        use super::MacBinaryArch::{IntelOnly, Native, Unknown};
+        let decide = super::decide_existing_ffmpeg;
+        assert_eq!(decide(true, Native, false), Use);
+        assert_eq!(decide(true, Unknown, false), Use);
+        assert_eq!(decide(true, IntelOnly, false), KeepUnlessNativeFound);
+        // An explicit STEMDECK_FFMPEG wins whatever it is built for.
+        assert_eq!(decide(true, IntelOnly, true), Use);
+        assert_eq!(decide(false, Native, true), Fail);
+        // Verification failure falls through to the next source.
+        assert_eq!(decide(false, Native, false), Replace);
+        assert_eq!(decide(false, IntelOnly, false), Replace);
+    }
+
+    #[test]
+    fn system_ffmpeg_candidates_follow_the_architecture_then_path_without_duplicates() {
+        let dir = make_tmp();
+        fs::write(dir.path().join("ffmpeg"), b"").unwrap();
+        let path_var = env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("arm64", Some(&path_var)),
+            vec![
+                PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+                PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"),
+                PathBuf::from("/usr/local/bin/ffmpeg"),
+                PathBuf::from("/opt/local/bin/ffmpeg"),
+                dir.path().join("ffmpeg"),
+            ]
+        );
+        // Intel Homebrew lives in /usr/local, which a Finder-launched app's
+        // PATH does not contain (#824).
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("x64", Some(&path_var)),
+            vec![
+                PathBuf::from("/usr/local/bin/ffmpeg"),
+                PathBuf::from("/usr/local/opt/ffmpeg-full/bin/ffmpeg"),
+                PathBuf::from("/opt/local/bin/ffmpeg"),
+                dir.path().join("ffmpeg"),
+            ]
+        );
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("arm64", None).len(),
+            4
+        );
+        assert_eq!(super::macos_system_ffmpeg_candidates("x64", None).len(), 3);
+    }
+
+    #[test]
+    fn pick_system_ffmpeg_skips_intel_and_failed_verification() {
+        use super::MacBinaryArch::{IntelOnly, Native};
+        let candidates = vec![
+            PathBuf::from("/intel/ffmpeg"),
+            PathBuf::from("/no-lame/ffmpeg"),
+            PathBuf::from("/good/ffmpeg"),
+            PathBuf::from("/also-good/ffmpeg"),
+        ];
+        let ran = std::cell::RefCell::new(Vec::new());
+        let picked = super::pick_macos_system_ffmpeg(
+            &candidates,
+            |path| {
+                if path.starts_with("/intel") {
+                    IntelOnly
+                } else {
+                    Native
+                }
+            },
+            |path| {
+                ran.borrow_mut().push(path.to_path_buf());
+                if path.starts_with("/no-lame") {
+                    Err("missing required encoder(s): libmp3lame".to_string())
+                } else {
+                    Ok(true)
+                }
+            },
+        );
+        assert_eq!(picked, Some(PathBuf::from("/good/ffmpeg")));
+        // The Intel one is never run; the search stops at the first full one.
+        assert_eq!(
+            ran.into_inner(),
+            vec![
+                PathBuf::from("/no-lame/ffmpeg"),
+                PathBuf::from("/good/ffmpeg")
+            ]
+        );
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates[..2], |_| Native, |_| Err(String::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn pick_system_ffmpeg_prefers_libvorbis_but_takes_a_plain_one_over_none() {
+        use super::MacBinaryArch::Native;
+        // Homebrew's plain ffmpeg first, ffmpeg-full second: the full one wins.
+        let candidates = vec![
+            PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+            PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"),
+        ];
+        let full_only = |path: &Path| Ok(path.to_string_lossy().contains("ffmpeg-full"));
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, full_only),
+            Some(PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"))
+        );
+        // Only plain builds: the first one is used, with no download (#824).
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, |_| Ok(false)),
+            Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        // A plain one that passes beats a full one that does not.
+        let plain_ok = |path: &Path| {
+            if path.to_string_lossy().contains("ffmpeg-full") {
+                Err("failed verification".to_string())
+            } else {
+                Ok(false)
+            }
+        };
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, plain_ok),
+            Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+    }
+
+    // The whole macOS order (ensure_macos_ffmpeg) without its side effects:
+    // `data` is the data-folder pair (its check result and arch), `system`
+    // the installed candidates, `rosetta` whether the fallback can run.
+    // Returns what setup would do: "use <path>", "fail", or the downloads it
+    // would try.
+    struct MacCase {
+        host: &'static str,
+        explicit: bool,
+        url_override: bool,
+        rosetta: bool,
+        data: Option<(Result<bool, String>, super::MacBinaryArch)>,
+        system: Vec<(&'static str, super::MacBinaryArch, Result<bool, String>)>,
+    }
+
+    fn mac_plan(case: MacCase) -> String {
+        use super::{ExistingFfmpeg, MacFfmpegNext};
+        let mut installed_intel = None;
+        if let Some((check, arch)) = &case.data {
+            match super::decide_existing_ffmpeg(check.is_ok(), *arch, case.explicit) {
+                ExistingFfmpeg::Use => return "use /data/ffmpeg".to_string(),
+                ExistingFfmpeg::KeepUnlessNativeFound => {
+                    installed_intel = Some(PathBuf::from("/data/ffmpeg"));
+                }
+                ExistingFfmpeg::Fail => return "fail".to_string(),
+                ExistingFfmpeg::Replace => {}
+            }
+        }
+        let paths: Vec<PathBuf> = case
+            .system
+            .iter()
+            .map(|(p, _, _)| PathBuf::from(p))
+            .collect();
+        let find = || {
+            super::pick_macos_system_ffmpeg(
+                &paths,
+                |path| {
+                    case.system
+                        .iter()
+                        .find(|(p, _, _)| Path::new(p) == path)
+                        .map(|(_, arch, _)| *arch)
+                        .unwrap()
+                },
+                |path| {
+                    case.system
+                        .iter()
+                        .find(|(p, _, _)| Path::new(p) == path)
+                        .map(|(_, _, check)| check.clone())
+                        .unwrap()
+                },
+            )
+        };
+        match super::next_macos_ffmpeg(installed_intel, case.url_override, find) {
+            MacFfmpegNext::Use(path) => format!("use {}", path.display()),
+            MacFfmpegNext::Download => {
+                let allowed = super::macos_intel_build_allowed(case.host, case.rosetta);
+                format!(
+                    "download {:?}",
+                    super::macos_download_sources(case.url_override, allowed)
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn macos_order_covers_both_architectures_with_and_without_libvorbis() {
+        use super::MacBinaryArch::{IntelOnly, Native};
+        let base = |host| MacCase {
+            host,
+            explicit: false,
+            url_override: false,
+            rosetta: false,
+            data: None,
+            system: Vec::new(),
+        };
+        let no_vorbis = || -> Result<bool, String> { Ok(false) };
+        let missing_lame = || -> Result<bool, String> { Err("missing libmp3lame".into()) };
+
+        for host in ["arm64", "x64"] {
+            // Fresh Mac, nothing installed: the primary alone (arm64 without
+            // Rosetta) or primary then fallback (Intel).
+            let want = if host == "arm64" {
+                "download [Primary]"
+            } else {
+                "download [Primary, Fallback]"
+            };
+            assert_eq!(mac_plan(base(host)), want, "{host}");
+
+            // A data-folder pair without libvorbis passes and is used.
+            let case = MacCase {
+                data: Some((no_vorbis(), Native)),
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "use /data/ffmpeg", "{host}");
+
+            // One missing a required encoder is replaced by an installed pair.
+            let case = MacCase {
+                data: Some((missing_lame(), Native)),
+                system: vec![("/opt/homebrew/bin/ffmpeg", Native, no_vorbis())],
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "use /opt/homebrew/bin/ffmpeg", "{host}");
+
+            // STEMDECK_FFMPEG that fails is reported, nothing replaced.
+            let case = MacCase {
+                explicit: true,
+                data: Some((missing_lame(), Native)),
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "fail", "{host}");
+
+            // STEMDECK_FFMPEG_URL: only that source, installed pairs ignored.
+            let case = MacCase {
+                url_override: true,
+                system: vec![("/usr/local/bin/ffmpeg", Native, Ok(true))],
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "download [Override]", "{host}");
+        }
+
+        // Apple Silicon with Rosetta: the fallback is allowed again.
+        let case = MacCase {
+            rosetta: true,
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "download [Primary, Fallback]");
+
+        // Apple Silicon: an Intel-only data pair is kept unless a native
+        // installed one is found, and an Intel-only installed one is skipped.
+        let case = MacCase {
+            rosetta: true,
+            data: Some((Ok(true), IntelOnly)),
+            system: vec![("/usr/local/bin/ffmpeg", IntelOnly, Ok(true))],
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "use /data/ffmpeg");
+        let case = MacCase {
+            data: Some((Ok(true), IntelOnly)),
+            system: vec![("/opt/homebrew/bin/ffmpeg", Native, no_vorbis())],
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "use /opt/homebrew/bin/ffmpeg");
+    }
+
+    // The second reporter on #824: an Intel Mac (OpenCore Legacy Patcher)
+    // with a full FFmpeg in /usr/local/bin, told "Primary: FFmpeg at
+    // .../StemDeck/ffmpeg/ffmpeg is missing required encoder(s): libvorbis"
+    // and then "Could not reach the download server" for the fallback.
+    #[test]
+    fn intel_mac_with_an_installed_ffmpeg_needs_no_download() {
+        use super::MacBinaryArch::Native;
+        // The shaka x64 primary it had downloaded lists no libvorbis. That no
+        // longer fails the check, so the pair already there is used.
+        let shaka_listing = " A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)
+ A....D aac                  AAC (Advanced Audio Coding)
+ A..X.D vorbis               Vorbis
+";
+        let ffmpeg = Path::new("/Users/jp/Library/Application Support/StemDeck/ffmpeg/ffmpeg");
+        assert_eq!(
+            super::check_encoder_listing(ffmpeg, shaka_listing),
+            Ok(false)
+        );
+
+        // A fresh data folder: /usr/local/bin is now looked at, even though a
+        // Finder-launched app's PATH does not contain it.
+        let candidates = super::macos_system_ffmpeg_candidates("x64", None);
+        assert_eq!(candidates[0], PathBuf::from("/usr/local/bin/ffmpeg"));
+        let case = MacCase {
+            host: "x64",
+            explicit: false,
+            url_override: false,
+            rosetta: false,
+            data: None,
+            system: vec![("/usr/local/bin/ffmpeg", Native, Ok(true))],
+        };
+        assert_eq!(mac_plan(case), "use /usr/local/bin/ffmpeg");
+    }
+
+    #[test]
+    fn macos_setup_error_says_what_happened_and_what_to_do() {
+        let attempts = vec![
+            "Download from GitHub (shaka-project build): Could not reach the download server"
+                .to_string(),
+        ];
+        let arm = super::macos_ffmpeg_setup_error("arm64", &attempts, true);
+        assert!(arm.contains("Could not reach the download server"), "{arm}");
+        assert!(arm.contains("built for Intel Macs"), "{arm}");
+        assert!(arm.contains("brew install ffmpeg\""), "{arm}");
+        assert!(arm.contains("brew install ffmpeg-full"), "{arm}");
+        assert!(arm.contains("STEMDECK_FFMPEG "), "{arm}");
+        assert!(arm.contains("softwareupdate --install-rosetta"), "{arm}");
+        // setup.js matches this to leave out its network hint.
+        assert!(arm.contains("Do one of these, then click Retry"), "{arm}");
+        assert!(arm.is_ascii());
+
+        let intel = super::macos_ffmpeg_setup_error("x64", &attempts, false);
+        assert!(!intel.contains("Rosetta"), "{intel}");
+        assert!(!intel.contains("built for Intel Macs"), "{intel}");
+        assert!(intel.contains("brew install ffmpeg\""), "{intel}");
+        assert!(intel.is_ascii());
+    }
+
+    #[test]
+    fn download_failures_say_whether_the_server_was_reached() {
+        let url = "https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip";
+        assert_eq!(
+            super::curl_http_status("curl: (22) The requested URL returned error: 429"),
+            Some(429)
+        );
+        assert_eq!(super::curl_http_status("curl: (7) Failed to connect"), None);
+
+        let limited = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(22),
+            "curl: (22) The requested URL returned error: 429",
+        );
+        assert!(limited.contains("HTTP 429"), "{limited}");
+        assert!(limited.contains(url), "{limited}");
+        assert!(!limited.contains("Could not reach"), "{limited}");
+
+        let refused = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(22),
+            "curl: (22) The requested URL returned error: 404",
+        );
+        assert!(refused.contains("HTTP 404"), "{refused}");
+        assert!(refused.contains("was reached"), "{refused}");
+
+        let unreachable = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(6),
+            "curl: (6) Could not resolve host: evermeet.cx",
+        );
+        assert!(unreachable.starts_with("Could not reach"), "{unreachable}");
+        assert!(unreachable.contains(url), "{unreachable}");
+    }
+
+    #[test]
+    fn macos_download_sources_follow_the_override_and_rosetta() {
+        use super::MacDownloadSource::{Fallback, Override, Primary};
+        assert_eq!(super::macos_download_sources(true, true), vec![Override]);
+        assert_eq!(super::macos_download_sources(true, false), vec![Override]);
+        assert_eq!(
+            super::macos_download_sources(false, true),
+            vec![Primary, Fallback]
+        );
+        assert_eq!(super::macos_download_sources(false, false), vec![Primary]);
+        for source in [Override, Primary, Fallback] {
+            assert!(source.label().starts_with("Download from"));
+        }
+    }
+
+    #[test]
+    fn next_macos_ffmpeg_prefers_native_system_and_lets_the_url_override_win() {
+        use super::MacFfmpegNext::{Download, Use};
+        let intel = || Some(PathBuf::from("/data/ffmpeg/ffmpeg"));
+        let brew = || Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+        let none = || None;
+        // A native system pair beats an installed Intel one and a download.
+        assert_eq!(
+            super::next_macos_ffmpeg(intel(), false, brew),
+            Use(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        assert_eq!(
+            super::next_macos_ffmpeg(None, false, brew),
+            Use(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        // No native one: the Intel pair that already runs is kept, not downloaded over.
+        assert_eq!(
+            super::next_macos_ffmpeg(intel(), false, none),
+            Use(PathBuf::from("/data/ffmpeg/ffmpeg"))
+        );
+        assert_eq!(super::next_macos_ffmpeg(None, false, none), Download);
+        // STEMDECK_FFMPEG_URL wins over a system pair, which is not even looked for.
+        let never = || -> Option<PathBuf> { panic!("system lookup with an explicit URL") };
+        assert_eq!(super::next_macos_ffmpeg(None, true, never), Download);
+    }
+
+    #[test]
+    fn install_staged_ffmpeg_moves_the_pair_and_reports_a_failed_move() {
+        let dir = make_tmp();
+        let staged = dir.path().join("ffmpeg").join("staged");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("ffmpeg"), b"new ffmpeg").unwrap();
+        fs::write(staged.join("ffprobe"), b"new ffprobe").unwrap();
+        let ffmpeg_dir = dir.path().join("ffmpeg");
+        fs::write(ffmpeg_dir.join("ffmpeg"), b"old").unwrap();
+        super::install_staged_ffmpeg(&staged, &ffmpeg_dir).unwrap();
+        assert_eq!(fs::read(ffmpeg_dir.join("ffmpeg")).unwrap(), b"new ffmpeg");
+        assert_eq!(
+            fs::read(ffmpeg_dir.join("ffprobe")).unwrap(),
+            b"new ffprobe"
+        );
+        // Nothing staged: an error that says what to do, not a panic.
+        let err = super::install_staged_ffmpeg(&staged, &ffmpeg_dir).unwrap_err();
+        assert!(err.contains("click Retry"), "{err}");
     }
 
     #[cfg(target_os = "macos")]
@@ -7374,13 +8752,41 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
 ";
         assert_eq!(
             super::missing_required_encoders(stripped),
-            vec!["libmp3lame", "libvorbis", "aac"]
+            vec!["libmp3lame", "aac"]
         );
 
         assert_eq!(
             super::missing_required_encoders(""),
             super::REQUIRED_FFMPEG_ENCODERS
         );
+    }
+
+    #[test]
+    fn libvorbis_is_optional_and_reported_separately() {
+        let path = Path::new("/x/ffmpeg");
+        let with_vorbis = "\
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3)
+ A....D libvorbis            libvorbis
+ A....D aac                  AAC (Advanced Audio Coding)
+";
+        assert_eq!(super::check_encoder_listing(path, with_vorbis), Ok(true));
+        // Homebrew's plain ffmpeg 9.0.2: no libvorbis, only the experimental
+        // native "vorbis" encoder, which StemDeck does not use.
+        let homebrew = "\
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A..X.D vorbis               Vorbis
+";
+        assert_eq!(super::check_encoder_listing(path, homebrew), Ok(false));
+        assert!(!super::REQUIRED_FFMPEG_ENCODERS.contains(&"libvorbis"));
+        assert_eq!(super::OPTIONAL_FFMPEG_ENCODERS, ["libvorbis"]);
+        let err = super::check_encoder_listing(path, " A....D flac  FLAC\n").unwrap_err();
+        assert!(err.contains("libmp3lame"), "{err}");
+        assert!(!err.contains("libvorbis"), "{err}");
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -7442,6 +8848,148 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
                 );
             }
         }
+    }
+
+    // --- one source of truth for the torch pair, and the #778 repair ---
+    //
+    // No cfg on these: the functions they reach are `any(not(macos), test)`,
+    // so they run on every host, macOS included.
+
+    fn torch_versions_file() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../../packaging/torch-versions.json"))
+            .expect("packaging/torch-versions.json is valid JSON")
+    }
+
+    #[test]
+    fn torch_constants_match_the_versions_file_the_packaging_scripts_read() {
+        // make-portable.sh and make-portable.ps1 read this file; the shell
+        // reads these constants. Drift between them is #778 all over again.
+        let file = torch_versions_file();
+        assert_eq!(file["cpuTorch"], super::CPU_TORCH_VERSION);
+        let pairs = file["torchvisionForTorch"]
+            .as_object()
+            .expect("torchvisionForTorch");
+        assert_eq!(
+            pairs[super::CPU_TORCH_VERSION],
+            super::CPU_TORCHVISION_VERSION
+        );
+        assert_eq!(pairs.len(), super::TORCHVISION_FOR_TORCH.len());
+        for (torch, vision) in super::TORCHVISION_FOR_TORCH {
+            assert_eq!(pairs[torch], vision, "torch {torch}");
+        }
+    }
+
+    #[test]
+    fn uv_lock_resolves_the_cpu_torch_pair() {
+        // The CPU swap replaces what the project install resolved. If uv.lock
+        // moves torch and the versions file does not, the swap downgrades it.
+        let lock = include_str!("../../../uv.lock");
+        for (name, version) in [
+            ("torch", super::CPU_TORCH_VERSION),
+            ("torchvision", super::CPU_TORCHVISION_VERSION),
+        ] {
+            let entry = format!("name = \"{name}\"\nversion = \"{version}\"\n");
+            assert!(
+                lock.replace('\r', "").contains(&entry),
+                "uv.lock does not resolve {name} {version}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_cuda_install_asks_for_a_matching_torchvision() {
+        // The pair install_cuda_torch asks for, for every tag setup can pick
+        // on any driver and GPU, must be a pair in the versions file (#615).
+        let file = torch_versions_file();
+        let pairs = &file["torchvisionForTorch"];
+        let mut tags = std::collections::BTreeSet::new();
+        for cap in [None, Some("5.2"), Some("6.1"), Some("8.6"), Some("12.0")] {
+            for driver in ["11.8", "12.0", "12.4", "12.8", "13.0"] {
+                tags.extend(super::wheel_candidates(cap, driver));
+            }
+        }
+        assert!(tags.contains("cu128") && tags.contains("cu124"));
+        for tag in tags {
+            let [torch, audio, vision] = super::cuda_torch_specs(tag);
+            let torch_version = super::torch_version_for_tag(tag);
+            let expected = pairs[torch_version]
+                .as_str()
+                .unwrap_or_else(|| panic!("{tag}: torch {torch_version} has no torchvision"));
+            assert_eq!(torch, format!("torch=={torch_version}+{tag}"));
+            assert_eq!(audio, format!("torchaudio=={torch_version}+{tag}"));
+            assert_eq!(vision, format!("torchvision=={expected}+{tag}"), "{tag}");
+        }
+        // Blackwell's line, spelled out.
+        assert_eq!(
+            super::cuda_torch_specs("cu128")[2],
+            "torchvision==0.23.0+cu128"
+        );
+    }
+
+    #[test]
+    fn version_py_is_read_without_python() {
+        let torch = "from typing import Optional\n\n\
+                     __all__ = ['__version__', 'debug', 'cuda', 'git_version', 'hip']\n\
+                     __version__ = '2.6.0+cpu'\ndebug = False\ncuda: Optional[str] = None\n";
+        assert_eq!(super::version_from_version_py(torch), Some("2.6.0+cpu"));
+        let vision = "__version__ = '0.21.0+cu124'\ngit_version = 'abc'\n";
+        assert_eq!(super::version_from_version_py(vision), Some("0.21.0+cu124"));
+        assert_eq!(
+            super::version_from_version_py("__version__: str = \"0.23.0+cu128\"\n"),
+            Some("0.23.0+cu128")
+        );
+        assert_eq!(
+            super::version_from_version_py("__version_info__ = '1'\n"),
+            None
+        );
+        assert_eq!(super::version_from_version_py("__version__ = ''\n"), None);
+        assert_eq!(super::version_from_version_py(""), None);
+    }
+
+    #[test]
+    fn only_a_cuda_torchvision_beside_cpu_torch_is_repaired() {
+        use super::torchvision_repair_spec as spec;
+        // The 0.20.0 Linux packages, CPU and NVIDIA alike (#778).
+        assert_eq!(
+            spec("2.6.0+cpu", "0.21.0+cu124").as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // Healthy: a fixed package, or the reporter's hand repair.
+        assert_eq!(spec("2.6.0+cpu", "0.21.0+cpu"), None);
+        // An NVIDIA install after the CUDA install: a working pair.
+        assert_eq!(spec("2.6.0+cu124", "0.21.0+cu124"), None);
+        assert_eq!(spec("2.8.0+cu128", "0.23.0+cu128"), None);
+        // No local tag at all, as some PyPI builds report: nothing to judge.
+        assert_eq!(spec("2.6.0", "0.21.0"), None);
+        assert_eq!(spec("2.6.0+cpu", "0.21.0"), None);
+        // A torch line with no known torchvision is not guessed at.
+        assert_eq!(spec("2.7.1+cpu", "0.22.1+cu126"), None);
+    }
+
+    #[test]
+    fn the_repair_decision_reads_the_installed_tree() {
+        let site = tempfile::tempdir().unwrap();
+        let write = |pkg: &str, version: &str| {
+            fs::create_dir_all(site.path().join(pkg)).unwrap();
+            fs::write(
+                site.path().join(pkg).join("version.py"),
+                format!("__version__ = '{version}'\n"),
+            )
+            .unwrap();
+        };
+        assert_eq!(super::installed_version(site.path(), "torch"), None);
+        write("torch", "2.6.0+cpu");
+        write("torchvision", "0.21.0+cu124");
+        let torch = super::installed_version(site.path(), "torch").unwrap();
+        let vision = super::installed_version(site.path(), "torchvision").unwrap();
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, &vision).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // After the repair, the next launch has nothing to do.
+        write("torchvision", "0.21.0+cpu");
+        let vision = super::installed_version(site.path(), "torchvision").unwrap();
+        assert_eq!(super::torchvision_repair_spec(&torch, &vision), None);
     }
 
     #[test]
@@ -7696,6 +9244,74 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         assert!(held <= super::MAX_PENDING_SAVES, "held {held}");
         // The stalest pick is the one dropped.
         assert!(super::take_pending_save(&state, &first).is_err());
+    }
+
+    #[test]
+    fn reveal_needs_a_file_this_app_saved() {
+        let state = super::BackendState::default();
+        assert!(super::saved_file(&state, "1").is_err(), "nothing saved yet");
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Song - Artist (Streamer).mp4");
+        std::fs::write(&file, b"x").unwrap();
+        super::record_saved(&state, "1", file.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "1").unwrap(), file);
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            super::saved_file(&state, "1").is_err(),
+            "a file that has gone is not revealed"
+        );
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_shows_only_the_callers_own_save() {
+        let state = super::BackendState::default();
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join("Streamer take.mp4");
+        let later = dir.join("A mix export.wav");
+        std::fs::write(&mine, b"x").unwrap();
+        std::fs::write(&later, b"y").unwrap();
+        super::record_saved(&state, "7", mine.clone()).unwrap();
+        // Another export saved afterwards does not change what token 7 reveals.
+        super::record_saved(&state, "8", later.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "7").unwrap(), mine);
+        assert_eq!(super::saved_file(&state, "8").unwrap(), later);
+        assert!(
+            super::saved_file(&state, "9").is_err(),
+            "an unknown token reveals nothing"
+        );
+        // Bounded: the oldest tokens go first.
+        for i in 10..(10 + super::MAX_PENDING_SAVES) {
+            super::record_saved(&state, &i.to_string(), later.clone()).unwrap();
+        }
+        assert!(state.inner.lock().unwrap().saved_files.len() <= super::MAX_PENDING_SAVES);
+        assert!(
+            super::saved_file(&state, "7").is_err(),
+            "the oldest save was dropped"
+        );
+        let _ = std::fs::remove_file(&mine);
+        let _ = std::fs::remove_file(&later);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_passes_the_path_as_one_argument() {
+        let path = PathBuf::from("/tmp/a b; echo pwned & \"quoted\".mp4");
+        let (program, args) = super::reveal_command(&path);
+        assert!(!program.is_empty());
+        // The path is never split or interpreted: it is one argument, or its
+        // folder is (Linux).
+        let joined: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            joined.iter().any(|a| a == path.to_string_lossy().as_ref())
+                || joined.iter().any(|a| a == "/tmp"),
+            "{joined:?}"
+        );
     }
 
     #[test]

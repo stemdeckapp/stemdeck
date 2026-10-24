@@ -133,6 +133,37 @@ function isMac() {
   return /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
 }
 
+/**
+ * Puts the CPU torchvision back where a CUDA one sits beside CPU torch (#778).
+ *
+ * The 0.20.0 Linux packages shipped that pair, and the in-app updater never
+ * replaces the Python runtime, so an updated install keeps it until this runs.
+ * On a healthy install it returns at once without touching the network. It
+ * runs on every launch, including the fast path, and never stops the app from
+ * starting: a failed repair is said once and tried again next launch.
+ */
+async function repairTorchvision() {
+  if (isMac()) return;
+  const stopPipProgress = await startPipProgress(() => {});
+  let result;
+  try {
+    result = await invoke("repair_torchvision");
+  } catch (err) {
+    console.warn("torchvision check failed to run:", err);
+    return;
+  } finally {
+    stopPipProgress();
+  }
+  if (result?.outcome === "failed") {
+    setStatus(
+      "The karaoke split could not be repaired, so it will not work yet. " +
+        "StemDeck will try again next time it starts. Check your internet connection; " +
+        "logs/setup.log in the StemDeck data folder has the details."
+    );
+    await minDelay(6000);
+  }
+}
+
 async function installRuntimePack(appRoot) {
   const status = await invoke("runtime_pack_status");
   if (!status.manifestReady) {
@@ -269,6 +300,13 @@ async function installRuntimePack(appRoot) {
 // normally papers over it, but a bare exec() never triggers Rosetta's
 // install-on-demand prompt, so a Mac without it just fails.
 function ffmpegFailureHint(message) {
+  // An Apple Silicon Mac without Rosetta, where StemDeck declined to install
+  // an Intel-only build (#771). The message already says what to do, and a
+  // network hint under it would be wrong.
+  if (/built for Intel Macs/.test(message)) return null;
+  // The macOS setup error now ends with its own next steps (#824): a network
+  // hint under it would point at the wrong thing when the server was reached.
+  if (/Do one of these, then click Retry/.test(message)) return null;
   const wrongArchitecture = /bad cpu type|os error 86|EBADARCH/i.test(message);
   if (wrongArchitecture) {
     return (
@@ -344,6 +382,7 @@ async function runSetup() {
         }
       }
       await runStep("backend", async () => {
+        await repairTorchvision();
         setStatus("Runtime is ready. Starting StemDeck backend...");
         const backend = await startBackend();
         setStatus("Opening StemDeck...");
@@ -477,6 +516,11 @@ async function runSetup() {
         stopPipProgress?.();
       }
     });
+
+    // After the GPU step, so an NVIDIA install that just got CUDA torch is
+    // judged with it in place, and before warmup, which loads the karaoke
+    // model through torchvision.
+    await repairTorchvision();
 
     await runStep("model", async () => {
       const stopProgress = startProgressStatus([

@@ -3,12 +3,18 @@ import {
   jobDetailEl, jobCancelBtn, progressEl, titleEl, bpmChip, keyChip,
   eventSource, setEventSource, setCurrentJobId,
   foregroundJobId, setForegroundJobId,
-  selectedStems, vocalSplitMode,
+  selectedStems, currentJobId,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
+import { prepareLayout, extractIntoOpenSong, layoutState } from "./modeStems.js";
+import { stemsReasonKey } from "./partChoice.js";
+import { getMode } from "./mode.js";
+import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen } from "./catalog.js";
+import { getCurrentTrackInfo, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen, setTrackVocalSplit, trackSourceUrl } from "./catalog.js";
+import { splitReason, splitReasonText, splitFailedText, noteSplitOutcome, effectiveVocalSplitMode } from "./vocalSplitState.js";
+import { reloadKeepingPlace } from "./reloadPlace.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
@@ -50,10 +56,83 @@ export async function runVocalSplitIfWanted(state) {
   const alreadySplit = state.vocal_split === "done";
   if (!wantsSplit || !hasVocals || alreadySplit) return state;
   splitAutoTriggered.add(state.job_id);
-  if (state.job_id === foregroundJobId) setWaveformLoading(true, "Splitting lead/backing vocals…");
+  if (state.job_id === foregroundJobId) setWaveformLoading(true, t("stems.splitRunning"));
+  return runVocalSplit(state);
+}
+
+/**
+ * A Lead + Backing split that did not make its stems, said out loud (#832).
+ * The song is done and keeps one Vocals stem; this says that, why in one line,
+ * and offers Try again, which runs the split on the same song without an
+ * import. The card in the notification centre keeps it after the box is
+ * closed. A cancel is the person's own doing, so it gets neither.
+ */
+export function reportSplitFailure(state, code) {
+  const jobId = state.job_id;
+  const reason = splitReason(code);
+  noteSplitOutcome(reason);
+  // The song's library row keeps it, so the Stems popover says why on a reopen.
+  setTrackVocalSplit(jobId, "error", reason);
+  if (reason === "cancelled") return;
+  const title = state.title || getCurrentTrackInfo()?.title || t("job.processingTrackTitle");
+  const message = t("split.failed", { title });
+  const detail = splitReasonText(reason);
+  notifyFailure({ kind: "split", message, detail, context: { jobId, splitReason: reason } });
+  showError(message, detail, {
+    retry: false,
+    action: { label: t("job.tryAgain"), className: "split-retry-btn", run: () => retryVocalSplit(jobId) },
+  });
+}
+
+/**
+ * Run the split again on a finished song: the notice's Try again (#832). The
+ * same request the import and the Stems popover send, so it queues behind a
+ * running import and is cancelled the same way. The open song reloads with
+ * its place kept when the pair is made.
+ */
+export async function retryVocalSplit(jobId) {
+  let state;
   try {
-    const res = await fetch(`/api/jobs/${state.job_id}/vocal-split`, { method: "POST" });
-    if (!(res.ok || res.status === 202)) return state;
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+    if (!res.ok) return;
+    state = await res.json();
+  } catch (e) {
+    console.warn("[job] could not read the song to split again:", e);
+    return;
+  }
+  if (state.status !== "done") return;
+  const open = jobId === currentJobId;
+  if (open) setWaveformLoading(true, t("stems.splitRunning"));
+  const finalState = await runVocalSplit(state);
+  if (open && jobId === currentJobId) {
+    if (finalState.vocal_split === "done") reloadKeepingPlace(jobId);
+    else setWaveformLoading(false);
+  }
+}
+
+// POST the split and keep the library row current. Returns the job's state
+// after it, or `state` unchanged when the split did not run. A failure is
+// reported (reportSplitFailure); a split already running elsewhere (409) or
+// a song that is gone (404) is not a failure of this one.
+async function runVocalSplit(state) {
+  let res;
+  try {
+    res = await fetch(`/api/jobs/${state.job_id}/vocal-split`, { method: "POST" });
+  } catch (e) {
+    console.warn("[job] vocal split failed:", e);
+    reportSplitFailure(state, "worker_failed");
+    return { ...state, vocal_split: "error", vocal_split_reason: "worker_failed" };
+  }
+  try {
+    if (!(res.ok || res.status === 202)) {
+      if (res.status === 409 || res.status === 404) return state;
+      const body = await res.json().catch(() => ({}));
+      const reason = splitReason(body?.vocal_split_reason);
+      reportSplitFailure(state, reason);
+      return { ...state, vocal_split: "error", vocal_split_reason: reason };
+    }
+    noteSplitOutcome(null);
+    dismissFailuresByJobId(state.job_id, "split");
     const r2 = await fetch(`/api/jobs/${state.job_id}`);
     if (!r2.ok) return state;
     const finalState = await r2.json();
@@ -75,9 +154,12 @@ export async function runVocalSplitIfWanted(state) {
       stemPresence: finalState.stem_presence,
       sections: finalState.sections,
       sectionsSource: finalState.sections_source,
-      sourceUrl: jobSources.get(finalState.job_id) || "",
+      // A Try again runs long after the import, when jobSources has nothing
+      // for the song: the row's own source keeps it matched to itself.
+      sourceUrl: jobSources.get(finalState.job_id) || trackSourceUrl(finalState.job_id),
       createdAt: finalState.created_at,
     });
+    setTrackVocalSplit(finalState.job_id, finalState.vocal_split || "done", null);
     return finalState;
   } catch (e) {
     console.warn("[job] vocal split failed:", e);
@@ -201,9 +283,11 @@ window.addEventListener(
 );
 
 // `retry` adds "Try again", which sends the user back to the URL field to start
-// a fresh import: right for an import failure and wrong for anything else. The
-// close button is always there, so no failure can leave the box stuck open.
-export function showError(message, detail, { retry = true } = {}) {
+// a fresh import: right for an import failure and wrong for anything else.
+// `action` ({ label, run, className }) is that button for anything else: it closes the
+// box and calls `run`, as the Lead + Backing notice does to split again (#832).
+// The close button is always there, so no failure can leave the box stuck open.
+export function showError(message, detail, { retry = true, action = null } = {}) {
   delete errorEl.dataset.kind; // see showPlaybackError
   errorEl.textContent = "";
   const msg = document.createElement("div");
@@ -228,6 +312,16 @@ export function showError(message, detail, { retry = true } = {}) {
       hideError();
       urlInput.focus();
       urlInput.select();
+    });
+    actions.append(btn);
+  } else if (action?.label && typeof action.run === "function") {
+    const btn = document.createElement("button");
+    btn.className = action.className ? `retry-btn ${action.className}` : "retry-btn";
+    btn.type = "button";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      hideError();
+      action.run();
     });
     actions.append(btn);
   }
@@ -373,6 +467,15 @@ function applyStudioSummary(state) {
 // stems (the vocals lane), same as if the user had never asked for a split.
 async function finishDoneJob(state) {
   const finalState = await runVocalSplitIfWanted(state);
+  // The open mode's lanes for the new song: its own selection unless a mode
+  // already chose (modeStems.js), never the Extract chips as they are now.
+  await prepareLayout(
+    finalState.job_id,
+    finalState.selected_stems || [],
+    (finalState.stems || []).filter((s) => s?.url).map((s) => s.name),
+    finalState.vocal_split || "none",
+    finalState.vocal_split_reason || null,
+  );
   wireUpAudio(
     finalState.job_id,
     finalState.stems || [],
@@ -647,7 +750,7 @@ function registerUploadRow(jobId, file) {
   const title = sanitizeFilename(file.name);
   const sourceUrl = `local:${title}`;
   jobSources.set(jobId, sourceUrl);
-  jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? vocalSplitMode : "all");
+  jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? effectiveVocalSplitMode() : "all");
   addTrackToLibrary({
     id: jobId,
     title,
@@ -758,6 +861,31 @@ export function wireJobForm() {
     // fileInput.files after a fetch() submission, breaking re-submits.
     const file = fileInput?._file ?? fileInput?.files?.[0] ?? null;
 
+    // The open song is already separated and the button is aimed at it (its
+    // own link in the box, or the upload it re-splits): different chips change
+    // the open mode's lanes and nothing is separated again (modeStems.js). The
+    // same chips as on screen still separate again, as they always did.
+    const open = getCurrentTrackInfo();
+    const typed = urlInput.value.trim();
+    const aimedAtOpen = !file && open?.status === "done"
+      && (typed ? typed === open.sourceUrl : submitBtn.dataset.resplitJob === open.id);
+    if (aimedAtOpen) {
+      const res = await extractIntoOpenSong(
+        [...selectedStems],
+        selectedStems.has("vocals") && effectiveVocalSplitMode() === "split" ? "split" : "combined",
+        getMode(),
+      );
+      if (res.handled) {
+        setSubmitProcessing(false);
+        // Success is said only for a change that was made (#793).
+        const refused = stemsReasonKey(res.reason);
+        // A split that did not work says why (#832), not only that it did not.
+        if (res.reason === "failed") showTrackNote(splitFailedText(layoutState().splitReason));
+        else showTrackNote(refused ? t(refused) : t("stems.extractApplied", { mode: t(`mode.${res.mode}`) }));
+        return;
+      }
+    }
+
     // A playlist is its own flow: expand, confirm the count, then queue every
     // track into a folder named after it. Nothing takes the studio.
     if (!file && looksLikePlaylist(urlInput.value)) {
@@ -866,7 +994,7 @@ export function wireJobForm() {
     // silently import the same file a second time.
     if (file) fileInput._clear?.();
     jobSources.set(jobId, newSourceUrl);
-    jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? vocalSplitMode : "all");
+    jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? effectiveVocalSplitMode() : "all");
     addTrackToLibrary({
       id: jobId,
       title: displayTitle,

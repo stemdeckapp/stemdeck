@@ -1,0 +1,757 @@
+/* ── Recording a take (static/js/capture/recordUi.js, takeLanes.js) ──
+   Loaded between waves.css and daw.css. Only rec-*, take-* and capture-*
+   classes live here, so nothing in daw.css depends on the order. */
+
+/* Record button: a red dot, solid red while recording. */
+.rec-btn { color: var(--danger); }
+.rec-btn.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--fg);
+  animation: rec-pulse 1.2s var(--easing) infinite;
+}
+.rec-btn.saving { opacity: 0.6; cursor: progress; }
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(214, 90, 74, 0.55); }
+  50% { box-shadow: 0 0 0 4px rgba(214, 90, 74, 0); }
+}
+
+.rec-opts-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 28px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.rec-opts-btn:hover,
+.rec-opts-btn[aria-expanded="true"] { color: var(--fg); background: var(--panel-2); }
+
+/* The panel: a popover over the footer, placed by JS above the arrow. */
+.rec-panel {
+  position: fixed;
+  z-index: 60;
+  width: min(340px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+  color: var(--fg);
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+.rec-panel[hidden] { display: none; }
+.rec-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.rec-panel-title { font-weight: 600; font-size: 13px; }
+
+/* A text button that reads as a link: it opens Settings > Recording. */
+.rec-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.rec-link:hover { color: var(--fg); }
+.rec-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rec-permission .rec-link { display: inline-block; margin-top: 6px; }
+
+.rec-permission {
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.rec-permission[hidden] { display: none; }
+.capture-reason, .capture-hint { margin: 0; line-height: 1.45; }
+.capture-hint { margin-top: 6px; color: var(--fg-2); overflow-wrap: anywhere; }
+
+.rec-meter, .rec-cal-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+.rec-meter-fill, .rec-cal-bar {
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: var(--guitar);
+}
+.rec-meter-fill.clip { background: var(--danger); }
+.rec-cal-bar { background: var(--accent); transition: transform var(--t-base) linear; }
+
+.rec-small-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.rec-small-btn:hover { background: var(--panel-3); }
+.rec-small-btn.primary { border-color: var(--accent-2); color: var(--accent); }
+.rec-small-btn:disabled { opacity: 0.5; cursor: default; }
+
+.rec-cal-status { margin: 0; min-height: 1em; }
+.rec-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Settings > Recording (static/js/capture/recordingSettings.js) ──
+   Rows, titles and switches come from the shared .settings-* rules in
+   daw.css; only what is specific to this tab is here. */
+.rec-settings .settings-section { display: flex; flex-direction: column; gap: 8px; }
+.rec-settings .settings-row { align-items: center; }
+/* Device names are long ("Microphone (Scarlett 2i2 USB)"), so these selects
+   get the wide column rather than the shared 84px one. */
+.rec-settings .rec-settings-select { width: 220px; max-width: 45vw; text-overflow: ellipsis; }
+.rec-settings .rec-small-btn { font-size: 12px; flex-shrink: 0; }
+.rec-settings-meter { margin-top: 2px; }
+.rec-settings .rec-settings-latency { margin: 0; font-size: 11.5px; font-weight: 400; color: var(--fg-2); font-family: var(--font-mono); }
+.rec-settings .rec-note,
+.rec-settings .rec-cal-status { font-size: 11px; }
+.rec-settings .rec-cal-status:empty { display: none; }
+.rec-settings-preview { width: min(320px, 100%); align-self: flex-start; }
+
+.rec-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.rec-note { margin: 0; color: var(--muted); line-height: 1.45; }
+.rec-monitor-delay { display: none; }
+.rec-panel.monitoring .rec-monitor-delay { display: block; color: var(--fg-2); }
+
+.rec-mute {
+  margin: 0;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.rec-mute legend { padding: 0 4px; color: var(--muted); font-size: 11.5px; }
+.rec-mute-list { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.rec-mute-item { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+
+.rec-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-2);
+  border-radius: var(--radius-sm);
+}
+.rec-review[hidden] { display: none; }
+.rec-review-text { margin: 0; }
+.rec-status { margin: 0; min-height: 1em; color: var(--fg-2); }
+.rec-status:empty { display: none; }
+
+/* ── Take lanes in the mixer ── */
+/* Italic leans past its box: 2px so the last letter is not cut. */
+.lane-header.take-lane .mx-name { font-style: italic; padding-right: 2px; }
+.take-menu-btn {
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+/* In a track's header: the M/S buttons' size, without their box, so the
+   menu stays quieter than the switches beside it. */
+.lane-header.mx-row .take-menu-btn.mx-btn {
+  width: var(--mx-ctl-w);
+  height: var(--mx-ctl-h);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 5px;
+}
+.lane-header.mx-row .take-menu-btn.mx-btn:hover { background: var(--panel-2); }
+.lane-header.mx-row .take-menu-btn.mx-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.take-menu-btn:hover,
+.take-menu-btn[aria-expanded="true"] { color: var(--fg); }
+
+.take-menu {
+  position: fixed;
+  z-index: 70;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+  color: var(--fg);
+  font-size: 12.5px;
+}
+.take-menu-field { display: flex; flex-direction: column; gap: 4px; }
+.take-menu-field > span { color: var(--muted); font-size: 11.5px; }
+.take-name-input, .take-nudge-input {
+  min-width: 0;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font: inherit;
+}
+.take-nudge-row { display: flex; gap: 4px; }
+.take-nudge-input { flex: 1; font-family: var(--font-mono); text-align: right; }
+.take-nudge-step {
+  width: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--fg);
+  cursor: pointer;
+}
+.take-menu-hint { margin: 0; color: var(--muted); line-height: 1.4; }
+.take-menu-actions { display: flex; justify-content: space-between; gap: 8px; }
+.take-apply, .take-delete {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.take-delete { color: var(--danger); }
+.take-delete.armed { background: var(--danger); color: var(--fg); border-color: var(--danger); }
+.take-menu-status { margin: 0; min-height: 1em; color: var(--fg-2); }
+.take-menu-status:empty { display: none; }
+
+/* ── Recording tracks (static/js/capture/takeLanes.js) ── */
+/* "+ Track" in the mixer header. */
+/* The add-track row: two dashed boxes, Audio track and Video track, under
+   the last extracted stem, above the recording tracks (player.js
+   placeAddTrackRow sets its CSS order; the default keeps it last until
+   then). 28px plus 6px above and below: player.js ADD_TRACK_ROW_HEIGHT
+   counts these 40px into the stack, and the waveform column has an empty row
+   as tall at the same place. */
+.add-track-row {
+  order: 2147483000;
+  flex: 0 0 28px;
+  height: 28px;
+  margin: 6px 12px;
+  display: flex;
+  gap: 6px;
+}
+.add-track-row[hidden] { display: none; }
+.add-track-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.add-track-spacer { flex: 0 0 40px; height: 40px; }
+.add-track-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--fg); border-color: var(--muted-2); }
+.add-track-btn:disabled { opacity: 0.4; cursor: default; }
+.add-track-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.add-track-cam { flex-shrink: 0; }
+/* A video track's camera mark, beside its name. */
+.track-kind-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lane-color, var(--muted));
+}
+/* Why other tracks were disarmed: a short note under the mixer header,
+   placed by takeLanes.showTrackNote. */
+.track-note {
+  position: fixed;
+  z-index: 60;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-2);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-panel);
+}
+.track-note[hidden] { display: none; }
+
+.track-arm.mx-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+/* A track's header (takeLanes.js buildRow): the stem rows' two lines, with
+   the menu and arm at the end of the fader's line and the input picker
+   before M, S and download, which line up with the stems' above. A track's
+   name is its own ("Track 1", "Guitar"), so its column is narrower and the
+   fader and the picker get the width. */
+/* The row is a size container (daw.css): its height decides whether the
+   picker has a line of its own. */
+.lane-header.mx-row.track-lane { --mx-name-w: 64px; }
+.track-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  color: var(--fg-2);
+}
+/* A row tall enough for three lines: the picker goes under the buttons, the
+   width of the controls, so a device and its input read in full ("MG-XU ·
+   Input 1+2"). The buttons' line stays on the row's middle, level with the
+   name. */
+@container mxrow (min-height: 108px) {
+  .lane-header.track-lane .mx-line-b {
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: var(--mx-ctl-gap);
+  }
+  .lane-header.track-lane .track-input-wrap {
+    order: 1;
+    flex: 1 0 100%;
+  }
+}
+.track-input-wrap::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -4px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.track-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: var(--mx-ctl-h);
+  padding: 0 18px 0 7px;
+  background: transparent;
+  color: var(--fg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font-family: var(--font-sans);
+  font-size: var(--mx-ctl-font);
+  font-weight: 600;
+  letter-spacing: 0;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.track-input:hover { color: var(--fg); }
+.track-input-wrap:hover { color: var(--fg); }
+.track-input option, .track-input optgroup { background: var(--panel); color: var(--fg); }
+.track-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* The track's device is not connected. */
+.track-input.missing { color: var(--danger); border-color: var(--danger); }
+/* An armed track's meter shows its input (recordUi.startArmMeter), on a
+   decibel scale, in place of its playback level. */
+.lane-header.track-lane.armed .lane-vu .lane-vu-bar.mx-meter-fill { width: var(--vu-in, 0%); }
+.lane-header.track-empty .mx-name { opacity: 0.7; }
+/* Beats daw.css's .lane-dl.mx-btn, which loads later and sets display. */
+.lane-header .lane-dl.track-dl-off { display: none; }
+
+.take-menu-takes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.take-menu-takes legend { padding: 0 4px; color: var(--muted); font-size: 11.5px; }
+.take-menu-take { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ── Take folders (takeLanes.js, player.js renderTakeFolderLanes) ──
+   A recording track is a folder of its takes. The arrow on the track row
+   opens one row per take under it, newest on top, and one waveform lane per
+   take beside them. Take rows are .lane-header.mx-row like any lane, so they
+   take their height from --lane-h and stay level with their lanes. */
+
+/* The disclosure arrow, left of the track name, with the number of takes. */
+.lane-header.mx-row .take-folder-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 16px;
+  height: 30px;
+  margin: 0 -2px 0 -6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.lane-header.mx-row .take-folder-toggle:hover { color: var(--fg); background: var(--panel-2); }
+.lane-header.mx-row .take-folder-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* No takes, or the streaming path: the arrow keeps its place, unseen. */
+.lane-header.mx-row .take-folder-toggle.off { visibility: hidden; }
+.take-folder-arrow {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--t-base) var(--easing);
+}
+.take-folder-toggle[aria-expanded="true"] .take-folder-arrow { transform: translateY(-2px) rotate(45deg); }
+.take-folder-toggle[aria-expanded="true"] { color: var(--take); }
+.take-folder-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* A take's row in the mixer: indented under its track, on the darker ground
+   of the folder, with a bar in the take colour on the one that plays. */
+.lane-header.mx-row.take-folder-row {
+  background: var(--bg);
+  cursor: pointer;
+  gap: 8px;
+}
+.lane-header.mx-row.take-folder-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+}
+.lane-header.mx-row.take-folder-row.playing::before { background: var(--take); }
+.lane-header.mx-row.take-folder-row:hover { background: var(--bg-2); }
+.lane-header.mx-row.take-folder-row.choosing { opacity: 0.6; cursor: progress; }
+.take-folder-indent { width: 4px; flex-shrink: 0; }
+
+/* Play this take: a radio dot, filled in the take colour when it plays. */
+.lane-header.mx-row .take-play.mx-btn {
+  width: var(--mx-ctl-w);
+  height: var(--mx-ctl-h);
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+.lane-header.mx-row .take-play.mx-btn::before {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  box-sizing: border-box;
+}
+.lane-header.mx-row .take-play.mx-btn:hover { color: var(--fg); }
+.lane-header.mx-row .take-play.mx-btn[aria-pressed="true"] {
+  color: var(--take);
+  border-color: var(--take);
+  background: color-mix(in srgb, var(--take) 14%, transparent);
+  cursor: default;
+}
+.lane-header.mx-row .take-play.mx-btn[aria-pressed="true"]::before { background: currentColor; }
+.lane-header.mx-row .take-play.mx-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.take-folder-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.lane-header.mx-row .take-folder-name {
+  color: var(--fg-2);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lane-header.mx-row.take-folder-row.playing .take-folder-name { color: var(--take); }
+.take-folder-meta {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.take-folder-meta:empty { display: none; }
+
+/* The take's menu: the track menu's twin, in the same column. */
+.lane-header.mx-row .take-folder-menu-btn.mx-btn {
+  margin-left: auto;
+  width: var(--mx-ctl-w);
+  height: var(--mx-ctl-h);
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.lane-header.mx-row .take-folder-menu-btn.mx-btn:hover,
+.lane-header.mx-row .take-folder-menu-btn.mx-btn[aria-expanded="true"] { color: var(--fg); }
+
+/* A take's waveform lane. Only the take that plays is drawn at full
+   strength; a click on another one makes that the take that plays, so those
+   lanes take the pointer (the overlay around them does not). */
+.stem-waveform-row.take-folder-lane { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+.stem-waveform-row.take-folder-lane:not(.playing) { pointer-events: auto; cursor: pointer; }
+.stem-waveform-row.take-folder-lane:not(.playing) .stem-waveform-svg rect { opacity: 0.38; }
+.stem-waveform-row.take-folder-lane:not(.playing):hover .stem-waveform-svg rect { opacity: 0.6; }
+.stem-waveform-row.take-folder-lane.playing { box-shadow: inset 3px 0 0 var(--take); }
+.stem-waveform-row.take-folder-lane.choosing { cursor: progress; }
+.stem-waveform-row.take-folder-lane.choosing .stem-waveform-svg rect { opacity: 0.7; }
+.take-folder-lane-name {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  pointer-events: none;
+}
+.take-folder-lane.playing .take-folder-lane-name { color: var(--take); }
+
+/* Where the live waveform (liveWave.js) anchors while a track records. It
+   covers the track's own lane and never takes the pointer. */
+.take-live-slot {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* The live waveform of a take being recorded (capture/liveWave.js): a canvas
+   laid over the track's lane in .waves-column, above the overview bars
+   (.stem-waveform-layer is z-index 3 and comes earlier), stacked the same
+   way as those bars, under the playhead. It scrolls and zooms with the column: full width,
+   top and height set from the lane. */
+.live-wave-lane {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.live-wave-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* A track that is recording shows the take being recorded (the live lane,
+   liveWave.js), not the take it is about to replace. */
+.stem-waveform-row.take-recording > .stem-waveform-svg { visibility: hidden; }
+
+/* ── A track's tools in its key column (takeLanes.js) ──
+   Preview (a video track) and Delete, as cells like the rail's. */
+.mx-keyrail-tools {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.track-tool {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.track-tool:hover { background: var(--panel-2); color: var(--fg); }
+.track-tool:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.track-tool.track-delete:hover,
+.track-tool.track-delete.armed { color: var(--danger); }
+.track-tool.track-delete.armed { background: color-mix(in srgb, var(--danger) 18%, transparent); }
+html:not(.mode-daw) .mx-keyrail-tools { display: none; }
+
+/* ── A video track's frames along its lane (video/videoLane.js) ── */
+.lane-filmstrip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.9;
+  border-radius: 3px;
+}
+
+/* ── The video preview window (video/videoPreview.js) ── */
+.video-preview {
+  position: fixed;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  min-height: 150px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  background: #000;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  resize: both;
+}
+.video-preview[hidden] { display: none; }
+.video-preview:focus { outline: none; }
+.video-preview:focus-visible { outline: 2px solid var(--focus-ring); }
+.video-preview-bar {
+  position: relative;
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.video-preview-bar:active { cursor: grabbing; }
+/* Left of the X, never under it. */
+.video-preview-title {
+  flex: 0 1 calc(50% - 22px);
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The X in the middle of the top bar. */
+.video-preview-close {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.video-preview-close:hover { background: var(--panel-2); color: var(--fg); }
+.video-preview-close:focus-visible { outline: 2px solid var(--focus-ring); }
+.video-preview-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.video-preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.video-preview-video[hidden] { display: none; }
+.video-preview-empty {
+  margin: 0;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.video-preview-empty[hidden] { display: none; }
+
+/* Settings > Recording: which input the latency test measures. */
+.rec-settings-test {
+  display: inline-flex;
+  margin: 2px 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.rec-seg-btn {
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.rec-seg-btn + .rec-seg-btn { border-left: 1px solid var(--border-strong); }
+.rec-seg-btn.active { background: var(--panel-3); color: var(--accent); }
+.rec-seg-btn:disabled { opacity: 0.45; cursor: default; }
+.rec-seg-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+/* A video track is picture only (its take's audio is silence, kept for
+   timing): no waveform on its lane, and no fader, level, M, S, EQ or
+   download in its row. Its rail keeps its column, empty, so the rows line up. */
+.stem-waveform-row.video-lane .stem-waveform-svg,
+.stem-waveform-row.video-lane .lane-drag-nugget { display: none; }
+.lane-header.track-video .mx-faderline,
+.lane-header.track-video .mx-rail > * { display: none; }
+/* The level keeps its height so the name sits where it does on other rows.
+   As specific as daw.css's .mx-card .lane-vu.mx-meter, which loads later. */
+.lane-header.track-video .lane-vu.mx-meter { visibility: hidden; }

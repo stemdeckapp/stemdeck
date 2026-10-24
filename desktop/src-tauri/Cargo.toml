@@ -4,6 +4,7 @@ name = "stemdeck"
 version = "0.0.0"
 description = "StemDeck desktop launcher"
 authors = ["StemDeck contributors"]
+license = "AGPL-3.0-only"
 edition = "2021"
 rust-version = "1.88"
 
@@ -46,6 +47,26 @@ tauri-plugin-store = "2"
 time = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 zstd = "0.13"
+
+# Answering the webview's microphone and camera requests for StemDeck's own
+# page (src/mediaperm.rs). All three are already in the tree through wry, at
+# these versions; named here because mediaperm.rs calls them directly.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"
+# The backend's kill-on-close job object (src/backendjob.rs, #790). Already in
+# the tree at this version; named here because backendjob.rs calls it directly.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pinned exactly, with the feature wry 0.55.1 uses: wry requires =2.0.2.
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 [dev-dependencies]
 tempfile = "3"

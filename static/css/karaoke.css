@@ -1,0 +1,597 @@
+/* Karaoke Mode (static/js/karaoke/karaoke.js): a view over the workspace,
+   from the design "StemDeck Karaoke Mode" (docs/karaoke-reference). Sizes are
+   the design's at an 1800 x 1020 window; colours are the app's tokens where it
+   has one (--accent, --fg, --muted), the design's own otherwise.
+   The layer's width depends on the sidebar, not the window, so the narrow
+   layouts are container queries on the layer itself. */
+
+.karaoke, .kk-fs {
+  --kk-yellow: var(--accent);
+  --kk-ws: #0b0f14;
+  --kk-panel: #0f151c;
+  --kk-card: #10161d;
+  --kk-card-on: #141b24;
+  --kk-divider: #161c24;
+  --kk-line: #1f2832;
+  --kk-strong: #2b3542;
+  --kk-text: var(--fg);
+  --kk-text-2: #c3c9d1;
+  --kk-muted: var(--muted);
+  --kk-disabled: #5b6570;
+}
+.karaoke {
+  --kk-current: 64px;
+  position: fixed;
+  z-index: 25; /* over everything in the lanes (up to 20), under every menu and dialog */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  padding: 14px 16px 12px;
+  background: var(--kk-ws);
+  color: var(--kk-text);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  container-type: size;
+  container-name: karaoke;
+}
+.karaoke[hidden] { display: none; }
+
+.kk-top { flex: 1; min-height: 0; display: flex; gap: 12px; position: relative; }
+
+/* ── Stage ── */
+.kk-stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  /* The lyric sizes below are capped by the stage's height too (cqh), so a
+     short window shrinks them instead of overlapping the title and the bar. */
+  container-type: size;
+  container-name: kkstage;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #1c232c;
+  isolation: isolate;
+}
+.kk-bg, .kk-veil { position: absolute; inset: 0; pointer-events: none; }
+.kk-bg-lights {
+  position: absolute;
+  inset: 0;
+  filter: blur(2px);
+  background:
+    radial-gradient(ellipse 14% 22% at 22% 12%, rgba(255, 176, 90, .55), rgba(255, 176, 90, 0) 70%),
+    radial-gradient(ellipse 10% 18% at 41% 6%, rgba(255, 196, 120, .45), rgba(255, 196, 120, 0) 70%),
+    radial-gradient(ellipse 12% 20% at 68% 10%, rgba(255, 170, 80, .5), rgba(255, 170, 80, 0) 70%),
+    radial-gradient(ellipse 9% 16% at 86% 18%, rgba(255, 150, 70, .4), rgba(255, 150, 70, 0) 70%),
+    radial-gradient(ellipse 30% 30% at 12% 70%, rgba(170, 70, 30, .35), rgba(170, 70, 30, 0) 70%),
+    radial-gradient(ellipse 30% 30% at 88% 65%, rgba(150, 60, 30, .32), rgba(150, 60, 30, 0) 70%),
+    radial-gradient(ellipse 60% 50% at 50% 45%, rgba(90, 45, 25, .55), rgba(90, 45, 25, 0) 80%),
+    linear-gradient(180deg, #24150d 0%, #140d09 55%, #0c0a09 100%);
+}
+/* The song's artwork, blurred over the stage-light fallback. */
+.kk-bg-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(40px) saturate(1.1);
+  transform: scale(1.1);
+}
+.kk-veil { background: radial-gradient(ellipse 80% 75% at 50% 45%, rgba(8, 10, 14, .25), rgba(8, 10, 14, .78) 100%); }
+
+.kk-stage-inner {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 22px 26px 18px;
+}
+.kk-stage-head { display: flex; align-items: center; gap: 16px; }
+.kk-art, .kk-fs-art {
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .45);
+  background: radial-gradient(circle at 30% 30%, #d98a3c, #5b2a14 60%, #1c0f09);
+}
+.kk-art { width: 62px; height: 62px; }
+.kk-art-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kk-art-img[hidden] { display: none; }
+.kk-titles { flex: 1; min-width: 0; }
+.kk-title { font-size: 26px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kk-artist { font-size: 16px; color: var(--kk-text-2); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.kk-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--kk-strong);
+  border-radius: 8px;
+  background: rgba(11, 15, 20, .72);
+  color: var(--kk-text);
+  cursor: pointer;
+  padding: 0;
+}
+.kk-icon-btn:hover { border-color: #3a4552; color: #fff; }
+.kk-icon-btn:focus-visible, .kk-btn:focus-visible,
+.kk-switch:focus-visible, .kk-bar:focus-visible, .kk-fs-play:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── Lyrics ── */
+.kk-lyrics {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 40px;
+  overflow: hidden;
+}
+.kk-lyrics > * { max-width: 1100px; width: 100%; overflow-wrap: anywhere; }
+.kk-prev {
+  font-size: min(22px, 4.2cqh);
+  font-weight: 500;
+  color: rgba(232, 235, 239, .32);
+  min-height: 1.35em;
+  margin-bottom: min(34px, 5cqh);
+}
+.kk-current {
+  font-size: min(var(--kk-current), 11.5cqh);
+  line-height: 1.14;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: #f4f5f7;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, .5);
+}
+.kk-current[hidden], .kk-intro[hidden], .kk-empty[hidden] { display: none; }
+.kk-w { transition: color .28s ease; }
+.kk-w.on { color: var(--kk-yellow); }
+.kk-next {
+  margin-top: min(52px, 7cqh);
+  font-size: min(38px, 7cqh);
+  line-height: 1.28;
+  font-weight: 500;
+  color: rgba(232, 235, 239, .58);
+}
+.kk-intro { display: flex; flex-direction: column; align-items: center; }
+.kk-intro-title { font-size: 24px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--kk-yellow); }
+.kk-intro-count { font-size: 18px; color: var(--kk-text-2); margin-top: 12px; font-variant-numeric: tabular-nums; }
+.kk-dots { display: flex; gap: 10px; margin-top: 22px; }
+.kk-dot { width: 12px; height: 12px; border-radius: 50%; background: rgba(232, 235, 239, .25); }
+.kk-dot.on { background: var(--kk-yellow); }
+.kk-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.kk-empty-text { margin: 0; font-size: 22px; font-weight: 600; color: var(--kk-text-2); }
+
+/* ── Progress ── */
+.kk-progress { padding: 0 120px; }
+.kk-bar { position: relative; height: 18px; cursor: pointer; touch-action: none; }
+.kk-bar-track, .kk-bar-fill { position: absolute; left: 0; top: 7px; height: 4px; border-radius: 2px; }
+.kk-bar-track { right: 0; background: rgba(232, 235, 239, .22); }
+.kk-bar-fill { width: 0; background: var(--kk-yellow); }
+.kk-bar-thumb {
+  position: absolute;
+  top: 1px;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--kk-yellow);
+  box-shadow: 0 0 0 4px rgba(245, 183, 42, .18);
+}
+.kk-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--kk-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Side panel: Queue | Sections ── */
+.kk-side {
+  width: 330px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-left: 1px solid var(--kk-divider);
+  padding-left: 12px;
+  min-height: 0;
+}
+.kk-side-title { height: 46px; display: flex; align-items: center; padding: 0 4px; font: 600 15px var(--font-sans); color: var(--kk-text-2); }
+.kk-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.kk-list[hidden] { display: none; }
+.kk-up-next { margin: 4px 2px; }
+
+/* ── The queue ── */
+.kk-queue { border-radius: 10px; }
+.kk-queue.kk-drop { outline: 1px dashed var(--kk-yellow); outline-offset: 2px; }
+.kk-q-items { display: flex; flex-direction: column; gap: 8px; }
+.kk-q-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--kk-line);
+  border-radius: 10px;
+  padding: 10px 10px 10px 12px;
+  background: var(--kk-card);
+  cursor: pointer;
+}
+.kk-q-row:hover { border-color: #3a4552; }
+.kk-q-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.kk-q-row.kk-q-dragging { opacity: .4; }
+.kk-q-art {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: radial-gradient(circle at 30% 30%, #d98a3c, #5b2a14 60%, #1c0f09);
+}
+.kk-q-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.kk-q-title { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kk-q-sub { font-size: 13px; color: var(--kk-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kk-q-remove {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kk-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.kk-q-remove:hover { background: rgba(255, 255, 255, .08); color: var(--kk-text); }
+.kk-q-remove:focus-visible { outline: 2px solid var(--focus-ring); }
+/* Where a drop would land: a line above that row, or above the hint at the end. */
+.kk-q-row.kk-q-before::before, .kk-q-hint.kk-q-before::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--kk-yellow);
+}
+.kk-q-hint {
+  position: relative;
+  margin-top: 8px;
+  border: 1px dashed var(--kk-strong);
+  border-radius: 10px;
+  padding: 18px 14px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--kk-text-2);
+}
+.kk-queue.kk-drop .kk-q-hint { border-color: var(--kk-yellow); }
+.kk-side-strip { display: none; }
+
+/* ── Bottom controls: Key, Speed, Stems ── */
+.kk-controls { flex: none; height: 132px; display: flex; gap: 12px; }
+.kk-panel {
+  box-sizing: border-box;
+  border: 1px solid var(--kk-line);
+  border-radius: 10px;
+  background: var(--kk-panel);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+}
+.kk-label { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--kk-muted); }
+.kk-key { width: 240px; flex: none; }
+.kk-transport { width: 200px; flex: none; }
+.kk-transport-row { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.kk-btn.kk-play { width: 64px; height: 44px; padding: 0; border-color: var(--kk-yellow); background: var(--kk-yellow); color: var(--bg); }
+.kk-btn.kk-play:hover:not(:disabled) { filter: brightness(1.08); }
+.kk-transport .kk-btn:disabled { opacity: .4; cursor: default; }
+/* The footer's transport, speed and click track are not Karaoke's: the
+   Transport panel above stands in for the part it needs. !important because
+   daw.css forces the footer to display: flex !important. */
+html.karaoke-open .daw-footer { display: none !important; }
+.kk-stems { flex: 1; padding: 14px 16px; }
+.kk-key-row { display: flex; align-items: center; gap: 10px; }
+.kk-key-name { font-size: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kk-badge {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1.5px solid var(--kk-yellow);
+  color: var(--kk-yellow);
+  font: 700 11px var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.kk-key-btns { display: flex; gap: 8px; }
+.kk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #27303b;
+  background: #121820;
+  color: #c9cfd7;
+  border-radius: 8px;
+  font: 500 13px var(--font-sans);
+  cursor: pointer;
+  padding: 0 12px;
+}
+.kk-btn:hover:not(:disabled) { border-color: #3a4552; color: #fff; }
+.kk-btn:disabled { opacity: .4; cursor: default; }
+.kk-sq { width: 44px; height: 36px; padding: 0; }
+.kk-reset { flex: 1; height: 36px; }
+.kk-joined { display: flex; }
+.kk-joined .kk-sq { height: 32px; }
+.kk-joined .kk-sq:first-child { border-radius: 8px 0 0 8px; }
+.kk-joined .kk-sq:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+
+/* The Stems label and, at its right, the voice form toggle (karaoke.js
+   buildVoiceToggle): Backing vocals in the voice, or separate. */
+.kk-stems-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.kk-voice { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.kk-voice[hidden] { display: none; }
+.kk-voice-label { font-size: 11px; color: var(--kk-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.kk-voice-seg { display: flex; flex: none; border: 1px solid var(--kk-strong); border-radius: 7px; overflow: hidden; }
+.kk-voice-btn {
+  padding: 3px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--kk-muted);
+  font: 500 11.5px var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kk-voice-btn + .kk-voice-btn { border-left: 1px solid var(--kk-strong); }
+.kk-voice-btn.on { background: var(--kk-card); color: var(--kk-yellow); font-weight: 600; }
+.kk-voice-btn:hover:not(:disabled):not(.on) { color: var(--kk-text); }
+.kk-voice-btn:disabled { opacity: .55; cursor: default; }
+.kk-voice-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.kk-stem-row { display: flex; gap: 8px; height: 64px; }
+.kk-stem {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  padding: 0 10px;
+  border-radius: 10px;
+  container-type: inline-size;
+  container-name: kkstem;
+  border: 1px solid #1c232c;
+  background: #0d1218;
+  cursor: pointer;
+  user-select: none;
+}
+.kk-stem.on { border-color: var(--kk-strong); background: var(--kk-card-on); }
+.kk-stem.fixed { cursor: default; }
+.kk-stem-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+/* A narrow card (seven stems in the design's width leave about 97 px each):
+   icon and switch on one row, the label under them on one line. */
+@container kkstem (max-width: 150px) {
+  .kk-stem-body {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "icon switch" "label label";
+    align-content: center;
+    row-gap: 4px;
+    column-gap: 4px;
+  }
+  .kk-stem-icon { grid-area: icon; }
+  .kk-switch { grid-area: switch; }
+  .kk-stem-label { grid-area: label; font-size: 12px; }
+}
+.kk-stem-icon { display: inline-flex; flex: none; color: var(--kk-disabled); }
+.kk-stem.on .kk-stem-icon { color: var(--kk-stem); }
+/* Lead vocals off: the design's red mic with a slash, not the grey of the rest. */
+.kk-stem[data-stem="lead_vocals"].off .kk-stem-icon,
+.kk-stem[data-stem="vocals"].off .kk-stem-icon { color: #e5566b; }
+.kk-stem-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.15;
+  font-weight: 500;
+  color: #7e8894;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kk-stem.on .kk-stem-label { color: var(--kk-text); }
+.kk-switch {
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  border: 0;
+  padding: 0;
+  background: #2a333e;
+  cursor: pointer;
+}
+.kk-stem.on .kk-switch { background: var(--kk-yellow); }
+.kk-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #c9cfd7;
+  transition: left .18s ease;
+}
+.kk-stem.on .kk-knob { left: 21px; background: #fff; }
+
+/* No song open. */
+.kk-no-track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 18px;
+  color: var(--kk-text-2);
+  background: var(--kk-ws);
+  z-index: 2;
+}
+.kk-no-track[hidden] { display: none; }
+
+/* A note beside the rail button (opening refused while recording). */
+.kk-note {
+  position: fixed;
+  z-index: 300;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 13px var(--font-sans);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+.kk-note[hidden] { display: none; }
+
+/* ── Narrower workspaces (design 7) ── */
+@container karaoke (max-width: 1299px) {
+  /* cqw here is the stage's width: the stage is the nearest container. */
+  .kk-current { --kk-current: clamp(40px, 5.6cqw, 64px); }
+  .kk-side { width: 280px; }
+  .kk-key { width: 220px; }
+}
+@container karaoke (max-width: 1099px) {
+  .kk-side { display: none; }
+  .kk-side-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 56px;
+    flex: none;
+    align-items: center;
+    border-left: 1px solid var(--kk-divider);
+    padding-left: 12px;
+  }
+  /* The panel as a drawer over the stage. */
+  .kk-side.kk-drawer-open {
+    display: flex;
+    position: absolute;
+    top: 0;
+    right: 68px;
+    bottom: 0;
+    width: 330px;
+    z-index: 3;
+    padding: 12px;
+    border: 1px solid var(--kk-strong);
+    border-radius: 12px;
+    background: var(--kk-ws);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  }
+  .kk-stem-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .kk-stem { justify-content: center; }
+}
+@container karaoke (max-width: 899px) {
+  .kk-controls { height: auto; flex-wrap: wrap; }
+  .kk-key, .kk-transport { flex: 1 1 calc(50% - 6px); width: auto; min-height: 120px; }
+  .kk-stems { flex: 1 1 100%; }
+  .kk-stem-row { overflow-x: auto; }
+  .kk-stem { min-width: 120px; }
+  .kk-progress { padding: 0 24px; }
+  .kk-next { font-size: min(28px, 6cqh); margin-top: min(32px, 5cqh); }
+}
+/* A short window (design 7: under 760 px tall). */
+@media (max-height: 759px) {
+  .kk-prev { display: none; }
+  .kk-next-line + .kk-next-line { display: none; }
+  .kk-next { margin-top: min(28px, 5cqh); font-size: min(30px, 6.5cqh); }
+}
+
+/* ── Fullscreen (design "Fullscreen", 1920 x 1080), sized from the viewport ── */
+.kk-fs {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #07090c;
+  color: #f4f5f7;
+  font-family: var(--font-sans);
+}
+.kk-fs[hidden] { display: none; }
+.kk-fs:fullscreen { width: 100vw; height: 100vh; }
+.kk-fs .kk-stage { position: absolute; inset: 0; border: 0; border-radius: 0; }
+.kk-fs .kk-veil { background: radial-gradient(ellipse 80% 75% at 50% 45%, rgba(8, 10, 14, .3), rgba(8, 10, 14, .82) 100%); }
+.kk-fs-inner {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: clamp(24px, 2.3vw, 64px) clamp(24px, 3.3vw, 88px) clamp(20px, 2.1vw, 56px);
+}
+.kk-fs-top { display: flex; align-items: center; gap: 18px; transition: opacity .3s ease; }
+.kk-fs-art { width: 54px; height: 54px; }
+.kk-fs-title { font-size: 22px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kk-fs-sub { font-size: 16px; color: rgba(232, 235, 239, .7); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kk-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  color: rgba(232, 235, 239, .72);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 999px;
+  padding: 9px 16px;
+  background: rgba(8, 10, 14, .45);
+  white-space: nowrap;
+}
+.kk-fs-exit { width: 48px; height: 48px; border-radius: 10px; border-color: rgba(255, 255, 255, .16); background: rgba(8, 10, 14, .45); }
+.kk-lyrics-fs { padding: 0; }
+.kk-lyrics-fs > * { max-width: 85vw; }
+.kk-lyrics-fs .kk-prev { font-size: clamp(18px, 1.8vw, 44px); color: rgba(232, 235, 239, .3); min-height: 1.3em; margin-bottom: clamp(28px, 2.9vw, 72px); }
+.kk-lyrics-fs .kk-current { font-size: clamp(40px, 5.4vw, 140px); line-height: 1.12; text-shadow: 0 4px 40px rgba(0, 0, 0, .55); }
+.kk-lyrics-fs .kk-next { font-size: clamp(24px, 3vw, 76px); line-height: 1.26; color: rgba(232, 235, 239, .52); margin-top: clamp(40px, 4.2vw, 104px); }
+.kk-lyrics-fs .kk-intro-title { font-size: clamp(22px, 1.8vw, 40px); }
+.kk-lyrics-fs .kk-intro-count { font-size: clamp(16px, 1.3vw, 30px); }
+.kk-fs-bottom { display: flex; align-items: center; gap: 20px; transition: opacity .3s ease; }
+.kk-fs-play {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(8, 10, 14, .45);
+  color: #f4f5f7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.kk-fs-time { font-family: var(--font-mono); font-size: 15px; color: rgba(232, 235, 239, .6); font-variant-numeric: tabular-nums; }
+.kk-fs-line { flex: 1; position: relative; height: 4px; border-radius: 2px; background: rgba(232, 235, 239, .16); }
+.kk-fs-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: var(--kk-yellow); }
+/* After 3 s without the pointer: the controls fade and the cursor goes. */
+.kk-fs.kk-idle { cursor: none; }
+.kk-fs.kk-idle .kk-fs-top, .kk-fs.kk-idle .kk-fs-bottom { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .kk-w, .kk-knob, .kk-fs-top, .kk-fs-bottom { transition: none; }
+}

@@ -107,5 +107,13 @@ Troubleshooting
   FFmpeg automatically; check internet access and retry, or install a system
   `ffmpeg` so `ffmpeg -version` works in your shell.
 - If setup fails, check internet access and retry.
+- StemDeck closes at once on Wayland, often with "Error 71 (Protocol error)
+  dispatching to Wayland display" or "Missing acquire timeline". This is
+  WebKitGTK's DMA-BUF renderer, mostly with the NVIDIA driver. StemDeck turns
+  that renderer off by itself on Wayland with NVIDIA, and after a launch that
+  closed before its window loaded. If it still closes, start it with:
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 ./StemDeck
+  STEMDECK_WEBKIT_DMABUF=off turns the renderer off, =on keeps it on and
+  stops StemDeck from switching it, and =auto is the default.
 - Inspect logs under the data directory's logs/ folder.
 - Deleting the data directory forces first-run setup to recreate runtime state.

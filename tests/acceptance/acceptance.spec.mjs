@@ -1642,7 +1642,7 @@ test(title("E5"), async ({ app }, testInfo) => {
   const stageAtCancel = (await job(first)).stage;
   const t0 = Date.now();
   await cancel.click();
-  await expect.poll(async () => (await job(first)).status, { timeout: 30_000, intervals: [250] }).toBe("cancelled");
+  await expect.poll(async () => (await job(first)).status, { timeout: 30_000, intervals: [250] }).toBe("stopped");
   const stoppedSec = (Date.now() - t0) / 1000;
   await expect.poll(async () => (await job(second)).status, { timeout: 60_000, intervals: [500] }).not.toBe("queued");
   const startedSec = (Date.now() - t0) / 1000;
@@ -1652,7 +1652,7 @@ test(title("E5"), async ({ app }, testInfo) => {
   // Let the second prove it is really running, then take it out too.
   await expect.poll(async () => (await job(second)).progress, { timeout: 120_000 }).toBeGreaterThan(0);
   await page.locator(`.queue-row[data-id="${second}"] .queue-cancel`).click();
-  await expect.poll(async () => (await job(second)).status, { timeout: 30_000 }).toBe("cancelled");
+  await expect.poll(async () => (await job(second)).status, { timeout: 30_000 }).toBe("stopped");
   await showLibrary(page);
 });
 

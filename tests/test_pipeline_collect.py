@@ -12,6 +12,7 @@ import soundfile as sf
 from app.pipeline.collect import (
     _PEAK_POINTS,
     compute_stem_peaks,
+    fill_missing_peaks,
     merge_stem_peaks,
     presence_for_split,
 )
@@ -218,3 +219,83 @@ def test_split_presence_is_empty_without_a_reference(tmp_path):
     assert presence_for_split(rms_values, None) == {}
     assert presence_for_split(rms_values, {"drums": 90}) == {}
     assert presence_for_split(rms_values, {"vocals": 0}) == {}
+
+
+# --- jobs that never had peaks.json ---
+
+
+def _tone(seconds: float = 0.5, amp: float = 0.5) -> list[float]:
+    t = np.linspace(0, seconds, int(44100 * seconds), endpoint=False)
+    return (amp * np.sin(2 * np.pi * 220 * t)).tolist()
+
+
+def test_fill_missing_peaks_builds_every_stem_and_the_takes(tmp_path):
+    """An old or hand-made job opens with no peaks. Building them once lets
+    the studio stream it like any other song instead of swapping engines a
+    moment after it opened, which lost a take started in that moment."""
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    for name in ("vocals", "drums", "original"):
+        _write_wav(stems_dir / f"{name}.wav", _tone())
+    take = tmp_path / "takes" / "t0000aaaa" / "audio.wav"
+    take.parent.mkdir(parents=True)
+    _write_wav(take, _tone(amp=0.25))
+
+    gone = tmp_path / "takes" / "t0000bbbb" / "audio.wav"
+    assert fill_missing_peaks(stems_dir, {"t0000aaaa": take, "t0000bbbb": gone}) is True
+
+    peaks = json.loads((stems_dir / "peaks.json").read_text(encoding="utf-8"))
+    assert set(peaks) == {"vocals", "drums", "original", "t0000aaaa"}
+    assert len(peaks["vocals"]) == _PEAK_POINTS
+    assert max(mx for _, mx in peaks["t0000aaaa"]) == pytest.approx(0.25, abs=0.01)
+    assert not list(stems_dir.glob("*.tmp"))
+
+
+def test_fill_missing_peaks_leaves_an_existing_file_alone(tmp_path):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    _write_wav(stems_dir / "vocals.wav", _tone())
+    (stems_dir / "peaks.json").write_text('{"vocals": [[-1, 1]]}', encoding="utf-8")
+
+    assert fill_missing_peaks(stems_dir) is True
+    assert json.loads((stems_dir / "peaks.json").read_text(encoding="utf-8")) == {
+        "vocals": [[-1, 1]]
+    }
+
+
+def test_fill_missing_peaks_without_audio_writes_nothing(tmp_path):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    (stems_dir / "broken.wav").write_bytes(b"RIFF")
+
+    assert fill_missing_peaks(stems_dir) is False
+    assert not (stems_dir / "peaks.json").exists()
+
+
+def test_a_first_take_on_a_job_without_peaks_brings_the_stems_along(tmp_path):
+    """Saving a take writes peaks.json. On a job that had none, a file with the
+    take alone would tell the studio it has peaks and draw no stem."""
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    for name in ("vocals", "drums"):
+        _write_wav(stems_dir / f"{name}.wav", _tone())
+    take = tmp_path / "audio.wav"
+    _write_wav(take, _tone(amp=0.25))
+
+    rms = merge_stem_peaks(stems_dir, ["t0000aaaa"], sources={"t0000aaaa": take})
+
+    peaks = json.loads((stems_dir / "peaks.json").read_text(encoding="utf-8"))
+    assert set(peaks) == {"vocals", "drums", "t0000aaaa"}
+    # Only what was asked for is measured for presence.
+    assert set(rms) == {"t0000aaaa"}
+
+
+def test_removing_a_take_from_a_job_without_peaks_writes_no_empty_file(tmp_path):
+    stems_dir = tmp_path / "stems"
+    stems_dir.mkdir()
+    _write_wav(stems_dir / "vocals.wav", _tone())
+
+    merge_stem_peaks(stems_dir, [], remove=["t0000aaaa"])
+
+    # An empty file would read as "this job has peaks" and stop them being built.
+    assert not (stems_dir / "peaks.json").exists()

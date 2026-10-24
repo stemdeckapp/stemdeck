@@ -1,4 +1,4 @@
-"""Build a jobs directory containing two finished tracks, for the browser tests.
+"""Build a jobs directory containing finished tracks, for the browser tests.
 
 The point is that the tests talk to the real backend: real Range requests for
 stems, the real registry, the real endpoints. Only the pipeline is skipped,
@@ -37,7 +37,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import shutil
 import struct
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -57,6 +60,16 @@ SIBLING_DURATION_SEC = 2
 # which no upload ever produces, and the format icon passed against it while
 # never appearing for a real file (#690).
 SOURCE_URL = "local:e2e-fixture"
+
+# A finished song whose stems are stored as MP3 (#783), the way the pipeline
+# leaves one: <name>.mp3 only, the WAVs gone, the job recording "mp3". Its own
+# source, so it never meets the dedup branch above, and dated before the other
+# two, so it sorts after them wherever the library sorts by date.
+MP3_JOB_ID = "e2e0f00dface"
+MP3_TITLE = "E2E MP3 Track"
+MP3_SOURCE_URL = "local:e2e-mp3-fixture"
+MP3_KBPS = 128
+MP3_CREATED_AT = 1690000000.0
 STEMS = ["vocals", "drums", "bass", "other"]
 SAMPLE_RATE = 44100
 CHANNELS = 2
@@ -166,10 +179,57 @@ def _build_job(jobs_dir: Path, job_id: str, title: str, seconds: int) -> dict:
     }
 
 
+def _ffmpeg() -> str:
+    """The ffmpeg the app would use: STEMDECK_FFMPEG, else the one on PATH.
+    Not app.core.config: importing it here, outside the server's environment,
+    would create the app's default folders in the repository."""
+    return os.environ.get("STEMDECK_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _build_mp3_job(jobs_dir: Path) -> dict:
+    """The fixture track's shape, stored as MP3 with the encoder settings the
+    storage stage uses (app/pipeline/stem_storage.py): CBR libmp3lame with the
+    LAME header that carries the encoder delay."""
+    record = _build_job(jobs_dir, MP3_JOB_ID, MP3_TITLE, DURATION_SEC)
+    stems_dir = jobs_dir / MP3_JOB_ID / "stems"
+    for name in STEMS:
+        wav = stems_dir / f"{name}.wav"
+        mp3 = stems_dir / f"{name}.mp3"
+        subprocess.run(
+            [
+                _ffmpeg(),
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(wav),
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                f"{MP3_KBPS}k",
+                "-write_xing",
+                "1",
+                str(mp3),
+            ],
+            check=True,
+        )
+        wav.unlink()
+    record.update(
+        source_url=MP3_SOURCE_URL,
+        created_at=MP3_CREATED_AT,
+        stem_format="mp3",
+        stem_mp3_kbps=MP3_KBPS,
+        stems=[{"name": n, "url": f"/api/jobs/{MP3_JOB_ID}/stems/{n}.mp3"} for n in STEMS],
+    )
+    return record
+
+
 def seed(jobs_dir: Path) -> list[str]:
     records = [
         _build_job(jobs_dir, JOB_ID, TITLE, DURATION_SEC),
         _build_job(jobs_dir, SIBLING_JOB_ID, SIBLING_TITLE, SIBLING_DURATION_SEC),
+        _build_mp3_job(jobs_dir),
     ]
     (jobs_dir / "registry.json").write_text(
         json.dumps({"version": 1, "jobs": records}, indent=2) + "\n", encoding="utf-8"

@@ -120,13 +120,34 @@ _STEPS = (
 )
 
 
+def _remember_vocal_split(error: Exception | None) -> None:
+    """Keep the vocal split's result where the backend reads it (#832).
+
+    setup.log alone told nobody: the Vocals choice offered Lead + Backing as
+    usual and the first sign was one Vocals stem. Best-effort like the rest."""
+    try:
+        from app.pipeline import vocal_split_status
+
+        if error is None:
+            vocal_split_status.record(True, source="warmup")
+        else:
+            code = vocal_split_status.failure_code("load", error)
+            vocal_split_status.record(False, code, source="warmup")
+    except Exception as e:
+        print(f"WARMUP_NOTE vocal_split status not recorded: {e}", flush=True)
+
+
 def main() -> int:
     for name, fn in _STEPS:
         try:
             fn()
             print(f"WARMUP_OK {name}", flush=True)
+            if name == "vocal_split":
+                _remember_vocal_split(None)
         except Exception as e:
             print(f"WARMUP_FAILED {name} {e}", flush=True)
+            if name == "vocal_split":
+                _remember_vocal_split(e)
     return 0  # best-effort throughout -- see module docstring
 
 

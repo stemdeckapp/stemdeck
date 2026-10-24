@@ -9,7 +9,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/css/variables.css" />
     <link rel="stylesheet" href="/css/waves.css" />
+    <link rel="stylesheet" href="/css/recording.css" />
     <link rel="stylesheet" href="/css/daw.css" />
+    <link rel="stylesheet" href="/css/eq.css" />
+    <link rel="stylesheet" href="/css/mastering.css" />
+    <link rel="stylesheet" href="/css/video.css" />
+    <link rel="stylesheet" href="/css/karaoke.css" />
+    <link rel="stylesheet" href="/css/streamer.css" />
+    <link rel="stylesheet" href="/css/settings.css" />
   </head>
   <body>
 
@@ -159,12 +166,21 @@
                broken: nothing moved, because nothing it controls belongs to a
                track that has already been separated (#634). The bar has its
                own control, "Sections" in the Collapse row. -->
-          <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Experimental. Labels intro, verse and chorus while a track is imported. Applies to the next import, not to a track that is already open. To hide the sections bar, use Collapse > Sections." aria-label="Detect song structure on import (experimental)" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleAria">
-            <span class="structure-toggle-main">
-              <span data-i18n="structure.toggle">Detect structure</span>
-            </span>
-            <span class="structure-toggle-note" data-i18n="structure.experimental">Experimental</span>
-          </button>
+          <!-- The two import-time detections, as switches stacked in one
+               segment. Detect lyrics: LRCLIB and the transcript of the vocals
+               run only when it is on (off by default, kept until changed). -->
+          <div class="detect-toggles">
+            <button class="stem-choice structure-toggle" type="button" id="autoSectionsBtn" aria-pressed="false" title="Labels intro, verse and chorus while a track is imported. Applies to the next import, not to a track that is already open. To hide the sections bar, use Collapse > Sections." aria-label="Detect song structure on import" data-i18n-title="structure.toggleTitle" data-i18n-aria-label="structure.toggleAria">
+              <span class="structure-toggle-main">
+                <span data-i18n="structure.toggle">Detect structure</span>
+              </span>
+            </button>
+            <button class="stem-choice structure-toggle lyrics-toggle" type="button" id="autoLyricsBtn" aria-pressed="false" title="Finds the lyrics while a track is imported, and transcribes the vocals when none are found. Applies to the next import, not to a track that is already open." aria-label="Detect lyrics on import" data-i18n-title="lyricsToggle.title" data-i18n-aria-label="lyricsToggle.aria">
+              <span class="structure-toggle-main">
+                <span data-i18n="lyricsToggle.label">Detect lyrics</span>
+              </span>
+            </button>
+          </div>
 
           <!-- The loaded track, named where the two rows leave room for it.
                It used to fill the gutter beside the footer timeline. That
@@ -294,6 +310,18 @@
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
             </button>
+            <!-- The studio mode (static/js/modeUi.js): Practice or Advanced. The
+                 brain is the maintainer's choice of icon, drawn in the rail's
+                 line style (18 px, 1.6 stroke, the text colour). -->
+            <button class="rail-btn rail-mode" id="modeBtn" type="button" title="Mode" aria-label="Mode" aria-haspopup="menu" aria-expanded="false" aria-controls="modeMenu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5.2C11.4 3.6 9.9 2.8 8.4 3.1 6.9 3.4 6 4.6 6 6c-1.6.3-2.7 1.7-2.6 3.3-1.1.7-1.6 2-1.3 3.3.3 1.1 1 1.8 1.9 2.1-.3 1.5.4 3 1.8 3.6.6 1.6 2.2 2.6 3.9 2.4 1.1-.1 1.9-.8 2.3-1.7z"/>
+                <path d="M12 5.2c.6-1.6 2.1-2.4 3.6-2.1 1.5.3 2.4 1.5 2.4 2.9 1.6.3 2.7 1.7 2.6 3.3 1.1.7 1.6 2 1.3 3.3-.3 1.1-1 1.8-1.9 2.1.3 1.5-.4 3-1.8 3.6-.6 1.6-2.2 2.6-3.9 2.4-1.1-.1-1.9-.8-2.3-1.7z"/>
+                <path d="M12 5.2v13.8"/>
+                <path d="M6 6c.4 1 1.3 1.6 2.3 1.6M18 6c-.4 1-1.3 1.6-2.3 1.6M4 12.6c1-.4 2.1-.2 2.8.5M20 12.6c-1-.4-2.1-.2-2.8.5M7.2 17.1c.8-.6 1.9-.7 2.8-.2M16.8 17.1c-.8-.6-1.9-.7-2.8-.2"/>
+              </svg>
+              <span data-i18n="mode.label">Mode</span>
+            </button>
             <button class="rail-btn rail-favorites" type="button" title="Favorites" aria-label="Favorites" aria-pressed="false" data-i18n-title="nav.favorites" data-i18n-aria-label="nav.favorites">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -383,6 +411,14 @@
                 <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
               </svg>
               <span><span data-i18n="nav.weRecommendLine1">We</span><br><span data-i18n="nav.weRecommendLine2">Recommend</span></span>
+            </button>
+            <!-- Donate (donate.js): opens the Donate dialog. Optional support,
+                 nothing in the app depends on it. -->
+            <button class="rail-btn rail-donate" id="donateBtn" type="button" title="Support StemDeck with a donation" aria-label="Support StemDeck with a donation" aria-haspopup="dialog" data-i18n-title="donate.buttonTitle" data-i18n-aria-label="donate.buttonTitle">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              <span data-i18n="donate.button">Donate</span>
             </button>
             <button class="rail-btn" id="settingsBtn" type="button" aria-label="Settings" aria-haspopup="dialog" data-i18n-aria-label="nav.settings">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -564,7 +600,7 @@
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
                   <span class="sections-clear-label" data-i18n="sections.clear">Clear</span>
                 </button>
-                <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-title="sections.addAria" data-i18n-aria-label="sections.addAria">
+                <button class="sections-add-btn-label" id="sectionsAddBtn" type="button" title="Add section" aria-label="Add section" data-i18n-aria-label="sections.addAria">
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                   <span data-i18n="sections.add">Add</span>
                 </button>
@@ -601,7 +637,20 @@
           <div class="daw-wave-header">
             <div class="daw-wave-label">
               <span class="daw-label-title" data-i18n="mixer.title">Mixer</span>
+              <!-- Which stems are lanes in this mode, and which play inside
+                   Original (static/js/stemsControl.js, modeStems.js). Practice
+                   and Advanced only, each with its own choice. -->
+              <button class="lane-stems-btn" id="laneStemsBtn" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Choose which stems get their own lane" data-i18n-title="stems.button"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="stems.button">Stems</span><svg class="lane-stems-caret" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+              <!-- A recording track: its own row and lane, armed to record into
+                   (static/js/capture/takeLanes.js). An audio track records
+                   sound; a video track also films with the camera. The row is
+                   moved under the last extracted stem once a song is open. -->
+              <div class="add-track-row" id="addTrackRow" hidden>
+                <button class="add-track-btn" id="addTrackBtn" type="button" disabled title="Add a track that records sound" data-i18n-title="rec.track.addAudioTitle"><span aria-hidden="true">+</span> <span data-i18n="rec.track.addAudio">Audio track</span></button>
+                <button class="add-track-btn add-track-video" id="addVideoTrackBtn" type="button" disabled title="Add a track that films with the camera and records sound" data-i18n-title="rec.track.addVideoTitle"><span aria-hidden="true">+</span> <svg class="add-track-cam" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg> <span data-i18n="rec.track.addVideo">Video track</span></button>
+              </div>
               <span class="uplabel daw-label-sub" data-i18n="mixer.hint">Drag fader · M/S</span>
+              <p class="track-note" id="trackNote" role="status" aria-live="polite" hidden></p>
             </div>
             <div class="daw-ruler-area">
               <div class="lanes-ruler" data-position="top">
@@ -810,6 +859,20 @@
 
         </div><!-- /#lanes -->
 
+      <!-- The Master drawer (static/js/masterPanel.js): between the lanes and
+           the footer, in the layout, so the lanes give it room rather than
+           being covered. Built on first open. -->
+      <section class="master-drawer" id="master-drawer" hidden aria-label="Master" data-i18n-aria-label="master.regionAria"></section>
+
+      <!-- Karaoke Mode (static/js/karaoke/karaoke.js): a fixed layer over the
+           lanes and the master drawer while open, built on first open. -->
+      <section class="karaoke" id="karaoke" hidden aria-label="Karaoke Mode"></section>
+
+      <!-- Performance Mode (id "streamer", static/js/streamer/streamer.js): a fixed layer over
+           the lanes and the master drawer while open, down to the top of the
+           footer (which stays visible), built on first open. -->
+      <section class="streamer" id="streamer" hidden aria-label="Performance Mode"></section>
+
       <!-- ══ FOOTER — sibling of #lanes inside .daw-main-col, not clipped ══ -->
       <footer class="daw-footer">
 
@@ -836,6 +899,18 @@
                 </svg>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="pause-icon" aria-hidden="true" style="display:none">
                   <rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>
+                </svg>
+              </button>
+              <!-- Record a take over the song (static/js/capture/recordUi.js).
+                   The arrow beside it opens the recording panel below. -->
+              <button class="daw-iconbtn btn-transport rec-btn" id="t-rec" type="button" title="Record a take over the song" aria-label="Record" aria-pressed="false" data-i18n-title="rec.recordTitle" data-i18n-aria-label="rec.record">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7" fill="currentColor"/>
+                </svg>
+              </button>
+              <button class="rec-opts-btn" id="t-rec-opts" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="recPanel" title="Recording options" aria-label="Recording options" data-i18n-title="rec.optionsTitle" data-i18n-aria-label="rec.optionsTitle">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <path d="M6 15l6-6 6 6"/>
                 </svg>
               </button>
             </div>
@@ -977,6 +1052,14 @@
                   <button class="metro-mult-btn active" id="t-metro-one" type="button" role="radio" aria-checked="true" title="Detected tempo" data-i18n-title="click.detected">1x</button>
                   <button class="metro-mult-btn" id="t-metro-double" type="button" role="radio" aria-checked="false" title="Double time" data-i18n-title="click.double">x2</button>
                 </div>
+                <!-- The click's sound (#805). Its options are the presets in
+                     js/clickSounds.js, filled in by transport.js; Classic is
+                     here so the select is never empty before that runs. -->
+                <span class="metro-select-wrap">
+                  <select id="t-metro-sound" class="metro-select" title="The sound of the click, for playback, the count-in and exports" data-i18n-title="click.soundTitle" aria-label="Click sound" data-i18n-aria-label="click.soundAria">
+                    <option value="classic" selected data-i18n="click.soundClassic">Classic</option>
+                  </select>
+                </span>
               </div>
               <!-- Only ever visible once footerFit has decided the options do
                    not fit inline; see .collapse-click in daw.css. -->
@@ -993,6 +1076,17 @@
                act on the track rather than on playback, and they have to stay
                reachable when the clusters are too wide for the window. -->
           <div class="footer-track-actions">
+            <!-- Opens the Master drawer: loudness, glue compressor, limiter and
+                 the master EQ for the whole mix (exports carry it). The icon
+                 alone, like the click toggle (#681): gold with a dot when the
+                 master is on; the name and the preset are in the tooltip and
+                 the aria-label, and in the Export Mix menu's Master row. -->
+            <button class="track-chip master-chip" id="t-master-btn" type="button" aria-expanded="false" aria-controls="master-drawer" title="Master" aria-label="Master">
+              <svg class="master-chip-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M2 4h20" stroke-dasharray="2 2"/>
+              </svg>
+              <span class="master-chip-dot" aria-hidden="true"></span>
+            </button>
             <div class="track-chip-wrap" id="footer-export-wrap">
               <button class="track-chip track-chip-primary" id="t-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="t-export-panel">
                 <svg class="export-dl-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -1014,6 +1108,7 @@
                   <button class="export-fmt" id="t-fmt-ogg" type="button" role="radio" aria-checked="false">OGG</button>
                   <button class="export-fmt export-fmt-video" id="t-fmt-mp4" type="button" role="radio" aria-checked="false">MP4</button>
                 </div>
+                <div class="export-ogg-unavailable" role="status" data-i18n="export.oggUnavailable">OGG export is unavailable: it needs an FFmpeg with Vorbis support.</div>
                 <div class="export-video-failed" role="status" data-i18n="export.videoFailed">MP4 export is unavailable: the video could not be fetched for this track. The audio stems are unaffected.</div>
                 <label class="export-click-opt" id="t-export-click-wrap" title="Mix the click track into the exported file" data-i18n-title="export.includeClickTitle">
                   <input type="checkbox" id="t-export-click">
@@ -1023,6 +1118,16 @@
                   <input type="checkbox" id="t-export-count-in">
                   <span data-i18n="export.addCountIn">Add count-in (1 bar)</span>
                 </label>
+                <button class="chip-panel-item export-item export-master-row" id="t-export-master" type="button" role="menuitem" title="Open the master settings" data-i18n-title="master.exportRowTitle">
+                  <span class="chip-item-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M2 4h20" stroke-dasharray="2 2"/></svg>
+                  </span>
+                  <span class="chip-item-text">
+                    <span class="chip-item-title">Master: off</span>
+                    <span class="chip-item-desc"></span>
+                  </span>
+                  <svg class="export-master-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+                </button>
                 <button class="chip-panel-item export-item" id="t-export-mix" type="button" role="menuitem">
                   <span class="chip-item-icon" aria-hidden="true">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><line x1="4" y1="9" x2="4" y2="15"/><line x1="9" y1="5" x2="9" y2="19"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="19" y1="4" x2="19" y2="20"/></svg>
@@ -1137,6 +1242,135 @@
           </a>
         </div>
         <p class="about-credits" data-i18n="about.credits">Song details from AcoustID, MusicBrainz (CC0), Wikipedia (CC BY-SA) and Wikidata (CC0). Band profiles from Discogs, with a Discogs token set. Lyrics from LRCLIB. Transcription by OpenAI Whisper (MIT).</p>
+        <p class="about-license"><span data-i18n="about.license">StemDeck is free software under the GNU AGPL-3.0.</span> <a href="https://github.com/stemdeckapp/stemdeck" target="_blank" rel="noopener noreferrer" data-i18n="about.source">Source code</a></p>
+      </div>
+    </div>
+
+    <!-- Donate dialog (donate.js), opened from the rail. Laid out like a donate
+         page: a hero, the ways to give with amounts on the left, sharing on the
+         right. Plain links only: nothing loads from Stripe or Liberapay until
+         the arrow is clicked, and then it opens in the system browser. While a
+         way's link is still a placeholder (donateLinks.js) the arrow is a
+         disabled "Coming soon". The QR code comes from this server (/api/qr). -->
+    <div class="about-backdrop hidden" id="donateDialog" role="dialog" aria-modal="true" aria-labelledby="donateTitle" aria-describedby="donateIntro">
+      <div class="about-card donate-card">
+        <button class="about-close" id="donateClose" type="button" aria-label="Close donate dialog" data-i18n-aria-label="donate.closeAria">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <section class="donate-hero">
+          <div class="donate-hero-text">
+            <span class="donate-mark" aria-hidden="true">
+              <svg width="26" height="26" viewBox="0 0 28 28" fill="none">
+                <rect x="2" y="10" width="3" height="8" rx="1.5" fill="currentColor" opacity=".5"/>
+                <rect x="7" y="6" width="3" height="16" rx="1.5" fill="currentColor" opacity=".7"/>
+                <rect x="12" y="2" width="4" height="24" rx="2" fill="currentColor"/>
+                <rect x="18" y="6" width="3" height="16" rx="1.5" fill="currentColor" opacity=".7"/>
+                <rect x="23" y="10" width="3" height="8" rx="1.5" fill="currentColor" opacity=".5"/>
+              </svg>
+            </span>
+            <h2 id="donateTitle" data-i18n="donate.title">Support StemDeck, free and open for everyone</h2>
+            <p class="donate-sub" id="donateIntro" data-i18n="donate.subtitle">I make StemDeck on my own, and it is free and open source. Donating is optional: every feature stays free, whether you donate or not.</p>
+          </div>
+          <div class="donate-art" aria-hidden="true">
+            <svg class="donate-art-svg" viewBox="0 0 320 196" width="320" height="196" aria-hidden="true" focusable="false">
+            <rect class="donate-art-lane" x="0.5" y="6.5" width="319" height="31" rx="7"/>
+            <path class="donate-art-wave donate-art-vocals" d="M8 17.6V26.4M12 17.3V26.7M16 15V29M20 16.3V27.7M24 14.1V29.9M28 14.4V29.6M32 15.5V28.5M36 13.7V30.3M40 15.8V28.2M44 14.7V29.3M48 16.5V27.5M52 17.1V26.9M56 16.9V27.1M60 16.8V27.2M64 19.1V24.9M68 19.6V24.4M72 19.7V24.3M76 19.9V24.1M80 20.5V23.5M84 20.7V23.3M88 20.2V23.8M92 20.6V23.4M96 19.2V24.8M100 21V23M104 21V23M108 21V23M112 21V23M116 21V23M120 21V23M124 13.9V30.1M128 13.3V30.7M132 14.2V29.8M136 13.5V30.5M140 15.7V28.3M144 16V28M148 16V28M152 15.1V28.9M156 16.7V27.3M160 17.8V26.2M164 18.1V25.9M168 19.1V24.9M172 20V24M176 20V24M180 20.4V23.6M184 20.8V23.2M188 20.5V23.5M192 20.2V23.8M196 19.3V24.7"/>
+            <path class="donate-art-wave donate-art-vocals is-ahead" d="M200 18.7V25.3M204 18.7V25.3M208 16.3V27.7M212 17.6V26.4M216 15.9V28.1M220 14V30M224 15.7V28.3M228 13.9V30.1M232 15.6V28.4M236 13V31M240 12.8V31.2M244 14V30M248 21V23M252 21V23M256 21V23M260 21V23M264 18V26M268 19V25M272 19.3V24.7M276 19.8V24.2M280 20.6V23.4M284 20.6V23.4M288 20.9V23.1M292 20.1V23.9M296 19.6V24.4M300 18.4V25.6M304 17.8V26.2M308 18V26M312 16.9V27.1"/>
+            <rect class="donate-art-lane" x="0.5" y="45.5" width="319" height="31" rx="7"/>
+            <path class="donate-art-wave donate-art-drums" d="M8 50.6V71.4M12 57.9V64.1M16 59V63M20 58.3V63.7M24 54.4V67.6M28 58.7V63.3M32 58.8V63.2M36 58.9V63.1M40 50.6V71.4M44 57.8V64.2M48 58.8V63.2M52 58.6V63.4M56 54.4V67.6M60 58.4V63.6M64 57.6V64.4M68 58.9V63.1M72 50.6V71.4M76 58.3V63.7M80 58.1V63.9M84 57.6V64.4M88 54.4V67.6M92 57.7V64.3M96 57.6V64.4M100 58.6V63.4M104 50.6V71.4M108 58.3V63.7M112 58.4V63.6M116 57.6V64.4M120 54.4V67.6M124 57.4V64.6M128 58.8V63.2M132 58.7V63.3M136 50.6V71.4M140 58.6V63.4M144 58.6V63.4M148 58.2V63.8M152 54.4V67.6M156 58V64M160 58.6V63.4M164 59V63M168 50.6V71.4M172 58.3V63.7M176 58.4V63.6M180 58.1V63.9M184 54.4V67.6M188 57.4V64.6M192 57.9V64.1M196 58.2V63.8"/>
+            <path class="donate-art-wave donate-art-drums is-ahead" d="M200 50.6V71.4M204 58V64M208 57.9V64.1M212 58.9V63.1M216 54.4V67.6M220 57.5V64.5M224 57.7V64.3M228 57.6V64.4M232 50.6V71.4M236 57.7V64.3M240 58.4V63.6M244 58.4V63.6M248 54.4V67.6M252 58.8V63.2M256 58V64M260 58.9V63.1M264 50.6V71.4M268 58.9V63.1M272 58.7V63.3M276 58.8V63.2M280 54.4V67.6M284 58.5V63.5M288 58.9V63.1M292 59V63M296 50.6V71.4M300 58.8V63.2M304 58.9V63.1M308 58.4V63.6M312 54.4V67.6"/>
+            <rect class="donate-art-lane" x="0.5" y="84.5" width="319" height="31" rx="7"/>
+            <path class="donate-art-wave donate-art-bass" d="M8 95V105M12 93.9V106.1M16 93.7V106.3M20 93.8V106.2M24 93.3V106.7M28 92.9V107.1M32 92.6V107.4M36 92.6V107.4M40 91.8V108.2M44 91.5V108.5M48 91.9V108.1M52 91.9V108.1M56 92.3V107.7M60 92.3V107.7M64 92.3V107.7M68 92.5V107.5M72 92.3V107.7M76 93.2V106.8M80 93.6V106.4M84 93.2V106.8M88 93.9V106.1M92 94.6V105.4M96 94.7V105.3M100 95.5V104.5M104 95.5V104.5M108 95.5V104.5M112 95.9V104.1M116 96.3V103.7M120 97V103M124 97.1V102.9M128 97.5V102.5M132 97.1V102.9M136 97.3V102.7M140 97.1V102.9M144 97.5V102.5M148 97.4V102.6M152 96.8V103.2M156 96.4V103.6M160 96.2V103.8M164 96V104M168 95.6V104.4M172 95.3V104.7M176 95.4V104.6M180 94.8V105.2M184 94.5V105.5M188 94.4V105.6M192 94V106M196 93.4V106.6"/>
+            <path class="donate-art-wave donate-art-bass is-ahead" d="M200 93.1V106.9M204 92.5V107.5M208 92V108M212 92.2V107.8M216 91.6V108.4M220 91.5V108.5M224 91.5V108.5M228 92V108M232 92.2V107.8M236 92.3V107.7M240 92.5V107.5M244 92.7V107.3M248 92.6V107.4M252 92.7V107.3M256 93.1V106.9M260 93.8V106.2M264 94V106M268 94.3V105.7M272 95.3V104.7M276 95.2V104.8M280 95.4V104.6M284 95.8V104.2M288 96.2V103.8M292 96.7V103.3M296 97.2V102.8M300 96.9V103.1M304 97.4V102.6M308 97.1V102.9M312 96.9V103.1"/>
+            <rect class="donate-art-lane" x="0.5" y="123.5" width="319" height="31" rx="7"/>
+            <path class="donate-art-wave donate-art-guitar" d="M8 135.8V142.2M12 135.4V142.6M16 134.2V143.8M20 134.1V143.9M24 134.6V143.4M28 134.4V143.6M32 134V144M36 132V146M40 131.9V146.1M44 133.1V144.9M48 131.2V146.8M52 130.5V147.5M56 131.1V146.9M60 131.8V146.2M64 131.1V146.9M68 132.2V145.8M72 132.4V145.6M76 129.7V148.3M80 130.7V147.3M84 131.1V146.9M88 130V148M92 131.5V146.5M96 130.5V147.5M100 130.9V147.1M104 132.7V145.3M108 132.8V145.2M112 133V145M116 133.4V144.6M120 133.1V144.9M124 134.1V143.9M128 134.1V143.9M132 135V143M136 134.2V143.8M140 135.4V142.6M144 135.7V142.3M148 135.2V142.8M152 134.3V143.7M156 134.6V143.4M160 133.4V144.6M164 133.7V144.3M168 133.2V144.8M172 132.9V145.1M176 133.7V144.3M180 132.5V145.5M184 132.8V145.2M188 133V145M192 130.8V147.2M196 132.3V145.7"/>
+            <path class="donate-art-wave donate-art-guitar is-ahead" d="M200 131.3V146.7M204 130.5V147.5M208 130.9V147.1M212 131.5V146.5M216 131V147M220 131V147M224 130.4V147.6M228 132.4V145.6M232 131.3V146.7M236 132.4V145.6M240 132.5V145.5M244 131.6V146.4M248 132.5V145.5M252 132.7V145.3M256 132.7V145.3M260 132.8V145.2M264 134.1V143.9M268 134.2V143.8M272 134.8V143.2M276 135.2V142.8M280 135.4V142.6M284 135.5V142.5M288 134.9V143.1M292 134.6V143.4M296 133.4V144.6M300 133.4V144.6M304 132.6V145.4M308 132.1V145.9M312 133.2V144.8"/>
+            <rect class="donate-art-lane" x="0.5" y="162.5" width="319" height="31" rx="7"/>
+            <path class="donate-art-wave donate-art-piano" d="M8 172V184M12 171.4V184.6M16 171.5V184.5M20 172.4V183.6M24 172.4V183.6M28 171.8V184.2M32 172.4V183.6M36 172.1V183.9M40 172.3V183.7M44 171.4V184.6M48 171.2V184.8M52 171V185M56 172.2V183.8M60 171.3V184.7M64 171.4V184.6M68 172.2V183.8M72 171.2V184.8M76 171.1V184.9M80 172.2V183.8M84 171.3V184.7M88 172.1V183.9M92 172.1V183.9M96 171.5V184.5M100 171.8V184.2M104 172.7V183.3M108 172.5V183.5M112 172.5V183.5M116 172.8V183.2M120 173.1V182.9M124 173.1V182.9M128 172.9V183.1M132 173.6V182.4M136 173.3V182.7M140 173.5V182.5M144 173.9V182.1M148 173.9V182.1M152 173.9V182.1M156 174.1V181.9M160 174.4V181.6M164 174.4V181.6M168 174.6V181.4M172 174.6V181.4M176 174.5V181.5M180 174.4V181.6M184 174.3V181.7M188 173.9V182.1M192 173.9V182.1M196 173.9V182.1"/>
+            <path class="donate-art-wave donate-art-piano is-ahead" d="M200 173.6V182.4M204 173.1V182.9M208 173V183M212 173.3V182.7M216 173.3V182.7M220 172.5V183.5M224 172.6V183.4M228 172.4V183.6M232 172.9V183.1M236 172.9V183.1M240 172V184M244 172.3V183.7M248 172.6V183.4M252 171.4V184.6M256 171.7V184.3M260 171.4V184.6M264 172.4V183.6M268 171.2V184.8M272 172.4V183.6M276 171.1V184.9M280 171.7V184.3M284 171.9V184.1M288 171.5V184.5M292 171V185M296 172V184M300 172.2V183.8M304 171.6V184.4M308 172.1V183.9M312 172.3V183.7"/>
+            <path class="donate-art-head" d="M196 1V195"/>
+            <path class="donate-art-head-cap" d="M191 0h10l-5 6z"/>
+            </svg>
+          </div>
+        </section>
+        <div class="donate-grid">
+          <section class="donate-panel donate-give" aria-label="Ways to donate" data-i18n-aria-label="donate.waysAria">
+            <div class="donate-ways">
+              <button class="donate-way" type="button" data-way="stripe" aria-pressed="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9.2c-.6-.9-1.7-1.4-3-1.4-1.8 0-3 .9-3 2.1 0 2.9 6 1.4 6 4.3 0 1.3-1.3 2.1-3 2.1-1.4 0-2.5-.6-3.1-1.5M12 6v1.8M12 16.3V18"/></svg>
+                <span class="donate-way-name" data-i18n="donate.oneTime">One-time donation</span>
+                <span class="donate-way-via" data-i18n="donate.viaStripe">via Stripe</span>
+              </button>
+              <button class="donate-way" type="button" data-way="liberapay" aria-pressed="false">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 11V7.5A2.5 2.5 0 0 0 18 5H6a2.5 2.5 0 0 0-2.5 2.5V18A2.5 2.5 0 0 0 6 20.5h5M3.5 10h17M8 3v4M16 3v4"/><path d="M21 17.5a3.5 3.5 0 1 1-1-2.5M20.3 13v2h-2"/></svg>
+                <span class="donate-way-name" data-i18n="donate.recurring">Recurring donation</span>
+                <span class="donate-way-via" data-i18n="donate.viaLiberapay">via Liberapay</span>
+              </button>
+            </div>
+            <div class="donate-presets" role="group" aria-label="Amount" data-i18n-aria-label="donate.amountsAria">
+              <button class="donate-preset" type="button" data-amount="5" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5V9ZM16 10.5h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5v2.5M11 3.5v2.5M14 3.5v2.5"/></svg><b>$5</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.coffee">a cup of coffee</span>
+              </button>
+              <button class="donate-preset" type="button" data-amount="10" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="2.5"/></svg><b>$10</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.strings">a set of strings</span>
+              </button>
+              <button class="donate-preset" type="button" data-amount="15" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 20.5 17.5 5.5M19.5 20.5 6.5 5.5"/><circle cx="18.3" cy="4.6" r="1.4"/><circle cx="5.7" cy="4.6" r="1.4"/></svg><b>$15</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.sticks">a pair of drumsticks</span>
+              </button>
+              <button class="donate-preset" type="button" data-amount="30" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v7a2.5 2.5 0 0 0 5 0V3M8.5 3v18M17.5 21V3c-2 1.5-3 4-3 7v3h3"/></svg><b>$30</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.lunch">lunch for two</span>
+              </button>
+              <button class="donate-preset" type="button" data-amount="50" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"/><circle cx="9" cy="7.5" r="1.5"/><circle cx="15" cy="7.5" r="1.5"/><rect x="8.5" y="13" width="7" height="5" rx="1"/></svg><b>$50</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.pedal">a guitar pedal</span>
+              </button>
+              <button class="donate-preset" type="button" data-amount="100" aria-pressed="false">
+                <span class="donate-preset-top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="5" height="7" rx="2"/><rect x="16" y="14" width="5" height="7" rx="2"/></svg><b>$100</b></span>
+                <span class="donate-preset-cap" data-i18n="donate.preset.headphones">studio headphones</span>
+              </button>
+            </div>
+            <div class="donate-custom-row">
+              <input class="donate-custom" id="donateCustom" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="8" placeholder="Custom amount (from $2)" aria-label="Custom amount in US dollars, from $2" aria-describedby="donateHint" data-i18n-placeholder="donate.customPlaceholder" data-i18n-aria-label="donate.customAria">
+              <a class="donate-go" id="donateGo" target="_blank" rel="noopener noreferrer" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </a>
+              <span class="donate-soon-wrap" id="donateSoonWrap">
+                <button class="donate-soon" id="donateSoon" type="button" disabled><span data-i18n="donate.soon">Coming soon</span></button>
+              </span>
+            </div>
+            <p class="donate-hint" id="donateHint" aria-live="polite" hidden></p>
+          </section>
+          <section class="donate-panel donate-share" aria-labelledby="donateShareTitle">
+            <svg class="donate-share-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.2a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="2.4"/></svg>
+            <h3 class="donate-share-title" id="donateShareTitle" data-i18n="donate.shareTitle">Share StemDeck with a friend</h3>
+            <div class="donate-share-body">
+              <img class="donate-qr" id="donateQr" width="132" height="132" alt="QR code for the StemDeck page on GitHub">
+              <div class="donate-share-btns">
+                <button class="donate-sq" id="donateCopy" type="button">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+                  <span class="donate-sq-label" data-i18n="donate.copy">Copy</span>
+                </button>
+                <button class="donate-sq" id="donateShare" type="button" hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3.5M8 7.5l4-4 4 4M7 10.5H5.5v10h13v-10H17"/></svg>
+                  <span class="donate-sq-label" data-i18n="donate.share">Share</span>
+                </button>
+                <a class="donate-sq" id="donateStar" href="https://github.com/stemdeckapp/stemdeck" target="_blank" rel="noopener noreferrer">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9Z"/></svg>
+                  <span class="donate-sq-label" data-i18n="donate.star">Star</span>
+                </a>
+                <a class="donate-sq" id="donateReleases" href="https://github.com/stemdeckapp/stemdeck/releases" target="_blank" rel="noopener noreferrer">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12.6V4.5a1 1 0 0 1 1-1h8.1l8 8a1.5 1.5 0 0 1 0 2.1l-7 7a1.5 1.5 0 0 1-2.1 0Z"/><circle cx="8" cy="8" r="1.5"/></svg>
+                  <span class="donate-sq-label" data-i18n="donate.releases">Releases</span>
+                </a>
+              </div>
+              <p class="donate-addr">github.com/stemdeckapp/stemdeck</p>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 
@@ -1244,6 +1478,37 @@
 
     <!-- First, so its handlers are installed before main.js is evaluated and
          can report a failure to parse, resolve an import, or wire the UI. -->
+    <!-- Recording panel, opened from the arrow beside Record. A popover over
+         the footer, so it lives outside it. -->
+    <div class="rec-panel" id="recPanel" role="dialog" aria-labelledby="recPanelTitle" hidden>
+      <div class="rec-panel-head">
+        <span class="rec-panel-title" id="recPanelTitle" data-i18n="rec.panelTitle">Record a take</span>
+        <!-- Input, camera and the latency test are set once, in Settings. -->
+        <button class="rec-link" id="recSettingsLink" type="button" data-i18n="rec.settingsLink">Input and camera settings</button>
+      </div>
+      <div class="rec-permission" id="recPermission" hidden></div>
+      <div class="rec-meter" aria-hidden="true"><div class="rec-meter-fill" id="recMeterFill"></div></div>
+      <label class="rec-check">
+        <input type="checkbox" id="recMonitor">
+        <span data-i18n="rec.monitor">Hear myself through StemDeck</span>
+      </label>
+      <p class="rec-note rec-monitor-delay" id="recMonitorDelay"></p>
+      <p class="rec-note" data-i18n="rec.headphonesNote">Use headphones. With speakers the song bleeds into the take, and hearing yourself can feed back.</p>
+      <fieldset class="rec-mute">
+        <legend data-i18n="rec.muteDuring">Mute while recording</legend>
+        <div class="rec-mute-list" id="recMuteList"></div>
+      </fieldset>
+      <div id="videoPanel" class="video-panel" hidden></div>
+      <div class="rec-review" id="recReview" hidden>
+        <p class="rec-review-text" id="recReviewText"></p>
+        <div class="rec-actions">
+          <button class="rec-small-btn primary" id="recKeep" type="button" data-i18n="rec.review.keep">Keep</button>
+          <button class="rec-small-btn" id="recDiscard" type="button" data-i18n="rec.review.discard">Discard</button>
+        </div>
+      </div>
+      <p class="rec-status" id="recStatus" role="status" aria-live="polite"></p>
+    </div>
+
     <script type="module" src="/js/boot-diagnostics.js"></script>
     <script type="module" src="/js/main.js"></script>
     <script type="module" src="/js/ui-chrome.js"></script>

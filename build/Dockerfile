@@ -113,6 +113,8 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY app/ ./app/
 COPY static/ ./static/
+# The AGPL asks for a copy of the license with every copy of the program.
+COPY LICENSE ./LICENSE
 
 # Create the app user and own all non-bind-mounted paths. /app/jobs is a
 # bind mount at runtime -- the entrypoint script re-chowns it to app:app

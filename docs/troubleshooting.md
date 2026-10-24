@@ -22,6 +22,22 @@ Three ways to get a secure context, in order of least effort:
 
 **`./run.sh: Permission denied`:** run `chmod +x run.sh`.
 
+## Linux desktop app
+
+**StemDeck closes as soon as it opens on Wayland:** the terminal shows `Error 71 (Protocol error) dispatching to Wayland display`, often after `Missing acquire timeline`. This is WebKitGTK's DMA-BUF renderer, seen mostly with the NVIDIA driver. StemDeck turns that renderer off by itself in two cases: a Wayland session with the NVIDIA driver loaded, and the launch after one that closed before its window finished loading. That second switch is saved, so it stays off. If StemDeck still closes, start it with the renderer off:
+
+```
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./StemDeck
+```
+
+To control it yourself, set `STEMDECK_WEBKIT_DMABUF`:
+
+- `auto` (the default): the two automatic cases above.
+- `off`: the renderer is always off.
+- `on`: the renderer stays on, nothing is switched for you, and a saved switch is forgotten.
+
+A `WEBKIT_DISABLE_DMABUF_RENDERER` you set yourself always wins over all of this. Each launch writes the choice it made to `logs/setup.log` in the data directory.
+
 ## Layout on disk
 
 ```

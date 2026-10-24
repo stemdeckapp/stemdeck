@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import math
+import re
 import subprocess
 from pathlib import Path
 
-from app.core.config import JOBS_DIR, TIMEOUT_ANALYZE, ffmpeg_executable
-from app.core.models import Job, JobCancelled, _set
+from app.core.config import EBUR128_FRAMELOG, JOBS_DIR, TIMEOUT_ANALYZE, ffmpeg_executable
+from app.core.models import LOUDNESS_VERSION, Job, JobCancelled, _set
 from app.pipeline.cancel import check_cancel, run_registered
 
 logger = logging.getLogger("stemdeck.analyze")
@@ -224,34 +226,82 @@ def _detect_key(
     return label, scale_name, round(confidence * 100)
 
 
-def _measure_loudness(y: object, sr: int) -> tuple[float | None, float | None]:
-    """Compute integrated loudness (LUFS, BS.1770) and sample peak (dBFS)
-    of the loaded mono signal. Returns (lufs, peak_db); either may be
-    None on failure or silence. We use sample peak rather than oversampled
-    true peak -- the difference is typically <1 dB and not worth the 4x
-    resample cost for a display field."""
-    import numpy as np
+# The loudness card's numbers come from ffmpeg's ebur128 filter: ITU-R BS.1770-4
+# integrated loudness (gated, K-weighted, all channels, the file's own rate) and
+# the 4x oversampled true peak, over the whole track. It is the same measurement
+# pyloudnorm gives on the stereo mix (within 0.01 LU on the measured songs) and
+# a streaming service's meter, at about 2 s a song with no new dependency. The
+# first version of this card measured a 22 kHz MONO buffer cut at 180 s: a mono
+# sum counts as one channel, so it read about 4 LU too low.
+_I_RE = re.compile(r"^\s*I:\s*(-?\d+(?:\.\d+)?|-?inf)\s*LUFS", re.MULTILINE)
+_PEAK_RE = re.compile(r"^\s*Peak:\s*(-?\d+(?:\.\d+)?|-?inf)\s*dBFS", re.MULTILINE)
+# ebur128 reports its floor, not -inf, for a track that is all silence.
+_LUFS_FLOOR = -69.9
 
-    if y is None or getattr(y, "size", 0) == 0:
+
+def parse_ebur128_summary(text: str) -> tuple[float | None, float | None]:
+    """(integrated LUFS, true peak dBTP) from ffmpeg's ebur128 summary, or None
+    for either that is missing, silent or not a number."""
+    lufs_all = _I_RE.findall(text)
+    peak_all = _PEAK_RE.findall(text)
+    lufs = _finite(lufs_all[-1]) if lufs_all else None
+    peak = _finite(peak_all[-1]) if peak_all else None
+    if lufs is not None and lufs <= _LUFS_FLOOR:
+        lufs = None
+    return lufs, peak
+
+
+def _finite(raw: str) -> float | None:
+    value = float(raw)
+    return value if math.isfinite(value) else None
+
+
+def measure_loudness(
+    sources: list[Path], job: Job | None = None
+) -> tuple[float | None, float | None]:
+    """Integrated loudness (LUFS, BS.1770-4 gated) and true peak (dBTP) of the
+    whole stereo mix, over the full track. One file is measured as it is; several
+    (a job whose source was not kept: its stems) are summed first, which is the
+    mix. Returns (None, None) when ffmpeg is missing or fails, or the audio is
+    silent: these are display fields, so a failure degrades to "no value".
+
+    With a `job` the process is registered so a cancel stops it (#748); the
+    caller checks the cancel flag when this returns."""
+    if not sources:
         return None, None
-
-    peak_lin = float(np.abs(y).max())
-    peak_db = 20.0 * float(np.log10(peak_lin)) if peak_lin > 1e-9 else None
-
-    lufs: float | None = None
+    cmd: list[str] = [ffmpeg_executable(), "-hide_banner", "-nostdin", "-vn"]
+    for source in sources:
+        cmd += ["-i", str(source)]
+    meter = f"ebur128=peak=true:framelog={EBUR128_FRAMELOG}"
+    if len(sources) == 1:
+        cmd += ["-af", meter]
+    else:
+        pads = "".join(f"[{i}:a]" for i in range(len(sources)))
+        cmd += ["-filter_complex", f"{pads}amix=inputs={len(sources)}:normalize=0,{meter}"]
+    cmd += ["-f", "null", "-"]
     try:
-        import pyloudnorm as pyln
+        if job is not None:
+            result = run_registered(job, cmd, TIMEOUT_ANALYZE)
+        else:
+            result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_ANALYZE)
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning("loudness measurement failed: %s", e)
+        return None, None
+    if result.returncode != 0:
+        logger.warning("loudness measurement failed: ffmpeg exit %s", result.returncode)
+        return None, None
+    return parse_ebur128_summary(result.stderr.decode("utf-8", errors="replace"))
 
-        meter = pyln.Meter(sr)  # BS.1770-4 with default 400ms blocks
-        lufs_raw = float(meter.integrated_loudness(y))
-        # pyloudnorm returns -inf for silence; surface as None instead so
-        # the frontend can hide the field rather than render "-inf LUFS".
-        if np.isfinite(lufs_raw):
-            lufs = lufs_raw
-    except (ImportError, ValueError) as e:
-        # ValueError fires if the clip is shorter than the gating window.
-        logger.warning("LUFS measurement failed: %s", e)
-    return lufs, peak_db
+
+def dynamic_range_db(lufs: float | None, peak_db: float | None) -> float | None:
+    """The card's Dynamic Range: true peak minus integrated loudness, the
+    peak-to-loudness ratio (PLR) in dB. It is NOT EBU R128's loudness range
+    (LRA, the spread of short-term loudness): a steady loud master and a
+    dynamic one can share an LRA, while PLR is what separates a crushed master
+    (about 6) from an open one (14 and up)."""
+    if lufs is None or peak_db is None:
+        return None
+    return round(peak_db - lufs, 1)
 
 
 def _load_audio_ffmpeg(
@@ -339,6 +389,17 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
     them, and the decode is registered so cancel can stop it outright (#748)."""
     logger.info("analyze: entering for job %s, source=%s", job.id, source)
     _set(job, status="analyzing", progress=0.0, stage="Analyzing audio...")
+    # Loudness first, and on its own: it needs no librosa, and it reads the
+    # whole stereo source, not the 22 kHz mono 180 s buffer the key and tempo use.
+    lufs, peak_db = measure_loudness([source], job=job)
+    check_cancel(job)
+    _set(
+        job,
+        lufs=lufs,
+        peak_db=peak_db,
+        dynamic_range=dynamic_range_db(lufs, peak_db),
+        loudness_version=LOUDNESS_VERSION,
+    )
     try:
         import librosa
     except ImportError:
@@ -380,15 +441,6 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         key, scale, key_confidence = detected if detected else (None, None, None)
         check_cancel(job)
 
-        # LUFS / peak. Computed on the same 22 kHz mono buffer; this
-        # loses a few dB of accuracy vs full-sample-rate stereo, but
-        # it's good enough for a UI display and adds ~50 ms to analyze.
-        lufs, peak_db = _measure_loudness(y, sr)
-
-        dynamic_range: float | None = None
-        if lufs is not None and peak_db is not None:
-            dynamic_range = round(peak_db - lufs, 1)
-
         # Beat interval coefficient of variation → stability 0-100.
         # CV = std/mean of inter-beat intervals; CV=0 is perfectly metronomic.
         tempo_stability: int | None = None
@@ -408,9 +460,6 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
             key=key,
             scale=scale,
             key_confidence=key_confidence,
-            lufs=lufs,
-            peak_db=peak_db,
-            dynamic_range=dynamic_range,
             tempo_stability=tempo_stability,
             progress=1.0,
             stage="Analysis complete",

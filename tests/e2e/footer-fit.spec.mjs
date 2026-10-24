@@ -65,7 +65,12 @@ test.describe("footer fit", () => {
     // Asserts the property rather than the collapse class. Whether this width
     // needs to wrap at all depends on the content, and the seeded fixture's
     // strip is narrower than a real six-stem track's.
-    await page.setViewportSize({ width: 1728, height: 900 });
+    //
+    // 1792 rather than 1728 since Record and its options arrow joined the
+    // transport cluster (62px), and 1840 since the Master pill joined Export
+    // Mix (36px and its 8px gap): the same "a little short" row, one control
+    // wider each time.
+    await page.setViewportSize({ width: 1840, height: 900 });
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page, { revealOptions: false });
 

@@ -23,7 +23,12 @@ from app.core.models import Job
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
-from app.core.settings import get_auto_sections, get_max_duration_sec, get_playlist_max_items
+from app.core.settings import (
+    get_auto_lyrics,
+    get_auto_sections,
+    get_max_duration_sec,
+    get_playlist_max_items,
+)
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue
 from app.pipeline.download import InvalidPlaylistURL, expand_playlist
@@ -142,6 +147,7 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
     # Read once for the batch, so every job in one playlist import agrees, and
     # captured now rather than when each job reaches its sections stage.
     auto_sections = get_auto_sections()
+    auto_lyrics = get_auto_lyrics()
     created: list[dict[str, Any]] = []
     for item in items:
         job = Job(
@@ -153,6 +159,7 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
             title=item["title"] or None,
             thumbnail=item.get("thumbnail"),
             auto_sections=auto_sections,
+            auto_lyrics=auto_lyrics,
         )
         if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
             break  # queue filled up mid-loop; report what did land

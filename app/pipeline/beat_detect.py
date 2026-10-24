@@ -23,7 +23,7 @@ cannot load. Selected automatically in that case; forceable with
 STEMDECK_BEAT_DETECTOR=librosa.
 
 Deliberately *not* madmom: its pretrained models are CC BY-NC-SA 4.0, which
-would quietly make an Apache-2.0 project non-commercial for everyone who
+would quietly make an AGPL-3.0 project non-commercial for everyone who
 installs it. Its DBN post-processor is BSD and model-free, and beat_this can use
 it, but doing so needs a git install with an undeclared Cython build step on
 three platforms. The interior-gap fill in beatgrid.py recovers what the DBN was

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.core.models import Job
 from app.core.registry import _jobs
-from tests.ffmpeg_probe import ffmpeg_available, skip_without_ffmpeg
+from tests.ffmpeg_probe import ffmpeg_available, skip_without_ffmpeg, skip_without_vorbis
 
 
 @pytest.fixture(autouse=True)
@@ -197,6 +197,39 @@ def test_peaks_404_when_file_missing(client, tmp_path):
 
     r = client.get(f"/api/jobs/{job.id}/stems/peaks.json")
     assert r.status_code == 404
+
+
+def test_peaks_are_built_on_first_request_when_missing(client, tmp_path, monkeypatch):
+    """An old or hand-made job has stems and no peaks.json. The first request
+    builds it (the stems and the job's takes), so the studio streams the song
+    instead of decoding every stem and swapping engines under a take."""
+    import numpy as np
+    import soundfile as sf
+
+    from app.core import takes as takes_mod
+
+    monkeypatch.setattr(takes_mod, "JOBS_DIR", tmp_path)
+    job = Job(id="abcdefabcd10")
+    job.status = "done"
+    job.takes = [{"id": "t0000aaaa"}, {"id": "../escape"}]
+    _jobs[job.id] = job
+    stems_dir = tmp_path / job.id / "stems"
+    stems_dir.mkdir(parents=True)
+    tone = (0.5 * np.sin(np.linspace(0, 200 * np.pi, 22050))).astype("float32")
+    for name in ("vocals", "drums"):
+        sf.write(stems_dir / f"{name}.wav", tone, 44100, subtype="PCM_16")
+    take = tmp_path / job.id / "takes" / "t0000aaaa"
+    take.mkdir(parents=True)
+    sf.write(take / "audio.wav", tone * 0.5, 44100, subtype="FLOAT")
+
+    r = client.get(f"/api/jobs/{job.id}/peaks")
+
+    assert r.status_code == 200
+    assert set(r.json()) == {"vocals", "drums", "t0000aaaa"}
+    assert (stems_dir / "peaks.json").is_file()
+    # Built once: the next request is the ordinary cached answer.
+    again = client.get(f"/api/jobs/{job.id}/peaks", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304
 
 
 def test_peaks_404_for_non_done_job(client):
@@ -404,14 +437,12 @@ def test_all_stems_zip_mp3(client, tmp_path):
 
 
 def test_all_stems_zip_ogg(client, tmp_path):
-    """OGG zip transcodes via ffmpeg (libvorbis); skip if ffmpeg isn't available."""
+    """OGG zip transcodes via ffmpeg (libvorbis); skip if ffmpeg or its
+    libvorbis isn't available."""
     import io
     import zipfile
 
-    if not ffmpeg_available():
-        import pytest
-
-        pytest.skip("ffmpeg not available")
+    skip_without_vorbis()
 
     import struct
 
@@ -942,12 +973,88 @@ def test_rendered_exports_declare_their_length(client, tmp_path):
 def test_ogg_is_still_streamed(client, tmp_path):
     """Ogg keeps a granule position on every page and patches nothing
     afterwards, so it has no reason to pay for a full render first."""
-    _skip_without_ffmpeg()
+    skip_without_vorbis()
     job = _done_job_with_stems(tmp_path, "abcdef000036", ["vocals"])
     r = client.get(f"/api/jobs/{job.id}/mixdown.ogg?stems=vocals&gains=1")
     assert r.status_code == 200
     assert r.content[:4] == b"OggS"
     assert "content-length" not in r.headers, "ogg should still be chunked"
+
+
+# --- OGG without libvorbis (#824) ---
+
+
+def _without_vorbis(monkeypatch):
+    from app.pipeline import audio_encoders
+
+    monkeypatch.setattr(
+        audio_encoders,
+        "ffmpeg_encoders",
+        lambda: frozenset({"pcm_s16le", "flac", "libmp3lame", "aac", "vorbis"}),
+    )
+
+
+def test_ogg_mixdown_without_libvorbis_is_a_clear_422(client, tmp_path, monkeypatch):
+    _without_vorbis(monkeypatch)
+    job = _done_job_with_stems(tmp_path, "abcdef000824", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.ogg?stems=vocals&gains=1")
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "libvorbis" in detail and "WAV, MP3 or FLAC" in detail
+    assert str(tmp_path) not in detail
+    # Nothing rendered, so nothing half-written is left in the cache.
+    cache = tmp_path / "cache" / "mixdown"
+    assert not cache.exists() or not any(cache.iterdir())
+
+
+def test_ogg_mixdown_without_libvorbis_still_404s_an_unknown_job(client, monkeypatch):
+    _without_vorbis(monkeypatch)
+    r = client.get("/api/jobs/abcdef0dead1/mixdown.ogg?stems=vocals&gains=1")
+    assert r.status_code == 404
+
+
+def test_ogg_zip_without_libvorbis_is_a_clear_422(client, tmp_path, monkeypatch):
+    import tempfile
+
+    _without_vorbis(monkeypatch)
+    job = _done_job_with_stems(tmp_path, "abcdef000825", ["vocals"])
+
+    def no_archive(*_a, **_k):
+        raise AssertionError("no archive may be started for a refused format")
+
+    monkeypatch.setattr(tempfile, "mkstemp", no_archive)
+    r = client.get(f"/api/jobs/{job.id}/stems/all.zip?format=ogg")
+    assert r.status_code == 422
+    assert "libvorbis" in r.json()["detail"]
+
+
+def test_other_formats_still_export_without_libvorbis(client, tmp_path, monkeypatch):
+    _skip_without_ffmpeg()
+    _without_vorbis(monkeypatch)
+    job = _done_job_with_stems(tmp_path, "abcdef000826", ["vocals"])
+    for url in (
+        f"/api/jobs/{job.id}/mixdown.wav?stems=vocals&gains=1",
+        f"/api/jobs/{job.id}/mixdown.mp3?stems=vocals&gains=1",
+        f"/api/jobs/{job.id}/mixdown.flac?stems=vocals&gains=1",
+        f"/api/jobs/{job.id}/stems/all.zip?format=mp3",
+    ):
+        r = client.get(url)
+        assert r.status_code == 200, url
+        assert r.content, url
+
+
+def test_ogg_is_tried_as_before_when_the_capability_is_unknown(client, tmp_path, monkeypatch):
+    # A probe that could not run must not turn OGG off: the export is tried
+    # exactly as it was before the probe existed.
+    from app.pipeline import audio_encoders
+
+    monkeypatch.setattr(audio_encoders, "ffmpeg_encoders", lambda: None)
+    assert audio_encoders.unavailable_detail("ogg") is None
+    skip_without_vorbis()
+    job = _done_job_with_stems(tmp_path, "abcdef000827", ["vocals"])
+    r = client.get(f"/api/jobs/{job.id}/mixdown.ogg?stems=vocals&gains=1")
+    assert r.status_code == 200
+    assert r.content[:4] == b"OggS"
 
 
 def test_bumping_the_render_version_invalidates_the_cache(monkeypatch):

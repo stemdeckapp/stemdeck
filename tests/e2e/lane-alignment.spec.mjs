@@ -6,6 +6,11 @@
 // error accumulated down the stack, so the bottom lane was the worst.
 //
 // These tests are all measurements of that disagreement.
+//
+// Since the side-rail header (#776) the name sits above its fader, so it is a
+// fixed distance above the waveform's centre line rather than on it. What
+// must not happen is that distance changing from row to row or with the
+// window: that is the drift these tests exist for.
 
 import { test, expect } from "@playwright/test";
 import { openStudio, waitForClickTrack } from "./helpers.mjs";
@@ -14,6 +19,14 @@ import { openStudio, waitForClickTrack } from "./helpers.mjs";
 // to cross the point where the lanes stop fitting and start overflowing (around
 // 853 here) -- that transition is where the drift used to appear.
 const HEIGHTS = [720, 768, 800, 853, 900, 947, 1000, 1013, 1080, 1150, 1237, 1300];
+
+// How far each name sits from its waveform's centre line (signed, px), and
+// how much that distance varies across the rows. Rows with no name (an EQ
+// panel) are left out.
+function nameOffsets(g) {
+  const off = g.nameMids.flatMap((m, i) => (m === null || g.waveMids[i] === undefined ? [] : [m - g.waveMids[i]]));
+  return { off, spread: off.length ? Math.max(...off) - Math.min(...off) : 0 };
+}
 
 async function geometry(page) {
   return page.evaluate(() => {
@@ -47,6 +60,7 @@ test.describe("lane alignment", () => {
     await waitForClickTrack(page);
 
     const offenders = [];
+    const perHeight = [];
     for (const height of HEIGHTS) {
       await page.setViewportSize({ width: 1600, height });
       await page.waitForTimeout(450);
@@ -56,14 +70,43 @@ test.describe("lane alignment", () => {
       // One pixel of rounding is fine; a row is 72px or more, so anything the
       // eye can see is far larger.
       const worstRow = Math.max(...rowDrift);
-      // The name and its waveform share a centre line. Two pixels covers the
-      // rounding in both measurements.
-      const nameDrift = g.nameMids.map((m, i) => (m === null ? 0 : Math.abs((g.waveMids[i] ?? m) - m)));
-      const worstName = Math.max(...nameDrift);
+      // Every name the same distance from its waveform's centre line. Two
+      // pixels covers the rounding in both measurements.
+      const { off, spread } = nameOffsets(g);
+      perHeight.push(off[0]);
 
-      if (worstRow > 1 || worstName > 2) {
-        offenders.push({ height, worstRow, worstName, rowDrift, nameDrift });
+      if (worstRow > 1 || spread > 2) {
+        offenders.push({ height, worstRow, nameSpread: spread, rowDrift, nameOffsets: off });
       }
+    }
+    expect(offenders).toEqual([]);
+    // And the same distance at every window height.
+    expect(Math.max(...perHeight) - Math.min(...perHeight)).toBeLessThanOrEqual(2);
+  });
+
+  // An open EQ panel is a row of its own in both columns (static/js/eq/),
+  // taller than a lane and of a fixed height: the lanes share what it leaves.
+  // The same measurement as above, with two panels open.
+  test("every row lines up with EQ panels open, at any window height", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openStudio(page, { tauri: true });
+    await waitForClickTrack(page);
+    for (const lane of ["drums", "bass"]) {
+      await page.locator(`.eq-tab[data-eq-lane="${lane}"]`).click();
+      await expect(page.locator(`.eq-panel-lane[data-eq-lane="${lane}"]`)).toHaveCount(1);
+    }
+
+    const offenders = [];
+    for (const height of HEIGHTS) {
+      await page.setViewportSize({ width: 1600, height });
+      await page.waitForTimeout(450);
+      const g = await geometry(page);
+      const worstRow = Math.max(...g.mixTops.map((t, i) => Math.abs((g.waveTops[i] ?? t) - t)));
+      const { spread } = nameOffsets(g);
+      if (g.mixTops.length !== g.waveTops.length || worstRow > 1 || spread > 2) {
+        offenders.push({ height, rows: [g.mixTops.length, g.waveTops.length], worstRow, nameSpread: spread });
+      }
+      expect(`${g.column}px`).toBe(g.stackVar);
     }
     expect(offenders).toEqual([]);
   });
@@ -84,19 +127,18 @@ test.describe("lane alignment", () => {
     }
   });
 
-  test("a stem name sits on its waveform centre line, not above it", async ({ page }) => {
+  test("every stem name sits the same distance from its waveform centre line", async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1013 });
     await openStudio(page, { tauri: true });
     await waitForClickTrack(page);
     const g = await geometry(page);
 
-    // The name and its meter are stacked and centred as a pair, which put the
-    // name half a meter above the row's centre while the waveform beside it was
-    // centred on that line. Invisible at 72px rows, obvious once a lane grows.
-    for (const [i, nameMid] of g.nameMids.entries()) {
-      if (nameMid === null) continue;
-      expect(Math.abs(nameMid - g.waveMids[i])).toBeLessThanOrEqual(2);
-    }
+    // #665 put the name on the centre line; the side-rail header (#776) puts
+    // it above its fader instead. Either way it is one offset for every row,
+    // so a name never wanders off its own lane as the lanes grow.
+    const { off, spread } = nameOffsets(g);
+    expect(off.length).toBeGreaterThan(1);
+    expect(spread).toBeLessThanOrEqual(2);
   });
   // The first track of a session is the one whose lanes are built before the
   // click-track hint has arrived under the footer. That hint is text from the

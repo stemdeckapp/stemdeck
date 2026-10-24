@@ -30,13 +30,6 @@ export function queueCount(snap = snapshot) {
   return (snap.running ? 1 : 0) + (snap.queued?.length ?? 0);
 }
 
-export function ordinal(n) {
-  const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
-  const suffix = { 1: "st", 2: "nd", 3: "rd" }[n % 10] ?? "th";
-  return `${n}${suffix}`;
-}
-
 /** Stage text for the running row. The backend stage already carries a
  *  percentage during separation ("Separating 42%"), so only append one when it
  *  does not, rather than rendering "Separating 42% 42%". */
@@ -80,7 +73,7 @@ export function queueRowStates(snap = snapshot) {
       state: "waiting",
       // A paused queue is not "2nd in line" for anything -- nothing is moving.
       // Say so, or the row looks stuck.
-      label: paused ? "Paused" : `Queued - ${ordinal(place)} in line`,
+      label: paused ? t("queue.pausedStatus") : t("queue.positionInLine", { position: place }),
       progress: 0,
       position: place,
     });
@@ -169,11 +162,15 @@ export async function reorderQueuedJob(jobId, afterId) {
   }
 }
 
-export async function cancelQueuedJob(jobId) {
+/** Take a job out of the queue: stop its extraction and keep the song (#772).
+ *  Stop, never cancel: a cancel deletes the job's files, so the song left the
+ *  Library too and never reached the Trash. A stopped job stays in the Library
+ *  with Extract, which runs it again. */
+export async function stopQueuedJob(jobId) {
   try {
-    await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+    await fetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { method: "POST" });
   } catch (e) {
-    console.warn("[queue] cancel failed:", e);
+    console.warn("[queue] stop failed:", e);
   }
   // Do not wait for the next frame: the row should go the moment it is clicked.
   await refreshQueue();

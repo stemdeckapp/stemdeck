@@ -153,6 +153,22 @@ def _relax_secure_origin_gate(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _test_hosts_are_own_names(monkeypatch):
+    """The cross-site guard refuses a Host it does not know while network access
+    is off, and the test clients address the app as "testserver", "test" or "t".
+    Treated here as the machine's own names, so the gate tests that switch
+    network access off fail for their own reason. tests/test_csrf_guard.py
+    checks the real rule."""
+    from app.core import csrf as _csrf
+
+    real = _csrf.own_hostnames()
+    monkeypatch.setattr(
+        _csrf, "own_hostnames", lambda: real | frozenset({"testserver", "test", "t"})
+    )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_network_settings(tmp_path, monkeypatch):
     """Isolate the runtime network gate for every test. Without this, a stray
     settings.json in the repo (written by a local dev server) could flip the
@@ -170,3 +186,29 @@ def _isolate_network_settings(tmp_path, monkeypatch):
     _settings._state = None  # force a fresh load from the isolated path
     yield
     _settings._state = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vocal_split_status(tmp_path, monkeypatch):
+    """Every split a test runs records its outcome (#832): never in the real
+    data folder, and never carried from one test into the next."""
+    from app.pipeline import vocal_split_status as _vss
+
+    monkeypatch.setattr(_vss, "_status_path", tmp_path / "vocal-split-status.json")
+    _vss.reset_state()
+    yield
+    _vss.reset_state()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_video_encoder(tmp_path, monkeypatch):
+    """No test touches the machine's GPU encoders or the real probe cache.
+    The suite defaults to the CPU kill switch, so every existing render runs
+    libx264 exactly as before; tests/test_video_encoder.py clears it."""
+    from app.pipeline import video_encoder as _ve
+
+    monkeypatch.setattr(_ve, "_cache_path", tmp_path / "video_encoders.json")
+    monkeypatch.setattr(_ve, "VIDEO_ENCODER_OVERRIDE", "cpu")
+    _ve.reset_state()
+    yield
+    _ve.reset_state()

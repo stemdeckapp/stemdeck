@@ -2,24 +2,31 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
+import threading
 import time
+import uuid
 from pathlib import Path
 
 from app.core.config import (
     DEMUCS_MODEL,
     FAILED_TTL_SECONDS,
+    JOB_ID_RE,
     JOB_TTL_SECONDS,
     STEM_NAMES,
+    TAKES_DIRNAME,
     TIMEOUT_FFMPEG,
     ffmpeg_executable,
 )
 from app.core.models import FINISHED_STATUSES, Job
 from app.core.registry import all_jobs as registry_all
+from app.core.registry import deleted_ids as registry_deleted_ids
 from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
 from app.core.registry import set_proc
+from app.core.stem_files import is_stem_audio, stem_names_on_disk, stem_path
 from app.pipeline.audio_stats import scan_stem
 
 logger = logging.getLogger("stemdeck.collect")
@@ -249,7 +256,18 @@ def compute_stem_peaks(stems_dir: Path, stem_names: list[str]) -> dict[str, floa
     return rms_values
 
 
-def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> dict[str, float]:
+# Serialises the read-modify-write of peaks.json between a take being saved
+# (merge_stem_peaks) and the first request of a job that had none
+# (fill_missing_peaks), which run on different threads.
+_PEAKS_WRITE_LOCK = threading.Lock()
+
+
+def merge_stem_peaks(
+    stems_dir: Path,
+    new_names: list[str],
+    sources: dict[str, Path] | None = None,
+    remove: list[str] | None = None,
+) -> dict[str, float]:
     """Add peaks/RMS for newly-produced stems (e.g. the on-demand lead/backing
     vocal split, #275) into the existing peaks.json instead of recomputing
     every stem. Best-effort, same as compute_stem_peaks: a failure here only
@@ -257,36 +275,124 @@ def merge_stem_peaks(stems_dir: Path, new_names: list[str]) -> dict[str, float]:
 
     Returns each scanned stem's RMS, from the same pass, so the caller can
     extend stem presence without decoding anything twice (see
-    presence_for_split)."""
-    path = stems_dir / "peaks.json"
-    peaks: dict[str, list[list[float]]] = {}
-    rms_values: dict[str, float] = {}
-    if path.is_file():
-        try:
-            peaks = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            logger.warning("could not read existing peaks.json in %s", stems_dir, exc_info=True)
+    presence_for_split).
 
-    for name in new_names:
-        wav = stems_dir / f"{name}.wav"
+    `sources` maps a name to a WAV outside stems_dir: a recorded take lives in
+    takes/<take_id>/audio.wav but its waveform is served from the same
+    peaks.json as the stems, so the chunked engine needs no fallback. `remove`
+    drops entries, for a deleted take."""
+    path = stems_dir / "peaks.json"
+    rms_values: dict[str, float] = {}
+    scanned: dict[str, list[list[float]]] = {}
+    # A job that never had peaks.json (separated before it existed, or made
+    # by hand) gets one here for the first time. Written with the take alone,
+    # the studio would see peaks, stream the song, and draw no stem at all.
+    # Those extra stems are drawn only: their RMS is not returned.
+    backfill = (
+        []
+        if path.is_file() or remove
+        else [n for n in _stem_wav_names(stems_dir) if n not in new_names]
+    )
+
+    for name in [*backfill, *new_names]:
+        wav = (sources or {}).get(name) or stem_path(stems_dir, name)
         if not wav.is_file():
             continue
         try:
             result, rms = scan_stem(wav, _PEAK_POINTS)
-            rms_values[name] = rms
+            if name in new_names:
+                rms_values[name] = rms
             if result:
-                peaks[name] = result
+                scanned[name] = result
         except Exception:
             logger.warning("could not compute peaks for %s/%s", stems_dir.name, name, exc_info=True)
 
-    try:
-        tmp = stems_dir / "peaks.json.tmp"
-        tmp.write_text(json.dumps(peaks), encoding="utf-8")
-        tmp.replace(path)
-    except Exception:
-        logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
+    # Read, change and write under one lock: a take saved while the first
+    # request of an old job builds its peaks must not lose either change.
+    with _PEAKS_WRITE_LOCK:
+        peaks: dict[str, list[list[float]]] = {}
+        if path.is_file():
+            try:
+                peaks = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning("could not read existing peaks.json in %s", stems_dir, exc_info=True)
+        for name in remove or []:
+            peaks.pop(name, None)
+        peaks.update(scanned)
+        if not peaks and not path.is_file():
+            # Nothing to draw and no file yet: leave it to fill_missing_peaks.
+            return rms_values
+        try:
+            tmp = stems_dir / "peaks.json.tmp"
+            tmp.write_text(json.dumps(peaks), encoding="utf-8")
+            tmp.replace(path)
+        except Exception:
+            logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
 
     return rms_values
+
+
+def _stem_wav_names(stems_dir: Path) -> list[str]:
+    # WAV or MP3 (#783): an MP3-stored song has no WAVs left.
+    return stem_names_on_disk(stems_dir)
+
+
+def fill_missing_peaks(stems_dir: Path, sources: dict[str, Path] | None = None) -> bool:
+    """Write peaks.json for a job that has none: every WAV in stems_dir, plus
+    `sources` (name -> WAV elsewhere: the recorded takes). Returns True when
+    peaks.json exists afterwards.
+
+    Jobs separated before peaks.json existed, or put together by hand, have
+    no peaks. The studio then had to decode every stem in the browser for its
+    waveforms, which meant swapping the streaming engine for the full-decode
+    one a moment after the song opened, and a take started in that moment was
+    recording into the engine being thrown away. Built once, on the first
+    request: one streamed pass per file, about 1 s for a three minute song of
+    seven stems. Entries that appear meanwhile (a take saved during the scan)
+    are kept, not overwritten.
+    """
+    path = stems_dir / "peaks.json"
+    if path.is_file():
+        return True
+    wanted: dict[str, Path] = {
+        name: stem_path(stems_dir, name) for name in _stem_wav_names(stems_dir)
+    }
+    for name, wav in (sources or {}).items():
+        if wav.is_file():
+            wanted[name] = wav
+    computed: dict[str, list[list[float]]] = {}
+    for name, wav in wanted.items():
+        try:
+            result, _rms = scan_stem(wav, _PEAK_POINTS)
+        except Exception:
+            logger.warning("could not compute peaks for %s/%s", stems_dir.name, name, exc_info=True)
+            continue
+        if result:
+            computed[name] = result
+    if not computed:
+        return False
+    with _PEAKS_WRITE_LOCK:
+        peaks: dict[str, list[list[float]]] = {}
+        if path.is_file():
+            try:
+                peaks = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning("could not read peaks.json in %s", stems_dir, exc_info=True)
+        for name, result in computed.items():
+            peaks.setdefault(name, result)
+        tmp = stems_dir / f"peaks.json.{uuid.uuid4().hex}.tmp"
+        try:
+            tmp.write_text(json.dumps(peaks), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            logger.warning("could not write peaks.json for %s", stems_dir.name, exc_info=True)
+            return False
+        finally:
+            tmp.unlink(missing_ok=True)
+    logger.info(
+        "built missing peaks.json for %s (%d entries)", stems_dir.parent.name, len(computed)
+    )
+    return True
 
 
 def presence_for_split(
@@ -324,22 +430,88 @@ def presence_for_split(
     }
 
 
-def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
-    """Delete job directories older than `ttl_seconds` (JOB_TTL_SECONDS when
-    not given) and remove them from the in-memory registry. Called hourly from
-    the background sweep loop started at app startup, and only when the user
-    has asked for automatic deletion -- deciding *whether* to sweep is the
-    caller's job, this one only decides what is old.
+def _has_takes_on_disk(job_dir: Path) -> bool:
+    """True when the job folder holds a recording, finished or not. A take in
+    progress is on disk before it is in job.takes, so the record alone is not
+    enough to know."""
+    takes = job_dir / TAKES_DIRNAME
+    try:
+        return takes.is_dir() and any(takes.iterdir())
+    except OSError:
+        return True  # cannot tell, so assume there is something to keep
 
-    Prefers Job.created_at over directory mtime (which can be touched by
-    unrelated filesystem events), and never deletes the directory of an
-    active (non-terminal) registered job even if its timestamp looks old.
-    Falls back to mtime for orphan directories left over from a previous
-    server run, since the registry is in-memory only."""
+
+def _has_stems_on_disk(job_dir: Path) -> bool:
+    stems = job_dir / "stems"
+    try:
+        # An MP3-stored song (#783) holds stems too: missing it here would let
+        # the sweep delete an unregistered folder that still has a song in it.
+        return stems.is_dir() and any(is_stem_audio(p) for p in stems.iterdir())
+    except OSError:
+        return True
+
+
+def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str]) -> str | None:
+    """Why the TTL sweep must leave `job_dir` alone, or None to remove it.
+
+    The sweep is the user's own "delete finished jobs after N days" setting,
+    and it only ever means plain finished separations. It used to judge by age
+    alone, so it also deleted the user's favourites, their recorded takes, and
+    any folder at all in the library directory that was old enough, job or not.
+    Every rule below keeps something the user would not count as "a finished
+    job I no longer need"; when in doubt, keep."""
+    if not JOB_ID_RE.match(job_dir.name):
+        # Not a job folder: something of the user's, or of another program,
+        # that happens to live in the library directory.
+        return "not a job folder"
+    if job is not None:
+        if job.status not in _TERMINAL:
+            return "job is still active"
+        if job.created_at >= cutoff:
+            return "job is newer than the cutoff"
+        if job.favorite:
+            return "favourite"
+        if job.takes or job.tracks or _has_takes_on_disk(job_dir):
+            return "holds recorded takes"
+        # A job in the Trash follows the same rule as any other finished job:
+        # the Trash has no purge of its own, and this sweep never had a
+        # separate rule for it.
+        return None
+    # Unregistered. restore() adopts every job folder that has stems, so one
+    # that is still unregistered is either a delete whose files outlived it
+    # (tombstoned, the user asked for it gone) or an import that never got as
+    # far as stems. Anything else is kept.
+    try:
+        if job_dir.stat().st_mtime >= cutoff:
+            return "unregistered folder is newer than the cutoff"
+    except OSError:
+        return "unregistered folder cannot be read"
+    if job_dir.name in deleted:
+        return None
+    if _has_takes_on_disk(job_dir):
+        return "unregistered folder holds recorded takes"
+    if _has_stems_on_disk(job_dir):
+        return "unregistered folder holds stems"
+    return None
+
+
+def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
+    """Delete finished jobs older than `ttl_seconds` (JOB_TTL_SECONDS when not
+    given) and remove them from the in-memory registry. Called hourly from the
+    background sweep loop started at app startup, and only when the user has
+    asked for automatic deletion -- deciding *whether* to sweep is the caller's
+    job, this one only decides what is old and what may go.
+
+    Judged by Job.created_at, not directory mtime (which unrelated filesystem
+    events touch). Never removes an active job, a favourite, a job with
+    recorded takes or tracks, or a folder whose name is not a job id; an
+    unregistered job folder goes only when it is old and abandoned. See
+    _keep_reason for each rule. Every removal is logged with its reason."""
     cutoff = time.time() - (JOB_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
     if not jobs_dir.is_dir():
         return
     jobs = registry_all()
+    deleted = registry_deleted_ids()
     removed = False
     for d in jobs_dir.iterdir():
         if not d.is_dir():
@@ -347,13 +519,14 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
         if d.name == "failed":
             continue  # the failure quarantine has its own TTL (sweep_failed_jobs)
         job = jobs.get(d.name)
-        if job is not None:
-            if job.status not in _TERMINAL:
-                continue  # never delete an active job's working dir
-            if job.created_at >= cutoff:
-                continue
-        elif d.stat().st_mtime >= cutoff:
+        reason = _keep_reason(job, d, cutoff, deleted)
+        if reason is not None:
+            logger.debug("auto-delete kept %s: %s", d.name, reason)
             continue
+        if job is not None:
+            logger.info("auto-delete removed job %s: finished and older than the cutoff", d.name)
+        else:
+            logger.info("auto-delete removed unregistered job folder %s: old and abandoned", d.name)
         _rmtree(d)
         registry_remove(d.name)
         removed = True
