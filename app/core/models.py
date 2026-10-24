@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS
+from app.core.versions import VERSION_ID_RE, active_of, clean_versions, versions_of
 from app.core.vocal_split_outcome import INTERRUPTED, message_for
 
 
@@ -357,6 +358,21 @@ class Job:
     # what happened and what to do instead of showing one Vocals lane with no
     # word about it (#832). None otherwise.
     vocal_split_reason: str | None = None
+    # Versions of the song (#804, app/core/versions.py): named choices of
+    # stems over the one set of stem files. None until one is made, created,
+    # renamed or chosen: the song then reads as its implicit default version.
+    versions: list[dict[str, Any]] | None = None
+    # The version that opens with the song, or None for the first one.
+    active_version: str | None = None
+    # How the stems were separated (#804), recorded when separation runs, so
+    # a later Extract fills missing stems with exactly the same settings and
+    # they add up to the song. None for a song separated before this existed.
+    separation_model: str | None = None
+    separation_quality: str | None = None
+    # Separating the stems a song does not have yet (POST .../fill-stems), a
+    # post-hoc action on a "done" job like vocal_split. "error" leaves every
+    # stem the song had as it was.
+    stem_fill: Literal["none", "running", "done", "error"] = "none"
     # When the user put this job in the Trash, or None if they have not.
     #
     # Server-side on purpose. The Trash used to live only in the browser's
@@ -450,6 +466,9 @@ class Job:
             "vocal_split_reason": self.vocal_split_reason,
             # A fixed sentence per code, never the worker's own words.
             "vocal_split_message": message_for(self.vocal_split_reason),
+            "versions": versions_of(self),
+            "active_version": active_of(self),
+            "stem_fill": self.stem_fill,
             "trashed_at": self.trashed_at,
             "favorite": self.favorite,
             "created_at": self.created_at,
@@ -493,6 +512,13 @@ class Job:
         if job.vocal_split == "running":
             job.vocal_split = "error"
             job.vocal_split_reason = INTERRUPTED
+        # Never fails the song: a damaged versions list loses only the
+        # entries that are not a version (app/core/versions.py).
+        job.versions = clean_versions(job.versions)
+        if not isinstance(job.active_version, str) or not VERSION_ID_RE.match(job.active_version):
+            job.active_version = None
+        if job.stem_fill == "running":
+            job.stem_fill = "error"
         return job
 
 

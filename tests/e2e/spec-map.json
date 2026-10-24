@@ -118,6 +118,11 @@
       "specs": ["search", "file-drop", "native-file-drop", "error-box-narrow", "import-background", "job-form-submit", "composer-arming", "boot-failure", "work-info", "artist-from-server", "about-reach"]
     },
     {
+      "why": "Versions of a song (#804): the rows under a song in the library, the versions part of the Stems popover, the version-scoped mix and stem records, and the endpoints behind them",
+      "paths": ["static/js/versions.js", "static/js/versionScope.js", "app/core/versions.py", "app/pipeline/stem_fill.py"],
+      "specs": ["song-versions", "mode-stems", "library-rows", "help-mode", "partial-stems"]
+    },
+    {
       "why": "The library sidebar: rows, folders, tags, favorites, trash",
       "paths": ["static/js/libraryDeleteKey.js", "static/css/catalog.css"],
       "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]

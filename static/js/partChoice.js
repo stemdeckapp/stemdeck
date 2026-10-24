@@ -12,6 +12,8 @@
 // Nothing is written until a mode's choice is changed, so a song opens in
 // every mode exactly as before. Pure: no DOM, no store, testable in Node.
 
+import { scopeFor } from "./versionScope.js";
+
 export const CHOICE_VERSION = 1;
 export const CHOICE_VERSION_LANES = 2;
 
@@ -24,10 +26,12 @@ export const BASE_STEMS = Object.freeze(["vocals", "drums", "bass", "guitar", "p
 
 const MODE_RE = /^[a-z][a-z0-9-]{0,23}$/;
 
-/** The store key of `jobId`'s choice in `mode`. */
-export function choiceKey(jobId, mode) {
+/** The store key of `jobId`'s choice in `mode`, in the song's open version
+ * or in `versionId` (versionScope.js: the default version keeps the key
+ * every song had). */
+export function choiceKey(jobId, mode, versionId) {
   if (!jobId || !MODE_RE.test(String(mode || ""))) throw new Error("a job and a mode are required");
-  return `stemdeck:stems:${jobId}:${mode}`;
+  return `stemdeck:stems:${versionId === undefined ? scopeFor(jobId) : scopeFor(jobId, versionId)}:${mode}`;
 }
 
 export const VOICE_FORMS = Object.freeze(["combined", "split"]);
@@ -233,9 +237,8 @@ export function timelineLanes(remove, present) {
   };
 }
 
-// Why a stem choice was not applied (modeStems.js changeLayout, requestSplit,
-// extractIntoOpenSong) mapped to the i18n key the Stems popover and the
-// Extract button show. "" (applied) has no refusal text; a reason not listed
+// Why a stem choice was not applied (modeStems.js changeLayout, requestSplit)
+// mapped to the i18n key the Stems popover and the version actions show. "" (applied) has no refusal text; a reason not listed
 // here still says nothing changed, never that it did (#793).
 const REASON_KEYS = Object.freeze({
   recording: "stems.blockedRecording",

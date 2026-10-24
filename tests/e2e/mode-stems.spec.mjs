@@ -4,7 +4,7 @@
 // drums, bass, other) and no lead/backing split, so the split itself is not
 // covered here (scratchpad ms3.mjs ran it against a real song).
 import { test, expect } from "@playwright/test";
-import { openStudio, JOB_ID, chooseMode } from "./helpers.mjs";
+import { openStudio, JOB_ID, chooseMode, resetVersions } from "./helpers.mjs";
 
 const lanes = (page) =>
   page.evaluate(async () => Object.keys((await import("/js/state.js")).trackIndex).filter((n) => !/^t[kr]_/.test(n)).sort().join(","));
@@ -20,6 +20,10 @@ async function chooseStems(page, want) {
 }
 
 test.describe("stem choice per mode", () => {
+  // Extract on the open song makes a version of it on the server (#804),
+  // which every spec shares.
+  test.afterEach(async ({ request }) => { await resetVersions(request); });
+
   test("Practice and Advanced keep different lanes for one song", async ({ page }) => {
     await page.addInitScript(() => {
       if (!sessionStorage.getItem("mode-stems-spec")) {
@@ -75,7 +79,7 @@ test.describe("stem choice per mode", () => {
     expect(pressed).toEqual(["drums"]);
   });
 
-  test("Extract with other chips changes the open mode's lanes, no new job", async ({ page }) => {
+  test("Extract with other chips changes the lanes as a version of the song, no new job", async ({ page }) => {
     await openStudio(page);
     const posts = [];
     await page.route("**/api/jobs/**", (route) => {

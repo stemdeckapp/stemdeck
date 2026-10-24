@@ -801,6 +801,71 @@ input, textarea { font-family: inherit; }
 .cat-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .cat-title { color: var(--fg); font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat-sub { color: var(--muted); font-size: 10.5px; display: flex; gap: 5px; white-space: nowrap; overflow: hidden; }
+/* A version of the song above it (#804): indented under its row, its name
+   and the stems it shows. */
+.cat-version {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 1px 0 1px 30px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid transparent;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0 6px 6px 0;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.cat-version:hover { background: var(--panel-2); }
+.cat-version:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.cat-version.active { background: var(--panel-2); border-left-color: var(--accent); }
+.cat-version-name {
+  flex-shrink: 0;
+  max-width: 55%;
+  color: var(--fg-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat-version.active .cat-version-name { color: var(--fg); }
+/* Delete a version: shown on hover, focus and for the open one, so the rows
+   stay quiet. Armed, it turns into its own confirmation text. */
+.cat-version-del {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.cat-version-del svg { width: 13px; height: 13px; }
+.cat-version:hover .cat-version-del,
+.cat-version.active .cat-version-del,
+.cat-version-del:focus-visible,
+.cat-version-del.armed { opacity: 1; }
+.cat-version-del:hover { color: var(--danger); background: var(--panel-3); }
+.cat-version-del:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.cat-version-del.armed { color: var(--danger); }
+.cat-version-stems {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* Shown only when it has something to say (#636). A finished import is the
    resting state of every row in the library, so a green dot on all of them
    marked nothing out: it was one more thing to read past on the way to the
@@ -6254,3 +6319,54 @@ html:not(.mode-daw) #master-drawer {
 .stems-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .stems-pop-apply { border-color: var(--accent-2); color: var(--accent); font-weight: 600; }
 .stems-pop-apply:hover:not(:disabled) { background: var(--panel-2); }
+/* The song's versions (#804), under the stem choice. */
+.stems-pop-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.stems-pop-versions[hidden] { display: none; }
+.stems-pop-vrow { display: flex; gap: 6px; }
+.stems-pop-vselect,
+.stems-pop-vname {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+.stems-pop-vselect { width: 100%; text-overflow: ellipsis; }
+.stems-pop-vname { flex: 1; }
+.stems-pop-vname::placeholder { color: var(--muted); }
+.stems-pop-vselect:focus-visible,
+.stems-pop-vname:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.stems-pop-vselect:disabled { opacity: 0.6; cursor: default; }
+.stems-pop-vrename,
+.stems-pop-vdelete,
+.stems-pop-vnew {
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.stems-pop-vrename:hover:not(:disabled),
+.stems-pop-vdelete:hover:not(:disabled),
+.stems-pop-vnew:hover:not(:disabled) { background: var(--panel-2); color: var(--fg); }
+.stems-pop-vrename:focus-visible,
+.stems-pop-vdelete:focus-visible,
+.stems-pop-vnew:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.stems-pop-vrename:disabled,
+.stems-pop-vdelete:disabled,
+.stems-pop-vnew:disabled { opacity: 0.45; cursor: default; }
+.stems-pop-vdelete.armed { border-color: var(--danger); color: var(--danger); }
+.stems-pop-vnew { border-color: var(--accent-2); color: var(--accent); font-weight: 600; }

@@ -1,6 +1,8 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { wireUpAudio, updateFooterTrack } from "./player.js";
 import { prepareLayout } from "./modeStems.js";
+import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
+import { activeVersionId, songVersions } from "./versionScope.js";
 import { initSections } from "./sections.js";
 import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedStems, titleEl } from "./state.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
@@ -351,6 +353,17 @@ function findTrackBySource(sourceUrl, exceptId) {
     if (normalizeSource(track.sourceUrl) === source) return id;
   }
   return null;
+}
+
+/**
+ * The finished library song `sourceUrl` is the link of, or null: the one an
+ * Extract of that link adds a version to instead of replacing (#804). One in
+ * the Trash is never it.
+ */
+export function findDoneTrackBySource(sourceUrl) {
+  const id = findTrackBySource(sourceUrl, null);
+  if (!id || tracks[id]?.status !== "done" || getTrashFolder()?.items.includes(id)) return null;
+  return id;
 }
 
 function replaceTrackId(oldId, newId) {
@@ -824,6 +837,9 @@ function stateMetadataToTrack(state, fallbackTrack) {
     vocalSplitReason: "vocal_split_reason" in state ? state.vocal_split_reason : fallbackTrack.vocalSplitReason ?? null,
     hasVideo: state.has_video ?? fallbackTrack.hasVideo ?? false,
     videoStatus: state.video_status ?? fallbackTrack.videoStatus ?? null,
+    // Its versions (#804): the library shows them under the song.
+    versions: Array.isArray(state.versions) ? state.versions : fallbackTrack.versions ?? null,
+    activeVersion: state.active_version ?? fallbackTrack.activeVersion ?? null,
     createdAt: fallbackTrack.createdAt ?? state.created_at,
     favorite: fallbackTrack.favorite ?? false,
     // The band (#699): the one saved on the track first, since a band chosen
@@ -1208,6 +1224,9 @@ async function loadTrackIntoStudio(trackId) {
   setResplitTarget(resplittable ? track : null);
 
   applyTrackInfoToPanel(track);
+  // Which version opens (#804): its lanes and its mix are the ones read
+  // below, under that version's records (versionScope.js).
+  applyServerVersions(trackId, track.versions, track.activeVersion);
   // The open mode's own lanes for this song (modeStems.js), read before the
   // lanes are built: what Practice shows never depends on another mode.
   await prepareLayout(
@@ -1268,6 +1287,17 @@ export function setCurrentTrack(trackId) {
   for (const el of document.querySelectorAll(`.cat-item[data-id="${trackId}"]`)) el.classList.add("active");
   for (const el of document.querySelectorAll(".strip-thumb.active")) el.classList.remove("active");
   for (const el of document.querySelectorAll(`.strip-thumb[data-id="${trackId}"]`)) el.classList.add("active");
+  paintActiveVersionRows();
+}
+
+/** Mark the open version's row under the open song (#804). */
+function paintActiveVersionRows() {
+  const active = _currentTrackId ? activeVersionId(_currentTrackId) : null;
+  for (const el of document.querySelectorAll(".cat-version")) {
+    const on = el.dataset.id === _currentTrackId && el.dataset.version === active;
+    el.classList.toggle("active", on);
+    el.setAttribute("aria-current", on ? "true" : "false");
+  }
 }
 
 // ─── Folder operations ───
@@ -2065,6 +2095,77 @@ function renderTrackItem(trackId, { inTrash = false } = {}) {
   return el;
 }
 
+/**
+ * The rows under a song with more than one version (#804): each version's
+ * name and the stems it shows. A click opens the song in that version, with
+ * its lanes and its saved mix. A song with one version has none.
+ */
+function renderVersionRows(trackId) {
+  const track = tracks[trackId];
+  const versions = Array.isArray(track?.versions) ? track.versions : [];
+  if (track?.status !== "done" || versions.length < 2) return [];
+  const active = versions.some((v) => v.id === track.activeVersion) ? track.activeVersion : versions[0].id;
+  return versions.map((v, i) => {
+    const el = document.createElement("div");
+    const on = trackId === _currentTrackId && v.id === active;
+    el.className = `cat-version${on ? " active" : ""}`;
+    el.dataset.id = trackId;
+    el.dataset.version = v.id;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-current", on ? "true" : "false");
+    el.tabIndex = 0;
+    const name = versionLabel(v, i);
+    const stems = versionStemsText(v.stems);
+    el.title = i18nT("versions.openVersion", { name, stems });
+    el.setAttribute("aria-label", el.title);
+    el.innerHTML = `<span class="cat-version-name">${esc(name)}</span><span class="cat-version-stems">${esc(stems)}</span><button class="cat-version-del" type="button" title="${esc(i18nT("versions.delete"))}" aria-label="${esc(i18nT("versions.delete"))}: ${esc(name)}">${TRASH_ICON_SVG}</button>`;
+    // Two presses, like the Stems popover: the first arms it and says so, the
+    // second deletes. The song's stems and the other versions stay.
+    const del = el.querySelector(".cat-version-del");
+    let armTimer = null;
+    const disarm = () => {
+      clearTimeout(armTimer);
+      del.classList.remove("armed");
+      del.innerHTML = TRASH_ICON_SVG;
+    };
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!del.classList.contains("armed")) {
+        del.classList.add("armed");
+        del.textContent = i18nT("versions.deleteConfirm");
+        armTimer = setTimeout(disarm, 4000);
+        return;
+      }
+      clearTimeout(armTimer);
+      del.disabled = true;
+      deleteVersion(trackId, v.id).then((err) => {
+        if (err) {
+          del.disabled = false;
+          disarm();
+          showError(err);
+        }
+      });
+    });
+    del.addEventListener("blur", disarm);
+    del.addEventListener("keydown", (e) => e.stopPropagation());
+    const go = (e) => {
+      e.stopPropagation();
+      openVersion(trackId, v.id).catch((err) => {
+        console.warn("[catalog] could not open the version:", err);
+        showError(i18nT("versions.openFailed"));
+      });
+    };
+    el.addEventListener("click", go);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        go(e);
+      }
+    });
+    return el;
+  });
+}
+
 function renderFolder(folder) {
   const isTrash = folder.id === TRASH_ID;
   const isUnsorted = folder.id === UNSORTED_ID;
@@ -2128,6 +2229,7 @@ function renderFolder(folder) {
     for (const id of visibleItems) {
       const item = renderTrackItem(id);
       if (item) body.appendChild(item);
+      if (item) body.append(...renderVersionRows(id));
     }
     for (const child of childFolders) {
       const childEl = renderFolder(child);
@@ -3794,6 +3896,14 @@ async function syncWithServer() {
         }
         if (!known.work && libraryWork(state.work)) {
           known.work = libraryWork(state.work);
+          backfilled = true;
+        }
+        // Versions made in another window or on another device (#804).
+        if (Array.isArray(state.versions)
+          && (JSON.stringify(known.versions) !== JSON.stringify(state.versions)
+            || known.activeVersion !== state.active_version)) {
+          known.versions = state.versions;
+          known.activeVersion = state.active_version ?? null;
           backfilled = true;
         }
         continue;
@@ -5831,6 +5941,24 @@ export async function initCatalog() {
   document.addEventListener("stemdeck:takes-changed", (e) => {
     const id = e.detail?.jobId;
     if (id && id === _currentTrackId) loadTrackIntoStudio(id);
+  });
+  // A version made, renamed, deleted or opened (versions.js, #804): the
+  // song's rows follow.
+  document.addEventListener("stemdeck:versions-changed", (e) => {
+    const id = e.detail?.jobId;
+    const track = id ? tracks[id] : null;
+    if (!track) return;
+    const versions = songVersions(id).filter((v) => v.stems);
+    if (!versions.length) return;
+    const active = activeVersionId(id);
+    if (JSON.stringify(track.versions) === JSON.stringify(versions) && track.activeVersion === active) {
+      paintActiveVersionRows();
+      return;
+    }
+    track.versions = versions;
+    track.activeVersion = active;
+    saveState();
+    render();
   });
   setDisplayedVersion(currentVersion);
   render();

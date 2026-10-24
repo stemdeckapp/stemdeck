@@ -18,6 +18,7 @@ import {
   masterVolume, audioEngine,
 } from "./state.js";
 import { storeGet, storeSetDebounced, storeFlushPending } from "./utils.js";
+import { scopeFor } from "./versionScope.js";
 import { getMode } from "./mode.js";
 import { t } from "./i18n.js";
 import { stemFileExt } from "./playbackStems.js";
@@ -62,9 +63,28 @@ export function ensureMixerStateDefaults() {
 // is never rewritten or deleted: Practice and Advanced start from it until
 // they have saved a record of their own, so nobody loses a mix. Karaoke and
 // Streamer start from their defaults.
+//
+// A version of a song (versionScope.js, #804) keeps its own record per mode:
+// the key's song part is the version's scope. The default version's scope is
+// the song id itself, so its records are the ones above, and only it starts
+// from the legacy record.
 const LEGACY_MODES = new Set(["practice", "daw"]);
-export const mixKey = (jobId, mode) => `stemdeck:mix:${jobId}:${mode}`;
+export const mixKey = (jobId, mode, versionId) =>
+  `stemdeck:mix:${versionId === undefined ? scopeFor(jobId) : scopeFor(jobId, versionId)}:${mode}`;
 const legacyMixKey = (jobId) => `stemdeck:mix:${jobId}`;
+
+/** The saved mix of `jobId` in `mode` and version `versionId` as stored
+ * (a pending change written first), the default version falling back to the
+ * legacy record as a load does; null when there is none. */
+export async function readSavedMix(jobId, mode, versionId) {
+  const key = mixKey(jobId, mode, versionId);
+  await storeFlushPending(key);
+  let stored = await storeGet(key, null);
+  if (!stored && LEGACY_MODES.has(mode) && scopeFor(jobId, versionId) === jobId) {
+    stored = await storeGet(legacyMixKey(jobId), null);
+  }
+  return stored && typeof stored === "object" ? stored : null;
+}
 
 // The mode whose record is the one in memory (mixerState, mixGlobals).
 let _activeMode = getMode();
@@ -104,7 +124,9 @@ export async function loadMixIntoState(jobId, loadedStemNames = STEM_NAMES) {
       // behind a screen and an engine that never had it (#781).
       await storeFlushPending(mixKey(jobId, mode));
       stored = await storeGet(mixKey(jobId, mode), null);
-      if (!stored && LEGACY_MODES.has(mode)) stored = await storeGet(legacyMixKey(jobId), null);
+      if (!stored && LEGACY_MODES.has(mode) && scopeFor(jobId) === jobId) {
+        stored = await storeGet(legacyMixKey(jobId), null);
+      }
     } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
     if (mode === _activeMode) break;
   }

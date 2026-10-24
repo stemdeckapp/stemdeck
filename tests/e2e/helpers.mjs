@@ -505,3 +505,19 @@ export async function leaveModeView(page) {
   const mode = await page.evaluate(async () => (await import("/js/mode.js")).getMode());
   await chooseMode(page, mode);
 }
+
+/**
+ * Put the fixture back to its one version (#804). Versions live on the
+ * server, which every spec shares, so a spec that makes one (Extract on the
+ * open song, Save as new version) leaves it behind for the next spec unless
+ * it calls this. `request` is Playwright's APIRequestContext.
+ */
+export async function resetVersions(request, jobId = JOB_ID) {
+  const res = await request.get(`/api/jobs/${jobId}/versions`);
+  if (!res.ok()) return;
+  const { versions } = await res.json();
+  if (versions.some((v) => v.id === "main")) await request.post(`/api/jobs/${jobId}/versions/main/select`);
+  for (const v of versions) {
+    if (v.id !== "main") await request.delete(`/api/jobs/${jobId}/versions/${v.id}`);
+  }
+}

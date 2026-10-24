@@ -92,6 +92,9 @@ const HELP = [
   ["#catalogList .queue-row .queue-cancel", "help.queueStop"],
   ["#catalogList .cat-item.in-trash", "help.trashedSong"],
   ["#catalogList .cat-item", "help.song"],
+  // A version of a song, under its row (#804).
+  ["#catalogList .cat-version .cat-version-del", "help.versionRowDelete"],
+  ["#catalogList .cat-version", "help.versionRow"],
   // The Lyrics view of the sidebar (lyrics.js). Align and Sync lines come
   // before the plain links, which share their class.
   ["#lyricsPanel .lyrics-line", "help.lyricsLine"],
@@ -117,6 +120,12 @@ const HELP = [
   [".stems-pop-split", "help.stemsSplit"],
   [".stems-pop-reset", "help.stemsReset"],
   [".stems-pop-apply", "help.stemsApply"],
+  // The song's versions, at the foot of the Stems popover (#804).
+  ["#laneVersionSelect", "help.versionSelect"],
+  [".stems-pop-vname", "help.versionName"],
+  [".stems-pop-vrename", "help.versionRename"],
+  [".stems-pop-vnew", "help.versionSaveNew"],
+  [".stems-pop-vdelete", "help.versionDelete"],
   ["#t-rec", "help.record"],
   ["#t-rec-opts", "help.recOptions"],
   // The recording panel opened by the arrow beside Record (recordUi.js), and

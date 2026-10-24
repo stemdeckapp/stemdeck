@@ -65,6 +65,16 @@ from app.core.settings import (
 )
 from app.core.stem_files import stem_path, stem_url
 from app.core.stems_location import is_relocating
+from app.core.versions import (
+    MAX_VERSIONS,
+    VERSION_ID_RE,
+    VERSION_NAME_MAX_CHARS,
+    active_of,
+    clean_name,
+    clean_stems,
+    make_version,
+    versions_of,
+)
 from app.core.vocal_split_outcome import CANCELLED as SPLIT_CANCELLED
 from app.core.vocal_split_outcome import WORKER_FAILED as SPLIT_WORKER_FAILED
 from app.core.vocal_split_outcome import message_for as split_message_for
@@ -107,6 +117,7 @@ from app.pipeline.lyrics_retime import (
 )
 from app.pipeline.lyrics_retime import saved_view as saved_retime_view
 from app.pipeline.runner import _pipeline_lock
+from app.pipeline.stem_fill import FillRefused, fill_stems, missing_stems
 from app.pipeline.stem_storage import store_split_stems
 from app.pipeline.vocal_split import VocalSplitError, split_vocals
 from app.pipeline.work_lookup import find_work, might_have_work
@@ -865,6 +876,182 @@ async def start_vocal_split(job_id: str) -> Response:
     _set(job, stage="Done")
     registry_persist(JOBS_DIR)
     return JSONResponse(_job_state(job))
+
+
+# -- Versions (#804)
+#
+# A version is a named choice of stems over the song's one set of stem files
+# (app/core/versions.py). These endpoints only ever change the song's record:
+# none of them reads, writes or deletes a stem file. Each runs on the event
+# loop with no await between reading the versions and writing them back, so
+# two requests cannot interleave a read-modify-write.
+
+
+class VersionCreateBody(BaseModel):
+    name: str | None = Field(default=None, max_length=VERSION_NAME_MAX_CHARS * 4)
+    stems: list[str] = Field(min_length=1, max_length=len(STEM_NAMES))
+    # Make it the version that opens with the song.
+    select: StrictBool = False
+
+
+class VersionRenameBody(BaseModel):
+    name: str = Field(max_length=VERSION_NAME_MAX_CHARS * 4)
+
+
+def _versions_payload(job: Job) -> dict:
+    versions = versions_of(job)
+    return {"job_id": job.id, "versions": versions, "active_version": active_of(job, versions)}
+
+
+def _version_job(job_id: str, *, ready: bool = True) -> Job:
+    """The job whose versions a request changes, after the id checks.
+    404 for anything that is not a known job; 409 while it is not done."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if ready and job.status != "done":
+        raise HTTPException(status_code=409, detail="the song is not ready")
+    return job
+
+
+def _check_version_id(version_id: str) -> None:
+    if not VERSION_ID_RE.match(version_id):
+        raise HTTPException(status_code=404, detail="version not found")
+
+
+@router.get("/{job_id}/versions")
+async def list_versions(job_id: str) -> dict:
+    """The versions of a song and the one that opens with it."""
+    return _versions_payload(_version_job(job_id, ready=False))
+
+
+@router.post("/{job_id}/versions", status_code=201)
+async def create_version(job_id: str, body: VersionCreateBody) -> dict:
+    """A new version of the song showing `stems`. Nothing is separated or
+    copied on disk: it is settings only."""
+    job = _version_job(job_id)
+    stems = clean_stems(body.stems)
+    if not stems:
+        raise HTTPException(status_code=422, detail="choose at least one known stem")
+    versions = versions_of(job)
+    if len(versions) >= MAX_VERSIONS:
+        raise HTTPException(status_code=409, detail="this song has too many versions")
+    version = make_version(versions, body.name, stems)
+    versions.append(version)
+    active = version["id"] if body.select else active_of(job, versions)
+    _set(job, versions=versions, active_version=active)
+    registry_persist(JOBS_DIR)
+    return {"version": version, **_versions_payload(job)}
+
+
+@router.patch("/{job_id}/versions/{version_id}")
+async def rename_version(job_id: str, version_id: str, body: VersionRenameBody) -> dict:
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    name = clean_name(body.name)
+    if name is None:
+        raise HTTPException(status_code=422, detail="a version needs a name")
+    versions = versions_of(job)
+    target = next((v for v in versions if v["id"] == version_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    target["name"] = name
+    _set(job, versions=versions, active_version=active_of(job, versions))
+    registry_persist(JOBS_DIR)
+    return _versions_payload(job)
+
+
+@router.delete("/{job_id}/versions/{version_id}")
+async def delete_version(job_id: str, version_id: str) -> dict:
+    """Forget a version. Its stems stay: every version shares the song's one
+    set of stem files, and no stem file is ever deleted here. The last
+    version cannot be deleted: a song always has one."""
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    versions = versions_of(job)
+    if not any(v["id"] == version_id for v in versions):
+        raise HTTPException(status_code=404, detail="version not found")
+    if len(versions) == 1:
+        raise HTTPException(status_code=409, detail="a song keeps at least one version")
+    remaining = [v for v in versions if v["id"] != version_id]
+    # The deleted one was opening with the song: the first left does now.
+    _set(job, versions=remaining, active_version=active_of(job, remaining))
+    registry_persist(JOBS_DIR)
+    return _versions_payload(job)
+
+
+@router.post("/{job_id}/versions/{version_id}/select")
+async def select_version(job_id: str, version_id: str) -> dict:
+    """Make a version the one that opens with the song."""
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    versions = versions_of(job)
+    if not any(v["id"] == version_id for v in versions):
+        raise HTTPException(status_code=404, detail="version not found")
+    _set(job, versions=versions, active_version=version_id)
+    registry_persist(JOBS_DIR)
+    return _versions_payload(job)
+
+
+class FillStemsBody(BaseModel):
+    stems: list[str] = Field(min_length=1, max_length=len(STEM_NAMES))
+
+
+_FILL_REFUSALS = {
+    "no_source": "no source kept for this track",
+    "model": "this song was separated with another model",
+}
+
+
+@router.post("/{job_id}/fill-stems")
+async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
+    """Extract on a song already in the library (#804): separate only the
+    stems of `stems` it has no file for, with the model and quality it was
+    separated with. The stems it has are never replaced. Answers at once,
+    with nothing separated, when none is missing; otherwise when the run is
+    over, with the song's state."""
+    job = _version_job(job_id)
+    wanted = clean_stems(body.stems)
+    if not wanted:
+        raise HTTPException(status_code=422, detail="choose at least one known stem")
+    job_dir = (JOBS_DIR / job_id).resolve()
+    stems_dir = (job_dir / "stems").resolve()
+    if not stems_dir.is_dir() or not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.stem_fill == "running" or job.vocal_split == "running":
+        raise HTTPException(status_code=409, detail="the song is busy")
+    missing = await asyncio.to_thread(missing_stems, stems_dir, wanted)
+    if not missing:
+        return JSONResponse({"filled": [], "state": _job_state(job)})
+    source = _retained_source(job_id) if (job.source_url or "").startswith("local:") else None
+    if source is None and (job.source_url or "local:").startswith("local:"):
+        raise HTTPException(status_code=409, detail=_FILL_REFUSALS["no_source"])
+    # Checked again here, after the await above: the first of two requests
+    # to get this far is the one that runs.
+    if job.stem_fill == "running":
+        raise HTTPException(status_code=409, detail="the song is busy")
+    job.stem_fill = "running"
+    _set(job, stage="Extracting missing stems...")
+    try:
+        async with _pipeline_lock:
+            filled = await asyncio.to_thread(fill_stems, job, job_dir, wanted, source)
+    except FillRefused as e:
+        job.stem_fill = "error"
+        _set(job, stage="Done")
+        registry_persist(JOBS_DIR)
+        raise HTTPException(status_code=409, detail=_FILL_REFUSALS[e.code]) from None
+    except Exception:
+        logger.exception("[%s] filling missing stems failed", job_id)
+        job.stem_fill = "error"
+        _set(job, stage="Done")
+        registry_persist(JOBS_DIR)
+        return JSONResponse({"detail": "could not extract the missing stems"}, status_code=500)
+    job.stem_fill = "done"
+    _set(job, stage="Done")
+    registry_persist(JOBS_DIR)
+    return JSONResponse({"filled": filled, "state": _job_state(job)})
 
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")

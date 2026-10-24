@@ -6,14 +6,13 @@ import {
   selectedStems, currentJobId,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
-import { prepareLayout, extractIntoOpenSong, layoutState } from "./modeStems.js";
-import { stemsReasonKey } from "./partChoice.js";
-import { getMode } from "./mode.js";
+import { prepareLayout } from "./modeStems.js";
+import { extractAsVersion } from "./versions.js";
 import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { getCurrentTrackInfo, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen, setTrackVocalSplit, trackSourceUrl } from "./catalog.js";
-import { splitReason, splitReasonText, splitFailedText, noteSplitOutcome, effectiveVocalSplitMode } from "./vocalSplitState.js";
+import { getCurrentTrackInfo, findDoneTrackBySource, openTrackInStudio, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen, setTrackVocalSplit, trackSourceUrl } from "./catalog.js";
+import { splitReason, splitReasonText, noteSplitOutcome, effectiveVocalSplitMode } from "./vocalSplitState.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
@@ -862,28 +861,36 @@ export function wireJobForm() {
     const file = fileInput?._file ?? fileInput?.files?.[0] ?? null;
 
     // The open song is already separated and the button is aimed at it (its
-    // own link in the box, or the upload it re-splits): different chips change
-    // the open mode's lanes and nothing is separated again (modeStems.js). The
-    // same chips as on screen still separate again, as they always did.
-    const open = getCurrentTrackInfo();
+    // own link in the box, or the upload it re-splits): it is never separated
+    // over again (#804). The chips become a version of the song, sharing its
+    // stems; only a stem it does not have yet is separated (versions.js).
+    let open = getCurrentTrackInfo();
     const typed = urlInput.value.trim();
+    // The link of a finished song in the library that is not open: it opens,
+    // and the Extract below makes a version of it, rather than a new import
+    // that would replace it in the library (#804).
+    const known = !file && typed && open?.sourceUrl !== typed && !looksLikePlaylist(typed)
+      ? findDoneTrackBySource(typed)
+      : null;
+    if (known && known !== open?.id) {
+      await openTrackInStudio(known);
+      open = getCurrentTrackInfo();
+    }
     const aimedAtOpen = !file && open?.status === "done"
-      && (typed ? typed === open.sourceUrl : submitBtn.dataset.resplitJob === open.id);
+      && ((known && open.id === known)
+        || (typed ? typed === open.sourceUrl : submitBtn.dataset.resplitJob === open.id));
     if (aimedAtOpen) {
-      const res = await extractIntoOpenSong(
+      const res = await extractAsVersion(
         [...selectedStems],
         selectedStems.has("vocals") && effectiveVocalSplitMode() === "split" ? "split" : "combined",
-        getMode(),
+        (text) => showTrackNote(text),
+        open.id,
       );
-      if (res.handled) {
-        setSubmitProcessing(false);
-        // Success is said only for a change that was made (#793).
-        const refused = stemsReasonKey(res.reason);
-        // A split that did not work says why (#832), not only that it did not.
-        if (res.reason === "failed") showTrackNote(splitFailedText(layoutState().splitReason));
-        else showTrackNote(refused ? t(refused) : t("stems.extractApplied", { mode: t(`mode.${res.mode}`) }));
-        return;
-      }
+      setSubmitProcessing(false);
+      // Never a new import of a song already in the library: that replaced
+      // it (#804). Not handled means nothing was changed.
+      showTrackNote(res.handled ? res.text : t("versions.extractFailed"));
+      return;
     }
 
     // A playlist is its own flow: expand, confirm the count, then queue every

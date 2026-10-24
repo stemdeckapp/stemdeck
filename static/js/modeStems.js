@@ -24,6 +24,7 @@ import { setLaneLayout, shownLaneLayout } from "./player.js";
 import { mixModeInForce, onMixModeSettled } from "./mixMode.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { noteSplitOutcome, splitReason } from "./vocalSplitState.js";
+import { scopeFor, activeVersionStems, songVersions } from "./versionScope.js";
 import { dismissFailuresByJobId } from "./notifications.js";
 import {
   BASE_STEMS, choiceKey, parseChoice, serializeChoice, mergeChoice, modeLayout, layoutLanes,
@@ -31,11 +32,17 @@ import {
 } from "./partChoice.js";
 
 // The open song as the last prepareLayout saw it: { jobId, songSelected,
+// versionStems (the stems of its open version, versionScope.js, or null),
 // present (stem names with a file), splitState, splitReason (why the last
 // split failed, a code from vocalSplitState.js, or null) }.
-let song = { jobId: null, songSelected: [], present: [], splitState: "none", splitReason: null };
-// Every mode's record for the open song, as read or last written.
-let records = { jobId: null, byMode: {} };
+let song = { jobId: null, songSelected: [], versionStems: null, present: [], splitState: "none", splitReason: null };
+// Every mode's record for the open song in its open version (`scope`,
+// versionScope.js), as read or last written.
+let records = { scope: null, byMode: {} };
+const sameScope = (jobId) => Boolean(jobId) && records.scope === scopeFor(jobId);
+// The lanes a mode shows when it has chosen none: the open version's stems
+// (#804), which for a song's first version are its selection at import.
+const defaultLanes = () => song.versionStems || song.songSelected;
 const listeners = new Set();
 // Refusals the UI owns (recording, a take open): set by whoever can answer.
 let busyCheck = () => "";
@@ -68,7 +75,7 @@ async function readRecord(jobId, mode) {
 }
 
 async function writeRecord(jobId, mode, record) {
-  if (records.jobId === jobId) records.byMode[mode] = record;
+  if (sameScope(jobId)) records.byMode[mode] = record;
   await storeSet(choiceKey(jobId, mode), record);
 }
 
@@ -81,17 +88,18 @@ async function writeRecord(jobId, mode, record) {
  */
 export async function prepareLayout(jobId, songSelected, present, splitState = "none", splitReason = null) {
   const mode = mixModeInForce();
-  if (records.jobId !== jobId) records = { jobId, byMode: {} };
+  if (!sameScope(jobId)) records = { scope: scopeFor(jobId), byMode: {} };
   const stored = await readRecord(jobId, mode);
   records.byMode[mode] = stored;
   song = {
     jobId,
     songSelected: [...(songSelected || [])],
+    versionStems: activeVersionStems(jobId),
     present: [...(present || [])],
     splitState: splitState || "none",
     splitReason: splitState === "error" ? splitReason || null : null,
   };
-  const layout = modeLayout(mode, stored, song.songSelected);
+  const layout = modeLayout(mode, stored, defaultLanes());
   setLaneLayout(jobId, { ...layout, songSelected: song.songSelected });
   notify();
   return layout;
@@ -103,8 +111,8 @@ export async function prepareLayout(jobId, songSelected, present, splitState = "
 export function layoutState() {
   const mode = mixModeInForce();
   const jobId = song.jobId === currentJobId ? song.jobId : null;
-  const stored = jobId ? records.byMode[mode] ?? null : null;
-  const layout = modeLayout(mode, stored, song.songSelected);
+  const stored = sameScope(jobId) ? records.byMode[mode] ?? null : null;
+  const layout = modeLayout(mode, stored, defaultLanes());
   const c = parseChoice(stored);
   return {
     jobId,
@@ -117,7 +125,7 @@ export function layoutState() {
     present: [...song.present],
     splitState: song.splitState,
     splitReason: song.splitReason,
-    songDefault: songDefaultLanes(song.songSelected),
+    songDefault: songDefaultLanes(defaultLanes()),
     shown: layoutLanes(layout, new Set(song.present)),
   };
 }
@@ -144,7 +152,7 @@ export async function changeLayout(patch) {
     if (!patch.lanes.length) return "empty";
   }
   if (patch && "lanes" in patch && !LANE_MODES.includes(mode)) return "mode";
-  const stored = records.jobId === jobId && mode in records.byMode
+  const stored = sameScope(jobId) && mode in records.byMode
     ? records.byMode[mode]
     : await readRecord(jobId, mode);
   const next = serializeChoice(mergeChoice(stored, patch));
@@ -158,8 +166,8 @@ export async function changeLayout(patch) {
 /** Reload the open song when the layout of `mode` shows other lanes than
  * the ones on screen. Returns whether a reload was asked for. */
 function applyIfChanged(jobId, mode) {
-  const stored = records.jobId === jobId ? records.byMode[mode] ?? null : null;
-  const layout = modeLayout(mode, stored, song.songSelected);
+  const stored = sameScope(jobId) ? records.byMode[mode] ?? null : null;
+  const layout = modeLayout(mode, stored, defaultLanes());
   const want = layoutSignature(layoutLanes(layout, new Set(song.present)));
   const shown = shownLaneLayout();
   setLaneLayout(jobId, { ...layout, songSelected: song.songSelected });
@@ -183,7 +191,7 @@ export async function requestSplit() {
   if (!VOICE_MODES.includes(mode)) return "mode";
   const current = {};
   for (const m of STEM_MODES) {
-    current[m] = records.jobId === jobId && m in records.byMode ? records.byMode[m] : await readRecord(jobId, m);
+    current[m] = sameScope(jobId) && m in records.byMode ? records.byMode[m] : await readRecord(jobId, m);
   }
   const patches = splitFreezePatches(mode, current);
   for (const [m, rec] of Object.entries(patches)) await writeRecord(jobId, m, rec);
@@ -192,21 +200,14 @@ export async function requestSplit() {
     notify();
     return "";
   }
+  // The song's other versions (#804) see no pair either: every mode of
+  // theirs without a voice of its own stays at one Vocals lane.
+  const open = scopeFor(jobId);
+  await freezeVoiceInVersions(jobId, songVersions(jobId).map((v) => v.id).filter((id) => scopeFor(jobId, id) !== open));
   song = { ...song, splitState: "running", splitReason: null };
   notify();
-  let ok = false;
   // Why it failed, from the server (#832): the popover and Karaoke say it.
-  let reason = "worker_failed";
-  try {
-    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/vocal-split`, { method: "POST" });
-    ok = res.ok || res.status === 202;
-    if (res.status === 409) [ok, reason] = await waitForSplit(jobId);
-    else if (!ok) reason = splitReason((await res.json().catch(() => ({})))?.vocal_split_reason);
-  } catch (err) {
-    console.warn("[modeStems] the vocal split failed:", err);
-  }
-  noteSplitOutcome(ok ? null : reason);
-  if (ok) dismissFailuresByJobId(jobId, "split");
+  const [ok, reason] = await runVocalSplit(jobId);
   if (song.jobId === jobId) {
     song = { ...song, splitState: ok ? "done" : "error", splitReason: ok ? null : reason };
   }
@@ -237,46 +238,46 @@ async function waitForSplit(jobId) {
 }
 
 /**
- * The Extract button on an open song that is already separated (Q1): the
- * chips become the open mode's lanes, nothing is separated again. Karaoke
- * and Streamer choose no lanes, so there the studio mode under them
- * (Practice or Advanced) takes the choice, seen when they close.
- * `stems`: the chips; `voice`: "split" or "combined" for the Lead + Backing
- * toggle beside them. Resolves { handled, mode, reason }: not handled when
- * the chips equal the lanes already shown (the button then separates again,
- * as it always did: the explicit "Separate again").
+ * Freeze every mode of the versions `versionIds` of `jobId` that has no
+ * voice of its own at one Vocals lane, before a Lead + Backing split starts:
+ * a split asked for in one version never changes what another shows.
  */
-export async function extractIntoOpenSong(stems, voice, studioMode) {
-  const jobId = song.jobId;
-  if (!jobId || jobId !== currentJobId) return { handled: false };
-  const inForce = mixModeInForce();
-  const mode = LANE_MODES.includes(inForce) ? inForce : studioMode;
-  if (!LANE_MODES.includes(mode)) return { handled: false };
-  const lanes = BASE_STEMS.filter((n) => (stems || []).includes(n));
-  if (!lanes.length) return { handled: false };
-  const stored = records.jobId === jobId && mode in records.byMode ? records.byMode[mode] : await readRecord(jobId, mode);
-  const layout = modeLayout(mode, stored, song.songSelected);
-  const present = new Set(song.present);
-  const splitDone = present.has("lead_vocals") && present.has("backing_vocals");
-  const voiceNow = layout.voice || (splitDone ? "split" : "combined");
-  const wantVoice = lanes.includes("vocals") && voice === "split" ? "split" : voiceNow;
-  const sameLanes = layout.lanes.length === lanes.length && layout.lanes.every((n) => lanes.includes(n));
-  if (sameLanes && wantVoice === voiceNow) return { handled: false };
-  const why = layoutBlockedReason();
-  if (why) return { handled: true, mode, reason: why };
-  const patch = { lanes, ...(wantVoice !== voiceNow ? { voice: wantVoice } : {}) };
-  if (mode !== inForce) {
-    // Not on screen: saved for when that mode is back.
-    await writeRecord(jobId, mode, serializeChoice(mergeChoice(stored, patch)));
-    notify();
-    return { handled: true, mode, reason: "" };
+export async function freezeVoiceInVersions(jobId, versionIds) {
+  for (const vid of versionIds || []) {
+    const current = {};
+    for (const m of STEM_MODES) {
+      try {
+        current[m] = await storeGet(choiceKey(jobId, m, vid), null);
+      } catch (err) {
+        console.warn("[modeStems] reading a version's stem choice failed:", err);
+        current[m] = null;
+      }
+    }
+    // "" asks for the pair in no mode: all of them are frozen.
+    for (const [m, rec] of Object.entries(splitFreezePatches("", current))) {
+      await storeSet(choiceKey(jobId, m, vid), rec);
+    }
   }
-  if (patch.voice === "split" && !splitDone) {
-    const r1 = await changeLayout({ lanes });
-    if (r1) return { handled: true, mode, reason: r1 };
-    return { handled: true, mode, reason: await requestSplit() };
+}
+
+/**
+ * Run the song's Lead + Backing split (idempotent on the server) without
+ * touching any record. Resolves [done, the reason when it was not].
+ */
+export async function runVocalSplit(jobId) {
+  let ok = false;
+  let reason = "worker_failed";
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/vocal-split`, { method: "POST" });
+    ok = res.ok || res.status === 202;
+    if (res.status === 409) [ok, reason] = await waitForSplit(jobId);
+    else if (!ok) reason = splitReason((await res.json().catch(() => ({})))?.vocal_split_reason);
+  } catch (err) {
+    console.warn("[modeStems] the vocal split failed:", err);
   }
-  return { handled: true, mode, reason: await changeLayout(patch) };
+  noteSplitOutcome(ok ? null : reason);
+  if (ok) dismissFailuresByJobId(jobId, "split");
+  return [ok, ok ? null : reason];
 }
 
 // ── Reload with the place kept ──
@@ -292,7 +293,7 @@ export { reloadKeepingPlace };
 async function onModeSettled(mode) {
   const jobId = currentJobId;
   if (!jobId || song.jobId !== jobId) return;
-  if (records.jobId !== jobId) records = { jobId, byMode: {} };
+  if (!sameScope(jobId)) records = { scope: scopeFor(jobId), byMode: {} };
   if (!(mode in records.byMode)) records.byMode[mode] = await readRecord(jobId, mode);
   if (jobId !== currentJobId || mode !== mixModeInForce()) return;
   // A take recording keeps the lanes it began with; the next load follows.

@@ -8,18 +8,27 @@
 // split when the song has none), a line naming what Original holds, "Use the
 // song's stems", and Apply. Keyboard: Enter or Space opens it with the first
 // checkbox focused, Tab moves, Escape closes and returns focus.
+//
+// Below them, the song's versions (#804, versions.js): which one is open (a
+// choice opens another, with its own lanes and mix), its name, "Save as new
+// version" (the ticked stems and the mix as it is now, under a new name) and
+// Delete, which forgets the version's settings and never a stem.
 
 import { t, onLanguageChange } from "./i18n.js";
 import { laneLabel, STEM_COLORS } from "./constants.js";
 import { mixerState, currentJobId } from "./state.js";
 import { onModeChange } from "./mode.js";
 import {
-  layoutState, changeLayout, requestSplit, onLayoutChange, setLayoutBusyCheck,
+  layoutState, changeLayout, requestSplit, onLayoutChange, setLayoutBusyCheck, layoutBlockedReason,
 } from "./modeStems.js";
 import { BASE_STEMS, sameNames, stemsReasonKey } from "./partChoice.js";
 import { isRecording } from "./capture/recordUi.js";
 import { isStreamerTakeOpen } from "./streamer/streamer.js";
 import { splitFailedText, vocalSplitUnavailable, onVocalSplitAvailability } from "./vocalSplitState.js";
+import { activeVersionId, nextVersionNumber, songVersions } from "./versionScope.js";
+import {
+  createVersion, deleteVersion, openVersion, renameVersion, versionLabel, versionStemsText,
+} from "./versions.js";
 
 let btn = null;
 let pop = null;
@@ -27,6 +36,8 @@ let ui = null;
 // The choice being edited, applied with Apply: { lanes: Set, voice }.
 let draft = null;
 let busy = false;
+// Delete asks twice: the first press arms it for a few seconds.
+let deleteArmed = 0;
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -113,11 +124,142 @@ function build() {
   applyBtn.type = "button";
   applyBtn.addEventListener("click", () => apply());
   actions.append(reset, applyBtn);
-  pop.append(title, hint, list, voice, holds, status, actions);
+  const versions = buildVersions();
+  pop.append(title, hint, list, voice, holds, status, actions, versions.wrap);
   pop.addEventListener("keydown", onKey);
   pop.addEventListener("click", (e) => e.stopPropagation());
   document.body.append(pop);
-  ui = { title, hint, rows, voice, voiceLabel, voiceBtns, seg, splitBtn, splitNote, holds, status, reset, applyBtn };
+  ui = { title, hint, rows, voice, voiceLabel, voiceBtns, seg, splitBtn, splitNote, holds, status, reset, applyBtn, v: versions };
+}
+
+function buildVersions() {
+  const wrap = el("div", "stems-pop-versions");
+  const label = el("label", "stems-pop-voice-label");
+  label.htmlFor = "laneVersionSelect";
+  const select = el("select", "stems-pop-vselect");
+  select.id = "laneVersionSelect";
+  select.addEventListener("change", () => runVersion(() => openVersion(currentJobId, select.value)));
+  const nameRow = el("div", "stems-pop-vrow");
+  const name = el("input", "stems-pop-vname");
+  name.type = "text";
+  name.maxLength = 60;
+  name.autocomplete = "off";
+  name.addEventListener("input", () => paint());
+  name.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      rename.click();
+    }
+  });
+  const rename = el("button", "stems-pop-vrename");
+  rename.type = "button";
+  rename.addEventListener("click", () => {
+    const value = name.value.trim();
+    if (!value) return;
+    runVersion(async () => {
+      const why = await renameVersion(currentJobId, activeVersionId(currentJobId), value);
+      if (why) throw new Error(why);
+    }, t("versions.renamed"));
+  });
+  nameRow.append(name, rename);
+  const row = el("div", "stems-pop-actions");
+  const del = el("button", "stems-pop-vdelete");
+  del.type = "button";
+  del.addEventListener("click", () => {
+    if (!deleteArmed) {
+      deleteArmed = window.setTimeout(() => { deleteArmed = 0; paint(); }, 4000);
+      paint();
+      return;
+    }
+    window.clearTimeout(deleteArmed);
+    deleteArmed = 0;
+    runVersion(async () => {
+      const why = await deleteVersion(currentJobId, activeVersionId(currentJobId));
+      if (why) throw new Error(why);
+    }, t("versions.deleted"));
+  });
+  const save = el("button", "stems-pop-vnew");
+  save.type = "button";
+  save.addEventListener("click", () => saveAsVersion());
+  row.append(del, save);
+  wrap.append(label, select, nameRow, row);
+  return { wrap, label, select, name, rename, del, save };
+}
+
+/** Run a version action with the popover held, then say how it went. */
+async function runVersion(fn, doneText = "") {
+  const why = layoutBlockedReason();
+  if (why) {
+    setStatus(blockedText(why));
+    paint();
+    return;
+  }
+  busy = true;
+  paint();
+  try {
+    await fn();
+    setStatus(doneText);
+  } catch (err) {
+    console.warn("[stemsControl] the version action failed:", err);
+    setStatus(t("versions.failed"));
+  }
+  busy = false;
+  draft = null;
+  paint();
+}
+
+/** "Save as new version": the ticked stems, the voice and the mix as it is
+ * now become a new version of the song, which opens. */
+function saveAsVersion() {
+  const state = layoutState();
+  if (!draft) return;
+  const lanes = [...draft.lanes].filter((n) => hasStem(state.present, n));
+  if (!lanes.length) {
+    setStatus(blockedText("empty"));
+    return;
+  }
+  const name = t("versions.unnamed", { n: nextVersionNumber(songVersions(currentJobId)) });
+  const voice = lanes.includes("vocals") ? draft.voice : null;
+  runVersion(() => createVersion(currentJobId, { name, lanes, voice, copyMix: true }), t("versions.created", { name }));
+}
+
+function paintVersions(state) {
+  const v = ui?.v;
+  if (!v) return;
+  const jobId = state.jobId;
+  v.wrap.hidden = !jobId;
+  if (!jobId) return;
+  const list = songVersions(jobId);
+  const active = activeVersionId(jobId);
+  v.label.textContent = t("versions.title");
+  v.select.setAttribute("aria-label", t("versions.title"));
+  const options = list.map((ver, i) => {
+    const text = ver.stems ? `${versionLabel(ver, i)} (${versionStemsText(ver.stems)})` : versionLabel(ver, i);
+    return [ver.id, text];
+  });
+  const have = [...v.select.options].map((o) => [o.value, o.textContent]);
+  if (JSON.stringify(have) !== JSON.stringify(options)) {
+    v.select.replaceChildren(...options.map(([value, text]) => {
+      const o = el("option", null, text);
+      o.value = value;
+      return o;
+    }));
+  }
+  v.select.value = active;
+  v.select.disabled = busy || list.length < 2;
+  const index = Math.max(0, list.findIndex((ver) => ver.id === active));
+  const current = versionLabel(list[index], index);
+  if (document.activeElement !== v.name) v.name.value = list[index]?.name || "";
+  v.name.placeholder = current;
+  v.name.setAttribute("aria-label", t("versions.nameLabel"));
+  v.name.disabled = busy;
+  v.rename.textContent = t("versions.rename");
+  v.rename.disabled = busy || !v.name.value.trim() || v.name.value.trim() === (list[index]?.name || "");
+  v.save.textContent = t("versions.saveNew");
+  v.save.disabled = busy;
+  v.del.textContent = deleteArmed ? t("versions.deleteConfirm") : t("versions.delete");
+  v.del.classList.toggle("armed", Boolean(deleteArmed));
+  v.del.disabled = busy || list.length < 2;
 }
 
 /** The song has this stem: its file, or Vocals as the Lead + Backing pair. */
@@ -199,6 +341,7 @@ function paint() {
   ui.reset.disabled = busy;
   ui.applyBtn.textContent = t("stems.apply");
   ui.applyBtn.disabled = busy || !draftChanged(state);
+  paintVersions(state);
 }
 
 function setStatus(text) {
@@ -252,6 +395,8 @@ async function runSplit() {
 function open() {
   if (!pop) build();
   draft = null;
+  window.clearTimeout(deleteArmed);
+  deleteArmed = 0;
   setStatus("");
   pop.hidden = false;
   btn.setAttribute("aria-expanded", "true");
@@ -265,7 +410,12 @@ function place() {
   const r = btn.getBoundingClientRect();
   const w = pop.offsetWidth;
   const left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
-  const top = Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8);
+  // Hung below the button and scrolled inside when it is taller than the
+  // room there (the versions part made it tall), so it never covers the
+  // button that closes it. Moved up only when there is almost no room below.
+  const below = Math.floor(window.innerHeight - r.bottom - 14);
+  pop.style.maxHeight = below >= 240 ? `${below}px` : "";
+  const top = below >= 240 ? r.bottom + 6 : Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8);
   pop.style.left = `${Math.round(left)}px`;
   pop.style.top = `${Math.round(Math.max(8, top))}px`;
 }
@@ -315,6 +465,11 @@ export function initStemsControl() {
   // The layout is read before the song's job id is current: paint again once
   // the song's mix is in.
   document.addEventListener("stemdeck:mix-loaded", () => paint());
+  // Another version opened, or the list changed: the ticks start from it.
+  document.addEventListener("stemdeck:versions-changed", () => {
+    if (!busy) draft = null;
+    paint();
+  });
   paint();
 }
 
