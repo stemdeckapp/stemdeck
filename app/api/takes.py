@@ -126,7 +126,6 @@ logger = logging.getLogger("stemdeck.api")
 
 router = APIRouter(tags=["takes"])
 
-PartKind = Literal["audio", "camera"]
 _PART_KINDS = ("audio", "camera")
 _STATE_FILE = "parts.json"
 _SIDECAR_FILE = "take.json"

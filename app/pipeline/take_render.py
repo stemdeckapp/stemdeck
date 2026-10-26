@@ -11,7 +11,6 @@ latency or offset means the material arrived late, so it is subtracted.
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 import shutil
@@ -627,7 +626,3 @@ def run_video_render(
         on_proc(None)
         if not ok:
             tmp.unlink(missing_ok=True)
-
-
-def is_finite_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
