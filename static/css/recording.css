@@ -330,11 +330,6 @@
    Input 1+2"). The buttons' line stays on the row's middle, level with the
    name. */
 @container mxrow (min-height: 108px) {
-  .lane-header.track-lane .mx-line-b {
-    flex-wrap: wrap;
-    height: auto;
-    row-gap: var(--mx-ctl-gap);
-  }
   .lane-header.track-lane .track-input-wrap {
     order: 1;
     flex: 1 0 100%;

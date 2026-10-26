@@ -341,10 +341,6 @@ html.karaoke-open .daw-footer { display: none !important; }
 .kk-btn:disabled { opacity: .4; cursor: default; }
 .kk-sq { width: 44px; height: 36px; padding: 0; }
 .kk-reset { flex: 1; height: 36px; }
-.kk-joined { display: flex; }
-.kk-joined .kk-sq { height: 32px; }
-.kk-joined .kk-sq:first-child { border-radius: 8px 0 0 8px; }
-.kk-joined .kk-sq:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
 
 /* The Stems label and, at its right, the voice form toggle (karaoke.js
    buildVoiceToggle): Backing vocals in the voice, or separate. */
