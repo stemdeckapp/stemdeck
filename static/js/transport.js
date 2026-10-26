@@ -2,7 +2,7 @@ import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } f
 import { MIN_LOOP_SEC, loopDragResult } from "./loopRegion.js";
 import { tickStepAt } from "./rulerTicks.js";
 import {
-  playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
+  playBtn, stopBtn, loopBtn,
   speedBtns,
   pitchDownBtn,
   pitchUpBtn,
@@ -11,7 +11,7 @@ import {
   pitchWrap,
   speedWrap,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
-  multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
+  multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
   footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
@@ -24,10 +24,10 @@ import {
   metronomeGrouping, setMetronomeGrouping,
   setMetronomeHasBars,
   setMetronomeEnabled, setMetronomeVolume, setMetronomeBeatsPerBar,
-  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed, playbackSpeed,
+  setLoopEnabled, setLoopStart, setLoopEnd, setPlaybackSpeed, playbackSpeed,
   waveZoom, setWaveZoom, overviewRerenderFn,
 } from "./state.js";
-import { applyMix, nudgeAllLanePitches, resetAllLanePitches, mixGlobals, setMixGlobals } from "./mixer.js";
+import { nudgeAllLanePitches, resetAllLanePitches, mixGlobals, setMixGlobals } from "./mixer.js";
 import { isDownbeatIndex, barPositionIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn, defaultGrouping, normaliseGrouping } from "./metronome.js";
 import { CLICK_SOUNDS } from "./clickSounds.js";
@@ -1109,7 +1109,6 @@ export function wireTransportButtons() {
   // a screen reader is told.
   setMetroOptionsAvailable(false);
   playBtn.addEventListener("click", togglePlayPause);
-  playMiniBtn?.addEventListener("click", togglePlayPause);
   stopBtn.addEventListener("click", stopTransport);
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
@@ -1117,15 +1116,6 @@ export function wireTransportButtons() {
   wireLoopInputs();
   wireZoomButtons();
   wireLaneScrollSync();
-  masterFader?.addEventListener("input", () => {
-    setMasterVolume(parseFloat(masterFader.value));
-    applyMix();
-  });
-  masterFader?.addEventListener("dblclick", () => {
-    masterFader.value = "0.5";
-    setMasterVolume(0.5);
-    applyMix();
-  });
   wireSpeedControl();
   wireMetronomeControl();
   wirePitchControl();

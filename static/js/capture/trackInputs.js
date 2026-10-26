@@ -232,7 +232,6 @@ export async function listInputDevices({ unlock = false } = {}) {
 // choice was never made, and the single input chosen before there were two
 // is carried over to the role its device belongs to.
 
-export const INPUT_ROLES = Object.freeze(["voice", "instrument"]);
 const NONE = "none";
 
 function roleKey(role) {

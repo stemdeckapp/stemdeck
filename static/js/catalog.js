@@ -1,5 +1,5 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
-import { wireUpAudio, updateFooterTrack } from "./player.js";
+import { wireUpAudio } from "./player.js";
 import { prepareLayout } from "./modeStems.js";
 import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
 import { activeVersionId, songVersions } from "./versionScope.js";
@@ -792,17 +792,6 @@ export function trackSourceUrl(trackId) {
   return tracks[trackId]?.sourceUrl || "";
 }
 
-function hasTrackAnalysis(track) {
-  return Boolean(
-    track?.bpm
-    || track?.key
-    || track?.scale
-    || track?.keyConfidence != null
-    || track?.lufs != null
-    || track?.peakDb != null,
-  );
-}
-
 function stateMetadataToTrack(state, fallbackTrack) {
   return {
     ...fallbackTrack,
@@ -953,13 +942,6 @@ function applyTrackInfoToPanel(track) {
   paintNowPlayingNames(track);
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
-  updateFooterTrack({
-    title: track.title,
-    thumbnail: track.thumb,
-    key: track.key,
-    bpm: track.bpm,
-    stemCount: stemCountOf(track) || null,
-  });
   applyStemPresenceCards(track.stemPresence);
 
   const summaryKey = document.getElementById("summary-key");
@@ -1879,15 +1861,6 @@ function unavailableWarningHtml(track) {
     ? i18nT("track.unavailableReimport")
     : i18nT("track.unavailableReupload");
   return `<span class="cat-unavailable-warning">${esc(label)}</span>`;
-}
-
-/**
- * How many stems a track has: the stem files that exist once it is done, and
- * the ones asked for before then. The mix itself ("original") is not a stem.
- */
-function stemCountOf(track) {
-  const stems = track?.audioStems?.length ? track.audioStems : track?.stems || [];
-  return stems.filter((s) => (s?.name ?? s) !== "original").length;
 }
 
 /**
@@ -2912,10 +2885,6 @@ export function setSidebarCollapsed(isCollapsed) {
   }
 }
 
-export function isSidebarCollapsed() {
-  return !!document.querySelector(".app")?.classList.contains("cat-collapsed");
-}
-
 function wireCatalogToggle() {
   const toggle = document.getElementById("catalogToggle");
   const collapseBtn = document.getElementById("sidebarCollapseBtn");
@@ -3061,33 +3030,10 @@ function wireCatalogSearch() {
   });
 }
 
-// ─── Collapsible widgets ───
-
-function wireWidgets() {
-  for (const head of document.querySelectorAll(".widget-head")) {
-    const widget = head.closest(".widget");
-    if (!widget) continue;
-    const key = `stemdeck.widget.${widget.dataset.widget}`;
-    if (localStorage.getItem(key) === "collapsed") {
-      widget.classList.add("collapsed");
-      head.setAttribute("aria-expanded", "false");
-    }
-    head.addEventListener("click", () => {
-      const isCollapsed = widget.classList.toggle("collapsed");
-      head.setAttribute("aria-expanded", String(!isCollapsed));
-      localStorage.setItem(key, isCollapsed ? "collapsed" : "open");
-    });
-    head.addEventListener("keydown", (e) => {
-      if (e.code === "Enter" || e.code === "Space") { e.preventDefault(); head.click(); }
-    });
-  }
-}
-
 // ─── Init ───
 
 const FALLBACK_VERSION = "0.1.0";
 let currentVersion = FALLBACK_VERSION;
-const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
 const RELEASES_URL = "https://github.com/stemdeckapp/stemdeck/releases";
 // The releases LIST, not /releases/latest. GitHub defines "latest" as the most
 // recent NON-PRERELEASE release, so the moment a version ships with the
@@ -3142,10 +3088,8 @@ function canonicalVersion(value) {
 }
 
 function setDisplayedVersion(version) {
-  const brand = document.getElementById("brandVersion");
   const about = document.getElementById("aboutVersion");
   currentVersion = normalizeVersion(version);
-  if (brand) brand.textContent = `v${currentVersion}`;
   if (about) about.textContent = `v${currentVersion}`;
 }
 
@@ -5926,7 +5870,6 @@ export async function initCatalog() {
   wireCatalogToggle();
   wireCatalogRailViews();
   wireCatalogSearch();
-  wireWidgets();
   wireMainPanelDrop();
   wireRailTrashDrop();
   wireRailLibraryDrop();

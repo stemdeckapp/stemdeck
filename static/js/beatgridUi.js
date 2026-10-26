@@ -78,8 +78,6 @@ export function toggleBeatGridEditor(force) {
   }
 }
 
-export const isBeatGridEditorOpen = () => isBeatGridEditing();
-
 export function wireBeatGridUi() {
   if (!bgToolbar) return;
 

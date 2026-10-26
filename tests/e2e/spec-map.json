@@ -50,7 +50,6 @@
     "static/js/mixer.js",
     "static/js/transport.js",
     "static/js/mode.js",
-    "static/js/audio.js",
     "static/js/audioEngine.js",
     "static/js/chunkedAudioEngine.js",
     "static/js/audioContext.js",
