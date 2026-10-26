@@ -8,7 +8,7 @@
 // value they never chose.
 //
 // The field is dimmed rather than removed. `hidden` would not have worked here
-// in any case: base.css is not loaded by index.html and daw.css scopes its
+// in any case: there is no global `.hidden` rule and daw.css scopes its
 // rule to `.daw`, while the settings overlay is appended to document.body.
 
 import { test, expect } from "@playwright/test";

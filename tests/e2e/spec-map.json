@@ -6,7 +6,7 @@
     "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to big-release catches what core misses.",
     "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
     "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
-    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over base.css and --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
+    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
     "Specs are named without tests/e2e/ and .spec.mjs. Paths are globs: * stays inside one folder, ** crosses folders.",
     "The rules were built from what the specs touch: modules they import with page.evaluate, element ids and classes the module renders, and the API routes they hit or stub."
   ],
@@ -38,9 +38,7 @@
     "pyproject.toml",
 
     "static/index.html",
-    "static/css/base.css",
     "static/css/variables.css",
-    "static/css/responsive.css",
     "static/vendor/multitrack.js",
     "static/js/main.js",
     "static/js/state.js",
@@ -99,7 +97,7 @@
       "why": "The mode switch and the mode menu, the stem picker and the lane stems popover",
       "paths": [
         "static/js/modeUi.js", "static/js/mixMode.js", "static/js/modeStems.js", "static/js/partChoice.js",
-        "static/js/stemChoice.js", "static/js/stemsControl.js", "static/js/playbackStems.js", "static/css/appbar.css"
+        "static/js/stemChoice.js", "static/js/stemsControl.js", "static/js/playbackStems.js"
       ],
       "specs": ["modes", "help-mode", "mode-stems", "partial-stems", "extract-row", "stem-chip-overflow", "karaoke", "streamer", "streamer-media", "panel-toggles", "transpose-switch-song"]
     },
@@ -123,7 +121,7 @@
     },
     {
       "why": "The library sidebar: rows, folders, tags, favorites, trash",
-      "paths": ["static/js/libraryDeleteKey.js", "static/css/catalog.css"],
+      "paths": ["static/js/libraryDeleteKey.js"],
       "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]
     },
     {
@@ -173,7 +171,7 @@
     },
     {
       "why": "Footer and transport layout",
-      "paths": ["static/js/footerFit.js", "static/css/transport.css"],
+      "paths": ["static/js/footerFit.js"],
       "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "slow-speed"]
     },
     {
@@ -183,7 +181,7 @@
     },
     {
       "why": "Lane headers are built by the take lanes and the record UI, so every lane spec reads them",
-      "paths": ["static/js/capture/takeLanes.js", "static/js/capture/recordUi.js", "static/css/mixer.css", "static/css/waves.css"],
+      "paths": ["static/js/capture/takeLanes.js", "static/js/capture/recordUi.js", "static/css/waves.css"],
       "specs": ["help-mode", "mode-stems", "partial-stems", "lane-alignment", "eq-panels", "eq-suggest", "transpose", "karaoke", "drag-out", "track-header", "zoom", "sections-zoom", "live-wave"]
     },
     {
@@ -195,7 +193,7 @@
       "why": "Master bus, mastering and export",
       "paths": [
         "static/js/masterEngine.js", "static/js/masterFx.js", "static/js/masterMath.js", "static/js/masterPanel.js",
-        "static/css/master.css", "static/css/mastering.css",
+        "static/css/mastering.css",
         "app/api/suggest.py", "app/pipeline/eq_*", "app/pipeline/mastering.py", "app/pipeline/fx_filters.py", "app/pipeline/audio_stats.py"
       ],
       "specs": ["master-live", "eq-suggest", "eq-engine", "eq-panels", "mode-stems", "export-menu", "modes", "help-mode", "partial-stems", "error-banner"]
@@ -234,11 +232,6 @@
       "why": "Notifications, failure reports and release cards",
       "paths": ["static/js/notifications.js"],
       "specs": ["report-failure", "release-full-download", "update-check", "error-banner"]
-    },
-    {
-      "why": "Job page pieces with one owner each",
-      "paths": ["static/css/job.css"],
-      "specs": ["error-box-narrow", "error-banner", "extract-row", "stem-chip-overflow", "job-form-submit", "key-card"]
     },
     {
       "why": "Format icon and cover art",
