@@ -1088,6 +1088,7 @@ fn sweep_update_leftovers() {
 /// replace python/ (see `AppUpdatePlan`). `None` is treated as "cannot verify",
 /// which sends the user to the full-package download rather than risking an app
 /// layer whose imports the installed runtime may not satisfy.
+#[cfg(any(windows, target_os = "linux"))]
 fn installed_runtime_id() -> Option<String> {
     let root = app_root().ok()?;
     let text = fs::read_to_string(root.join("python").join("runtime-version.json")).ok()?;
@@ -1260,6 +1261,7 @@ fn app_sha_path(downloads: &Path) -> PathBuf {
     downloads.join(format!("{UPDATE_APP_ARCHIVE}.sha256"))
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 fn verify_update_sha256(path: &Path, expected: &str, label: &str) -> Result<(), String> {
     let actual = sha256_file(path)?;
     if !actual.eq_ignore_ascii_case(expected.trim()) {
@@ -2006,7 +2008,7 @@ fn ensure_torch_device(
     #[cfg(target_os = "macos")]
     {
         // No pip pass on this platform: MPS ships in the bundled wheel.
-        let _ = &app;
+        let _ = (&state, &app);
         let mps_available = verify_mps_torch(&python);
         let (device, reason) = if mps_available {
             ("mps", "mps")
@@ -2462,7 +2464,7 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
 /// setup now walks the whole list, so nothing in the app asks for just the
 /// head of it. Kept because the per-architecture expectations below are
 /// clearer read one tag at a time than as one-element vectors.
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "macos")))]
 fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
     wheel_candidates(compute_cap, cuda_version)[0]
 }
@@ -2801,6 +2803,7 @@ fn python_stdlib_present(venv_root: &Path) -> bool {
 
 /// Maps known pip/OS failure patterns to actionable user messages.
 /// Pure function — caller is responsible for logging the raw stderr before calling.
+#[cfg(not(target_os = "macos"))]
 fn classify_cuda_install_error(stderr: &str) -> String {
     let lower = stderr.to_ascii_lowercase();
 
