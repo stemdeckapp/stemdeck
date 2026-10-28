@@ -301,10 +301,6 @@ export function holdLaneSilent(name, on) {
   if (had !== Boolean(on)) applyMix();
 }
 
-export function isLaneHeldSilent(name) {
-  return _heldSilent.has(name);
-}
-
 export function applyMix() {
   if (!multitrack) return;
   const anySolo = allTrackNames().some((name) => trackIndex[name] !== undefined && mixerState[name]?.soloed);
@@ -474,36 +470,6 @@ export function setLaneControlsEnabled(enabled) {
 
 const MINI_WAVE_BARS = 40;
 const MINI_WAVE_VIEWBOX_H = 26;
-
-function emptyMiniWaveSvg(stemName) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "lane-mini-wave");
-  svg.dataset.stem = stemName;
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.setAttribute("viewBox", `0 0 ${MINI_WAVE_BARS * 2} ${MINI_WAVE_VIEWBOX_H}`);
-  return svg;
-}
-
-function makeMiniWaveSvg(stemName, color) {
-  // Seeded placeholder bars used while real peaks haven't loaded yet.
-  let s = 0;
-  for (const c of stemName) s = (s * 31 + c.charCodeAt(0)) >>> 0;
-  const rng = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-  const svg = emptyMiniWaveSvg(stemName);
-  for (let i = 0; i < MINI_WAVE_BARS; i++) {
-    const env = Math.sin((i / MINI_WAVE_BARS) * Math.PI) * 0.7 + 0.3;
-    const h = Math.max(2, env * (rng() * 0.6 + 0.25) * MINI_WAVE_VIEWBOX_H);
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", `${i * 2}`);
-    rect.setAttribute("y", `${(MINI_WAVE_VIEWBOX_H - h) / 2}`);
-    rect.setAttribute("width", "1");
-    rect.setAttribute("height", `${h}`);
-    rect.setAttribute("fill", color);
-    rect.setAttribute("opacity", "0.6");
-    svg.appendChild(rect);
-  }
-  return svg;
-}
 
 export function renderRealMiniWave(stemName, audioBuffer, color) {
   const svg = mixerEl.querySelector(`.lane-mini-wave[data-stem="${stemName}"]`);
@@ -921,53 +887,6 @@ export function soloOnlyStem(name) {
   refreshMixerVisuals();
   applyMix();
   saveMix();
-}
-
-export function resetMixer() {
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.volume = 1;
-    s.muted = false;
-    s.soloed = false;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function muteAll() {
-  // Toggle direction reflects the lanes actually loaded for this job (base 6,
-  // or drums/bass/lead_vocals/backing_vocals/guitar/piano/other when the
-  // on-demand split, #275, is active) rather than always the fixed 6 --
-  // trackIndex is the live "what's actually mounted" source of truth.
-  const loadedNames = Object.keys(trackIndex).filter((n) => n !== "original");
-  const allMuted = loadedNames.length > 0 && loadedNames.every((n) => mixerState[n]?.muted);
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.muted = !allMuted;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function clearAllSolos() {
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.soloed = false;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function wireMixerToolbar() {
-  document.getElementById("mixer-reset")?.addEventListener("click", resetMixer);
-  document.getElementById("mixer-mute-all")?.addEventListener("click", muteAll);
-  document.getElementById("mixer-clear-solo")?.addEventListener("click", clearAllSolos);
 }
 
 export function wireStemListControls() {

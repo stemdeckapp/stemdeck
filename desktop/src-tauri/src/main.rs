@@ -549,7 +549,6 @@ fn main() {
             download_runtime_pack,
             verify_runtime_pack,
             extract_runtime_pack,
-            installed_runtime_id,
             check_app_update,
             download_app_update,
             apply_app_update,
@@ -558,7 +557,6 @@ fn main() {
             repair_torchvision,
             warmup_models,
             start_backend,
-            local_ip,
             build_target,
             open_url,
             native_file_drop,
@@ -1090,7 +1088,7 @@ fn sweep_update_leftovers() {
 /// replace python/ (see `AppUpdatePlan`). `None` is treated as "cannot verify",
 /// which sends the user to the full-package download rather than risking an app
 /// layer whose imports the installed runtime may not satisfy.
-#[tauri::command]
+#[cfg(any(windows, target_os = "linux"))]
 fn installed_runtime_id() -> Option<String> {
     let root = app_root().ok()?;
     let text = fs::read_to_string(root.join("python").join("runtime-version.json")).ok()?;
@@ -1263,6 +1261,7 @@ fn app_sha_path(downloads: &Path) -> PathBuf {
     downloads.join(format!("{UPDATE_APP_ARCHIVE}.sha256"))
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 fn verify_update_sha256(path: &Path, expected: &str, label: &str) -> Result<(), String> {
     let actual = sha256_file(path)?;
     if !actual.eq_ignore_ascii_case(expected.trim()) {
@@ -1972,21 +1971,6 @@ fn build_target() -> BuildTarget {
     BuildTarget { os, arch, gpu }
 }
 
-/// Best-effort primary LAN IPv4, shown in Settings so the user knows the address
-/// to open StemDeck from another device. Uses the "connect a UDP socket" trick:
-/// no packets are sent — connect() just makes the OS pick the source IP for the
-/// default route. Returns None when offline / no route.
-#[tauri::command]
-fn local_ip() -> Option<String> {
-    use std::net::UdpSocket;
-    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
-    sock.connect("8.8.8.8:80").ok()?;
-    match sock.local_addr().ok()?.ip() {
-        std::net::IpAddr::V4(v4) if !v4.is_loopback() => Some(v4.to_string()),
-        _ => None,
-    }
-}
-
 /// Detects GPU hardware, installs CUDA torch if needed, and persists the chosen device.
 #[tauri::command]
 fn ensure_torch_device(
@@ -2024,7 +2008,7 @@ fn ensure_torch_device(
     #[cfg(target_os = "macos")]
     {
         // No pip pass on this platform: MPS ships in the bundled wheel.
-        let _ = &app;
+        let _ = (&state, &app);
         let mps_available = verify_mps_torch(&python);
         let (device, reason) = if mps_available {
             ("mps", "mps")
@@ -2480,7 +2464,7 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
 /// setup now walks the whole list, so nothing in the app asks for just the
 /// head of it. Kept because the per-architecture expectations below are
 /// clearer read one tag at a time than as one-element vectors.
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "macos")))]
 fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
     wheel_candidates(compute_cap, cuda_version)[0]
 }
@@ -2819,6 +2803,7 @@ fn python_stdlib_present(venv_root: &Path) -> bool {
 
 /// Maps known pip/OS failure patterns to actionable user messages.
 /// Pure function — caller is responsible for logging the raw stderr before calling.
+#[cfg(not(target_os = "macos"))]
 fn classify_cuda_install_error(stderr: &str) -> String {
     let lower = stderr.to_ascii_lowercase();
 

@@ -9,7 +9,6 @@ export const urlInput = $("url");
 export const submitBtn = $("submit");
 
 export const playBtn = $("t-play");
-export const playMiniBtn = $("t-play-mini");
 export const stopBtn = $("t-stop");
 export const loopBtn = $("t-loop");
 export const titleEl = $("title");
@@ -17,7 +16,6 @@ export const bpmChip = $("t-bpm");
 export const keyChip = $("t-key");
 export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
-export const masterFader = $("t-master");
 export const speedBtns = ["t-speed-05", "t-speed-075", "t-speed-1"].map($);
 export const pitchDownBtn = $("t-pitch-down");
 export const pitchUpBtn = $("t-pitch-up");
@@ -28,7 +26,6 @@ export const pitchResetBtn = $("t-pitch-reset");
 // when it has something to say.
 export const pitchWrap = $("t-pitch-wrap");
 export const speedWrap = $("t-speed-wrap");
-export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 
 export const jobBox = $("job");
@@ -39,7 +36,6 @@ export const jobCancelBtn = $("job-cancel");
 export const progressEl = $("progress");
 
 export const errorEl = $("error");
-export const lanesEl = $("lanes");
 export const mixerEl = $("mixer");
 export const multitrackContainer = $("multitrack-container");
 export const wavesGrid = $("waves-grid");
@@ -77,7 +73,6 @@ export const exportClickWrap = $("t-export-click-wrap");
 export const exportCountInEl = $("t-export-count-in");
 export const exportCountInWrap = $("t-export-count-in-wrap");
 export const bgToolbar = $("beatgrid-toolbar");
-export const bgCanvas = $("beatgrid-canvas");
 export const bgUndoBtn = $("bg-undo");
 export const bgRedoBtn = $("bg-redo");
 export const bgResetBtn = $("bg-reset");
@@ -87,11 +82,7 @@ export const bgSnapEl = $("bg-snap");
 export const bgBarLenEl = $("bg-barlen");
 export const bgHintEl = $("bg-hint");
 export const stemListEl = document.querySelector(".stem-list");
-export const npScrubEl = document.querySelector(".np-scrub");
 export const npScrubFill     = $("footer-scrub-fill");
-export const footerTitle     = $("footer-title");
-export const footerMeta      = $("footer-meta");
-export const footerThumb     = $("footer-thumb");
 
 // ─── Mutable state ───
 
@@ -154,11 +145,6 @@ export function saveSelectedStems() {
     console.warn("[state] failed to save stem selection:", e)
   );
 }
-export function setStemSelected(name, selected) {
-  if (selected) selectedStems.add(name);
-  else selectedStems.delete(name);
-  saveSelectedStems();
-}
 
 // On-demand lead/backing vocal split (#275): "all" (default, plain Vocals
 // lane) or "split" (auto-run the split once the next import finishes).
@@ -179,17 +165,7 @@ export function setVocalSplitMode(mode) {
   );
 }
 
-// Web Audio analysers for live VU meters.
-export let audioContext = null;
-export let masterVolume = 0.5; // mirrored from masterFader.value
-export const trackAnalysers = []; // index → { analyser, data, vuEl }
-export let vuRafId = null;
-
-// Master bus nodes — created once in audio.js, shared across mixer.js.
-// masterBusGain is driven by the master fader; masterLimiter is a
-// transparent brickwall limiter that prevents inter-stem summing clipping.
-export let masterBusGain = null;
-export let masterLimiter = null;
+export let masterVolume = 0.5; // no control sets it any more; stays 0.5
 
 // ─── Setter helpers for mutable state (so other modules can update) ───
 
@@ -208,7 +184,6 @@ function _loopChanged() { for (const fn of _loopListeners) fn(); }
 export function setLoopEnabled(v) { loopEnabled = v; _loopChanged(); }
 export function setLoopStart(v) { loopStart = v; _loopChanged(); }
 export function setLoopEnd(v) { loopEnd = v; _loopChanged(); }
-export function setAudioContext(v) { audioContext = v; }
 export function setMasterVolume(v) { masterVolume = v; }
 export let playbackSpeed = 1.0;
 export function setPlaybackSpeed(v) { playbackSpeed = v; }
@@ -219,9 +194,6 @@ export function setPlaybackSpeed(v) { playbackSpeed = v; }
 // tools are only available at 1.
 export let waveZoom = 1;
 export function setWaveZoom(v) { waveZoom = v; }
-export function setVuRafId(v) { vuRafId = v; }
-export function setMasterBusGain(v) { masterBusGain = v; }
-export function setMasterLimiter(v) { masterLimiter = v; }
 
 // Footer waveform draw callback — set by player.js, called by transport.js
 export let footerWaveDrawFn = null;

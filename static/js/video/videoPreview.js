@@ -206,8 +206,3 @@ export function closePreview() {
 
 // Practice mode has no video tracks' tools: the preview closes with them.
 onModeChange((m) => { if (m === "practice") closePreview(); });
-
-/** The track the preview shows, or null when it is closed. */
-export function previewTrackId() {
-  return win && !win.hidden ? trackId : null;
-}

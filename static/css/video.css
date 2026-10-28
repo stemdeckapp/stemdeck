@@ -74,8 +74,6 @@
 }
 .vid-offset { width: 72px; font-family: var(--font-mono); text-align: right; }
 
-.vid-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-
 /* 16:9 tile at most 320 px wide: enough to check framing, small enough to
    keep the lanes in view while playing. */
 .vid-preview-wrap {

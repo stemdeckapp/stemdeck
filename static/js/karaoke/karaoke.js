@@ -32,7 +32,7 @@ import { splitFailedText, vocalSplitUnavailable, onVocalSplitAvailability } from
 import { takeOpen as streamerTakeOpen } from "../streamer/streamerRecord.js";
 import {
   transposedKey, semitoneLabel, clockShort, clockLong,
-  sungLines, lyricFrame, timedWords, sungCount, karaokeStems, karaokeMutedByDefault, karaokeAlwaysOn,
+  sungLines, lyricFrame, timedWords, karaokeStems, karaokeMutedByDefault, karaokeAlwaysOn,
 } from "./karaokeModel.js";
 
 const FS_IDLE_MS = 3000;

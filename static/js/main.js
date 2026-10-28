@@ -1,7 +1,7 @@
 // The studio mode first: it sets the class the DAW controls are hidden by.
 import "./mode.js";
 import {
-  playBtn, loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
+  loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitModeReady, setVocalSplitMode,
   setAutoSectionsResetFn, onLoopChange,
@@ -15,7 +15,7 @@ import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange } from "./transport.js";
 import { setSectionsLoopBridge, refreshSectionsAddState } from "./sections.js";
-import { wireStemListControls, wireMixerToolbar, laneDragIcon } from "./mixer.js";
+import { wireStemListControls, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
@@ -503,7 +503,6 @@ wireBeatGridUi();
 wireFooterControls();
 requestAnimationFrame(drawFooterPlaceholder);
 wireStemListControls();
-wireMixerToolbar();
 wireStemChoiceButtons();
 wireAllButton();
 wireVocalModeToggle();

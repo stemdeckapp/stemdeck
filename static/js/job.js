@@ -5,7 +5,7 @@ import {
   foregroundJobId, setForegroundJobId,
   selectedStems, currentJobId,
 } from "./state.js";
-import { destroyPlayer, wireUpAudio, setWaveformLoading, updateFooterTrack } from "./player.js";
+import { destroyPlayer, wireUpAudio, setWaveformLoading } from "./player.js";
 import { prepareLayout } from "./modeStems.js";
 import { extractAsVersion } from "./versions.js";
 import { showTrackNote } from "./capture/takeLanes.js";
@@ -189,7 +189,6 @@ function setSubmitProcessing(processing) {
   // conditions from the other side.
   submitBtn.disabled = processing || selectedStems.size === 0;
   submitBtn.classList.toggle("loading", processing);
-  document.querySelector(".strip-sq-process")?.classList.toggle("loading", processing);
   const label = submitBtn.querySelector("span");
   // Back to the label the markup ships, not a second one that only exists
   // here. This restored t("job.process") -- "Process" -- while index.html
@@ -551,15 +550,6 @@ function applyState(state) {
   }
   if (state.bpm) bpmChip.textContent = t("job.bpmValue", { bpm: state.bpm });
   if (state.key) keyChip.textContent = state.key;
-  if (state.title || state.bpm || state.key || state.thumbnail) {
-    updateFooterTrack({
-      title: state.title,
-      thumbnail: state.thumbnail,
-      key: state.key,
-      bpm: state.bpm,
-      stemCount: state.stems ? state.stems.filter((s) => s.name !== "original").length : null,
-    });
-  }
   applyStudioSummary(state);
   // Stage label is owned by the phrase-rotation timer below; we don't
   // overwrite it from each SSE tick. The truthful backend stage goes

@@ -105,11 +105,6 @@ export function takeOpen() {
   return isTakeOpen(rec.state);
 }
 
-/** The canvas the take films, at the output size, while a take is open. */
-export function outputCanvas() {
-  return isTakeOpen(rec.state) ? rec.canvas : null;
-}
-
 /** The last take recorded for `jobId` (a reload keeps it), or null. */
 export function lastTake(jobId) {
   if (rec.jobId === jobId && rec.takeId && (rec.state === "saved" || rec.state.startsWith("export"))) return rec.takeId;

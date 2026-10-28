@@ -94,11 +94,6 @@ export function setBypass(laneId, on) {
   return setLaneEq(laneId, eq);
 }
 
-/** Back to flat (no bands, 0 dB output, not bypassed, panel state cleared). */
-export function resetLane(laneId) {
-  return setLaneEq(laneId, flatEq());
-}
-
 /**
  * Play a different EQ on the lane without saving or announcing it: an A/B
  * "compare" (preview the flat or bypassed version), or soloing one band

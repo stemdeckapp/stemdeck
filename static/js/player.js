@@ -24,13 +24,12 @@ import {
   titleEl, npThumb, rulerTime, wavesGrid, playBtn,
   stopBtn, loopBtn, loopRegionEl,
   multitrack, currentJobId, trackIndex, totalDuration, loopEnabled,
-  loopStart, loopEnd, trackAnalysers,
-  masterVolume, masterFader, mixerState,
+  loopStart, loopEnd,
+  mixerState,
   audioEngine, setAudioEngine,
   setMultitrack, setCurrentJobId, setTrackIndex, setTotalDuration,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
-  footerTitle, footerMeta, footerThumb,
   setFooterWaveDrawFn, setOverviewRerenderFn, autoSectionsResetFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
   metronomeCountInBars, metronomeGrouping, metronomeSound,
@@ -63,7 +62,6 @@ import {
   updatePresencePlayhead, resetSpeed, resetPitch, updatePitchAvailability, restoreGlobals,
   updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
-import { stopVuLoop } from "./audio.js";
 import { destroySections } from "./sections.js";
 import { t, plural, onLanguageChange } from "./i18n.js";
 import { paintNowPlayingArt } from "./formatIcon.js";
@@ -473,34 +471,6 @@ function barsWaveformSvg(peaks, norm, barCount) {
       + `width="${OVERVIEW_BAR_FRAC}" height="${h.toFixed(2)}" rx="0.3"></rect>`;
   }
   return rects.join("");
-}
-
-// Mixer-column mini-wave keeps a per-stem normalized envelope (each
-// thumbnail fills its own little box). Used by mixer.js indirectly via
-// renderRealMiniWave, which has its own peak computation.
-function bufferPeaks(audioBuffer, count) {
-  const peaks = bufferMinMaxPeaks(audioBuffer, count);
-  let max = 0;
-  for (const [mn, mx] of peaks) {
-    if (mx > max) max = mx;
-    if (-mn > max) max = -mn;
-  }
-  const norm = max > 0 ? 1 / max : 0;
-  return peaks.map(([mn, mx]) => Math.max(Math.min(1, mx * norm), -mn * norm));
-}
-
-function waveformPath(peaks) {
-  const top = peaks.map((amp, i) => {
-    const x = (i / (peaks.length - 1)) * 100;
-    const y = 24 - amp * 21;
-    return `${i === 0 ? "M" : "L"}${x.toFixed(3)} ${y.toFixed(3)}`;
-  });
-  const bottom = [...peaks].reverse().map((amp, i) => {
-    const x = ((peaks.length - 1 - i) / (peaks.length - 1)) * 100;
-    const y = 24 + amp * 21;
-    return `L${x.toFixed(3)} ${y.toFixed(3)}`;
-  });
-  return `${top.join(" ")} ${bottom.join(" ")} Z`;
 }
 
 function renderOverviewWaveformPath(stemName, peaks, norm, color, barCount, orderIndex) {
@@ -1040,7 +1010,6 @@ export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("engine-waveforms");
   document.querySelector(".app")?.classList.add("no-track");
   destroySections();
-  stopVuLoop();
   stopStemVuLoop();
   resetSpeed();
   resetPitch();
@@ -1091,7 +1060,6 @@ export function destroyPlayer() {
   timeEl.textContent = "00:00 / 00:00";
   resetAnalysisCards();
 
-  trackAnalysers.length = 0;
   for (const row of document.querySelectorAll(".energy-row")) {
     const bar = row.querySelector("b");
     const txt = row.querySelector("em");
@@ -1122,7 +1090,6 @@ export function destroyPlayer() {
   setFooterWaveDrawFn(null);
   const cv = document.getElementById("footer-waveform");
   if (cv) { const c = cv.getContext("2d"); c?.clearRect(0, 0, cv.width, cv.height); }
-  updateFooterTrack({});
 }
 
 export function renderEmptyShell() {
@@ -1343,7 +1310,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   app?.classList.remove("is-import");
   app?.classList.remove("no-track");
   setWaveformLoading(true);
-  stopVuLoop();
   stopStemVuLoop();
   destroyMultitrack();
   playBtn.classList.remove("playing");
@@ -1464,7 +1430,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   // genuinely has no video stream, which is not a fault and not news (#436).
   exportWrap?.classList.toggle("video-failed", videoStatus === "failed");
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
-  updateFooterTrack({ thumbnail, stemCount: stems.filter((s) => s.name !== "original").length });
 
   // Reset footer waveform state — will be re-populated below after peaks fetch.
   _footerWavePeaks = null;
@@ -1690,7 +1655,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     buildFooterWaveTicks(totalDuration);
     updateFooterTimes(0);
     updatePresencePlayhead(0);
-    setMasterVolume(masterFader ? parseFloat(masterFader.value) : masterVolume);
     mixReady.then(() => { if (currentJobId === jobId && multitrack === mt) applyMix(); });
     setLoopStart(totalDuration * LOOP_DEFAULT_START_FRAC);
     setLoopEnd(totalDuration * LOOP_DEFAULT_END_FRAC);
@@ -2123,36 +2087,6 @@ async function initFooterWaveform(stemUrl) {
     _footerWaveResizeObs.observe(canvas.parentElement || canvas);
   } catch (e) {
     console.warn("[player] footer waveform:", e);
-  }
-}
-
-export function updateFooterTrack({ title, thumbnail, key, bpm, stemCount } = {}) {
-  if (footerThumb) {
-    const artEl = footerThumb.closest(".footer-art");
-    if (thumbnail) {
-      footerThumb.src = thumbnail;
-      footerThumb.onload = () => {
-        footerThumb.classList.add("loaded");
-        artEl?.classList.add("has-art");
-      };
-      footerThumb.onerror = () => {
-        footerThumb.classList.remove("loaded");
-        artEl?.classList.remove("has-art");
-      };
-    } else {
-      footerThumb.removeAttribute("src");
-      footerThumb.classList.remove("loaded");
-      artEl?.classList.remove("has-art");
-    }
-  }
-  if (footerTitle && title !== undefined) footerTitle.textContent = title;
-  if (footerMeta) {
-    const parts = [];
-    if (key) parts.push(key);
-    if (bpm) parts.push(`${Math.round(bpm)} BPM`);
-    if (stemCount != null) parts.push(`${stemCount} Stems`);
-    if (key !== undefined || bpm !== undefined || stemCount !== undefined)
-      footerMeta.textContent = parts.join(" • ");
   }
 }
 

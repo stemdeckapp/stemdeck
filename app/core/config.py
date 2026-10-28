@@ -537,10 +537,6 @@ AUDIO_TAG_MOJIBAKE_MIN_WORD = 4
 # lookup runs beside separation, which takes far longer, so it costs an import
 # no time unless both requests are slow and the separation was fast.
 TIMEOUT_ARTIST_LOOKUP = _env_int("STEMDECK_TIMEOUT_ARTIST_LOOKUP", 8)
-# How long a finished pipeline waits for a lookup still in flight before it
-# lets the job finish without a band. Kept short: the page finds the band
-# itself when it opens a track that has none, so the wait buys little.
-ARTIST_LOOKUP_GRACE_SEC = _env_int("STEMDECK_ARTIST_LOOKUP_GRACE_SEC", 2)
 # Wikimedia asks every client to name itself and a way to reach its maker.
 ARTIST_LOOKUP_USER_AGENT = (
     "StemDeck (https://github.com/stemdeckapp/stemdeck; self-hosted stem separation)"
@@ -642,9 +638,8 @@ TITLE_ARTIST_SEARCHES = 2
 IDENTIFY_VIDEO_EXTRA_SEC = 150
 # Each AcoustID or MusicBrainz request is abandoned after this many seconds.
 TIMEOUT_IDENTIFY_REQUEST = _env_int("STEMDECK_TIMEOUT_IDENTIFY_REQUEST", 8)
-# How long a finished pipeline waits for identification still in flight, as
-# ARTIST_LOOKUP_GRACE_SEC does for the band. Separation takes minutes, so the
-# answer is nearly always waiting already.
+# How long a finished pipeline waits for identification still in flight.
+# Separation takes minutes, so the answer is nearly always waiting already.
 IDENTIFY_GRACE_SEC = _env_int("STEMDECK_IDENTIFY_GRACE_SEC", 2)
 # POST /api/jobs/{id}/audio-tags identifies an older track before it answers;
 # past this it answers with what it has.

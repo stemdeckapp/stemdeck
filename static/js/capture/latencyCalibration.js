@@ -43,14 +43,6 @@ export function saveCalibration(deviceId, rate, cal) {
   }
 }
 
-export function clearCalibration(deviceId, rate) {
-  try {
-    localStorage.removeItem(calibrationKey(deviceId, rate));
-  } catch (e) {
-    console.warn("[capture] could not clear the calibration:", e);
-  }
-}
-
 /**
  * Run one calibration on an open capture. Playback must be stopped first.
  * Resolves { ok: true, roundTripMs, driftPpm, ... } and stores it, or

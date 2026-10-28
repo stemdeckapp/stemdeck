@@ -225,11 +225,3 @@ export function startQueueStream() {
 
   open();
 }
-
-export function stopQueueStream() {
-  if (source) {
-    source.close();
-    source = null;
-  }
-  stopPolling();
-}

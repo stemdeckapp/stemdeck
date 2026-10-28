@@ -130,31 +130,6 @@ def _write_voiced_wav(path, hits, seconds: float, sr: int = SR) -> None:
 CLICK_LEAD_IN = 0.5
 
 
-def _write_kit_wav(path, beat_times: list[float], seconds: float, sr: int = SR) -> list[float]:
-    """A realistic kit pattern over the given beat grid.
-
-    Kick on beats 1 and 3, snare on 2 and 4, and a hat on *every* eighth --
-    including the on-beats. That last detail matters: with hats only between the
-    beats, every eighth carries equal weight and the eighth-note pulse becomes a
-    perfectly reasonable reading of the tempo (measured: a 100 BPM pattern
-    detected as 199.9). Hats on the beats as well reinforce which pulse is the
-    beat, which is what real playing does.
-
-    A bare identical hit on every beat (what `_write_hits_wav` produces) is not
-    music at all and leaves the phase unconstrained: on one such fixture the
-    model locked onto the off-beat with zero onset support under the whole grid.
-    """
-    hits: list[tuple[float, str]] = []
-    for i, t in enumerate(beat_times):
-        hits.append((t, "kick" if i % 4 in (0, 2) else "snare"))
-        hits.append((t, "hat"))
-        nxt = beat_times[i + 1] if i + 1 < len(beat_times) else None
-        if nxt is not None:
-            hits.append(((t + nxt) / 2.0, "hat"))
-    _write_voiced_wav(path, hits, seconds, sr)
-    return [t for t in beat_times if 0 <= t < seconds]
-
-
 def _write_click_wav(
     path, bpm: float, seconds: float, sr: int = SR, start: float = CLICK_LEAD_IN
 ) -> list[float]:

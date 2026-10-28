@@ -507,9 +507,6 @@ input, textarea { font-family: inherit; }
   text-align: center; padding: 16px 0; margin: 0;
 }
 
-/* Hidden collapsed strip (JS compat, not shown in new design) */
-.appbar-icon-strip.hidden { display: none !important; }
-
 /* ═══════════════════════════════════
    BODY LAYOUT
    ═══════════════════════════════════ */
@@ -636,21 +633,6 @@ input, textarea { font-family: inherit; }
   flex-shrink: 0;
 }
 
-/* Lib header row */
-.daw-lib-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 4px;
-  min-height: 22px;
-  flex-shrink: 0;
-}
-.daw-lib-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.daw-lib-count { color: var(--muted-2); font-weight: 500; margin-left: 4px; }
 .new-folder-btn {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px 3px 7px;
@@ -741,39 +723,6 @@ input, textarea { font-family: inherit; }
   background: rgba(148, 163, 184, 0.6);
   background-clip: padding-box;
 }
-
-/* Library item */
-.lib-item {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  position: relative;
-  transition: background var(--t-fast);
-}
-.lib-item:hover { background: var(--panel); }
-.lib-item.active {
-  background: linear-gradient(90deg, rgba(244,183,64,0.10) 0%, var(--panel-2) 60%);
-}
-.lib-item.active::before {
-  content: '';
-  position: absolute; left: -2px; top: 6px; bottom: 6px;
-  width: 3px; border-radius: 2px;
-  background: var(--accent);
-}
-.lib-cover {
-  width: 36px; height: 36px; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
-  color: rgba(255,255,255,0.85);
-  flex-shrink: 0;
-}
-.lib-meta { flex: 1; min-width: 0; }
-.lib-meta .t { font-size: 13px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-meta .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 /* cat-item (legacy catalog items JS creates) */
 .cat-item {
@@ -1163,14 +1112,6 @@ input, textarea { font-family: inherit; }
 }
 .playlist-confirm-go:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Color picker popover */
-.color-picker-popover {
-  position: absolute; z-index: 90;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  border-radius: 8px; padding: 8px; display: flex; gap: 6px;
-  box-shadow: var(--shadow-panel);
-}
-
 /* Collapsed sidebar strip */
 .cat-collapsed-strip { display: none; }
 .daw.cat-collapsed .sidebar { width: var(--rail-w); }
@@ -1337,17 +1278,6 @@ input, textarea { font-family: inherit; }
   text-wrap: balance;
 }
 
-/* Track card */
-.daw-track-card {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  padding: 4px 16px;
-  flex-shrink: 0;
-  width: 340px;
-  border-right: 1px solid var(--border);
-}
-
 /* Metadata cards.
    Two lines, not three: the qualifier (Natural Minor, Peak 3.5 dB, High) sits
    on the value's own line rather than under it. Six stems only fit on a
@@ -1438,7 +1368,6 @@ input, textarea { font-family: inherit; }
 }
 .np-art-img[src]:not([src=""]) { display: block; }
 
-.daw-track-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .daw-track-title { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* One compact line -- duration · stems · source · quality · extracted date --
    instead of a duration/stems row plus three further label:value rows below
@@ -1476,35 +1405,6 @@ input, textarea { font-family: inherit; }
 .daw-fav-btn:hover { color: var(--fg); }
 .daw-fav-btn.active { color: #e54e4e; }
 .daw-fav-btn.active svg { fill: #e54e4e; stroke: #e54e4e; }
-.daw-chip {
-  display: inline-flex; align-items: center;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-2);
-  font-size: 11px;
-  color: var(--fg-2);
-  font-family: var(--font-mono);
-}
-
-/* Energy panel */
-.daw-energy-panel {
-  padding: 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.daw-energy-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.daw-playhead-label { color: var(--accent); display: flex; align-items: center; gap: 4px; }
-.daw-energy-bars { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; }
 
 /* Energy rows (JS-driven) */
 .energy-row {
@@ -1618,31 +1518,6 @@ input, textarea { font-family: inherit; }
 .stem-card.inactive .stem-card-pct { color: var(--muted); }
 
 /* Analysis panel */
-.daw-analysis-panel {
-  padding: 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: flex;
-  gap: 16px;
-  flex-shrink: 0;
-}
-.daw-analysis-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 80px;
-}
-.daw-analysis-val { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-.daw-analysis-num {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--fg);
-}
-.daw-analysis-num.accent { color: var(--accent); }
-.daw-analysis-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
-.daw-analysis-divider { width: 1px; background: var(--border); align-self: stretch; }
 .daw-camelot-ring {
   width: 20px; height: 20px; border-radius: 50%;
   border: 1.5px solid var(--accent);
@@ -1981,7 +1856,6 @@ input, textarea { font-family: inherit; }
 
 .app.panel-analysis-off .daw-track-header { display: none; }
 .app.panel-sections-off .daw-section-ribbon { display: none; }
-.app.panel-timeline-off .footer-wave-region { display: none; }
 
 /* ── Waveform header ── */
 .daw-wave-header {
@@ -2154,7 +2028,6 @@ input, textarea { font-family: inherit; }
   align-items: center;
   min-width: 0;
 }
-.lane-knob-indicator { display: none; }
 .mx-fader-input {
   -webkit-appearance: none;
   appearance: none;
@@ -2298,26 +2171,6 @@ input, textarea { font-family: inherit; }
 .lane-dl.mx-btn:hover { color: var(--fg); border-color: var(--muted-2); }
 .lane-dl.mx-btn svg { width: 17px; height: 17px; }
 
-/* The two lines of controls beside the name (mixer.js renderMixerRow):
-   the EQ tab, the fader and its level; then key, M, S and download, at the
-   right end so they line up from row to row. Centred as a pair on the row's
-   middle, the name's line. */
-.mx-strip {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--mx-ctl-gap);
-}
-.mx-line {
-  display: flex;
-  align-items: center;
-  gap: var(--mx-ctl-gap);
-  min-width: 0;
-  height: var(--mx-ctl-h);
-}
-.mx-line-b { justify-content: flex-end; }
 /* Holds the EQ tab (eq/eqRows.js). The same width with or without it, so
    the fader does not move when the audio engine comes up and the tab
    appears. */
@@ -2725,12 +2578,6 @@ input, textarea { font-family: inherit; }
   background: rgb(11, 15, 18);
 }
 .wave-loading-overlay.hidden { display: none !important; }
-.wave-loading-glow {
-  width: 80px; height: 80px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(244,183,64,0.2) 0%, transparent 70%);
-  animation: daw-pulse 2s ease-in-out infinite;
-}
-@keyframes daw-pulse { 0%,100%{opacity:0.5;transform:scale(0.9);} 50%{opacity:1;transform:scale(1.1);} }
 .wave-loading-lines {
   display: flex; gap: 3px; align-items: center;
 }
@@ -2773,36 +2620,6 @@ input, textarea { font-family: inherit; }
   align-items: stretch;
 }
 
-.daw-footer-left {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 140px;
-  flex: 1;
-}
-.daw-time-big {
-  font-size: 20px; font-weight: 600; letter-spacing: -0.01em;
-}
-.daw-time-total { font-size: 13px; color: var(--muted); }
-.daw-footer-right {
-  display: flex; align-items: center; gap: 8px;
-  min-width: 140px; justify-content: flex-end;
-  flex: 1;
-}
-.daw-master-fader { accent-color: var(--accent); cursor: pointer; }
-.daw-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--panel-2); border: 1px solid var(--border-strong);
-  color: var(--fg); border-radius: 8px; font-size: 12px;
-  font-family: inherit; cursor: pointer;
-  transition: background var(--t-fast);
-}
-.daw-btn:hover { background: var(--panel-3); }
-
-/* Transport controls */
-.daw-transport-controls {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-}
 .daw-play-btn {
   background: var(--accent);
   color: #1a1206;
@@ -2837,19 +2654,6 @@ input, textarea { font-family: inherit; }
 /* Loop active state */
 .daw-iconbtn.loop.active,
 .btn-transport.loop.active { color: var(--accent); }
-
-/* Export buttons in footer */
-.daw-footer .footer-btn {
-  padding: 0 14px;
-  height: 36px;
-  border-radius: 8px;
-  gap: 6px;
-  white-space: nowrap;
-}
-.daw-footer .footer-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 
 /* ── Footer redesign ── */
 
@@ -3063,14 +2867,6 @@ input, textarea { font-family: inherit; }
   display: none;
 }
 .footer-art.has-art { display: block; }
-.footer-thumb-img {
-  width: 100%; height: 100%; object-fit: cover;
-  opacity: 0; transition: opacity 0.2s;
-}
-.footer-thumb-img.loaded { opacity: 1; }
-.footer-info {
-  display: flex; flex-direction: column; gap: 3px; min-width: 0;
-}
 .footer-title {
   font-size: 13px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -4309,8 +4105,8 @@ input, textarea { font-family: inherit; }
 .release-full-download { margin: 0 0 12px; font-size: 13px; line-height: 1.45; text-align: left; color: var(--fg); }
 
 /* The release dialog lives outside `.daw`, so the scoped `.daw .hidden` rule
-   does not reach its inner elements and base.css's global `.hidden` is not
-   loaded on this page. Hide the mode-specific parts explicitly (same approach
+   does not reach its inner elements and there is no global `.hidden` rule.
+   Hide the mode-specific parts explicitly (same approach
    as `.about-backdrop.hidden`) so desktop hides the docker block and server
    hides the download button. */
 .release-docker.hidden,
@@ -4431,38 +4227,6 @@ input, textarea { font-family: inherit; }
   background: var(--panel-3);
   color: var(--fg);
 }
-
-.lib-tags-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 2px 0 8px;
-}
-.lib-tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 11px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  font-size: 12px;
-  color: var(--fg-2);
-  cursor: pointer;
-  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
-  white-space: nowrap;
-}
-.lib-tag-chip:hover {
-  background: var(--panel-2);
-  color: var(--fg);
-  border-color: rgba(255,255,255,0.15);
-}
-.lib-tag-chip.active {
-  background: rgba(244,183,64,0.12);
-  color: var(--accent);
-  border-color: rgba(244,183,64,0.3);
-}
-.lib-tag-count { color: var(--muted); font-size: 11px; }
 
 /* Supporters ("We Recommend" dialog): category sections, each a small uppercase
    accent label with a rule, over a responsive grid of partner cards. */
@@ -5143,7 +4907,6 @@ input, textarea { font-family: inherit; }
 /* ── Responsive: hide zoom in small windows ── */
 @media (max-width: 900px) {
   .daw-info-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .daw-track-card { grid-column: 1 / -1; width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
   .stem-presence-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stem-card[data-stem="vocals"] { grid-column: span 1; }
 }
@@ -5829,30 +5592,6 @@ input, textarea { font-family: inherit; }
    drawing and leaves the ticks and the seek working. */
 .footer-wave-panel {
   display: none !important;
-}
-
-/* 8. The Timeline toggle.
-
-   It hides .footer-wave-region, which wraps two things: the waveform strip,
-   now hidden outright by 7, and the now-playing block, now pinned into the top
-   bar by 6. A fixed-position element is still hidden when an ancestor is
-   display: none, so the only thing pressing Timeline would do now is make the
-   card in the top bar disappear. A control whose label names something that is
-   not there, doing something the label does not describe.
-
-   Two parts, and the second matters as much as the first. The button is hidden
-   here, but it stays in the DOM, so wireAllToggle still counts "timeline"
-   among the panels All governs: pressing All would set panel-timeline-off and
-   take the card with it. Neutralising the rule is what stops that. Doing this
-   properly means dropping the button from the markup and letting the All row
-   govern two panels rather than three. */
-.daw-panel-toggle[data-panel="timeline"],
-.daw-panel-toggle[data-panel="timeline"] + .daw-panel-toggles-sep,
-.daw-panel-toggles-sep:has(+ .daw-panel-toggle[data-panel="timeline"]) {
-  display: none !important;
-}
-.app.panel-timeline-off .footer-wave-region {
-  display: block;
 }
 
 /* 9. An upload's format where it has no artwork (#690).

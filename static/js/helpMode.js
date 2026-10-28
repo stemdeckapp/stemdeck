@@ -331,10 +331,6 @@ let introTimer = null;
 const INTRO_MS = 1600;
 let current = null;
 
-export function isHelpModeOn() {
-  return on;
-}
-
 /** The help entry for whatever is under the pointer, and the element it is for. */
 function findEntry(target) {
   if (!(target instanceof Element)) return null;
