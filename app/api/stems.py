@@ -32,6 +32,7 @@ from app.core.config import (
     TAKE_ID_RE,
     TIMEOUT_FFMPEG,
     TRACK_ID_RE,
+    WAV_PLAIN_HEADER_ARGS,
     ffmpeg_executable,
 )
 from app.core.registry import get as registry_get
@@ -112,7 +113,7 @@ _VOCAL_DECOMPOSITION_NAMES = frozenset(EXTRA_STEM_NAMES)
 # stems zip. WAV is lossless PCM, FLAC is lossless compressed, MP3 is VBR ~190 kbps,
 # OGG is Vorbis VBR q6 (~192 kbps) — the quality tier matching the MP3 setting.
 _ENCODE_ARGS = {
-    "wav": ["-c:a", "pcm_s16le"],
+    "wav": ["-c:a", "pcm_s16le", *WAV_PLAIN_HEADER_ARGS],
     "mp3": ["-q:a", "2"],
     "flac": ["-c:a", "flac"],
     "ogg": ["-c:a", "libvorbis", "-q:a", "6"],
@@ -200,7 +201,10 @@ _MIXDOWN_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
 #
 # "6": exports take the master (master=): loudness target, glue compressor and
 # true-peak limiter; the master chain with its measured gain is in the key.
-_RENDER_CACHE_VERSION = "6"
+#
+# "7": WAV renders before this carried a LIST/INFO chunk ahead of the data
+# chunk, which strict hardware players reject (WAV_PLAIN_HEADER_ARGS).
+_RENDER_CACHE_VERSION = "7"
 
 # Measured masters (app/pipeline/mastering.py), one small JSON per mix and
 # master setting, so the export, the region export, the "render and listen"
@@ -1630,6 +1634,7 @@ async def get_stem(
         str(end - start),
         "-c:a",
         "pcm_s16le",
+        *WAV_PLAIN_HEADER_ARGS,
         "-f",
         "wav",
     ]

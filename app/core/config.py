@@ -1015,6 +1015,14 @@ BEATGRID_ONSET_TOL_MAX = 0.07  # absolute ceiling on the above, seconds
 VIDEO_MAX_HEIGHT = max(144, _env_int("STEMDECK_VIDEO_MAX_HEIGHT", 720))
 
 
+# Output options for every WAV ffmpeg writes. Without them the muxer inserts a
+# LIST/INFO chunk (ISFT "Lavf...", plus any tags carried over from the input)
+# between fmt and data. That is valid RIFF, but hardware players and samplers
+# that only parse the canonical 44-byte header refuse the file. Both flags are
+# needed: -map_metadata -1 drops inherited tags, +bitexact drops the encoder tag.
+WAV_PLAIN_HEADER_ARGS = ("-map_metadata", "-1", "-fflags", "+bitexact")
+
+
 def ffmpeg_executable() -> str:
     """Return the preferred FFmpeg executable.
 

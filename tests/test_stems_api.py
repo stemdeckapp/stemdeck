@@ -885,12 +885,21 @@ def _assert_wav_header_sizes_match(content: bytes) -> None:
     raise AssertionError("no data chunk found")
 
 
+def _assert_wav_header_is_canonical(content: bytes) -> None:
+    """data must follow fmt directly: no LIST/INFO chunk (ffmpeg's ISFT
+    "Lavf..." tag) in between. Valid RIFF, but players that only parse the
+    44-byte header refuse the file."""
+    assert content[12:16] == b"fmt " and int.from_bytes(content[16:20], "little") == 16
+    assert content[36:40] == b"data", f"expected data at byte 36, found {content[36:40]!r}"
+
+
 def test_mixdown_wav_header_sizes_are_finalised(client, tmp_path):
     _skip_without_ffmpeg()
     job = _done_job_with_stems(tmp_path, "abcdef000030", ["vocals", "drums"])
     r = client.get(f"/api/jobs/{job.id}/mixdown.wav?stems=vocals,drums&gains=1,0.5")
     assert r.status_code == 200
     _assert_wav_header_sizes_match(r.content)
+    _assert_wav_header_is_canonical(r.content)
     # The cached copy is the same finalised file.
     (cached,) = (tmp_path / "cache" / "mixdown").glob("*.wav")
     assert cached.read_bytes() == r.content
@@ -904,6 +913,7 @@ def test_stem_region_wav_header_sizes_are_finalised(client, tmp_path):
     r = client.get(f"/api/jobs/{job.id}/stems/vocals.wav?start=0&end=0.05")
     assert r.status_code == 200
     _assert_wav_header_sizes_match(r.content)
+    _assert_wav_header_is_canonical(r.content)
     # No temp file left behind for the uncached region render.
     cache_dir = tmp_path / "cache" / "mixdown"
     assert not [p for p in cache_dir.glob(".*") if cache_dir.is_dir()]
