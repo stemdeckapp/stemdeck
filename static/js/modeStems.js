@@ -43,6 +43,21 @@ const sameScope = (jobId) => Boolean(jobId) && records.scope === scopeFor(jobId)
 // The lanes a mode shows when it has chosen none: the open version's stems
 // (#804), which for a song's first version are its selection at import.
 const defaultLanes = () => song.versionStems || song.songSelected;
+// What the user extracted for the open song, for the All stems zip: the open
+// version's stems with Vocals replaced by the lead + backing pair once the
+// split is done (the two together carry the same signal). Never the lanes of a
+// mode, which fold stems into Original or leave some out.
+function extractedStems() {
+  const present = new Set(song.present);
+  const split = present.has("lead_vocals") && present.has("backing_vocals");
+  const out = [];
+  for (const n of defaultLanes()) {
+    for (const m of n === "vocals" && split ? ["lead_vocals", "backing_vocals"] : [n]) {
+      if (!out.includes(m) && (!present.size || present.has(m))) out.push(m);
+    }
+  }
+  return out;
+}
 const listeners = new Set();
 // Refusals the UI owns (recording, a take open): set by whoever can answer.
 let busyCheck = () => "";
@@ -100,7 +115,7 @@ export async function prepareLayout(jobId, songSelected, present, splitState = "
     splitReason: splitState === "error" ? splitReason || null : null,
   };
   const layout = modeLayout(mode, stored, defaultLanes());
-  setLaneLayout(jobId, { ...layout, songSelected: song.songSelected });
+  setLaneLayout(jobId, { ...layout, songSelected: song.songSelected, extracted: extractedStems() });
   notify();
   return layout;
 }
@@ -170,7 +185,7 @@ function applyIfChanged(jobId, mode) {
   const layout = modeLayout(mode, stored, defaultLanes());
   const want = layoutSignature(layoutLanes(layout, new Set(song.present)));
   const shown = shownLaneLayout();
-  setLaneLayout(jobId, { ...layout, songSelected: song.songSelected });
+  setLaneLayout(jobId, { ...layout, songSelected: song.songSelected, extracted: extractedStems() });
   if (shown && shown.jobId === jobId && shown.sig === want) return false;
   reloadKeepingPlace(jobId);
   return true;
