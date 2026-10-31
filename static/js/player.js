@@ -1153,6 +1153,10 @@ function renderAllMiniWaves(mt, stems) {
 let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
 let _currentStems = [];
+// Every real stem the job has on disk (no takes, no "original"), whatever the
+// open mode shows as lanes. The All stems zip is built from this, not from the
+// lanes (a mode folds stems into Original, and "I play" leaves some out).
+let _jobStemNames = [];
 let _mixUrl = null;
 let _currentTitle = "";
 // Whether the current job has a preserved video track (mp4 upload). Gates the
@@ -1421,6 +1425,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   const playbackStems = buildPlaybackStems(rawForPlayback, stems, STEM_NAMES, exclude);
   const fullDecodeStems = addVisualOnlyStems(playbackStems, stems);
   _currentStems = stems;
+  _jobStemNames = rawStems.filter((s) => s.name !== "original" && !isTakeName(s.name)).map((s) => s.name);
   _mixUrl = mixUrl || null;
   _currentTitle = title || "";
   _currentHasVideo = !!hasVideo;
@@ -2356,16 +2361,26 @@ export function downloadCurrentVideo(onTransferStart) {
 // showing it for a download that never starts.
 export function downloadAllStemsZip(format = "wav", onTransferStart) {
   if (!currentJobId) return false;
-  // Only the active (selected) stems loaded in the DAW — not all 6.
-  const names = _currentStems.filter((s) => s.name !== "original" && s.url).map((s) => s.name);
-  if (!names.length) return false;
+  // Every stem the song has, in the chosen format, whatever the lanes show.
+  // Recorded tracks are lanes of their own and ride along when present.
+  const takes = _currentStems.filter((s) => isTakeName(s.name) && s.url).map((s) => s.name);
+  if (!_jobStemNames.length && !takes.length) return false;
   const safe = _currentTitle
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_stems.zip` : "stems.zip";
-  const q = new URLSearchParams({ format, stems: names.join(",") });
+  const q = new URLSearchParams({ format });
+  // No stems param: the server returns every stem the job has. Takes are only
+  // included when asked for by id, so then the list is spelled out. The server
+  // refuses vocals together with lead/backing (the same signal), so a split
+  // job sends the split pair.
+  if (takes.length) {
+    const split = _jobStemNames.includes("lead_vocals") || _jobStemNames.includes("backing_vocals");
+    const real = _jobStemNames.filter((n) => !(split && n === "vocals"));
+    q.set("stems", [...real, ...takes].join(","));
+  }
   // Include click track: the zip gets the click as its own file too, lined up
   // with the stems (#805). The count-in is a mix-export option only: the
   // stems in a zip start at the song's first sample, so there is nowhere
