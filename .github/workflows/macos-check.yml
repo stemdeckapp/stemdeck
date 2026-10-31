@@ -35,12 +35,27 @@ jobs:
     # never signs, packages, or uploads anything.
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
     defaults:
       run:
         shell: bash
         working-directory: desktop/src-tauri
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Compiled dependencies are most of this job's time. Keyed on Cargo.lock, so a
+      # dependency change starts a fresh cache and the closest older one seeds it.
+      - name: cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-
 
       - name: cargo fmt --check
         run: cargo fmt --check
