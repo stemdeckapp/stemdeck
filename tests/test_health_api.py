@@ -19,6 +19,41 @@ def test_health_endpoints_report_ok():
             assert "data_dir" not in body
 
 
+def test_health_reports_export_formats(monkeypatch):
+    # How the export menu learns that OGG is unavailable (#824).
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(
+        main_mod,
+        "export_formats",
+        lambda: {"wav": True, "mp3": True, "flac": True, "ogg": False},
+    )
+    with TestClient(app) as client:
+        body = client.get("/api/health").json()
+    assert body["export_formats"] == {"wav": True, "mp3": True, "flac": True, "ogg": False}
+
+
+def test_health_reports_unknown_export_formats_as_null(monkeypatch):
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "export_formats", lambda: None)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["export_formats"] is None
+
+
+def test_health_export_formats_carry_no_path():
+    # The real probe: booleans keyed by format, never the ffmpeg location.
+    from app.main import app
+
+    with TestClient(app) as client:
+        formats = client.get("/api/health").json()["export_formats"]
+    if formats is not None:
+        assert set(formats) == {"wav", "mp3", "flac", "ogg"}
+        assert all(isinstance(v, bool) for v in formats.values())
+
+
 def test_health_identifies_the_answering_process():
     # The desktop shell spawns this backend and polls /api/health to know it
     # started. A 200 alone only proves *something* holds the port: a second

@@ -1,6 +1,11 @@
 THIRD-PARTY NOTICES
 ===================
 
+StemDeck itself is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only). The full text is in LICENSE.txt in the
+app's Contents/Resources folder, and the source code is at
+https://github.com/stemdeckapp/stemdeck
+
 StemDeck for macOS uses a thin Tauri app plus a downloaded runtime pack.
 
 Bundled in StemDeck.app:

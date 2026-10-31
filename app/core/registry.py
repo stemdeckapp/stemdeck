@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -11,6 +13,9 @@ from pathlib import Path
 
 from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, LYRICS_FILE, STEM_NAMES
 from app.core.models import Job, clean_artist, clean_audio_tags, clean_identity, clean_work
+from app.core.settings import quarantine_corrupt
+from app.core.stem_files import stem_exists, stem_url
+from app.core.takes import reconcile_tracks, recover_takes
 
 logger = logging.getLogger("stemdeck.registry")
 
@@ -166,6 +171,12 @@ def mark_deleted(job_id: str) -> None:
         _deleted.add(job_id)
 
 
+def deleted_ids() -> set[str]:
+    """A snapshot of the ids the user deleted (see mark_deleted)."""
+    with _lock:
+        return set(_deleted)
+
+
 def _prune_deleted(jobs_dir: Path) -> None:
     """Forget deletion records whose directory is finally gone.
 
@@ -210,50 +221,223 @@ def persist(jobs_dir: Path) -> None:
             )
             + "\n"
         )
-        tmp = jobs_dir / f".registry.{uuid.uuid4().hex}.tmp"
         try:
-            tmp.write_text(payload, encoding="utf-8")
-            tmp.replace(path)
+            _write_atomic(path, payload)
         except OSError:
             logger.warning("could not persist registry to %s", path, exc_info=True)
-        finally:
-            tmp.unlink(missing_ok=True)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Make a rename in `directory` durable. POSIX only: Windows cannot open a
+    directory for fsync, and NTFS journals the rename itself."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # some filesystems (network shares) refuse; the rename still happened
+    finally:
+        os.close(fd)
+
+
+def _write_atomic(path: Path, payload: str) -> None:
+    """Replace `path` with `payload` so that a crash at any moment leaves
+    either the old file or the new one, never a torn or empty one.
+
+    The bytes are flushed and fsynced before the rename: without that, a power
+    loss right after os.replace can leave the new name pointing at a file whose
+    data never reached the disk, which is how a registry.json turns up empty.
+    The temp name is unique per call so concurrent writers cannot collide on it
+    (#281). Raises OSError; the temp file is gone either way."""
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    _fsync_dir(path.parent)
+
+
+def _read_registry(path: Path) -> dict | None:
+    """The registry file as a JSON object, or None when it is unusable.
+
+    An unusable file (empty, truncated, not JSON, not an object, unreadable) is
+    moved aside to registry.json.corrupt-<time> before anything else happens:
+    restore() goes on to re-adopt the jobs on disk and persist, and that persist
+    used to write over the only copy of the favourites, the Trash, the queue
+    and the delete tombstones. Same quarantine as a corrupt settings.json."""
+    try:
+        data = json.loads(path.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError, ValueError):
+        logger.warning("registry at %s is unreadable", path, exc_info=True)
+        quarantine_corrupt(path, "registry")
+        return None
+    if not isinstance(data, dict):
+        logger.warning("registry at %s is not a JSON object", path)
+        quarantine_corrupt(path, "registry")
+        return None
+    return data
+
+
+def _keep_bad_records(path: Path, records: list, why: str) -> None:
+    """Save the raw JSON of records the load skipped or repaired, beside the
+    registry as registry.json.bad-<time>, so dropping them is never silent.
+    The next persist rewrites registry.json without them."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = path.with_name(f"{path.name}.bad-{stamp}-{uuid.uuid4().hex[:6]}")
+    try:
+        payload = json.dumps({"why": why, "records": records}, indent=2) + "\n"
+        _write_atomic(target, payload)
+        logger.warning("kept %d registry record(s) aside in %s: %s", len(records), target, why)
+    except (OSError, TypeError, ValueError):
+        logger.warning("could not keep bad registry records aside", exc_info=True)
+
+
+def _annotation_types(annotation: object) -> tuple[type, ...] | None:
+    """The JSON types a Job field annotation allows, or None when it is not one
+    of the simple shapes the record uses (the field is then not checked).
+
+    The annotations are strings (from __future__ import annotations), such as
+    "float | None", "list[dict[str, Any]]" or "Literal['none', 'done']"."""
+    if not isinstance(annotation, str):
+        return None
+    allowed: list[type] = []
+    for part in annotation.split("|"):
+        base = part.strip().split("[", 1)[0]
+        if base == "None":
+            allowed.append(type(None))
+        elif base in ("str", "Literal", "JobStatus"):
+            allowed.append(str)
+        elif base in ("int", "float"):
+            allowed.extend((int, float))
+        elif base == "bool":
+            allowed.append(bool)
+        elif base == "list":
+            allowed.append(list)
+        elif base == "dict":
+            allowed.append(dict)
+        else:
+            return None
+    return tuple(allowed)
+
+
+def _repair_field_types(job: Job) -> list[str]:
+    """Reset every field whose value is the wrong JSON type to its default.
+
+    Job.from_record copies values as they are, so a record with a string where
+    a number belongs loaded fine and failed later, somewhere unrelated: sorting
+    by created_at in persist() raised, and from then on no save succeeded.
+    Returns the names of the fields it reset."""
+    repaired: list[str] = []
+    for f in dataclasses.fields(Job):
+        if f.name == "id":
+            continue
+        allowed = _annotation_types(f.type)
+        if allowed is None:
+            continue
+        value = getattr(job, f.name)
+        ok = isinstance(value, allowed)
+        if ok and isinstance(value, bool) and bool not in allowed:
+            ok = False  # bool is an int subclass; True is not a number here
+        if ok:
+            continue
+        if f.default is not dataclasses.MISSING:
+            setattr(job, f.name, f.default)
+        elif f.default_factory is not dataclasses.MISSING:
+            setattr(job, f.name, f.default_factory())
+        else:
+            continue
+        repaired.append(f.name)
+    return repaired
 
 
 def restore(jobs_dir: Path) -> None:
-    """Load persisted jobs and recover completed orphan jobs from disk."""
+    """Load persisted jobs and recover completed orphan jobs from disk.
+
+    Nothing the user had is lost silently: a file that cannot be read as a
+    whole is moved aside (registry.json.corrupt-<time>), and a record that
+    cannot be loaded as it was is skipped or repaired with its raw JSON kept in
+    registry.json.bad-<time>. Every other record loads as before."""
     jobs_dir.mkdir(parents=True, exist_ok=True)
     path = registry_path(jobs_dir)
     changed = False
-    if path.is_file():
+    data = _read_registry(path) if path.is_file() else None
+    if data is not None:
         try:
-            data = _migrate(json.loads(path.read_text(encoding="utf-8")))
+            data = _migrate(data)
             recorded = data.get("deleted")
             if isinstance(recorded, list):
                 with _lock:
-                    _deleted.update(str(job_id) for job_id in recorded)
+                    _deleted.update(
+                        job_id
+                        for job_id in recorded
+                        if isinstance(job_id, str) and JOB_ID_RE.match(job_id)
+                    )
             to_add = {}
             resume: list[Job] = []
-            for record in data.get("jobs", []):
-                job = Job.from_record(record)
+            records = data.get("jobs", [])
+            if not isinstance(records, list):
+                _keep_bad_records(path, [records], "the jobs list was not a list")
+                records = []
+            bad: list = []
+            for record in records:
+                # One record at a time. A single bad one used to abort the whole
+                # load, and the persist after orphan recovery then wrote the
+                # survivors over everything else: favourites, the Trash, the
+                # queue and the delete tombstones.
+                try:
+                    job = Job.from_record(record)
+                    repaired = _repair_field_types(job)
+                except Exception:
+                    rid = record.get("id") if isinstance(record, dict) else None
+                    logger.warning("skipping unreadable registry record %r", rid, exc_info=True)
+                    bad.append(record)
+                    continue
+                if repaired:
+                    logger.warning(
+                        "registry record %s had wrong types in %s; reset to defaults",
+                        job.id,
+                        ", ".join(repaired),
+                    )
+                    bad.append(record)
+                    changed = True
                 if not JOB_ID_RE.match(job.id):
                     continue
-                # A stopped job may have no title yet: one trashed before its
-                # download finished still has files and a place in the Trash.
-                if (job.status in _TERMINAL and job.title) or job.status in _STOPPED:
-                    to_add[job.id] = job
-                elif job.status in _RESUMABLE:
-                    recovered = _resume_or_recover(job, jobs_dir / job.id)
-                    if recovered is not None:
-                        to_add[recovered.id] = recovered
-                        # The bumped resume_attempts has to reach disk here. The
-                        # next persist is whenever the job finishes, so without
-                        # this a job that kills the process every time is read
-                        # back with the same count on every start and retried
-                        # forever -- the exact loop the cap exists to stop.
-                        changed = True
-                        if recovered.status in _RESUMABLE:
-                            resume.append(recovered)
+                try:
+                    # A stopped job may have no title yet: one trashed before
+                    # its download finished still has files and a Trash place.
+                    if (job.status in _TERMINAL and job.title) or job.status in _STOPPED:
+                        to_add[job.id] = job
+                    elif job.status in _RESUMABLE:
+                        recovered = _resume_or_recover(job, jobs_dir / job.id)
+                        if recovered is not None:
+                            to_add[recovered.id] = recovered
+                            # The bumped resume_attempts has to reach disk here.
+                            # The next persist is whenever the job finishes, so
+                            # without this a job that kills the process every
+                            # time is read back with the same count on every
+                            # start and retried forever -- the exact loop the
+                            # cap exists to stop.
+                            changed = True
+                            if recovered.status in _RESUMABLE:
+                                resume.append(recovered)
+                except Exception:
+                    logger.warning("could not restore registry record %s", job.id, exc_info=True)
+                    bad.append(record)
+            if bad:
+                _keep_bad_records(path, bad, "records that could not be loaded as they were")
+            for job in to_add.values():
+                if _sync_tracks(job, jobs_dir / job.id):
+                    changed = True
             with _lock:
                 _jobs.update(to_add)
             # The user's order first, then oldest first. queue_position is
@@ -267,11 +451,12 @@ def restore(jobs_dir: Path) -> None:
         except Exception:
             # Broad on purpose. restore() runs at import time, so anything that
             # escapes here stops the backend booting with no way for a user to
-            # recover short of deleting the file by hand. A registry.json that
-            # is valid JSON but not an object (a top-level list, null, a bare
-            # string) used to do exactly that: _migrate calls data.get() and
-            # raises AttributeError, which the old tuple did not name (#520).
+            # recover short of deleting the file by hand (#520). Records are
+            # guarded one by one above, so reaching this is about the file as a
+            # whole: keep its bytes before the persist below can replace them.
             logger.warning("failed to load registry from %s", path, exc_info=True)
+            if path.is_file():
+                quarantine_corrupt(path, "registry")
 
     # Orphan recovery, and the persist that follows it, were outside the guard
     # above -- an unreadable jobs_dir or a failed write was fatal at startup for
@@ -289,6 +474,7 @@ def restore(jobs_dir: Path) -> None:
                 continue
             recovered = _recover_done_job(job_dir)
             if recovered is not None:
+                _sync_tracks(recovered, job_dir)
                 with _lock:
                     _jobs[recovered.id] = recovered
                 changed = True
@@ -363,26 +549,41 @@ def take_pending_resume() -> list[str]:
     return ids
 
 
+def _sync_tracks(job: Job, job_dir: Path) -> bool:
+    """Reconcile a loaded job's recording tracks with its takes on disk, so
+    takes recorded before tracks existed come back as a track each. Never
+    fatal: restore() runs at import time."""
+    if not job.takes and not job.tracks and not (job_dir / "takes").is_dir():
+        return False
+    try:
+        job.tracks, job.takes, changed = reconcile_tracks(job_dir, job.tracks, job.takes)
+    except Exception:
+        logger.warning("could not reconcile tracks for %s", job.id, exc_info=True)
+        return False
+    return changed
+
+
 def _recover_done_job(job_dir: Path) -> Job | None:
     stems_dir = job_dir / "stems"
     if not stems_dir.is_dir():
         return None
+    # WAV or MP3, whichever the song was stored as (#783).
     stems = [
-        {"name": name, "url": f"/api/jobs/{job_dir.name}/stems/{name}.wav"}
+        {"name": name, "url": stem_url(job_dir.name, stems_dir, name)}
         for name in ("original", *STEM_NAMES, *EXTRA_STEM_NAMES)
-        if (stems_dir / f"{name}.wav").is_file()
+        if stem_exists(stems_dir, name)
     ]
     if not stems:
         return None
     mix_url = None
-    if (stems_dir / "mix.wav").is_file():
-        mix_url = f"/api/jobs/{job_dir.name}/stems/mix.wav"
+    if stem_exists(stems_dir, "mix"):
+        mix_url = stem_url(job_dir.name, stems_dir, "mix")
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
     # A restart between the split finishing and its next registry persist
     # would otherwise report the job as never split -- derive from disk the
     # same way `stems` above does, so the recovered library entry doesn't
     # regress (#275).
-    has_split = all((stems_dir / f"{name}.wav").is_file() for name in EXTRA_STEM_NAMES)
+    has_split = all(stem_exists(stems_dir, name) for name in EXTRA_STEM_NAMES)
     vocal_split = "done" if has_split else "none"
     meta_path = job_dir / "metadata.json"
     meta: dict = {}
@@ -421,6 +622,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         lufs=meta.get("lufs"),
         peak_db=meta.get("peak_db"),
         dynamic_range=meta.get("dynamic_range"),
+        loudness_version=meta.get("loudness_version"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
@@ -433,6 +635,13 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         # The file is the record: metadata.json predates it for most jobs.
         has_lyrics=(job_dir / LYRICS_FILE).is_file(),
         vocal_split=vocal_split,
+        stem_format=meta.get("stem_format") if meta.get("stem_format") in ("wav", "mp3") else None,
+        stem_mp3_kbps=meta.get("stem_mp3_kbps")
+        if isinstance(meta.get("stem_mp3_kbps"), int)
+        else None,
+        # Takes are files first: their folders survive whatever the registry
+        # lost, so the lanes come back with the job.
+        takes=recover_takes(job_dir),
     )
 
 

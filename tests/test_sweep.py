@@ -257,3 +257,139 @@ def test_restore_ignores_failed_quarantine(tmp_path: Path):
 
     assert "abcdefabcde3" not in _jobs
     assert quarantined.is_dir()  # restore must not delete it either
+
+
+# ── what auto-delete must never take (favourites, takes, non-job folders) ──
+
+
+def _old_done_job(jobs_dir: Path, job_id: str, **fields) -> tuple[Job, Path]:
+    d = _mkdir(jobs_dir, job_id)
+    job = Job(id=job_id)
+    job.status = "done"
+    job.created_at = time.time() - 999_999
+    for key, value in fields.items():
+        setattr(job, key, value)
+    _jobs[job.id] = job
+    return job, d
+
+
+def _backdate(path: Path) -> None:
+    import os
+
+    old = time.time() - 999_999
+    os.utime(path, (old, old))
+
+
+def test_favourite_older_than_ttl_survives(tmp_path: Path):
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaaa1", favorite=True)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+    assert job.id in _jobs
+
+
+def test_job_with_takes_in_its_record_survives(tmp_path: Path):
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaaa2", takes=[{"id": "t1"}])
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+    assert job.id in _jobs
+
+
+def test_job_with_tracks_in_its_record_survives(tmp_path: Path):
+    _job, d = _old_done_job(tmp_path, "aaaaaaaaaaa3", tracks=[{"id": "r1"}])
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+def test_job_with_a_take_on_disk_only_survives(tmp_path: Path):
+    """A take being recorded is a folder before it is in job.takes."""
+    _job, d = _old_done_job(tmp_path, "aaaaaaaaaaa4")
+    (d / "takes" / "sometake").mkdir(parents=True)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+def test_plain_old_job_is_removed_and_logged(tmp_path: Path, caplog):
+    import logging
+
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaaa5", favorite=False)
+    with caplog.at_level(logging.INFO, logger="stemdeck.collect"):
+        sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert not d.exists()
+    assert job.id not in _jobs
+    assert any("aaaaaaaaaaa5" in r.getMessage() for r in caplog.records)
+
+
+def test_trashed_old_job_follows_the_ordinary_rule(tmp_path: Path):
+    """The Trash has no purge of its own; the sweep treats a trashed finished
+    job like any other finished job, as it always did."""
+    _job, d = _old_done_job(tmp_path, "aaaaaaaaaaa6", trashed_at=time.time() - 999_999)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert not d.exists()
+
+
+def test_trashed_favourite_is_still_kept(tmp_path: Path):
+    _job, d = _old_done_job(
+        tmp_path, "aaaaaaaaaaa7", trashed_at=time.time() - 999_999, favorite=True
+    )
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+@pytest.mark.parametrize("name", ["My Samples", "backup", "ABCDEFABCDEF", "abcdefabcdef0"])
+def test_old_folder_that_is_not_a_job_survives(tmp_path: Path, name: str):
+    d = _mkdir(tmp_path, name)
+    _backdate(d)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+def test_unregistered_job_folder_with_stems_survives(tmp_path: Path):
+    """restore() adopts every folder with stems, so one still unregistered may
+    be a load that went wrong. Its audio is kept."""
+    d = _mkdir(tmp_path, "bbbbbbbbbbb1")
+    (d / "stems").mkdir()
+    (d / "stems" / "vocals.wav").write_bytes(b"RIFF")
+    _backdate(d)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+def test_unregistered_job_folder_with_takes_survives(tmp_path: Path):
+    d = _mkdir(tmp_path, "bbbbbbbbbbb2")
+    (d / "takes" / "t").mkdir(parents=True)
+    _backdate(d)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+
+
+def test_tombstoned_folder_with_stems_is_removed(tmp_path: Path):
+    """The user deleted this job and its files outlived the delete."""
+    from app.core.registry import mark_deleted
+
+    d = _mkdir(tmp_path, "bbbbbbbbbbb3")
+    (d / "stems").mkdir()
+    (d / "stems" / "vocals.wav").write_bytes(b"RIFF")
+    _backdate(d)
+    mark_deleted(d.name)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert not d.exists()
+
+
+@pytest.mark.asyncio
+async def test_ttl_disabled_deletes_nothing(tmp_path: Path, monkeypatch):
+    """Auto-delete off (the default): the loop never calls the TTL sweep, so a
+    plain old job, the one thing the sweep would take, stays."""
+    from app import main as main_mod
+    from app.core.settings import set_auto_delete_jobs
+
+    _job, d = _old_done_job(tmp_path, "aaaaaaaaaaa8")
+    set_auto_delete_jobs(False)
+    monkeypatch.setattr(main_mod, "JOBS_DIR", tmp_path)
+
+    async def stop_loop(_delay):
+        raise RuntimeError("stop-loop")
+
+    monkeypatch.setattr(main_mod.asyncio, "sleep", stop_loop)
+    with pytest.raises(RuntimeError, match="stop-loop"):
+        await main_mod._sweep_loop()
+    assert d.is_dir()

@@ -1,5 +1,5 @@
 import {
-  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, STEM_COLORS, STEM_DISPLAY, LANE_VOLUME_MAX,
+  STEM_NAMES, TRACK_NAMES, EXTRA_STEM_NAMES, TAKE_NAMES, STEM_COLORS, STEM_DISPLAY, LANE_VOLUME_MAX,
 } from "./constants.js";
 
 // Every lane name this session might ever need mixer state for, including
@@ -10,15 +10,19 @@ import {
 // syncStemNamesFromAPI() resolves -- a const array here would freeze the
 // fallback values from before that happens.
 function allTrackNames() {
-  return [...TRACK_NAMES, ...EXTRA_STEM_NAMES];
+  // TAKE_NAMES: the open job's recorded takes, which mix like any stem.
+  return [...TRACK_NAMES, ...EXTRA_STEM_NAMES, ...TAKE_NAMES];
 }
 import {
   mixerState, mixerEl, stemListEl, currentJobId, multitrack, trackIndex,
   masterVolume, audioEngine,
 } from "./state.js";
-import { storeGet, storeSetDebounced } from "./utils.js";
+import { storeGet, storeSetDebounced, storeFlushPending } from "./utils.js";
+import { scopeFor } from "./versionScope.js";
+import { getMode } from "./mode.js";
 import { t } from "./i18n.js";
-import { PITCH_MAX, PITCH_MIN, clampPitch, pitchBlockedKey } from "./pitchBus.js";
+import { stemFileExt } from "./playbackStems.js";
+import { PITCH_MAX, PITCH_MIN, clampPitch, pitchBlockedKey, savedGlobalPitch } from "./pitchBus.js";
 
 function defaultMixerEntry() {
   // `pitch` is the key this lane is actually in, in semitones from the
@@ -26,8 +30,20 @@ function defaultMixerEntry() {
   // control, so the number on a lane never has to be added to another number to
   // know what you are hearing. It rides along in the same per-track store as
   // volume and mute, so a lane's key survives a reload.
-  return { volume: 1, muted: false, soloed: false, pitch: 0 };
+  //
+  // `fx` is the lane's effects list (the EQ descriptor, eqMath.js schema v1),
+  // read and written only through eqEngine.js. A mix saved before the EQ
+  // existed has no `fx`, and this default fills it in.
+  return { volume: 1, muted: false, soloed: false, pitch: 0, fx: [] };
 }
+
+// The master slot's effects live beside the lanes in the same per-song store,
+// under a key no lane can have (eqEngine.MASTER). Nothing iterates the lanes
+// through mixerState's keys, so it is never mistaken for a lane.
+const MASTER_SLOT = "__master";
+const masterEntry = (stored) => ({
+  fx: Array.isArray(stored?.fx) ? stored.fx : [],
+});
 
 export function ensureMixerStateDefaults() {
   for (const name of allTrackNames()) {
@@ -35,15 +51,96 @@ export function ensureMixerStateDefaults() {
   }
 }
 
+// ── One saved mix per song and per mode ──
+//
+// Practice, Advanced, Karaoke and Streamer (and Streaming, when it exists)
+// each keep their own record of a song: what is muted, soloed and how loud,
+// each lane's key, the EQ and the master, and the speed and global key the
+// song was left at. A change in one mode is never seen in another. The record of a mode is
+// `stemdeck:mix:<jobId>:<mode>`.
+//
+// The one record every song had before there were modes (`stemdeck:mix:<jobId>`)
+// is never rewritten or deleted: Practice and Advanced start from it until
+// they have saved a record of their own, so nobody loses a mix. Karaoke and
+// Streamer start from their defaults.
+//
+// A version of a song (versionScope.js, #804) keeps its own record per mode:
+// the key's song part is the version's scope. The default version's scope is
+// the song id itself, so its records are the ones above, and only it starts
+// from the legacy record.
+const LEGACY_MODES = new Set(["practice", "daw"]);
+export const mixKey = (jobId, mode, versionId) =>
+  `stemdeck:mix:${versionId === undefined ? scopeFor(jobId) : scopeFor(jobId, versionId)}:${mode}`;
+const legacyMixKey = (jobId) => `stemdeck:mix:${jobId}`;
+
+/** The saved mix of `jobId` in `mode` and version `versionId` as stored
+ * (a pending change written first), the default version falling back to the
+ * legacy record as a load does; null when there is none. */
+export async function readSavedMix(jobId, mode, versionId) {
+  const key = mixKey(jobId, mode, versionId);
+  await storeFlushPending(key);
+  let stored = await storeGet(key, null);
+  if (!stored && LEGACY_MODES.has(mode) && scopeFor(jobId, versionId) === jobId) {
+    stored = await storeGet(legacyMixKey(jobId), null);
+  }
+  return stored && typeof stored === "object" ? stored : null;
+}
+
+// The mode whose record is the one in memory (mixerState, mixGlobals).
+let _activeMode = getMode();
+export function getMixMode() { return _activeMode; }
+
+// What is saved with the mix besides the lanes: the speed and the global key
+// the song was left at. Not in mixerState, whose keys are all lanes.
+export const mixGlobals = { pitch: 0, speed: 1 };
+const defaultGlobals = () => ({ pitch: 0, speed: 1 });
+function cleanGlobals(g) {
+  const out = defaultGlobals();
+  if (Number.isFinite(g?.pitch)) out.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, Math.round(g.pitch)));
+  if (Number.isFinite(g?.speed)) out.speed = Math.round(Math.max(0.5, Math.min(1.5, g.speed)) * 100) / 100;
+  return out;
+}
+
+/** Remember the speed or global key of the open song, in the open mode's
+ * record. `save: false` when a lane write follows that saves anyway. */
+export function setMixGlobals(patch, { save = true } = {}) {
+  Object.assign(mixGlobals, cleanGlobals({ ...mixGlobals, ...patch }));
+  if (save) saveMix();
+}
+
+let _loadToken = 0;
+
 export async function loadMixIntoState(jobId, loadedStemNames = STEM_NAMES) {
-  let stored = {};
-  try {
-    const data = await storeGet(`stemdeck:mix:${jobId}`, {});
-    if (data && typeof data === "object") stored = data;
-  } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
+  const token = ++_loadToken;
+  let stored = null;
+  // The mode can change while the record is read: read again, for the new one.
+  for (let tries = 0; tries < 3; tries++) {
+    const mode = _activeMode;
+    stored = null;
+    try {
+      // A change made a moment ago may still be waiting in the debounce:
+      // reading past it would open the song as it was before that change,
+      // and the late write would then put the change back in the store
+      // behind a screen and an engine that never had it (#781).
+      await storeFlushPending(mixKey(jobId, mode));
+      stored = await storeGet(mixKey(jobId, mode), null);
+      if (!stored && LEGACY_MODES.has(mode) && scopeFor(jobId) === jobId) {
+        stored = await storeGet(legacyMixKey(jobId), null);
+      }
+    } catch (e) { console.warn("[mixer] failed to load mix state:", e); }
+    if (mode === _activeMode) break;
+  }
+  if (token !== _loadToken) return;
+  if (!stored || typeof stored !== "object") stored = {};
   for (const name of allTrackNames()) {
     Object.assign(mixerState[name], defaultMixerEntry(), stored[name] || {});
+    if (!Array.isArray(mixerState[name].fx)) mixerState[name].fx = [];
   }
+  mixerState[MASTER_SLOT] = masterEntry(stored[MASTER_SLOT]);
+  // The global key comes from the same record as the lanes it moved, so the
+  // counter can never disagree with what they play (a record without one is
+  // read from its lanes: savedGlobalPitch).
+  Object.assign(mixGlobals, cleanGlobals({ ...stored.__global, pitch: savedGlobalPitch(stored, loadedStemNames) }));
   // If all loaded stems are muted the session is unplayable -- unmute as recovery.
   const loadedStems = loadedStemNames.filter((n) => mixerState[n]);
   if (loadedStems.length > 0 && loadedStems.every((n) => mixerState[n].muted)) {
@@ -55,11 +152,39 @@ export function resetMixerState() {
   for (const name of allTrackNames()) {
     Object.assign(mixerState[name], defaultMixerEntry());
   }
+  mixerState[MASTER_SLOT] = masterEntry(null);
+  Object.assign(mixGlobals, defaultGlobals());
 }
 
 function saveMix() {
   if (!currentJobId) return;
-  storeSetDebounced(`stemdeck:mix:${currentJobId}`, mixerState);
+  storeSetDebounced(mixKey(currentJobId, _activeMode), { ...mixerState, __global: { ...mixGlobals } });
+}
+
+/**
+ * Make `mode` the one whose record is open: what is in memory is saved to its
+ * own mode's record first, then the open song's record for `mode` is loaded in
+ * its place. Resolves true when the song's mix was replaced (the caller then
+ * pushes it to the engine), false when no song is loaded (the next song to
+ * load reads `mode`'s record) or `mode` was already open.
+ */
+let _switchToken = 0;
+export async function switchMixMode(mode) {
+  if (mode === _activeMode) return false;
+  const jobId = currentJobId;
+  const from = _activeMode;
+  if (jobId) await storeFlushPending(mixKey(jobId, from));
+  _activeMode = mode;
+  const names = Object.keys(trackIndex || {});
+  if (!jobId || !names.length) return false;
+  const token = ++_switchToken;
+  await loadMixIntoState(jobId, names);
+  return token === _switchToken && currentJobId === jobId && _activeMode === mode;
+}
+
+/** Save the open song's mix (debounced). Used by eqEngine.js. */
+export function persistMix() {
+  saveMix();
 }
 
 /** Push one lane's transpose into whichever engine is playing. */
@@ -124,10 +249,10 @@ export function refreshLaneKeyVisual(name) {
   if (!wrap) return;
   const n = mixerState[name]?.pitch ?? 0;
   const signed = n > 0 ? `+${n}` : String(n);
-  const valueEl = wrap.querySelector(".lane-key-value");
-  // "K" while the lane is in its own key, so the control reads as a label
-  // until it is doing something, and as a number the moment it is.
-  if (valueEl) valueEl.textContent = n === 0 ? "K" : signed;
+  // The number beside the "KEY" label: 0 in the lane's own key, the signed
+  // offset once it is moved.
+  const numEl = wrap.querySelector(".lane-key-num");
+  if (numEl) numEl.textContent = n === 0 ? "0" : signed;
   wrap.classList.toggle("active", n !== 0);
 
   const locked = wrap.classList.contains("locked");
@@ -161,6 +286,21 @@ export function setLaneKeysAvailable(available) {
   }
 }
 
+// Lanes held silent for a moment without touching their mute: Performance
+// mode holds its own take track while a new take records, so the musician
+// does not hear the last take in their headphones. Heard as muted, never in
+// mixerState, so never saved into any mode's record.
+const _heldSilent = new Set();
+
+/** Hold lane `name` silent (on) or let it go (off). */
+export function holdLaneSilent(name, on) {
+  if (!name) return;
+  const had = _heldSilent.has(name);
+  if (on) _heldSilent.add(name);
+  else _heldSilent.delete(name);
+  if (had !== Boolean(on)) applyMix();
+}
+
 export function applyMix() {
   if (!multitrack) return;
   const anySolo = allTrackNames().some((name) => trackIndex[name] !== undefined && mixerState[name]?.soloed);
@@ -168,7 +308,7 @@ export function applyMix() {
     const s = mixerState[name];
     if (!s) continue;
     let effective = s.volume;
-    if (s.muted) effective = 0;
+    if (s.muted || _heldSilent.has(name)) effective = 0;
     else if (anySolo && !s.soloed) effective = 0;
     const idx = trackIndex[name];
     if (idx === undefined) continue;
@@ -209,9 +349,22 @@ export function updateLaneKnobVisual(knobEl, v) {
   }
   const val = knobEl.closest(".lane-header")?.querySelector(".mx-val");
   if (val) {
-    const db = v <= 0 ? "-∞" : (20 * Math.log10(v)).toFixed(1);
-    val.textContent = db === "-∞" ? "-∞" : `${parseFloat(db) > 0 ? "+" : ""}${db}`;
+    const text = levelText(v);
+    // The side-rail header keeps the unit in its own span; other rows (the
+    // recording tracks) still carry the bare number.
+    const num = val.querySelector(".mx-val-num");
+    if (num) num.textContent = text;
+    else val.textContent = text;
   }
+}
+
+/** A lane's level as the readout shows it: "0.0", "+3.5", "-6.0" or "-∞" (dB). */
+export function levelText(v) {
+  if (!(v > 0)) return "-∞";
+  const db = (20 * Math.log10(v)).toFixed(1);
+  // "-0.0" from a level a hair under unity reads as a different number.
+  if (db === "-0.0") return "0.0";
+  return `${parseFloat(db) > 0 ? "+" : ""}${db}`;
 }
 
 export function setLaneVolume(name, v) {
@@ -224,7 +377,31 @@ export function setLaneVolume(name, v) {
   saveMix();
 }
 
+/**
+ * What the ear hears, shown on both columns: a muted lane fades, and while
+ * any lane is soloed every lane that is not fades darker and blurs. The
+ * mixer row and the lane's waveform row get the same two classes (daw.css).
+ * The waveform rows are redrawn on their own schedule, so this runs again on
+ * every "stemdeck:overview-drawn".
+ */
+function paintLaneSilence() {
+  const names = allTrackNames();
+  const anySolo = names.some((n) => trackIndex[n] !== undefined && mixerState[n]?.soloed);
+  for (const name of names) {
+    const state = mixerState[name];
+    if (!state) continue;
+    const dimmed = anySolo && !state.soloed && !state.muted;
+    const sel = `[data-stem="${CSS.escape(name)}"]`;
+    for (const node of document.querySelectorAll(`.lane-header.mx-row${sel}, .stem-waveform-row${sel}`)) {
+      node.classList.toggle("lane-muted", state.muted);
+      node.classList.toggle("solo-dimmed", dimmed);
+    }
+  }
+}
+document.addEventListener("stemdeck:overview-drawn", paintLaneSilence);
+
 export function refreshMixerVisuals() {
+  paintLaneSilence();
   for (const name of allTrackNames()) {
     const state = mixerState[name];
     if (!state) continue;
@@ -293,36 +470,6 @@ export function setLaneControlsEnabled(enabled) {
 
 const MINI_WAVE_BARS = 40;
 const MINI_WAVE_VIEWBOX_H = 26;
-
-function emptyMiniWaveSvg(stemName) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "lane-mini-wave");
-  svg.dataset.stem = stemName;
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.setAttribute("viewBox", `0 0 ${MINI_WAVE_BARS * 2} ${MINI_WAVE_VIEWBOX_H}`);
-  return svg;
-}
-
-function makeMiniWaveSvg(stemName, color) {
-  // Seeded placeholder bars used while real peaks haven't loaded yet.
-  let s = 0;
-  for (const c of stemName) s = (s * 31 + c.charCodeAt(0)) >>> 0;
-  const rng = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-  const svg = emptyMiniWaveSvg(stemName);
-  for (let i = 0; i < MINI_WAVE_BARS; i++) {
-    const env = Math.sin((i / MINI_WAVE_BARS) * Math.PI) * 0.7 + 0.3;
-    const h = Math.max(2, env * (rng() * 0.6 + 0.25) * MINI_WAVE_VIEWBOX_H);
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", `${i * 2}`);
-    rect.setAttribute("y", `${(MINI_WAVE_VIEWBOX_H - h) / 2}`);
-    rect.setAttribute("width", "1");
-    rect.setAttribute("height", `${h}`);
-    rect.setAttribute("fill", color);
-    rect.setAttribute("opacity", "0.6");
-    svg.appendChild(rect);
-  }
-  return svg;
-}
 
 export function renderRealMiniWave(stemName, audioBuffer, color) {
   const svg = mixerEl.querySelector(`.lane-mini-wave[data-stem="${stemName}"]`);
@@ -471,7 +618,7 @@ const PREVIEW_FONT = '700 30px system-ui, -apple-system, "Segoe UI", sans-serif'
 
 export function laneDragIcon(stemName) {
   try {
-    const label = t(`stem.${stemName}`) || stemName;
+    const label = STEM_DISPLAY[stemName] || stemName;
     const canvas = document.createElement("canvas");
     let ctx = canvas.getContext("2d");
     ctx.font = PREVIEW_FONT;
@@ -533,6 +680,9 @@ export function renderMixerRow(stem) {
   nameEl.className = "mx-name";
   nameEl.style.color = color;
   nameEl.textContent = display;
+  // A long name ("Backing vocals", a track named by its player) ends in an
+  // ellipsis at the size the header uses; the full name is on hover.
+  nameEl.title = display;
 
   // Col 3: horizontal fader
   const fader = makeVolumeKnob(stem.name, color);
@@ -541,19 +691,21 @@ export function renderMixerRow(stem) {
   const vu = document.createElement("div");
   vu.className = "lane-vu mx-meter";
   vu.dataset.stem = stem.name;
-  vu.innerHTML = '<div class="lane-vu-bar mx-meter-fill"></div><div class="lane-vu-bar"></div>';
+  // Two thin bars under the fader: the level, and its peak hold (the loop in
+  // player.js already sets --vu-level and --vu-peak). The analysers are mono,
+  // so the second bar is the hold, not a right channel.
+  vu.innerHTML =
+    '<div class="mx-meter-track"><div class="lane-vu-bar mx-meter-fill"></div></div>' +
+    '<div class="mx-meter-track"><div class="lane-vu-bar mx-meter-hold"></div></div>';
 
-  // Col 5: value label
+  // Col 5: value label, the number and its unit
   const val = document.createElement("span");
   val.className = "mx-val";
-  const initFrac = Math.max(0, Math.min(1, (state?.volume ?? 1) / LANE_VOLUME_MAX));
-  val.textContent = String(Math.round(initFrac * 100));
+  val.innerHTML = '<span class="mx-val-num"></span><span class="mx-val-unit">dB</span>';
+  val.querySelector(".mx-val-num").textContent = levelText(state?.volume ?? 1);
 
-  // Col 6: this lane's key, just left of the mute button.
-  //
-  // Laid out along the row like everything beside it. The original version
-  // stacked its buttons vertically next to M and S, which put one widget on the
-  // opposite axis to its neighbours and read as a jumble.
+  // Col 6: this lane's key, just left of the mute button: minus, the
+  // reading, plus, along the line like M and S beside it.
   const key = makeLaneKey(stem.name, display);
 
   // Col 7: M button
@@ -578,16 +730,50 @@ export function renderMixerRow(stem) {
   const dl = document.createElement("a");
   dl.className = "lane-dl mx-btn";
   dl.href = stem.url;
-  dl.download = `${stem.name}.wav`;
+  dl.download = `${stem.name}.${stemFileExt(stem.url)}`;
   dl.title = t("aria.download", { name: display });
   dl.appendChild(downloadIcon());
 
-  // Wrap name + VU in a column so VU appears below the name
-  const nameVuCol = document.createElement("div");
-  nameVuCol.className = "lane-name-vu";
-  nameVuCol.append(nameEl, vu);
+  // The side-rail header (#776: readable from across a room, in the same
+  // 300px column and the same row height). A card on the left: the name with
+  // the lane's colour swatch, the fader and the level it sets, the meter under
+  // the fader, and a line for a recording track's own controls
+  // (capture/takeLanes.js). On the right two columns the full height of the
+  // row: the key (+, KEY and the offset, minus) and the rail of mute, solo,
+  // the EQ tab (eq/eqRows.js fills the slot) and download, so they sit in the
+  // same place on every row.
+  const swatch = document.createElement("span");
+  swatch.className = "mx-swatch";
+  swatch.setAttribute("aria-hidden", "true");
+  const head = document.createElement("div");
+  head.className = "mx-head";
+  head.append(swatch, nameEl);
 
-  row.append(iconCell, nameVuCol, fader, val, key, muteBtn, soloBtn, dl);
+  const faderLine = document.createElement("div");
+  faderLine.className = "mx-faderline";
+  faderLine.append(fader, val);
+
+  const eqSlot = document.createElement("div");
+  eqSlot.className = "mx-eq-slot";
+  eqSlot.dataset.stem = stem.name;
+  const actions = document.createElement("div");
+  actions.className = "mx-actions";
+
+  const card = document.createElement("div");
+  card.className = "mx-card";
+  card.append(head, faderLine, vu, actions);
+
+  const keyRail = document.createElement("div");
+  keyRail.className = "mx-keyrail";
+  keyRail.append(key);
+
+  const rail = document.createElement("div");
+  rail.className = "mx-rail";
+  rail.append(muteBtn, soloBtn, eqSlot, dl);
+
+  row.classList.add("mx-row-rail");
+  row.style.setProperty("--lane-color", color);
+  row.append(iconCell, card, keyRail, rail);
 
   muteBtn.addEventListener("click", () => toggleStemMute(stem.name));
   soloBtn.addEventListener("click", () => toggleStemSolo(stem.name));
@@ -600,7 +786,10 @@ export function renderMixerRow(stem) {
 }
 
 /**
- * The per-lane key stepper: plus above, the reading in the middle, minus below.
+ * The per-lane key stepper: minus, the reading in the middle, plus, on the
+ * line of M and S. It used to stack plus above and minus below, 11px arrows
+ * around a 20px box; on the second line of the header there is the width
+ * for three controls of a size that can be read and hit.
  *
  * Drums get the control too, disabled and saying why, rather than no control at
  * all. A missing button on one row reads as a rendering bug; a disabled one
@@ -617,9 +806,17 @@ function makeLaneKey(stemName, display) {
   up.textContent = "+";
   up.setAttribute("aria-label", t("aria.laneKeyUp", { name: display }));
 
+  // The middle cell: a small "KEY" label and the lane's offset in semitones.
   const valueEl = document.createElement("span");
   valueEl.className = "lane-key-value";
-  valueEl.textContent = "K";
+  const keyLabel = document.createElement("span");
+  keyLabel.className = "lane-key-label";
+  keyLabel.dataset.i18n = "mixer.key.label";
+  keyLabel.textContent = t("mixer.key.label");
+  const keyNum = document.createElement("span");
+  keyNum.className = "lane-key-num";
+  keyNum.textContent = "0";
+  valueEl.append(keyLabel, keyNum);
 
   const down = document.createElement("button");
   down.type = "button";
@@ -628,8 +825,8 @@ function makeLaneKey(stemName, display) {
   down.textContent = "\u2212";
   down.setAttribute("aria-label", t("aria.laneKeyDown", { name: display }));
 
-  // Plus above, the reading, minus below.
-  wrap.append(up, valueEl, down);
+  // Minus, the reading, plus: lower to the left, higher to the right.
+  wrap.append(down, valueEl, up);
 
   if (stemName === "drums") {
     wrap.classList.add("locked");
@@ -690,53 +887,6 @@ export function soloOnlyStem(name) {
   refreshMixerVisuals();
   applyMix();
   saveMix();
-}
-
-export function resetMixer() {
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.volume = 1;
-    s.muted = false;
-    s.soloed = false;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function muteAll() {
-  // Toggle direction reflects the lanes actually loaded for this job (base 6,
-  // or drums/bass/lead_vocals/backing_vocals/guitar/piano/other when the
-  // on-demand split, #275, is active) rather than always the fixed 6 --
-  // trackIndex is the live "what's actually mounted" source of truth.
-  const loadedNames = Object.keys(trackIndex).filter((n) => n !== "original");
-  const allMuted = loadedNames.length > 0 && loadedNames.every((n) => mixerState[n]?.muted);
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.muted = !allMuted;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function clearAllSolos() {
-  for (const name of allTrackNames()) {
-    const s = mixerState[name];
-    if (!s) continue;
-    s.soloed = false;
-  }
-  refreshMixerVisuals();
-  applyMix();
-  saveMix();
-}
-
-export function wireMixerToolbar() {
-  document.getElementById("mixer-reset")?.addEventListener("click", resetMixer);
-  document.getElementById("mixer-mute-all")?.addEventListener("click", muteAll);
-  document.getElementById("mixer-clear-solo")?.addEventListener("click", clearAllSolos);
 }
 
 export function wireStemListControls() {

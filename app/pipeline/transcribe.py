@@ -62,6 +62,7 @@ from app.core.config import (
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import lyrics_mending_enabled, transcribe_lyrics_enabled
+from app.core.stem_files import stem_exists, stem_path
 from app.pipeline.lyrics_lookup import lyrics_path, read_lyrics, write_lyrics
 from app.pipeline.lyrics_repair import looks_stripped, mend_from_transcript, words_of
 from app.pipeline.lyrics_retime import save_transcript
@@ -144,7 +145,7 @@ def skip_reason(job: Job, job_dir: Path) -> str | None:
 
 def _vocals_reason(job: Job, job_dir: Path) -> str | None:
     """Why this job's vocals are not worth transcribing, or None."""
-    if not (job_dir / "stems" / "vocals.wav").is_file():
+    if not stem_exists(job_dir / "stems", "vocals"):
         return "no vocals stem"
     presence = (job.stem_presence or {}).get("vocals")
     if isinstance(presence, int) and presence < TRANSCRIBE_MIN_VOCAL_PRESENCE:
@@ -483,7 +484,7 @@ def transcribe_lyrics(job: Job, job_dir: Path) -> bool:
             logger.info("[%s] lyrics transcription skipped: %s", job.id, reason)
             return False
         _set(job, stage=_STAGE)
-        vocals = job_dir / "stems" / "vocals.wav"
+        vocals = stem_path(job_dir / "stems", "vocals")
         result = _run_worker(job, _spawn_worker_cmd(vocals, _device(job)))
         if result is None:
             return False
@@ -571,7 +572,7 @@ def mend_lyrics(job: Job, job_dir: Path) -> bool:
         return False
     started = time.monotonic()
     _set(job, stage=_STAGE)
-    vocals = job_dir / "stems" / "vocals.wav"
+    vocals = stem_path(job_dir / "stems", "vocals")
     result = _run_worker(job, _spawn_worker_cmd(vocals, _device(job)) + _language_gate())
     if result is None:
         return False

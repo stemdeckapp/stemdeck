@@ -14,6 +14,19 @@ export async function fetchJobs() {
   return res.json();
 }
 
+/** Library order (#772): oldest first by when the song was added, the order
+ *  the Queue runs them in, so the first song added is the first row. Takes
+ *  anything with `createdAt` (seconds) and `id`: a desktop track or a phone
+ *  card. Songs added in the same second fall back to their id, so the order
+ *  never depends on how the list happened to be stored. */
+export function compareOldestFirst(a, b) {
+  const byTime = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+  if (byTime !== 0) return byTime;
+  const idA = String(a?.id ?? "");
+  const idB = String(b?.id ?? "");
+  return idA < idB ? -1 : idA > idB ? 1 : 0;
+}
+
 export function deriveSource(sourceUrl) {
   if (!sourceUrl) return "Local file";
   if (sourceUrl.startsWith("local:")) return "Local file";

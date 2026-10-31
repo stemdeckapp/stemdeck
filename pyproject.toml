@@ -5,7 +5,8 @@ name = "stemdeck"
 # Builds between tags report a dev version (e.g. 0.7.0a5.dev3+g<sha>). (#169)
 dynamic = ["version"]
 description = "Paste a YouTube URL, get audio stems split into a DAW-style player."
-requires-python = ">=3.10,<3.14"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115,!=0.136.3",
     "uvicorn[standard]>=0.30",

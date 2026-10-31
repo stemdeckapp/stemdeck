@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>StemDeck · Karaoke fullscreen</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#07090C}
+a{color:#F5B72A}a:hover{color:#FFD066}
+button{font-family:inherit;cursor:pointer}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.w{transition:color .28s ease}
+.w.on{color:#F5B72A}
+.stage-bg{background:
+radial-gradient(ellipse 14% 22% at 22% 12%, rgba(255,176,90,.55), rgba(255,176,90,0) 70%),
+radial-gradient(ellipse 10% 18% at 41% 6%, rgba(255,196,120,.45), rgba(255,196,120,0) 70%),
+radial-gradient(ellipse 12% 20% at 68% 10%, rgba(255,170,80,.5), rgba(255,170,80,0) 70%),
+radial-gradient(ellipse 9% 16% at 86% 18%, rgba(255,150,70,.4), rgba(255,150,70,0) 70%),
+radial-gradient(ellipse 30% 30% at 12% 70%, rgba(170,70,30,.35), rgba(170,70,30,0) 70%),
+radial-gradient(ellipse 30% 30% at 88% 65%, rgba(150,60,30,.32), rgba(150,60,30,0) 70%),
+radial-gradient(ellipse 60% 50% at 50% 45%, rgba(90,45,25,.55), rgba(90,45,25,0) 80%),
+linear-gradient(180deg,#24150D 0%,#140D09 55%,#0C0A09 100%)}
+.stage-veil{background:radial-gradient(ellipse 80% 75% at 50% 45%, rgba(8,10,14,.3), rgba(8,10,14,.82) 100%)}
+</style>
+</helmet>
+<div style="width:1920px;height:1080px;position:relative;overflow:hidden;background:#07090C;color:#F4F5F7;font-family:Inter,system-ui,sans-serif">
+<div class="stage-bg" style="position:absolute;inset:0;filter:blur(3px)"></div>
+<div class="stage-veil" style="position:absolute;inset:0"></div>
+
+<div style="position:relative;height:100%;display:flex;flex-direction:column;box-sizing:border-box;padding:44px 64px 40px 64px">
+
+<div style="display:flex;align-items:center;gap:18px">
+<div style="width:54px;height:54px;border-radius:6px;position:relative;overflow:hidden;background:radial-gradient(circle at 30% 30%,#D98A3C,#5B2A14 60%,#1C0F09)">
+<div style="position:absolute;inset:11px;border-radius:50%;border:1px solid rgba(255,220,170,.35)"></div>
+</div>
+<div style="flex:1">
+<div style="font-size:22px;font-weight:700">Floorlight</div>
+<div style="font-size:16px;color:rgba(232,235,239,.7);margin-top:2px">The Late Arrivals · {{sectionName}}</div>
+</div>
+<span style="display:inline-flex;align-items:center;gap:14px;font-size:14px;color:rgba(232,235,239,.72);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:9px 16px;background:rgba(8,10,14,.45)">A minor <span style="opacity:.4">·</span> 100% <span style="opacity:.4">·</span> Lead vocals off</span>
+<a href="Main.dc.html" aria-label="Exit fullscreen" style="width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(8,10,14,.45);color:#F4F5F7">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"></path></svg>
+</a>
+</div>
+
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
+<div style="font-size:34px;font-weight:500;color:rgba(232,235,239,.3);min-height:44px;margin-bottom:56px">{{prevLine}}</div>
+<div style="font-size:104px;line-height:1.12;font-weight:800;letter-spacing:-.02em;text-shadow:0 4px 40px rgba(0,0,0,.55)">
+<div><sc-for list="{{line1}}" as="wd" hint-placeholder-count="5"><span class="{{wd.cls}}" style="margin:0 .12em">{{wd.w}}</span></sc-for></div>
+<div><sc-for list="{{line2}}" as="wd" hint-placeholder-count="5"><span class="{{wd.cls}}" style="margin:0 .12em">{{wd.w}}</span></sc-for></div>
+</div>
+<div style="margin-top:80px;font-size:58px;line-height:1.26;font-weight:500;color:rgba(232,235,239,.52)">
+<div>{{next1}}</div>
+<div>{{next2}}</div>
+</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:20px">
+<button onClick="{{togglePlay}}" aria-label="{{playAria}}" style="width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(8,10,14,.45);color:#F4F5F7;display:inline-flex;align-items:center;justify-content:center">
+<sc-if value="{{isPaused}}" hint-placeholder-val="{{ true }}"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"></path></svg></sc-if>
+<sc-if value="{{isPlaying}}" hint-placeholder-val="{{ false }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+</button>
+<span class="mono" style="font-size:15px;color:rgba(232,235,239,.6)">{{posLabel}}</span>
+<div style="flex:1;position:relative;height:4px;border-radius:2px;background:rgba(232,235,239,.16)"><div style="{{fillStyle}}"></div></div>
+<span class="mono" style="font-size:15px;color:rgba(232,235,239,.6)">03:06</span>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1080}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { t: 52, playing: false };
+  }
+  componentDidMount() {
+    this._iv = setInterval(() => {
+      if (!this.state.playing) return;
+      let t = this.state.t + 0.1;
+      if (t >= 186) t = 0;
+      this.setState({ t: t });
+    }, 100);
+  }
+  componentWillUnmount() { clearInterval(this._iv); }
+  data() {
+    if (this._d) return this._d;
+    const sections = [
+      { name: 'Intro', s: 0, e: 18 }, { name: 'Verse 1', s: 18, e: 48 }, { name: 'Chorus', s: 48, e: 78 },
+      { name: 'Verse 2', s: 78, e: 108 }, { name: 'Chorus', s: 108, e: 138 }, { name: 'Bridge', s: 138, e: 164 },
+      { name: 'Chorus', s: 164, e: 186 }
+    ];
+    const chorus = [
+      ['Move into the light now', 'Shine until the night is gone'],
+      ['Move into the light now', 'Keep it moving, keep it strong'],
+      ["Don't you stop the feeling", 'Let it carry us along'],
+      ['Move into the light now', 'Shine until the night is gone']
+    ];
+    const lyr = {
+      'Verse 1': [
+        ['Lights come low across the city', 'Every window humming in the heat'],
+        ['I can feel the bassline in the pavement', 'Pulling at the rhythm in my feet'],
+        ["Nobody's watching, nobody's leaving", 'Turn it up and let the night begin'],
+        ['Hold that groove until the morning', 'Let the music pull you in']
+      ],
+      'Chorus': chorus,
+      'Verse 2': [
+        ['Snare cracks open like a doorway', 'Horns are calling from the other side'],
+        ['Shoulders loose and hearts are racing', 'Ride the pocket, let it slide'],
+        ['Every step a little brighter', 'Every turn a little more'],
+        ['Find the downbeat, feel it rising', 'Meet me in the middle of the floor']
+      ],
+      'Bridge': [
+        ['Breathe it in, breathe it out', 'Let the drums do the talking'],
+        ['Breathe it in, breathe it out', 'Keep your feet, keep them walking'],
+        ['Hands up high, hold it there', 'Feel the room start rising']
+      ]
+    };
+    const phrases = [];
+    sections.forEach((sec) => {
+      const L = lyr[sec.name];
+      if (!L) return;
+      const step = (sec.e - sec.s) / L.length;
+      L.forEach((p, i) => phrases.push({ t: sec.s + i * step, end: sec.s + (i + 1) * step, l1: p[0], l2: p[1] }));
+    });
+    this._d = { sections: sections, phrases: phrases };
+    return this._d;
+  }
+  renderVals() {
+    const d = this.data();
+    const t = this.state.t;
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const mmss = (x) => pad(Math.floor(x / 60)) + ':' + pad(Math.floor(x % 60));
+    let sectionName = d.sections[0].name;
+    d.sections.forEach((s) => { if (t >= s.s) sectionName = s.name; });
+    let pi = -1;
+    d.phrases.forEach((p, i) => { if (t >= p.t) pi = i; });
+    let line1 = [], line2 = [], prevLine = '', next1 = '', next2 = '';
+    if (pi >= 0) {
+      const p = d.phrases[pi];
+      const w1 = p.l1.split(' '), w2 = p.l2.split(' ');
+      const n = w1.length + w2.length;
+      const start = p.t + 0.4, end = p.end - 1.2;
+      const prog = Math.max(0, Math.min(1, (t - start) / (end - start)));
+      const k = Math.floor(prog * n);
+      const cls = (i) => ((t >= start && i <= k) ? 'w on' : 'w');
+      line1 = w1.map((w, i) => ({ w: w, cls: cls(i) }));
+      line2 = w2.map((w, i) => ({ w: w, cls: cls(w1.length + i) }));
+      if (pi > 0) prevLine = d.phrases[pi - 1].l2;
+      const nx = d.phrases[pi + 1];
+      if (nx) { next1 = nx.l1; next2 = nx.l2; }
+    } else {
+      line1 = [{ w: 'Instrumental', cls: 'w' }];
+      next1 = d.phrases[0].l1; next2 = d.phrases[0].l2;
+    }
+    const pct = Math.max(0, Math.min(100, (t / 186) * 100));
+    return {
+      sectionName: sectionName, line1: line1, line2: line2, prevLine: prevLine, next1: next1, next2: next2,
+      posLabel: mmss(t),
+      fillStyle: 'position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:#F5B72A;width:' + pct + '%',
+      isPlaying: this.state.playing, isPaused: !this.state.playing, playAria: this.state.playing ? 'Pause' : 'Play',
+      togglePlay: () => this.setState({ playing: !this.state.playing })
+    };
+  }
+}
+</script>
+</body>
+</html>

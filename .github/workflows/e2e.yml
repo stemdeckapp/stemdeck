@@ -1,0 +1,271 @@
+# Browser tests for static/js (#339), as one reusable workflow. ci.yml calls it
+# for pull requests and pushes to main; e2e-full.yml calls it for every push to
+# big-release, the nightly run and a manual run. The steps live only here.
+#
+# This drives the real UI against the real backend, including the Tauri code
+# path, which is where #335 hid because it was invisible in a browser.
+# Split three ways, each shard on its own runner (#686). The suite runs
+# serially inside a shard -- workers: 1 in playwright.config -- because it
+# shares one backend and one jobs directory, and several specs change server
+# state. A shard is a separate machine with its own backend, so splitting
+# here adds parallelism without adding sharing. Files stay whole, since
+# fullyParallel is off, so tests that rely on order within a file still get
+# it. Free on a public repository; each shard pays its own setup.
+
+name: e2e
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "full runs every spec; scoped runs the set scripts/ci/select-e2e.mjs picks for the diff against base-ref"
+        type: string
+        required: true
+      base-ref:
+        description: "Branch a scoped run diffs against (the pull request's base)"
+        type: string
+        default: ""
+      checkout-ref:
+        description: "Ref to test; empty means the commit of the triggering event"
+        type: string
+        default: ""
+
+# The caller's token already has nothing; this keeps it that way if a new
+# caller grants more. Checkout of this public repository and the artifact
+# upload work without it.
+permissions: {}
+
+env:
+  UV_LINK_MODE: copy
+  # See the matching comment in ci.yml (#169).
+  SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+
+jobs:
+  frontend-e2e:
+    # Pinned, not ubuntu-latest: that label moves to Ubuntu 26 from
+    # 2026-10-19 (https://github.com/actions/runner-images/issues/14748), and
+    # the move is gradual, so two shards of one run could land on different
+    # images. The stalled runs in #838 were already on ubuntu-24.04; the cause
+    # there was the mirror, and the pin keeps the image from becoming a
+    # second variable. Revisit once that migration has finished and the suite
+    # has passed on 26.04; the cache keys below name the image, so moving it
+    # starts from clean caches.
+    runs-on: ubuntu-24.04
+    # A full shard takes about 10 minutes, setup included. This bounds a hung
+    # run; it does not start a runner that GitHub never assigns, since queue
+    # time does not count toward it. The install steps below have their own,
+    # shorter limits, so a stalled install fails in minutes and names itself.
+    timeout-minutes: 30
+    strategy:
+      # One failing shard must not cancel the others: the report is only
+      # useful whole.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      SHARD: ${{ matrix.shard }}
+      # ffmpeg for the backend under test: a static build from BtbN's GitHub
+      # releases, the builder the Windows desktop app already downloads from.
+      # A month-end autobuild, because BtbN keeps those for about two years
+      # and daily ones for about two weeks. The SHA256 matches both GitHub's
+      # asset digest and BtbN's checksums.sha256 for this release. Bump all
+      # three together.
+      FFMPEG_RELEASE: autobuild-2026-09-30-13-08
+      FFMPEG_ASSET: ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1.tar.xz
+      FFMPEG_SHA256: 97ce978979194b5cf7e06a5e68020dbdaa7a4f3294c5452b6a1bc347100dbb79
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          # Full history, so the base branch is there to diff against.
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "20"
+          cache: npm
+      # Empty output means everything. The inputs go through env, never into
+      # the script text.
+      - name: select specs
+        env:
+          MODE: ${{ inputs.mode }}
+          BASE_REF: ${{ inputs.base-ref }}
+        run: node scripts/ci/select-e2e.mjs --mode "$MODE" --base "$BASE_REF" > "$RUNNER_TEMP/e2e-specs.txt"
+      # Each setup step records its own duration for the job summary (#838).
+      - name: install uv
+        run: |
+          bash scripts/ci/setup-timing.sh begin "uv install"
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          bash scripts/ci/setup-timing.sh end "uv install"
+      - name: uv sync
+        run: |
+          bash scripts/ci/setup-timing.sh begin "uv sync"
+          uv sync --frozen --all-extras
+          bash scripts/ci/setup-timing.sh end "uv sync"
+      - name: npm ci
+        run: |
+          bash scripts/ci/setup-timing.sh begin "npm ci"
+          npm ci
+          bash scripts/ci/setup-timing.sh end "npm ci"
+      # Cache keys: the Playwright version the lockfile resolves (it decides
+      # the browser build and the system packages), and the runner image
+      # version (it decides which .deb versions apt wants).
+      - name: cache keys
+        id: keys
+        run: |
+          pw="$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")"
+          echo "playwright=$pw" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+      - name: restore Playwright browsers
+        id: browsers-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-ubuntu-24.04-${{ steps.keys.outputs.playwright }}
+      # The browser download alone, from Playwright's CDN: about 10 s, and
+      # nothing on a cache hit. The system packages are a separate step, so a
+      # cached browser is not held up by apt. 3 attempts of at most 150 s plus
+      # 30 s of pauses fit inside the step's 10 minutes.
+      - name: Playwright browsers
+        timeout-minutes: 10
+        env:
+          CACHE: ${{ steps.browsers-cache.outputs.cache-hit == 'true' && 'hit' || 'miss' }}
+        run: |
+          bash scripts/ci/setup-timing.sh begin "Playwright browsers"
+          bash scripts/ci/retry.sh --timeout 150 -- npx playwright install chromium
+          bash scripts/ci/setup-timing.sh end "Playwright browsers" "$CACHE"
+      # One shard saves, so the other two do not race it for the same key.
+      # Saved here rather than at the end of the job, so a failing spec does
+      # not cost the next run its cache.
+      - if: matrix.shard == 1 && steps.browsers-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-ubuntu-24.04-${{ steps.keys.outputs.playwright }}
+      # The image already has Chromium's libraries. What install-deps still
+      # fetches is about 26 MB of fonts and package upgrades, and that is
+      # where #838's 12-minute installs went (29 kB/s from the Azure Ubuntu
+      # mirror). The .debs are cached, so most runs only fetch the package
+      # index. An older image's .debs are a fine start: apt uses the ones that
+      # still match and downloads the rest.
+      - name: restore apt packages
+        id: debs-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/e2e-apt-debs
+          key: e2e-apt-debs-ubuntu-24.04-${{ steps.keys.outputs.playwright }}-${{ steps.keys.outputs.image }}
+          restore-keys: |
+            e2e-apt-debs-ubuntu-24.04-${{ steps.keys.outputs.playwright }}-
+      # apt's robustness options go in a config file so they also reach the
+      # apt-get that Playwright runs: retry a failed file, drop a connection
+      # silent for 20 s instead of waiting on it, wait for the dpkg lock
+      # rather than fail, and keep the .debs for the cache. retry.sh runs
+      # under sudo so its timeout can kill apt itself, and apt resumes partial
+      # downloads, so a retry does not start from zero. 3 attempts of at most
+      # 170 s plus 30 s of pauses fit inside the step's 10 minutes.
+      # The image's apt sources go through /etc/apt/apt-mirrors.txt: Azure's
+      # mirror first, then archive.ubuntu.com, then security.ubuntu.com. apt
+      # only falls back on an error, never on a trickle, and #838's own CI saw
+      # Azure serve the font packages at about 40 kB/s for nine minutes while
+      # it served the package index at 1.5 MB/s. So a retry drops Azure and
+      # starts on archive.ubuntu.com.
+      - name: Playwright system dependencies
+        timeout-minutes: 10
+        env:
+          CACHE: ${{ steps.debs-cache.outputs.cache-hit == 'true' && 'hit' || (steps.debs-cache.outputs.cache-matched-key != '' && 'partial' || 'miss') }}
+        run: |
+          bash scripts/ci/setup-timing.sh begin "Playwright system deps"
+          printf '%s\n' \
+            'Acquire::Retries "3";' \
+            'Acquire::http::Timeout "20";' \
+            'Acquire::https::Timeout "20";' \
+            'DPkg::Lock::Timeout "60";' \
+            'APT::Keep-Downloaded-Packages "true";' \
+            | sudo tee /etc/apt/apt.conf.d/80-e2e-robust > /dev/null
+          debs="$HOME/.cache/e2e-apt-debs"
+          mkdir -p "$debs"
+          find "$debs" -maxdepth 1 -name '*.deb' -exec sudo cp -t /var/cache/apt/archives/ {} +
+          cat /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo env "PATH=$PATH" "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" bash scripts/ci/retry.sh --timeout 170 -- bash -c '
+            if [ "$RETRY_ATTEMPT" -gt 1 ] && grep -q "azure\.archive\.ubuntu\.com" /etc/apt/apt-mirrors.txt 2>/dev/null; then
+              echo "retry: attempt $RETRY_ATTEMPT drops the Azure Ubuntu mirror"
+              sed -i "/azure\.archive\.ubuntu\.com/d" /etc/apt/apt-mirrors.txt
+            fi
+            exec node_modules/.bin/playwright install-deps chromium'
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$debs" {} +
+          echo "cached .debs: $(find "$debs" -name '*.deb' | wc -l), $(du -sh "$debs" | cut -f1)"
+          bash scripts/ci/setup-timing.sh end "Playwright system deps" "$CACHE"
+      - if: matrix.shard == 1 && steps.debs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/e2e-apt-debs
+          key: e2e-apt-debs-ubuntu-24.04-${{ steps.keys.outputs.playwright }}-${{ steps.keys.outputs.image }}
+      # The backend under test is real, and finishing a recorded take renders
+      # it with ffmpeg (app/pipeline/take_render.py). The runner image has no
+      # ffmpeg, so without this the take specs get a 500 and time out. This
+      # was apt's ffmpeg, 63 MB from the same mirror, the step #838's shards
+      # were killed in. The archive is checked against its pin on every run,
+      # cache hit or not, before anything in it is unpacked.
+      - name: restore ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/e2e-ffmpeg
+          key: e2e-ffmpeg-${{ env.FFMPEG_SHA256 }}
+      - name: ffmpeg
+        timeout-minutes: 10
+        env:
+          CACHE: ${{ steps.ffmpeg-cache.outputs.cache-hit == 'true' && 'hit' || 'miss' }}
+        run: |
+          bash scripts/ci/setup-timing.sh begin "ffmpeg"
+          dir="$HOME/.cache/e2e-ffmpeg"
+          archive="$dir/$FFMPEG_ASSET"
+          mkdir -p "$dir"
+          if ! echo "$FFMPEG_SHA256  $archive" | sha256sum --check --status 2>/dev/null; then
+            rm -f "$archive"
+            bash scripts/ci/retry.sh --timeout 150 -- \
+              curl -fsSL --connect-timeout 20 -o "$archive" \
+              "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$FFMPEG_ASSET"
+            if ! echo "$FFMPEG_SHA256  $archive" | sha256sum --check; then
+              echo "::error::ffmpeg archive $FFMPEG_ASSET does not match its pinned SHA256; not using it"
+              rm -f "$archive"
+              exit 1
+            fi
+          fi
+          bin="$RUNNER_TEMP/ffmpeg"
+          mkdir -p "$bin"
+          tar -xJf "$archive" -C "$bin" --strip-components=2 --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/ffmpeg" -hide_banner -version | head -1
+          # The export specs need all four, and ogg needs Vorbis. Fail here,
+          # by name, rather than as a 500 in a spec minutes later.
+          "$bin/ffmpeg" -hide_banner -encoders | grep -E "libvorbis|libmp3lame" || true
+          for enc in libvorbis libmp3lame aac flac; do
+            if ! "$bin/ffmpeg" -hide_banner -encoders | grep -qE "^ A[^ ]* +$enc "; then
+              echo "::error::ffmpeg $FFMPEG_ASSET has no $enc encoder; the export specs need it"
+              exit 1
+            fi
+          done
+          bash scripts/ci/setup-timing.sh end "ffmpeg" "$CACHE"
+      - if: matrix.shard == 1 && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/e2e-ffmpeg
+          key: e2e-ffmpeg-${{ env.FFMPEG_SHA256 }}
+      # Runs whatever happened above, so a stalled or failed install still
+      # shows on the run page, with how long it had been running.
+      - name: setup timing summary
+        if: always()
+        run: bash scripts/ci/setup-timing.sh summary
+      # A reduced set can leave a shard with nothing to run, which must pass.
+      # The spec list is unquoted on purpose: one argument per path.
+      - run: npx playwright test --shard=${{ matrix.shard }}/3 --pass-with-no-tests $(cat "$RUNNER_TEMP/e2e-specs.txt")
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          # Per shard: a second upload under the same name fails the job.
+          name: playwright-report-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

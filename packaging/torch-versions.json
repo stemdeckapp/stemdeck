@@ -1,0 +1,8 @@
+{
+  "_about": "The torch line the Windows and Linux desktop packages bake, and the torchvision built for each torch line. Read by scripts/linux/bake-cpu-torch.sh, scripts/windows/make-portable.ps1 and scripts/check_torch_bundle.py; a test in desktop/src-tauri/src/main.rs fails when the Rust constants drift from it. cpuTorch and its torchvision must also match what uv.lock resolves (#778).",
+  "cpuTorch": "2.6.0",
+  "torchvisionForTorch": {
+    "2.6.0": "0.21.0",
+    "2.8.0": "0.23.0"
+  }
+}

@@ -15,9 +15,8 @@ test.describe("studio", () => {
 
   test("a heart pressed in the studio is saved on the server", async ({ page }) => {
     const { favoriteWrites } = await openStudio(page);
-    await row(page, SIBLING_JOB_ID).hover();
-    await row(page, SIBLING_JOB_ID).locator(".cat-fav").click();
-    await expect.poll(() => favoriteWrites).toContainEqual({ id: SIBLING_JOB_ID, favorite: true });
+    await page.locator("#fav-btn").click();
+    await expect.poll(() => favoriteWrites).toContainEqual({ id: JOB_ID, favorite: true });
   });
 
   test("a favourite set on the phone shows in the studio", async ({ page }) => {

@@ -19,6 +19,8 @@
 | `STEMDECK_MAX_DURATION_SEC` | `1200` | Reject audio longer than this (seconds). |
 | `STEMDECK_JOB_TTL_SECONDS` | `86400` | How long to keep job dirs on disk. |
 | `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |
+| `STEMDECK_STEM_FORMAT` | `mp3` | How new songs' stems are stored: `mp3` or `wav`. Songs already in the library keep their format. A choice saved in Settings > Library wins over this. |
+| `STEMDECK_STEM_MP3_KBPS` | `128` | MP3 stem bitrate: `128`, `192` or `256` (constant bitrate). Used only with `mp3`. |
 | `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
 | `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
 | `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |
@@ -92,3 +94,4 @@ These are for development and testing. Release builds only recognize the variabl
 | `STEMDECK_PYTHON` | all | **debug builds only** | Override the Python executable path |
 | `STEMDECK_FFMPEG_URL` | Windows, macOS | release | Override the FFmpeg download URL |
 | `STEMDECK_FFPROBE_URL` | macOS | release | Override the ffprobe download URL |
+| `STEMDECK_WEBKIT_DMABUF` | Linux | release | WebKitGTK's DMA-BUF renderer: `auto` (default), `on` or `off`. See [Troubleshooting](troubleshooting.md#linux-desktop-app) |

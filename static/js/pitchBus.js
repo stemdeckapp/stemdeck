@@ -59,3 +59,39 @@ export function inputForPitch(semitones) {
 export function pitchBlockedKey() {
   return window.isSecureContext === false ? "pitch.insecureOrigin" : "pitch.unavailable";
 }
+
+/**
+ * The global key a song's saved record was left at.
+ *
+ * The record holds it under `__global.pitch`. A record from before the global
+ * key was saved (0.20 and earlier, `stemdeck:mix:<jobId>`) has only the lanes,
+ * which are absolute: the global control moved every lane but drums by the
+ * same amount. Opening one showed 0 on the counter over lanes still playing
+ * two semitones down (#781), so the key is read back from the lanes: the one
+ * most of the song's pitched lanes are in, the one nearer the original on a
+ * tie, and 0 when no lane says anything.
+ *
+ * `laneNames` are the lanes the song actually has; a record also holds every
+ * lane the app knows, at whatever the control last pushed them to.
+ */
+export function savedGlobalPitch(record, laneNames) {
+  const stored = record?.__global?.pitch;
+  if (Number.isFinite(stored)) return clampPitch(stored);
+  const counts = new Map();
+  for (const name of laneNames || []) {
+    if (name === "drums") continue;
+    const p = record?.[name]?.pitch;
+    if (!Number.isFinite(p)) continue;
+    const k = clampPitch(p);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  let best = 0;
+  let bestCount = 0;
+  for (const [k, n] of counts) {
+    if (n > bestCount || (n === bestCount && Math.abs(k) < Math.abs(best))) {
+      best = k;
+      bestCount = n;
+    }
+  }
+  return best;
+}

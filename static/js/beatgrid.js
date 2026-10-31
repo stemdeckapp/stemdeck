@@ -609,7 +609,5 @@ export function setBeatGridSnap(on) {
 }
 export const getBeatGridSnap = () => _snap;
 
-/** Indices the user has explicitly positioned; ripple interpolates between them. */
-export const getAnchors = () => [..._anchors].sort((a, b) => a - b);
 export const getBeats = () => _beats.slice();
 export const getBars = () => _bars.map((b) => ({ ...b }));

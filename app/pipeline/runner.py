@@ -40,6 +40,7 @@ from app.pipeline.lyrics_lookup import LyricsLookup
 from app.pipeline.lyrics_retime import retime_after_separation
 from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
+from app.pipeline.stem_storage import store_stems
 from app.pipeline.transcribe import transcribe_lyrics
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -282,13 +283,21 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     failure raises out of _run_common, past finish(), and nothing is written.
     """
     lookup = IdentifyLookup.start(job, [source])
+    # Lyrics only when Detect lyrics was on for this job (False skips all
+    # three stages below; None, a job from before the setting, looks as it
+    # always did).
+    want_lyrics = job.auto_lyrics is not False
     # The lyrics, on the same terms: LRCLIB beside separation, lyrics.json
     # written only by a pipeline that got to the end. Looked up by the
     # identity once the identification has it, else by the tags.
-    lyrics = LyricsLookup.start(
-        job,
-        job_dir,
-        identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+    lyrics = (
+        LyricsLookup.start(
+            job,
+            job_dir,
+            identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+        )
+        if want_lyrics
+        else None
     )
     _run_common(job, source, job_dir)
     if lookup is not None:
@@ -300,6 +309,8 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
         mark = time.monotonic()
         lyrics.finish(job, job_dir, LYRICS_LOOKUP_GRACE_SEC)
         _lap(job, "lyrics_wait", mark)
+    if not want_lyrics:
+        return
     # Lyrics from the vocals stem, only when the lookup found none: last,
     # because it needs both the stem and the lookup's answer. Never raises
     # but for a cancel.
@@ -314,12 +325,30 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     _lap(job, "retime", mark)
 
 
+def _store_stems(job: Job, job_dir: Path) -> None:
+    """WAV or MP3 storage of the stems (#783). Last, once no stage reads the
+    stems any more: separation and every analysis ran on the WAVs. Never
+    fails the song; store_stems keeps the WAVs on any failure, and the guard
+    is for a future change there, as for the beat grid."""
+    _check_cancel(job)
+    mark = time.monotonic()
+    try:
+        store_stems(job, job_dir)
+    except JobCancelled:
+        raise
+    except Exception:
+        logger.exception("stem storage stage failed for job %s; stems kept as WAV", job.id)
+        _set(job, stem_format="wav", stem_mp3_kbps=None)
+    _lap(job, "store", mark)
+
+
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _check_cancel(job)
     mark = time.monotonic()
     source = download(job, url, job_dir)
     _lap(job, "download", mark)
     _run_with_band_lookup(job, source, job_dir)
+    _store_stems(job, job_dir)
 
 
 def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
@@ -328,6 +357,7 @@ def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
     source = _prepare_local_source(job, source_path, job_dir)
     _lap(job, "prepare", mark)
     _run_with_band_lookup(job, source, job_dir)
+    _store_stems(job, job_dir)
 
 
 def _write_metadata(job: Job, job_dir: Path) -> None:
@@ -346,6 +376,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "lufs": job.lufs,
         "peak_db": job.peak_db,
         "dynamic_range": job.dynamic_range,
+        "loudness_version": job.loudness_version,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "sections": job.sections,
@@ -356,6 +387,8 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "compute_device": job.compute_device,
         "gpu_fallback": job.gpu_fallback,
         "stage_timings": job.stage_timings,
+        "stem_format": job.stem_format,
+        "stem_mp3_kbps": job.stem_mp3_kbps,
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
@@ -469,6 +502,13 @@ async def _run_async(
             " (wrapped)" if not isinstance(e, JobCancelled) else "",
             job.id,
         )
+        if job.stop_requested:
+            # A stopped job keeps its source, in the Library (#772) or the
+            # Trash (#748). Its half-written separation is of no use and can
+            # be large; Extract clears the same folder (reset_for_rerun).
+            # Cleared before the status changes, so nothing that sees
+            # "stopped" can still find it.
+            shutil.rmtree(job_dir / DEMUCS_MODEL, ignore_errors=True)
         remove_files = settle_cancelled(job)
         persist_registry(jobs_dir)
         release_source(job.id)

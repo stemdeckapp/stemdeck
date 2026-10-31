@@ -87,6 +87,16 @@ OLD_METADATA_KEYS = {
 
 
 @pytest.fixture(autouse=True)
+def _wav_storage(monkeypatch):
+    """The stubbed stages write placeholder bytes, not audio, so the MP3
+    storage step (#783, the default) could only ever take its failure path
+    here. These tests hold the pipeline's contract from before identification;
+    WAV storage is that contract. MP3 storage has its own tests
+    (test_stem_storage.py)."""
+    monkeypatch.setenv("STEMDECK_STEM_FORMAT", "wav")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_registry():
     _jobs.clear()
     jobs_mod._TAG_LOOKUPS.clear()

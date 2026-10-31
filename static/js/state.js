@@ -1,5 +1,6 @@
 import { $, storeGet, storeSet } from "./utils.js";
 import { STEM_NAMES } from "./constants.js";
+import { DEFAULT_CLICK_SOUND, normaliseClickSound } from "./clickSounds.js";
 
 // ─── DOM refs ───
 
@@ -8,7 +9,6 @@ export const urlInput = $("url");
 export const submitBtn = $("submit");
 
 export const playBtn = $("t-play");
-export const playMiniBtn = $("t-play-mini");
 export const stopBtn = $("t-stop");
 export const loopBtn = $("t-loop");
 export const titleEl = $("title");
@@ -16,7 +16,6 @@ export const bpmChip = $("t-bpm");
 export const keyChip = $("t-key");
 export const stemsChip = $("t-stems-chip");
 export const timeEl = $("t-time");
-export const masterFader = $("t-master");
 export const speedBtns = ["t-speed-05", "t-speed-075", "t-speed-1"].map($);
 export const pitchDownBtn = $("t-pitch-down");
 export const pitchUpBtn = $("t-pitch-up");
@@ -27,7 +26,6 @@ export const pitchResetBtn = $("t-pitch-reset");
 // when it has something to say.
 export const pitchWrap = $("t-pitch-wrap");
 export const speedWrap = $("t-speed-wrap");
-export const npArt = $("np-art");
 export const npThumb = $("np-thumb");
 
 export const jobBox = $("job");
@@ -38,7 +36,6 @@ export const jobCancelBtn = $("job-cancel");
 export const progressEl = $("progress");
 
 export const errorEl = $("error");
-export const lanesEl = $("lanes");
 export const mixerEl = $("mixer");
 export const multitrackContainer = $("multitrack-container");
 export const wavesGrid = $("waves-grid");
@@ -67,6 +64,7 @@ export const metroHalfBtn = $("t-metro-half");
 export const metroOneBtn = $("t-metro-one");
 export const metroDoubleBtn = $("t-metro-double");
 export const metroCountInEl = $("t-metro-countin");
+export const metroSoundEl = $("t-metro-sound");
 export const metroBarCustomEl = $("t-metro-bar-custom");
 export const metroGroupEl = $("t-metro-group");
 export const metroEditBtn = $("t-metro-edit");
@@ -75,7 +73,6 @@ export const exportClickWrap = $("t-export-click-wrap");
 export const exportCountInEl = $("t-export-count-in");
 export const exportCountInWrap = $("t-export-count-in-wrap");
 export const bgToolbar = $("beatgrid-toolbar");
-export const bgCanvas = $("beatgrid-canvas");
 export const bgUndoBtn = $("bg-undo");
 export const bgRedoBtn = $("bg-redo");
 export const bgResetBtn = $("bg-reset");
@@ -85,11 +82,7 @@ export const bgSnapEl = $("bg-snap");
 export const bgBarLenEl = $("bg-barlen");
 export const bgHintEl = $("bg-hint");
 export const stemListEl = document.querySelector(".stem-list");
-export const npScrubEl = document.querySelector(".np-scrub");
 export const npScrubFill     = $("footer-scrub-fill");
-export const footerTitle     = $("footer-title");
-export const footerMeta      = $("footer-meta");
-export const footerThumb     = $("footer-thumb");
 
 // ─── Mutable state ───
 
@@ -152,11 +145,6 @@ export function saveSelectedStems() {
     console.warn("[state] failed to save stem selection:", e)
   );
 }
-export function setStemSelected(name, selected) {
-  if (selected) selectedStems.add(name);
-  else selectedStems.delete(name);
-  saveSelectedStems();
-}
 
 // On-demand lead/backing vocal split (#275): "all" (default, plain Vocals
 // lane) or "split" (auto-run the split once the next import finishes).
@@ -177,17 +165,7 @@ export function setVocalSplitMode(mode) {
   );
 }
 
-// Web Audio analysers for live VU meters.
-export let audioContext = null;
-export let masterVolume = 0.5; // mirrored from masterFader.value
-export const trackAnalysers = []; // index → { analyser, data, vuEl }
-export let vuRafId = null;
-
-// Master bus nodes — created once in audio.js, shared across mixer.js.
-// masterBusGain is driven by the master fader; masterLimiter is a
-// transparent brickwall limiter that prevents inter-stem summing clipping.
-export let masterBusGain = null;
-export let masterLimiter = null;
+export let masterVolume = 0.5; // no control sets it any more; stays 0.5
 
 // ─── Setter helpers for mutable state (so other modules can update) ───
 
@@ -198,10 +176,14 @@ export function setCurrentJobId(v) { currentJobId = v; }
 export function setForegroundJobId(v) { foregroundJobId = v; }
 export function setTrackIndex(v) { trackIndex = v; }
 export function setTotalDuration(v) { totalDuration = v; }
-export function setLoopEnabled(v) { loopEnabled = v; }
-export function setLoopStart(v) { loopStart = v; }
-export function setLoopEnd(v) { loopEnd = v; }
-export function setAudioContext(v) { audioContext = v; }
+// Whoever needs to react to the loop changing (the Sections Add button depends
+// on whether a loop is armed) subscribes here rather than polling.
+const _loopListeners = [];
+export function onLoopChange(fn) { _loopListeners.push(fn); }
+function _loopChanged() { for (const fn of _loopListeners) fn(); }
+export function setLoopEnabled(v) { loopEnabled = v; _loopChanged(); }
+export function setLoopStart(v) { loopStart = v; _loopChanged(); }
+export function setLoopEnd(v) { loopEnd = v; _loopChanged(); }
 export function setMasterVolume(v) { masterVolume = v; }
 export let playbackSpeed = 1.0;
 export function setPlaybackSpeed(v) { playbackSpeed = v; }
@@ -212,9 +194,6 @@ export function setPlaybackSpeed(v) { playbackSpeed = v; }
 // tools are only available at 1.
 export let waveZoom = 1;
 export function setWaveZoom(v) { waveZoom = v; }
-export function setVuRafId(v) { vuRafId = v; }
-export function setMasterBusGain(v) { masterBusGain = v; }
-export function setMasterLimiter(v) { masterLimiter = v; }
 
 // Footer waveform draw callback — set by player.js, called by transport.js
 export let footerWaveDrawFn = null;
@@ -242,6 +221,10 @@ export let metronomeEnabled = false;
 export function setMetronomeEnabled(v) { metronomeEnabled = v; }
 export let metronomeVolume = 0.6;
 export function setMetronomeVolume(v) { metronomeVolume = v; }
+// The click sound preset (#805), a global preference like the volume: one of
+// the ids in clickSounds.js, anything else reads as the default (Classic).
+export let metronomeSound = DEFAULT_CLICK_SOUND;
+export function setMetronomeSound(v) { metronomeSound = normaliseClickSound(v); }
 // -1 = follow the bar marks the detector found; 0 = no accent; N = accent
 // every N beats from the top of the track.
 export let metronomeBeatsPerBar = -1;

@@ -1,30 +1,8 @@
 /* ─── Post-import studio dashboard ─── */
 
-.studio-dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.studio-top-grid {
-  display: grid;
-  grid-template-columns: minmax(760px, 1.42fr) minmax(560px, 1fr);
-  gap: 12px;
-}
-
 .presence-panel,
-.preview-panel,
-.stems-panel,
 .wave-editor {
   border-radius: 12px;
-}
-
-.panel-title,
-.preview-head {
-  color: #d4d8de;
-  font-size: 15px;
-  font-weight: 700;
-  text-transform: uppercase;
 }
 
 .presence-panel {
@@ -61,13 +39,6 @@
   gap: 12px;
   min-width: 0;
   font-size: 16px;
-}
-
-.presence-icon {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, currentColor 28%, transparent));
 }
 
 .presence-bars {
@@ -215,96 +186,6 @@
       transparent 42.7% 50.3%, black 50.3% 60.6%, transparent 60.6% 65.8%,
       black 65.8% 88.6%, transparent 88.6% 93.7%, black 93.7% 97.6%,
       transparent 97.6%);
-}
-
-.preview-panel {
-  min-height: 292px;
-  padding: 14px 18px 16px;
-}
-
-.preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--glass-line);
-}
-
-.preview-head div {
-  display: flex;
-  gap: 12px;
-}
-
-.preview-head button,
-.footer-btn {
-  min-height: 36px;
-  padding: 0 16px;
-  border: 1px solid var(--glass-line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.04);
-  color: #d8dde3;
-  font: inherit;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.footer-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-
-.preview-head button {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.preview-mixer-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 94px;
-  gap: 22px;
-  align-items: stretch;
-  padding-top: 14px;
-}
-
-.master-strip {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto 128px;
-  gap: 10px 8px;
-  justify-items: center;
-  color: #d1d6dd;
-}
-
-.master-strip .master-fader-track {
-  height: 128px;
-}
-
-.master-strip > span {
-  grid-column: 1 / -1;
-}
-
-.master-scale {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  color: #a8b0ba;
-  font-size: 12px;
-}
-
-.studio-wave-grid {
-  display: grid;
-  grid-template-columns: 424px minmax(0, 1fr);
-  gap: 10px;
-}
-
-.stems-panel {
-  min-height: 326px;
-  padding: 16px 18px;
 }
 
 .stem-list {
@@ -488,13 +369,6 @@
   padding: 12px 14px 14px;
 }
 
-.wave-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
 /* Shared scroll viewport for the ruler + waves. Putting both in the
    same scroll container with a single inner canvas guarantees the
    ruler-time element and the loop-region overlay share one coordinate
@@ -583,93 +457,14 @@
   pointer-events: none;
 }
 
-.zoom-tools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #c9ced6;
-  font-size: 18px;
-}
-
-.zoom-slider {
-  width: 116px;
-  height: 18px;
-  accent-color: var(--gold);
-  background: transparent;
-  cursor: pointer;
-}
-
-.zoom-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--gold) calc(var(--zoom-frac, 0) * 100%), rgba(148, 163, 184, 0.2) calc(var(--zoom-frac, 0) * 100%));
-}
-
-.zoom-slider::-webkit-slider-thumb {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
-  border-radius: 50%;
-  background: #f3d37c;
-  border: 2px solid rgba(255, 255, 255, 0.78);
-  box-shadow: 0 0 10px rgba(216, 168, 74, 0.28);
-}
-
-.zoom-slider::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--gold) calc(var(--zoom-frac, 0) * 100%), rgba(148, 163, 184, 0.2) calc(var(--zoom-frac, 0) * 100%));
-}
-
-.zoom-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #f3d37c;
-  border: 2px solid rgba(255, 255, 255, 0.78);
-  box-shadow: 0 0 10px rgba(216, 168, 74, 0.28);
-}
-
-.zoom-tools button {
-  min-height: 32px;
-  min-width: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--glass-line);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #d8dde3;
-  font: inherit;
-  cursor: pointer;
-  transition: background-color var(--t-base) var(--easing);
-}
-
-.zoom-tools button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.zoom-tools button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.zoom-tools #zoom-out,
-.zoom-tools #zoom-in {
-  font-size: 22px;
-  padding: 0;
-  width: 32px;
-}
-
-.zoom-tools .kebab {
-  width: 32px;
-  padding: 0;
-  font-size: 22px;
-}
-
 .waves-column {
   min-width: 0;
   position: relative;
   overflow: hidden;
+  /* Clips the same, but without becoming a scroll container, so the EQ tab
+     and an open EQ panel (eq.css) can stick to the visible left edge of
+     .wave-scroll at any zoom. Browsers without `clip` keep `hidden`. */
+  overflow: clip;
   min-height: 274px;
   --wave-gutter: 0px;
 }
@@ -703,6 +498,27 @@
   display: flex;
   flex-direction: column;
 }
+/* The playhead over the lanes. The ruler's line runs under this layer (z 3),
+   so a solid lane (a video track's frames) hid it; this one is drawn in the
+   layer, above the lanes' waveforms and frames, and below an open EQ panel
+   (.eq-panel-body, z 2), which it must not cross. Placed by
+   updatePlayheadMarker (transport.js), which sets its left and height: an
+   element of its own, so moving it restyles it alone (a custom property on
+   the layer restyled every lane under it, every frame). */
+.lane-playhead-line {
+  position: absolute;
+  top: 0;
+  /* Down to the last lane's bottom, not into the + track row under it. */
+  height: 100%;
+  left: 0;
+  width: 1.5px;
+  transform: translateX(-50%);
+  background: #e54e4e;
+  box-shadow: 0 0 7px rgba(229, 78, 78, 0.34);
+  pointer-events: none;
+  z-index: 1;
+}
+.app.is-import .lane-playhead-line { display: none; }
 
 .stem-waveform-row {
   /* Fixed 48px height matches the multitrack lane height
@@ -979,60 +795,10 @@
   opacity: 0.55;
 }
 
-.transport-footer {
-  min-height: 86px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: center;
-  align-items: center;
-  gap: 24px;
-  padding: 6px 4px 0;
-}
-
-.transport-footer .np-transport {
-  justify-self: center;
-}
-
-.footer-btn {
-  min-height: 36px;
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
 /* ─── Screenshot-aligned DAW layout ─── */
-
-.app:not(.is-import) .studio-dashboard {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns:
-    minmax(
-      clamp(340px, calc((var(--visible-track-count, 6) * 70px) + 112px), 650px),
-      clamp(360px, calc((var(--visible-track-count, 6) * 78px) + 128px), 720px)
-    )
-    minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(74px, 86px);
-  gap: 10px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.app:not(.is-import) .studio-top-grid,
-.app:not(.is-import) .studio-wave-grid {
-  display: contents;
-}
 
 .app:not(.is-import) .presence-panel {
   display: none;
-}
-
-.app:not(.is-import) .preview-panel {
-  grid-column: 1;
-  grid-row: 1;
-  min-height: 0;
-  padding: 10px 8px 12px;
 }
 
 .app:not(.is-import) .wave-editor {
@@ -1041,28 +807,6 @@
   min-height: 0;
   padding: 6px 12px;
   overflow: hidden;
-}
-
-.app:not(.is-import) .stems-panel {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: stretch;
-  width: 48px;
-  /* 6px panel padding + 32px toolbar + 34px ruler = 72px top;
-     6px matches wave-editor bottom padding so height == waves-column height */
-  margin: 72px 0 6px 12px;
-  height: auto;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  z-index: 4;
-  pointer-events: none;
-}
-
-.app:not(.is-import) .stems-panel .panel-title {
-  display: none;
 }
 
 .app:not(.is-import) .stem-list {
@@ -1099,11 +843,6 @@
 .app:not(.is-import) .stem-icon {
   width: 24px;
   height: 24px;
-}
-
-.app:not(.is-import) .wave-toolbar {
-  height: 30px;
-  margin: 0 0 2px;
 }
 
 .app:not(.is-import) .wave-scroll {
@@ -1165,41 +904,4 @@
 .app:not(.is-import) .stem-waveform-svg rect {
   opacity: 0.92;
   filter: none;
-}
-
-.app:not(.is-import) .transport-footer {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr);
-  align-items: center;
-  justify-items: stretch;
-  gap: 22px;
-  padding: 14px 16px;
-  border: 1px solid var(--glass-line);
-  border-radius: 10px;
-  background:
-    radial-gradient(circle at 50% 0, rgba(216, 168, 74, 0.05), transparent 28rem),
-    rgba(11, 22, 30, 0.68);
-}
-
-.app:not(.is-import) .footer-btn {
-  min-width: 100px;
-  min-height: 36px;
-  padding: 0 14px;
-  font-size: 13px;
-  gap: 7px;
-}
-
-.app:not(.is-import) .transport-footer .np-transport {
-  grid-column: 2;
-  justify-self: center;
-}
-
-.footer-actions {
-  display: flex;
-  grid-column: 3;
-  justify-self: end;
-  gap: 18px;
 }

@@ -17,6 +17,9 @@ at startup), so the Settings UI can change them without a restart:
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
 - `discogs_token`     - the user's Discogs token, for band profiles.
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
+- `video_encoder`     - H.264 encoder of the take render: auto | cpu | an encoder.
+- `stem_format`       - how new songs' stems are stored: wav | mp3 (#783).
+- `stem_mp3_kbps`     - the MP3 bitrate when stem_format is mp3: 128 | 192 | 256.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -35,8 +38,12 @@ from pathlib import Path
 
 from app.core.config import (
     DATA_DIR,
+    DEFAULT_STEM_STORAGE,
     MAX_DURATION_SEC,
     PLAYLIST_MAX_ITEMS,
+    STEM_FORMAT_CHOICES,
+    STEM_MP3_KBPS_CHOICES,
+    VIDEO_ENCODER_CHOICES,
     VIDEO_MAX_HEIGHT,
     available_torch_devices,
     detect_torch_device,
@@ -126,18 +133,30 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     return True
 
 
-def _quarantine_corrupt(path: Path) -> None:
-    """Move an unusable settings file aside rather than leaving it to be
-    overwritten by the next save.
+def quarantine_corrupt(path: Path, what: str = "settings") -> Path | None:
+    """Move an unusable file aside rather than leaving it to be overwritten by
+    the next save. Returns where it went, or None if it could not be moved.
 
     Renaming keeps the bytes for diagnosis. Deleting or writing over them
-    destroys the only remaining evidence of what the user had configured."""
+    destroys the only remaining evidence of what the user had configured.
+    Shared with the registry (app/core/registry.py), whose file has the same
+    problem; `what` only names the file in the log."""
     try:
-        target = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        stamp = int(time.time())
+        target = path.with_name(f"{path.name}.corrupt-{stamp}")
+        n = 1
+        while target.exists():  # a second quarantine within the same second
+            target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+            n += 1
         path.replace(target)
-        _log.warning("settings at %s were unreadable; moved aside to %s", path, target)
+        _log.warning("%s at %s were unreadable; moved aside to %s", what, path, target)
+        return target
     except OSError:
-        _log.warning("could not move unreadable settings at %s aside", path, exc_info=True)
+        _log.warning("could not move unreadable %s at %s aside", what, path, exc_info=True)
+        return None
+
+
+_quarantine_corrupt = quarantine_corrupt
 
 
 def _load() -> dict:
@@ -298,6 +317,30 @@ def _default_auto_sections() -> bool:
     wants it from first boot.
     """
     return os.environ.get("STEMDECK_AUTO_SECTIONS", "").strip() == "1"
+
+
+def _default_auto_lyrics() -> bool:
+    """Lyrics found while a song is imported (LRCLIB, then a Whisper
+    transcript of the vocals), off until the user turns Detect lyrics on.
+
+    Unlike Detect structure this is a standing choice, kept until changed.
+    STEMDECK_AUTO_LYRICS=1 turns it on for a deployment that wants it from
+    first boot.
+    """
+    return os.environ.get("STEMDECK_AUTO_LYRICS", "").strip() == "1"
+
+
+def get_auto_lyrics() -> bool:
+    with _LOCK:
+        v = _ensure().get("auto_lyrics")
+        return v if isinstance(v, bool) else _default_auto_lyrics()
+
+
+def set_auto_lyrics(value: bool) -> bool:
+    with _LOCK:
+        _ensure()["auto_lyrics"] = bool(value)
+        _save()
+        return bool(value)
 
 
 def get_auto_sections() -> bool:
@@ -593,6 +636,96 @@ def set_separation_quality(value: str) -> str:
         raise ValueError("separation_quality must be one of: " + ", ".join(_QUALITY_CHOICES))
     with _LOCK:
         _ensure()["separation_quality"] = choice
+        _save()
+        return choice
+
+
+# ── stem_format / stem_mp3_kbps ──
+# How a song's stems are stored once it finishes (#783): "wav" or "mp3" at a
+# CBR bitrate. Read when a job finishes (app/pipeline/stem_storage.py), so a
+# change applies to the next song without a restart; songs already in the
+# library keep whatever they were stored as. STEMDECK_STEM_FORMAT and
+# STEMDECK_STEM_MP3_KBPS seed the defaults for Docker and Unraid; a choice
+# saved in Settings wins over them, as for separation_quality.
+def _default_stem_format() -> str:
+    env = os.environ.get("STEMDECK_STEM_FORMAT", "").strip().lower()
+    return env if env in STEM_FORMAT_CHOICES else DEFAULT_STEM_STORAGE[0]
+
+
+def _default_stem_mp3_kbps() -> int:
+    raw = os.environ.get("STEMDECK_STEM_MP3_KBPS", "").strip().lower().removesuffix("k")
+    try:
+        kbps = int(raw)
+    except ValueError:
+        return DEFAULT_STEM_STORAGE[1]
+    return kbps if kbps in STEM_MP3_KBPS_CHOICES else DEFAULT_STEM_STORAGE[1]
+
+
+def get_stem_format() -> str:
+    with _LOCK:
+        v = _ensure().get("stem_format")
+        return v if isinstance(v, str) and v in STEM_FORMAT_CHOICES else _default_stem_format()
+
+
+def get_stem_mp3_kbps() -> int:
+    with _LOCK:
+        v = _ensure().get("stem_mp3_kbps")
+        ok = isinstance(v, int) and not isinstance(v, bool) and v in STEM_MP3_KBPS_CHOICES
+        return v if ok else _default_stem_mp3_kbps()
+
+
+def check_stem_format(value: object) -> str:
+    """The whitelisted format for ``value``, or ValueError (never echoing it)."""
+    choice = value.strip().lower() if isinstance(value, str) else ""
+    if choice not in STEM_FORMAT_CHOICES:
+        raise ValueError("stem_format must be one of: " + ", ".join(STEM_FORMAT_CHOICES))
+    return STEM_FORMAT_CHOICES[STEM_FORMAT_CHOICES.index(choice)]
+
+
+def check_stem_mp3_kbps(value: object) -> int:
+    """The whitelisted bitrate for ``value``, or ValueError (never echoing it)."""
+    kbps = value if isinstance(value, int) and not isinstance(value, bool) else None
+    if kbps not in STEM_MP3_KBPS_CHOICES:
+        raise ValueError(
+            "stem_mp3_kbps must be one of: " + ", ".join(map(str, STEM_MP3_KBPS_CHOICES))
+        )
+    return kbps
+
+
+def set_stem_storage(fmt: object = None, kbps: object = None) -> tuple[str, int]:
+    """Persist either or both, after both are validated: a request with one
+    bad value changes nothing. Returns what now applies."""
+    choice = check_stem_format(fmt) if fmt is not None else None
+    rate = check_stem_mp3_kbps(kbps) if kbps is not None else None
+    with _LOCK:
+        if choice is not None:
+            _ensure()["stem_format"] = choice
+        if rate is not None:
+            _ensure()["stem_mp3_kbps"] = rate
+        if choice is not None or rate is not None:
+            _save()
+        return get_stem_format(), get_stem_mp3_kbps()
+
+
+# ── video_encoder ──
+# The H.264 encoder of the take render (app/pipeline/video_encoder.py): "auto"
+# (default) uses a GPU encoder that passed a real test encode on this machine,
+# "cpu" always libx264, an encoder name only that one (libx264 when it fails).
+# Read per render. STEMDECK_VIDEO_ENCODER overrides it (video_encoder.policy).
+def get_video_encoder() -> str:
+    with _LOCK:
+        v = _ensure().get("video_encoder")
+        return v if isinstance(v, str) and v in VIDEO_ENCODER_CHOICES else "auto"
+
+
+def set_video_encoder(value: str) -> str:
+    choice = (value or "").strip().lower()
+    if choice not in VIDEO_ENCODER_CHOICES:
+        raise ValueError("video_encoder must be one of: " + ", ".join(VIDEO_ENCODER_CHOICES))
+    # The stored value is the whitelist's own string, never the request's.
+    choice = VIDEO_ENCODER_CHOICES[VIDEO_ENCODER_CHOICES.index(choice)]
+    with _LOCK:
+        _ensure()["video_encoder"] = choice
         _save()
         return choice
 

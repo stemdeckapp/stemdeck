@@ -411,15 +411,6 @@ def validate_playlist_url(url: str) -> str:
     return f"https://www.youtube.com/playlist?list={list_id}"
 
 
-def is_playlist_url(url: str) -> bool:
-    """Cheap check for the UI: would validate_playlist_url accept this?"""
-    try:
-        validate_playlist_url(url)
-    except InvalidPlaylistURL:
-        return False
-    return True
-
-
 def expand_playlist(url: str, limit: int) -> dict:
     """List a playlist's entries without downloading anything.
 

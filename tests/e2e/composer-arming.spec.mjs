@@ -16,7 +16,7 @@
 // rewriting syncWithServer's own payload to fight the fixture's local source,
 // which tests the stub more than it tests the app.
 import { expect, test } from "@playwright/test";
-import { openStudio, JOB_ID, TRACK_TITLE } from "./helpers.mjs";
+import { openStudio, JOB_ID, TRACK_TITLE, resetVersions } from "./helpers.mjs";
 
 const YOUTUBE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 
@@ -55,62 +55,33 @@ test.describe("composer arming", () => {
     await expect(page.locator("#url")).toHaveValue("");
   });
 
-  test("pressing the button re-splits the open upload", async ({ page }) => {
+  test("pressing the button on the open upload makes a version, never a re-split", async ({ page, request }) => {
     // The end-to-end wiring, and the one that catches a guard placed wrongly.
     // `required` on an empty box is refused by the browser before any handler
     // runs, so setting it here made the button answer "please fill out this
-    // field" instead of separating the track -- invisible to every assertion
+    // field" instead of acting on the track -- invisible to every assertion
     // that only looks at attributes.
+    //
+    // Since #804 the song is never separated over again: the chips become a
+    // version of it, sharing its stems, and no second job is made.
     await openStudio(page);
 
-    const sent = [];
-    await page.route("**/api/jobs/*/resplit", async (route) => {
-      sent.push({ url: route.request().url(), body: route.request().postDataJSON() });
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ job_id: "cafebabe0001" }),
-      });
+    const posts = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST") posts.push(new URL(req.url()).pathname);
     });
-
+    await page.locator("#stemAllBtn").click(); // all off
+    await page.locator('.stem-choice[data-stem="drums"]').click();
     await page.locator("#submit").click();
 
-    await expect.poll(() => sent.length, { timeout: 10000 }).toBe(1);
-    expect(sent[0].url).toContain(`/api/jobs/${JOB_ID}/resplit`);
-    expect(Array.isArray(sent[0].body.stems)).toBe(true);
-  });
+    await expect.poll(() => posts.filter((u) => u === `/api/jobs/${JOB_ID}/versions`).length, { timeout: 10000 }).toBe(1);
+    expect(posts.filter((u) => u.endsWith("/resplit") || u === "/api/jobs")).toEqual([]);
+    // The track it came from is still the one in the library, with its versions.
+    await expect(page.locator(`.cat-item[data-id="${JOB_ID}"]`).first()).toBeVisible();
+    await expect(page.locator(`#catalogList .cat-version[data-id="${JOB_ID}"]`)).toHaveCount(2);
 
-  test("re-splitting does not swallow the track it came from", async ({ page }) => {
-    // addTrackToLibrary replaces any existing track that shares a sourceUrl,
-    // which is how re-importing a link supersedes its old entry. A re-split
-    // reuses the source of the track it came from, so it would trip the same
-    // branch -- and that branch drops the catalog entry without deleting the
-    // job, leaving a directory with no reference for syncWithServer to
-    // re-adopt on the next launch.
-    await openStudio(page);
-
-    await page.route("**/api/jobs/*/resplit", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        // The server hands back the source it chose, which is deliberately
-        // not the one this job was made from.
-        body: JSON.stringify({
-          job_id: "cafebabe0003",
-          source_url: "local:E2E Fixture Track (cafeba)",
-        }),
-      }),
-    );
-    await page.locator("#submit").click();
-
-    // Presence is the question here, not placement or count.
-    await expect(page.locator(`.cat-item[data-id="cafebabe0003"]`).first()).toBeVisible({
-      timeout: 10000,
-    });
-    await expect(
-      page.locator(`.cat-item[data-id="${JOB_ID}"]`).first(),
-      "the track that was re-split must still be in the library",
-    ).toBeVisible();
+    // Put the shared fixture back to one version for the specs after this one.
+    await resetVersions(request);
   });
 
   test("a typed URL still wins over the open upload", async ({ page }) => {

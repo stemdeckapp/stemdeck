@@ -49,6 +49,12 @@ export async function seedCatalogState(page, { folders, tracks }) {
     ([key, value]) => window.localStorage.setItem(key, JSON.stringify(value)),
     [STORAGE_KEY, { v: STORAGE_VERSION, folders, tracks }],
   );
+  // The suite tests the full studio: DAW mode (static/js/mode.js), where
+  // Record, the EQ and the master are. Practice is the app's default; a test
+  // of it sets the mode before this runs, and a mode already set is kept.
+  await page.addInitScript(() => {
+    if (!window.localStorage.getItem("stemdeck.mode")) window.localStorage.setItem("stemdeck.mode", "daw");
+  });
 }
 
 /** Read the library store back, to assert on what was persisted. */
@@ -273,10 +279,20 @@ export async function stubFavorites(page, serverFavorites = {}) {
   });
   await page.route(/\/api\/jobs(\?.*)?$/, async (route) => {
     if (route.request().method() !== "GET") return route.continue();
-    const res = await route.fetch();
+    let res;
+    try {
+      res = await route.fetch();
+    } catch (err) {
+      // The test ended with this library read still out (a short test, a
+      // background sync): nothing is waiting for the answer any more.
+      if (/Test ended|Target page, context or browser has been closed/.test(String(err))) return;
+      throw err;
+    }
     const jobs = await res.json();
     for (const j of jobs) j.favorite = serverFavorites[j.job_id] ?? null;
-    await route.fulfill({ response: res, json: jobs });
+    await route.fulfill({ response: res, json: jobs }).catch((err) => {
+      if (!/Test ended|Target page, context or browser has been closed/.test(String(err))) throw err;
+    });
   });
   return writes;
 }
@@ -336,6 +352,34 @@ export async function openClickOptions(page) {
   if ((await more.getAttribute("aria-expanded")) === "true") return;
   await more.click();
   await page.locator("#t-metro-panel.open").waitFor({ timeout: 5000 });
+}
+
+/**
+ * Answer /api/health with the real body but a chosen `export_formats`, the
+ * capability the export menu reads to disable OGG on an ffmpeg without
+ * libvorbis (#824). The real answer depends on the ffmpeg of whichever machine
+ * runs the suite, so a spec that cares must fix it. Call before page.goto.
+ */
+export async function stubExportFormats(page, formats) {
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, export_formats: formats } });
+  });
+}
+
+/**
+ * Answer /api/health's vocal_split field ({ available, reason }) for this
+ * page: whether Lead + Backing can be made on this install (#832). The real
+ * answer depends on what setup and earlier splits recorded on the machine
+ * running the suite. Call before page.goto.
+ */
+export async function stubVocalSplitHealth(page, capability) {
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, vocal_split: capability } });
+  });
 }
 
 export const exportUi = (page) => ({
@@ -443,4 +487,37 @@ export async function stubImportQueue(page, jobId, title = "Importing") {
     run: async () => { running = true; await read(); },
     settle: async () => { running = false; await read(); },
   };
+}
+
+/**
+ * Choose a mode from the Mode menu (the Mode button at the top of the rail),
+ * the only way into Karaoke ("karaoke") and Performance ("streamer"), as a
+ * person does: the button, then the item.
+ */
+export async function chooseMode(page, mode) {
+  await page.locator("#modeBtn").click();
+  await page.locator(`#modeMenu .mode-item[data-mode="${mode}"]`).click();
+}
+
+/** Leave Karaoke or Performance through the Mode menu: the studio's own mode
+ * (Practice or Advanced, whichever is in force) chosen again. */
+export async function leaveModeView(page) {
+  const mode = await page.evaluate(async () => (await import("/js/mode.js")).getMode());
+  await chooseMode(page, mode);
+}
+
+/**
+ * Put the fixture back to its one version (#804). Versions live on the
+ * server, which every spec shares, so a spec that makes one (Extract on the
+ * open song, Save as new version) leaves it behind for the next spec unless
+ * it calls this. `request` is Playwright's APIRequestContext.
+ */
+export async function resetVersions(request, jobId = JOB_ID) {
+  const res = await request.get(`/api/jobs/${jobId}/versions`);
+  if (!res.ok()) return;
+  const { versions } = await res.json();
+  if (versions.some((v) => v.id === "main")) await request.post(`/api/jobs/${jobId}/versions/main/select`);
+  for (const v of versions) {
+    if (v.id !== "main") await request.delete(`/api/jobs/${jobId}/versions/${v.id}`);
+  }
 }

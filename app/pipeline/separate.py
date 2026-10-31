@@ -120,7 +120,9 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
         raise RuntimeError("demucs worker has no stdin/stderr pipe")
     set_proc(job.id, proc)
 
-    shifts = 2 if get_separation_quality() == "best" else 1
+    # The quality separate() recorded for this job (#804), else the setting.
+    quality = job.separation_quality or get_separation_quality()
+    shifts = 2 if quality == "best" else 1
     req = json.dumps({"source": str(source), "job_dir": str(job_dir), "shifts": shifts}) + "\n"
     try:
         proc.stdin.write(req)
@@ -233,7 +235,7 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     return (0, tail) if job_ok else (1, tail)
 
 
-def separate(job: Job, source: Path, job_dir: Path) -> Path:
+def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) -> Path:
     """Run demucs on the configured device, falling back to CPU once when a
     GPU attempt fails (#276).
 
@@ -242,8 +244,16 @@ def separate(job: Job, source: Path, job_dir: Path) -> Path:
     tail, and gpu_fallback/compute_device persist to job state and metadata.
     It applies even when the user forced cuda/mps in Settings -- a dead job
     with no diagnostics is strictly worse for them than a slow one that
-    explains itself."""
+    explains itself.
+
+    `quality` is the Separation quality to use, "standard" or "best"; None
+    reads the setting, per job like the device. Recorded on the job with the
+    model (#804), so stems separated later for the same song (fill-stems) use
+    the same settings and add up with the ones it has."""
     _set(job, status="separating", progress=0.0, stage="Separating stems...")
+    quality = quality or get_separation_quality()
+    job.separation_model = DEMUCS_MODEL
+    job.separation_quality = quality
 
     # Read the device fresh per job (not a frozen import) so a Settings change
     # applies to the next separation without a restart. Recorded on the job for

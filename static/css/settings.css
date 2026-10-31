@@ -1,0 +1,536 @@
+/* ── Settings dialog (catalog.js openLibraryEditor) ──────────────────────────
+   A wide two-column window: the sections down the left with a search box,
+   the chosen section on the right with its title, its settings in cards, and
+   a footer that never scrolls away. Every setting is a row: what it is and
+   what it does on the left, its control on the right, all controls ending on
+   the same edge.
+
+   Below 820px the section list becomes a row of chips over the content;
+   below 560px the dialog fills the screen like a sheet. Recording keeps its
+   own details in recording.css; this file only fits it to the cards. */
+
+.library-editor-backdrop {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: center;
+  padding: 24px;
+  background: rgba(3,8,13,0.62);
+  backdrop-filter: blur(3px);
+}
+
+.library-editor {
+  /* One width for every select, and one for every number, so the controls
+     line up down the column whatever their section. */
+  --set-pad: 32px;
+  --set-card-pad: 22px;
+  --set-control-w: 248px;
+  --set-num-w: 148px;
+  --set-control-h: 38px;
+  --set-accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --set-danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+
+  position: relative;
+  width: min(1060px, 100%);
+  /* A fixed height, not a max-height, so switching sections never resizes the
+     window: each pane fills it and scrolls inside it. */
+  height: min(82vh, 820px);
+  display: grid;
+  grid-template-columns: 252px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-2);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+.library-editor [hidden] { display: none !important; }
+.library-editor :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Left: title, search, sections ── */
+.settings-side {
+  display: flex; flex-direction: column; gap: 14px; min-height: 0;
+  padding: 24px 14px 18px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+.settings-side-title {
+  margin: 0; padding: 0 10px;
+  font-size: 19px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg);
+}
+.settings-search { position: relative; }
+.settings-search-icon {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none;
+}
+.settings-search-input {
+  width: 100%; box-sizing: border-box; height: 36px;
+  padding: 0 34px 0 34px;
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 9px;
+  color: var(--fg); font: inherit; font-size: 13.5px;
+  outline: none;
+  transition: border-color var(--t-fast) var(--easing);
+}
+.settings-search-input::placeholder { color: var(--muted); }
+.settings-search-input::-webkit-search-cancel-button { display: none; }
+.library-editor .settings-search-input:focus-visible,
+.settings-search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--set-accent-soft); }
+.settings-search-clear {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; display: grid; place-items: center; padding: 0;
+  border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.settings-search-clear:hover { color: var(--fg); background: var(--panel-3); }
+
+.settings-tabs {
+  display: flex; flex-direction: column; gap: 2px;
+  min-height: 0; overflow-y: auto;
+  margin: 0 -4px; padding: 0 4px;
+}
+.settings-nav-group {
+  margin: 16px 12px 6px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-tab {
+  position: relative;
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  width: 100%; min-height: 40px; padding: 8px 12px;
+  border: none; border-radius: 8px; background: transparent;
+  color: var(--fg-2); font: inherit; font-size: 14px; font-weight: 500; text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--easing), color var(--t-fast) var(--easing), opacity var(--t-base) var(--easing);
+}
+.settings-tab-icon { color: var(--muted); transition: color var(--t-fast) var(--easing); }
+.settings-tab-label { min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
+.settings-tab:hover { background: var(--panel-2); color: var(--fg); }
+.settings-tab:hover .settings-tab-icon { color: var(--fg-2); }
+.settings-tab.active { background: var(--set-accent-soft); color: var(--fg); font-weight: 600; }
+.settings-tab.active::before {
+  content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.settings-tab.active .settings-tab-icon { color: var(--accent); }
+.library-editor .settings-tab:focus-visible { outline-offset: -2px; }
+/* While searching, no section is the one showing, so none looks picked. */
+.is-searching .settings-tab.active { background: transparent; font-weight: 500; }
+.is-searching .settings-tab.active::before { display: none; }
+.is-searching .settings-tab.active .settings-tab-icon { color: var(--muted); }
+/* While searching, a section with nothing that matches steps back. */
+.settings-tab.no-match { opacity: 0.38; }
+.settings-tab-badge {
+  display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 6px; box-sizing: border-box;
+  border-radius: 10px; background: var(--set-danger-soft); color: var(--danger);
+  font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.settings-tab-dot {
+  width: 8px; height: 8px; margin-right: 4px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--set-accent-soft);
+}
+
+/* ── Right: header, content, footer ── */
+.settings-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.settings-main-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-shrink: 0;
+  padding: 24px var(--set-pad) 18px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-main-text { min-width: 0; }
+.settings-main-title { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); overflow-wrap: anywhere; }
+.settings-main-desc { margin: 6px 0 0; max-width: 68ch; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+.library-editor-close {
+  flex-shrink: 0; width: 34px; height: 34px; margin: -4px -8px 0 0; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.library-editor-close:hover { background: var(--panel-2); border-color: var(--border); color: var(--fg); }
+
+/* Every pane fills the window and scrolls inside it. A pane that cannot
+   scroll does not clip, it runs on under the footer (the Network section did
+   exactly that once it gained one QR card per address). */
+.settings-pane, .settings-results {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 28px;
+  overflow-y: auto;
+  padding: 24px var(--set-pad) 32px;
+  scrollbar-gutter: stable;
+}
+.settings-pane.hidden { display: none; }
+.settings-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0;
+  padding: 14px var(--set-pad);
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.settings-foot-note { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.settings-done {
+  flex-shrink: 0; height: var(--set-control-h); min-width: 104px; padding: 0 26px;
+  border: 1px solid var(--accent); border-radius: 9px; background: var(--accent);
+  color: var(--bg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background var(--t-fast) var(--easing);
+}
+.settings-done:hover { background: var(--accent-2); border-color: var(--accent-2); }
+
+/* ── Groups, cards and rows ── */
+.settings-group { display: flex; flex-direction: column; gap: 10px; }
+.settings-group-title {
+  margin: 0 0 0 2px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-group-desc { margin: -4px 0 2px 2px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.settings-section {
+  flex-shrink: 0;
+  padding: 0 var(--set-card-pad);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 28px;
+  padding: 18px 0;
+  border-radius: 6px;
+  transition: outline-color var(--t-base) var(--easing);
+}
+.settings-section > .settings-row ~ .settings-row { border-top: 1px solid var(--border); }
+.settings-row-text { flex: 1 1 auto; min-width: 0; max-width: 620px; }
+.settings-row-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--fg); }
+.settings-row-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.settings-row-desc code, .settings-main-desc code {
+  font-family: var(--font-mono); font-size: 0.92em; color: var(--fg-2);
+  padding: 1px 5px; border-radius: 4px; background: var(--panel-3);
+}
+.settings-lock-note { font-style: italic; }
+/* A setting that only applies while another is on. Dimmed and inert rather
+   than removed, so the value stays readable while deciding about the other. */
+.settings-row.disabled { opacity: 0.45; }
+.settings-row.disabled input { cursor: not-allowed; }
+/* The row a search result points at, marked for a moment. */
+.settings-row.settings-row-flash { outline: 2px solid var(--accent); outline-offset: 8px; }
+/* The separation engine cannot load at all (#730). */
+.set-demucs-desc.is-broken { color: var(--danger); }
+
+/* A row whose control is wide (a path, a key) puts it under the text. */
+.settings-row-stack { display: block; }
+
+/* ── Controls ── */
+.settings-select, .settings-num-input, .settings-text-input, .settings-unit-field {
+  box-sizing: border-box; height: var(--set-control-h);
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 8px;
+  color: var(--fg); font: inherit; font-size: 13.5px;
+  transition: border-color var(--t-fast) var(--easing), box-shadow var(--t-fast) var(--easing);
+}
+.settings-select {
+  flex-shrink: 0; width: var(--set-control-w); max-width: 100%;
+  padding: 0 34px 0 12px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  text-overflow: ellipsis;
+  /* A chevron drawn from two gradients, so it takes the token colour. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.settings-select:disabled { opacity: 0.55; cursor: not-allowed; }
+.settings-select:hover:not(:disabled), .settings-text-input:hover, .settings-unit-field:hover { border-color: color-mix(in srgb, var(--fg) 28%, var(--border-strong)); }
+.library-editor .settings-select:focus-visible,
+.library-editor .settings-text-input:focus-visible,
+.library-editor .settings-num-input:focus-visible { outline: none; }
+.settings-select:focus, .settings-text-input:focus, .settings-num-input:focus, .settings-unit-field:focus-within {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--set-accent-soft);
+}
+.settings-num-input {
+  flex-shrink: 0; width: var(--set-num-w); padding: 0 12px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.settings-num-input:disabled { opacity: 0.6; cursor: not-allowed; }
+/* A number and its unit, in one box the same width as a plain number. */
+.settings-unit-field { flex-shrink: 0; display: inline-flex; align-items: center; width: var(--set-num-w); overflow: hidden; }
+.settings-unit-field .settings-num-input {
+  flex: 1; min-width: 0; width: auto; height: 100%;
+  border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 8px 0 12px;
+}
+.settings-unit {
+  flex-shrink: 0; padding: 0 12px 0 2px;
+  font-size: 13px; color: var(--muted); white-space: nowrap;
+}
+.settings-text-input {
+  width: 100%; margin-top: 12px; padding: 0 12px;
+  font-family: var(--font-mono); font-size: 13px;
+}
+.settings-text-input::placeholder { color: var(--muted-2); font-family: var(--font-sans); }
+
+.settings-switch { position: relative; flex-shrink: 0; width: 46px; height: 26px; cursor: pointer; }
+.settings-switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.settings-switch-track {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: var(--panel-3); border: 1px solid var(--border-strong);
+  transition: background var(--t-base) var(--easing), border-color var(--t-base) var(--easing);
+}
+.settings-switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--fg-2); box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: transform var(--t-base) var(--easing), background var(--t-base) var(--easing);
+}
+.settings-switch input:checked + .settings-switch-track { background: color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+.settings-switch input:checked + .settings-switch-track .settings-switch-thumb { transform: translateX(20px); background: var(--accent); }
+.settings-switch input:focus-visible + .settings-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-switch input:disabled { cursor: not-allowed; }
+.settings-switch:has(input:disabled) { opacity: 0.6; cursor: not-allowed; }
+
+.settings-btn, .settings-reset-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  height: 36px; padding: 0 16px; box-sizing: border-box;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--panel-3); color: var(--fg);
+  font: inherit; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: background var(--t-fast) var(--easing), border-color var(--t-fast) var(--easing), color var(--t-fast) var(--easing);
+}
+.settings-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--fg) 30%, var(--border-strong)); background: color-mix(in srgb, var(--fg) 6%, var(--panel-3)); }
+.settings-btn:disabled { opacity: 0.5; cursor: default; }
+.settings-btn-accent { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: var(--set-accent-soft); color: var(--accent); }
+.settings-btn-accent:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.settings-reset-btn { border-color: color-mix(in srgb, var(--danger) 60%, transparent); background: var(--set-danger-soft); color: var(--danger); }
+.settings-reset-btn:hover { background: color-mix(in srgb, var(--danger) 24%, transparent); border-color: var(--danger); }
+
+/* ── Library ── */
+.stems-location { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.stems-location-path, .exports-location-path {
+  flex: 1; min-width: 0; height: var(--set-control-h); box-sizing: border-box;
+  display: flex; align-items: center; padding: 0 12px;
+  border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--fg-2); font-family: var(--font-mono); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stems-location-size { flex-shrink: 0; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stems-location-msg, .exports-location-msg, .cookies-file-msg, .acoustid-key-msg, .discogs-token-msg {
+  margin-top: 8px; font-size: 13px; line-height: 1.45; color: var(--muted);
+}
+.stems-location-msg:empty, .exports-location-msg:empty, .cookies-file-msg:empty { display: none; }
+.stems-location-msg.error, .exports-location-msg.error, .cookies-file-msg,
+.acoustid-key-msg.error, .discogs-token-msg.error { color: var(--danger); }
+.stems-location-msg.ok { color: var(--accent); }
+
+.library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
+.library-editor-sync:disabled { opacity: 0.55; cursor: default; }
+/* A list that can run long scrolls in its own box, header pinned. */
+.library-editor-table-wrap {
+  max-height: 300px; overflow: auto; margin-bottom: 20px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2);
+}
+.library-editor-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.library-editor-sync-table { table-layout: fixed; }
+.library-editor-sync-table .le-col-name { width: 40%; }
+.library-editor-sync-table .le-col-source { width: 18%; }
+.library-editor-sync-table .le-col-loc { width: 42%; }
+.library-editor-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 10px 14px; text-align: left; white-space: nowrap;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.library-editor-table tbody td {
+  padding: 10px 14px; vertical-align: middle; color: var(--fg-2);
+  border-bottom: 1px solid var(--border);
+}
+.library-editor-table tbody tr:last-child td { border-bottom: none; }
+.library-editor-table tbody tr:hover td { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.library-editor-table .le-name, .library-editor-table .le-loc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-editor-table .le-name { color: var(--fg); }
+.library-editor-table tr.unavailable .le-name { color: var(--danger); }
+.le-badge {
+  margin-left: 8px; padding: 2px 7px; border-radius: 5px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  background: var(--set-danger-soft); color: var(--danger);
+}
+.library-editor-empty { color: var(--muted); text-align: center; padding: 26px 14px !important; }
+/* With nothing out of sync, the line above the table already says so. */
+.library-editor-table-wrap:has(.library-editor-empty) { display: none; }
+
+/* Danger zone: one look for anything that cannot be undone. */
+.settings-danger-subhead { color: var(--danger); }
+.settings-danger-zone .settings-section {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 5%, var(--panel));
+}
+
+/* ── Song details ── */
+.acoustid-key, .discogs-token { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.acoustid-key .settings-text-input, .discogs-token .settings-text-input { flex: 1; min-width: 0; margin-top: 0; }
+.acoustid-register, .discogs-register {
+  display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 500;
+  color: var(--accent); text-decoration: none;
+}
+.acoustid-register:hover, .discogs-register:hover { text-decoration: underline; }
+.discogs-privacy { margin-top: 6px; }
+
+/* ── Export ── */
+.video-encoder-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 0 18px; }
+.video-encoder-actions .settings-row-desc { margin-top: 0; }
+.video-encoder-table-wrap { max-height: none; overflow-x: auto; }
+.video-encoder-table td.is-ok { color: var(--take); }
+
+/* ── Network ── */
+.settings-server-note {
+  flex-shrink: 0; margin: 0; padding: 12px 16px;
+  font-size: 13px; line-height: 1.5; color: var(--fg-2);
+  background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+.settings-net { padding: 0 0 20px; font-size: 13px; color: var(--muted); }
+.settings-net.hidden { display: none; }
+.settings-net-empty { color: var(--muted); }
+/* Transpose over the network: red, because the consequence is a control that
+   does nothing or a browser page saying the connection is not private. */
+.settings-net-warn {
+  margin: 0 0 16px; padding: 10px 14px;
+  border-left: 3px solid var(--danger); border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger); font-size: 13px; line-height: 1.5;
+}
+.settings-net-warn.hidden { display: none; }
+.settings-net-qr { display: flex; flex-direction: column; gap: 14px; }
+.qr-hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.qr-cards-row { display: flex; flex-wrap: wrap; gap: 24px; }
+.qr-card { display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; }
+.qr-img-wrap { width: 136px; height: 136px; border-radius: 8px; border: 3px solid var(--accent); overflow: hidden; box-sizing: border-box; }
+.qr-card img { width: 100%; height: 100%; display: block; transition: filter var(--t-base) ease, scale var(--t-base) ease; }
+.qr-card.qr-blurred img { filter: blur(10px); scale: 1.12; }
+.qr-label { max-width: 160px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); text-align: center; word-break: break-all; }
+
+/* ── Logs and Registry: a card that fills the pane ── */
+.settings-section-fill { flex: 1 0 auto; display: flex; flex-direction: column; min-height: 420px; padding-bottom: 20px; }
+.settings-pane[data-pane="registry"] .settings-section-fill { min-height: 460px; }
+.settings-subtabs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin: 16px 0 2px; padding: 4px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px;
+  align-self: flex-start;
+}
+.settings-subtab {
+  height: 32px; padding: 0 14px;
+  border: none; border-radius: 6px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background var(--t-fast) var(--easing), color var(--t-fast) var(--easing);
+}
+.settings-subtab:hover { color: var(--fg); }
+.settings-subtab.active { background: var(--panel-3); color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+/* The pane is a column and the textareas grow with flex:1, so the subpane
+   has to be one too, or a textarea collapses to its default width. */
+.settings-subpane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.settings-subpane.hidden { display: none; }
+.settings-registry-view {
+  flex: 1; min-height: 300px; width: 100%; box-sizing: border-box; resize: none;
+  padding: 12px 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--fg-2); font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  white-space: pre; overflow: auto;
+}
+.library-editor .settings-registry-view:focus-visible { outline: none; border-color: var(--accent); }
+.settings-logtail-view { overflow-wrap: normal; overflow-x: auto; }
+.settings-logs-dir {
+  margin: 0 0 12px; padding: 10px 14px;
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 8px;
+}
+.settings-logs-path { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-2); word-break: break-all; user-select: all; }
+.settings-logs-list { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted); }
+.settings-log-row { padding: 12px 14px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
+.settings-log-main { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.settings-log-name { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--fg); }
+.settings-log-meta { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.settings-log-desc { margin-top: 4px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.settings-logs-empty { font-size: 13px; color: var(--muted); padding: 6px 2px; }
+
+/* ── Recording (built by capture/recordingSettings.js) ── */
+.rec-settings .settings-section { display: flex; flex-direction: column; gap: 0; }
+.rec-settings .settings-select.rec-settings-select { width: var(--set-control-w); max-width: 100%; }
+.rec-settings .rec-settings-meter { margin: -6px 0 16px; }
+.rec-settings .rec-permission:not([hidden]) { margin: 0 0 16px; font-size: 13px; }
+.rec-settings .rec-settings-test { align-self: flex-start; margin: 0 0 12px; }
+.rec-settings .rec-settings-latency { margin: 0 0 8px; font-size: 13px; }
+.rec-settings .rec-note, .rec-settings .rec-cal-status { font-size: 13px; line-height: 1.5; margin: 0 0 12px; }
+.rec-settings .rec-cal-progress { margin: 0 0 16px; }
+.rec-settings .rec-small-btn { height: 36px; padding: 0 16px; font-size: 13.5px; }
+.rec-settings-preview { margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
+
+/* ── Search results ── */
+.settings-results { gap: 10px; }
+.settings-results[hidden] { display: none; }
+.settings-results-status { margin: 0; font-size: 13px; color: var(--muted); }
+.settings-results-status:empty { display: none; }
+.settings-results-status.is-empty { padding: 56px 16px; text-align: center; font-size: 14.5px; color: var(--fg-2); }
+.settings-results-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.settings-result {
+  display: grid; gap: 4px; width: 100%; padding: 14px 18px; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--t-fast) var(--easing), background var(--t-fast) var(--easing);
+}
+.settings-result:hover, .settings-result:focus-visible { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: var(--panel-2); }
+.library-editor .settings-result:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--set-accent-soft); }
+.settings-result-path { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.settings-result-title { font-size: 14.5px; font-weight: 600; }
+.settings-result-desc {
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.settings-result mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--fg);
+  border-radius: 3px; padding: 0 1px;
+}
+
+/* ── Narrow windows: the sections become a row of chips over the content ── */
+@media (max-width: 820px) {
+  .library-editor {
+    --set-pad: 20px;
+    --set-card-pad: 18px;
+    height: min(92vh, 820px);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-side {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px 16px;
+    padding: 16px 64px 0 20px;
+    border-right: none; border-bottom: 1px solid var(--border);
+  }
+  .settings-side-title { padding: 0; font-size: 18px; }
+  .settings-search { max-width: 360px; }
+  .settings-tabs {
+    grid-column: 1 / -1;
+    flex-direction: row; gap: 4px; overflow-x: auto; overflow-y: hidden;
+    margin: 0 -64px 0 -20px; padding: 0 20px 10px;
+    scrollbar-width: none;
+    /* The row runs on past the edge: fade it there so it reads as more. */
+    mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 40px), transparent);
+  }
+  .settings-tabs::-webkit-scrollbar { display: none; }
+  .settings-nav-group { display: none; }
+  .settings-tab { width: auto; flex-shrink: 0; grid-template-columns: 16px auto auto; gap: 8px; min-height: 36px; padding: 6px 12px; white-space: nowrap; font-size: 13.5px; }
+  .settings-tab-label { overflow-wrap: normal; }
+  .settings-tab.active::before { left: 10px; right: 10px; top: auto; bottom: -10px; width: auto; height: 3px; border-radius: 3px 3px 0 0; }
+  .settings-tab-badge, .settings-tab-dot { margin-right: 0; }
+  .library-editor-close { position: absolute; top: 14px; right: 16px; margin: 0; }
+  .settings-main-head { padding: 18px var(--set-pad) 14px; }
+  .settings-main-title { font-size: 18px; }
+  .settings-pane, .settings-results { padding-top: 20px; gap: 24px; }
+}
+
+/* ── Phone width: a full-screen sheet, controls under their labels ── */
+@media (max-width: 560px) {
+  .library-editor-backdrop { padding: 0; }
+  .library-editor { width: 100%; height: 100%; border: none; border-radius: 0; }
+  .settings-side { grid-template-columns: minmax(0, 1fr); padding: 14px 60px 0 16px; }
+  .settings-search { max-width: none; grid-column: 1 / -1; }
+  .settings-tabs { margin: 0 -60px 0 -16px; padding: 0 16px 10px; }
+  .library-editor { --set-pad: 16px; --set-card-pad: 16px; }
+  .settings-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .settings-row > .settings-select, .settings-row > .rec-settings-select { width: 100%; }
+  .settings-row > .settings-switch, .settings-row > .settings-unit-field,
+  .settings-row > .settings-num-input, .settings-row > .settings-btn,
+  .settings-row > .settings-reset-btn, .settings-row > .rec-small-btn { align-self: flex-start; }
+  .settings-foot-note { display: none; }
+  .settings-foot { justify-content: flex-end; }
+}
