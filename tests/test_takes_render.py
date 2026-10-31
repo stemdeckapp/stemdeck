@@ -1079,3 +1079,16 @@ def test_filmstrip_of_a_take_ending_between_seconds_has_no_black_frame(tmp_path)
     img = np.frombuffer(raw, dtype=np.uint8).reshape(h, w * meta["count"])
     for i in range(meta["count"]):
         assert img[:, i * w : (i + 1) * w].mean() > 20, f"frame {i} is black"
+
+
+def test_take_audio_wav_has_a_canonical_header(tmp_path):
+    """audio.wav is served and zipped as-is, so it must not carry ffmpeg's
+    LIST/INFO chunk between fmt and data (strict hardware players refuse it)."""
+    skip_without_ffmpeg()
+    raw = tmp_path / "audio.raw.wav"
+    sf.write(str(raw), np.zeros((4410, 2), dtype="float32"), 44100, subtype="PCM_16")
+    dest = tmp_path / "audio.wav"
+    take_render.render_take_audio(raw, dest, 0.0, 4410, 44100, 2)
+    content = dest.read_bytes()
+    assert content[12:16] == b"fmt "
+    assert content[36:40] == b"data", f"expected data at byte 36, found {content[36:40]!r}"

@@ -32,6 +32,7 @@ from app.core.config import (
     EXPORT_LIMIT_LOSSY_DBTP,
     TIMEOUT_FFMPEG,
     VIDEO_CPU_ENCODER,
+    WAV_PLAIN_HEADER_ARGS,
     ffmpeg_executable,
 )
 from app.pipeline import video_encoder
@@ -245,6 +246,7 @@ def render_take_audio(
             str(TAKE_RATE),
             "-c:a",
             "pcm_s16le",
+            *WAV_PLAIN_HEADER_ARGS,
             "-f",
             "wav",
             "-y",

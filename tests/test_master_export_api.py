@@ -206,7 +206,7 @@ def test_the_master_is_in_the_cache_key():
     on = stems_mod._mixdown_cache_key(*base, "m:volume=2.0,alimiter")
     other = stems_mod._mixdown_cache_key(*base, "m:volume=2.1,alimiter")
     assert len({off, on, other}) == 3
-    assert stems_mod._RENDER_CACHE_VERSION == "6"
+    assert stems_mod._RENDER_CACHE_VERSION == "7"
 
 
 async def test_no_master_renders_the_same_bytes_as_before(jobs_dir, client, monkeypatch):
