@@ -115,6 +115,9 @@ test.describe("Karaoke Mode", () => {
     // Karaoke's lanes are the voice and Original (every instrument folded into
     // it, partChoice.js KARAOKE_LANES), so there is no Bass lane here.
     await openKaraoke(page);
+    // vocals exists in every mode, so wait for Karaoke's own lanes (the track
+    // index swaps after the mode view opens), not just for the voice.
+    await expect.poll(async () => Object.keys(await mixOf(page)).sort()).toEqual(["original", "vocals"]);
     await expect.poll(async () => (await mixOf(page)).vocals[0]).toBe("M");
     expect(Object.keys(await mixOf(page)).sort()).toEqual(["original", "vocals"]);
     expect((await mixOf(page)).original[0]).toBe("-");
@@ -125,7 +128,7 @@ test.describe("Karaoke Mode", () => {
     // Back out: Advanced is untouched by what was done in Karaoke.
     await leaveModeView(page);
     await expect(page.locator("#karaoke")).toBeHidden();
-    await expect.poll(async () => (await mixOf(page)).drums[0]).toBe("-");
+    await expect.poll(async () => (await mixOf(page)).drums?.[0]).toBe("-");
     expect(await speedOf(page)).toBe(0.75);
     expect((await savedMix(page, "daw")).vocals.muted).toBe(true);
     expect((await savedMix(page, "daw")).drums.muted).toBe(false);
@@ -134,6 +137,9 @@ test.describe("Karaoke Mode", () => {
     // Karaoke again: its own is remembered, but the voice is off every time.
     await mute(page, "vocals", false);
     await openKaraoke(page);
+    // vocals exists in every mode, so wait for Karaoke's own lanes (the track
+    // index swaps after the mode view opens), not just for the voice.
+    await expect.poll(async () => Object.keys(await mixOf(page)).sort()).toEqual(["original", "vocals"]);
     await expect.poll(async () => (await mixOf(page)).vocals[0]).toBe("M");
     expect((await mixOf(page)).original[0]).toBe("-");
     expect(await speedOf(page)).toBe(1.25);

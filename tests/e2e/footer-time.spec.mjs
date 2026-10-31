@@ -36,6 +36,12 @@ async function clickRulerAt(page, frac) {
 
 test.beforeEach(async ({ page }) => {
   await openStudio(page);
+  // openStudio returns once the UI knows the song's length, which is before the
+  // audio engine has read the stem headers. The engine clamps a seek to its own
+  // duration, so a seek in that gap lands on 0 while the readout still moves.
+  await expect
+    .poll(() => page.evaluate(async () => (await import("/js/transport.js")).transport().getDuration?.() ?? 0))
+    .toBeGreaterThan(5);
 });
 
 test("the total is the song's length and nothing has elapsed yet", async ({ page }) => {

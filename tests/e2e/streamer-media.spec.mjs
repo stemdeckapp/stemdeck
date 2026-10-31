@@ -105,7 +105,8 @@ test.describe("Streamer Mode: devices and meter", () => {
       await sm(page, ".sm-aspect select").selectOption(aspect);
       await expect.poll(async () => (await sample(aspect)).all, { message: aspect }).toBe(true);
       // Pillarboxed: outside the picture stays black.
-      if (aspect !== "16:9") expect((await sample(aspect)).outside).toBe(false);
+      // Polled: the canvas can still hold the previous aspect's frame for a tick.
+      if (aspect !== "16:9") await expect.poll(async () => (await sample(aspect)).outside, { message: aspect }).toBe(false);
     }
   });
 
