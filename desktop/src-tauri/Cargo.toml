@@ -45,7 +45,7 @@ tauri-plugin-store = "2"
 # Certificate validity dates. Already in the tree via rcgen; named here because
 # certs.rs uses it directly.
 time = "0.3"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 
 # Answering the webview's microphone and camera requests for StemDeck's own
