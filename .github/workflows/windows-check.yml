@@ -1,7 +1,6 @@
 name: Windows Rust Check
 
-# Manual only -- not on every PR/push, to keep the self-hosted runner's load
-# and cost unchanged from today. Companion to macos-check.yml: ci.yml (which
+# Manual, plus PRs that touch the Rust (see below). Companion to macos-check.yml: ci.yml (which
 # does run on every PR) is 100% ubuntu-latest, so nothing behind
 # #[cfg(windows)] -- or, as it turned out, code that lost a #[cfg(unix)] gate
 # and started compiling on Windows by accident -- has ever had a real
@@ -11,8 +10,7 @@ on:
   workflow_dispatch:
   # Also on PRs that actually touch the Rust, so a desktop-shell change cannot
   # merge without a real compiler pass on this platform. Scoped by path so the
-  # self-hosted runner's load is unchanged for the majority of PRs, which do not
-  # go near src-tauri. (#421 added ~600 lines of mostly cfg-gated Rust and every
+  # majority of PRs, which do not go near src-tauri, skip it. (#421 added ~600 lines of mostly cfg-gated Rust and every
   # CI check passed without compiling any of it.)
   pull_request:
     paths:
@@ -27,27 +25,21 @@ concurrency:
 
 jobs:
   check:
-    # Never run a fork's code on the self-hosted runner -- see the same guard in
-    # macos-check.yml. cargo build/clippy/test execute whatever the PR supplies
-    # (build.rs, proc-macro crates, a swapped Cargo.toml dependency, the test
-    # bodies), nothing here cleans the workspace, and this runner also builds
-    # the Windows release. Fork PRs get a maintainer-triggered
-    # workflow_dispatch run instead.
+    # Fork PRs get a maintainer-triggered workflow_dispatch run instead. This
+    # runner is GitHub-hosted and disposable, so the guard is no longer needed
+    # for safety; it is kept so fork PRs do not start compiles on their own.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    # Runner must have rustup and the MSVC toolchain (same requirements as
-    # windows-release.yml, which this intentionally does not replace -- this
-    # only builds/checks, never packages or uploads anything).
-    runs-on: [self-hosted, windows, x64]
+    # windows-latest ships rustup and the MSVC toolchain. This intentionally
+    # does not replace windows-release.yml -- this only builds/checks, never
+    # packages or uploads anything.
+    runs-on: windows-latest
     timeout-minutes: 30
     defaults:
       run:
-        # bash on this self-hosted runner mangles the auto-generated temp
-        # script's Windows-style path (backslashes stripped -- "No such file
-        # or directory" on a path that plainly exists), the way
-        # windows-release.yml's own steps already discovered. powershell is
-        # the proven shell for this runner.
+        # Kept as powershell: it is the shell this job has always run under
+        # (bash mangled the temp script's Windows path on the old runner).
         shell: powershell
         working-directory: desktop/src-tauri
     steps:
