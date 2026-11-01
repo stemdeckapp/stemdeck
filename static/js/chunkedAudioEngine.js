@@ -194,6 +194,7 @@ import { createPlaybackContext } from "./audioContext.js";
 import { createTickLoop } from "./tickLoop.js";
 import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
 import { createEngineFx, engineFxApi } from "./fxChain.js";
+import { reachedEnd } from "./playbackEnd.js";
 
 export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -276,6 +277,12 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // as it is built and would otherwise read these before initialisation.
   let playing = false;
   let destroyed = false;
+  // True once ready() has settled, either way. Before that there is no
+  // duration and no chunk to start from; see _playWhenLoaded.
+  let _loaded = false;
+  // Which play() pressed before ready() is the live one. Bumped by each, so a
+  // wait overtaken by a pause and a new play starts nothing.
+  let _pendingSeq = 0;
 
   // Per-stem state: url, parsed WAV header, gain node, analyser (VU tap), and
   // currently playing nodes. Graph per stem: sources -> gain -> fx slot (EQ)
@@ -653,13 +660,22 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
         return;
       }
     }
-    if (t >= _duration) {
+    if (reachedEnd(t, _duration)) {
       playing = false;
       _audioStarted = false;
       _startOffset = _duration;
       tickLoop.cancel();
       onTime?.(_duration);
       onEnded?.();
+      return;
+    }
+    if (!(_duration > 0)) {
+      // No known length: no end to report and nothing to schedule against.
+      // Stop rather than tick on every frame. play() waits for ready(), so
+      // this is a guard, not a path.
+      playing = false;
+      _audioStarted = false;
+      tickLoop.cancel();
       return;
     }
     _maybeSchedule();
@@ -689,6 +705,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   function play(leadIn = 0) {
     if (playing || destroyed) return Promise.resolve(false);
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (!_loaded) return _playWhenLoaded(leadIn);
     // Play from the end starts again from the top, as the buffered engine's
     // play() does. The transport places a count-in on that assumption; without
     // this the count-in led into 0 while the audio started at the end.
@@ -735,6 +752,29 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       });
   }
 
+  // Play pressed before ready() has settled. The transport shows the song's
+  // length from its peaks before the headers are read, so Play works in that
+  // window, and starting then ran one tick at position 0 of a 0 second track:
+  // its end. Nothing played and onEnded fired, which in Karaoke moved the
+  // queue on. Instead the start waits for ready() and then goes the usual way,
+  // under the contract above: true once started, false if abandoned.
+  //
+  // `playing` is set meanwhile, as it already is while a first chunk is
+  // fetched, so the button shows Play pressed and a second press pauses. A
+  // pause, a seek (which plays again with a new wait) or destroy() leaves
+  // this wait stale, and a stale wait starts nothing. A song change destroys
+  // the engine, so a wait can never start the previous song.
+  function _playWhenLoaded(leadIn) {
+    playing = true;
+    const seq = ++_pendingSeq;
+    const settle = (ok) => {
+      if (seq !== _pendingSeq || !playing || destroyed) return false;
+      playing = false;
+      return ok ? play(leadIn) : false;
+    };
+    return ready.then(settle, () => settle(false));
+  }
+
   function pause() {
     if (!playing) return;
     _startOffset = _getCurrentTime();
@@ -748,7 +788,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   }
 
   function seek(t) {
-    const clamped = Math.max(0, Math.min(t, _duration || 0));
+    // Before ready() the length is not known, so the position is kept as asked
+    // and clamped once it is. Clamping to 0 there lost a Play's snap to the
+    // loop start, and any seek made while the stems loaded.
+    const clamped = Math.max(0, _loaded ? Math.min(t, _duration || 0) : t);
     const wasPlaying = playing;
     if (wasPlaying) {
       _stopNodes();
@@ -776,6 +819,16 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // only, ~6 x 1 KB) instead of blocking on the full first-chunk download (~5 MB).
   // play() handles the case where chunk 0 is not yet cached.
   const ready = (async () => {
+    // Set before the result is handed on, so a play() waiting on it
+    // (_playWhenLoaded) takes the loaded path.
+    try {
+      return await _load();
+    } finally {
+      _loaded = true;
+    }
+  })();
+
+  async function _load() {
     if (!stemMap.size) {
       _loadError = "This track has no stem files to play.";
       return false;
@@ -815,11 +868,14 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       return false;
     }
 
+    // A seek made while loading kept its position unclamped (see seek).
+    if (_startOffset > _duration) _startOffset = _scheduledTo = _duration;
+
     // Kick off chunk 0 and 1 in the background; play() picks up the cached result.
     _fetchChunk(0);
     _fetchChunk(1);
     return true;
-  })();
+  }
 
   return {
     ready,

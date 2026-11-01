@@ -27,6 +27,7 @@ import { createPlaybackContext } from "./audioContext.js";
 import { createTickLoop } from "./tickLoop.js";
 import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
 import { createEngineFx, engineFxApi } from "./fxChain.js";
+import { reachedEnd } from "./playbackEnd.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -109,6 +110,14 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const tickLoop = createTickLoop(tick);
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
+  // True once ready() has settled, either way. Tracks arrive one by one as
+  // each decodes, so before that a start would play whichever stems happened
+  // to be in; see play().
+  let _loaded = false;
+  // Non-zero while a play() pressed before ready() waits for it: the id of
+  // that wait, so one overtaken by a pause and a new play starts nothing.
+  let _pending = 0;
+  let _pendingSeq = 0;
 
   // A backgrounded tab can have its context suspended out from under it. The
   // sources stay scheduled, so nothing here notices; the audio just stops. Ask
@@ -134,6 +143,16 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Decode all stems up front AND load the SoundTouch worklet in parallel.
   // Resolves true once at least one stem is ready (worklet load is best-effort).
   const ready = (async () => {
+    // Set before the result is handed on, so a play() waiting on it takes the
+    // loaded path.
+    try {
+      return await _load();
+    } finally {
+      _loaded = true;
+    }
+  })();
+
+  async function _load() {
     // Counted so the failure can name a cause rather than arriving as a silent
     // console warning (#359). A fetch that never landed and a file the decoder
     // rejected are different problems for the user.
@@ -197,8 +216,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
           ? "Could not load this track's audio files."
           : "This track has no stem files to play.";
     }
+    // A seek made while loading kept its position unclamped (see seek).
+    if (startOffset > duration) startOffset = duration;
     return hasPlaybackTrack;
-  })();
+  }
 
   // Clamped so the reported playhead never reads before the start position.
   // During a count-in the sources are scheduled to begin in the future
@@ -291,11 +312,16 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     if (loop.enabled && loop.end > loop.start && t >= loop.end) {
       seek(loop.start);
       t = loop.start;
-    } else if (t >= duration) {
+    } else if (reachedEnd(t, duration)) {
       pause();
       startOffset = duration;
       onTime?.(duration);
       onEnded?.();
+      return;
+    } else if (!(duration > 0)) {
+      // A track of no length has no end to report. Stop rather than tick on
+      // every frame.
+      pause();
       return;
     }
     onTime?.(t);
@@ -312,10 +338,26 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // started. Here that is always before play() returns, but the streaming
   // engine can only say so after a fetch, and callers are written against the
   // promise so the two engines keep one contract.
+  //
+  // Pressed before ready() has settled, the start waits for it. The stems
+  // decode one by one, so starting at once played only those already in and
+  // never added the rest. A pause, or destroy() on a song change, drops the
+  // wait; a stale wait starts nothing. isPlaying() reads true meanwhile, as on
+  // the streaming engine during its first fetch, so a second press pauses.
   function play(leadIn = 0) {
-    if (playing || destroyed || !tracks.size) return Promise.resolve(false);
+    if (playing || _pending || destroyed) return Promise.resolve(false);
     // Safari: resume the context fire-and-forget within the user-gesture tick.
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (!_loaded) {
+      const seq = _pending = ++_pendingSeq;
+      const settle = (ok) => {
+        if (_pending !== seq || destroyed) return false;
+        _pending = 0;
+        return ok ? play(leadIn) : false;
+      };
+      return ready.then(settle, () => settle(false));
+    }
+    if (!tracks.size) return Promise.resolve(false);
     let off = startOffset;
     if (off >= duration) off = 0;
     const lead = Math.max(0, leadIn);
@@ -327,6 +369,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   }
 
   function pause() {
+    _pending = 0; // a start still waiting for ready() is dropped
     if (!playing) return;
     const t = now();
     stopSources();
@@ -338,7 +381,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   }
 
   function seek(t) {
-    const clamped = Math.max(0, Math.min(t, duration || 0));
+    // Before ready() the length is still growing as stems decode, so the
+    // position is kept as asked and clamped once it is known.
+    const clamped = Math.max(0, _loaded ? Math.min(t, duration || 0) : t);
     if (playing) {
       stopSources();
       startSources(clamped); // bumps _epoch
@@ -421,6 +466,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     // then lied about a dead engine, and anything still holding a reference to
     // the tick would have kept it alive on that stale flag.
     playing = false;
+    _pending = 0;
     tickLoop.dispose();
     ctx.removeEventListener("statechange", onCtxStateChange);
     tracks.clear();
@@ -439,7 +485,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     pause,
     seek,
     setTime: seek, // alias to match the multitrack interface used by transport.js
-    isPlaying: () => playing,
+    isPlaying: () => playing || _pending !== 0,
     // This engine honours play(leadIn) for a count-in; the streaming/chunked
     // paths do not, so the transport checks this before scheduling one.
     supportsCountIn: true,

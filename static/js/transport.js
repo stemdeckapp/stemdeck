@@ -669,11 +669,23 @@ function _armCountIn(eng, startPos) {
   // this one's clicks belong to this one. A destroyed metronome ignores them.
   const generation = ++_countInGeneration;
   const clickTrack = metronome;
-  eng.play(leadIn).then((started) => {
+  const start = eng.play(leadIn);
+  start.then((started) => {
     if (!started || generation !== _countInGeneration) return;
     clickTrack.playCountIn(sourceClicks);
   });
-  return true;
+  return start;
+}
+
+// The Play button is lit as soon as Play is pressed, because the engine may
+// only start after a fetch, or after its stems load. A start that never
+// happened (the stems could not be read, or the fetch failed) must not leave
+// it lit over silence. A pause or another Play in between leaves the engine
+// in charge of the state, so only an engine that is not playing turns it off.
+function _unlightIfNotStarted(start) {
+  Promise.resolve(start).then((started) => {
+    if (!started && !audioEngine?.isPlaying?.()) playBtn.classList.remove("playing");
+  }, (err) => console.warn("[transport] play failed:", err));
 }
 
 export function togglePlayPause() {
@@ -705,7 +717,7 @@ export function togglePlayPause() {
     // same position playback will actually start from.
     let startPos = eng.getCurrentTime?.() ?? 0;
     if (totalDuration > 0 && startPos >= totalDuration) startPos = 0;
-    if (!_armCountIn(eng, startPos)) eng.play();
+    _unlightIfNotStarted(_armCountIn(eng, startPos) || eng.play());
     playBtn.classList.add("playing");
     stopBtn.classList.remove("stopped");
   } else {
@@ -725,7 +737,7 @@ export function resumePlayback() {
   const ctx = tx.audioContext;
   if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
   if (eng) {
-    eng.play();
+    _unlightIfNotStarted(eng.play());
     playBtn.classList.add("playing");
     stopBtn.classList.remove("stopped");
   } else {
