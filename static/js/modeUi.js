@@ -6,8 +6,15 @@
 //
 // Keyboard: Enter or Space opens the menu with the current mode focused,
 // Up and Down move, Enter or Space chooses, Escape closes and returns focus.
+//
+// Mouse and pen: pointing at the button opens the menu, and leaving both the
+// button and the menu closes it after a short delay (hoverMenu.js holds the
+// rules). A click on a menu the pointer opened keeps it open. Touch has no
+// hover, so a tap opens and closes it as a click does. While the Guide is on,
+// pointing explains the button instead, so hover does not open the menu.
 
 import { t, onLanguageChange } from "./i18n.js";
+import { HOVER_CLOSE_MS, initialHoverMenu, hoverMenuStep } from "./hoverMenu.js";
 import { MODES, AVAILABLE, getMode, setMode, onModeChange } from "./mode.js";
 import { isRecording, closeRecordPanel } from "./capture/recordUi.js";
 import { armedTracks, setArmed } from "./capture/takeLanes.js";
@@ -23,6 +30,22 @@ const current = () => (isKaraokeOpen() ? "karaoke" : isStreamerOpen() ? "streame
 let btn = null;
 let menu = null;
 let note = null;
+let hover = initialHoverMenu();
+let closeTimer = null;
+
+const isHoverPointer = (e) => e.pointerType === "mouse" || e.pointerType === "pen";
+
+function feed(ev) {
+  const { state, action } = hoverMenuStep(hover, ev);
+  hover = state;
+  if (action === "none") return;
+  clearTimeout(closeTimer);
+  closeTimer = null;
+  if (action === "open-hover") open({ focusItem: false });
+  else if (action === "open-click" || action === "pin") open({ focusItem: true });
+  else if (action === "close") close();
+  else if (action === "schedule-close") closeTimer = setTimeout(() => feed({ type: "timer" }), HOVER_CLOSE_MS);
+}
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -80,6 +103,8 @@ function build() {
   menu.append(note);
   menu.addEventListener("keydown", onMenuKey);
   menu.addEventListener("click", (e) => e.stopPropagation());
+  menu.addEventListener("pointerenter", (e) => { if (isHoverPointer(e)) feed({ type: "enter-menu" }); });
+  menu.addEventListener("pointerleave", (e) => { if (isHoverPointer(e)) feed({ type: "leave-menu" }); });
   document.body.append(menu);
 }
 
@@ -121,8 +146,14 @@ function choose(m) {
   close();
 }
 
-function open() {
+// focusItem: a click or a key moves focus into the menu, as before; a hover
+// does not, so pointing past the button never takes focus from where it is.
+function open({ focusItem = true } = {}) {
   if (!menu) build();
+  if (!menu.hidden) {
+    if (focusItem) (items().find((i) => i.dataset.mode === current()) || items()[0])?.focus();
+    return;
+  }
   paint();
   note.hidden = true;
   const r = btn.getBoundingClientRect();
@@ -131,11 +162,15 @@ function open() {
   const top = Math.min(r.top, window.innerHeight - menu.offsetHeight - 8);
   menu.style.top = `${Math.max(8, Math.round(top))}px`;
   btn.setAttribute("aria-expanded", "true");
+  if (!focusItem) return;
   const focused = items().find((i) => i.dataset.mode === current()) || items()[0];
   focused?.focus();
 }
 
 function close({ focusButton = false } = {}) {
+  clearTimeout(closeTimer);
+  closeTimer = null;
+  hover = hoverMenuStep(hover, { type: "closed" }).state;
   if (!menu || menu.hidden) return;
   menu.hidden = true;
   btn.setAttribute("aria-expanded", "false");
@@ -173,13 +208,26 @@ export function initModeUi() {
   if (!btn) return;
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (menu && !menu.hidden) close();
-    else open();
+    feed({ type: "click" });
   });
+  btn.addEventListener("pointerenter", (e) => {
+    if (!isHoverPointer(e)) return;
+    feed({ type: "enter-button", allowOpen: !document.body.classList.contains("help-mode") });
+  });
+  btn.addEventListener("pointerleave", (e) => { if (isHoverPointer(e)) feed({ type: "leave-button" }); });
   btn.addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.key === "Enter") e.stopPropagation();
   });
   document.addEventListener("click", () => close());
+  // A menu the pointer opened does not hold focus, so its own key handler
+  // never sees Escape. This closes it, and keeps Escape from also closing
+  // what is behind it.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !menu || menu.hidden || menu.contains(document.activeElement)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  }, true);
   window.addEventListener("resize", () => close());
   onModeChange((m) => {
     if (m === "practice") onLeaveDaw();
