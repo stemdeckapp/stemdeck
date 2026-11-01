@@ -20,7 +20,9 @@ import {
   DATA_DIR,
   JOBS_DIR,
   PACKAGE_DIR,
+  REPO_ROOT,
   connect,
+  documentsDir,
   launchApp,
   osDrag,
   readState,
@@ -66,6 +68,13 @@ import {
   wideWindow,
 } from "./helpers.mjs";
 import { fingerprint, realMirrorPath } from "./global-setup.mjs";
+import {
+  UPG_FOLDER,
+  UPG_JOB_ID,
+  UPG_STEMS,
+  UPG_TITLE,
+  prepareUpgradeLibrary,
+} from "./upgrade-fixture.mjs";
 
 // The app is started once by global-setup.mjs; each worker attaches to it. A
 // worker restarted after a failure attaches again to the same app, so a
@@ -1696,6 +1705,118 @@ test(title("E6"), async ({ app }, testInfo) => {
     await openTrack(page, id);
     await expect(page.locator("#error")).toBeHidden();
     await shot(page, testInfo, "offline-track");
+  } finally {
+    await browser.close().catch(() => {});
+    await stopRecordedApp();
+  }
+});
+
+// ─── Upgrade from 0.20.0 (QA catalogue UPG-01, UPG-02) ──────────────────────
+//
+// Last, because they start the build a third time, on a library of their own.
+//
+// The library is tests/fixtures/upgrade-0.20.0, written by the 0.20.0 code
+// itself (make.py there), copied to data\acceptance-upg (git-ignored) with real
+// WAV stems added. An upgrader unzips the new version into a new folder: its
+// data folder has no settings.json, and the shell brings the old settings in
+// from %LOCALAPPDATA%\StemDeck\settings.json, which names the old library. So
+// the build starts with STEMDECK_DATA_DIR set to the package's own data folder
+// (the throwaway the harness resets, holding the runtime that is slow to
+// download) minus its settings.json, and LOCALAPPDATA set to the fixture's.
+// The user's real %LOCALAPPDATA% and library are never named.
+
+const UPG_ROOT = path.join(REPO_ROOT, "data", "acceptance-upg");
+
+// Steps: with 0.20.0's library and settings in place, start the new version
+// from a new folder. Expect: the same songs, folders and settings show;
+// Settings > Library > StemData location is the old folder.
+test(title("UPG-01"), async ({ app }, testInfo) => {
+  test.skip(!desktop(), "Server target: an upgrade starts the desktop build on an old library.");
+  // If the old StemData location were lost, the shell's default would be
+  // Documents\StemDeck\jobs when that folder has anything in it, and that may
+  // be a real library. Refuse rather than find out by opening it.
+  const docsJobs = path.join(documentsDir(), "StemDeck", "jobs");
+  test.skip(fs.existsSync(docsJobs), `${docsJobs} exists: a failed upgrade would open it. Move it aside for the run.`);
+
+  await app.browser.close().catch(() => {});
+  await stopRecordedApp();
+  const upg = prepareUpgradeLibrary(UPG_ROOT);
+  fs.rmSync(path.join(DATA_DIR, "settings.json"), { force: true });
+  writeState({ ...readState(), upgrade: { ready: false } });
+  await launchApp({ label: "upgrade", localAppData: upg.localAppData, env: { STEMDECK_DATA_DIR: DATA_DIR } });
+  const { browser, page } = await connect(chromium, { timeout: 5 * 60_000 });
+  watchNetwork(page);
+  try {
+    await expect(page.locator("#url")).toBeVisible({ timeout: 120_000 });
+    await wideWindow(page);
+
+    // The settings came across, and the library is the old one.
+    const restored = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"));
+    const where = await api("/api/settings/stems-location");
+    expect(path.resolve(where.path).toLowerCase(), "StemData location").toBe(path.resolve(upg.library).toLowerCase());
+    const now = await api("/api/settings");
+    for (const [key, value] of Object.entries(upg.settings)) {
+      if (key !== "jobs_dir") expect(now[key], `setting ${key}`).toEqual(value);
+    }
+
+    // The song is listed, in the folder 0.20.0 kept it in.
+    const old = (await api("/api/jobs")).find((j) => j.job_id === UPG_JOB_ID);
+    expect(old?.status, "the old song in /api/jobs").toBe("done");
+    expect(old?.title).toBe(UPG_TITLE);
+    await showLibrary(page);
+    await expect(page.locator(`.cat-item[data-id="${UPG_JOB_ID}"]`).first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(UPG_FOLDER, { exact: true }).first()).toBeVisible();
+    await shot(page, testInfo, "library");
+
+    // How new songs' stems will be stored. 0.20.0 had no such setting, so an
+    // upgrader has no saved choice. Recorded, not judged: the default is an
+    // open review finding (app/core/config.py, DEFAULT_STEM_STORAGE).
+    const stored = "stem_format" in restored
+      ? `settings.json holds stem_format ${restored.stem_format}`
+      : "settings.json has no stem_format, so DEFAULT_STEM_STORAGE applies";
+    note(testInfo, `After the upgrade, new songs are stored as ${now.stem_format}`
+      + `${now.stem_format === "mp3" ? ` at ${now.stem_mp3_kbps} kbps` : ""} (${stored}).`
+      + ` The old song keeps ${old.stem_format || "its WAVs (no stem_format recorded)"}.`);
+    for (const name of UPG_STEMS) {
+      expect(fs.existsSync(path.join(upg.library, UPG_JOB_ID, "stems", `${name}.wav`)), `${name}.wav left as it was`).toBe(true);
+    }
+    writeState({ ...readState(), upgrade: { ready: true } });
+  } finally {
+    await browser.close().catch(() => {});
+  }
+});
+
+// Steps: after UPG-01, open the old song and play it. Expect: every lane
+// plays; the saved sections and key are as they were.
+test(title("UPG-02"), async ({ app }, testInfo) => {
+  test.skip(!desktop(), "Server target: needs the build UPG-01 starts.");
+  test.skip(!readState()?.upgrade?.ready, "UPG-01 did not open the old library.");
+  const { browser, page } = await connect(chromium, { timeout: 60_000 });
+  watchNetwork(page);
+  try {
+    await wideWindow(page);
+    await openTrack(page, UPG_JOB_ID);
+
+    // Every stem is a lane, and the engine read all of them.
+    await expect.poll(() => page.evaluate(async () => Object.keys((await import("/js/state.js")).trackIndex)
+      .filter((n) => !/^t[kr]_/.test(n)).sort().join(",")), { timeout: 30_000 }).toBe([...UPG_STEMS].sort().join(","));
+    await expect.poll(() => page.evaluate(async () => (await import("/js/state.js")).audioEngine?.getDuration?.() || 0),
+      { timeout: 30_000 }).toBeGreaterThan(3.5);
+    await expect(page.locator("#waveLoadingOverlay")).toBeHidden({ timeout: 30_000 });
+
+    // The saved sections and key, as 0.20.0 left them.
+    const saved = await job(UPG_JOB_ID);
+    expect((saved.sections || []).map((x) => x.name), "sections").toEqual(["Verse", "Chorus"]);
+    expect(saved.key, "key").toBe("A min");
+    await expect(page.locator("#t-key")).toContainText(/A/);
+
+    // It plays.
+    await page.locator("#t-play").click();
+    await expect.poll(() => page.evaluate(async () => (await import("/js/transport.js")).transport().getCurrentTime()),
+      { timeout: 20_000 }).toBeGreaterThan(1.5);
+    await shot(page, testInfo, "playing");
+    await page.locator("#t-play").click();
+    partly(testInfo, "That every lane sounds right is for ears.");
   } finally {
     await browser.close().catch(() => {});
     await stopRecordedApp();

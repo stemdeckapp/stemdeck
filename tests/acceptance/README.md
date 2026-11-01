@@ -52,6 +52,16 @@ in `acceptance.spec.mjs`, which runs them in the order they can, not by id.
 | Timeline | T1 |
 | Errors and cancel | E1 to E6 |
 | Fixes since 0.18.1 | V1 to V4 |
+| Upgrade from 0.20.0 (QA catalogue ids) | UPG-01, UPG-02 |
+
+UPG-01 and UPG-02 start the build a third time, last, on a 0.20.0 library:
+`tests/fixtures/upgrade-0.20.0`, written by the 0.20.0 code (`make.py`
+there), copied to `data\acceptance-upg` with WAV stems added. The build gets
+the package's data folder without its `settings.json`, and a `LOCALAPPDATA`
+holding the old settings copy that names the old library, which is how a new
+version unzipped into a new folder finds them. UPG-01 is skipped when
+`Documents\StemDeck\jobs` exists, since a lost StemData location would open
+that folder.
 
 The line by line timing checks:
 

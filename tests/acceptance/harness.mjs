@@ -116,7 +116,7 @@ export function resetPackageState() {
   fs.mkdirSync(FAKE_LOCALAPPDATA, { recursive: true });
 }
 
-function documentsDir() {
+export function documentsDir() {
   const out = spawnSync("powershell.exe", [
     "-NoProfile", "-Command", "[Environment]::GetFolderPath('MyDocuments')",
   ], { encoding: "utf8" });
@@ -141,15 +141,18 @@ export function freePort() {
  * suite's own AcoustID key), plus the isolation and the debugging port.
  * `offline` adds a proxy nobody listens on, for this app alone (see E6).
  */
-function appEnv(cdpPort, { offline = false } = {}) {
+function appEnv(cdpPort, { offline = false, localAppData = FAKE_LOCALAPPDATA, extraEnv = {} } = {}) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (/^STEMDECK_/i.test(k) || /^WEBVIEW2_/i.test(k)) continue;
     if (offline && /^(https?|all|no)_proxy$/i.test(k)) continue;
     env[k] = v;
   }
-  env.LOCALAPPDATA = FAKE_LOCALAPPDATA;
-  env.WEBVIEW2_USER_DATA_FOLDER = path.join(FAKE_LOCALAPPDATA, "WebView2");
+  // A check's own STEMDECK_ variables (UPG-01 names the data folder), added
+  // after the user's are dropped, so only what the check chose reaches the app.
+  Object.assign(env, extraEnv);
+  env.LOCALAPPDATA = localAppData;
+  env.WEBVIEW2_USER_DATA_FOLDER = path.join(localAppData, "WebView2");
   // The three throttling switches keep timers and animation frames running
   // when the window is covered by another one during an unattended run: the
   // karaoke wipe is drawn per frame, and an occluded WebView2 stops drawing.
@@ -178,8 +181,12 @@ function appEnv(cdpPort, { offline = false } = {}) {
   return env;
 }
 
-/** Start StemDeck.exe and wait for its DevTools endpoint. Records the pid. */
-export async function launchApp({ offline = false, label = "app" } = {}) {
+/**
+ * Start StemDeck.exe and wait for its DevTools endpoint. Records the pid.
+ * `localAppData` replaces the throwaway LOCALAPPDATA (it must be one too), and
+ * `env` adds variables for this launch alone.
+ */
+export async function launchApp({ offline = false, label = "app", localAppData = FAKE_LOCALAPPDATA, env = {} } = {}) {
   const cdpPort = Number(process.env.STEMDECK_ACCEPTANCE_CDP_PORT) || (await freePort());
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const out = fs.openSync(path.join(RESULTS_DIR, `${label}-stdout.log`), "a");
@@ -188,12 +195,12 @@ export async function launchApp({ offline = false, label = "app" } = {}) {
   // backend with %LOCALAPPDATA%\StemDeck as its data folder.
   const child = spawn(EXE, [], {
     cwd: PACKAGE_DIR,
-    env: appEnv(cdpPort, { offline }),
+    env: appEnv(cdpPort, { offline, localAppData, extraEnv: env }),
     stdio: ["ignore", out, out],
     windowsHide: false,
   });
   const startedAt = Date.now();
-  writeState({ ...(readState() || {}), mode: "desktop", pid: child.pid, cdpPort, startedAt, offline });
+  writeState({ ...(readState() || {}), mode: "desktop", pid: child.pid, cdpPort, startedAt, offline, localAppData });
   child.unref();
 
   const endpoint = `http://127.0.0.1:${cdpPort}`;
@@ -275,6 +282,7 @@ export async function stopApp(pid) {
     const line = String(row.l || "").toLowerCase();
     return exe.startsWith(PACKAGE_DIR.toLowerCase())
       || line.includes(FAKE_LOCALAPPDATA.toLowerCase())
+      || (readState()?.localAppData && line.includes(String(readState().localAppData).toLowerCase()))
       || exe.endsWith("msedgewebview2.exe")
       || exe.endsWith("python.exe");
   };

@@ -1,0 +1,40 @@
+{
+  "stemdeck.folders": {
+    "v": 2,
+    "folders": [
+      {
+        "id": "f-old",
+        "name": "Practice 2026",
+        "items": [
+          "0a20c0ffee01"
+        ],
+        "color": "#4a7fff"
+      },
+      {
+        "id": "trash",
+        "name": "Trash",
+        "items": [],
+        "color": null
+      }
+    ],
+    "tracks": {
+      "0a20c0ffee01": {
+        "id": "0a20c0ffee01",
+        "title": "Old Song From 0.20.0",
+        "status": "done",
+        "stems": [
+          "vocals",
+          "drums",
+          "bass",
+          "other"
+        ],
+        "sourceUrl": "local:Old Song From 0.20.0",
+        "createdAt": 1790812800.0,
+        "favorite": true,
+        "tags": [
+          "warmup"
+        ]
+      }
+    }
+  }
+}

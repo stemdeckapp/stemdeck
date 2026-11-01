@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "work": null,
+      "error": null,
+      "trashed_at": null,
+      "stage_message": "Done",
+      "progress": 1.0,
+      "has_video": false,
+      "stage_timings": null,
+      "tempo_stability": null,
+      "stem_presence": {
+        "vocals": 70,
+        "drums": 70,
+        "bass": 70,
+        "other": 70
+      },
+      "source_format": "wav",
+      "favorite": null,
+      "artist": null,
+      "sections": [
+        {
+          "id": "s-verse",
+          "name": "Verse",
+          "start": 0.5,
+          "end": 2.0,
+          "color": "#4a7fff"
+        },
+        {
+          "id": "s-chorus",
+          "name": "Chorus",
+          "start": 2.0,
+          "end": 3.5,
+          "color": "#ff7a4a"
+        }
+      ],
+      "compute_device": null,
+      "key": "A min",
+      "thumbnail": null,
+      "tags": null,
+      "stems": [
+        {
+          "name": "vocals",
+          "url": "/api/jobs/0a20c0ffee01/stems/vocals.wav"
+        },
+        {
+          "name": "drums",
+          "url": "/api/jobs/0a20c0ffee01/stems/drums.wav"
+        },
+        {
+          "name": "bass",
+          "url": "/api/jobs/0a20c0ffee01/stems/bass.wav"
+        },
+        {
+          "name": "other",
+          "url": "/api/jobs/0a20c0ffee01/stems/other.wav"
+        }
+      ],
+      "error_detail": null,
+      "mix_url": null,
+      "lufs": null,
+      "auto_sections": false,
+      "sections_source": "manual",
+      "identity": null,
+      "video_status": null,
+      "dynamic_range": null,
+      "resume_attempts": 0,
+      "source_url": "local:Old Song From 0.20.0",
+      "key_confidence": 77,
+      "queue_position": 0,
+      "vocal_split": "none",
+      "status": "done",
+      "bpm": 120,
+      "selected_stems": [
+        "vocals",
+        "drums",
+        "bass",
+        "other"
+      ],
+      "duration_sec": 4.0,
+      "peak_db": null,
+      "created_at": 1790812800.0,
+      "title": "Old Song From 0.20.0",
+      "id": "0a20c0ffee01",
+      "has_lyrics": false,
+      "audio_tags": null,
+      "scale": "Natural Minor",
+      "gpu_fallback": false
+    }
+  ],
+  "deleted": []
+}
