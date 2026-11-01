@@ -25,7 +25,8 @@ import { createTrack, uploadPart } from "../capture/takeUpload.js";
 import { openSilentCapture } from "../capture/captureGraph.js";
 import { recordBlockReason } from "../capture/takeMath.js";
 import { requestTakesReload } from "../capture/takeLanes.js";
-import { startCameraRecording, recorderSupported } from "../video/cameraRecorder.js";
+import { startCameraRecording } from "../video/cameraRecorder.js";
+import { videoRecordBlockKey, supportedRecorderMimes, platformFromUserAgent } from "../video/recordSupport.js";
 import { audioEngine, playbackSpeed } from "../state.js";
 import { transport, togglePlayPause, setPlayheadTime } from "../transport.js";
 import { nextRecordState, isTakeOpen, startPoint, outputPixels, videoBitrate, performanceTrackId } from "./recordModel.js";
@@ -116,12 +117,33 @@ export function streamerTrackId(jobId) {
 }
 
 /** Why recording cannot start now, or null: the studio's own rules
- * (takeMath.recordBlockReason: an engine, tempo 1) and the browser's. */
+ * (takeMath.recordBlockReason: an engine, tempo 1) and the browser's. The
+ * browser's is an i18n key (recordSupport.videoRecordBlockKey). */
 export function recordBlock() {
   const block = recordBlockReason({ hasEngine: Boolean(audioEngine), rate: playbackSpeed });
   if (block) return block;
-  if (!recorderSupported() || typeof HTMLCanvasElement.prototype.captureStream !== "function") return "unsupported";
-  return null;
+  return videoBlock();
+}
+
+/** The i18n key that says why this engine cannot record the picture, or null. */
+export function videoBlock() {
+  const Recorder = window.MediaRecorder;
+  const hasMediaRecorder = typeof Recorder === "function";
+  return videoRecordBlockKey({
+    hasMediaRecorder,
+    hasCanvasCapture: typeof HTMLCanvasElement !== "undefined"
+      && typeof HTMLCanvasElement.prototype.captureStream === "function",
+    supportedMimes: hasMediaRecorder ? supportedRecorderMimes(Recorder.isTypeSupported?.bind(Recorder)) : null,
+    platform: platformFromUserAgent(navigator.userAgent),
+  });
+}
+
+// Told when the picture's recorder fails to start once the take is armed:
+// the take goes on with its sound, and the view says the picture is missing.
+const videoErrorListeners = new Set();
+export function onVideoRecordError(cb) {
+  videoErrorListeners.add(cb);
+  return () => videoErrorListeners.delete(cb);
 }
 
 /** The Streamer track of this song: the one this browser kept, else a
@@ -399,6 +421,10 @@ onTakeEvent((ev) => {
       });
     } catch (err) {
       console.warn("[streamer] the scene recorder did not start:", err);
+      const key = videoBlock() || "streamer.rec.noEncoder";
+      for (const cb of videoErrorListeners) {
+        try { cb(key); } catch (e) { console.warn("[streamer] video error listener failed:", e); }
+      }
     }
   } else if ((ev.type === "failed" || ev.type === "discarded") && ev.takeId === rec.takeId) {
     try { rec.camera?.abort(); } catch (err) { console.warn(err); }

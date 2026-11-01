@@ -62,7 +62,7 @@ import { toggleStemMute, getMixMode, holdLaneSilent } from "../mixer.js";
 import { isMixSwitching } from "../mixMode.js";
 import { setPerformanceTrackRule } from "../modeStems.js";
 import {
-  startRecording, stopRecording, drawOutput, recordState, takeOpen, onRecordChange, recordBlock,
+  startRecording, stopRecording, drawOutput, recordState, takeOpen, onRecordChange, recordBlock, onVideoRecordError,
   lastTake, streamerTrackId, markExport, takeInfo, forgetTake, keepChosenTake,
 } from "./streamerRecord.js";
 import { encoderNote } from "../videoEncoderNote.js";
@@ -972,7 +972,9 @@ function flashNote(text, anchor) {
     note.style.top = `${Math.round(top)}px`;
   }
   clearTimeout(noteTimer);
-  noteTimer = setTimeout(() => { note.hidden = true; }, 3500);
+  // Long enough to read: a sentence naming packages to install needs more
+  // than a short note does.
+  noteTimer = setTimeout(() => { note.hidden = true; }, Math.max(3500, Math.min(15000, text.length * 60)));
 }
 
 // The layer covers the lanes, the master drawer and the footer (hidden while
@@ -1713,9 +1715,10 @@ function toggleTakeMute() {
 const BLOCK_KEY = {
   "tempo": "streamer.rec.tempo",
   "no-engine": "streamer.rec.noSong",
-  "unsupported": "streamer.rec.unsupported",
   "busy": "streamer.rec.busy",
 };
+// The browser's reasons are i18n keys already (recordSupport.js).
+const blockKey = (reason) => BLOCK_KEY[reason] || (String(reason).startsWith("streamer.rec.") ? reason : "streamer.rec.failed");
 
 async function toggleRecording() {
   if (takeOpen()) {
@@ -1730,7 +1733,7 @@ async function toggleRecording() {
   }
   const block = recordBlock();
   if (block) {
-    flashNote(t(BLOCK_KEY[block] || "streamer.rec.failed"), badge);
+    flashNote(t(blockKey(block)), badge);
     return;
   }
   const media = streamerMedia();
@@ -1748,7 +1751,7 @@ async function toggleRecording() {
     trackName: t("streamer.trackName"),
     draw: drawTakeFrame,
   });
-  if (!res.ok) flashNote(t(BLOCK_KEY[res.reason] || "streamer.rec.failed"), badge);
+  if (!res.ok) flashNote(t(blockKey(res.reason)), badge);
   else if (!inputState().live) flashNote(t("streamer.rec.noMic"), badge);
 }
 
@@ -2896,6 +2899,7 @@ export function initStreamer() {
     }
     if (state === "failed") flashNote(t("streamer.rec.failed"), ui?.builder.rec);
   });
+  onVideoRecordError((key) => flashNote(t(key), ui?.builder.rec));
   onDevicesChange(() => {
     painted.devices = null;
   });

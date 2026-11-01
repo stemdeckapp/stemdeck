@@ -211,12 +211,12 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support"]
     },
     {
       "why": "Video: camera takes, the video lane and encoder settings",
       "paths": ["static/js/video/**", "static/js/videoEncoderNote.js", "static/js/videoEncoderSettings.js", "static/css/video.css", "app/api/video_encoders.py", "app/pipeline/video_encoder.py"],
-      "specs": ["video-take", "video-sync", "export-menu", "streamer-media", "recording", "recording-real-audio", "settings-nav"]
+      "specs": ["video-take", "video-sync", "export-menu", "streamer-media", "recording", "recording-real-audio", "settings-nav", "performance-record-support"]
     },
     {
       "why": "The Guide (help mode) overlay",
