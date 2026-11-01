@@ -154,7 +154,7 @@
     {
       "why": "Song sections: lock, loop, rename, zoom, and the ruler",
       "paths": ["static/js/sections.js", "static/js/loopRegion.js", "static/js/rulerTicks.js"],
-      "specs": ["sections-lock", "sections-loop", "sections-rename", "sections-zoom", "song-structure-toggle", "zoom", "footer-time", "karaoke"]
+      "specs": ["sections-lock", "sections-loop", "sections-rename", "sections-zoom", "song-structure-toggle", "zoom", "footer-time", "karaoke", "loop-transport"]
     },
     {
       "why": "Beat grid, metronome and count-in",
