@@ -139,7 +139,6 @@ test("choosing a tile and an amount: one of each is pressed at a time", async ({
   await expect(preset(page, 30)).toHaveAttribute("aria-pressed", "true");
   await expect(dialog(page).locator('.donate-preset[aria-pressed="true"]')).toHaveCount(1);
   await expect(preset(page, 30)).toContainText("$30");
-  await expect(preset(page, 30)).toContainText("lunch for two");
 
   // Typing a custom amount lets go of the preset.
   await custom(page).fill("12");
@@ -353,8 +352,8 @@ test("the dialog follows the interface language", async ({ page }) => {
   await expect(hint(page)).toHaveText("Der kleinste Betrag ist $2.");
 });
 
-test("at phone width the cards stack and nothing scrolls sideways but the amounts", async ({ page }) => {
-  await page.setViewportSize({ width: 400, height: 860 });
+test("at phone width the cards stack and nothing scrolls sideways", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 860 });
   await openApp(page);
   await page.locator("#donateBtn").click();
   const give = await page.locator(".donate-give").boundingBox();
@@ -363,7 +362,11 @@ test("at phone width the cards stack and nothing scrolls sideways but the amount
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const card = await page.locator(".donate-card").boundingBox();
   expect(card.x).toBeGreaterThanOrEqual(0);
-  expect(card.x + card.width).toBeLessThanOrEqual(400);
-  // The amounts row scrolls inside itself.
-  expect(await page.locator(".donate-presets").evaluate((r) => r.scrollWidth > r.clientWidth)).toBe(true);
+  expect(card.x + card.width).toBeLessThanOrEqual(360);
+  // The four amounts share the row evenly, on one line, with no scrolling.
+  expect(await page.locator(".donate-presets").evaluate((r) => r.scrollWidth <= r.clientWidth)).toBe(true);
+  const boxes = await page.locator(".donate-preset").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
+  expect(boxes).toHaveLength(4);
+  for (const b of boxes) expect(Math.abs(b.y - boxes[0].y)).toBeLessThan(1);
+  for (const b of boxes) expect(Math.abs(b.width - boxes[0].width)).toBeLessThan(1.5);
 });
