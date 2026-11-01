@@ -28,7 +28,31 @@
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
 
-`run.sh` also reads: `HOST` (default `127.0.0.1`), `PORT` (default `8765`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+`run.sh` also reads: `HOST` (default `0.0.0.0`, every network interface), `PORT` (default `8000`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+
+### Who can reach StemDeck
+
+The desktop app's backend listens on every network interface from the first
+launch. That is deliberate: whether other devices are served is decided by the
+app for each request, so the setting takes effect at once, with no restart.
+
+While **Make StemDeck available on your network** is off, StemDeck answers only
+the machine it runs on, through loopback (`127.0.0.1`, `::1`) or one of the
+machine's own addresses. A request from any other device gets a 403 that says
+StemDeck is not available on the network, before it reaches any page or API.
+Turning the setting on lets other devices in; see
+[the https section](#serving-other-devices-why-https-is-not-optional) for what a
+phone needs.
+
+Docker, Unraid and `run.sh` start with network access on, because a headless
+server exists to be reached from other devices. To start one with it off, set
+`STEMDECK_ALLOW_NETWORK=0` (any value other than `1` means off). In server
+mode the switch in Settings is shown on and read-only, so the variable is the
+way to change it.
+
+The refusal is made by StemDeck, not by your operating system. If you want the
+port unreachable from other devices at the network level, block it in your
+firewall.
 
 ### Serving other devices: why https is not optional
 
@@ -62,7 +86,7 @@ host out of its own server.
 The desktop app does the same thing without being configured, because it has
 two audiences that need opposite things.
 
-- **Plain http on `127.0.0.1`** for its own window. Loopback is already a
+- **Plain http**, which its own window reaches at `127.0.0.1`. Loopback is already a
   secure context, so nothing is lost, and it is the only scheme that works: a
   self-signed certificate would raise a warning page the app window has no way
   to click through.
@@ -72,8 +96,8 @@ two audiences that need opposite things.
 Both listeners serve the same process, so there is one library, one queue and
 one Demucs worker either way.
 
-The certificate is generated on your own machine the first time you enable
-network access, and lives in `<data>/certs/` beside `jobs/` and
+The certificate is generated on your own machine the first time the app
+starts, and lives in `<data>/certs/` beside `jobs/` and
 `settings.json`. Nothing is shipped in the download: a certificate in the
 release would publish its private key to everyone who downloaded it, which is
 worse than plain http because it looks secure. It is regenerated automatically
