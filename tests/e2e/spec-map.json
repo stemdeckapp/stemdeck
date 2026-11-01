@@ -249,6 +249,11 @@
       "specs": ["boot-failure"]
     },
     {
+      "why": "The reason a failed request shows in the error box",
+      "paths": ["static/js/errorReason.js"],
+      "specs": ["restore-error", "error-banner"]
+    },
+    {
       "why": "The phone page and the QR code that opens it",
       "paths": ["static/mobile/**", "static/js/shared/**", "app/api/qr.py"],
       "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order"]

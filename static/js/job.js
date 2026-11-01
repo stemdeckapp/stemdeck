@@ -18,6 +18,7 @@ import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
 import { formatKey } from "./keyLabel.js";
+import { errorReason, responseErrorMessage } from "./errorReason.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -787,11 +788,17 @@ export async function importFromUrl(url, { title, stems } = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, stems: stemSel }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    jobId = data.job_id;
+    // A body that is not JSON (a proxy's error page) must not hide the status.
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(responseErrorMessage(res, data));
+    jobId = data?.job_id;
+    // An ok answer without an id has no reason to give: the toast says so.
+    if (!jobId) throw new Error("");
   } catch (err) {
-    showError(t("job.restoreFailed", { message: err.message }));
+    // The real error, whatever the toast can say about it.
+    console.error("[job] import for restore failed:", err);
+    const reason = errorReason(err);
+    showError(reason ? t("job.restoreFailed", { message: reason }) : t("job.restoreFailedNoReason"));
     setSubmitProcessing(false);
     return null;
   }
