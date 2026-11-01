@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Applied only when the app is code-signed (bundle.macOS.entitlements in
-  tauri.conf.json). Release builds are not signed today, so this changes
-  nothing yet. Under the hardened runtime that notarization requires, the
-  microphone and the camera are refused without these two keys, even after
-  the user allows them; they are here so that signing later does not quietly
-  break recording.
+  Applied when scripts/macos/make-app.sh signs the app with the hardened
+  runtime that notarization requires (Tauri itself does not sign it; see
+  #857). Under the hardened runtime the microphone and the camera are refused
+  without these two keys, even after the user allows them. Nothing else is
+  needed: Python and ffmpeg run as separate child processes, which the
+  parent's hardened runtime does not restrict, and no third-party library is
+  loaded into the stemdeck process itself.
 -->
 <plist version="1.0">
 <dict>

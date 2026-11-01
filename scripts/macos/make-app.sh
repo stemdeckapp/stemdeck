@@ -40,11 +40,17 @@ cd "$REPO_ROOT/desktop"
 export CI=true
 
 npm ci
+# Tauri signs and notarizes on its own when it sees these variables, but this
+# script adds files to Contents/Resources after the build, which would break
+# that seal (#857). Hide them from Tauri and sign once at the end instead.
+TAURI_ENV=(env -u APPLE_SIGNING_IDENTITY -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD
+  -u APPLE_API_ISSUER -u APPLE_API_KEY -u APPLE_API_KEY_PATH
+  -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID)
 if [[ "$ARCH" == "arm64" ]]; then
-  npx tauri build --bundles app --target aarch64-apple-darwin
+  "${TAURI_ENV[@]}" npx tauri build --bundles app --target aarch64-apple-darwin
   TARGET_DIR="$REPO_ROOT/desktop/src-tauri/target/aarch64-apple-darwin/release"
 else
-  npx tauri build --bundles app --target x86_64-apple-darwin
+  "${TAURI_ENV[@]}" npx tauri build --bundles app --target x86_64-apple-darwin
   TARGET_DIR="$REPO_ROOT/desktop/src-tauri/target/x86_64-apple-darwin/release"
 fi
 
@@ -71,6 +77,41 @@ if [[ -f "$REPO_ROOT/packaging/macos/THIRD_PARTY_NOTICES.txt" ]]; then
 fi
 # The AGPL asks for a copy of the license with every copy of the program.
 cp "$REPO_ROOT/LICENSE" "$RESOURCES/LICENSE.txt"
+
+# Signing must be the last thing that touches the bundle: any file changed
+# after this invalidates the seal and Gatekeeper reports the app as damaged.
+# shellcheck source=scripts/macos/notarize.sh
+source "$REPO_ROOT/scripts/macos/notarize.sh"
+ENTITLEMENTS="$REPO_ROOT/desktop/src-tauri/Entitlements.plist"
+MAIN_EXE="${APP_DIR}/Contents/MacOS/stemdeck"
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  echo "==> Signing with Developer ID (hardened runtime)"
+  for target in "$MAIN_EXE" "$APP_DIR"; do
+    codesign --force --options runtime --timestamp \
+      --entitlements "$ENTITLEMENTS" \
+      --sign "$APPLE_SIGNING_IDENTITY" "$target"
+  done
+else
+  echo "NOTICE: APPLE_SIGNING_IDENTITY is not set. Sealing ad hoc: this build is for"
+  echo "        local use only, is not notarized, and other Macs will reject it."
+  for target in "$MAIN_EXE" "$APP_DIR"; do
+    codesign --force --sign - "$target"
+  done
+fi
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
+if notarize_credentials_set; then
+  NOTARY_DIR="$(mktemp -d -t stemdeck-notary-app)"
+  NOTARY_ZIP="${NOTARY_DIR}/StemDeck-${ARCH}.zip"
+  ditto -c -k --keepParent "$APP_DIR" "$NOTARY_ZIP"
+  notarize_submit "$NOTARY_ZIP"
+  rm -f "$NOTARY_ZIP"
+  rmdir "$NOTARY_DIR"
+  staple_and_validate "$APP_DIR"
+elif [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  echo "NOTICE: APPLE_API_ISSUER, APPLE_API_KEY or APPLE_API_KEY_PATH is not set;"
+  echo "        the app is signed but not notarized."
+fi
 
 echo "$APP_DIR" > "$BUILD_DIR/app-path-${ARCH}.txt"
 echo "==> App ready: $APP_DIR"

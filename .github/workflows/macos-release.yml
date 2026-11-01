@@ -14,7 +14,8 @@ jobs:
   build-and-upload:
     # Runner must be darwin/arm64 with Rosetta 2, Xcode CLT, Homebrew, rustup, and zstd.
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 120
+    # Four notarizations (app and DMG, for arm64 and x64) can each be slow.
+    timeout-minutes: 360
     permissions:
       contents: write
     defaults:
@@ -46,10 +47,40 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Wrote version $VERSION to all version files"
 
+      # A release must never ship unsigned (#857): stop here if any signing or
+      # notarization secret is missing, before spending an hour on the build.
+      - name: prepare signing credentials
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret $name is empty. Refusing to build an unsigned macOS release."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          identities="$(security find-identity -v -p codesigning)"
+          if ! grep -qF "$APPLE_SIGNING_IDENTITY" <<<"$identities"; then
+            echo "::error::The signing identity is not in this runner's keychain."
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path")
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       - name: build macOS arm64
         env:
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           command -v zstd
           command -v uv >/dev/null 2>&1 || brew install uv
@@ -64,6 +95,9 @@ jobs:
         env:
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           command -v zstd
           if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
@@ -111,9 +145,21 @@ jobs:
             test -L "$mountpoint/Applications"
             test -f "$mountpoint/README-macOS.txt"
             test -f "$mountpoint/THIRD_PARTY_NOTICES.txt"
+            # Gatekeeper gate (#857): the shipped app must be sealed, notarized
+            # and stapled, and so must the DMG around it.
+            codesign --verify --deep --strict --verbose=2 "$mountpoint/StemDeck.app"
+            assessment="$(spctl -a -vvv -t exec "$mountpoint/StemDeck.app" 2>&1)" || true
+            echo "$assessment"
+            if ! grep -q ': accepted' <<<"$assessment" ||
+              ! grep -q 'source=Notarized Developer ID' <<<"$assessment"; then
+              echo "$arch StemDeck.app is not accepted as a notarized Developer ID app." >&2
+              exit 1
+            fi
+            xcrun stapler validate "$mountpoint/StemDeck.app"
             hdiutil detach "$mountpoint"
             rmdir "$mountpoint"
             trap - EXIT
+            xcrun stapler validate ".build/macos-dist/StemDeck-macOS-$arch.dmg"
           done
 
       - name: upload artifacts
@@ -132,3 +178,11 @@ jobs:
             .build/macos-dist/StemDeck-macOS-x64.dmg
             .build/StemDeck-runtime-macOS-x64.tar.zst
             .build/macos-dist/SHA256SUMS-macOS-x64.txt
+
+      - name: remove signing credentials
+        if: always()
+        run: |
+          if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+            rm -f "$APPLE_API_KEY_PATH"
+          fi
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
