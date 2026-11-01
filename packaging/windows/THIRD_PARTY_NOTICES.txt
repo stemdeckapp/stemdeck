@@ -96,17 +96,19 @@ StemDeck downloads FFmpeg at first run and calls it as a separate
 executable. It is not linked into StemDeck and does not change
 StemDeck's own license.
 
-Build: ffmpeg-n8.1-latest-win64-gpl, from BtbN/FFmpeg-Builds
+Build: ffmpeg-n8.1.2-50-g1a748fe2cd-win64-gpl-8.1, from BtbN/FFmpeg-Builds
+       release autobuild-2026-08-31-13-27
+       https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-31-13-27
 License: GNU General Public License v3 or later
          https://www.gnu.org/licenses/gpl-3.0.html
 
 Written offer of source. The complete corresponding source for this
 build is:
 
-  FFmpeg itself, tag n8.1
-    https://github.com/FFmpeg/FFmpeg/tree/n8.1
+  FFmpeg itself, commit 1a748fe2cd on the release/8.1 branch
+    https://github.com/FFmpeg/FFmpeg/tree/1a748fe2cd43e3ead22fafb1b5b7d77f153898a8
   The build scripts and the exact configure flags used
-    https://github.com/BtbN/FFmpeg-Builds
+    https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-08-31-13-27
 
 If either link stops resolving, open an issue at
 https://github.com/stemdeckapp/stemdeck/issues and the source will be

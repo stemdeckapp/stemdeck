@@ -64,22 +64,26 @@ const APP_EXE_NAME: &str = "StemDeck.exe";
 #[cfg(not(windows))]
 const APP_EXE_NAME: &str = "StemDeck";
 // Windows FFmpeg comes from BtbN's GitHub build (served via GitHub's CDN, far
-// faster worldwide than the old gyan.dev single mirror -- #248). Unlike gyan.dev,
-// which published a per-file `{url}.sha256` companion, BtbN publishes ONE combined
-// `checksums.sha256` listing every asset as `<hash>  <filename>` lines; we fetch it
-// and pick the line for our archive's basename. The `latest` tag is rolling (the
-// `n8.1-latest` asset is rebuilt in place), so the checksum is fetched fresh each
-// run and verified -- the same trust model as the old gyan flow. A compile-time pin
-// is not possible without self-hosting the archive.
+// faster worldwide than the old gyan.dev single mirror -- #248), pinned to one
+// dated month-end autobuild and verified by SHA256 before it is extracted, like
+// the macOS pins below. The rolling `latest` tag is avoided on purpose: its
+// n8.1.3 gcc 16.2 rebuilds abort at random with "stack smashing detected"
+// (3 to 5 runs in 100 of a plain decode), while this gcc 15.2 build crashed 0
+// times in 2400 runs. The hash matches GitHub's asset digest and BtbN's checksums.sha256 for
+// the release, so it is pinned here rather than fetched from the same host.
+//
+// BtbN keeps month-end autobuilds for about two years (daily ones for about
+// two weeks), so this release disappears around 2028-08. Bump the tag, the
+// asset and the hash together before then, and the e2e.yml FFMPEG_RELEASE pin
+// with them. STEMDECK_FFMPEG_URL still overrides the source, unverified.
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip";
-#[cfg(windows)]
-const DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL: &str =
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256";
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-gpl-8.1.zip";
+#[cfg(any(windows, test))]
+const DEFAULT_WINDOWS_FFMPEG_SHA256: &str =
+    "273abb45f3f9f76c303e35ff39f5bb6c23c163ae65f6244a32b7d4a7f6cf0616";
 // macOS FFmpeg is pinned to a specific evermeet build and verified by SHA256
 // before it is extracted or executed (#172). evermeet publishes no .sha256
-// companion (only a GPG signature and a size), so unlike the Windows BtbN
-// path we cannot fetch the hash at runtime -- instead we pin the hash of a
+// companion (only a GPG signature and a size), so we pin the hash of a
 // specific versioned zip, captured at build time from evermeet's TLS endpoint
 // (the download size matched evermeet's signed release info). Bump the version
 // and BOTH hashes together when updating FFmpeg. The rolling getrelease/latest
@@ -6320,18 +6324,6 @@ fn make_executable(path: &Path) -> Result<(), String> {
     }
 }
 
-// Parse a combined `checksums.sha256` file (lines of `<hash>  <filename>`) and
-// return the lowercased hash for `filename`, or None if it is not listed.
-#[cfg(any(windows, test))]
-fn sha256_from_checksums(contents: &str, filename: &str) -> Option<String> {
-    contents.lines().find_map(|line| {
-        let mut parts = line.split_whitespace();
-        let hash = parts.next()?;
-        let name = parts.next()?;
-        (name == filename).then(|| hash.to_ascii_lowercase())
-    })
-}
-
 #[cfg(windows)]
 fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
     let url = env_path_override("STEMDECK_FFMPEG_URL")
@@ -6343,30 +6335,15 @@ fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
 
-    // Fetch BtbN's combined checksums.sha256 and pick the line for our archive (#135, #248).
-    // Only verified for the default URL; custom overrides skip the check.
-    let expected_sha256 = if is_default_url {
-        let archive_name = url
-            .rsplit('/')
-            .next()
-            .ok_or_else(|| "could not derive FFmpeg archive name from URL".to_string())?;
-        let sha256_tmp = downloads.join("ffmpeg-windows.checksums.sha256");
-        download_file_blocking(DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL, &sha256_tmp)?;
-        let raw = fs::read_to_string(&sha256_tmp)
-            .map_err(|e| format!("failed to read FFmpeg checksums: {e}"))?;
-        let _ = fs::remove_file(&sha256_tmp);
-        Some(sha256_from_checksums(&raw, archive_name).ok_or_else(|| {
-            format!("FFmpeg checksums file did not list an entry for {archive_name}")
-        })?)
-    } else {
-        None
-    };
+    // The default URL is checked against the compile-time pin (#135, #248);
+    // a custom STEMDECK_FFMPEG_URL override skips the check.
+    let expected_sha256 = is_default_url.then_some(DEFAULT_WINDOWS_FFMPEG_SHA256);
 
     download_file_blocking(&url, &archive_path)?;
 
     if let Some(expected) = expected_sha256 {
         let actual = sha256_file(&archive_path)?;
-        if !actual.eq_ignore_ascii_case(&expected) {
+        if !actual.eq_ignore_ascii_case(expected) {
             let _ = fs::remove_file(&archive_path);
             return Err(format!(
                 "FFmpeg archive checksum mismatch (expected {expected}, got {actual}). \
@@ -8664,30 +8641,24 @@ mod tests {
         env::remove_var(key);
     }
 
+    // The Windows FFmpeg pin must name one dated release, never the rolling
+    // `latest` tag (its gcc 16.2 rebuilds crash at random), and carry a real
+    // SHA256 so the download is verified before it is extracted.
     #[test]
-    fn sha256_from_checksums_picks_matching_line() {
-        let contents = "\
-c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694  ffmpeg-master-latest-win64-gpl.zip
-3D26DD6B1AF970297D141531D2C651491C4F6043B95D8C68E2FEC3C141255FF7  ffmpeg-n8.1-latest-win64-gpl-8.1.zip
-b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-latest-win64-gpl-7.1.zip
-";
-        // Matching line -> lowercased hash.
-        assert_eq!(
-            super::sha256_from_checksums(contents, "ffmpeg-n8.1-latest-win64-gpl-8.1.zip")
-                .as_deref(),
-            Some("3d26dd6b1af970297d141531d2c651491c4f6043b95d8c68e2fec3c141255ff7")
+    fn windows_ffmpeg_is_pinned_to_a_dated_build_with_a_sha256() {
+        let url = super::DEFAULT_WINDOWS_FFMPEG_URL;
+        assert!(
+            url.starts_with("https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-"),
+            "{url}"
         );
-        // A different asset is not matched.
-        assert_eq!(
-            super::sha256_from_checksums(contents, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
-            Some("c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694")
-        );
-        // Absent filename -> None.
-        assert!(super::sha256_from_checksums(contents, "not-in-list.zip").is_none());
-        // Extra whitespace between hash and name is tolerated.
-        assert_eq!(
-            super::sha256_from_checksums("abc123   only-one.zip\n", "only-one.zip").as_deref(),
-            Some("abc123")
+        assert!(!url.contains("/download/latest/"), "{url}");
+        assert!(!url.contains("-latest-"), "{url}");
+        let sha = super::DEFAULT_WINDOWS_FFMPEG_SHA256;
+        assert_eq!(sha.len(), 64, "{sha}");
+        assert!(
+            sha.chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "{sha}"
         );
     }
 
