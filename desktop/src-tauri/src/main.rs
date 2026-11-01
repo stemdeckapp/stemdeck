@@ -1039,14 +1039,13 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
     fs::rename(&extracted, &runtime).map_err(|e| format!("failed to install runtime: {e}"))?;
 
     // Cleanup is non-fatal; log warnings rather than silently discarding errors.
-    if let Err(e) = fs::remove_dir_all(&tmp) {
-        if let Ok(d) = local_data_dir() {
-            append_to_setup_log(&d, &format!("cleanup warning: {}: {e}", tmp.display()));
-        }
-    }
-    if let Err(e) = fs::remove_dir_all(&old) {
-        if let Ok(d) = local_data_dir() {
-            append_to_setup_log(&d, &format!("cleanup warning: {}: {e}", old.display()));
+    // A folder that is not there is not one: runtime.old never exists on a
+    // first install (#858).
+    for path in [&tmp, &old] {
+        if let Some(warning) = cleanup_warning(path, fs::remove_dir_all(path)) {
+            if let Ok(d) = local_data_dir() {
+                append_to_setup_log(&d, &warning);
+            }
         }
     }
 
@@ -4080,6 +4079,17 @@ fn local_data_dir() -> Result<PathBuf, String> {
 fn log_setup_step(step: &str) {
     if let Ok(data_dir) = local_data_dir() {
         append_to_setup_log(&data_dir, &format!("step: {step}"));
+    }
+}
+
+// The setup.log line for a failed cleanup, or None when it worked or there
+// was nothing to remove.
+fn cleanup_warning(path: &Path, result: std::io::Result<()>) -> Option<String> {
+    match result {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Some(format!("cleanup warning: {}: {e}", path.display()))
+        }
+        _ => None,
     }
 }
 
@@ -8888,6 +8898,20 @@ mod tests {
         for source in [Override, Primary, Fallback] {
             assert!(source.label().starts_with("Download from"));
         }
+    }
+
+    #[test]
+    fn cleanup_warning_is_silent_for_a_folder_that_was_never_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("runtime.old");
+        let result = fs::remove_dir_all(&missing);
+        assert!(result.is_err());
+        assert_eq!(super::cleanup_warning(&missing, result), None);
+        assert_eq!(super::cleanup_warning(&missing, Ok(())), None);
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let warning = super::cleanup_warning(&missing, Err(denied)).unwrap();
+        assert!(warning.starts_with("cleanup warning: "), "{warning}");
+        assert!(warning.contains("runtime.old"), "{warning}");
     }
 
     #[test]
