@@ -379,23 +379,15 @@ test.describe("loop and transport by hand", () => {
     await expect(page.locator("#t-metro")).not.toHaveClass(/active/);
   });
 
-  // Known bug, found by this spec: the search box sits inside #catalogToggle,
-  // a role="button" whose keydown handler (static/js/catalog.js,
-  // wireCatalogToggle) calls preventDefault on Space for every key that
-  // bubbles up from the box, so "daft punk" is typed as "daftpunk". The other
-  // specs fill() the box, which sends no keys, so none of them could see it.
-  // Marked as failing so the suite stays green while it is open; once the
-  // handler ignores keys from the input, this reports an unexpected pass and
-  // the test.fail comes off.
-  // Known bug, found by this spec. The transport shows the song's length (from
-  // its peaks) before the streaming engine has read the stems' headers, and
-  // Play works from that moment. Pressed in that window, the engine's play()
-  // runs with its duration still 0 (static/js/chunkedAudioEngine.js, play),
-  // so its first tick takes the "reached the end" branch: nothing plays, and
-  // onEnded fires the stemdeck:track-ended event, which in Karaoke moves the
-  // queue on to the next song. Holding the stem downloads makes the window
-  // wide enough to hit every time. Marked as failing until that is fixed.
-  test.fail("KEY-01 Space pressed while the stems are still loading does not end the song", async ({ page }) => {
+  // Found by this spec. The transport shows the song's length (from its
+  // peaks) before the streaming engine has read the stems' headers, and Play
+  // works from that moment. Pressed in that window, the engine's play() ran
+  // with its duration still 0, so its first tick took the "reached the end"
+  // branch: nothing played, and onEnded fired the stemdeck:track-ended event,
+  // which in Karaoke moves the queue on to the next song. Now the engine
+  // holds the Play until the stems are read, then starts. Holding the stem
+  // downloads makes the window wide enough to hit every time.
+  test("KEY-01 Space pressed while the stems are still loading does not end the song", async ({ page }) => {
     let release;
     const held = new Promise((r) => { release = r; });
     await page.route("**/stems/*.wav", async (route) => {
@@ -419,10 +411,25 @@ test.describe("loop and transport by hand", () => {
       requestAnimationFrame(step);
     }));
     const ended = await page.evaluate(() => window.__ended);
+    // The press is held, not dropped: the button shows it.
+    await expect(page.locator("#t-play")).toHaveClass(/playing/);
     release();
     expect(ended, "track-ended fired by a Play pressed during loading").toBe(0);
+
+    // Once the stems arrive, the song the person pressed Play on starts.
+    await expect.poll(async () => (await player(page)).time, { timeout: 15_000 }).toBeGreaterThan(0.3);
+    expect((await player(page)).playing).toBe(true);
+    expect(await page.evaluate(() => window.__ended)).toBe(0);
   });
 
+  // Known bug, found by this spec: the search box sits inside #catalogToggle,
+  // a role="button" whose keydown handler (static/js/catalog.js,
+  // wireCatalogToggle) calls preventDefault on Space for every key that
+  // bubbles up from the box, so "daft punk" is typed as "daftpunk". The other
+  // specs fill() the box, which sends no keys, so none of them could see it.
+  // Marked as failing so the suite stays green while it is open; once the
+  // handler ignores keys from the input, this reports an unexpected pass and
+  // the test.fail comes off.
   test.fail("KEY-01 a space typed in the library search box reaches it", async ({ page }) => {
     await setUp(page);
     const search = page.locator("#catalogSearch");

@@ -228,6 +228,45 @@ test.describe("Karaoke Mode", () => {
     expect((await mixOf(page)).vocals[0]).toBe("M");
   });
 
+  // Play pressed while the song's stems are still loading used to end it
+  // (chunkedAudioEngine.js started with a duration of 0), and the ended
+  // event moved the queue on to the next song before a note had played.
+  // Holding the stem downloads keeps the song loading for as long as needed.
+  test("Play pressed while the song loads does not move the queue on", async ({ page }) => {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route("**/stems/*.wav", async (route) => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    await page.addInitScript((id) => {
+      localStorage.setItem("stemdeck:karaoke:queue", JSON.stringify([id]));
+      window.__ended = 0;
+      document.addEventListener("stemdeck:track-ended", () => window.__ended++);
+    }, SIBLING_JOB_ID);
+    await openStudio(page);
+    await openKaraoke(page);
+    await expect(kk(page, ".kk-q-row")).toHaveCount(1);
+
+    await kk(page, ".kk-transport .kk-play").click();
+    // Several ticks of the engine's clock (tickLoop.js runs on frames).
+    await ev(page, () => new Promise((r) => {
+      let n = 0;
+      const step = () => (++n >= 10 ? r() : requestAnimationFrame(step));
+      requestAnimationFrame(step);
+    }));
+    const ended = await ev(page, () => window.__ended);
+    release();
+    expect(ended, "track-ended fired by a Play pressed during loading").toBe(0);
+    expect(await ev(page, async () => (await import("/js/state.js")).currentJobId)).toBe(JOB_ID);
+    await expect(kk(page, ".kk-q-row")).toHaveCount(1);
+
+    // Once the stems arrive, the same song plays, and the queue still waits.
+    await expect.poll(() => now(page), { timeout: 15_000 }).toBeGreaterThan(0.3);
+    expect(await ev(page, async () => (await import("/js/state.js")).currentJobId)).toBe(JOB_ID);
+    await expect(kk(page, ".kk-q-row")).toHaveCount(1);
+  });
+
   test("opens over the lanes, applies its defaults to the mixer, and closes back to the studio", async ({ page }) => {
     await openStudio(page);
     await openKaraoke(page);
