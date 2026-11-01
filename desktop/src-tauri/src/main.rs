@@ -887,9 +887,12 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     // Reached once per launch, and only when a binary is actually present, so
     // the cost is two -version calls on a path that otherwise skips setup
     // entirely.
-    let ffmpeg_ready = ffmpeg
-        .as_deref()
-        .is_some_and(|path| verify_ffmpeg_pair(path).is_ok());
+    //
+    // A known-bad managed build (gcc 16, see is_known_bad_ffmpeg_build) also
+    // reads as not ready, so setup reaches ensure_ffmpeg, which replaces it.
+    let ffmpeg_ready = ffmpeg.as_deref().is_some_and(|path| {
+        verify_ffmpeg_pair(path).is_ok() && !managed_ffmpeg_needs_replacing(&data_dir, path)
+    });
     let torch_device = read_config_str(&data_dir, "torchDevice");
     let torch_device_reason = effective_device_reason(
         read_config_str(&data_dir, "torchDeviceReason"),
@@ -1636,6 +1639,12 @@ fn ensure_workspace() -> Result<(), String> {
         let old_path = data.join("runtime.old");
         if !runtime_path.exists() && old_path.is_dir() {
             let _ = fs::rename(&old_path, &runtime_path);
+        }
+        // The same for an FFmpeg swap (swap_in_staged_dir).
+        let ffmpeg_path = data.join("ffmpeg");
+        let ffmpeg_old = data.join("ffmpeg.old");
+        if !ffmpeg_path.exists() && ffmpeg_old.is_dir() {
+            let _ = fs::rename(&ffmpeg_old, &ffmpeg_path);
         }
     }
 
@@ -5318,7 +5327,19 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     #[cfg(not(target_os = "macos"))]
     if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
         match verify_ffmpeg_pair(&existing) {
-            Ok(()) => return Ok(existing),
+            Ok(()) => {
+                // A build that passes every check can still be one that
+                // crashes at random (gcc 16 BtbN builds). Swap the shell's own
+                // copy for the pinned build; the old one stays on failure.
+                #[cfg(windows)]
+                if managed_ffmpeg_needs_replacing(data_dir, &existing) {
+                    replace_stale_ffmpeg_or_keep(data_dir);
+                    if let Err(err) = verify_ffmpeg_pair(&existing) {
+                        return Err(format!("FFmpeg failed its checks after replacement: {err}"));
+                    }
+                }
+                return Ok(existing);
+            }
             Err(err) if env_path_override("STEMDECK_FFMPEG").is_some() => return Err(err),
             Err(err) => eprintln!(
                 "FFmpeg at {} is present but unusable, looking for a replacement: {err}",
@@ -6326,6 +6347,15 @@ fn make_executable(path: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
+    let archive_path = download_windows_ffmpeg_archive(data_dir)?;
+    extract_ffmpeg_binaries(&archive_path, &data_dir.join("ffmpeg"))
+}
+
+// Downloads the Windows FFmpeg archive into data/downloads and checks it
+// against the compiled-in SHA-256 when the default URL is used. Returns the
+// archive path; nothing is extracted yet.
+#[cfg(windows)]
+fn download_windows_ffmpeg_archive(data_dir: &Path) -> Result<PathBuf, String> {
     let url = env_path_override("STEMDECK_FFMPEG_URL")
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| DEFAULT_WINDOWS_FFMPEG_URL.to_string());
@@ -6352,7 +6382,7 @@ fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
         }
     }
 
-    extract_ffmpeg_binaries(&archive_path, data_dir)
+    Ok(archive_path)
 }
 
 #[cfg(windows)]
@@ -6410,13 +6440,12 @@ fn download_file_blocking(url: &str, target: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), String> {
+fn extract_ffmpeg_binaries(archive_path: &Path, ffmpeg_dir: &Path) -> Result<(), String> {
     let file = fs::File::open(archive_path)
         .map_err(|e| format!("failed to open {}: {e}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|e| format!("failed to read FFmpeg zip {}: {e}", archive_path.display()))?;
-    let ffmpeg_dir = data_dir.join("ffmpeg");
-    fs::create_dir_all(&ffmpeg_dir)
+    fs::create_dir_all(ffmpeg_dir)
         .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
 
     let mut copied_ffmpeg = false;
@@ -6592,6 +6621,287 @@ fn check_ffmpeg_pair(ffmpeg: &Path) -> Result<bool, String> {
         );
     }
     Ok(full)
+}
+
+// What `ffmpeg -version` says about how a build was made.
+#[derive(Debug, PartialEq, Eq)]
+struct FfmpegBuild {
+    version: Option<String>,
+    gcc_major: Option<u32>,
+}
+
+// Reads the "ffmpeg version X" and "built with gcc N.M.P" lines. Either can
+// be missing (a clang or MSVC build has no gcc line), which reads as None.
+fn parse_ffmpeg_build(version_text: &str) -> FfmpegBuild {
+    let mut build = FfmpegBuild {
+        version: None,
+        gcc_major: None,
+    };
+    for line in version_text.lines().map(str::trim) {
+        if build.version.is_none() {
+            if let Some(rest) = line.strip_prefix("ffmpeg version ") {
+                build.version = rest.split_whitespace().next().map(str::to_string);
+            }
+        }
+        if build.gcc_major.is_none() {
+            if let Some(rest) = line.strip_prefix("built with gcc ") {
+                build.gcc_major = rest
+                    .split(|c: char| c == '.' || c.is_whitespace())
+                    .next()
+                    .and_then(|major| major.parse().ok());
+            }
+        }
+    }
+    build
+}
+
+// BtbN builds compiled with gcc 16 (2026-09-30 and 2026-10-27, n8.1.3) abort
+// at random with "stack smashing detected"; gcc 15.2 builds ran clean in
+// 1000+ runs. A build with no gcc line is not called bad.
+const FIRST_BAD_FFMPEG_GCC_MAJOR: u32 = 16;
+
+fn is_known_bad_ffmpeg_build(build: &FfmpegBuild) -> bool {
+    build
+        .gcc_major
+        .is_some_and(|major| major >= FIRST_BAD_FFMPEG_GCC_MAJOR)
+}
+
+// How many times a stale managed FFmpeg is replaced with one pin before the
+// shell stops trying (network failures). A pinned build that downloads but
+// then fails its own checks gives up at once.
+const MAX_FFMPEG_REPLACE_ATTEMPTS: u64 = 3;
+
+// Kept in config.json under "ffmpegReplace", so a failed replacement is not
+// retried on every launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FfmpegReplaceRecord {
+    pin: String,
+    attempts: u64,
+    gave_up: bool,
+}
+
+// Whether the FFmpeg the shell found is one it manages and may replace: on
+// Windows only, the flat data/ffmpeg/ffmpeg.exe the shell downloads, and only
+// when the user named neither a binary (STEMDECK_FFMPEG) nor a source
+// (STEMDECK_FFMPEG_URL). A system FFmpeg on PATH, a bin/ layout the user
+// dropped in (#248) and an override are never touched.
+fn is_managed_ffmpeg(
+    data_dir: &Path,
+    existing: &Path,
+    windows: bool,
+    ffmpeg_override: bool,
+    url_override: bool,
+) -> bool {
+    windows
+        && !ffmpeg_override
+        && !url_override
+        && existing == data_dir.join("ffmpeg").join("ffmpeg.exe")
+}
+
+// The decision itself, with every input passed in.
+fn should_replace_ffmpeg(
+    managed: bool,
+    build: &FfmpegBuild,
+    record: Option<&FfmpegReplaceRecord>,
+    pin: &str,
+) -> bool {
+    if !managed || !is_known_bad_ffmpeg_build(build) {
+        return false;
+    }
+    match record {
+        Some(record) if record.pin == pin => {
+            !record.gave_up && record.attempts < MAX_FFMPEG_REPLACE_ATTEMPTS
+        }
+        // No record, or one for an older pin: a new pin earns a fresh try.
+        _ => true,
+    }
+}
+
+// The record after one more failed attempt.
+#[cfg(any(windows, test))]
+fn next_replace_record(
+    previous: Option<&FfmpegReplaceRecord>,
+    pin: &str,
+    build_rejected: bool,
+) -> FfmpegReplaceRecord {
+    let attempts = match previous {
+        Some(record) if record.pin == pin => record.attempts + 1,
+        _ => 1,
+    };
+    FfmpegReplaceRecord {
+        pin: pin.to_string(),
+        attempts,
+        gave_up: build_rejected || attempts >= MAX_FFMPEG_REPLACE_ATTEMPTS,
+    }
+}
+
+fn read_ffmpeg_replace_record(data_dir: &Path) -> Option<FfmpegReplaceRecord> {
+    let text = fs::read_to_string(data_dir.join("config.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let record = value.get("ffmpegReplace")?;
+    Some(FfmpegReplaceRecord {
+        pin: record.get("pin")?.as_str()?.to_string(),
+        attempts: record.get("attempts")?.as_u64()?,
+        gave_up: record.get("gaveUp")?.as_bool()?,
+    })
+}
+
+// stdout of `ffmpeg -version`, or None when it does not run.
+fn ffmpeg_version_text(path: &Path) -> Option<String> {
+    let mut command = Command::new(path);
+    command
+        .arg("-version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console_window(&mut command);
+    let output =
+        command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg version").ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// True when `existing` is the shell's own Windows FFmpeg, it is a known-bad
+// build, and replacing it has not already been tried and given up on. Never
+// runs anything on other platforms or for a user-supplied FFmpeg.
+fn managed_ffmpeg_needs_replacing(data_dir: &Path, existing: &Path) -> bool {
+    let managed = is_managed_ffmpeg(
+        data_dir,
+        existing,
+        cfg!(windows),
+        env_path_override("STEMDECK_FFMPEG").is_some(),
+        env_path_override("STEMDECK_FFMPEG_URL").is_some(),
+    );
+    if !managed {
+        return false;
+    }
+    let Some(text) = ffmpeg_version_text(existing) else {
+        return false;
+    };
+    let build = parse_ffmpeg_build(&text);
+    let replace = should_replace_ffmpeg(
+        true,
+        &build,
+        read_ffmpeg_replace_record(data_dir).as_ref(),
+        DEFAULT_WINDOWS_FFMPEG_URL,
+    );
+    if replace {
+        eprintln!(
+            "FFmpeg {} at {} was built with gcc {}, a known-bad build",
+            build.version.as_deref().unwrap_or("(unknown version)"),
+            existing.display(),
+            build.gcc_major.unwrap_or_default()
+        );
+    }
+    replace
+}
+
+// Moves `live` aside to `old`, moves `staged` into its place, then removes
+// `old`. When the second move fails the first is undone, so `live` is never
+// left missing. ensure_workspace restores `old` if the process dies between
+// the two moves.
+#[cfg(any(windows, test))]
+fn swap_in_staged_dir(live: &Path, staged: &Path, old: &Path) -> Result<(), String> {
+    if old.exists() {
+        fs::remove_dir_all(old).map_err(|e| format!("failed to remove {}: {e}", old.display()))?;
+    }
+    fs::rename(live, old).map_err(|e| {
+        format!(
+            "failed to move {} aside to {}: {e}",
+            live.display(),
+            old.display()
+        )
+    })?;
+    if let Err(e) = fs::rename(staged, live) {
+        let _ = fs::rename(old, live);
+        return Err(format!(
+            "failed to move {} into {}: {e}",
+            staged.display(),
+            live.display()
+        ));
+    }
+    if let Err(e) = fs::remove_dir_all(old) {
+        eprintln!("could not remove {}: {e}", old.display());
+    }
+    Ok(())
+}
+
+// Why a replacement failed: a network or file problem that may pass, or a
+// pinned build that downloaded and failed its own checks (never retried).
+#[cfg(windows)]
+enum ReplaceFailure {
+    Transient(String),
+    BuildRejected(String),
+}
+
+// Downloads the pinned build the same verified way a fresh install does,
+// extracts it beside the live one, checks it, and only then swaps it in.
+#[cfg(windows)]
+fn replace_managed_ffmpeg(data_dir: &Path) -> Result<(), ReplaceFailure> {
+    let archive = download_windows_ffmpeg_archive(data_dir).map_err(ReplaceFailure::Transient)?;
+    let live = data_dir.join("ffmpeg");
+    let staged = data_dir.join("ffmpeg.new");
+    let old = data_dir.join("ffmpeg.old");
+    if staged.exists() {
+        fs::remove_dir_all(&staged).map_err(|e| {
+            ReplaceFailure::Transient(format!("failed to remove {}: {e}", staged.display()))
+        })?;
+    }
+    let checked = extract_ffmpeg_binaries(&archive, &staged).and_then(|()| {
+        let staged_ffmpeg = staged.join("ffmpeg.exe");
+        verify_ffmpeg_pair(&staged_ffmpeg)?;
+        let build = ffmpeg_version_text(&staged_ffmpeg)
+            .map(|text| parse_ffmpeg_build(&text))
+            .ok_or_else(|| "the pinned FFmpeg did not report its version".to_string())?;
+        if is_known_bad_ffmpeg_build(&build) {
+            return Err(format!(
+                "the pinned FFmpeg is itself a known-bad build: {build:?}"
+            ));
+        }
+        Ok(())
+    });
+    if let Err(e) = checked {
+        let _ = fs::remove_dir_all(&staged);
+        return Err(ReplaceFailure::BuildRejected(e));
+    }
+    swap_in_staged_dir(&live, &staged, &old).map_err(|e| {
+        let _ = fs::remove_dir_all(&staged);
+        ReplaceFailure::Transient(e)
+    })
+}
+
+// Replaces a known-bad managed FFmpeg, keeping the old one on any failure and
+// recording the failure so the next launch does not repeat it without end.
+#[cfg(windows)]
+fn replace_stale_ffmpeg_or_keep(data_dir: &Path) {
+    let pin = DEFAULT_WINDOWS_FFMPEG_URL;
+    let (message, rejected) = match replace_managed_ffmpeg(data_dir) {
+        Ok(()) => {
+            eprintln!("Replaced a known-bad FFmpeg build with the pinned one");
+            let _ = update_setup_config(data_dir, [("ffmpegReplace", serde_json::Value::Null)]);
+            return;
+        }
+        Err(ReplaceFailure::Transient(e)) => (e, false),
+        Err(ReplaceFailure::BuildRejected(e)) => (e, true),
+    };
+    let previous = read_ffmpeg_replace_record(data_dir);
+    let record = next_replace_record(previous.as_ref(), pin, rejected);
+    eprintln!(
+        "Keeping the current FFmpeg, replacing it failed (attempt {}): {message}",
+        record.attempts
+    );
+    let _ = update_setup_config(
+        data_dir,
+        [(
+            "ffmpegReplace",
+            serde_json::json!({
+                "pin": record.pin,
+                "attempts": record.attempts,
+                "gaveUp": record.gave_up,
+            }),
+        )],
+    );
 }
 
 fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
@@ -8660,6 +8970,213 @@ mod tests {
                 .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
             "{sha}"
         );
+    }
+
+    const FFMPEG_VERSION_GCC_15: &str = "ffmpeg version n8.1.2-50-g1a748fe2cd-20260831 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with gcc 15.2.0 (crosstool-NG 1.28.0.23_185f348)\n\
+configuration: --prefix=/ffbuild/prefix --enable-gpl\n\
+libavutil      60.  8.100 / 60.  8.100\n";
+    const FFMPEG_VERSION_GCC_16: &str = "ffmpeg version n8.1.3-24-g92611900bb-20261027 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)\n\
+configuration: --prefix=/ffbuild/prefix --enable-gpl\n";
+    const FFMPEG_VERSION_CLANG: &str =
+        "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with Apple clang version 17.0.0 (clang-1700.0.13.3)\n\
+configuration: --cc=clang\n";
+
+    #[test]
+    fn parse_ffmpeg_build_reads_version_and_gcc_major() {
+        let clean = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_15);
+        assert_eq!(
+            clean.version.as_deref(),
+            Some("n8.1.2-50-g1a748fe2cd-20260831")
+        );
+        assert_eq!(clean.gcc_major, Some(15));
+        assert!(!super::is_known_bad_ffmpeg_build(&clean));
+
+        let bad = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_16);
+        assert_eq!(
+            bad.version.as_deref(),
+            Some("n8.1.3-24-g92611900bb-20261027")
+        );
+        assert_eq!(bad.gcc_major, Some(16));
+        assert!(super::is_known_bad_ffmpeg_build(&bad));
+
+        let clang = super::parse_ffmpeg_build(FFMPEG_VERSION_CLANG);
+        assert_eq!(clang.version.as_deref(), Some("8.1.1"));
+        assert_eq!(clang.gcc_major, None);
+        assert!(!super::is_known_bad_ffmpeg_build(&clang));
+
+        let empty = super::parse_ffmpeg_build("");
+        assert_eq!(empty.version, None);
+        assert_eq!(empty.gcc_major, None);
+        assert!(!super::is_known_bad_ffmpeg_build(&empty));
+    }
+
+    // Run by hand against real binaries:
+    // STEMDECK_TEST_FFMPEG_BAD=<gcc 16 ffmpeg> STEMDECK_TEST_FFMPEG_CLEAN=<gcc 15 ffmpeg>
+    // cargo test known_bad_ffmpeg_real_binaries -- --ignored
+    #[test]
+    #[ignore]
+    fn known_bad_ffmpeg_real_binaries() {
+        let bad = env::var("STEMDECK_TEST_FFMPEG_BAD").expect("STEMDECK_TEST_FFMPEG_BAD");
+        let clean = env::var("STEMDECK_TEST_FFMPEG_CLEAN").expect("STEMDECK_TEST_FFMPEG_CLEAN");
+        let read = |path: &str| {
+            super::parse_ffmpeg_build(
+                &super::ffmpeg_version_text(Path::new(path)).expect("ffmpeg -version ran"),
+            )
+        };
+        let bad = read(&bad);
+        let clean = read(&clean);
+        println!("bad: {bad:?}\nclean: {clean:?}");
+        assert!(super::is_known_bad_ffmpeg_build(&bad), "{bad:?}");
+        assert!(!super::is_known_bad_ffmpeg_build(&clean), "{clean:?}");
+    }
+
+    #[test]
+    fn only_the_shells_own_windows_ffmpeg_is_managed() {
+        let data = Path::new("data");
+        let flat = data.join("ffmpeg").join("ffmpeg.exe");
+        assert!(super::is_managed_ffmpeg(data, &flat, true, false, false));
+        // Not Windows: never.
+        assert!(!super::is_managed_ffmpeg(data, &flat, false, false, false));
+        // The user named a binary or a source.
+        assert!(!super::is_managed_ffmpeg(data, &flat, true, true, false));
+        assert!(!super::is_managed_ffmpeg(data, &flat, true, false, true));
+        // A bin/ layout the user dropped in, or a system FFmpeg on PATH.
+        let bin = data.join("ffmpeg").join("bin").join("ffmpeg.exe");
+        assert!(!super::is_managed_ffmpeg(data, &bin, true, false, false));
+        assert!(!super::is_managed_ffmpeg(
+            data,
+            Path::new("ffmpeg"),
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn should_replace_ffmpeg_only_a_managed_bad_build_and_not_forever() {
+        use super::{FfmpegReplaceRecord, MAX_FFMPEG_REPLACE_ATTEMPTS};
+        let pin = "https://example.invalid/pin.zip";
+        let bad = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_16);
+        let clean = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_15);
+        let clang = super::parse_ffmpeg_build(FFMPEG_VERSION_CLANG);
+
+        assert!(super::should_replace_ffmpeg(true, &bad, None, pin));
+        assert!(!super::should_replace_ffmpeg(false, &bad, None, pin));
+        assert!(!super::should_replace_ffmpeg(true, &clean, None, pin));
+        assert!(!super::should_replace_ffmpeg(true, &clang, None, pin));
+
+        let tried_once = FfmpegReplaceRecord {
+            pin: pin.to_string(),
+            attempts: 1,
+            gave_up: false,
+        };
+        assert!(super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&tried_once),
+            pin
+        ));
+        let used_up = FfmpegReplaceRecord {
+            attempts: MAX_FFMPEG_REPLACE_ATTEMPTS,
+            ..tried_once.clone()
+        };
+        assert!(!super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&used_up),
+            pin
+        ));
+        let gave_up = FfmpegReplaceRecord {
+            gave_up: true,
+            ..tried_once.clone()
+        };
+        assert!(!super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&gave_up),
+            pin
+        ));
+        // A new pin is a new build: try again.
+        assert!(super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&gave_up),
+            "https://example.invalid/newer.zip"
+        ));
+    }
+
+    #[test]
+    fn next_replace_record_counts_and_gives_up_on_a_rejected_build() {
+        use super::MAX_FFMPEG_REPLACE_ATTEMPTS;
+        let pin = "pin";
+        let first = super::next_replace_record(None, pin, false);
+        assert_eq!((first.attempts, first.gave_up), (1, false));
+        let mut record = first;
+        for _ in 1..MAX_FFMPEG_REPLACE_ATTEMPTS {
+            record = super::next_replace_record(Some(&record), pin, false);
+        }
+        assert_eq!(record.attempts, MAX_FFMPEG_REPLACE_ATTEMPTS);
+        assert!(record.gave_up);
+        // The pinned build itself failing its checks: give up at once.
+        let rejected = super::next_replace_record(None, pin, true);
+        assert_eq!((rejected.attempts, rejected.gave_up), (1, true));
+        // A record for an older pin starts over.
+        let fresh = super::next_replace_record(Some(&record), "newer", false);
+        assert_eq!((fresh.attempts, fresh.gave_up), (1, false));
+    }
+
+    #[test]
+    fn read_ffmpeg_replace_record_round_trips_and_null_clears() {
+        let dir = make_tmp();
+        assert!(super::read_ffmpeg_replace_record(dir.path()).is_none());
+        super::update_setup_config(
+            dir.path(),
+            [(
+                "ffmpegReplace",
+                serde_json::json!({"pin": "p", "attempts": 2, "gaveUp": false}),
+            )],
+        )
+        .unwrap();
+        let record = super::read_ffmpeg_replace_record(dir.path()).unwrap();
+        assert_eq!(
+            record,
+            super::FfmpegReplaceRecord {
+                pin: "p".to_string(),
+                attempts: 2,
+                gave_up: false
+            }
+        );
+        super::update_setup_config(dir.path(), [("ffmpegReplace", serde_json::Value::Null)])
+            .unwrap();
+        assert!(super::read_ffmpeg_replace_record(dir.path()).is_none());
+    }
+
+    #[test]
+    fn swap_in_staged_dir_replaces_live_and_keeps_it_on_failure() {
+        let dir = make_tmp();
+        let live = dir.path().join("ffmpeg");
+        let staged = dir.path().join("ffmpeg.new");
+        let old = dir.path().join("ffmpeg.old");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("ffmpeg.exe"), "old").unwrap();
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("ffmpeg.exe"), "new").unwrap();
+        // A leftover from an earlier interrupted swap is cleared first.
+        fs::create_dir_all(&old).unwrap();
+
+        super::swap_in_staged_dir(&live, &staged, &old).unwrap();
+        assert_eq!(fs::read_to_string(live.join("ffmpeg.exe")).unwrap(), "new");
+        assert!(!staged.exists());
+        assert!(!old.exists());
+
+        // No staged dir: the second move fails and live is put back.
+        let err = super::swap_in_staged_dir(&live, &staged, &old).unwrap_err();
+        assert!(err.contains("failed to move"), "{err}");
+        assert_eq!(fs::read_to_string(live.join("ffmpeg.exe")).unwrap(), "new");
+        assert!(!old.exists());
     }
 
     #[test]
