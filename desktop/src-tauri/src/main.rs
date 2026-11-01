@@ -88,6 +88,7 @@ const DEFAULT_WINDOWS_FFMPEG_SHA256: &str =
 // (the download size matched evermeet's signed release info). Bump the version
 // and BOTH hashes together when updating FFmpeg. The rolling getrelease/latest
 // URL is intentionally avoided so the pinned hash stays valid.
+#[cfg(any(target_os = "macos", test))]
 const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip";
 #[cfg(target_os = "macos")]
 const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/ffprobe-8.1.1.zip";
@@ -107,9 +108,9 @@ const DEFAULT_MACOS_FFPROBE_SHA256: &str =
 // (downloaded, sha256'd, and cross-checked against the release notes' own
 // published MD5s and each binary's Mach-O magic bytes) before pinning here.
 // Bump the release tag and all four hashes together when updating.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const SHAKA_FFMPEG_RELEASE: &str = "n8.1.2-1";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const SHAKA_FFMPEG_BASE_URL: &str =
     "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download";
 #[cfg(target_os = "macos")]
@@ -1679,8 +1680,8 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
     log_setup_step("ensure-external-assets");
     ensure_workspace()?;
     let data_dir = local_data_dir()?;
-    let ffmpeg = ensure_ffmpeg(&data_dir)?;
-    write_setup_config(&data_dir, &ffmpeg)?;
+    let (ffmpeg, source) = ensure_ffmpeg(&data_dir)?;
+    write_setup_config(&data_dir, &ffmpeg, &source, std::env::consts::ARCH)?;
     Ok(AssetStatus {
         ffmpeg_ready: true,
         ffmpeg_path: Some(ffmpeg.display().to_string()),
@@ -5316,7 +5317,8 @@ fn parse_health_identity(response: &str) -> Option<HealthIdentity> {
     })
 }
 
-fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
+// The FFmpeg to use, and where it came from (for config.json, #858).
+fn ensure_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
     // Use an already-present binary (flat, bin/, or STEMDECK_FFMPEG override) before
     // downloading, so a manually-placed FFmpeg is honored (#248).
     //
@@ -5348,7 +5350,8 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
                         return Err(format!("FFmpeg failed its checks after replacement: {err}"));
                     }
                 }
-                return Ok(existing);
+                let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
+                return Ok((existing, FfmpegSource::existing(explicit)));
             }
             Err(err) if env_path_override("STEMDECK_FFMPEG").is_some() => return Err(err),
             Err(err) => eprintln!(
@@ -5373,7 +5376,7 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // taking a plainer system build would cost OGG export for nothing (#824).
     #[cfg(not(target_os = "macos"))]
     if matches!(check_ffmpeg_pair(Path::new("ffmpeg")), Ok(true)) {
-        return Ok(PathBuf::from("ffmpeg"));
+        return Ok((PathBuf::from("ffmpeg"), FfmpegSource::System));
     }
 
     #[cfg(windows)]
@@ -5382,7 +5385,10 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
         verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        Ok((
+            portable,
+            FfmpegSource::Download(ffmpeg_download_url(DEFAULT_WINDOWS_FFMPEG_URL)),
+        ))
     }
 
     #[cfg(target_os = "macos")]
@@ -5399,8 +5405,148 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
         verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        Ok((
+            portable,
+            FfmpegSource::Download(ffmpeg_download_url(DEFAULT_LINUX_FFMPEG_URL)),
+        ))
     }
+}
+
+// The URL a Windows or Linux download fetched: STEMDECK_FFMPEG_URL when set,
+// as download_windows_ffmpeg_archive and download_linux_ffmpeg choose it.
+#[cfg(not(target_os = "macos"))]
+fn ffmpeg_download_url(default: &str) -> String {
+    env_path_override("STEMDECK_FFMPEG_URL")
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
+// Where the FFmpeg pair setup settled on came from. config.json records it
+// as ffmpegSource, which used to be the platform's default download URL
+// whatever was actually used, so a bug report could not show a manual or
+// fallback pair (#858).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FfmpegSource {
+    // Downloaded by this setup run, from this ffmpeg URL.
+    Download(String),
+    // The file STEMDECK_FFMPEG names.
+    EnvOverride,
+    // A pair already in the data folder: an earlier download, or one placed
+    // there by hand. StemDeck cannot tell which.
+    DataFolder,
+    // An FFmpeg installed on the system: on PATH, or in a known install folder.
+    System,
+}
+
+impl FfmpegSource {
+    fn existing(explicit: bool) -> Self {
+        if explicit {
+            Self::EnvOverride
+        } else {
+            Self::DataFolder
+        }
+    }
+
+    // The ffmpegSource value. A URL and "system PATH" keep the format they
+    // always had; the rest are new.
+    fn config_value(&self, ffmpeg: &Path) -> String {
+        match self {
+            Self::Download(url) => url.clone(),
+            Self::EnvOverride => "STEMDECK_FFMPEG".to_string(),
+            Self::DataFolder => "data folder".to_string(),
+            // A bare "ffmpeg" was found through PATH; a full path is one of
+            // the known install folders (or PATH resolved on macOS).
+            Self::System => match ffmpeg.parent() {
+                Some(dir) if !dir.as_os_str().is_empty() => "system install".to_string(),
+                _ => "system PATH".to_string(),
+            },
+        }
+    }
+}
+
+// The CPU architecture a binary is built for, read from its first bytes
+// without running it: Mach-O (thin or universal), ELF or PE. "universal" for
+// a Mach-O with both arm64 and x86_64, "unknown" for anything else (a script,
+// a short file, another CPU), never a guess (#858).
+fn binary_arch_label(header: &[u8]) -> &'static str {
+    const ELF_X86_64: u16 = 0x3e;
+    const ELF_AARCH64: u16 = 0xb7;
+    const PE_X86_64: u16 = 0x8664;
+    const PE_ARM64: u16 = 0xaa64;
+    let u16_at = |at: usize, little: bool| -> Option<u16> {
+        let bytes = header.get(at..at + 2)?;
+        let pair = [bytes[0], bytes[1]];
+        Some(if little {
+            u16::from_le_bytes(pair)
+        } else {
+            u16::from_be_bytes(pair)
+        })
+    };
+    if let Some(types) = macho_cpu_types(header) {
+        let arm = types.contains(&MACHO_CPU_TYPE_ARM64);
+        let intel = types.contains(&MACHO_CPU_TYPE_X86_64);
+        return match (arm, intel) {
+            (true, true) => "universal",
+            (true, false) => "arm64",
+            (false, true) => "x86_64",
+            (false, false) => "unknown",
+        };
+    }
+    let machine = if header.starts_with(b"\x7fELF") {
+        // EI_DATA: 1 little-endian, 2 big-endian. e_machine at 18.
+        header
+            .get(5)
+            .and_then(|data| u16_at(18, *data == 1))
+            .map(|m| match m {
+                ELF_X86_64 => "x86_64",
+                ELF_AARCH64 => "arm64",
+                _ => "unknown",
+            })
+    } else if header.starts_with(b"MZ") {
+        // e_lfanew at 0x3c points at "PE\0\0", then the u16 Machine field.
+        header
+            .get(0x3c..0x40)
+            .and_then(|b| usize::try_from(u32::from_le_bytes([b[0], b[1], b[2], b[3]])).ok())
+            .filter(|&pe| header.get(pe..pe + 4) == Some(b"PE\0\0".as_slice()))
+            .and_then(|pe| u16_at(pe + 4, true))
+            .map(|m| match m {
+                PE_X86_64 => "x86_64",
+                PE_ARM64 => "arm64",
+                _ => "unknown",
+            })
+    } else {
+        None
+    };
+    machine.unwrap_or("unknown")
+}
+
+// binary_arch_label for a file, a bare name resolved through PATH first.
+fn binary_arch(path: &Path) -> &'static str {
+    use std::io::Read;
+    let resolved = if path.is_absolute() {
+        Some(path.to_path_buf())
+    } else {
+        path.to_str().and_then(resolve_on_path)
+    };
+    let Some(resolved) = resolved else {
+        return "unknown";
+    };
+    let mut header = Vec::with_capacity(4096);
+    match fs::File::open(resolved).and_then(|file| file.take(4096).read_to_end(&mut header)) {
+        Ok(_) => binary_arch_label(&header),
+        Err(_) => "unknown",
+    }
+}
+
+// What setup.log says when an x86_64 FFmpeg ends up on an arm64 machine: it
+// runs translated (Rosetta 2 on a Mac), slower than a native build. The Intel
+// fallback on a Mac with Rosetta is deliberate (#771), so this is a notice,
+// not an error. `host` is std::env::consts::ARCH.
+fn translated_ffmpeg_notice(host: &str, ffmpeg_arch: &str) -> Option<&'static str> {
+    (host == "aarch64" && ffmpeg_arch == "x86_64").then_some(
+        "notice: FFmpeg is built for x86_64 and this machine is arm64. It runs \
+         translated (through Rosetta 2 on a Mac), so imports and exports are slower.",
+    )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -5683,14 +5829,12 @@ enum MacBinaryArch {
     Unknown,
 }
 
-#[cfg(any(target_os = "macos", test))]
+// On every host, since binary_arch_label reads them for config.json.
 const MACHO_CPU_TYPE_X86_64: u32 = 0x0100_0007;
-#[cfg(any(target_os = "macos", test))]
 const MACHO_CPU_TYPE_ARM64: u32 = 0x0100_000c;
 
 // The CPU types a Mach-O header declares: one for a thin binary, one per
 // slice for a universal one. None when `header` is not a Mach-O.
-#[cfg(any(target_os = "macos", test))]
 fn macho_cpu_types(header: &[u8]) -> Option<Vec<u32>> {
     let be = |at: usize| -> Option<u32> {
         let bytes = header.get(at..at + 4)?;
@@ -5983,7 +6127,7 @@ fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: b
 // "Verifies" means the required encoders (REQUIRED_FFMPEG_ENCODERS). A pair
 // without libvorbis passes; the backend then reports OGG export unavailable.
 #[cfg(target_os = "macos")]
-fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
+fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
     let host = macos_arch_suffix(std::env::consts::ARCH);
     let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
 
@@ -5992,9 +6136,11 @@ fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let verified = verify_ffmpeg_pair(&existing);
         let arch = macos_pair_arch(host, &existing);
         match decide_existing_ffmpeg(verified.is_ok(), arch, explicit) {
-            ExistingFfmpeg::Use => return Ok(existing),
+            ExistingFfmpeg::Use => return Ok((existing, FfmpegSource::existing(explicit))),
             ExistingFfmpeg::KeepUnlessNativeFound => installed_intel = Some(existing),
-            ExistingFfmpeg::Fail => return verified.map(|()| existing),
+            ExistingFfmpeg::Fail => {
+                return verified.map(|()| (existing, FfmpegSource::existing(explicit)))
+            }
             ExistingFfmpeg::Replace => eprintln!(
                 "FFmpeg at {} is present but unusable, looking for a replacement: {}",
                 existing.display(),
@@ -6012,16 +6158,24 @@ fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
             check_ffmpeg_pair,
         )
     };
+    let kept = installed_intel.clone();
     if let MacFfmpegNext::Use(path) = next_macos_ffmpeg(installed_intel, url_override, find_system)
     {
-        return Ok(path);
+        // Step 4 hands back the data-folder pair itself; anything else is an
+        // installed system pair from step 3.
+        let source = if kept.as_ref() == Some(&path) {
+            FfmpegSource::DataFolder
+        } else {
+            FfmpegSource::System
+        };
+        return Ok((path, source));
     }
 
-    download_macos_ffmpeg(data_dir)?;
+    let url = download_macos_ffmpeg(data_dir)?;
     let portable =
         ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
     verify_ffmpeg_pair(&portable)?;
-    Ok(portable)
+    Ok((portable, FfmpegSource::Download(url)))
 }
 
 // An override hash from `env_var`, trimmed and lowercased, or None if unset/
@@ -6098,6 +6252,25 @@ fn download_macos_ffmpeg_zip_source(
     Ok(())
 }
 
+// One of shaka-project's raw per-architecture binaries ("ffmpeg" or "ffprobe",
+// "arm64" or "x64").
+#[cfg(any(target_os = "macos", test))]
+fn shaka_binary_url(binary: &str, arch: &str) -> String {
+    format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/{binary}-osx-{arch}")
+}
+
+// The ffmpeg URL a macOS download source fetched, for config.json's
+// ffmpegSource (#858). `override_url` is STEMDECK_FFMPEG_URL, used only by
+// MacDownloadSource::Override.
+#[cfg(any(target_os = "macos", test))]
+fn macos_source_url(source: MacDownloadSource, host: &str, override_url: &str) -> String {
+    match source {
+        MacDownloadSource::Override => override_url.to_string(),
+        MacDownloadSource::Primary => shaka_binary_url("ffmpeg", host),
+        MacDownloadSource::Fallback => DEFAULT_MACOS_FFMPEG_URL.to_string(),
+    }
+}
+
 /// Primary source: shaka-project's per-architecture builds, published as raw
 /// (non-zip) binaries -- downloaded straight into `ffmpeg_dir` (the staging
 /// folder), no extraction step.
@@ -6108,8 +6281,8 @@ fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
         "arm64" => (SHAKA_FFMPEG_SHA256_ARM64, SHAKA_FFPROBE_SHA256_ARM64),
         _ => (SHAKA_FFMPEG_SHA256_X64, SHAKA_FFPROBE_SHA256_X64),
     };
-    let ffmpeg_url = format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/ffmpeg-osx-{arch}");
-    let ffprobe_url = format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/ffprobe-osx-{arch}");
+    let ffmpeg_url = shaka_binary_url("ffmpeg", arch);
+    let ffprobe_url = shaka_binary_url("ffprobe", arch);
     let ffmpeg_target = ffmpeg_dir.join("ffmpeg");
     let ffprobe_target = ffmpeg_dir.join("ffprobe");
 
@@ -6133,8 +6306,9 @@ fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Ok is the ffmpeg URL that was installed.
 #[cfg(target_os = "macos")]
-fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
+fn download_macos_ffmpeg(data_dir: &Path) -> Result<String, String> {
     let downloads = data_dir.join("downloads");
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
@@ -6150,8 +6324,10 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     // prune_downloads empties.
     let staged = ffmpeg_dir.join("staged");
     let host = macos_arch_suffix(std::env::consts::ARCH);
-    let result = download_macos_ffmpeg_sources(host, &downloads, &staged)
-        .and_then(|()| install_staged_ffmpeg(&staged, &ffmpeg_dir));
+    let result = download_macos_ffmpeg_sources(host, &downloads, &staged).and_then(|url| {
+        install_staged_ffmpeg(&staged, &ffmpeg_dir)?;
+        Ok(url)
+    });
     let _ = fs::remove_dir_all(&staged);
     result
 }
@@ -6231,12 +6407,13 @@ fn fetch_macos_source(
     }
 }
 
+// Ok is the ffmpeg URL of the source that was accepted.
 #[cfg(target_os = "macos")]
 fn download_macos_ffmpeg_sources(
     host: &str,
     downloads: &Path,
     staged: &Path,
-) -> Result<(), String> {
+) -> Result<String, String> {
     // Primary: shaka-project's per-architecture builds on GitHub Releases
     // (GitHub's global CDN) -- the same class of fix that already solved this
     // for Windows (#248, off gyan.dev's single mirror). evermeet.cx is the
@@ -6283,7 +6460,10 @@ fn download_macos_ffmpeg_sources(
                 .map_err(|e| format!("It downloaded, but StemDeck could not use it: {e}"))
         });
         match result {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                let override_url = env::var("STEMDECK_FFMPEG_URL").unwrap_or_default();
+                return Ok(macos_source_url(source, host, &override_url));
+            }
             Err(err) => {
                 eprintln!("FFmpeg source failed ({}): {err}", source.label());
                 attempts.push(format!("{}: {err}", source.label()));
@@ -6914,8 +7094,18 @@ fn replace_stale_ffmpeg_or_keep(data_dir: &Path) {
     );
 }
 
-fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
+fn write_setup_config(
+    data_dir: &Path,
+    ffmpeg: &Path,
+    source: &FfmpegSource,
+    host: &str,
+) -> Result<(), String> {
     let ffprobe = ffprobe_beside(ffmpeg);
+    let arch = binary_arch(ffmpeg);
+    if let Some(notice) = translated_ffmpeg_notice(host, arch) {
+        eprintln!("{notice}");
+        append_to_setup_log(data_dir, notice);
+    }
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -6940,18 +7130,14 @@ fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
                 "ffprobePath",
                 serde_json::json!(ffprobe.display().to_string()),
             ),
+            // What was actually used (#858): the URL a download came from,
+            // or where an existing pair was found. It used to be the default
+            // download URL whatever happened.
             (
                 "ffmpegSource",
-                serde_json::json!(env::var("STEMDECK_FFMPEG_URL").unwrap_or_else(|_| {
-                    if cfg!(windows) {
-                        DEFAULT_WINDOWS_FFMPEG_URL.to_string()
-                    } else if cfg!(target_os = "macos") {
-                        DEFAULT_MACOS_FFMPEG_URL.to_string()
-                    } else {
-                        "system PATH".to_string()
-                    }
-                })),
+                serde_json::json!(source.config_value(ffmpeg)),
             ),
+            ("ffmpegArch", serde_json::json!(arch)),
             ("updatedAt", serde_json::json!(updated_at)),
         ],
     )
@@ -8898,6 +9084,138 @@ mod tests {
         for source in [Override, Primary, Fallback] {
             assert!(source.label().starts_with("Download from"));
         }
+    }
+
+    #[test]
+    fn macos_source_url_names_the_build_that_was_accepted() {
+        use super::MacDownloadSource::{Fallback, Override, Primary};
+        let url = super::macos_source_url;
+        assert_eq!(
+            url(Primary, "arm64", ""),
+            "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-osx-arm64"
+        );
+        assert!(url(Primary, "x64", "").ends_with("/ffmpeg-osx-x64"));
+        assert_eq!(url(Fallback, "arm64", ""), super::DEFAULT_MACOS_FFMPEG_URL);
+        assert_eq!(
+            url(Override, "arm64", "https://example.test/ffmpeg.zip"),
+            "https://example.test/ffmpeg.zip"
+        );
+    }
+
+    #[test]
+    fn ffmpeg_source_config_value_says_where_the_pair_came_from() {
+        use super::FfmpegSource;
+        let flat = PathBuf::from("/data/ffmpeg/ffmpeg");
+        let url = "https://example.test/ffmpeg-osx-arm64".to_string();
+        assert_eq!(FfmpegSource::Download(url.clone()).config_value(&flat), url);
+        assert_eq!(
+            FfmpegSource::existing(true).config_value(Path::new("/opt/mine/ffmpeg")),
+            "STEMDECK_FFMPEG"
+        );
+        assert_eq!(
+            FfmpegSource::existing(false).config_value(&flat),
+            "data folder"
+        );
+        // A bare name came through PATH, the old value; a full path is an install.
+        assert_eq!(
+            FfmpegSource::System.config_value(Path::new("ffmpeg")),
+            "system PATH"
+        );
+        assert_eq!(
+            FfmpegSource::System.config_value(Path::new("/opt/homebrew/bin/ffmpeg")),
+            "system install"
+        );
+    }
+
+    #[test]
+    fn binary_arch_label_reads_macho_elf_and_pe_without_guessing() {
+        use super::{binary_arch_label, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        assert_eq!(binary_arch_label(&thin_macho(ARM)), "arm64");
+        assert_eq!(binary_arch_label(&thin_macho(X86)), "x86_64");
+        assert_eq!(binary_arch_label(&fat_macho(&[X86, ARM])), "universal");
+        assert_eq!(binary_arch_label(&fat_macho(&[0x0000_0012])), "unknown");
+
+        let elf = |little: bool, machine: u16| {
+            let mut h = vec![0u8; 64];
+            h[..4].copy_from_slice(b"\x7fELF");
+            h[5] = if little { 1 } else { 2 };
+            let bytes = if little {
+                machine.to_le_bytes()
+            } else {
+                machine.to_be_bytes()
+            };
+            h[18..20].copy_from_slice(&bytes);
+            h
+        };
+        assert_eq!(binary_arch_label(&elf(true, 0x3e)), "x86_64");
+        assert_eq!(binary_arch_label(&elf(true, 0xb7)), "arm64");
+        assert_eq!(binary_arch_label(&elf(false, 0xb7)), "arm64");
+        assert_eq!(binary_arch_label(&elf(true, 0x28)), "unknown");
+
+        let pe = |machine: u16| {
+            let mut h = vec![0u8; 0x100];
+            h[..2].copy_from_slice(b"MZ");
+            h[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+            h[0x80..0x84].copy_from_slice(b"PE\0\0");
+            h[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+            h
+        };
+        assert_eq!(binary_arch_label(&pe(0x8664)), "x86_64");
+        assert_eq!(binary_arch_label(&pe(0xaa64)), "arm64");
+        // An e_lfanew past the end, a script, an empty file: unknown, not a guess.
+        let mut short_pe = pe(0x8664);
+        short_pe.truncate(0x82);
+        assert_eq!(binary_arch_label(&short_pe), "unknown");
+        assert_eq!(binary_arch_label(b"#!/bin/sh\nexec ffmpeg"), "unknown");
+        assert_eq!(binary_arch_label(&[]), "unknown");
+    }
+
+    #[test]
+    fn translated_ffmpeg_notice_only_for_intel_on_arm() {
+        let notice = super::translated_ffmpeg_notice;
+        assert!(notice("aarch64", "x86_64").is_some_and(|n| n.contains("Rosetta")));
+        assert!(notice("aarch64", "arm64").is_none());
+        assert!(notice("aarch64", "universal").is_none());
+        assert!(notice("aarch64", "unknown").is_none());
+        assert!(notice("x86_64", "x86_64").is_none());
+        assert!(notice("aarch64", "x86_64").is_some_and(|n| n.is_ascii()));
+    }
+
+    #[test]
+    fn write_setup_config_records_the_real_source_and_arch() {
+        use super::MACHO_CPU_TYPE_X86_64 as X86;
+        // The evermeet fallback installed on an Apple Silicon Mac.
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg_dir = dir.path().join("ffmpeg");
+        fs::create_dir_all(&ffmpeg_dir).unwrap();
+        let ffmpeg = ffmpeg_dir.join("ffmpeg");
+        fs::write(&ffmpeg, thin_macho(X86)).unwrap();
+        let source = super::FfmpegSource::Download(super::DEFAULT_MACOS_FFMPEG_URL.to_string());
+        super::write_setup_config(dir.path(), &ffmpeg, &source, "aarch64").unwrap();
+
+        let text = fs::read_to_string(dir.path().join("config.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(config["ffmpegSource"], super::DEFAULT_MACOS_FFMPEG_URL);
+        assert_eq!(config["ffmpegArch"], "x86_64");
+        let log = fs::read_to_string(dir.path().join("logs").join("setup.log")).unwrap();
+        assert!(log.contains("built for x86_64"), "{log}");
+
+        // A pair placed by hand, native: recorded as such, and no notice.
+        let other = tempfile::tempdir().unwrap();
+        let arm = other.path().join("ffmpeg");
+        fs::write(&arm, thin_macho(super::MACHO_CPU_TYPE_ARM64)).unwrap();
+        super::write_setup_config(
+            other.path(),
+            &arm,
+            &super::FfmpegSource::DataFolder,
+            "aarch64",
+        )
+        .unwrap();
+        let text = fs::read_to_string(other.path().join("config.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(config["ffmpegSource"], "data folder");
+        assert_eq!(config["ffmpegArch"], "arm64");
+        assert!(!other.path().join("logs").join("setup.log").exists());
     }
 
     #[test]
