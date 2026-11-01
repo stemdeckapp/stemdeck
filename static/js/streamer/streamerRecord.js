@@ -28,7 +28,7 @@ import { requestTakesReload } from "../capture/takeLanes.js";
 import { startCameraRecording, recorderSupported } from "../video/cameraRecorder.js";
 import { audioEngine, playbackSpeed } from "../state.js";
 import { transport, togglePlayPause, setPlayheadTime } from "../transport.js";
-import { nextRecordState, isTakeOpen, startPoint, outputPixels, videoBitrate } from "./recordModel.js";
+import { nextRecordState, isTakeOpen, startPoint, outputPixels, videoBitrate, performanceTrackId } from "./recordModel.js";
 import { resolutionOf } from "./outputSettings.js";
 
 const TRACK_KEY = (jobId) => `stemdeck:streamer:track:${jobId}`;
@@ -135,11 +135,10 @@ async function ensureTrack(jobId, name) {
   } catch (err) {
     console.warn("[streamer] reading the song's tracks failed:", err);
   }
-  const found = (kept && tracks.find((tr) => tr.id === kept))
-    || tracks.filter((tr) => tr.kind === "video" && tr.name === name).pop();
+  const found = performanceTrackId(tracks, kept, name);
   if (found) {
-    writeKept(TRACK_KEY(jobId), found.id);
-    return found.id;
+    writeKept(TRACK_KEY(jobId), found);
+    return found;
   }
   const track = await createTrack(jobId, { name, kind: "video" });
   writeKept(TRACK_KEY(jobId), track.id);
@@ -350,6 +349,22 @@ export function markExport(event, extra = {}) {
     rec.jobId = extra.jobId ?? rec.jobId;
   }
   set(event, extra);
+}
+
+/**
+ * A take of the song's Performance track is the one that plays (chosen in
+ * the timeline's take lanes, or followed there): it becomes the take lane's
+ * take, and the track is kept as the song's Performance track (as recording
+ * into it would keep it). Never while a take is open or exporting (the take
+ * lanes are locked then).
+ */
+export function keepChosenTake(jobId, trackId, takeId) {
+  if (!jobId || !trackId || !takeId || isTakeOpen(rec.state) || rec.state === "exporting") return false;
+  writeKept(TRACK_KEY(jobId), trackId);
+  writeKept(LAST_TAKE_KEY(jobId), takeId);
+  // The take just recorded (saved or exported) is no longer the lane's.
+  if (rec.jobId === jobId && rec.takeId && rec.takeId !== takeId) set("reset", { takeId: null });
+  return true;
 }
 
 /** The take `takeId` of `jobId` is gone from the server (deleted in

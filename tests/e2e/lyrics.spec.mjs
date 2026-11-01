@@ -381,7 +381,7 @@ test.describe("lyrics tab", () => {
     await openTrack(page);
     await showLyricsTab(page);
     await expect(page.locator("#lyricsStatus")).toHaveText(
-      "Could not reach LRCLIB. Check your connection and try again.",
+      "LRCLIB did not answer. It may be down for a moment. Try again shortly.",
     );
     // An error status stays in the tab, not floated over the top bar the way
     // the error banner's rules once took every element marked "error".

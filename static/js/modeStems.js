@@ -186,9 +186,52 @@ function applyIfChanged(jobId, mode) {
   const want = layoutSignature(layoutLanes(layout, new Set(song.present)));
   const shown = shownLaneLayout();
   setLaneLayout(jobId, { ...layout, songSelected: song.songSelected, extracted: extractedStems() });
-  if (shown && shown.jobId === jobId && shown.sig === want) return false;
+  if (shown && shown.jobId === jobId && shown.sig === want && !performanceLaneStale(jobId)) return false;
   reloadKeepingPlace(jobId);
   return true;
+}
+
+// ── Performance's own track ──
+//
+// The video track Performance records its takes into (streamer/
+// streamerRecord.js) is Performance's alone. Outside it the track is no lane
+// at all: Practice and Advanced show no row, take folder or take for it, never
+// play it and never export it (hidden but still sounding would make the song
+// differ from what the screen shows). Its takes, the take that plays, its
+// folder's open state and its mix in Performance are not touched; only what
+// is loaded changes, so opening or closing Performance on a song that has the
+// track reloads the lanes with the place kept.
+
+// (jobId, tracks) => the id of the song's Performance track among `tracks`,
+// or null. streamer.js sets it: the track is Performance's to name.
+let performanceTrack = () => null;
+// What the last load decided: { jobId, id (null: the song has none), shown }.
+let performanceLane = { jobId: null, id: null, shown: false };
+
+export function setPerformanceTrackRule(fn) {
+  performanceTrack = typeof fn === "function" ? fn : () => null;
+}
+
+/** `jobId`'s tracks (the server's list) as the mode in force shows them:
+ * without Performance's own track unless Performance is open. */
+export function shownTracks(jobId, tracks) {
+  const list = Array.isArray(tracks) ? tracks : [];
+  let id = null;
+  try {
+    id = performanceTrack(jobId, list);
+  } catch (err) {
+    console.warn("[modeStems] finding the Performance track failed:", err);
+  }
+  const shown = mixModeInForce() === "streamer";
+  performanceLane = { jobId, id, shown };
+  return id && !shown ? list.filter((tr) => tr?.id !== id) : list;
+}
+
+/** The loaded lanes show or hide `jobId`'s Performance track against what
+ * the mode in force wants. */
+function performanceLaneStale(jobId) {
+  const p = performanceLane;
+  return p.jobId === jobId && Boolean(p.id) && p.shown !== (mixModeInForce() === "streamer");
 }
 
 /**

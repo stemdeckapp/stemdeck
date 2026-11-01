@@ -1017,7 +1017,7 @@ test(title("V2"), async ({ app }, testInfo) => {
 });
 
 // Steps: turn off the network; open a track, its Lyrics, click Look up again.
-// Expect: "Could not reach LRCLIB. Check your connection and try again." in
+// Expect: "LRCLIB did not answer. It may be down for a moment. Try again shortly." in
 // the Lyrics panel; nothing floats over the top bar.
 //
 // The page asks the server to look lyrics up (#719), and the server answers
@@ -1036,7 +1036,7 @@ test(title("E4"), async ({ app }, testInfo) => {
   try {
     await openTrack(page, id);
     await openLyrics(page);
-    const offline = "Could not reach LRCLIB. Check your connection and try again.";
+    const offline = "LRCLIB did not answer. It may be down for a moment. Try again shortly.";
     await expect(page.locator("#lyricsPanel #lyricsStatus")).toHaveText(offline, { timeout: 30_000 });
     const again = page.locator("#lyricsVersions .lyrics-link", { hasText: "Look up again" });
     await expect(again).toBeVisible();

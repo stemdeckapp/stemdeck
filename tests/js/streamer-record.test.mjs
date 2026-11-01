@@ -2,6 +2,7 @@
 import {
   RECORD_STATES, nextRecordState, isTakeOpen, startPoint, shouldAutoStop,
   outputPixels, videoBitrate, exportFileName, buildRenderRequest, isNoEncoder, BITRATE_MAX, CAMERA_CAP_BPS, rawExtension,
+  performanceTrackId,
 } from "../../static/js/streamer/recordModel.js";
 
 let failed = 0;
@@ -107,6 +108,22 @@ check("the raw recording is named after what was recorded", rawExtension("video/
   const withPart = buildRenderRequest({ mix, remove: "bass", range: { in: 1, out: 4 } });
   const whole = buildRenderRequest({ mix, range: { in: 1, out: 4 } });
   check("the part played goes to the server as remove_stem, the whole song sends none", withPart.remove_stem === "bass" && !("remove_stem" in whole));
+}
+
+// Which track is the Performance track: the kept one while it exists, else
+// the last video track of that name, never an audio track.
+{
+  const tracks = [
+    { id: "k00000001", kind: "audio", name: "Performance" },
+    { id: "k00000002", kind: "video", name: "Performance" },
+    { id: "k00000003", kind: "video", name: "Camera" },
+    { id: "k00000004", kind: "video", name: "Performance" },
+  ];
+  check("the kept track while it is there", performanceTrackId(tracks, "k00000003", "Performance") === "k00000003");
+  check("a kept track that is gone: the last video track of the name", performanceTrackId(tracks, "k0000000f", "Performance") === "k00000004");
+  check("no kept track: the last video track of the name", performanceTrackId(tracks, null, "Performance") === "k00000004");
+  check("an audio track of the name is never it", performanceTrackId([tracks[0]], null, "Performance") === null);
+  check("none: no track, no list", performanceTrackId([], null, "Performance") === null && performanceTrackId(null, "k00000002", "Performance") === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

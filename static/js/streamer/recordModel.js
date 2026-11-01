@@ -58,6 +58,17 @@ export function takeHoldStep(held, { open, trackId }) {
 }
 
 /**
+ * Which of a song's `tracks` is its Performance track: the one this browser
+ * kept (`keptId`) while it is still there, else the last video track called
+ * `name` (another browser's), else none (null).
+ */
+export function performanceTrackId(tracks, keptId, name) {
+  const list = Array.isArray(tracks) ? tracks : [];
+  if (keptId && list.some((tr) => tr?.id === keptId)) return keptId;
+  return list.filter((tr) => tr?.kind === "video" && tr.name === name).pop()?.id ?? null;
+}
+
+/**
  * A new take was just saved: unmute its track once, so Play plays it with
  * the backing. Due when the song's lanes have reloaded with the new take
  * (`peaksReady`), the take track is a lane (`loaded`), the open mix record is

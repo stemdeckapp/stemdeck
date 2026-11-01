@@ -36,7 +36,8 @@ import {
   trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery,
 } from "./streamerModel.js";
 import { getBeats, getBeatGridSnap } from "../beatgrid.js";
-import { getTracks } from "../capture/takeLanes.js";
+import { getTracks, selectTake, twoPress, requestTakesReload } from "../capture/takeLanes.js";
+import { deleteTake } from "../capture/takeUpload.js";
 import { loadScene, saveScene, flushScene } from "./sceneStore.js";
 import {
   SETTINGS_KEY, NONE, defaultRecordingSettings, parseRecordingSettings, serializeRecordingSettings,
@@ -56,17 +57,20 @@ import {
 import { loadFilmstrip, drawFilmstrip } from "../video/videoLane.js";
 import { openRecordingSettings } from "../capture/recordingSettings.js";
 import { storeGet, storeSet } from "../utils.js";
+import { showError } from "../job.js";
 import { toggleStemMute, getMixMode, holdLaneSilent } from "../mixer.js";
 import { isMixSwitching } from "../mixMode.js";
+import { setPerformanceTrackRule } from "../modeStems.js";
 import {
   startRecording, stopRecording, drawOutput, recordState, takeOpen, onRecordChange, recordBlock,
-  lastTake, streamerTrackId, markExport, takeInfo, forgetTake,
+  lastTake, streamerTrackId, markExport, takeInfo, forgetTake, keepChosenTake,
 } from "./streamerRecord.js";
 import { encoderNote } from "../videoEncoderNote.js";
 import { renderRequest, exportTake, cancelExport, saveRawRecording, rawRecordingType, canRevealSaved, revealSaved, forgetSaved } from "./streamerExport.js";
-import { shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep } from "./recordModel.js";
+import { shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep, performanceTrackId } from "./recordModel.js";
 import { renderStage } from "./stageRenderer.js";
 import { reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio } from "./reviewModel.js";
+import { takeLaneRows, showsTakeLanes, chooseAction, followTake, scrollTarget, takeLanesSig } from "./takeListModel.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
@@ -186,6 +190,7 @@ const ICONS = {
   pause: [["rect", { x: 6, y: 5, width: 4, height: 14, rx: 1, fill: "currentColor", stroke: "none" }], ["rect", { x: 14, y: 5, width: 4, height: 14, rx: 1, fill: "currentColor", stroke: "none" }]],
   stop: [["rect", { x: 6, y: 6, width: 12, height: 12, rx: 1.5, fill: "currentColor", stroke: "none" }]],
   speaker: [["path", { d: "M4 9h4l5-4v14l-5-4H4z", fill: "currentColor" }], "M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"],
+  trash: ["M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"],
 };
 function selectBox(cls, leadIcon) {
   const wrap = el("div", `sm-select ${cls || ""}`.trim());
@@ -544,19 +549,30 @@ function buildTimeline() {
   head.append(headTime, el("span", "sm-tl-playhead-line"));
   overlay.append(head);
 
-  grid.append(mask, markers, noSections, ruler, videoLabel, video, audioLabels, audio, dims, overlay, tip);
+  // The take lanes: one row per take of the Performance track under the take
+  // lane, oldest on top (paintTakeRows), from two takes. Each row's label (a
+  // button) and its wave make that take the one that plays.
+  const takeLabels = el("div", "sm-tl-takes-labels");
+  takeLabels.hidden = true;
+  const takeRows = el("div", "sm-tl-takes");
+  takeRows.hidden = true;
+  takeRows.setAttribute("aria-hidden", "true");
+
+  grid.append(mask, markers, noSections, ruler, videoLabel, video, audioLabels, audio, takeLabels, takeRows, dims, overlay, tip);
   scroll.append(grid);
   scroll.addEventListener("scroll", () => { painted.lanes = null; });
-  // A plain wheel scrolls the zoomed song sideways.
+  // A plain wheel scrolls the zoomed song sideways, except over the take
+  // lanes, where it scrolls through the rows.
   scroll.addEventListener("wheel", (e) => {
     if (zoom <= 0 || e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (e.target instanceof Element && e.target.closest(".sm-tl-takes, .sm-tl-takes-labels")) return;
     e.preventDefault();
     scroll.scrollLeft += e.deltaY;
   }, { passive: false });
   card.append(partBox, zoomBox, scroll);
   return {
     partSel: partSel.sel,
-    takeHint, takeBlock, film, videoNote, takeMute,
+    takeHint, takeBlock, film, videoNote, takeMute, takeLabels, takeRows, takeRowEls: [],
     card, zoomBox, zTrack, zFill, zThumb, zOut, zIn, scroll, grid, mask, markers, ruler, video, audio, lanes,
     range, trimIn, trimOut, dimL, dimR, tip, head, headTime, noStems, noSections,
   };
@@ -2444,6 +2460,7 @@ function paintTimeline(tNow) {
   if (tl.takeHint.hidden === hint) tl.takeHint.hidden = !hint;
   const noStems = !dur || !part.loaded || Boolean(specs[0]);
   if (tl.noStems.hidden !== noStems) tl.noStems.hidden = noStems;
+  paintTakeRows({ src, left, view, pps, dur, color: specs[1]?.color || ui.accent });
   paintTakeBlock(x, dur);
   paintTakeMute();
 }
@@ -2463,6 +2480,193 @@ function paintTakeMute() {
   btn.disabled = takeOpen();
   btn.classList.toggle("off", muted);
   btn.setAttribute("aria-pressed", String(muted));
+}
+
+/** The song's Performance track as the studio loaded it (takeLanes.getTracks:
+ * with its takes and the one that plays), or null. Only a track the loaded
+ * song has, so the last song's list never shows while the next one loads. */
+function performanceTrack() {
+  const job = currentJobId;
+  if (!job) return null;
+  const tracks = getTracks();
+  const id = performanceTrackId(tracks, streamerTrackId(job), t("streamer.trackName"));
+  if (!id || trackIndex[id] === undefined) return null;
+  return tracks.find((tr) => tr.id === id) || null;
+}
+
+/** Nothing may change the take lane's take now: a take records or exports. */
+function takesLocked() {
+  return takeOpen() || Boolean(exporting);
+}
+
+// The take being made the one that plays (its row says so until the lanes reload).
+let choosingTake = null;
+// A take chosen here that the song's tracks do not list as playing yet (they
+// reload once the server has it): the take lane keeps it meanwhile.
+let pendingTake = null;
+// A take deleted from its row ({ job, take }) until the song's takes reload
+// without it: then the take lane shows the take that plays, if any is left.
+let deletedTake = null;
+// The rows the take lanes last showed ({ track, ids }, or null while hidden),
+// so a take recorded since scrolls into view.
+let shownTakes = null;
+
+/** The take lanes: one row per take of the Performance track under the take
+ * lane, oldest on top, newest at the bottom, from two takes. The row of the
+ * take that plays is marked, the others dimmed. The take lane above (and the
+ * video lane, the review and the export) follow the take that plays. */
+function paintTakeRows({ src, left, view, pps, dur, color }) {
+  const tl = ui.builder.timeline;
+  const job = currentJobId;
+  const track = performanceTrack();
+  const rows = track ? takeLaneRows(track) : [];
+  const show = showsTakeLanes(rows);
+  const locked = takesLocked();
+  if (pendingTake && (pendingTake.job !== job || !track || rows.find((r) => r.active)?.id === pendingTake.take)) pendingTake = null;
+  if (deletedTake && (deletedTake.job !== job || !rows.some((r) => r.id === deletedTake.take))) {
+    // The server made the newest remaining take the one that plays (or none
+    // is left); with one take left the rows hide, so it is followed here.
+    const active = rows.find((r) => r.active);
+    if (deletedTake.job === job && track && active && !lastTake(job) && keepChosenTake(job, track.id, active.id)) takeChanged();
+    deletedTake = null;
+  }
+  if (track && !pendingTake && !choosingTake && !deletedTake) {
+    const follow = followTake(rows, lastTake(job), { locked });
+    if (follow && keepChosenTake(job, track.id, follow)) takeChanged();
+  }
+  const marked = choosingTake || pendingTake?.take || "";
+  const sig = `${show}|${takeLanesSig(rows, locked)}|${marked}|${t("streamer.takeLane.name", { n: 1 })}`;
+  if (painted.takeRows !== sig) {
+    painted.takeRows = sig;
+    painted.takeRowsDraw = null;
+    buildTakeRows(show ? rows : [], locked, marked);
+    const before = shownTakes && track && shownTakes.track === track.id ? shownTakes.ids : null;
+    const target = scrollTarget(before, rows);
+    shownTakes = show ? { track: track.id, ids: rows.map((r) => r.id) } : null;
+    if (target) scrollTakeRowIntoView(target);
+  }
+  if (!show) return;
+  const drawSig = `${view}|${left}|${pps}|${dur}|${color}|${tl.takeRows.clientHeight}`;
+  if (painted.takeRowsDraw === drawSig && painted.takeRowsSrc === src) return;
+  painted.takeRowsDraw = drawSig;
+  painted.takeRowsSrc = src;
+  for (const row of tl.takeRowEls) {
+    drawWave(row.canvas, { names: [row.id], take: true }, src, left, view, pps, dur, color);
+  }
+}
+
+/** The rows' labels (buttons) and waves, for `rows` (none: hidden). */
+function buildTakeRows(rows, locked, marked) {
+  const tl = ui.builder.timeline;
+  const show = rows.length > 0;
+  tl.takeLabels.hidden = !show;
+  tl.takeRows.hidden = !show;
+  tl.takeRowEls = rows.map((row) => {
+    const name = t("streamer.takeLane.name", { n: row.n });
+    const aria = t(row.active ? "streamer.takeLane.playingAria" : "streamer.takeLane.playAria", { take: name });
+    const head = el("div", "sm-tl-take-head");
+    head.dataset.takeId = row.id;
+    const label = button("sm-tl-label sm-tl-take-label");
+    label.dataset.takeId = row.id;
+    label.setAttribute("aria-pressed", String(row.active));
+    label.setAttribute("aria-label", aria);
+    label.title = aria;
+    label.disabled = locked;
+    label.append(el("span", "sm-tl-label-name", name));
+    // Delete, at the label's right: shown on hover or focus, always in the
+    // tab order. Two presses ("Delete? Press again"), no undo, as in the
+    // mixer's take menu.
+    const del = button("sm-tl-take-del");
+    del.dataset.takeId = row.id;
+    del.append(icon(ICONS.trash, { size: 12, width: 2 }));
+    const delName = t("streamer.takeLane.deleteAria", { take: name });
+    del.setAttribute("aria-label", delName);
+    del.title = delName;
+    del.disabled = locked;
+    del.addEventListener("click", (e) => e.stopPropagation());
+    twoPress(del, t("rec.take.deleteConfirm"), () => deleteRowTake(row.id, del));
+    head.append(label, del);
+    const lane = el("div", "sm-tl-take-row");
+    lane.dataset.takeId = row.id;
+    lane.title = aria;
+    const canvas = el("canvas", "sm-tl-take-wave");
+    lane.append(canvas);
+    for (const node of [label, lane]) {
+      node.classList.toggle("playing", row.active);
+      node.classList.toggle("choosing", marked === row.id && !row.active);
+      node.classList.toggle("locked", locked);
+      node.addEventListener("click", (e) => {
+        e.stopPropagation();
+        chooseTake(row.id);
+      });
+    }
+    return { id: row.id, head, label, lane, canvas };
+  });
+  tl.takeLabels.replaceChildren(...tl.takeRowEls.map((r) => r.head));
+  tl.takeRows.replaceChildren(...tl.takeRowEls.map((r) => r.lane));
+}
+
+/** Delete take `takeId` of the Performance track (its row's Delete, pressed
+ * twice). The rows and the take lane follow once the song's takes reload. */
+async function deleteRowTake(takeId, btn) {
+  const job = currentJobId;
+  const track = performanceTrack();
+  if (!job || !track || takesLocked() || !track.takes?.some((tk) => tk.id === takeId)) return;
+  btn.disabled = true;
+  try {
+    await deleteTake(job, takeId);
+  } catch (err) {
+    console.warn("[streamer] deleting the take failed:", err);
+    showError(t("rec.take.failed"));
+    btn.disabled = false;
+    return;
+  }
+  if (currentJobId !== job) return;
+  if (pendingTake?.take === takeId) pendingTake = null;
+  deletedTake = { job, take: takeId };
+  forgetTake(job, takeId);
+  takeChanged();
+  painted.takeRows = null;
+  requestTakesReload(job);
+}
+
+/** Scroll the timeline up or down (never sideways) until the row of `takeId` shows. */
+function scrollTakeRowIntoView(takeId) {
+  const tl = ui.builder.timeline;
+  const row = tl.takeRowEls.find((r) => r.id === takeId)?.lane;
+  if (!row) return;
+  const box = tl.scroll.getBoundingClientRect();
+  const top = box.top + tl.scroll.clientTop;
+  const bottom = top + tl.scroll.clientHeight;
+  const r = row.getBoundingClientRect();
+  if (r.bottom > bottom) tl.scroll.scrollTop += r.bottom - bottom + 4;
+  else if (r.top < top) tl.scroll.scrollTop -= top - r.top + 4;
+}
+
+/** The take lane's take changed: it, its mute, the video lane, the review
+ * and the export follow. */
+function takeChanged() {
+  for (const k of ["exp", "takeMute", "takeBlock", "lanes", "review", "reviewView"]) painted[k] = null;
+}
+
+/** Make `takeId` the take that plays (the take folder's own call), and the
+ * one the stage's take lane, review and export show. */
+async function chooseTake(takeId) {
+  const job = currentJobId;
+  const track = performanceTrack();
+  if (!job || !track || choosingTake) return;
+  const action = chooseAction(takeLaneRows(track), takeId, { locked: takesLocked(), laneTake: lastTake(job) });
+  if (action === "none") return;
+  if (action === "select") {
+    choosingTake = takeId;
+    painted.takeRows = null;
+    const ok = await selectTake(track.id, takeId);
+    choosingTake = null;
+    painted.takeRows = null;
+    if (!ok || currentJobId !== job) return;
+    pendingTake = { job, take: takeId };
+  }
+  if (keepChosenTake(job, track.id, takeId)) takeChanged();
 }
 
 // Each take's filmstrip, asked once ("loading", "ok" with `loaded`, or
@@ -2552,12 +2756,19 @@ function paintTakeBlock(x, dur) {
 /** One lane: `spec` { names, label, color } (the peaks of `names`), or null. */
 function drawLane(lane, spec, src, left, view, pps, dur) {
   lane.key = spec?.key ?? null;
+  // The saved take this lane draws (the take that plays), for the page to read.
+  lane.canvas.dataset.take = spec?.take ? spec.names[0] : "";
   lane.label.hidden = !spec;
   lane.name.textContent = spec ? spec.label : "";
   lane.label.title = spec ? spec.label : "";
   const color = spec?.color || "#9aa3ad";
   lane.label.style.setProperty("--sm-lane", color);
-  const c = lane.canvas;
+  drawWave(lane.canvas, spec, src, left, view, pps, dur, color);
+}
+
+/** The part of `spec`'s wave in view on canvas `c` (a stem lane, the take
+ * lane, or a take's row). */
+function drawWave(c, spec, src, left, view, pps, dur, color) {
   const w = Math.max(0, Math.min(view, dur * pps - left) - 32);
   c.style.left = `${left + 16}px`;
   c.style.width = `${w}px`;
@@ -2666,6 +2877,9 @@ function onKey(e) {
 // ── Init ──
 
 export function initStreamer() {
+  // The song's Performance track, as recording finds it (streamerRecord.js):
+  // a lane in Performance only (modeStems.js).
+  setPerformanceTrackRule((jobId, tracks) => performanceTrackId(tracks, streamerTrackId(jobId), t("streamer.trackName")));
   // Karaoke opened (the Mode menu): one view at a time.
   document.addEventListener("stemdeck:karaoke-changed", (e) => {
     if (e.detail?.open && open) closeStreamer();

@@ -521,21 +521,24 @@ function buildTakeRow(track, take, playing) {
   return row;
 }
 
-/** Make a take the one its track plays (and so the one the main row shows). */
+/** Make a take the one its track plays (and so the one the main row shows).
+ * Resolves true once the server has it (the lanes then reload), else false. */
 export async function selectTake(trackId, takeId) {
   const track = _tracks.find((tr) => tr.id === trackId);
   const jobId = _jobId;
-  if (!track || !jobId || track.active?.id === takeId) return;
-  if (!track.takes?.some((tk) => tk.id === takeId)) return;
+  if (!track || !jobId || track.active?.id === takeId) return false;
+  if (!track.takes?.some((tk) => tk.id === takeId)) return false;
   const sel = `.take-folder-row[data-folder-of="${trackId}"], .take-folder-lane[data-folder-of="${trackId}"]`;
   for (const r of document.querySelectorAll(sel)) r.classList.toggle("choosing", r.dataset.takeId === takeId);
   try {
     await patchTrack(jobId, trackId, { active_take_id: takeId });
     requestTakesReload(jobId);
+    return true;
   } catch (e) {
     console.warn("[tracks] switching the take failed:", e);
     for (const r of document.querySelectorAll(sel)) r.classList.remove("choosing");
     showError(t("rec.take.failed"));
+    return false;
   }
 }
 
@@ -877,7 +880,9 @@ function deleteToolFor(track) {
   return btn;
 }
 
-function twoPress(btn, confirmText, action) {
+/** Two presses: the first arms `btn` (its text becomes `confirmText`), the
+ * second runs `action`. Shared with Performance's take lanes (streamer.js). */
+export function twoPress(btn, confirmText, action) {
   let armed = false;
   btn.addEventListener("click", async () => {
     if (!armed) {

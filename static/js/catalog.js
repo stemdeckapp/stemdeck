@@ -1,6 +1,6 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
 import { wireUpAudio } from "./player.js";
-import { prepareLayout } from "./modeStems.js";
+import { prepareLayout, shownTracks } from "./modeStems.js";
 import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
 import { activeVersionId, songVersions } from "./versionScope.js";
 import { initSections } from "./sections.js";
@@ -1219,7 +1219,8 @@ async function loadTrackIntoStudio(trackId) {
     track.vocalSplitReason || null,
   );
   if (token !== _loadTrackToken) return;
-  wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, track.tracks)], track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
+  // Performance's own track is a lane in Performance only (modeStems.js).
+  wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
   // Not awaited: the track is already loading, and the answer arrives as a
   // "tracktags" event.

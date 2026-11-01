@@ -472,8 +472,9 @@ html.streamer-open .daw-footer { display: none !important; }
   min-width: max-content;
   display: grid;
   grid-template-columns: var(--sm-label-w) var(--sm-tl-w, 100%);
-  /* zoom row, markers, ruler, gap, video, gap, stems (see .sm-center) */
-  grid-template-rows: var(--sm-tl-rows);
+  /* zoom row, markers, ruler, gap, video, gap, stems (see .sm-center),
+     then the take lanes (none until a song has two takes) */
+  grid-template-rows: var(--sm-tl-rows) auto;
   column-gap: 8px;
   align-content: start;
 }
@@ -720,6 +721,95 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-tl-lane { position: absolute; left: 16px; height: calc(50% - 6px); display: block; pointer-events: none; }
 .sm-tl-lane-0 { top: 4px; }
 .sm-tl-lane-1 { bottom: 4px; }
+/* The take lanes (streamer.js paintTakeRows): one small row per take of the
+   Performance track under the stems, oldest on top, as Logic Pro stacks take
+   lanes. The row of the take that plays is marked in yellow, the others are
+   dimmed. Rows keep their height: past what fits, the timeline scrolls down
+   inside its card (.sm-tl-scroll), the page never grows. */
+.sm-tl-takes-labels, .sm-tl-takes {
+  --sm-take-h: 22px;
+  grid-row: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0 2px;
+}
+.sm-tl-takes-labels[hidden], .sm-tl-takes[hidden] { display: none; }
+.sm-tl-takes-labels { grid-column: 1; position: sticky; left: 0; z-index: 3; }
+.sm-tl-takes { grid-column: 2; }
+/* A row's head: its label and its Delete (on hover or focus; armed, the
+   confirm text runs out over the row's wave). */
+.sm-tl-take-head { position: relative; flex: none; height: var(--sm-take-h); display: flex; gap: 2px; }
+.sm-tl-takes-labels .sm-tl-take-label {
+  position: static;
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  height: 100%;
+  padding: 0 0 0 9px;
+  border-color: var(--sm-edge);
+  background: var(--sm-card);
+  color: var(--sm-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.sm-tl-take-row {
+  position: relative;
+  flex: none;
+  height: var(--sm-take-h);
+  box-sizing: border-box;
+  border: 1px solid var(--sm-line);
+  border-radius: 5px;
+  background: #0d1117;
+  overflow: hidden;
+  cursor: pointer;
+}
+.sm-tl-take-wave { position: absolute; top: 2px; bottom: 2px; left: 16px; height: calc(100% - 4px); display: block; pointer-events: none; }
+/* Not playing: dimmed, brighter under the pointer. */
+.sm-tl-take-label:not(.playing), .sm-tl-take-row:not(.playing) { opacity: .5; }
+.sm-tl-take-label:not(.playing):not(.locked):hover, .sm-tl-take-row:not(.playing):not(.locked):hover { opacity: .85; }
+.sm-tl-take-label.playing, .sm-tl-take-row.playing { border-color: var(--sm-yellow); cursor: default; }
+.sm-tl-take-label.playing { color: var(--sm-text); background: color-mix(in srgb, var(--sm-yellow) 10%, var(--sm-card)); }
+.sm-tl-take-label.choosing, .sm-tl-take-row.choosing { opacity: .85; border-color: var(--sm-yellow); border-style: dashed; }
+.sm-tl-take-label.locked, .sm-tl-take-row.locked { cursor: default; }
+.sm-tl-take-label:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-tl-take-del {
+  flex: none;
+  width: 20px;
+  height: 100%;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--sm-edge);
+  border-radius: 5px;
+  background: var(--sm-card);
+  color: var(--sm-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  opacity: 0;
+}
+.sm-tl-take-head:hover .sm-tl-take-del, .sm-tl-take-del:focus-visible, .sm-tl-take-del.armed { opacity: 1; }
+.sm-tl-take-del:hover:not(:disabled) { border-color: #ff6b70; color: #ff6b70; }
+.sm-tl-take-del:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-tl-take-del:disabled { cursor: default; }
+.sm-tl-take-head:hover .sm-tl-take-del:disabled { opacity: .35; }
+.sm-tl-take-del.armed {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: 0;
+  z-index: 4;
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
+  border-color: #ff6b70;
+  background: #3a1416;
+  color: #ffd2d3;
+  font-weight: 600;
+}
 /* The kept range: yellow box, an in and an out handle. */
 .sm-tl-range {
   position: absolute;
@@ -750,7 +840,7 @@ html.streamer-open .daw-footer { display: none !important; }
 }
 .sm-tl-trim-l { left: -2px; border-radius: 6px 0 0 6px; }
 .sm-tl-trim-r { right: -2px; border-radius: 0 6px 6px 0; }
-.sm-tl-dims { grid-column: 2; grid-row: 5 / 8; position: relative; pointer-events: none; z-index: 1; }
+.sm-tl-dims { grid-column: 2; grid-row: 5 / 9; position: relative; pointer-events: none; z-index: 1; }
 .sm-tl-dim { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: rgba(11, 15, 20, .62); }
 .sm-tl-tip {
   position: absolute;
@@ -1040,6 +1130,7 @@ html.streamer-open .daw-footer { display: none !important; }
 /* Show in folder or Save the raw recording beside it when they fit. */
 .sm-export-row .sm-ib.sm-export-reveal, .sm-export-row .sm-ib.sm-export-raw { height: 38px; }
 .sm-export-go:disabled { opacity: .45; cursor: default; }
+
 @media (prefers-reduced-motion: reduce) {
   .sm-rec.recording .sm-rec-dot { animation: none; }
 }

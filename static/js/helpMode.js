@@ -260,6 +260,11 @@ const HELP = [
   ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.go"],
   ["#streamer .sm-export-reveal", "help.smReveal", null, "streamer.export.reveal"],
   ["#streamer .sm-part", "help.smPart", null, "streamer.part.label"],
+  // The timeline's take lanes (streamer.js paintTakeRows): a row per take of
+  // the Performance track, its label (a button, named "Take 2") and its wave
+  // (named by its title, "Play Take 2"), and its Delete ("Delete Take 2").
+  ["#streamer .sm-tl-take-del", "help.smTakeDelete"],
+  ["#streamer .sm-tl-take-label, #streamer .sm-tl-take-row", "help.smTakeLane"],
   // The Take Timeline's zoom and its trim handles (the handles name themselves).
   ["#streamer .sm-zoom", "help.smZoom", null, "streamer.zoom"],
   ["#streamer .sm-tl-trim", "help.smTrim"],
