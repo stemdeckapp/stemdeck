@@ -92,7 +92,7 @@ All of it, with credits to the people who reported each problem, is in the [rele
 
 <br>
 
-**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card sets up GPU support; later launches start in seconds.
+**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings, and on Windows your songs by default, in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card sets up GPU support; later launches start in seconds.
 
 **macOS.** Open the DMG and drag StemDeck to Applications. StemDeck is not code-signed yet, so clear the quarantine flag once, or macOS will say the app is damaged:
 
@@ -104,7 +104,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 
 **Docker and Unraid.** See [Build from source](docs/build-from-source.md#docker) for the `docker run` line, GPU passthrough and the Unraid volume mapping.
 
-**Updates.** The desktop app tells you when a new version is out and installs it for you.
+**Updates.** The desktop app tells you when a new version is out. On Windows and Linux it usually installs the update for you. A version that changes the Python packages StemDeck runs on is a full download instead, and 0.21.0 is one: about 300 MB on Windows and 420 MB on Linux, once. On Windows, unzip it over your current StemDeck folder. The zip has no files inside `data`, so your songs, models and settings there stay as they are. Unzipped into a new folder, StemDeck starts without the songs from the old `data` folder and downloads FFmpeg and the model again. On macOS, download the new DMG.
 
 </details>
 
