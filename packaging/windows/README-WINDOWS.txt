@@ -17,9 +17,12 @@ Notes
 - Runtime, config, and logs stay under data/, next to StemDeck.exe, not in AppData.
 - FFmpeg is downloaded during first-run setup into data/ffmpeg/.
 - Demucs model weights are downloaded by the backend on first use into data/models/.
-- Your job history and library are stored separately (Documents/StemDeck by default,
-  same as before), not inside this folder -- relocate them anytime from
-  Settings -> StemData location if you'd rather keep them elsewhere.
+- Your library is stored in data/jobs/, unless Documents/StemDeck/jobs already
+  held one from an older install. Move it anytime from Settings -> StemData
+  location if you would rather keep it elsewhere.
+- To install a new version by hand, extract it over this folder. The zip has no
+  files inside data/, so your library, models and settings stay. Extracted into a
+  new folder, StemDeck starts without the songs in this folder's data/jobs/.
 - The empty portable.txt file next to StemDeck.exe is what tells the app to use
   this data/ folder instead of AppData -- don't delete it.
 
@@ -29,4 +32,4 @@ Troubleshooting
 - If setup fails, check internet access and retry.
 - If a job fails, inspect data/logs/ when logs are added.
 - Deleting data/ forces first-run setup to recreate runtime state (ffmpeg and the
-  Demucs model re-download; your job history and library are unaffected).
+  Demucs model re-download). It also deletes a library stored in data/jobs/.
