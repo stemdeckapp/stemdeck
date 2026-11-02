@@ -2134,7 +2134,7 @@ function renderVersionRows(trackId) {
         if (err) {
           del.disabled = false;
           disarm();
-          showError(err);
+          showError(i18nT("versions.failed"));
         }
       });
     });

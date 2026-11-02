@@ -749,8 +749,10 @@ async function postFileJob(file) {
   fd.append("stems", JSON.stringify([...selectedStems]));
   fd.append("vocal_split", String(wantsVocalSplit()));
   const res = await fetch("/api/jobs", { method: "POST", body: fd });
-  const data = await res.json();
+  // A body that is not JSON (a proxy's error page) must not hide the status.
+  const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(responseErrorMessage(res, data));
+  if (!data?.job_id) throw new Error("");
   return data.job_id;
 }
 
@@ -939,8 +941,11 @@ export function wireJobForm() {
       setSubmitProcessing(false);
       fileInput._clear?.();
       if (failure) {
+        console.error("[job] upload failed:", failure);
+        const reason = errorReason(failure);
+        const counts = { queued, total: batch.length };
         showError(
-          `Queued ${queued} of ${batch.length} files: ${failure.message}`,
+          reason ? t("job.batchFailed", { ...counts, message: reason }) : t("job.batchFailedNoReason", counts),
           null,
           { retry: false },
         );
@@ -1002,12 +1007,15 @@ export function wireJobForm() {
     let newSourceUrl = sourceUrl;
     try {
       const res = await fetch(endpoint, fetchInit);
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(responseErrorMessage(res, data));
-      jobId = data.job_id;
+      jobId = data?.job_id;
+      if (!jobId) throw new Error("");
       if (data.source_url) newSourceUrl = data.source_url;
     } catch (err) {
-      showError(t("job.startFailed", { message: err.message }));
+      console.error("[job] import failed to start:", err);
+      const reason = errorReason(err);
+      showError(reason ? t("job.startFailed", { message: reason }) : t("job.startFailedNoReason"));
       setSubmitProcessing(false);
       return;
     }

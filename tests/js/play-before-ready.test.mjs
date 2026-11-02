@@ -238,7 +238,7 @@ function chunked(stems = STEMS) {
   release();
   check("chunked: failed load, ready() is false", (await eng.ready) === false);
   check("chunked: failed load, a waiting Play resolves false", (await p) === false);
-  check("chunked: failed load, the error is reported", /could not load/i.test(eng.getLoadError() || ""), eng.getLoadError());
+  check("chunked: failed load, the error is reported", eng.getLoadError() === "player.loadError.unreachable", eng.getLoadError());
   check("chunked: failed load, reads as not playing", eng.isPlaying() === false);
   await ticks();
   check("chunked: failed load, no onEnded", ev.ended === 0);
@@ -321,7 +321,7 @@ function chunked(stems = STEMS) {
   const eng = createAudioEngine([{ name: "vocals", url: "/s/missing.wav" }], { onEnded: () => ev.ended++ });
   const p = eng.play();
   check("fulldecode: failed load, a waiting Play resolves false", (await p) === false);
-  check("fulldecode: failed load, the error is reported", /could not load/i.test(eng.getLoadError() || ""), eng.getLoadError());
+  check("fulldecode: failed load, the error is reported", eng.getLoadError() === "player.loadError.unreachable", eng.getLoadError());
   check("fulldecode: failed load, reads as not playing", eng.isPlaying() === false);
   check("fulldecode: failed load, no onEnded", ev.ended === 0);
   eng.destroy();

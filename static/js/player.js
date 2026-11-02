@@ -1802,7 +1802,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
             console.warn("[player] audio engine had no usable stems; playback disabled:", reason);
             updateMetronomeAvailability(null, t("click.reason.playbackUnavailable"));
             showPlaybackError(
-              reason || t("player.audioCouldNotLoad"),
+              t(reason || "player.audioCouldNotLoad"),
               t("player.playbackDisabledFull"),
               { jobId, engine: kind, stage: "Loading stems" },
             );
