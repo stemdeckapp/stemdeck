@@ -18,7 +18,8 @@ import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
 import { formatKey } from "./keyLabel.js";
-import { errorReason, responseErrorMessage } from "./errorReason.js";
+import { errorReason, importFailure, responseErrorMessage } from "./errorReason.js";
+import { isReimportableSource } from "./utils.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -347,7 +348,8 @@ window.addEventListener(
 );
 
 // `retry` adds "Try again", which sends the user back to the URL field to start
-// a fresh import: right for an import failure and wrong for anything else.
+// a fresh import: right for a failure that started there and wrong for anything
+// else. A failed link import's own Try again is retryImportAction below.
 // `action` ({ label, run, className }) is that button for anything else: it closes the
 // box and calls `run`, as the Lead + Backing notice does to split again (#832).
 // The close button is always there, so no failure can leave the box stuck open.
@@ -358,8 +360,8 @@ export function showError(message, detail, { retry = true, action = null } = {})
   msg.className = "error-msg";
   msg.textContent = message;
   if (detail) {
-    // Classified cause from the backend (e.g. "out-of-memory — ..."), shown
-    // as a muted secondary line so failures are actionable, not opaque.
+    // The server's own words (for a failed import, what its error_detail says
+    // after the cause), shown as a muted secondary line under the sentence.
     const detailEl = document.createElement("div");
     detailEl.className = "error-detail";
     detailEl.textContent = detail;
@@ -399,6 +401,21 @@ export function showError(message, detail, { retry = true, action = null } = {})
   actions.append(close);
   errorEl.append(errorIcon(), msg, actions);
   errorEl.classList.remove("hidden");
+}
+
+// Try again on a failed link import: the same link imported again, with the
+// same stems, as the library row's Try again does (#175). It used to put the
+// cursor in the link box, which a restore never fills, so a failed restore
+// had no retry. A failed job is replaced by the new one, so its card goes.
+function retryImportAction(url, options, failedJobId = null) {
+  return {
+    label: t("job.tryAgain"),
+    className: "import-retry-btn",
+    run: () => {
+      dismissFailuresByJobId(failedJobId);
+      importFromUrl(url, options);
+    },
+  };
 }
 
 function clearImportError() {
@@ -646,12 +663,20 @@ function applyState(state) {
     stopJobPolling();
     updateTrackStatus(state.job_id, "error");
     setWaveformLoading(false);
-    showError(state.error || t("job.unknownError"), state.error_detail);
+    const failure = importFailure(state);
+    const source = jobSources.get(state.job_id) || state.source_url;
+    showError(failure.message, failure.detail, {
+      retry: false,
+      // An upload has no link to fetch again: its message says to add the file.
+      action: isReimportableSource(source)
+        ? retryImportAction(source, { title: state.title, stems: state.selected_stems, vocalSplit: state.vocal_split_wanted }, state.job_id)
+        : null,
+    });
     // Also record it: the banner above is transient and the user may well
     // dismiss it before deciding to report anything.
     notifyFailure({
       kind: "import",
-      message: state.error || t("job.unknownError"),
+      message: failure.message,
       detail: state.error_detail || null,
       context: {
         jobId: state.job_id,
@@ -871,7 +896,10 @@ export async function importFromUrl(url, { title, stems, vocalSplit = false } = 
     // The real error, whatever the toast can say about it.
     console.error("[job] import for restore failed:", err);
     const reason = errorReason(err);
-    showError(reason ? t("job.restoreFailed", { message: reason }) : t("job.restoreFailedNoReason"));
+    showError(reason ? t("job.restoreFailed", { message: reason }) : t("job.restoreFailedNoReason"), null, {
+      retry: false,
+      action: retryImportAction(url, { title, stems, vocalSplit }),
+    });
     setSubmitProcessing(false);
     return null;
   }

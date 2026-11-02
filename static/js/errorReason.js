@@ -54,3 +54,44 @@ export function errorReason(err) {
   if (typeof err === "string") return err.trim();
   return typeof err?.message === "string" ? err.message.trim() : "";
 }
+
+// The causes classify_failure gives a failed job (app/pipeline/errors.py), and
+// the sentence that says each one with its next step (#175).
+const CAUSE_KEYS = {
+  "out-of-memory": "job.cause.outOfMemory",
+  "unsupported-device": "job.cause.unsupportedDevice",
+  "disk-full": "job.cause.diskFull",
+  "source-blocked": "job.cause.sourceBlocked",
+  "source-unavailable": "job.cause.sourceUnavailable",
+  "bad-input": "job.cause.badInput",
+  unknown: "job.cause.unknown",
+};
+
+/**
+ * A failed job's error_detail, "<cause> <dash> <words>" as
+ * _quarantine_failed_job in app/pipeline/runner.py writes it, split into the
+ * cause and the server's own words, which it has already redacted. A detail
+ * that does not start with a known cause has cause "" and is all words.
+ */
+export function failureCause(detail) {
+  const text = typeof detail === "string" ? detail.trim() : "";
+  const m = /^([a-z-]+)(?:\s+\S\s+([\s\S]*))?$/.exec(text);
+  if (m && Object.hasOwn(CAUSE_KEYS, m[1])) return { cause: m[1], message: (m[2] || "").trim() };
+  return { cause: "", message: text };
+}
+
+/**
+ * What a failed import says: its cause as a sentence in the chosen language,
+ * with the server's words as the detail line under it. An upload adds that
+ * the file has to be added again, because there is no link to fetch it from.
+ * A failure the pipeline did not classify keeps the server's own message.
+ */
+export function importFailure(state) {
+  const { cause, message } = failureCause(state?.error_detail);
+  if (!cause) return { message: state?.error || t("job.audioProcessingFailed"), detail: message };
+  const sentence = t(CAUSE_KEYS[cause]);
+  return {
+    message: String(state.source_url || "").startsWith("local:") ? t("job.uploadFailed", { cause: sentence }) : sentence,
+    detail: message,
+  };
+}

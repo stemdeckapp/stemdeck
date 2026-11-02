@@ -1216,6 +1216,7 @@ input, textarea { font-family: inherit; }
   margin-top: 4px;
   font-family: var(--font-mono); font-size: 11px;
   color: var(--muted);
+  white-space: pre-line; /* a Resync lists one failed track per line */
 }
 #error .error-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 #error .retry-btn {

@@ -370,7 +370,9 @@ function buildCard(record) {
   title.textContent = kindLabel(record.kind);
   const desc = document.createElement("div");
   desc.className = "daw-notif-card-desc";
-  desc.textContent = `${record.cause || record.message} · ${relativeTime(record.at)}`;
+  // A failed import's message is already its cause in a sentence (#175); the
+  // bare cause key is for the report's title.
+  desc.textContent = `${(record.kind !== "import" && record.cause) || record.message} · ${relativeTime(record.at)}`;
   body.append(title, desc);
 
   const dismiss = document.createElement("button");
