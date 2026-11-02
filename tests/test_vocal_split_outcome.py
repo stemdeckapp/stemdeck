@@ -297,6 +297,29 @@ def test_try_again_after_the_cause_is_fixed(client, done_job, monkeypatch):
     assert {"lead_vocals", "backing_vocals"} <= {s["name"] for s in body["stems"]}
 
 
+def test_a_cancel_that_lost_the_race_does_not_outlive_the_split(client, done_job, monkeypatch):
+    """A cancel landing after the worker finished: the split still ends done,
+    and the flag must not stay set on the song. Left set, any later run on it
+    that reads the flag without clearing it first stops itself."""
+    import app.api.jobs as jobs_mod
+
+    job, _ = done_job
+    _use(monkeypatch, _raw(SUCCESS))
+    merge = jobs_mod.merge_stem_peaks
+
+    def cancel_then_merge(*args):
+        jobs_mod.cancel_job(job.id)
+        return merge(*args)
+
+    monkeypatch.setattr(jobs_mod, "merge_stem_peaks", cancel_then_merge)
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+
+    assert r.status_code == 200
+    assert job.vocal_split == "done"
+    assert job.cancel_requested is False
+
+
 def test_an_older_worker_message_is_still_classified(client, done_job, monkeypatch):
     """The plain-string error line the worker used to write: read for its words."""
     job, _ = done_job

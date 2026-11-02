@@ -908,6 +908,9 @@ async def start_vocal_split(job_id: str) -> Response:
     extra_presence = presence_for_split(rms_values, job.stem_presence)
     if extra_presence:
         job.stem_presence = {**(job.stem_presence or {}), **extra_presence}
+    # A cancel that arrived after the worker finished lost the race. Left set,
+    # it would stop the next run on this song that reads the flag.
+    job.cancel_requested = False
     job.vocal_split = "done"
     _set(job, stage="Done")
     registry_persist(JOBS_DIR)
