@@ -5,7 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-import { openStudio, seedLibrary, stubUpdateCheck } from "./helpers.mjs";
+import { JOB_ID, chooseMode, openStudio, seedLibrary, stubUpdateCheck } from "./helpers.mjs";
 
 const tip = (page) => page.locator("#helpTip");
 
@@ -14,6 +14,32 @@ async function helpOn(page) {
   await expect(page.locator("body")).toHaveClass(/help-mode/);
   await expect(page.locator("#helpModeBtn")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".help-pill")).toBeVisible();
+}
+
+/**
+ * Every control on screen that pointing at explains nothing, or explains it
+ * with no title or a raw key, by tag, class and label. Each one is pointed at
+ * as the mouse would (help mode's own pointerover), so the answer is the HELP
+ * table's, first match and all.
+ */
+function unexplained(page) {
+  return page.evaluate(() => {
+    const CONTROLS = 'button, input:not([type=hidden]), select, textarea, a[href], label, [role=button], [role=switch], [role=slider], [role=tab], [role=option], [tabindex="0"]';
+    const tipEl = document.getElementById("helpTip");
+    const out = [];
+    for (const el of document.querySelectorAll(CONTROLS)) {
+      if (el.closest("#helpTip, .help-pill, [hidden], .hidden")) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(el).visibility === "hidden") continue;
+      el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      const shown = !tipEl.hidden && document.querySelector(".help-current")?.contains(el);
+      if (shown && tipEl.querySelector("b").textContent.trim() && !/help\.|\{name\}/.test(tipEl.textContent)) continue;
+      const cls = typeof el.className === "string" ? el.className.trim().replace(/\s+/g, ".") : "";
+      const label = (el.getAttribute("aria-label") || el.title || el.textContent || "").trim().slice(0, 40);
+      out.push(`${el.tagName.toLowerCase()}${cls ? `.${cls}` : ""} "${label}"`);
+    }
+    return out;
+  });
 }
 
 test.describe("help mode", () => {
@@ -186,5 +212,98 @@ test.describe("help mode", () => {
       if (!title || !text || /help\.|\{name\}/.test(text) || text === title) bad.push({ i, title, text });
     }
     expect(bad).toEqual([]);
+  });
+});
+
+// Every control a person can see explains itself, in the views and states the
+// first pass above never opens.
+test.describe("help mode leaves no control unexplained", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1020 });
+  });
+
+  test("in Performance Mode, wide and narrow", async ({ page }) => {
+    await openStudio(page);
+    await chooseMode(page, "streamer");
+    await expect(page.locator("#streamer")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+    // Narrow, the output panel folds into a drawer behind its own button.
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(page.locator("#streamer .sm-output-btn")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+  });
+
+  test("in Karaoke Mode", async ({ page }) => {
+    await openStudio(page);
+    await chooseMode(page, "karaoke");
+    await expect(page.locator("#karaoke .kk-stem").first()).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+  });
+
+  test("in the lyrics Align and Sync lines tools", async ({ page }) => {
+    const synced = "[00:00.00]\n[00:00.50] Line one\n[00:02.00] Line two\n[00:04.00] Line three";
+    await page.route(/^https:\/\/lrclib\.net\//, (route) => route.abort("internetdisconnected"));
+    await page.route(`**/api/jobs/${JOB_ID}/lyrics`, (route) => route.fulfill({ json: {
+      v: 1, source: "lrclib", track: "Fixture", artist: "Band", album: "", duration: 6, synced,
+      plain: "Line one\nLine two\nLine three", instrumental: false, lrclib_id: 201, timing: "exact", others: [],
+    } }));
+    await openStudio(page);
+    await page.locator(".rail-lyrics").click();
+    await page.locator("#lyricsPanel .lyrics-align-toggle").click();
+    await expect(page.locator("#lyricsAlign")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await page.locator("#lyricsPanel .lyrics-sync-toggle").click();
+    await expect(page.locator("#lyricsSync")).toBeVisible();
+    await page.locator("#lyricsPanel .lyrics-line").nth(1).click();
+    await expect(page.locator("#lyricsPanel .lyrics-line-tools")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+  });
+
+  test("in search results and a preview", async ({ page }) => {
+    await page.route("**/api/search", (route) => route.fulfill({ json: { max_duration_sec: 1200, items: [
+      { title: "Result one", url: "https://www.youtube.com/watch?v=aaaaaaaaaaa", duration: 200, uploader: "Channel" },
+      { title: "Result two", url: "https://www.youtube.com/watch?v=bbbbbbbbbbb", duration: 9000, uploader: "Channel", too_long: true },
+    ] } }));
+    await page.route("**/api/search/preview**", (route) => route.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.alloc(0) }));
+    await openStudio(page);
+    await page.locator("#url").fill("some song ");
+    await page.locator("#search-panel .search-preview-btn").first().click();
+    await expect(page.locator("#search-panel .search-player")).toBeVisible();
+    await helpOn(page);
+    // Clicking Guide closed the panel; typing with Guide on opens it again.
+    await page.locator("#url").focus();
+    await page.keyboard.type("x");
+    await expect(page.locator("#search-panel .search-row").first()).toBeVisible();
+    await page.locator("#search-panel .search-row").first().hover();
+    await expect(tip(page)).toContainText("puts its link in the search box");
+    expect(await unexplained(page)).toEqual([]);
+  });
+
+  test("in the paused queue, a failure notice and the error box", async ({ page }) => {
+    const queued = ["a0a0a0a0a001", "a0a0a0a0a002", "a0a0a0a0a003"].map((job_id, i) => ({ job_id, title: `Waiting ${i + 1}`, status: "queued", progress: 0 }));
+    await page.route("**/api/queue", (route) => route.fulfill({ json: {
+      running: null, queued, paused: true,
+      max_pending_uploads: 5, max_pending_urls: 50, capacity_left_uploads: 5, capacity_left_urls: 50,
+    } }));
+    await page.route("**/api/queue/events", (route) => route.abort());
+    await openStudio(page);
+    await page.evaluate(async () => {
+      await (await import("/js/queue.js")).refreshQueue();
+      (await import("/js/notifications.js")).notifyFailure({ kind: "export", message: "Export failed", context: {} });
+      (await import("/js/job.js")).showError("Could not import", "detail");
+    });
+    await page.locator(".rail-queue").click();
+    await expect(page.locator("#catalogList .queue-start-btn")).toBeVisible();
+    await helpOn(page);
+    await page.locator("#notifBtn").click();
+    await expect(page.locator("#notifList .daw-notif-error")).toBeVisible();
+    expect(await unexplained(page)).toEqual([]);
   });
 });

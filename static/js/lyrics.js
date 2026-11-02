@@ -496,9 +496,9 @@ function alignPanel() {
   nudges.append(steps[0], steps[1], readout, steps[2], steps[3]);
 
   const actions = el("div", "lyrics-align-actions");
-  const detect = alignButton(t("lyrics.align.detect"), autoDetect);
+  const detect = alignButton(t("lyrics.align.detect"), autoDetect, "lyrics-align-detect");
   detect.title = t("lyrics.align.detectTitle");
-  const reset = alignButton(t("lyrics.align.reset"), () => applyOffset(0));
+  const reset = alignButton(t("lyrics.align.reset"), () => applyOffset(0), "lyrics-align-reset");
   reset.title = t("lyrics.align.resetTitle");
   // Closes the panel. Nothing to save here: every change is saved as it is
   // made (a burst of nudges once, after the last).
@@ -514,7 +514,7 @@ function alignPanel() {
   // rather than moving nothing.
   const note = el("p", "lyrics-align-note");
   note.setAttribute("aria-live", "polite");
-  const syncBtn = alignButton(t("lyrics.sync.open"), () => openSync({ focus: true }));
+  const syncBtn = alignButton(t("lyrics.sync.open"), () => openSync({ focus: true }), "lyrics-align-sync");
   syncBtn.title = t("lyrics.sync.openTitle");
   const offsetControls = [start, ...steps, detect, reset];
 
@@ -799,7 +799,8 @@ function closeSync(focusToggle, { keepOpen = false } = {}) {
 /** One of the panel's options, a checkbox that lets go of focus once
  * changed, so Space goes back to play and pause. */
 function syncOption(key, checked, onChange, titleKey) {
-  const label = el("label", "lyrics-sync-opt");
+  // Its own class from its key (lyrics-sync-opt-snap), for the Guide.
+  const label = el("label", `lyrics-sync-opt lyrics-sync-opt-${key.split(".").pop()}`);
   const box = el("input");
   box.type = "checkbox";
   box.checked = checked;
@@ -834,7 +835,7 @@ function buildSyncPanel(session) {
   tap.append(el("kbd", "", t("lyrics.sync.tapKey")));
   tap.title = t("lyrics.sync.tapTitle");
 
-  const undo = alignButton(t("lyrics.sync.undo"), undoSync);
+  const undo = alignButton(t("lyrics.sync.undo"), undoSync, "lyrics-sync-undo");
   undo.title = t("lyrics.sync.undoTitle");
   const edits = el("div", "lyrics-sync-row");
   edits.append(undo);
@@ -846,11 +847,11 @@ function buildSyncPanel(session) {
     syncOption("lyrics.sync.ripple", session.ripple, (on) => { session.ripple = on; }, "lyrics.sync.rippleTitle"),
   );
 
-  const retimeBtn = alignButton(t("lyrics.sync.retime"), retimeFromVocals);
+  const retimeBtn = alignButton(t("lyrics.sync.retime"), retimeFromVocals, "lyrics-sync-retime");
   retimeBtn.title = t("lyrics.sync.retimeTitle");
-  const detected = alignButton(t("lyrics.sync.resetDetected"), resetToDetected);
+  const detected = alignButton(t("lyrics.sync.resetDetected"), resetToDetected, "lyrics-sync-detected");
   detected.title = t("lyrics.sync.resetDetectedTitle");
-  const original = alignButton(t("lyrics.sync.resetOriginal"), resetToOriginal);
+  const original = alignButton(t("lyrics.sync.resetOriginal"), resetToOriginal, "lyrics-sync-original");
   original.title = t("lyrics.sync.resetOriginalTitle");
   // No timing of their own (plain lyrics fitted to the vocals): nothing to
   // go back to.

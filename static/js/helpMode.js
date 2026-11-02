@@ -27,6 +27,12 @@ const HELP = [
   ["#uploadFileBtn", "help.upload"],
   ["#fileClear", "help.fileClear"],
   ["#url", "help.search"],
+  // The search results under it (search.js), a panel of its own on the body.
+  ["#search-panel .search-tab", "help.searchTab"],
+  ["#search-panel .search-play", "help.searchPreviewPlay"],
+  ["#search-panel .search-seek", "help.searchPreviewSeek"],
+  ["#search-panel .search-preview-btn", "help.searchPreview"],
+  ["#search-panel .search-row", "help.searchResult"],
   ["#stemAllBtn", "help.stemAll"],
   [".stem-choice[data-stem]", "help.stemChip", chipName],
   ["#stemMoreBtn", "help.stemMore"],
@@ -47,6 +53,8 @@ const HELP = [
   ["#job-cancel", "help.jobCancel"],
   // Try again on the notice a failed Lead + Backing split shows (#832).
   [".split-retry-btn", "help.splitRetry"],
+  ["#error .retry-btn", "help.errorRetry"],
+  ["#error .error-close", "help.errorClose"],
   ["#fav-btn", "help.favorite"],
   ["#np-details-btn", "help.songDetails"],
   ["#sidebarCollapseBtn", "help.toggleLibrary"],
@@ -58,6 +66,8 @@ const HELP = [
   // The notifications panel, before the bell it hangs from.
   ["#notifReleaseDismiss", "help.notifDismiss"],
   ["#notifReleaseCard", "help.notifRelease"],
+  ["#notifList .daw-notif-error .daw-notif-dismiss", "help.notifDismiss"],
+  ["#notifList .daw-notif-error", "help.notifFailure"],
   ["#notifClearAll", "help.notifClear"],
   [".daw-notif-close", "help.notifClose"],
   ["#notifBtn", "help.notifications"],
@@ -90,6 +100,9 @@ const HELP = [
   ["#catalogList .cat-item .cat-extract", "help.songExtract"],
   // A Queue row's remove button (#772): stops the extraction, keeps the song.
   ["#catalogList .queue-row .queue-cancel", "help.queueStop"],
+  ["#catalogList .queue-row .queue-top", "help.queueTop"],
+  ["#catalogList .queue-row", "help.queueRow"],
+  ["#catalogList .queue-start-btn", "help.queueStart"],
   ["#catalogList .cat-item.in-trash", "help.trashedSong"],
   ["#catalogList .cat-item", "help.song"],
   // A version of a song, under its row (#804).
@@ -98,6 +111,25 @@ const HELP = [
   // The Lyrics view of the sidebar (lyrics.js). Align and Sync lines come
   // before the plain links, which share their class.
   ["#lyricsPanel .lyrics-line", "help.lyricsLine"],
+  // The Align panel and the Sync lines panel under the links, and the
+  // controls of the line in hand while syncing.
+  ["#lyricsAlign .lyrics-align-start", "help.lyricsAlignStart"],
+  ["#lyricsAlign .lyrics-align-nudge", "help.lyricsAlignNudge"],
+  ["#lyricsAlign .lyrics-align-detect", "help.lyricsAlignDetect"],
+  ["#lyricsAlign .lyrics-align-reset", "help.lyricsAlignReset"],
+  ["#lyricsAlign .lyrics-align-done", "help.lyricsAlignDone"],
+  ["#lyricsAlign .lyrics-align-sync", "help.lyricsSync"],
+  ["#lyricsSync .lyrics-sync-tap", "help.lyricsSyncTap", null, "lyrics.sync.tap"],
+  ["#lyricsSync .lyrics-sync-undo", "help.lyricsSyncUndo"],
+  ["#lyricsSync .lyrics-sync-opt-leadIn", "help.lyricsSyncLeadIn"],
+  ["#lyricsSync .lyrics-sync-opt-snap", "help.lyricsSyncSnap"],
+  ["#lyricsSync .lyrics-sync-opt-ripple", "help.lyricsSyncRipple"],
+  ["#lyricsSync .lyrics-sync-retime", "help.lyricsSyncRetime"],
+  ["#lyricsSync .lyrics-sync-detected", "help.lyricsSyncResetDetected"],
+  ["#lyricsSync .lyrics-sync-original", "help.lyricsSyncResetOriginal"],
+  ["#lyricsSync .lyrics-align-done", "help.lyricsLaneDone"],
+  ["#lyricsPanel .lyrics-line-tools .lyrics-line-here", "help.lyricsLineHere"],
+  ["#lyricsPanel .lyrics-line-tools .lyrics-align-nudge", "help.lyricsLineNudge"],
   ["#lyricsPanel .lyrics-align-toggle", "help.lyricsAlign"],
   ["#lyricsPanel .lyrics-sync-toggle", "help.lyricsSync"],
   ["#lyricsPanel .lyrics-version", "help.lyricsVersion"],
@@ -131,6 +163,9 @@ const HELP = [
   // The recording panel opened by the arrow beside Record (recordUi.js), and
   // its video part (video/videoTake.js).
   ["#recSettingsLink", "help.recSettingsLink"],
+  // The links the panel adds to its messages: no input found, no track yet.
+  ["#recPermission .rec-link", "help.recSettingsLink"],
+  ["#recStatus .rec-link", "help.addTrack"],
   [".rec-check:has(#recMonitor)", "help.recMonitor"],
   ["#recPanel .rec-mute", "help.recMute"],
   ["#recKeep", "help.recKeep"],
@@ -144,6 +179,9 @@ const HELP = [
   ["#addTrackBtn", "help.addTrack"],
   ["#addVideoTrackBtn", "help.addVideoTrack"],
   [".track-tool.track-preview", "help.trackPreview", laneName],
+  // The preview window that button opens (video/videoPreview.js).
+  [".video-preview-close", "help.videoPreviewClose"],
+  [".video-preview", "help.videoPreview"],
   [".track-tool.track-delete", "help.trackDelete", laneName],
   [".track-arm", "help.trackArm", laneName],
   [".track-input", "help.trackInput", laneName],
@@ -248,6 +286,16 @@ const HELP = [
   // take review, and the Live | Take switch shown when only one window fits.
   ["#streamer .sm-view-switch", "help.smViewSwitch"],
   ["#streamer .sm-review", "help.smReview"],
+  // Allow or Retry, over the live window and under each device select.
+  ["#streamer .sm-cam-act, #streamer .sm-dev-act", "help.smDeviceAct"],
+  // The head row, the undo of the scene and the timeline's ruler.
+  ["#streamer .sm-aspect", "help.smAspect", null, "streamer.aspectAria"],
+  ["#streamer .sm-safe", "help.smSafeZones"],
+  ["#streamer .sm-output-btn", "help.smOutputToggle"],
+  ["#streamer .sm-stop", "help.smStop"],
+  ["#streamer .sm-play", "help.play"],
+  ["#streamer .sm-history", "help.smUndo", null, "help.eqUndoTitle"],
+  ["#streamer .sm-tl-ruler", "help.smRuler", null, "streamer.position"],
   // The REC button sits inside the live window, so it comes first. Its own
   // name: the badge reads "READY" or the time, which says nothing about it.
   ["#streamer .sm-rec", "help.smRec", null, "streamer.recOn"],
@@ -258,6 +306,11 @@ const HELP = [
   ["#streamer .sm-select:has(#streamerAudioSrc), #streamer label[for=streamerAudioSrc]", "help.smAudioSource", null, "streamer.audioSource"],
   ["#streamer .sm-out-col:has(#streamerRes)", "help.smResolution", null, "streamer.resolution"],
   ["#streamer .sm-out-col:has(#streamerFps)", "help.smFps", null, "streamer.fps"],
+  ["#streamer .sm-in-settings", "help.recSettingsLink"],
+  ['#streamer .sm-switch-row[data-setting="recordMixedAudio"]', "help.smMixedAudio"],
+  ['#streamer .sm-switch-row[data-setting="autoStopAtEnd"]', "help.smAutoStop"],
+  ["#streamer .sm-export-cancel", "help.smExportCancel"],
+  ["#streamer .sm-export-raw", "help.smSaveRaw"],
   // Its text changes with the take (Try again), so the name is fixed.
   ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.go"],
   ["#streamer .sm-export-reveal", "help.smReveal", null, "streamer.export.reveal"],
@@ -274,6 +327,14 @@ const HELP = [
   // a layer on the page body, so its exit button is matched by its own class.
   [".kk-fs-btn", "help.kkFullscreen"],
   [".kk-fs-exit", "help.kkFullscreenExit"],
+  [".kk-fs-play", "help.play"],
+  // Shown in place of the lyrics when the song has none with timing.
+  [".kk-empty-btn", "help.kkOpenLyrics"],
+  ["#karaoke .kk-bar", "help.kkProgress"],
+  ["#karaoke .kk-key", "help.kkKey", null, "karaoke.key"],
+  // The backing track's card has no switch: it always plays.
+  ["#karaoke .kk-stem.fixed", "help.kkStemFixed"],
+  ["#karaoke .kk-stem", "help.kkStem", chipName],
   ["#karaoke .kk-side, #karaoke .kk-side-strip", "help.kkQueue", null, "karaoke.tabQueue"],
   ["#karaoke .kk-voice", "help.kkVoice", null, "karaoke.voiceForm"],
   ["#karaoke .kk-transport", "help.kkTransport", null, "karaoke.transport"],
