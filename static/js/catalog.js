@@ -8,7 +8,7 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
-import { RESTART_REQUIRED, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, RESTART_REQUIRED, codeMessage, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
@@ -2948,6 +2948,7 @@ function wireCatalogRailViews() {
     try {
       const trash = getTrashFolder();
       const toDelete = [...(trash?.items || [])];
+      const binned = Object.fromEntries(toDelete.map((id) => [id, tracks[id]]));
       // Awaited: the tombstone has to be on disk before the tracks leave the
       // local index, or a reload re-imports them (#521).
       await markJobsDeleted(toDelete);
@@ -2960,14 +2961,30 @@ function wireCatalogRailViews() {
       // when the files could not be removed -- was invisible, and the track
       // came back the next time the registry was read from disk.
       const failed = [];
+      const busy = [];
       for (const id of toDelete) {
         try {
           const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-          if (!res.ok && res.status !== 404) failed.push(id);
+          if (res.ok || res.status === 404) continue;
+          const data = res.status === 409 ? await res.json().catch(() => null) : null;
+          (data?.code === JOB_BUSY && binned[id] ? busy : failed).push(id);
         } catch (err) {
           console.warn("[catalog] delete failed for", id, err);
           failed.push(id);
         }
+      }
+      if (busy.length) {
+        // Still being separated (missing stems, Lead + Backing), so the server
+        // kept it: it goes back in the Trash, to be emptied once that is over.
+        for (const id of busy) {
+          tracks[id] = binned[id];
+          _deletedJobIds.delete(id);
+        }
+        getTrashFolder().items.push(...busy);
+        await markJobsDeleted([]); // writes the tombstones without them
+        saveState();
+        render();
+        showError(i18nT("library.songBusy"), null, { retry: false });
       }
       if (failed.length) {
         console.warn("[catalog] %d track(s) could not be deleted on the server", failed.length);
@@ -4250,8 +4267,7 @@ async function wireStemsLocation(overlay) {
       });
       const data = await r.json();
       if (!r.ok) {
-        const reason = data.code === RESTART_REQUIRED ? responseErrorMessage(r, data) : data.detail;
-        setMessage(reason || i18nT("settings.stemsLocation.moveFailed"), "error");
+        setMessage(codeMessage(data) || data.detail || i18nT("settings.stemsLocation.moveFailed"), "error");
         return;
       }
       // Re-read rather than trust the POST: the GET reports where the stems
@@ -4918,7 +4934,10 @@ function openResetConfirm() {
       const r = await fetch("/api/reset", { method: "POST" });
       if (!r.ok) {
         let detail = i18nT("resetConfirm.failed");
-        try { detail = (await r.json()).detail || detail; } catch (err) { console.warn("reset error body parse failed:", err); }
+        try {
+          const body = await r.json();
+          detail = codeMessage(body) || body.detail || detail;
+        } catch (err) { console.warn("reset error body parse failed:", err); }
         msg.textContent = detail;
         goBtn.disabled = false;
         input.disabled = false;

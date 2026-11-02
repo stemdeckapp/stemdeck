@@ -251,7 +251,7 @@
     {
       "why": "The reason a failed request shows in the error box",
       "paths": ["static/js/errorReason.js"],
-      "specs": ["restore-error", "submit-error", "error-banner"]
+      "specs": ["restore-error", "submit-error", "error-banner", "job-busy"]
     },
     {
       "why": "The phone page and the QR code that opens it",

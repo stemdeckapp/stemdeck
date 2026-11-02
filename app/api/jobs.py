@@ -40,6 +40,7 @@ from app.core.models import (
     FINISHED_STATUSES,
     LOUDNESS_VERSION,
     Job,
+    JobBusy,
     JobCancelled,
     _set,
     settle_cancelled,
@@ -118,7 +119,7 @@ from app.pipeline.lyrics_retime import (
 )
 from app.pipeline.lyrics_retime import saved_view as saved_retime_view
 from app.pipeline.runner import _pipeline_lock
-from app.pipeline.stem_fill import FillRefused, fill_stems, missing_stems
+from app.pipeline.stem_fill import FillRefused, cancel_fill, fill_stems, missing_stems
 from app.pipeline.stem_storage import store_split_stems
 from app.pipeline.vocal_split import VocalSplitError, split_vocals
 from app.pipeline.work_lookup import find_work, might_have_work
@@ -579,12 +580,24 @@ def cancel_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status in FINISHED_STATUSES:
+        # Extract missing stems first: a split or a lyrics timing waiting
+        # behind it would otherwise take the cancel and terminate the fill's
+        # worker under this id. Its stages read a stand-in's flag, which
+        # cancel_fill sets once the fill holds the pipeline lock; before that,
+        # the song's flag stops it from starting, and the process under this
+        # id is someone else's, so it is left alone.
+        if job.stem_fill == "running":
+            job.cancel_requested = True
+            if cancel_fill(job_id):
+                proc = registry_get_proc(job_id)
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
         # A vocal split only ever runs on a done job, so this early return made
         # it uncancellable by construction: the flag was never even set, while
         # the split held _pipeline_lock and stalled the whole import queue for
         # its full duration (#519). Terminating the worker is enough -- the
         # split's own error path marks it failed and releases the lock.
-        if job.vocal_split == "running":
+        elif job.vocal_split == "running":
             job.cancel_requested = True
             proc = registry_get_proc(job_id)
             if proc is not None and proc.poll() is None:
@@ -1043,7 +1056,7 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     stems_dir = (job_dir / "stems").resolve()
     if not stems_dir.is_dir() or not stems_dir.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="job not found")
-    if job.stem_fill == "running" or job.vocal_split == "running":
+    if job.post_hoc_running():
         raise HTTPException(status_code=409, detail="the song is busy")
     missing = await asyncio.to_thread(missing_stems, stems_dir, wanted)
     if not missing:
@@ -1055,6 +1068,8 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     # to get this far is the one that runs.
     if job.stem_fill == "running":
         raise HTTPException(status_code=409, detail="the song is busy")
+    # A cancel is for the run it was sent to, as for the vocal split.
+    job.cancel_requested = False
     job.stem_fill = "running"
     _set(job, stage="Extracting missing stems...")
     try:
@@ -1066,10 +1081,14 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
         registry_persist(JOBS_DIR)
         raise HTTPException(status_code=409, detail=_FILL_REFUSALS[e.code]) from None
     except Exception:
-        logger.exception("[%s] filling missing stems failed", job_id)
+        if not job.cancel_requested:
+            logger.exception("[%s] filling missing stems failed", job_id)
         job.stem_fill = "error"
         _set(job, stage="Done")
         registry_persist(JOBS_DIR)
+        # Stopped by POST .../cancel: every stem the song had is still there.
+        if job.cancel_requested:
+            return JSONResponse({"detail": "the extraction was cancelled"}, status_code=409)
         return JSONResponse({"detail": "could not extract the missing stems"}, status_code=500)
     job.stem_fill = "done"
     _set(job, stage="Done")
@@ -2186,9 +2205,11 @@ def delete_job(job_id: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in FINISHED_STATUSES:
         raise HTTPException(status_code=409, detail="job is still running")
+    if job.post_hoc_running():
+        raise JobBusy()
     # A timing of its lyrics in flight stops rather than write into a
     # directory being removed (it also checks the job is still registered).
-    if cancel_run(job_id) and job.vocal_split != "running":
+    if cancel_run(job_id):
         proc = registry_get_proc(job_id)
         if proc is not None and proc.poll() is None:
             proc.terminate()

@@ -11,6 +11,16 @@ import { t } from "./i18n.js";
 // The server's code for a write it refuses after the stems folder moved and
 // before the restart (refuse_writes_until_restart in app/main.py).
 export const RESTART_REQUIRED = "restart_required";
+// The server's code for a delete, a library move or a reset it refuses while a
+// stem fill or a vocal split runs (refuse_while_busy in app/main.py).
+export const JOB_BUSY = "job_busy";
+
+/** The translated sentence for a code this side knows, or "". */
+export function codeMessage(data) {
+  if (data?.code === RESTART_REQUIRED) return t("settings.stemsLocation.restartToSave");
+  if (data?.code === JOB_BUSY) return t("library.songBusy");
+  return "";
+}
 
 /**
  * The reason a non-ok response gives: the translated sentence for a code this
@@ -19,7 +29,8 @@ export const RESTART_REQUIRED = "restart_required";
  * response at all.
  */
 export function responseErrorMessage(res, data) {
-  if (data?.code === RESTART_REQUIRED) return t("settings.stemsLocation.restartToSave");
+  const known = codeMessage(data);
+  if (known) return known;
   const detail = data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail.trim();
   if (Array.isArray(detail)) {

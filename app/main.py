@@ -45,6 +45,7 @@ from app.core.config import (
     torch_load_error,
 )
 from app.core.logging_setup import configure_logging
+from app.core.models import JobBusy
 from app.core.process import process_exists as _process_exists
 from app.core.redact import redact
 from app.core.registry import all_jobs as registry_all_jobs
@@ -718,6 +719,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
                 status_code=409,
                 detail="Finish or cancel the imports in the queue before moving the stems folder",
             )
+        if any(j.post_hoc_running() for j in registry_all_jobs().values()):
+            raise JobBusy()
         target = validate_target(Path(raw), JOBS_DIR)
     except StemsLocationError as e:
         abandon_relocation()
@@ -785,6 +788,8 @@ def reset_app_data() -> dict[str, object]:
     active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
     if active:
         raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")
+    if any(j.post_hoc_running() for j in registry_all_jobs().values()):
+        raise JobBusy()
     # Clear the queue alongside the registry, or the worker would keep popping
     # ids that no longer resolve and the queue view would report ghosts.
     from app.api.takes import forget_job_locks
@@ -1163,6 +1168,21 @@ async def refuse_writes_until_restart(request: Request, call_next):
             status_code=409,
         )
     return await call_next(request)
+
+
+# A delete, a library move or a reset refused while a stem fill or a vocal split
+# runs. Its own code, which the UI translates, so it never reads as the restart
+# refusal above.
+@app.exception_handler(JobBusy)
+async def refuse_while_busy(_request: Request, _exc: JobBusy) -> JSONResponse:
+    return JSONResponse(
+        {
+            "detail": "A song is still being separated (missing stems or Lead + Backing). "
+            "Try again when it has finished.",
+            "code": "job_busy",
+        },
+        status_code=409,
+    )
 
 
 # Cross-site guard (app/core/csrf.py has the reasoning and every rule). Inside
