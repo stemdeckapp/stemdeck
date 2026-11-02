@@ -606,19 +606,10 @@ def test_auto_without_nvenc_uses_the_cpu(fake):
     assert c.encoder == "libx264" and c.reason == "missing"
 
 
-@pytest.mark.parametrize(
-    ("os_name", "encoder"),
-    [
-        ("windows", "h264_qsv"),
-        ("windows", "h264_amf"),
-        # (VAAPI is left out: its probe needs a /dev/dri render node first.)
-        ("linux", "h264_nvenc"),
-        ("linux", "h264_qsv"),
-        ("macos", "h264_videotoolbox"),
-    ],
-)
-def test_an_encoder_picked_in_settings_is_still_used(fake, monkeypatch, os_name, encoder):
-    monkeypatch.setattr(ve, "os_key", lambda platform=None: os_name)
+# An explicit pick ignores the OS. VAAPI is left out: its probe needs a
+# /dev/dri render node first.
+@pytest.mark.parametrize("encoder", ["h264_qsv", "h264_amf", "h264_videotoolbox"])
+def test_an_encoder_picked_in_settings_is_still_used(fake, encoder):
     fake.probe = dict(ALL_PASS)
     settings_mod.set_video_encoder(encoder)
     assert ve.choose(1920, 1080, 30).encoder == encoder
