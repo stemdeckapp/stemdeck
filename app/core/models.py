@@ -358,6 +358,11 @@ class Job:
     # what happened and what to do instead of showing one Vocals lane with no
     # word about it (#832). None otherwise.
     vocal_split_reason: str | None = None
+    # Whether Lead + Backing was chosen when the job was submitted (#848). Kept
+    # on the job rather than only in the page that asked, so a reload, a
+    # restart or a second window still asks for the split once the job is
+    # done. False for a record written before it existed.
+    vocal_split_wanted: bool = False
     # Versions of the song (#804, app/core/versions.py): named choices of
     # stems over the one set of stem files. None until one is made, created,
     # renamed or chosen: the song then reads as its implicit default version.
@@ -466,6 +471,7 @@ class Job:
             "vocal_split_reason": self.vocal_split_reason,
             # A fixed sentence per code, never the worker's own words.
             "vocal_split_message": message_for(self.vocal_split_reason),
+            "vocal_split_wanted": self.vocal_split_wanted,
             "versions": versions_of(self),
             "active_version": active_of(self),
             "stem_fill": self.stem_fill,

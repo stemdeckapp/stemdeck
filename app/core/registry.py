@@ -504,6 +504,8 @@ def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
         # Finished after all: keep it where the user put it, or a song they
         # binned reappears in the library.
         recovered.trashed_at = job.trashed_at
+        # And the Lead + Backing it was imported with, still to be split.
+        recovered.vocal_split_wanted = job.vocal_split_wanted
         return recovered
 
     if job.trashed_at is not None:

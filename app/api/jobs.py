@@ -243,6 +243,16 @@ class JobRequest(BaseModel):
     # rejected, so a future model with extra stems doesn't break older
     # clients pinning the old set.
     stems: list[str] | None = None
+    # Lead + Backing (#848): split the vocals once the job is done. Ignored
+    # when the selection has no vocals.
+    vocal_split: bool = False
+
+
+def _note_split_request(job: Job) -> None:
+    """Say in the log that Lead + Backing came with the import, so the log
+    tells a split that was never asked for from one that ran."""
+    if job.vocal_split_wanted:
+        logger.info("[%s] vocal split requested with the import", job.id)
 
 
 @router.post("")
@@ -283,11 +293,13 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
         # as the user opens another song.
         auto_sections=get_auto_sections(),
         auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=payload.vocal_split and "vocals" in selected,
     )
     if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
         raise HTTPException(status_code=503, detail=_URL_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
     registry_persist(JOBS_DIR)
+    _note_split_request(job)
     return {"job_id": job.id}
 
 
@@ -383,12 +395,14 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         audio_tags=audio_tags,
         auto_sections=get_auto_sections(),
         auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=form.get("vocal_split") == "true" and "vocals" in selected,
     )
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
     registry_persist(JOBS_DIR)
+    _note_split_request(job)
     return {"job_id": job.id}
 
 
@@ -656,6 +670,7 @@ class ResplitBody(BaseModel):
     trusted, and an empty result falls back to every stem."""
 
     stems: list[str] = Field(default_factory=list, max_length=len(STEM_NAMES))
+    vocal_split: bool = False
 
 
 def _retained_source(job_id: str) -> Path | None:
@@ -776,12 +791,14 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         # The song's lyrics came along with it: keep looking for them only if
         # Detect lyrics is on.
         auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=body.vocal_split and "vocals" in selected,
     )
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(new_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(new_job.id)
     registry_persist(JOBS_DIR)
+    _note_split_request(new_job)
     # source_url comes back because the client cannot derive it: it is
     # deliberately not the one it asked with, and the library keys its
     # dedup on exactly this string.
@@ -815,6 +832,10 @@ async def start_vocal_split(job_id: str) -> Response:
     job.vocal_split = "running"
     job.vocal_split_reason = None
     _set(job, stage="Splitting lead/backing vocals...")
+    # Saved before it starts: a restart during the split then reads it as
+    # interrupted, so a page that finds the job asking for Lead + Backing
+    # (vocal_split_wanted) never starts it a second time.
+    registry_persist(JOBS_DIR)
     try:
         async with _pipeline_lock:
             # Cancelled while it waited behind an import: never start.
@@ -822,6 +843,8 @@ async def start_vocal_split(job_id: str) -> Response:
                 raise VocalSplitError(
                     "vocal split cancelled before it started", code=SPLIT_CANCELLED
                 )
+            logger.info("[%s] vocal split started", job_id)
+            started = time.monotonic()
             new_names = await asyncio.to_thread(split_vocals, job, stems_dir)
             # The peaks are read from the new WAVs first; then the two are kept
             # the way the song keeps its stems (#783). Neither raises.
@@ -855,6 +878,12 @@ async def start_vocal_split(job_id: str) -> Response:
         )
 
     vocal_split_status.record(True, source="split")
+    logger.info(
+        "[%s] vocal split done in %.1fs: %s",
+        job_id,
+        time.monotonic() - started,
+        ", ".join(new_names),
+    )
     existing = {s["name"] for s in job.stems}
     for name in new_names:
         if name not in existing:

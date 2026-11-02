@@ -279,7 +279,7 @@ export async function requestSplit() {
 
 /** A split another window started: wait for it (at most 15 minutes).
  * Resolves [done, the reason when it was not]. */
-async function waitForSplit(jobId) {
+export async function waitForSplit(jobId) {
   const until = Date.now() + 15 * 60 * 1000;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 2000));

@@ -33,13 +33,13 @@ const lanes = (page) =>
   page.evaluate(async () => Object.keys((await import("/js/state.js")).trackIndex).filter((n) => !/^t[kr]_/.test(n)).sort().join(","));
 
 /** What an import with Lead + Backing chosen does when its job finishes:
- * job.js runVocalSplitIfWanted, the call both completion paths make. */
+ * job.js runVocalSplitIfWanted, the call both completion paths make, with
+ * the job's own record of the request (vocal_split_wanted). */
 async function finishImportWithSplit(page) {
   return page.evaluate(async (id) => {
     const job = await import("/js/job.js");
     const state = await (await fetch(`/api/jobs/${id}`)).json();
-    job.jobVocalSplitModes.set(id, "split");
-    const after = await job.runVocalSplitIfWanted(state);
+    const after = await job.runVocalSplitIfWanted({ ...state, vocal_split_wanted: true });
     return { status: after.status, vocalSplit: after.vocal_split, reason: after.vocal_split_reason, stems: after.stems.map((s) => s.name) };
   }, JOB_ID);
 }

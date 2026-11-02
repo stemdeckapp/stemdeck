@@ -188,6 +188,48 @@ def test_persist_and_restore_terminal_job(tmp_path: Path):
     assert restored.cancel_requested is False
 
 
+def test_a_lead_backing_request_survives_a_restart(tmp_path: Path):
+    """#848: a job queued with Lead + Backing still asks for the split after
+    the app restarts, whether it was waiting or had finished."""
+    for job_id, status in (("abcdef000848", "queued"), ("abcdef001848", "done")):
+        _jobs[job_id] = Job(id=job_id, status=status, title="Asked", vocal_split_wanted=True)
+
+    persist_registry(tmp_path)
+    _jobs.clear()
+    restore_registry(tmp_path)
+
+    assert _jobs["abcdef000848"].vocal_split_wanted is True
+    assert _jobs["abcdef001848"].vocal_split_wanted is True
+
+
+def test_a_job_recovered_from_its_stems_keeps_the_lead_backing_request(tmp_path: Path):
+    """A crash after the last stem landed but before the done-persist rebuilds
+    the job from disk: the request must come with it."""
+    job = Job(id="abcdef003848", status="separating", title="Nearly", vocal_split_wanted=True)
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    _stems_dir(tmp_path, job.id)
+    _jobs.clear()
+
+    restore_registry(tmp_path)
+
+    assert _jobs[job.id].status == "done"
+    assert _jobs[job.id].vocal_split_wanted is True
+
+
+def test_a_registry_from_before_the_lead_backing_request_loads_unchanged(tmp_path: Path):
+    """The registry 0.20.0 wrote has no vocal_split_wanted: its songs load as
+    "not asked for", without being set aside as damaged."""
+    fixture = Path(__file__).parent / "fixtures" / "upgrade-0.20.0" / "library" / "registry.json"
+    assert "vocal_split_wanted" not in fixture.read_text(encoding="utf-8")
+    (tmp_path / "registry.json").write_bytes(fixture.read_bytes())
+
+    restore_registry(tmp_path)
+
+    assert _jobs["0a20c0ffee01"].vocal_split_wanted is False
+    assert not list(tmp_path.glob("registry.json.bad-*"))
+
+
 def test_restore_recovers_orphan_done_job_from_stems(tmp_path: Path):
     job_dir = tmp_path / "abcdefabcdee"
     stems_dir = job_dir / "stems"
