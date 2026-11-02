@@ -2875,21 +2875,6 @@ input, textarea { font-family: inherit; }
 /* Wraps freely here -- the gutter is narrow and the block is stacked, so the
    meta reads as a short paragraph rather than a clipped line. */
 .footer-track-slot .daw-track-meta-line { row-gap: 2px; line-height: 1.35; }
-.footer-art {
-  width: 44px; height: 44px; border-radius: 6px;
-  background: var(--panel-3); flex-shrink: 0; overflow: hidden;
-  display: none;
-}
-.footer-art.has-art { display: block; }
-.footer-title {
-  font-size: 13px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  color: var(--fg);
-}
-.footer-meta {
-  font-size: 11px; color: var(--muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 
 /* Position group: elapsed / total time, then the loop controls that act on
    that position (design 1b groups them together, not with the transport). */
