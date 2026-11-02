@@ -375,6 +375,80 @@ def test_tombstoned_folder_with_stems_is_removed(tmp_path: Path):
     assert not d.exists()
 
 
+# ── a stopped song (upload kept, never separated) is never auto-deleted ──
+
+
+def _old_stopped_upload(jobs_dir: Path, job_id: str, **fields) -> tuple[Job, Path]:
+    d = jobs_dir / job_id
+    d.mkdir(parents=True)
+    source = d / "source.mp3"
+    source.write_bytes(b"ID3")
+    _backdate(d)
+    job = Job(id=job_id, status="stopped", source_url="local:Song", **fields)
+    job.created_at = time.time() - 999_999
+    _jobs[job.id] = job
+    return job, source
+
+
+@pytest.mark.parametrize("trashed_at", [None, 1.0], ids=["library", "trash"])
+def test_old_stopped_song_survives_the_ttl_sweep(tmp_path: Path, trashed_at):
+    job, source = _old_stopped_upload(tmp_path, "ccccccccccc1", trashed_at=trashed_at)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert source.is_file()
+    assert job.id in _jobs
+
+
+@pytest.mark.asyncio
+async def test_stopped_song_survives_a_full_sweep_pass_with_auto_delete_on(
+    tmp_path: Path, monkeypatch
+):
+    """Both hourly sweeps run for real: the TTL sweep and the failed-job one."""
+    from app import main as main_mod
+    from app.core.settings import set_auto_delete_days, set_auto_delete_jobs
+
+    job, source = _old_stopped_upload(tmp_path, "ccccccccccc2")
+    failed = _mkdir(tmp_path / "failed", "ccccccccccc3")
+    _backdate(failed)
+    set_auto_delete_jobs(True)
+    set_auto_delete_days(1)
+    monkeypatch.setattr(main_mod, "JOBS_DIR", tmp_path)
+
+    async def stop_loop(_delay):
+        raise RuntimeError("stop-loop")
+
+    monkeypatch.setattr(main_mod.asyncio, "sleep", stop_loop)
+    with pytest.raises(RuntimeError, match="stop-loop"):
+        await main_mod._sweep_loop()
+
+    assert not failed.exists(), "the failed-job sweep did run"
+    assert source.is_file()
+    assert job.id in _jobs
+
+
+def test_trashed_in_flight_upload_comes_back_stopped_and_is_kept(tmp_path: Path):
+    """A restart turns a job trashed mid-separation into a stopped song (#748);
+    the first sweep after that start must not take it."""
+    from app.core.registry import persist, restore, take_pending_resume
+
+    job_id = "ccccccccccc4"
+    job = Job(id=job_id, status="separating", source_url="local:Song", trashed_at=1.0)
+    job.created_at = time.time() - 999_999
+    _jobs[job_id] = job
+    persist(tmp_path)
+    (tmp_path / job_id).mkdir()
+    source = tmp_path / job_id / "source.mp3"
+    source.write_bytes(b"ID3")
+    _jobs.clear()
+
+    restore(tmp_path)
+    assert _jobs[job_id].status == "stopped"
+    assert take_pending_resume() == []
+
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert source.is_file()
+    assert job_id in _jobs
+
+
 @pytest.mark.asyncio
 async def test_ttl_disabled_deletes_nothing(tmp_path: Path, monkeypatch):
     """Auto-delete off (the default): the loop never calls the TTL sweep, so a

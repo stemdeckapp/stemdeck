@@ -470,6 +470,10 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
     if job is not None:
         if job.status not in _TERMINAL:
             return "job is still active"
+        if job.status == "stopped":
+            # Never separated, and an upload's kept source is its only copy:
+            # only the user deletes a stopped song.
+            return "stopped song"
         if job.created_at >= cutoff:
             return "job is newer than the cutoff"
         if job.favorite:
@@ -506,8 +510,8 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
     job, this one only decides what is old and what may go.
 
     Judged by Job.created_at, not directory mtime (which unrelated filesystem
-    events touch). Never removes an active job, a favourite, a job with
-    recorded takes or tracks, or a folder whose name is not a job id; an
+    events touch). Never removes an active job, a stopped song, a favourite, a
+    job with recorded takes or tracks, or a folder whose name is not a job id; an
     unregistered job folder goes only when it is old and abandoned. See
     _keep_reason for each rule. Every removal is logged with its reason."""
     cutoff = time.time() - (JOB_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
