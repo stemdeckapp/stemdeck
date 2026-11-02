@@ -8,6 +8,7 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
+import { RESTART_REQUIRED, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
@@ -1038,13 +1039,22 @@ function syncTrashToServer(trackId, trashed) {
  * this side adopts the server's value on every sync (applyServerFavorite) and
  * only says something when the user presses a heart here. Not awaited, for the
  * same reason as the Trash: a heart must answer at once.
+ *
+ * Unlike the Trash, a refused heart is not sent again: the server's answer wins
+ * the next sync. Between a stems folder move and the restart the server refuses
+ * every write, so that refusal is shown, or the heart would quietly come undone.
  */
 function syncFavoriteToServer(trackId, favorite) {
   fetch(`/api/jobs/${encodeURIComponent(trackId)}/favorite`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ favorite }),
-  }).catch((e) => console.warn(`[catalog] could not save the favourite for ${trackId}`, e));
+  })
+    .then(async (res) => {
+      const data = res.status === 409 ? await res.json().catch(() => null) : null;
+      if (data?.code === RESTART_REQUIRED) showError(responseErrorMessage(res, data), null, { retry: false });
+    })
+    .catch((e) => console.warn(`[catalog] could not save the favourite for ${trackId}`, e));
 }
 
 /**
@@ -2009,7 +2019,8 @@ async function extractStoppedTrack(trackId) {
     const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/extract`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      notifyFailure({ kind: "import", message: body.detail || i18nT("job.audioProcessingFailed") });
+      const message = body.code === RESTART_REQUIRED ? responseErrorMessage(res, body) : body.detail;
+      notifyFailure({ kind: "import", message: message || i18nT("job.audioProcessingFailed") });
       render();
       return;
     }
@@ -4230,7 +4241,8 @@ async function wireStemsLocation(overlay) {
       });
       const data = await r.json();
       if (!r.ok) {
-        setMessage(data.detail || i18nT("settings.stemsLocation.moveFailed"), "error");
+        const reason = data.code === RESTART_REQUIRED ? responseErrorMessage(r, data) : data.detail;
+        setMessage(reason || i18nT("settings.stemsLocation.moveFailed"), "error");
         return;
       }
       // Re-read rather than trust the POST: the GET reports where the stems

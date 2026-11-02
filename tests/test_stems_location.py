@@ -6,6 +6,7 @@ destroy someone's library. Most of what follows is about refusing to.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -476,6 +477,155 @@ def test_a_playlist_import_is_refused_too(client, tmp_path):
     client.post("/api/settings/stems-location", json={"path": str(tmp_path / "elsewhere")})
     r = client.post("/api/playlist", json={"url": "https://www.youtube.com/playlist?list=PLabc"})
     assert r.status_code == 409
+
+
+@pytest.fixture
+def moved(client, tmp_path, monkeypatch):
+    """A finished song, moved to a new folder, before the restart. The jobs API
+    writes through its own JOBS_DIR binding, pointed here at the old folder the
+    way this process still sees it."""
+    import app.api.jobs as jobs_api
+
+    monkeypatch.setattr(jobs_api, "JOBS_DIR", client.jobs_dir)
+    from app.core.registry import persist
+
+    _jobs["aaaaaaaaaaaa"] = Job(id="aaaaaaaaaaaa", status="done")
+    _job_dir(client.jobs_dir, "aaaaaaaaaaaa")
+    persist(client.jobs_dir)
+    target = tmp_path / "elsewhere"
+    r = client.post("/api/settings/stems-location", json={"path": str(target)})
+    assert r.status_code == 200, r.text
+    return target
+
+
+def test_a_favourite_after_a_move_is_refused_and_nothing_lands_in_the_old_folder(client, moved):
+    """Before the restart this process still writes to the folder the library
+    left. A favourite saved there is gone on the next start, when the moved
+    registry wins."""
+    new_registry = (moved / "registry.json").read_bytes()
+
+    r = client.put("/api/jobs/aaaaaaaaaaaa/favorite", json={"favorite": True})
+
+    assert r.status_code == 409
+    assert r.json() == {
+        "detail": "Restart StemDeck to finish moving your stems folder. "
+        "Until then, changes are not saved.",
+        "code": "restart_required",
+    }
+    assert list(client.jobs_dir.iterdir()) == [], "nothing may be written to the old folder"
+    assert (moved / "registry.json").read_bytes() == new_registry
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/jobs/aaaaaaaaaaaa/trash", None),
+        ("POST", "/api/jobs/aaaaaaaaaaaa/restore", None),
+        ("PATCH", "/api/jobs/aaaaaaaaaaaa/sections", {"sections": []}),
+        ("DELETE", "/api/jobs/aaaaaaaaaaaa/beats", None),
+        ("DELETE", "/api/jobs/aaaaaaaaaaaa", None),
+        ("POST", "/api/jobs/aaaaaaaaaaaa/resplit", {}),
+        ("POST", "/api/queue/start", None),
+        ("POST", "/api/queue/reorder", {"job_id": "aaaaaaaaaaaa"}),
+        ("POST", "/api/reset", None),
+        ("POST", "/api/jobs", {"url": "https://youtu.be/dQw4w9WgXcQ"}),
+        ("POST", "/api/playlist", {"url": "https://www.youtube.com/playlist?list=PLabc"}),
+    ],
+)
+def test_every_write_to_the_library_is_refused_until_the_restart(client, moved, method, path, body):
+    r = client.request(method, path, json=body)
+
+    assert r.status_code == 409, r.text
+    assert r.json()["code"] == "restart_required"
+    assert list(client.jobs_dir.iterdir()) == []
+    assert _jobs["aaaaaaaaaaaa"].trashed_at is None
+
+
+def test_no_write_route_is_left_out_of_the_refusal(client, moved):
+    """Walks the app, so a write endpoint added later is refused too unless it
+    is deliberately allowed."""
+    import re
+
+    import app.main as main_mod
+
+    for route in main_mod.app.routes:
+        path = getattr(route, "path", "")
+        unsafe = (getattr(route, "methods", None) or set()) & {"POST", "PUT", "PATCH", "DELETE"}
+        if not path.startswith("/api/") or path in main_mod._WRITES_ALLOWED_DURING_MOVE:
+            continue
+        concrete = re.sub(r"\{[^}]+\}", "aaaaaaaaaaaa", path)
+        for method in unsafe:
+            r = client.request(method, concrete, json={})
+            assert r.status_code == 409, f"{method} {path}: {r.status_code}"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "status"),
+    [
+        ("GET", "/api/jobs", None, 200),
+        ("GET", "/api/jobs/aaaaaaaaaaaa", None, 200),
+        ("GET", "/api/health", None, 200),
+        ("GET", "/api/settings/stems-location", None, 200),
+        ("POST", "/api/settings", {}, 200),
+        # Bodies the endpoints refuse before any lookup leaves the machine:
+        # reaching the endpoint at all is what is under test.
+        ("POST", "/api/search", {}, 422),
+        ("POST", "/api/playlist/preview", {}, 422),
+    ],
+)
+def test_reads_and_settings_keep_working_until_the_restart(
+    client, moved, method, path, body, status
+):
+    r = client.request(method, path, json=body)
+    assert r.status_code == status, r.text
+
+
+def test_a_second_move_before_the_restart_is_refused_and_keeps_the_door_shut(
+    client, moved, tmp_path
+):
+    """A second move would move nothing out of the emptied folder and point the
+    setting somewhere empty, and a refused one used to reopen the door, so the
+    next favourite landed in the old folder again."""
+    import app.core.settings as settings_mod
+    from app.core import stems_location
+
+    for path in (client.jobs_dir, tmp_path / "another"):
+        r = client.post("/api/settings/stems-location", json={"path": str(path)})
+        assert r.status_code == 409
+        assert r.json()["code"] == "restart_required"
+
+    assert stems_location.is_relocating() is True
+    assert settings_mod.get_jobs_dir() == str(moved.resolve())
+    assert client.put("/api/jobs/aaaaaaaaaaaa/favorite", json={"favorite": True}).status_code == 409
+    assert list(client.jobs_dir.iterdir()) == []
+
+
+def test_nothing_is_refused_when_no_move_is_pending(client, monkeypatch):
+    import app.api.jobs as jobs_api
+
+    monkeypatch.setattr(jobs_api, "JOBS_DIR", client.jobs_dir)
+    _jobs["aaaaaaaaaaaa"] = Job(id="aaaaaaaaaaaa", status="done")
+
+    r = client.put("/api/jobs/aaaaaaaaaaaa/favorite", json={"favorite": True})
+
+    assert r.status_code == 200
+    assert _jobs["aaaaaaaaaaaa"].favorite is True
+
+
+def test_writes_work_again_after_the_restart(client, moved, monkeypatch):
+    """The flag lives in this process only: the restarted backend starts with
+    it down and JOBS_DIR bound to the new folder."""
+    import app.api.jobs as jobs_api
+    from app.core import stems_location
+
+    monkeypatch.setattr(stems_location, "_relocating", False)
+    monkeypatch.setattr(jobs_api, "JOBS_DIR", moved)
+
+    r = client.put("/api/jobs/aaaaaaaaaaaa/favorite", json={"favorite": True})
+
+    assert r.status_code == 200
+    saved = json.loads((moved / "registry.json").read_text(encoding="utf-8"))
+    assert saved["jobs"][0]["favorite"] is True
 
 
 def test_a_failed_move_leaves_the_app_usable(client, tmp_path):

@@ -4,7 +4,8 @@
 //
 // Run:  node tests/js/error-reason.test.mjs
 
-import { errorReason, responseErrorMessage } from "../../static/js/errorReason.js";
+import { errorReason, RESTART_REQUIRED, responseErrorMessage } from "../../static/js/errorReason.js";
+import { TRANSLATIONS } from "../../static/js/i18n.js";
 
 let pass = 0,
   fail = 0;
@@ -36,6 +37,17 @@ eq("no detail and no status text (HTTP/2) gives the code", responseErrorMessage(
 eq("a body that was not JSON gives the code", responseErrorMessage(res(500, ""), null), "HTTP 500");
 eq("an object detail is not shown as [object Object]", responseErrorMessage(res(400, ""), { detail: { code: 1 } }), "HTTP 400");
 eq("no response at all is empty", responseErrorMessage(undefined, undefined), "");
+
+// A write refused between a stems folder move and the restart: the sentence
+// comes from the language tables, not the server's English detail.
+const refused = { detail: "server words", code: "restart_required" };
+eq("the code the server sends", RESTART_REQUIRED, "restart_required");
+eq(
+  "a refused write after a move gives the translated sentence",
+  responseErrorMessage(res(409, "Conflict"), refused),
+  TRANSLATIONS.en["settings.stemsLocation.restartToSave"],
+);
+eq("an unknown code still gives the detail", responseErrorMessage(res(409, ""), { detail: "busy", code: "other" }), "busy");
 
 // errorReason
 eq("an Error's message", errorReason(new Error("Failed to fetch")), "Failed to fetch");
