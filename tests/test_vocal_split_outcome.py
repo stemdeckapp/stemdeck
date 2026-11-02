@@ -116,6 +116,16 @@ DOWNLOAD_FAILS = (
     "UVR_MDXNET_KARA_2.onnx, response code: 404')\n"
     "w._load = boom"
 )
+CORRUPT_MODEL = (
+    "class S:\n"
+    "    def __init__(self, **kw): pass\n"
+    "w._import_separator = lambda: S\n"
+    "class InvalidProtobuf(Exception): pass\n"
+    "def boom(separator):\n"
+    "    raise InvalidProtobuf('[ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from "
+    "UVR_MDXNET_KARA_2.onnx failed:Protobuf parsing failed.')\n"
+    "w._load = boom"
+)
 OFFLINE_FAILS = (
     "class S:\n"
     "    def __init__(self, **kw): pass\n"
@@ -153,6 +163,7 @@ CRASHES = "import os\nos._exit(139)"
         (_worker(SHARED_LIB_FAILS), "dependency_missing"),
         (_worker(NMS_FAILS), "dependency_missing"),
         (_worker(DOWNLOAD_FAILS), "model_unavailable"),
+        (_worker(CORRUPT_MODEL), "model_unavailable"),
         (_worker(OFFLINE_FAILS), "model_unavailable"),
         (_worker(OOM_FAILS), "out_of_memory"),
         (_worker(SEPARATE_FAILS), "worker_failed"),
@@ -163,6 +174,7 @@ CRASHES = "import os\nos._exit(139)"
         "shared-library",
         "torchvision-op",
         "model-download",
+        "model-corrupt",
         "offline",
         "out-of-memory",
         "separate-raises",

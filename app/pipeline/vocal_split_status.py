@@ -52,8 +52,10 @@ logger = logging.getLogger("stemdeck.pipeline")
 _PACKAGES = ("torch", "torchvision", "onnxruntime", "onnx", "onnx2torch", "audio-separator")
 
 # Lowercased substrings that name a missing or broken dependency: a module
-# that is not there, a shared library that would not load, or one of the
-# packages the model is run through failing on load (#778's torchvision).
+# that is not there, a shared library that would not load, or a torchvision
+# built for another torch (#778). Not onnxruntime or onnx2torch by name: they
+# read the model file, so they are named in the error a damaged model gives,
+# and that is the model, not the install.
 _DEPENDENCY_PATTERNS = (
     "no module named",
     "cannot open shared object",
@@ -62,8 +64,6 @@ _DEPENDENCY_PATTERNS = (
     "undefined symbol",
     "symbol not found",
     "torchvision",
-    "onnx2torch",
-    "onnxruntime",
 )
 
 # The model could not be fetched, or what was fetched is not a model.

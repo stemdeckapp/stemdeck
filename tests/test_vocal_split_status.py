@@ -20,6 +20,10 @@ from app.core.vocal_split_outcome import (
 from app.pipeline import vocal_split_status as vss
 
 
+class InvalidProtobuf(Exception):
+    """The type onnxruntime raises for a model file it cannot parse."""
+
+
 @pytest.mark.parametrize(
     ("phase", "exc", "code"),
     [
@@ -33,6 +37,16 @@ from app.pipeline import vocal_split_status as vss
             MODEL_UNAVAILABLE,
         ),
         ("load", ValueError("Unsupported Model File: parameters for MD5 hash"), MODEL_UNAVAILABLE),
+        # A damaged model file that survived load_or_heal names the library
+        # that read it. That is the model, not a missing dependency.
+        (
+            "load",
+            InvalidProtobuf(
+                "[ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from "
+                "UVR_MDXNET_KARA_2.onnx failed:Protobuf parsing failed."
+            ),
+            MODEL_UNAVAILABLE,
+        ),
         ("separate", MemoryError(), OUT_OF_MEMORY),
         ("separate", RuntimeError("MPS backend out of memory"), OUT_OF_MEMORY),
         ("separate", ValueError("bad shape"), WORKER_FAILED),
