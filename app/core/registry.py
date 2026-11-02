@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -10,16 +11,18 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, LYRICS_FILE, STEM_NAMES
 from app.core.models import Job, clean_artist, clean_audio_tags, clean_identity, clean_work
 from app.core.settings import quarantine_corrupt
 from app.core.stem_files import stem_exists, stem_url
 from app.core.takes import reconcile_tracks, recover_takes
+from app.core.versions import clean_stems
 
 logger = logging.getLogger("stemdeck.registry")
 
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 
 _jobs: dict[str, Job] = {}
 # Active subprocesses keyed by job_id (currently only Demucs). Lets
@@ -54,6 +57,31 @@ _pending_resume: list[str] = []
 # wipes it. Persisted with the registry; see _prune_deleted for why it stays
 # small.
 _deleted: set[str] = set()
+
+# What the user chose for a song, or its import recorded, that nothing in its
+# folder can be derived from. registry.json alone used to hold these, so a
+# registry rebuilt from the folders reset every one of them: a binned song came
+# back, versions (and the mixes the page keys by their ids) were gone, and a
+# link song could no longer fill its missing stems. metadata.json keeps a copy,
+# written when the song finishes and by every request that changes one.
+SAVED_FIELDS = (
+    "favorite",
+    "trashed_at",
+    "versions",
+    "active_version",
+    "vocal_split_wanted",
+    "selected_stems",
+    "source_url",
+    "source_format",
+    "separation_model",
+    "separation_quality",
+    "auto_lyrics",
+    "created_at",
+)
+
+
+def saved_fields(job: Job) -> dict[str, Any]:
+    return {name: getattr(job, name) for name in SAVED_FIELDS}
 
 
 def register(job: Job) -> Job:
@@ -156,6 +184,11 @@ def _migrate(data: dict) -> dict:
         # v0 → v1: version field was absent; no structural change needed.
         data["version"] = 1
         version = 1
+    if version < 2:
+        # v1 → v2: nothing changes in this file. restore() copies each
+        # song's SAVED_FIELDS into its metadata.json once.
+        data["version"] = 2
+        version = 2
     # Future migrations go here as `if version < N:` blocks.
     return data
 
@@ -373,6 +406,7 @@ def restore(jobs_dir: Path) -> None:
     data = _read_registry(path) if path.is_file() else None
     if data is not None:
         try:
+            copy_saved = data.get("version", 0) < 2
             data = _migrate(data)
             recorded = data.get("deleted")
             if isinstance(recorded, list):
@@ -389,6 +423,8 @@ def restore(jobs_dir: Path) -> None:
                 _keep_bad_records(path, [records], "the jobs list was not a list")
                 records = []
             bad: list = []
+            # The fields each record really held, not a default filled in.
+            held: dict[str, set[str]] = {}
             for record in records:
                 # One record at a time. A single bad one used to abort the whole
                 # load, and the persist after orphan recovery then wrote the
@@ -412,6 +448,7 @@ def restore(jobs_dir: Path) -> None:
                     changed = True
                 if not JOB_ID_RE.match(job.id):
                     continue
+                held[job.id] = set(record) - set(repaired)
                 try:
                     # A stopped job may have no title yet: one trashed before
                     # its download finished still has files and a Trash place.
@@ -437,6 +474,17 @@ def restore(jobs_dir: Path) -> None:
                 _keep_bad_records(path, bad, "records that could not be loaded as they were")
             for job in to_add.values():
                 if _sync_tracks(job, jobs_dir / job.id):
+                    changed = True
+            if copy_saved:
+                # Songs finished before metadata.json kept a copy get one now,
+                # or a registry lost later would still reset all of them.
+                copied = sum(
+                    _copy_saved_fields(job, jobs_dir, held.get(job.id, set()))
+                    for job in to_add.values()
+                    if job.status in _TERMINAL
+                )
+                if copied:
+                    logger.info("copied saved fields into %d song folder(s)", copied)
                     changed = True
             with _lock:
                 _jobs.update(to_add)
@@ -465,6 +513,8 @@ def restore(jobs_dir: Path) -> None:
         with _lock:
             known = set(_jobs)
             deleted = set(_deleted)
+        rebuilt: list[str] = []
+        unsaved: list[str] = []
         for job_dir in jobs_dir.iterdir():
             if not job_dir.is_dir() or not JOB_ID_RE.match(job_dir.name) or job_dir.name in known:
                 continue
@@ -472,16 +522,58 @@ def restore(jobs_dir: Path) -> None:
                 # The user deleted this and its files outlived the delete.
                 # Adopting it here is what brought songs back (#521).
                 continue
-            recovered = _recover_done_job(job_dir)
-            if recovered is not None:
+            found = _rebuild_from_folder(job_dir)
+            if found is not None:
+                recovered, had_saved = found
                 _sync_tracks(recovered, job_dir)
                 with _lock:
                     _jobs[recovered.id] = recovered
                 changed = True
+                rebuilt.append(recovered.id)
+                if not had_saved:
+                    unsaved.append(recovered.id)
+        if rebuilt:
+            listed = ", ".join(unsaved[:20]) or "none"
+            if len(unsaved) > 20:
+                listed += f" and {len(unsaved) - 20} more"
+            logger.warning(
+                "registry.json had no entry for %d song(s); rebuilt them from their folders: "
+                "%d with their favourite, Trash, versions and source, %d without "
+                "(metadata.json older than those, or unreadable): %s",
+                len(rebuilt),
+                len(rebuilt) - len(unsaved),
+                len(unsaved),
+                listed,
+            )
         if changed:
             persist(jobs_dir)
     except Exception:
         logger.warning("failed to recover jobs from %s", jobs_dir, exc_info=True)
+
+
+def _copy_saved_fields(job: Job, jobs_dir: Path, held: set[str]) -> bool:
+    """Put the job's SAVED_FIELDS into its metadata.json, changing nothing else
+    in it. A field the registry record did not hold only fills a gap: 0.20.0
+    drops versions and the newer fields from the registry, so after a
+    downgrade and back, metadata.json is their only copy. False when the song
+    has no usable metadata.json."""
+    meta_path = (jobs_dir / job.id / "metadata.json").resolve()
+    if not meta_path.is_relative_to(jobs_dir.resolve()):
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            return False
+        for name, value in saved_fields(job).items():
+            if name in held or name not in meta:
+                meta[name] = value
+        _write_atomic(meta_path, json.dumps(meta, indent=2) + "\n")
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        logger.warning("could not copy saved fields into %s", meta_path, exc_info=True)
+        return False
+    return True
 
 
 def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
@@ -501,11 +593,10 @@ def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
     has, and its files stay until the Trash is emptied."""
     recovered = _recover_done_job(job_dir)
     if recovered is not None:
-        # Finished after all: keep it where the user put it, or a song they
-        # binned reappears in the library.
-        recovered.trashed_at = job.trashed_at
-        # And the Lead + Backing it was imported with, still to be split.
-        recovered.vocal_split_wanted = job.vocal_split_wanted
+        # Finished after all: keep what the registry says the user chose (its
+        # Trash, its Lead + Backing still to be split), the newer source.
+        for name in SAVED_FIELDS:
+            setattr(recovered, name, getattr(job, name))
         return recovered
 
     if job.trashed_at is not None:
@@ -566,6 +657,13 @@ def _sync_tracks(job: Job, job_dir: Path) -> bool:
 
 
 def _recover_done_job(job_dir: Path) -> Job | None:
+    found = _rebuild_from_folder(job_dir)
+    return found[0] if found is not None else None
+
+
+def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
+    """A finished song rebuilt from its folder, and whether its metadata.json
+    held the SAVED_FIELDS (a folder written before they were kept has none)."""
     stems_dir = job_dir / "stems"
     if not stems_dir.is_dir():
         return None
@@ -594,6 +692,8 @@ def _recover_done_job(job_dir: Path) -> Job | None:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             pass
+        if not isinstance(meta, dict):
+            meta = {}  # read as none, so the folders after this one still rebuild
     else:
         # Crash window (#284): the process died between status=done and the
         # metadata write, leaving a complete stems dir that used to be
@@ -605,7 +705,7 @@ def _recover_done_job(job_dir: Path) -> Job | None:
             meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         except OSError:
             logger.warning("could not write recovery metadata for %s", job_dir.name, exc_info=True)
-    return Job(
+    job = Job(
         id=job_dir.name,
         status="done",
         progress=1.0,
@@ -645,6 +745,20 @@ def _recover_done_job(job_dir: Path) -> Job | None:
         # lost, so the lanes come back with the job.
         takes=recover_takes(job_dir),
     )
+    # A file on disk, so read through the same checks as a registry record: a
+    # value of the wrong type keeps what the folder gave instead of loading.
+    # NaN passes as a float but fails every JSON response the library sends.
+    saved = {
+        name: meta[name] for name in (*SAVED_FIELDS, "has_video", "video_status") if name in meta
+    }
+    if saved:
+        kept = Job.from_record({**saved, "id": job.id})
+        for name in saved.keys() - set(_repair_field_types(kept)):
+            value = getattr(kept, name)
+            if not isinstance(value, float) or math.isfinite(value):
+                setattr(job, name, value)
+        job.selected_stems = clean_stems(job.selected_stems) or selected
+    return job, any(name in meta for name in SAVED_FIELDS)
 
 
 def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:

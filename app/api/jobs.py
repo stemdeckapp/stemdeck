@@ -48,7 +48,7 @@ from app.core.models import (
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
-from app.core.registry import is_upload
+from app.core.registry import is_upload, saved_fields
 from app.core.registry import mark_deleted as registry_mark_deleted
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
@@ -447,6 +447,7 @@ def trash_job(job_id: str) -> dict:
         job.stop_requested = True
         _cancel_pipeline(job)
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
 
 
@@ -459,6 +460,7 @@ def restore_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
 
 
@@ -507,6 +509,7 @@ def set_favorite(job_id: str, body: FavoriteBody) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "favorite": job.favorite}
 
 
@@ -982,6 +985,7 @@ async def create_version(job_id: str, body: VersionCreateBody) -> dict:
     active = version["id"] if body.select else active_of(job, versions)
     _set(job, versions=versions, active_version=active)
     registry_persist(JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
     return {"version": version, **_versions_payload(job)}
 
 
@@ -999,6 +1003,7 @@ async def rename_version(job_id: str, version_id: str, body: VersionRenameBody) 
     target["name"] = name
     _set(job, versions=versions, active_version=active_of(job, versions))
     registry_persist(JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
 
@@ -1018,6 +1023,7 @@ async def delete_version(job_id: str, version_id: str) -> dict:
     # The deleted one was opening with the song: the first left does now.
     _set(job, versions=remaining, active_version=active_of(job, remaining))
     registry_persist(JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
 
@@ -1031,6 +1037,7 @@ async def select_version(job_id: str, version_id: str) -> dict:
         raise HTTPException(status_code=404, detail="version not found")
     _set(job, versions=versions, active_version=version_id)
     registry_persist(JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
 
@@ -1101,7 +1108,7 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
-_SECTIONS_WRITE_LOCK = threading.Lock()
+_SECTIONS_WRITE_LOCK = threading.RLock()
 
 
 def _write_json_atomic(path: Path, data: dict) -> None:
@@ -1252,7 +1259,15 @@ def _write_metadata_fields(job_id: str, fields: dict[str, object]) -> None:
             meta.update(fields)
             _write_json_atomic(meta_path, meta)
         except (OSError, ValueError):
-            logger.warning("could not record audio tags in metadata for %s", job_id, exc_info=True)
+            logger.warning("could not update metadata.json for %s", job_id, exc_info=True)
+
+
+def _keep_saved_fields(job: Job) -> None:
+    """Copy what the user set on a song (favourite, Trash, versions) into its
+    metadata.json, so a registry rebuilt from the folders keeps it. Read under
+    the lock, so of two quick changes the later one is what stays."""
+    with _SECTIONS_WRITE_LOCK:
+        _write_metadata_fields(job.id, saved_fields(job))
 
 
 @router.post("/{job_id}/audio-tags")
