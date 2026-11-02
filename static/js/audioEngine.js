@@ -136,8 +136,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
   let _epoch = 0;
-  // Why ready() resolved false, in words fit to show a user. Mirrors the same
-  // accessor on the chunked engine so callers need not know which one they hold.
+  // Why ready() resolved false, as an i18n key the caller shows with t(). A key
+  // and not text, so the phone page, which shares this engine, never loads the
+  // string tables. Mirrors the same accessor on the chunked engine so callers
+  // need not know which one they hold.
   let _loadError = null;
 
   // Decode all stems up front AND load the SoundTouch worklet in parallel.
@@ -211,10 +213,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     const hasPlaybackTrack = [...tracks.values()].some((track) => !track.visualOnly);
     if (!hasPlaybackTrack) {
       _loadError = undecodable
-        ? "This track's audio files are in a format StemDeck could not read."
+        ? "player.loadError.undecodable"
         : unreachable
-          ? "Could not load this track's audio files."
-          : "This track has no stem files to play.";
+          ? "player.loadError.unreachable"
+          : "player.loadError.noStems";
     }
     // A seek made while loading kept its position unclamped (see seek).
     if (startOffset > duration) startOffset = duration;

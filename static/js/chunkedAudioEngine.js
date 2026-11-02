@@ -332,7 +332,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   };
   ctx.addEventListener("statechange", onCtxStateChange);
 
-  // Why ready() resolved false, in words fit to show a user. Read via
+  // Why ready() resolved false, as an i18n key (see audioEngine.js). Read via
   // getLoadError() by the caller that decides what to put on screen.
   let _loadError = null;
 
@@ -830,7 +830,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   async function _load() {
     if (!stemMap.size) {
-      _loadError = "This track has no stem files to play.";
+      _loadError = "player.loadError.noStems";
       return false;
     }
 
@@ -861,10 +861,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     }
     if (!_duration) {
       _loadError = unreadable
-        ? "This track's audio files are in a format StemDeck could not read."
+        ? "player.loadError.undecodable"
         : unreachable
-          ? "Could not load this track's audio files."
-          : "This track's audio files contain no audio.";
+          ? "player.loadError.unreachable"
+          : "player.loadError.noAudio";
       return false;
     }
 
