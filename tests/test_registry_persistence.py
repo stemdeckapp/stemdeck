@@ -449,6 +449,25 @@ def test_a_stopped_job_survives_a_restart_in_the_trash(tmp_path: Path):
     assert _registry.take_pending_resume() == [], "only Extract may queue it again"
 
 
+def test_a_stopped_song_and_its_upload_survive_every_restart(tmp_path: Path):
+    """A song stopped in the Library (#772): never separated, its upload the only
+    copy. Two loads in a row, so the persist the first one ends with is read too."""
+    job = Job(id="abcdef0000f4", status="stopped", title="Kept", source_url="local:Kept")
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    source = tmp_path / job.id / "source.mp3"
+    source.parent.mkdir()
+    source.write_bytes(b"ID3")
+
+    for _ in range(2):
+        _jobs.clear()
+        restore_registry(tmp_path)
+        assert _jobs[job.id].status == "stopped"
+        assert _jobs[job.id].trashed_at is None
+        assert _registry.take_pending_resume() == []
+        assert source.is_file()
+
+
 def test_a_trashed_job_that_finished_before_the_crash_stays_in_the_trash(tmp_path: Path):
     job = Job(id="abcdef0000f2", status="separating", title="Binned", trashed_at=1.0)
     _jobs[job.id] = job
