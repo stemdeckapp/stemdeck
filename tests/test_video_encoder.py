@@ -24,6 +24,7 @@ import pytest
 from app.api import stems as stems_mod
 from app.api import takes as takes_mod
 from app.api import video_encoders as video_encoders_api
+from app.core import config as config_mod
 from app.core import settings as settings_mod
 from app.core.config import VIDEO_ENCODER_CHOICES, VIDEO_GPU_ENCODERS
 from app.pipeline import take_render
@@ -969,6 +970,31 @@ def test_a_cancelled_render_never_starts_ffmpeg(fake, tmp_path):
         )
     assert _renders(fake) == [], "no ffmpeg process was started"
     assert not list(tmp_path.glob("*render.mp4*"))
+
+
+async def test_render_timeout_scales_with_the_render_length(tmp_path, monkeypatch):
+    # A 30-minute take on a CPU that encodes at a third of realtime needs 90
+    # minutes; a flat one-hour bound killed it at 60.
+    timeouts = []
+    monkeypatch.setattr(
+        takes_mod, "run_video_render", lambda *a, timeout, **k: timeouts.append(timeout)
+    )
+    job = SimpleNamespace(id="abcdefabcdef")
+    monkeypatch.setattr(takes_mod, "registry_get", lambda jid: job)
+    for duration in (10.0, 1800.0, 24 * 3600.0):
+        run = takes_mod._RenderRun()
+        await takes_mod._render_task(run, job, ["ffmpeg"], tmp_path / "render.mp4", duration)
+        assert run.status == "done"
+    short, long_take, endless = timeouts
+    assert long_take >= 3 * 1800
+    assert short == config_mod.TIMEOUT_VIDEO_RENDER
+    assert endless == config_mod.TIMEOUT_RENDER_MAX
+    # A floor raised over the ceiling (a slow box) still holds.
+    monkeypatch.setattr(takes_mod, "TIMEOUT_VIDEO_RENDER", 8 * 3600)
+    await takes_mod._render_task(
+        takes_mod._RenderRun(), job, ["ffmpeg"], tmp_path / "render.mp4", 10.0
+    )
+    assert timeouts[-1] == 8 * 3600
 
 
 async def test_master_retry_uses_the_encoder_that_held(fake, tmp_path, monkeypatch):

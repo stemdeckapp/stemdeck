@@ -527,7 +527,7 @@ def run_video_render(
     cancelled: Callable[[], bool],
     report: Callable[[float], None],
     on_proc: Callable[[subprocess.Popen | None], None],
-    timeout: int,
+    timeout: float,
     check: Callable[[Path], None] | None = None,
     stall_timeout: float | None = None,
 ) -> None:

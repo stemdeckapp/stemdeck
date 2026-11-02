@@ -426,8 +426,13 @@ STEM_MP3_KBPS_CHOICES: tuple[int, ...] = (128, 192, 256)
 # long; the song then keeps its WAVs.
 TIMEOUT_STEM_TRANSCODE_STALL = _env_int("STEMDECK_TIMEOUT_STEM_TRANSCODE_STALL", 120)
 # Video render of a take (libx264 + AAC). Slower than any audio export: a
-# 5-minute 1080p30 encode runs about 1x to 3x realtime on a desktop CPU.
+# 5-minute 1080p30 encode runs about 1x to 3x realtime on a desktop CPU, and a
+# small NAS or laptop CPU can be several times slower than realtime. Bounded by
+# this many seconds per second of video, within the floor and the ceiling (the
+# floor wins): a flat bound cut a long take short on a slow CPU.
 TIMEOUT_VIDEO_RENDER = _env_int("STEMDECK_TIMEOUT_VIDEO_RENDER", 3600)
+TIMEOUT_RENDER_MAX = _env_int("STEMDECK_TIMEOUT_RENDER_MAX", 6 * 3600)
+VIDEO_RENDER_SEC_PER_SEC = 6.0
 
 # The take render's hardware (GPU) H.264 encoders (app/pipeline/video_encoder.py).
 # libx264 stays the default and the fallback for every failure. h264_mf

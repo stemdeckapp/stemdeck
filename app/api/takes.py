@@ -79,11 +79,13 @@ from app.core.config import (
     TAKE_SLACK_SEC,
     TAKES_DIRNAME,
     TIMEOUT_FILMSTRIP,
+    TIMEOUT_RENDER_MAX,
     TIMEOUT_VIDEO_GPU_STALL,
     TIMEOUT_VIDEO_RENDER,
     TRACK_ID_RE,
     TRACK_MAX_PER_JOB,
     VIDEO_CPU_ENCODER,
+    VIDEO_RENDER_SEC_PER_SEC,
     ffmpeg_executable,
     ffprobe_executable,
 )
@@ -1610,7 +1612,10 @@ async def _render_task(
                     cancelled=cancelled,
                     report=report,
                     on_proc=on_proc,
-                    timeout=TIMEOUT_VIDEO_RENDER,
+                    timeout=max(
+                        TIMEOUT_VIDEO_RENDER,
+                        min(TIMEOUT_RENDER_MAX, duration * VIDEO_RENDER_SEC_PER_SEC),
+                    ),
                     check=check,
                     stall_timeout=stall,
                 )
