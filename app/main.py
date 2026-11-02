@@ -271,8 +271,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     await tls_listener.stop()
     # Stop taking new work. Deliberately not cancelling the in-flight job: it is
-    # blocked in asyncio.to_thread, which cannot be cancelled, so it dies with
-    # the process exactly as it did before the queue existed.
+    # blocked in asyncio.to_thread, which cannot be cancelled. First, though:
+    # the worker kill below ends a separation, and this is what makes the
+    # runner keep that job to resume rather than fail it.
     jobqueue.request_stop()
     # Running take renders (ffmpeg processes) stop with the server.
     from app.api.takes import cancel_all_renders

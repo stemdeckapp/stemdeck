@@ -15,6 +15,7 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device, get_separation_quality
+from app.pipeline import jobqueue
 from app.pipeline.errors import SeparationError, classify_failure
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -264,7 +265,9 @@ def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) 
 
     rc, tail = _run_demucs(job, source, job_dir, device)
 
-    if rc != 0 and device != "cpu":
+    # A worker the shutdown killed is not a GPU failure: a CPU pass started
+    # now would keep the backend from exiting.
+    if rc != 0 and device != "cpu" and not jobqueue.is_stopping():
         cause = classify_failure("\n".join(tail))
         logger.warning(
             "[%s] demucs failed on %s (exit %s, cause=%s); retrying on CPU. tail:\n%s",

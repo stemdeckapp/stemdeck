@@ -21,6 +21,7 @@ from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
 from app.core.registry import is_upload
 from app.core.registry import persist as persist_registry
+from app.pipeline import jobqueue
 from app.pipeline.analyze import analyze, refine_key_from_stems
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.cancel import check_cancel as _check_cancel
@@ -490,6 +491,12 @@ async def _run_async(
             await asyncio.to_thread(blocking_fn, job, *fn_args, job_dir)
     except Exception as e:
         if not isinstance(e, JobCancelled) and not job.cancel_requested:
+            if jobqueue.is_stopping():
+                # The shutdown killed the demucs worker under this job, which
+                # reads exactly like a crash. Failing it deleted an upload. Its
+                # status stays resumable and the next start queues it again.
+                logger.info("[%s] interrupted by shutdown: %s", job.id, e)
+                return
             logger.exception("pipeline failed for job %s: %s", job.id, e)
             _set(job, status="error", stage="Error: Processing failed", error=error_msg)
             # A fingerprint may still have the source open (Windows).

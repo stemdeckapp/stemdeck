@@ -295,12 +295,25 @@ def is_paused() -> bool:
 
 
 def request_stop() -> None:
-    """Stop picking up new work. Deliberately does not cancel the in-flight job:
-    it is blocked in asyncio.to_thread, which cannot be cancelled, so it dies
-    with the process exactly as it did before the queue existed."""
+    """Stop picking up new work, at shutdown. Deliberately does not cancel the
+    in-flight job: it is blocked in asyncio.to_thread, which cannot be
+    cancelled. The shutdown then kills the demucs worker under it, and the
+    runner reads that as an interruption, not a failure (is_stopping).
+
+    A clean stop is not the crash registry.restore's one resume is kept for,
+    so the running job gets its resume back, on disk before the kill."""
     global _stopping
     _stopping = True
+    running = running_id()
+    job = registry_get(running) if running else None
+    if job is not None:
+        job.resume_attempts = 0
+        registry_persist(JOBS_DIR)
     _notify()
+
+
+def is_stopping() -> bool:
+    return _stopping
 
 
 def cleanup_job_dir(job_id: str) -> None:
