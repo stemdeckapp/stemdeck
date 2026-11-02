@@ -1597,10 +1597,6 @@ async def get_stem(
     name: str,
     start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
-    click: bool = Query(default=False, description="Mix the click track into the export"),
-    click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
-    click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
-    click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
 ) -> FileResponse | StreamingResponse:
     """A stem, as the song stores it: WAV, or MP3 for a song stored as MP3
     (#783), with its own type and file name whatever this URL says. Optional
