@@ -1991,7 +1991,8 @@ function extractButtonHtml(track) {
  * A failed link import can be tried again: the server quarantines a failed
  * job and forgets it on restart, so this is a new import of the same link,
  * which takes over the failed row (addTrackToLibrary, by source). A failed
- * upload has no file left to try with.
+ * upload's file is kept in the quarantine (jobs/failed/<id>), but nothing can
+ * queue a job from there, so it has no Try again.
  */
 function canRetryImport(track) {
   return track.status === "error" && isReimportableSource(track.sourceUrl);

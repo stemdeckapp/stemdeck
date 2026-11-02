@@ -396,9 +396,10 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         logger.warning("could not write metadata.json for job %s", job.id, exc_info=True)
 
 
-# Files worth keeping in a quarantined failure dir. Everything else (source
-# download, stem WAVs, video) is deleted first -- evidence must stay KB-scale,
-# not GB-scale.
+# Files worth keeping in a quarantined failure dir. Everything else (a link's
+# source download, stem WAVs, video) is deleted first -- evidence must stay
+# KB-scale, not GB-scale. An upload's source.* is kept as well (see
+# _quarantine_failed_job).
 _QUARANTINE_KEEP = frozenset(("error.txt", "metadata.json"))
 
 
@@ -409,7 +410,13 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
     tail, full traceback), strips the heavy audio payloads, and moves the dir
     to jobs/failed/<id> where sweep_failed_jobs expires it after FAILED_TTL.
     Best-effort throughout: any step failing falls back to plain removal so a
-    pathological error can never leak disk."""
+    pathological error can never leak disk.
+
+    Except for an upload's source.*. It goes to the quarantine with the
+    evidence, and if the quarantine itself fails its folder is left where it
+    is. Same reason the runner never deletes it on success: a link can be
+    fetched again, an upload is the one copy StemDeck has, and a failure (out
+    of memory, disk full, a killed worker) says nothing about the file."""
     tail: list[str] = getattr(exc, "tail", None) or []
     cause = classify_failure("\n".join([*tail, repr(exc)]))
     detail = cause
@@ -427,6 +434,18 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
     job.error_detail = detail
 
     try:
+        # Strip heavy payloads: the quarantine keeps diagnostics, not audio.
+        # First, so an upload's folder left behind by a failure below (disk
+        # full writing error.txt) holds no stems for restore() to adopt.
+        keep_source = is_upload(job)
+        for p in list(job_dir.iterdir()):
+            if p.name in _QUARANTINE_KEEP or (keep_source and p.name.startswith("source.")):
+                continue
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+
         # title/source stay unredacted: they never leave this file (the
         # /failure API's allowlist excludes both, see app/api/jobs.py), so
         # this is purely local diagnostic value for the person looking at
@@ -454,15 +473,6 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
             lines += ["", "--- traceback ---", tb]
         (job_dir / "error.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # Strip heavy payloads: the quarantine keeps diagnostics, not audio.
-        for p in list(job_dir.iterdir()):
-            if p.name in _QUARANTINE_KEEP:
-                continue
-            if p.is_dir():
-                shutil.rmtree(p, ignore_errors=True)
-            else:
-                p.unlink(missing_ok=True)
-
         failed_root = jobs_dir / "failed"
         failed_root.mkdir(parents=True, exist_ok=True)
         dest = failed_root / job.id
@@ -471,6 +481,11 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         shutil.move(str(job_dir), str(dest))
         logger.info("[%s] failure evidence kept at %s", job.id, dest)
     except Exception:
+        if is_upload(job):
+            logger.warning(
+                "[%s] quarantine failed; upload left at %s", job.id, job_dir, exc_info=True
+            )
+            return
         logger.warning("[%s] quarantine failed; removing job dir", job.id, exc_info=True)
         _rmtree(job_dir)
 

@@ -307,6 +307,117 @@ async def test_quarantine_redacts_a_source_url_embedded_in_the_exception(tmp_pat
     assert "<source-url-redacted>" in exception_line
 
 
+def _failed_separation_job(tmp_path: Path, source_url: str) -> tuple[Job, Path, Path]:
+    """A job whose folder holds a source, partial stems and partial demucs output."""
+    job = Job(id="abcdefabcd42", source_url=source_url)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    (job_dir / "stems" / "vocals.wav").write_bytes(b"RIFF" + b"\x00" * 64)
+    (job_dir / "htdemucs").mkdir()
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + b"upload" * 32)
+    return job, job_dir, source
+
+
+def _worker_died(*args, **kwargs):
+    # What separate() raises when the demucs worker's stderr hits EOF: a crash,
+    # an out-of-memory kill, or today a clean shutdown killing the worker.
+    from app.pipeline.errors import SeparationError
+
+    raise SeparationError("demucs failed: worker exited", tail=["Killed"], device="cpu")
+
+
+@pytest.mark.asyncio
+async def test_failed_upload_keeps_its_source_in_the_quarantine(tmp_path: Path):
+    """Decision 6: an upload is the one copy StemDeck has, so a failed separation
+    keeps source.* beside error.txt. Stems and demucs output still go."""
+    job, job_dir, source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    original = source.read_bytes()
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert not job_dir.exists()
+    quarantined = tmp_path / "failed" / job.id
+    assert (quarantined / "source.wav").read_bytes() == original
+    assert (quarantined / "error.txt").is_file()
+    assert not (quarantined / "stems").exists()
+    assert not (quarantined / "htdemucs").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_link_job_still_drops_its_source(tmp_path: Path):
+    """A link can be fetched again, so its failure evidence stays KB-scale."""
+    job, _job_dir, source = _failed_separation_job(
+        tmp_path, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+
+    with patch("app.pipeline.runner._run_blocking", side_effect=_worker_died):
+        await run_pipeline(job, job.source_url, tmp_path)
+
+    quarantined = tmp_path / "failed" / job.id
+    assert (quarantined / "error.txt").is_file()
+    assert list(quarantined.glob("source.*")) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_url", "folder_kept"),
+    [("local:Hollow Veins", True), ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", False)],
+)
+async def test_a_failed_quarantine_never_deletes_an_upload(
+    tmp_path: Path, source_url: str, folder_kept: bool
+):
+    """When the quarantine itself fails (disk full writing error.txt), its
+    fallback removes the job folder. An upload's folder is left in place
+    instead, its source intact and its stems already stripped, so restore()
+    cannot adopt it as a finished song."""
+    job, job_dir, source = _failed_separation_job(tmp_path, source_url)
+    original = source.read_bytes()
+
+    with (
+        patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died),
+        patch("pathlib.Path.write_text", side_effect=OSError(28, "No space left on device")),
+    ):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert job_dir.exists() is folder_kept
+    if folder_kept:
+        assert source.read_bytes() == original
+        assert not (job_dir / "stems").exists()
+        assert not (job_dir / "htdemucs").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_job_sweep_expires_a_kept_upload(tmp_path: Path, monkeypatch):
+    """The kept upload is not kept forever: the hourly failed-job sweep removes
+    it FAILED_TTL_SECONDS after the failure (the folder's mtime)."""
+    import time
+    from types import SimpleNamespace
+
+    from app.pipeline import collect
+
+    job, _job_dir, source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died):
+        await run_local_pipeline(job, source, tmp_path)
+    quarantined = tmp_path / "failed" / job.id
+    failed_at = time.time()
+
+    monkeypatch.setattr(
+        collect, "time", SimpleNamespace(time=lambda: failed_at + collect.FAILED_TTL_SECONDS - 60)
+    )
+    collect.sweep_failed_jobs(tmp_path)
+    assert (quarantined / "source.wav").is_file()
+
+    monkeypatch.setattr(
+        collect, "time", SimpleNamespace(time=lambda: failed_at + collect.FAILED_TTL_SECONDS + 60)
+    )
+    collect.sweep_failed_jobs(tmp_path)
+    assert not quarantined.exists()
+
+
 @pytest.mark.asyncio
 async def test_pipeline_success_logs_timing_summary(tmp_path: Path, caplog):
     """#293: successful jobs emit a one-line stage-timing summary."""
