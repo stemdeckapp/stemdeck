@@ -202,6 +202,21 @@ def test_a_lead_backing_request_survives_a_restart(tmp_path: Path):
     assert _jobs["abcdef001848"].vocal_split_wanted is True
 
 
+def test_a_job_recovered_from_its_stems_keeps_the_lead_backing_request(tmp_path: Path):
+    """A crash after the last stem landed but before the done-persist rebuilds
+    the job from disk: the request must come with it."""
+    job = Job(id="abcdef003848", status="separating", title="Nearly", vocal_split_wanted=True)
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+    _stems_dir(tmp_path, job.id)
+    _jobs.clear()
+
+    restore_registry(tmp_path)
+
+    assert _jobs[job.id].status == "done"
+    assert _jobs[job.id].vocal_split_wanted is True
+
+
 def test_a_registry_from_before_the_lead_backing_request_loads_unchanged(tmp_path: Path):
     """The registry 0.20.0 wrote has no vocal_split_wanted: its songs load as
     "not asked for", without being set aside as damaged."""

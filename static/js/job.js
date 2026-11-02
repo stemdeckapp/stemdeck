@@ -29,14 +29,17 @@ let lastStatus = null;
 let jobPollTimerId = null;
 const renderedJobs = new Set();
 const jobSources = new Map();
-// Guards against double-firing the split POST if a job's "done" state is
-// somehow observed twice (e.g. a late SSE frame after the queue already
-// settled it) -- the split is expensive, so this must stay a hard one-shot.
-const splitAutoTriggered = new Set();
+// The split each job's "done" state started here, by job id. A job's "done"
+// state is observed twice when it has both a per-job stream and a queue row
+// (a "Sync again" restore): the split is expensive, so it stays a hard
+// one-shot, and the second caller gets the first one's result rather than
+// the state from before the split.
+const splitRuns = new Map();
 
 // Lead + Backing goes with the job (#848): the server keeps it as
 // vocal_split_wanted, so the split is still asked for after a reload, a
 // restart or from a second window, none of which this page's memory survives.
+// Playlist imports do not send it.
 function wantsVocalSplit() {
   return selectedStems.has("vocals") && effectiveVocalSplitMode() === "split";
 }
@@ -52,18 +55,21 @@ function wantsVocalSplit() {
 // callers use the return value rather than assuming their own `state` is
 // still current.
 export async function runVocalSplitIfWanted(state) {
-  if (state.status !== "done" || !state.vocal_split_wanted || splitAutoTriggered.has(state.job_id)) return state;
+  if (state.status !== "done" || !state.vocal_split_wanted) return state;
+  if (splitRuns.has(state.job_id)) return splitRuns.get(state.job_id);
   const hasVocals = (state.stems || []).some((s) => s.name === "vocals");
   if (!hasVocals || state.vocal_split === "done") return state;
-  splitAutoTriggered.add(state.job_id);
   // It already failed where no page was there to say so (a window that was
   // closed, a restart during the split): said now, with Try again.
   if (state.vocal_split === "error") {
+    splitRuns.set(state.job_id, Promise.resolve(state));
     reportSplitFailure(state, state.vocal_split_reason);
     return state;
   }
   if (state.job_id === foregroundJobId) setWaveformLoading(true, t("stems.splitRunning"));
-  return runVocalSplit(state);
+  const run = runVocalSplit(state);
+  splitRuns.set(state.job_id, run);
+  return run;
 }
 
 /**
@@ -799,7 +805,7 @@ export async function importFromUrl(url, { title, stems, vocalSplit = false } = 
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, stems: stemSel, vocal_split: vocalSplit }),
+      body: JSON.stringify({ url, stems: stemSel, vocal_split: vocalSplit && effectiveVocalSplitMode() === "split" }),
     });
     // A body that is not JSON (a proxy's error page) must not hide the status.
     const data = await res.json().catch(() => null);

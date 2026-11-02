@@ -111,8 +111,40 @@ test.describe("Lead + Backing chosen at import", () => {
     await openWithImportInProgress(page);
 
     await expect.poll(() => savedStems(page)).toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    // Settled: no second request follows.
+    await page.waitForTimeout(1000);
     expect(posts).toHaveLength(1);
     expect((await readCatalogState(page)).tracks[JOB_ID].status).toBe("done");
+  });
+
+  test("both completion paths of one page share one split and its result", async ({ page }) => {
+    // A "Sync again" restore is finished by its own stream and by the queue.
+    const job = await serveJob(page, () => ({ vocal_split: "none", vocal_split_wanted: true }));
+    const posts = [];
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route(SPLIT_URL, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      posts.push(1);
+      await held;
+      job.set(withPair);
+      return route.fulfill({ json: {} });
+    });
+    await seedLibrary(page);
+    await stubUpdateCheck(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const both = page.evaluate(async (id) => {
+      const job = await import("/js/job.js");
+      const state = await (await fetch(`/api/jobs/${id}`)).json();
+      const results = await Promise.all([job.runVocalSplitIfWanted(state), job.runVocalSplitIfWanted(state)]);
+      return results.map((s) => s.stems.map((x) => x.name));
+    }, JOB_ID);
+    await expect.poll(() => posts.length).toBe(1);
+    release();
+
+    for (const stems of await both) expect(stems).toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    expect(posts).toHaveLength(1);
   });
 
   test("a split another page already started is waited for, not dropped", async ({ page }) => {
@@ -131,6 +163,7 @@ test.describe("Lead + Backing chosen at import", () => {
 
     await expect.poll(() => savedStems(page), { timeout: 15_000 })
       .toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    await page.waitForTimeout(1000);
     expect(posts).toHaveLength(1);
     expect(reads).toBeGreaterThan(2);
     await expect(page.locator("#error")).toBeHidden();

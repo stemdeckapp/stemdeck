@@ -1107,10 +1107,16 @@ function setCatalogView(view) {
 // Settings. Local uploads have no source bytes left to rebuild from (#354's
 // cleanup deletes the upload once the pipeline is done with it), so the
 // only path back is a fresh re-upload.
+// Whether a track had its Lead + Backing pair, so a restore asks for it again
+// (#848). A row saved before vocalSplit existed says so by its stems alone.
+function hadVocalSplit(track) {
+  return track.vocalSplit === "done" || Boolean(track.audioStems?.some((s) => s?.name === "lead_vocals"));
+}
+
 function reimportUnavailableTrack(trackId, track) {
   updateTrackStatus(trackId, "unavailable");
   if (isReimportableSource(track.sourceUrl)) {
-    importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems, vocalSplit: track.vocalSplit === "done" });
+    importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems, vocalSplit: hadVocalSplit(track) });
     return;
   }
   showError(i18nT("track.audioUnavailableError"));
@@ -5840,8 +5846,7 @@ async function resyncLibrary() {
         const jobId = await importFromUrl(t.sourceUrl, {
           title: t.title,
           stems: t.selectedStems,
-          // A song restored with the Lead + Backing it had (#848).
-          vocalSplit: t.vocalSplit === "done",
+          vocalSplit: hadVocalSplit(t),
         });
         if (jobId) await waitForJobTerminal(jobId);
       }

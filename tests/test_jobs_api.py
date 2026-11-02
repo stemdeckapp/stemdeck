@@ -814,7 +814,11 @@ def test_a_link_import_keeps_the_lead_backing_request(client):
 
     r = client.post(
         "/api/jobs",
-        json={"url": "https://youtu.be/dQw4w9WgXcQ", "stems": ["vocals", "drums"], "vocal_split": True},
+        json={
+            "url": "https://youtu.be/dQw4w9WgXcQ",
+            "stems": ["vocals", "drums"],
+            "vocal_split": True,
+        },
     )
     assert r.status_code == 200
     job_id = r.json()["job_id"]
@@ -870,7 +874,6 @@ def test_a_split_is_saved_as_running_before_it_starts(client, tmp_path, monkeypa
     import app.api.jobs as jobs_mod
 
     job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch)
-    job.vocal_split_wanted = True
     seen = {}
 
     def fake_split(job_arg, stems_dir_arg):
