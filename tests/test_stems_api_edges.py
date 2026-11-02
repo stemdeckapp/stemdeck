@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 
 import httpx
 import numpy as np
@@ -156,42 +155,15 @@ def test_master_output_note_missing_or_unreadable_is_none(jobs_dir):
 # --- the rubberband probe -------------------------------------------------------------
 
 
-def _probe(monkeypatch, result):
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **_kw):
-        calls.append(cmd)
-        if isinstance(result, BaseException):
-            raise result
-        return subprocess.CompletedProcess(cmd, 0, stdout=result, stderr="")
-
-    monkeypatch.setattr(stems_mod, "_rubberband_cached", None)
-    monkeypatch.setattr(stems_mod.subprocess, "run", fake_run)
-    return calls
+# The probe itself (the filter listing, its cache per ffmpeg binary, failures)
+# is tests/test_audio_encoders.py's. What the export routes ask is the same
+# answer /api/health reports (#858), with "no ffmpeg to ask" read as "no".
 
 
-def test_rubberband_is_found_in_the_filter_list_and_probed_once(monkeypatch):
-    calls = _probe(monkeypatch, " ... rubberband        A->A       Apply time-stretching\n")
-    assert stems_mod._rubberband_available() is True
-    assert stems_mod._rubberband_available() is True
-    assert len(calls) == 1
-    assert "-filters" in calls[0]
-
-
-@pytest.mark.parametrize(
-    "result",
-    [
-        " ... atempo   A->A   Adjust audio tempo.\n",
-        " ... rubberbandish   A->A   not the filter\n",
-        OSError("no ffmpeg"),
-        subprocess.TimeoutExpired("ffmpeg", 10),
-    ],
-)
-def test_rubberband_is_unavailable_without_the_filter_or_a_working_ffmpeg(monkeypatch, result):
-    calls = _probe(monkeypatch, result)
-    assert stems_mod._rubberband_available() is False
-    assert stems_mod._rubberband_available() is False
-    assert len(calls) == 1
+@pytest.mark.parametrize(("health", "expected"), [(True, True), (False, False), (None, False)])
+def test_the_export_routes_ask_the_probe_health_reports(monkeypatch, health, expected):
+    monkeypatch.setattr(stems_mod, "transpose_export", lambda: health)
+    assert stems_mod._rubberband_available() is expected
 
 
 # --- _click_lane: grids without beats and renders that fail ------------------------------

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -41,6 +42,27 @@ def test_health_reports_unknown_export_formats_as_null(monkeypatch):
     monkeypatch.setattr(main_mod, "export_formats", lambda: None)
     with TestClient(app) as client:
         assert client.get("/api/health").json()["export_formats"] is None
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+def test_health_reports_transpose_export(monkeypatch, value):
+    # How the export menu learns that a transposed mix cannot be exported
+    # (#858): the macOS download's ffmpeg has no rubberband filter.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "transpose_export", lambda: value)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["transpose_export"] is value
+
+
+def test_health_transpose_export_is_a_boolean_or_null():
+    # The real probe: never a path or a filter listing.
+    from app.main import app
+
+    with TestClient(app) as client:
+        value = client.get("/api/health").json()["transpose_export"]
+    assert value is None or isinstance(value, bool)
 
 
 def test_health_export_formats_carry_no_path():

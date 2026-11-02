@@ -5,11 +5,13 @@ desktop shell requires pcm_s16le, flac, libmp3lame and aac in the FFmpeg it
 installs, and treats libvorbis as optional (#824): the per-architecture macOS
 download and Homebrew's plain `ffmpeg` have none. Without libvorbis everything
 works except OGG export, which the UI then shows as unavailable and the export
-routes refuse with a clear 422 instead of a failed render.
+routes refuse with a clear 422 instead of a failed render. The same goes for
+a transposed export, which needs the rubberband filter (`transpose_export`).
 
-`ffmpeg -encoders` runs once per binary. The result is cached against
-`ffmpeg_identity()`, the same key app/pipeline/video_encoder.py caches its
-probes under, so a replaced binary is probed again and nothing else is.
+`ffmpeg -encoders` and `ffmpeg -filters` each run once per binary. The results
+are cached against `ffmpeg_identity()`, the same key
+app/pipeline/video_encoder.py caches its probes under, so a replaced binary is
+probed again and nothing else is.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import re
 import subprocess
 import threading
 
-from app.core.config import TIMEOUT_AUDIO_ENCODER_LIST, ffmpeg_executable
+from app.core.config import TIMEOUT_AUDIO_ENCODER_LIST, TIMEOUT_AUDIO_FILTER_LIST, ffmpeg_executable
 from app.pipeline.video_encoder import ffmpeg_identity
 
 logger = logging.getLogger("stemdeck.encoders")
@@ -123,7 +125,63 @@ def unavailable_detail(fmt: str) -> str | None:
     )
 
 
+# Transposed export (#592, #858). A lane shifted in the studio is rendered with
+# ffmpeg's rubberband filter, and librubberband is GPL, so plenty of builds
+# omit it: Homebrew's plain ffmpeg, and the per-architecture macOS download the
+# desktop shell installs. Without it every export that carries a key change is
+# refused with a 422, and /api/health says so first so the export menu can.
+_RUBBERBAND = re.compile(r"\brubberband\b")
+_filter_cache: dict[str, bool] = {}
+
+
+def _has_rubberband() -> bool:
+    """Whether `ffmpeg -filters` lists rubberband. Any probe problem reads as
+    no: an export that quietly used a different algorithm would be worse than
+    one that says it cannot transpose."""
+    try:
+        out = subprocess.run(  # noqa: S603 -- fixed args, trusted ffmpeg
+            [ffmpeg_executable(), "-hide_banner", "-filters"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=TIMEOUT_AUDIO_FILTER_LIST,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # A build without the filter and an ffmpeg that would not run both
+        # reach the user as "cannot transpose", so say here which it was.
+        logger.warning("ffmpeg -filters failed; treating transpose as unavailable", exc_info=True)
+        return False
+    if out.returncode != 0:
+        logger.warning(
+            "ffmpeg -filters exited %s; treating transpose as unavailable", out.returncode
+        )
+        return False
+    return bool(_RUBBERBAND.search(out.stdout))
+
+
+def transpose_export() -> bool | None:
+    """Whether the active ffmpeg can render a transposed export (it has the
+    rubberband filter), or None when there is no ffmpeg to ask.
+
+    Asked once per binary, cached under `ffmpeg_identity()` like the encoder
+    list, so a replaced ffmpeg (the desktop shell installs one after the
+    backend can already be running) is asked again."""
+    ident, _version = ffmpeg_identity()
+    if not ident:
+        return None
+    with _lock:
+        if ident in _filter_cache:
+            return _filter_cache[ident]
+    found = _has_rubberband()
+    with _lock:
+        _filter_cache[ident] = found
+    return found
+
+
 def reset_cache() -> None:
     """Forget every probe (tests)."""
     with _lock:
         _cache.clear()
+        _filter_cache.clear()

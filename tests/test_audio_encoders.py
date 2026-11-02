@@ -128,6 +128,67 @@ def test_the_detail_names_no_path():
     assert ae.OGG_UNAVAILABLE_DETAIL.isascii()
 
 
+# --- transpose_export: the rubberband filter (#858) -------------------------------
+
+RUBBERBAND_LINE = " ... rubberband        A->A       Apply time-stretching and pitch-shifting.\n"
+
+
+def test_transpose_export_is_true_when_the_filter_is_listed_and_asked_once(monkeypatch):
+    calls = _fake_probe(monkeypatch, " ... atempo   A->A   Adjust audio tempo.\n" + RUBBERBAND_LINE)
+    for _ in range(3):
+        assert ae.transpose_export() is True
+    assert len(calls) == 1
+    assert calls[0][1:] == ["-hide_banner", "-filters"]
+    # A replaced binary (the desktop shell installing another ffmpeg) is asked again.
+    monkeypatch.setattr(ae, "ffmpeg_identity", lambda: ("ident-b", "other"))
+    ae.transpose_export()
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        " ... atempo   A->A   Adjust audio tempo.\n",
+        " ... rubberbandish   A->A   not the filter\n",
+        "",
+    ],
+)
+def test_transpose_export_is_false_without_the_filter(monkeypatch, listing):
+    calls = _fake_probe(monkeypatch, listing)
+    assert ae.transpose_export() is False
+    assert ae.transpose_export() is False
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("error", [OSError("no ffmpeg"), subprocess.TimeoutExpired("ffmpeg", 1)])
+def test_a_filter_listing_that_cannot_run_reads_as_no_transpose(monkeypatch, error):
+    calls = []
+
+    def boom(cmd, **_kwargs):
+        calls.append(cmd)
+        raise error
+
+    monkeypatch.setattr(ae, "ffmpeg_identity", lambda: ("ident-d", "v"))
+    monkeypatch.setattr(ae.subprocess, "run", boom)
+    assert ae.transpose_export() is False
+    assert ae.transpose_export() is False
+    assert len(calls) == 1
+
+
+def test_a_failed_filter_listing_reads_as_no_transpose(monkeypatch):
+    _fake_probe(monkeypatch, RUBBERBAND_LINE, returncode=1)
+    assert ae.transpose_export() is False
+
+
+def test_transpose_export_is_unknown_without_an_ffmpeg(monkeypatch):
+    def never(*_a, **_k):
+        raise AssertionError("nothing to run")
+
+    monkeypatch.setattr(ae, "ffmpeg_identity", lambda: ("", ""))
+    monkeypatch.setattr(ae.subprocess, "run", never)
+    assert ae.transpose_export() is None
+
+
 def test_the_real_probe_agrees_with_the_test_skip_helper():
     # The same question tests/ffmpeg_probe.py asks for its skips.
     if not ffmpeg_available():

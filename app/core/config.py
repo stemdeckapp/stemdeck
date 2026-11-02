@@ -456,6 +456,9 @@ TIMEOUT_VIDEO_ENCODER_PROBE = _env_int("STEMDECK_TIMEOUT_VIDEO_ENCODER_PROBE", 2
 # audio_encoders.py). Runs once per ffmpeg binary and returns in well under a
 # second; the bound only matters for an ffmpeg that hangs.
 TIMEOUT_AUDIO_ENCODER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_ENCODER_LIST", 15)
+# `ffmpeg -filters`, asked once per ffmpeg binary whether it has rubberband,
+# which a transposed export needs (app/pipeline/audio_encoders.py, #858).
+TIMEOUT_AUDIO_FILTER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_FILTER_LIST", 15)
 # How long a probe result is trusted. A pass for a week, a failure for a day (a
 # driver installed today is tried tomorrow, or at once with Test encoders), a
 # timeout or a busy device for ten minutes (never as a lasting answer).

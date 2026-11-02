@@ -39,7 +39,7 @@ from app.core.registry import get as registry_get
 from app.core.settings import get_export_sample_rate
 from app.core.stem_files import stem_ext, stem_media_type, stem_path
 from app.core.takes import take_dir
-from app.pipeline.audio_encoders import unavailable_detail
+from app.pipeline.audio_encoders import transpose_export, unavailable_detail
 from app.pipeline.audio_stats import vocal_envelope
 from app.pipeline.click_render import (
     CLICK_TO_STEREO,
@@ -602,45 +602,23 @@ def _read_beat_grid(job_id: str) -> dict | None:
 PITCH_MIN = -6
 PITCH_MAX = 6
 
-# Probed once per process; the ffmpeg binary cannot change mid-run. None until
-# the first export needs to know.
-_rubberband_cached: bool | None = None
-
 
 def _rubberband_available() -> bool:
     """Whether this ffmpeg can pitch-shift.
 
-    librubberband is GPL and plenty of builds omit it -- the Homebrew ffmpeg on
-    a dev machine does, while the bundled macOS build does not -- so this is
-    probed rather than assumed. Any probe problem reads as "no": an export that
-    silently used a different algorithm would be worse than one that says it
-    cannot transpose.
+    librubberband is GPL and plenty of builds omit it: Homebrew's plain ffmpeg
+    does, and so does the per-architecture macOS download the desktop shell
+    installs (#858). So this is probed rather than assumed, by the one probe
+    /api/health reports as `transpose_export` (app/pipeline/audio_encoders.py),
+    cached per ffmpeg binary. No ffmpeg to ask reads as "no", like any other
+    probe problem.
 
-    rubberband specifically, not asetrate/atempo. Measured on the bundled build:
-    rubberband holds duration to the microsecond across -6..+6 and lands within
-    1 Hz of the target, and a lane whose length moved would desync the mix.
+    rubberband specifically, not asetrate/atempo. Measured on a build that has
+    it: rubberband holds duration to the microsecond across -6..+6 and lands
+    within 1 Hz of the target, and a lane whose length moved would desync the
+    mix.
     """
-    global _rubberband_cached
-    if _rubberband_cached is None:
-        _rubberband_cached = False
-        try:
-            probe = subprocess.run(
-                [ffmpeg_executable(), "-hide_banner", "-filters"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            _rubberband_cached = bool(re.search(r"\brubberband\b", probe.stdout))
-        except (OSError, subprocess.SubprocessError):
-            # Treated as "no pitch support", which is the safe answer, but the
-            # two cases are not the same: a build genuinely without the filter
-            # and an ffmpeg that would not run at all both surface to the user
-            # as "this build cannot transpose". Log which one it was, or that
-            # message is the only thing anybody has to go on.
-            logger.debug(
-                "rubberband probe failed; treating transpose as unavailable", exc_info=True
-            )
-    return _rubberband_cached
+    return transpose_export() is True
 
 
 def effective_pitch(name: str, semitones: int) -> int:

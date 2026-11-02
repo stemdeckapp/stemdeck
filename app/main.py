@@ -105,7 +105,7 @@ from app.core.stems_location import (
     move_library,
     validate_target,
 )
-from app.pipeline.audio_encoders import export_formats
+from app.pipeline.audio_encoders import export_formats, transpose_export
 from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
 from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_section_workspaces
 from app.pipeline.vocal_split_status import capability as vocal_split_capability
@@ -342,6 +342,12 @@ def health() -> dict[str, object]:
         # libvorbis, which the export menu then shows as unavailable (#824).
         # Probed once per ffmpeg binary, so this stays a cheap poll.
         "export_formats": export_formats(),
+        # Whether this ffmpeg has the rubberband filter a transposed export
+        # needs, or null when there is no ffmpeg to ask. False on the macOS
+        # download and Homebrew's plain ffmpeg, and the export menu then says
+        # so before a transposed mix is exported, rather than the export
+        # failing with a 422 at the end (#858). Probed once per binary.
+        "transpose_export": transpose_export(),
         # {"available": bool, "reason": code or None}: whether Lead + Backing
         # can be made on this install. False only after setup or a real split
         # found a dependency missing on these exact packages, which the
