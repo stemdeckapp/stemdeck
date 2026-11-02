@@ -189,6 +189,39 @@ def test_transpose_export_is_unknown_without_an_ffmpeg(monkeypatch):
     assert ae.transpose_export() is None
 
 
+# --- ffmpeg_too_old: the oldest FFmpeg StemDeck runs on is 5.1 --------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # Ubuntu 22.04's apt ffmpeg, Debian 11's, and a plain 5.0: no alimiter latency.
+        (
+            "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers",
+            "4.4.2-0ubuntu0.22.04.1",
+        ),
+        (
+            "ffmpeg version 4.3.8-0+deb11u1 Copyright (c) 2000-2024 the FFmpeg developers",
+            "4.3.8-0+deb11u1",
+        ),
+        ("ffmpeg version 5.0.3 Copyright (c) 2000-2022 the FFmpeg developers", "5.0.3"),
+        ("ffmpeg version n4.4 Copyright (c) 2000-2021 the FFmpeg developers", "n4.4"),
+        # Debian 12 (the Docker image), the pinned desktop downloads, Homebrew.
+        ("ffmpeg version 5.1.6-0+deb12u1 Copyright (c) 2000-2024 the FFmpeg developers", None),
+        ("ffmpeg version n8.1.2-50-g1a748fe2cd-20260831 Copyright (c) 2000-2026", None),
+        ("ffmpeg version 8.1.1-tessus  https://evermeet.cx/ffmpeg/  Copyright (c) 2000-2026", None),
+        ("ffmpeg version 6.0 Copyright (c) 2000-2023 the FFmpeg developers", None),
+        ("ffmpeg version 10.0 Copyright (c) 2000-2030 the FFmpeg developers", None),
+        # A git build names no release, so it is not called old.
+        ("ffmpeg version N-117000-g1234abcd-20241001 Copyright (c) 2000-2024", None),
+        ("", None),
+    ],
+)
+def test_ffmpeg_too_old_reads_the_version_line(monkeypatch, line, expected):
+    monkeypatch.setattr(ae, "ffmpeg_identity", lambda: ("ident-v", line))
+    assert ae.ffmpeg_too_old() == expected
+
+
 def test_the_real_probe_agrees_with_the_test_skip_helper():
     # The same question tests/ffmpeg_probe.py asks for its skips.
     if not ffmpeg_available():

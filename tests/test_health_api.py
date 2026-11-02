@@ -65,6 +65,40 @@ def test_health_transpose_export_is_a_boolean_or_null():
     assert value is None or isinstance(value, bool)
 
 
+@pytest.mark.parametrize("value", ["4.4.2-0ubuntu0.22.04.1", None])
+def test_health_reports_an_ffmpeg_too_old(monkeypatch, value):
+    # How the page learns that this FFmpeg is older than 5.1.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: value)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["ffmpeg_too_old"] == value
+
+
+def test_startup_logs_an_ffmpeg_too_old(monkeypatch, caplog):
+    # A server with no browser open still says so, with the version, the
+    # binary and what to do.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: "4.4.2")
+    with caplog.at_level("ERROR", logger="stemdeck"), TestClient(app):
+        pass
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any("4.4.2" in m and "5.1 or newer" in m and "STEMDECK_FFMPEG" in m for m in errors)
+
+
+def test_startup_is_quiet_about_a_new_enough_ffmpeg(monkeypatch, caplog):
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: None)
+    with caplog.at_level("ERROR", logger="stemdeck"), TestClient(app):
+        pass
+    assert not [r for r in caplog.records if "5.1 or newer" in r.getMessage()]
+
+
 def test_health_export_formats_carry_no_path():
     # The real probe: booleans keyed by format, never the ffmpeg location.
     from app.main import app

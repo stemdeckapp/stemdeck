@@ -180,6 +180,29 @@ def transpose_export() -> bool | None:
     return found
 
 
+# The oldest FFmpeg StemDeck runs on. Every mixdown and every master ends in
+# alimiter with latency=1 (app/pipeline/take_render.py, mastering.py), an
+# option FFmpeg 5.1 added: 4.4 and 5.0 reject the whole filter graph, so every
+# export and every master measure fails. Debian 12 ships 5.1; Ubuntu 22.04's
+# apt ffmpeg is 4.4.
+MIN_FFMPEG_VERSION = (5, 1)
+_VERSION_LINE = re.compile(r"ffmpeg version n?(\d+)\.(\d+)")
+
+
+def ffmpeg_too_old() -> str | None:
+    """The version of the active ffmpeg when it is older than
+    MIN_FFMPEG_VERSION, else None.
+
+    Read from `ffmpeg_identity()`'s version line, which is cached per binary,
+    so this runs nothing of its own. A version that names no release (a git
+    build, "N-117000-g...") is not called old, and neither is no ffmpeg."""
+    _ident, line = ffmpeg_identity()
+    m = _VERSION_LINE.match(line)
+    if m is None or (int(m[1]), int(m[2])) >= MIN_FFMPEG_VERSION:
+        return None
+    return line.split()[2]
+
+
 def reset_cache() -> None:
     """Forget every probe (tests)."""
     with _lock:

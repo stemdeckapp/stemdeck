@@ -307,6 +307,8 @@ function ffmpegFailureHint(message) {
   // The macOS setup error now ends with its own next steps (#824): a network
   // hint under it would point at the wrong thing when the server was reached.
   if (/Do one of these, then click Retry/.test(message)) return null;
+  // An FFmpeg older than 5.1 that the user named: the message says what to do.
+  if (/needs FFmpeg \d+\.\d+ or newer/.test(message)) return null;
   const wrongArchitecture = /bad cpu type|os error 86|EBADARCH/i.test(message);
   if (wrongArchitecture) {
     return (
