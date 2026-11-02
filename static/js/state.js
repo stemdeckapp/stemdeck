@@ -167,6 +167,12 @@ export function setVocalSplitMode(mode) {
 
 export let masterVolume = 0.5; // no control sets it any more; stays 0.5
 
+// Whether the backend's FFmpeg can export a key change (/api/health
+// transpose_export, #858): true, false, or null while unknown. Read through
+// transposeExport.js; only false holds a transposed export back.
+export let transposeExportAvailable = null;
+export function setTransposeExportAvailable(v) { transposeExportAvailable = v; }
+
 // ─── Setter helpers for mutable state (so other modules can update) ───
 
 export function setEventSource(v) { eventSource = v; }

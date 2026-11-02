@@ -13,7 +13,8 @@
 // participant before /finish so the camera parts are on the server first.
 // Every touch of the capture layer goes through ./captureAdapter.js.
 
-import { currentJobId, mixerState } from "../state.js";
+import { currentJobId, mixerState, transposeExportAvailable } from "../state.js";
+import { transposeExportBlocked } from "../transposeExport.js";
 import { t, applyTranslations, onLanguageChange } from "../i18n.js";
 import { showError } from "../job.js";
 import { currentMixLanes, triggerDownload } from "../player.js";
@@ -453,6 +454,13 @@ function _takeRow(jobId, take, signal, songTitle) {
         gains.push(Number(lanes.gains[i].toFixed(3)));
         pitches.push(lanes.pitches?.[i] ?? 0);
       });
+      // A key change this FFmpeg cannot export (no rubberband, #858): say so
+      // here rather than send a render the server refuses.
+      if (transposeExportBlocked(pitches, transposeExportAvailable)) {
+        state.textContent = t("video.failed", { reason: t("export.transposeUnavailable") });
+        setBusy(false);
+        return;
+      }
       // The backing lanes' EQs plus the take's own track, whose EQ the server
       // puts on the take.
       const fx = exportFxParam(take.track_id ? [...names, take.track_id] : names);

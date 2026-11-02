@@ -34,8 +34,9 @@ import {
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
   metronomeCountInBars, metronomeGrouping, metronomeSound,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
-  setMetronomeHasBars,
+  setMetronomeHasBars, transposeExportAvailable,
 } from "./state.js";
+import { transposeExportBlocked } from "./transposeExport.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
 import { createPlaybackContext } from "./audioContext.js";
@@ -2178,6 +2179,13 @@ function _exportLanes() {
 // as the mix export, and saves the MP4 through the same desktop/browser split.
 export { _effectiveMixGains as currentMixLanes, _triggerDownload as triggerDownload };
 
+/** Whether the mix as heard carries a key change the backend's FFmpeg cannot
+ * export (no rubberband, #858). The mix, region and MP4 exports send these
+ * keys; the stems zip sends none, so it is never held back. */
+export function mixTransposeBlocked() {
+  return transposeExportBlocked(_effectiveMixGains().pitches, transposeExportAvailable);
+}
+
 // The mix as the master measures it (masterEngine.js): the export's lanes,
 // gains, keys and EQ, without region, click or master. The server measures
 // the whole song for exactly this query (GET mixdown/loudness).
@@ -2439,6 +2447,9 @@ export function stemRegionDragPayload(name, ext = "wav") {
 
 export function regionDragPayload(ext = "wav") {
   if (!loopEnabled || loopStart >= loopEnd) return null;
+  // A key change this FFmpeg cannot export: no drag, rather than a file the
+  // server refuses to render (#858). Also keeps the prewarm from asking.
+  if (mixTransposeBlocked()) return null;
   const url = _mixdownUrl(ext, true);
   if (!url) return null;
   return { url: _absolute(url), filename: _regionDragFilename(ext) };

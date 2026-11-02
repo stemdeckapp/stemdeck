@@ -369,6 +369,20 @@ export async function stubExportFormats(page, formats) {
 }
 
 /**
+ * Answer /api/health with the real body but a chosen `transpose_export`:
+ * whether the backend's ffmpeg has the rubberband filter a transposed export
+ * needs (#858). The real answer depends on the ffmpeg of whichever machine
+ * runs the suite, so a spec that cares must fix it. Call before page.goto.
+ */
+export async function stubTransposeExport(page, value) {
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, transpose_export: value } });
+  });
+}
+
+/**
  * Answer /api/health's vocal_split field ({ available, reason }) for this
  * page: whether Lead + Backing can be made on this install (#832). The real
  * answer depends on what setup and earlier splits recorded on the machine

@@ -242,6 +242,8 @@ const HELP = [
   ["#t-export-mix", "help.exportMix"],
   ["#t-export-stems", "help.exportStems"],
   ["#t-export-region", "help.exportRegion"],
+  // Shown when a transposed mix cannot be exported (#858).
+  [".export-transpose-unavailable", "help.exportTransposeUnavailable"],
   // Performance Mode's two windows (streamer.js): the live camera and the
   // take review, and the Live | Take switch shown when only one window fits.
   ["#streamer .sm-view-switch", "help.smViewSwitch"],

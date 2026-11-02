@@ -4,11 +4,12 @@ import {
   loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitModeReady, setVocalSplitMode,
-  setAutoSectionsResetFn, onLoopChange,
+  setAutoSectionsResetFn, onLoopChange, setTransposeExportAvailable,
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, stemRegionDragPayload, prewarmRegionMix } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, stemRegionDragPayload, prewarmRegionMix, mixTransposeBlocked } from "./player.js";
+import { transposeExportFromHealth } from "./transposeExport.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
@@ -603,6 +604,7 @@ function wireFooterControls() {
     closeAllChipPanels();
     // A previous (video) job may have left MP4 selected; revert if unavailable now.
     if (format === "mp4" && !videoAvailable()) setFormat("wav");
+    applyTransposeGate();
     exportPanel?.classList.remove("hidden");
     exportBtn?.setAttribute("aria-expanded", "true");
   }
@@ -618,6 +620,9 @@ function wireFooterControls() {
       btn?.setAttribute("aria-checked", String(f === val));
     }
     applyFormatState();
+    // applyFormatState gives the region row back its loop state; a held-back
+    // transposed mix keeps it disabled.
+    if (panelOpen()) applyTransposeGate();
   }
   fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
   fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
@@ -655,11 +660,40 @@ function wireFooterControls() {
     if (oggUnavailable && format === "ogg") setFormat("wav");
   }
   onLanguageChange(applyOggAvailability);
+
+  // A transposed mix needs FFmpeg's rubberband filter to export, which the
+  // macOS download and Homebrew's plain FFmpeg do not have (#858). Then Mix,
+  // Region and MP4 (all send the keys) are held back with the reason in the
+  // menu, and the stems zip (never transposed) stays. Worked out when the menu
+  // opens and again on a click, since a key can change while it is open; a
+  // mix with every key at 0, or an unknown answer, changes nothing.
+  let transposeBlocked = false;
+  function applyTransposeGate() {
+    transposeBlocked = mixTransposeBlocked();
+    exportPanel?.classList.toggle("transpose-unavailable", transposeBlocked);
+    for (const it of [itemMix, itemRegion]) {
+      if (!it) continue;
+      if (transposeBlocked) {
+        it.setAttribute("aria-disabled", "true");
+        it.title = t("export.transposeUnavailable");
+      } else {
+        it.removeAttribute("title");
+      }
+    }
+    if (!transposeBlocked && !busy) {
+      itemMix?.removeAttribute("aria-disabled");
+      applyFormatState(); // gives the region row back its own disabled state
+    }
+  }
+  onLanguageChange(() => { if (transposeBlocked) applyTransposeGate(); });
+
   fetch("/api/health", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : null))
     .then((health) => {
       oggUnavailable = health?.export_formats?.ogg === false;
       applyOggAvailability();
+      setTransposeExportAvailable(transposeExportFromHealth(health));
+      if (panelOpen()) applyTransposeGate();
       // The same answer says whether Lead + Backing can be made (#832).
       applyVocalSplitHealth(health);
     })
@@ -777,6 +811,8 @@ function wireFooterControls() {
   // Export Mix: MP4 produces the video; any other format an audio mix.
   itemMix?.addEventListener("click", (e) => {
     e.stopPropagation();
+    applyTransposeGate();
+    if (transposeBlocked) return;
     runExport(
       (onStart) => (format === "mp4" ? downloadCurrentVideo(onStart) : downloadCurrentMix(format, onStart)),
       t("export.allMuted"),
@@ -785,6 +821,7 @@ function wireFooterControls() {
 
   itemRegion?.addEventListener("click", (e) => {
     e.stopPropagation();
+    applyTransposeGate();
     if (itemRegion.getAttribute("aria-disabled") === "true") return;
     runExport((onStart) => downloadRegionMix(format, onStart), t("export.allMuted"));
   });

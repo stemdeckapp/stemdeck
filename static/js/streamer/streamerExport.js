@@ -14,6 +14,9 @@ import { exportFxParam } from "../eqEngine.js";
 import { exportMasterParam } from "../masterEngine.js";
 import { waitForRender, cancelRender, renderDownloadUrl } from "../video/videoRender.js";
 import { buildRenderRequest, isNoEncoder } from "./recordModel.js";
+import { transposeExportAvailable } from "../state.js";
+import { transposeExportBlocked } from "../transposeExport.js";
+import { t } from "../i18n.js";
 
 const base = (jobId, takeId) => `/api/jobs/${encodeURIComponent(jobId)}/takes/${encodeURIComponent(takeId)}`;
 
@@ -52,6 +55,11 @@ export function renderRequest({ trackId, settings, aspect, range, remove = "" })
  * `onProgress(fraction)`, `onTransferStart()` as triggerDownload's.
  */
 export async function exportTake({ jobId, takeId, body, filename, onProgress, onTransferStart, signal }) {
+  // A key change this FFmpeg cannot export (no rubberband, #858): fail here,
+  // with the reason, rather than send a render the server refuses.
+  if (transposeExportBlocked(body?.pitches, transposeExportAvailable)) {
+    throw Object.assign(new Error(t("export.transposeUnavailable")), { code: "failed" });
+  }
   const res = await fetch(`${base(jobId, takeId)}/render`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

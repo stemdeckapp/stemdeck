@@ -72,9 +72,9 @@
       "specs": ["about-license", "artist-languages", "brand-link", "library-rows", "lyrics-cjk", "stem-chip-overflow", "track-header", "help-mode", "queue-progress", "modes", "donate"]
     },
     {
-      "why": "Which audio formats the backend's ffmpeg can encode, read through /api/health by the export menu's OGG button (#824)",
-      "paths": ["app/pipeline/audio_encoders.py"],
-      "specs": ["export-ogg", "export-menu"]
+      "why": "Which audio formats the backend's ffmpeg can encode and whether it can transpose, read through /api/health by the export menu's OGG button (#824) and its transposed-mix gate (#858)",
+      "paths": ["app/pipeline/audio_encoders.py", "static/js/transposeExport.js"],
+      "specs": ["export-ogg", "export-transpose", "export-menu"]
     },
     {
       "why": "The main stylesheet. Specs that measure layout (boundingBox, getComputedStyle, scroll and client sizes).",

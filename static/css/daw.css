@@ -3551,6 +3551,14 @@ input, textarea { font-family: inherit; }
   margin: 2px 4px 4px; padding: 5px 6px;
   font-size: 11px; line-height: 1.4; color: var(--muted);
 }
+/* A transposed mix on an FFmpeg without rubberband (#858): Mix and Region
+   are disabled, and this says why. */
+.export-transpose-unavailable { display: none; }
+#t-export-panel.transpose-unavailable .export-transpose-unavailable {
+  display: block;
+  margin: 2px 4px 4px; padding: 5px 6px;
+  font-size: 11px; line-height: 1.4; color: var(--muted);
+}
 
 /* Action rows — two-line: icon + (title/desc) + trailing check/count */
 .export-item {
