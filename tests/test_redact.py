@@ -128,19 +128,40 @@ def test_strips_any_users_folder_on_any_os(text, expected):
     assert redact(text) == expected
 
 
-def test_strips_the_user_name_as_a_path_segment_anywhere():
-    name = Path.home().name
-    assert redact(f"D:\\{name}\\Music\\x.wav") == "D:\\<user>\\Music\\x.wav"
-    assert redact(f"/mnt/{name}/x.wav") == "/mnt/<user>/x.wav"
-    assert redact(f"saved to D:\\{name}.") == "saved to D:\\<user>."
+@pytest.fixture
+def home_of(monkeypatch):
+    """Pin the process's home, so a test does not depend on the runner's
+    (a CI container's home is /github/home, a Docker one /root)."""
+
+    def pin(path: str) -> None:
+        monkeypatch.setattr(Path, "home", lambda: Path(path))
+
+    return pin
 
 
-def test_leaves_the_user_name_alone_inside_other_words():
+def test_strips_the_user_name_as_a_path_segment_anywhere(home_of):
+    home_of("C:/Users/Someone")
+    assert redact("D:\\Someone\\Music\\x.wav") == "D:\\<user>\\Music\\x.wav"
+    assert redact("/mnt/someone/x.wav") == "/mnt/<user>/x.wav"
+    assert redact("saved to D:\\Someone.") == "saved to D:\\<user>."
+
+
+def test_leaves_the_user_name_alone_inside_other_words(home_of):
     """Only a whole path segment is the user's folder. Replacing the bare
     name would rewrite any word that contains it, and a short or common name
     (`al`, `max`, `music`) would shred every line of the log."""
-    name = Path.home().name
-    text = f"{name}s mix by pre{name}, {name} said hi"
+    home_of("/home/max")
+    text = "maxs mix by premax, max said hi"
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize("home", ["/github/home", "/root", "/var/lib/stemdeck"])
+def test_a_service_home_name_is_not_a_user_name(home_of, home):
+    """A home outside a users folder is named for its role, not a person.
+    CI runs in a container whose home is /github/home, and taking "home"
+    for the user name rewrote every /home in the log."""
+    home_of(home)
+    text = "see https://users.example/home/x and /srv/root/stemdeck/backup\n"
     assert redact(text) == text
 
 

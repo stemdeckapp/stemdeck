@@ -119,7 +119,10 @@ def redact(text: str) -> str:
     text = _WIN_HOME_RE.sub("<home>", text)
     text = _POSIX_HOME_RE.sub("<home>", text)
     text = _UNC_RE.sub("<unc>", text)
-    if home.name:
+    # The home folder's name is the user's only inside a users folder; a
+    # service or container home (/root, /github/home) would otherwise turn
+    # every /home in the log into <user>.
+    if home.parent.name.lower() in ("users", "home", "documents and settings"):
         text = re.sub(rf"([\\/])(?i:{re.escape(home.name)}){_AT_END}", r"\1<user>", text)
     text = _SOURCE_URL_RE.sub("<source-url-redacted>", text)
     text = _IPV4_RE.sub("<ip>", text)
