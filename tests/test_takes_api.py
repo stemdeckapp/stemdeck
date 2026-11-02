@@ -22,6 +22,7 @@ from app.api import stems as stems_mod
 from app.api import takes as takes_mod
 from app.core.models import Job
 from app.core.registry import _jobs
+from app.core.takes import take_dir
 from tests.ffmpeg_probe import skip_without_ffmpeg
 
 JOB = "abcdefabcdef"
@@ -531,6 +532,61 @@ async def test_deleting_the_job_removes_its_takes(jobs_dir, client):
         await _finished_take(c, jobs_dir)
         assert (await c.delete(f"/api/jobs/{JOB}")).status_code == 200
     assert not (jobs_dir / JOB).exists()
+
+
+async def _take_with_locks(c, track_id: str | None = None) -> tuple[str, str]:
+    """A take whose take lock (a part) and filmstrip lock (a build that finds
+    no camera) both exist. Returns (take id, filmstrip lock key)."""
+    tid = await _create(c, track_id)
+    await _upload(c, tid, b"\0" * 8)
+    folder = take_dir(JOB, tid)
+    with pytest.raises(OSError):
+        takes_mod.build_filmstrip(folder / "camera.webm", folder)
+    assert f"{JOB}/{tid}" in takes_mod._take_locks
+    assert str(folder) in takes_mod._filmstrip_locks
+    return tid, str(folder)
+
+
+def _job_locks() -> list[str]:
+    return [k for k in [*takes_mod._take_locks, *takes_mod._filmstrip_locks] if JOB in k]
+
+
+async def test_deleting_a_take_a_track_or_the_song_drops_their_locks(jobs_dir, client):
+    _make_job(jobs_dir)
+    async with client as c:
+        tid, strip = await _take_with_locks(c)
+        assert (await c.delete(f"/api/jobs/{JOB}/takes/{tid}")).status_code == 200
+        assert strip not in takes_mod._filmstrip_locks
+        track = await _track(c)
+        _, strip = await _take_with_locks(c, track)
+        assert (await c.delete(f"/api/jobs/{JOB}/tracks/{track}")).status_code == 200
+        assert strip not in takes_mod._filmstrip_locks
+        await _take_with_locks(c)
+        assert (await c.delete(f"/api/jobs/{JOB}")).status_code == 200
+    assert not _job_locks()
+
+
+async def test_a_held_filmstrip_lock_outlives_the_delete(jobs_dir, client):
+    _make_job(jobs_dir)
+    async with client as c:
+        _, strip = await _take_with_locks(c)
+        lock = takes_mod._filmstrip_locks[strip]
+        try:
+            with lock:
+                assert (await c.delete(f"/api/jobs/{JOB}")).status_code == 200
+                assert takes_mod._filmstrip_locks.get(strip) is lock
+        finally:
+            takes_mod._filmstrip_locks.pop(strip, None)
+
+
+async def test_takes_made_and_deleted_leave_no_locks_behind(jobs_dir, client):
+    _make_job(jobs_dir)
+    before = len(takes_mod._take_locks), len(takes_mod._filmstrip_locks)
+    async with client as c:
+        for _ in range(10):
+            tid, _ = await _take_with_locks(c)
+            assert (await c.delete(f"/api/jobs/{JOB}/takes/{tid}")).status_code == 200
+    assert (len(takes_mod._take_locks), len(takes_mod._filmstrip_locks)) == before
 
 
 # ─── Takes as export lanes ───────────────────────────────────────────────
