@@ -285,6 +285,9 @@ export async function waitForSplit(jobId) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      // A server that does not answer for a moment (a proxy, a restart) has
+      // not ended the split; a song that is gone has.
+      if (!res.ok && res.status !== 404) continue;
       const state = res.ok ? await res.json() : null;
       if (state?.vocal_split === "done") return [true, null];
       if (state?.vocal_split !== "running") return [false, splitReason(state?.vocal_split_reason)];

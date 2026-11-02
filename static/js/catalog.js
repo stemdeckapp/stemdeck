@@ -7,7 +7,7 @@ import { initSections } from "./sections.js";
 import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedStems, titleEl } from "./state.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
-import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted } from "./job.js";
+import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
 import { RESTART_REQUIRED, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -1238,6 +1238,8 @@ async function loadTrackIntoStudio(trackId) {
   // Performance's own track is a lane in Performance only (modeStems.js).
   wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
+  // Its lanes change when the split ends.
+  if (track.vocalSplit === "running") followVocalSplit(trackId);
   // Not awaited: the track is already loading, and the answer arrives as a
   // "tracktags" event.
   backfillAudioTags(trackId);
