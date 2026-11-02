@@ -96,6 +96,16 @@ test.describe("a Lead + Backing split that did not work", () => {
     await expect(page.locator("#error")).toBeHidden();
   });
 
+  test("an Intel Mac is told why, with no Try again that cannot work", async ({ page }) => {
+    await failSplit(page, ["unsupported_platform"]);
+    await openStudio(page);
+    await finishImportWithSplit(page);
+
+    const box = page.locator("#error");
+    await expect(box).toContainText(await tr(page, "split.reason.unsupported_platform"));
+    await expect(box.locator(".split-retry-btn")).toHaveCount(0);
+  });
+
   test("the Stems popover says why the last split did not work", async ({ page }) => {
     // The song's own state carries the failure, as after a restart. Opening
     // a song reads it fresh (catalog.js loadTrackIntoStudio).
