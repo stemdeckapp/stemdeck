@@ -5,7 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-import { JOB_ID, chooseMode, openStudio, seedLibrary, stubUpdateCheck } from "./helpers.mjs";
+import { JOB_ID, chooseMode, openStudio, seedLibrary, stubAudioTags, stubUpdateCheck } from "./helpers.mjs";
 
 const tip = (page) => page.locator("#helpTip");
 
@@ -228,6 +228,9 @@ test.describe("help mode leaves no control unexplained", () => {
     await expect(page.locator("#streamer")).toBeVisible();
     await helpOn(page);
     expect(await unexplained(page)).toEqual([]);
+    // Inside the live window, which has its own entry: Allow has its own.
+    await page.locator("#streamer .sm-cam-act").hover();
+    await expect(tip(page)).toContainText("Asks for permission");
     // Narrow, the output panel folds into a drawer behind its own button.
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 1100, height: 900 });
@@ -246,7 +249,10 @@ test.describe("help mode leaves no control unexplained", () => {
 
   test("in the lyrics Align and Sync lines tools", async ({ page }) => {
     const synced = "[00:00.00]\n[00:00.50] Line one\n[00:02.00] Line two\n[00:04.00] Line three";
-    await page.route(/^https:\/\/lrclib\.net\//, (route) => route.abort("internetdisconnected"));
+    // Nothing here reaches the network: the lyrics are answered, the
+    // lookups refused.
+    await page.route(/^https:\/\/(lrclib\.net|[a-z.-]*wiki(data|pedia)\.org)\//, (route) => route.abort("internetdisconnected"));
+    await stubAudioTags(page, null);
     await page.route(`**/api/jobs/${JOB_ID}/lyrics`, (route) => route.fulfill({ json: {
       v: 1, source: "lrclib", track: "Fixture", artist: "Band", album: "", duration: 6, synced,
       plain: "Line one\nLine two\nLine three", instrumental: false, lrclib_id: 201, timing: "exact", others: [],
@@ -288,8 +294,9 @@ test.describe("help mode leaves no control unexplained", () => {
 
   test("in the paused queue, a failure notice and the error box", async ({ page }) => {
     const queued = ["a0a0a0a0a001", "a0a0a0a0a002", "a0a0a0a0a003"].map((job_id, i) => ({ job_id, title: `Waiting ${i + 1}`, status: "queued", progress: 0 }));
+    const running = { job_id: "a0a0a0a0a000", title: "Splitting", status: "separating", stage: "Separating 40%", progress: 0.4 };
     await page.route("**/api/queue", (route) => route.fulfill({ json: {
-      running: null, queued, paused: true,
+      running, queued, paused: true,
       max_pending_uploads: 5, max_pending_urls: 50, capacity_left_uploads: 5, capacity_left_urls: 50,
     } }));
     await page.route("**/api/queue/events", (route) => route.abort());
@@ -302,6 +309,13 @@ test.describe("help mode leaves no control unexplained", () => {
     await page.locator(".rail-queue").click();
     await expect(page.locator("#catalogList .queue-start-btn")).toBeVisible();
     await helpOn(page);
+    // Three rows in one list, each with its own sentence (first match wins).
+    await page.locator("#catalogList .queue-row.queue-running").hover();
+    await expect(tip(page)).toContainText("being split now");
+    await page.locator("#catalogList .queue-row.queue-waiting").first().hover();
+    await expect(tip(page)).toContainText("Drag it up or down");
+    await page.locator("#catalogList .queue-row .queue-top").first().hover();
+    await expect(tip(page)).toContainText("front of the queue");
     await page.locator("#notifBtn").click();
     await expect(page.locator("#notifList .daw-notif-error")).toBeVisible();
     expect(await unexplained(page)).toEqual([]);

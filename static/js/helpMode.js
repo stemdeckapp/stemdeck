@@ -101,6 +101,7 @@ const HELP = [
   // A Queue row's remove button (#772): stops the extraction, keeps the song.
   ["#catalogList .queue-row .queue-cancel", "help.queueStop"],
   ["#catalogList .queue-row .queue-top", "help.queueTop"],
+  ["#catalogList .queue-row.queue-running", "help.queueRunning"],
   ["#catalogList .queue-row", "help.queueRow"],
   ["#catalogList .queue-start-btn", "help.queueStart"],
   ["#catalogList .cat-item.in-trash", "help.trashedSong"],
