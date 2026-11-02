@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from unittest.mock import patch
 
 import pytest
@@ -801,6 +802,115 @@ def test_vocal_split_failure_keeps_job_done_with_base_stems(client, tmp_path, mo
     assert (stems_dir / "vocal_split_error.txt").is_file()
 
 
+# ─── Lead + Backing asked for with the import (#848) ─────────────────────────
+#
+# The request lived only in the page that submitted the job, so a reload, a
+# restart or a second window during the import dropped it: the song finished
+# with one Vocals stem and nothing said why. The job keeps it now.
+
+
+def test_a_link_import_keeps_the_lead_backing_request(client):
+    from app.core import registry
+
+    r = client.post(
+        "/api/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "stems": ["vocals", "drums"], "vocal_split": True},
+    )
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    assert registry.get(job_id).vocal_split_wanted is True
+    assert client.get(f"/api/jobs/{job_id}").json()["vocal_split_wanted"] is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"url": "https://youtu.be/dQw4w9WgXcQ"},
+        {"url": "https://youtu.be/dQw4w9WgXcQ", "vocal_split": False},
+        # No vocals chosen: there is nothing to split.
+        {"url": "https://youtu.be/dQw4w9WgXcQ", "stems": ["drums"], "vocal_split": True},
+    ],
+    ids=["not-sent", "combined", "no-vocals"],
+)
+def test_a_link_import_without_lead_backing_asks_for_no_split(client, body):
+    from app.core import registry
+
+    r = client.post("/api/jobs", json=body)
+    assert r.status_code == 200
+    assert registry.get(r.json()["job_id"]).vocal_split_wanted is False
+
+
+@pytest.mark.parametrize(("sent", "wanted"), [("true", True), ("false", False), (None, False)])
+def test_an_upload_keeps_the_lead_backing_request(upload_client, sent, wanted):
+    from app.core import registry
+
+    form = {"stems": json.dumps(["vocals", "bass"])}
+    if sent is not None:
+        form["vocal_split"] = sent
+    r = upload_client.post(
+        "/api/jobs",
+        data=form,
+        files={"file": ("song.mp3", io.BytesIO(b"ID3" + b"\x00" * 128), "audio/mpeg")},
+    )
+    assert r.status_code == 200
+    assert registry.get(r.json()["job_id"]).vocal_split_wanted is wanted
+
+
+def test_the_request_is_logged_with_the_import(client, caplog):
+    with caplog.at_level("INFO", logger="stemdeck.api"):
+        r = client.post(
+            "/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ", "vocal_split": True}
+        )
+    assert f"[{r.json()['job_id']}] vocal split requested with the import" in caplog.text
+
+
+def test_a_split_is_saved_as_running_before_it_starts(client, tmp_path, monkeypatch):
+    """A restart during the split must not leave the record at "none": a page
+    that finds the job asking for Lead + Backing would then run it again."""
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch)
+    job.vocal_split_wanted = True
+    seen = {}
+
+    def fake_split(job_arg, stems_dir_arg):
+        saved = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))
+        seen.update(next(r for r in saved["jobs"] if r["id"] == job.id))
+        (stems_dir_arg / "lead_vocals.wav").write_bytes(b"RIFF")
+        (stems_dir_arg / "backing_vocals.wav").write_bytes(b"RIFF")
+        return ["lead_vocals", "backing_vocals"]
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_split)
+
+    assert client.post(f"/api/jobs/{job.id}/vocal-split").status_code == 200
+    assert seen["vocal_split"] == "running"
+    restored = Job.from_record(seen)
+    assert restored.vocal_split == "error"
+    assert restored.vocal_split_reason == "interrupted"
+
+
+def test_a_split_logs_when_it_starts_and_how_long_it_took(client, tmp_path, monkeypatch, caplog):
+    """A successful split used to write nothing, so the log could not tell a
+    split that ran from one that was never asked for."""
+    import app.api.jobs as jobs_mod
+
+    job, _ = _make_done_job_with_vocals(tmp_path, monkeypatch)
+
+    def fake_split(job_arg, stems_dir_arg):
+        (stems_dir_arg / "lead_vocals.wav").write_bytes(b"RIFF")
+        (stems_dir_arg / "backing_vocals.wav").write_bytes(b"RIFF")
+        return ["lead_vocals", "backing_vocals"]
+
+    monkeypatch.setattr(jobs_mod, "split_vocals", fake_split)
+
+    with caplog.at_level("INFO", logger="stemdeck.api"):
+        assert client.post(f"/api/jobs/{job.id}/vocal-split").status_code == 200
+    assert f"[{job.id}] vocal split started" in caplog.text
+    assert re.search(
+        rf"\[{job.id}\] vocal split done in \d+\.\ds: lead_vocals, backing_vocals", caplog.text
+    )
+
+
 def test_submit_captures_the_song_structure_setting_on_the_job(client, monkeypatch):
     """The job carries the answer, so a later change cannot reach it.
 
@@ -904,6 +1014,17 @@ def test_resplit_starts_a_new_job_from_the_retained_source(resplit_client, tmp_p
     # The original is untouched: its stems, sections and beat grid survive.
     assert (tmp_path / job.id / "source.mp3").is_file()
     assert (tmp_path / job.id / "stems").is_dir()
+
+
+def test_resplit_keeps_the_lead_backing_request(resplit_client, tmp_path):
+    job = _finished_upload(tmp_path)
+
+    r = resplit_client.post(
+        f"/api/jobs/{job.id}/resplit", json={"stems": ["vocals"], "vocal_split": True}
+    )
+
+    assert r.status_code == 200
+    assert _jobs[r.json()["job_id"]].vocal_split_wanted is True
 
 
 @pytest.mark.parametrize(

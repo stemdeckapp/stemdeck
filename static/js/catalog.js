@@ -1110,7 +1110,7 @@ function setCatalogView(view) {
 function reimportUnavailableTrack(trackId, track) {
   updateTrackStatus(trackId, "unavailable");
   if (isReimportableSource(track.sourceUrl)) {
-    importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems });
+    importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems, vocalSplit: track.vocalSplit === "done" });
     return;
   }
   showError(i18nT("track.audioUnavailableError"));
@@ -5840,6 +5840,8 @@ async function resyncLibrary() {
         const jobId = await importFromUrl(t.sourceUrl, {
           title: t.title,
           stems: t.selectedStems,
+          // A song restored with the Lead + Backing it had (#848).
+          vocalSplit: t.vocalSplit === "done",
         });
         if (jobId) await waitForJobTerminal(jobId);
       }

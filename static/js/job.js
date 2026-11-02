@@ -6,7 +6,7 @@ import {
   selectedStems, currentJobId,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading } from "./player.js";
-import { prepareLayout } from "./modeStems.js";
+import { prepareLayout, waitForSplit } from "./modeStems.js";
 import { extractAsVersion } from "./versions.js";
 import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -29,33 +29,39 @@ let lastStatus = null;
 let jobPollTimerId = null;
 const renderedJobs = new Set();
 const jobSources = new Map();
-// On-demand lead/backing vocal split (#275): which jobs asked for it at
-// submit time (via the Extract bar's Vocals "Combined / Lead + Backing" toggle).
-// Exported so catalog.js's completeSettledJob (the background-job path --
-// there is no per-job SSE stream for those) can trigger it too, via
-// runVocalSplitIfWanted below. Only covers the primary single-file/single-URL
-// and batch-upload submit paths -- "Sync again" restores and playlist
-// imports don't carry this choice.
-export const jobVocalSplitModes = new Map();
 // Guards against double-firing the split POST if a job's "done" state is
 // somehow observed twice (e.g. a late SSE frame after the queue already
 // settled it) -- the split is expensive, so this must stay a hard one-shot.
 const splitAutoTriggered = new Set();
 
-// Fires the on-demand vocal split (#275) for a job that finished with the
-// Extract bar's "Lead + Backing" toggle on, then refreshes the library cache
-// (catalog.js's openTrack reads a locally cached stem list, which otherwise
-// stays stale after a job's stems change post-completion). Returns the job's
-// state after the split (or the original state, unchanged, if the split
-// wasn't requested/needed/possible) -- callers use the return value rather
-// than assuming their own `state` is still current.
+// Lead + Backing goes with the job (#848): the server keeps it as
+// vocal_split_wanted, so the split is still asked for after a reload, a
+// restart or from a second window, none of which this page's memory survives.
+function wantsVocalSplit() {
+  return selectedStems.has("vocals") && effectiveVocalSplitMode() === "split";
+}
+
+// Fires the on-demand vocal split (#275) for a job that was submitted with
+// the Extract bar's "Lead + Backing" toggle on, then refreshes the library
+// cache (catalog.js's openTrack reads a locally cached stem list, which
+// otherwise stays stale after a job's stems change post-completion). Called
+// by both completion paths: catalog.js's completeSettledJob (background jobs,
+// and every job a reloaded page finds still marked as processing) and
+// finishDoneJob below. Returns the job's state after the split (or the
+// original state, unchanged, if the split wasn't requested/needed/possible) --
+// callers use the return value rather than assuming their own `state` is
+// still current.
 export async function runVocalSplitIfWanted(state) {
-  if (state.status !== "done" || splitAutoTriggered.has(state.job_id)) return state;
-  const wantsSplit = jobVocalSplitModes.get(state.job_id) === "split";
+  if (state.status !== "done" || !state.vocal_split_wanted || splitAutoTriggered.has(state.job_id)) return state;
   const hasVocals = (state.stems || []).some((s) => s.name === "vocals");
-  const alreadySplit = state.vocal_split === "done";
-  if (!wantsSplit || !hasVocals || alreadySplit) return state;
+  if (!hasVocals || state.vocal_split === "done") return state;
   splitAutoTriggered.add(state.job_id);
+  // It already failed where no page was there to say so (a window that was
+  // closed, a restart during the split): said now, with Try again.
+  if (state.vocal_split === "error") {
+    reportSplitFailure(state, state.vocal_split_reason);
+    return state;
+  }
   if (state.job_id === foregroundJobId) setWaveformLoading(true, t("stems.splitRunning"));
   return runVocalSplit(state);
 }
@@ -112,8 +118,9 @@ export async function retryVocalSplit(jobId) {
 
 // POST the split and keep the library row current. Returns the job's state
 // after it, or `state` unchanged when the split did not run. A failure is
-// reported (reportSplitFailure); a split already running elsewhere (409) or
-// a song that is gone (404) is not a failure of this one.
+// reported (reportSplitFailure); a song that is gone (404) is not a failure
+// of this one. A split already running (409: another window, or this page
+// before a reload) is waited for, and its outcome taken as this one's.
 async function runVocalSplit(state) {
   let res;
   try {
@@ -124,8 +131,14 @@ async function runVocalSplit(state) {
     return { ...state, vocal_split: "error", vocal_split_reason: "worker_failed" };
   }
   try {
-    if (!(res.ok || res.status === 202)) {
-      if (res.status === 409 || res.status === 404) return state;
+    if (res.status === 409) {
+      const [done, reason] = await waitForSplit(state.job_id);
+      if (!done) {
+        reportSplitFailure(state, reason);
+        return { ...state, vocal_split: "error", vocal_split_reason: reason };
+      }
+    } else if (!(res.ok || res.status === 202)) {
+      if (res.status === 404) return state;
       const body = await res.json().catch(() => ({}));
       const reason = splitReason(body?.vocal_split_reason);
       reportSplitFailure(state, reason);
@@ -728,6 +741,7 @@ async function postFileJob(file) {
   const fd = new FormData();
   fd.append("file", file);
   fd.append("stems", JSON.stringify([...selectedStems]));
+  fd.append("vocal_split", String(wantsVocalSplit()));
   const res = await fetch("/api/jobs", { method: "POST", body: fd });
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -740,7 +754,6 @@ function registerUploadRow(jobId, file) {
   const title = sanitizeFilename(file.name);
   const sourceUrl = `local:${title}`;
   jobSources.set(jobId, sourceUrl);
-  jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? effectiveVocalSplitMode() : "all");
   addTrackToLibrary({
     id: jobId,
     title,
@@ -774,7 +787,7 @@ function sanitizeFilename(name) {
 // import form's URL path). Used by the library "Sync again" auto-restore to
 // re-download + re-separate a track whose backend audio was swept. Takes over
 // the studio like a normal import. Returns the new job id, or null on failure.
-export async function importFromUrl(url, { title, stems } = {}) {
+export async function importFromUrl(url, { title, stems, vocalSplit = false } = {}) {
   if (!url || url.startsWith("local:")) return null; // local files can't auto-restore
   reset();
   setSubmitProcessing(true);
@@ -786,7 +799,7 @@ export async function importFromUrl(url, { title, stems } = {}) {
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, stems: stemSel }),
+      body: JSON.stringify({ url, stems: stemSel, vocal_split: vocalSplit }),
     });
     // A body that is not JSON (a proxy's error page) must not hide the status.
     const data = await res.json().catch(() => null);
@@ -879,7 +892,7 @@ export function wireJobForm() {
     if (aimedAtOpen) {
       const res = await extractAsVersion(
         [...selectedStems],
-        selectedStems.has("vocals") && effectiveVocalSplitMode() === "split" ? "split" : "combined",
+        wantsVocalSplit() ? "split" : "combined",
         (text) => showTrackNote(text),
         open.id,
       );
@@ -953,12 +966,13 @@ export function wireJobForm() {
       fetchInit = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stems: [...selectedStems] }),
+        body: JSON.stringify({ stems: [...selectedStems], vocal_split: wantsVocalSplit() }),
       };
     } else if (file) {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("stems", JSON.stringify([...selectedStems]));
+      fd.append("vocal_split", String(wantsVocalSplit()));
       fetchInit = { method: "POST", body: fd };
     } else {
       fetchInit = {
@@ -969,6 +983,7 @@ export function wireJobForm() {
           // Backend uses this to decide whether to ffmpeg-amix a
           // "selected stems" track (mix.wav) at the end of the pipeline.
           stems: [...selectedStems],
+          vocal_split: wantsVocalSplit(),
         }),
       };
     }
@@ -998,7 +1013,6 @@ export function wireJobForm() {
     // silently import the same file a second time.
     if (file) fileInput._clear?.();
     jobSources.set(jobId, newSourceUrl);
-    jobVocalSplitModes.set(jobId, selectedStems.has("vocals") ? effectiveVocalSplitMode() : "all");
     addTrackToLibrary({
       id: jobId,
       title: displayTitle,
