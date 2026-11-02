@@ -125,6 +125,9 @@ def _isolate_job_queue():
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
     _jobqueue._paused = False
+    # Every TestClient's shutdown leaves this set, and a pipeline failure under
+    # it is read as an interruption rather than a failure.
+    _jobqueue._stopping = False
     # restore() populates this at import time from whatever registry is on disk;
     # the app lifespan drains it into the queue, which would otherwise leak a
     # real job into a test's queue.
@@ -136,6 +139,7 @@ def _isolate_job_queue():
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
     _jobqueue._paused = False
+    _jobqueue._stopping = False
     _registry._pending_resume.clear()
     _registry._deleted.clear()
 
