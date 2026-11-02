@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
+import pytest
+
+from app.core import redact as redact_mod
 from app.core.redact import redact
 
 
@@ -73,3 +78,124 @@ def test_composes_all_three_kinds_in_one_pass():
     assert "<home>" in result
     assert "<ip>" in result
     assert "<source-url-redacted>" in result
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda home: home,
+        lambda home: home.replace("\\", "/"),
+        lambda home: home.upper(),
+        lambda home: home.replace("\\", "\\\\"),  # repr() and JSON escape backslashes
+    ],
+    ids=["as-is", "forward-slashes", "other-case", "escaped"],
+)
+def test_strips_every_spelling_of_the_home_directory(spell):
+    """A log carries the same folder in several spellings: Python writes
+    backslashes, a file URI or ffmpeg writes forward slashes, repr() doubles
+    the backslashes. An exact string match only catches the first one."""
+    text = f'File "{spell(str(Path.home()))}/AppData/x.py", line 3'
+    assert redact(text) == 'File "<home>/AppData/x.py", line 3'
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("C:\\Users\\Someone\\AppData\\x.py", "<home>\\AppData\\x.py"),
+        ("c:/users/someone/Music/song.flac", "<home>/Music/song.flac"),
+        ("'C:\\\\Users\\\\Someone\\\\x.py'", "'<home>\\\\x.py'"),
+        ("D:\\Documents and Settings\\Someone\\x", "<home>\\x"),
+        ("file:///C:/Users/Someone/x.wav", "file:///<home>/x.wav"),
+        ("/Users/someone/Library/Caches/x", "<home>/Library/Caches/x"),
+        ("/home/someone/.cache/torch/hub", "<home>/.cache/torch/hub"),
+        ("/mnt/c/Users/Someone/x", "<home>/x"),
+        ("/c/Users/Someone/x", "<home>/x"),
+        ("/cygdrive/c/Users/Someone/x", "<home>/x"),
+        ("open \\\\NAS-SOMEONE\\music\\song.wav", "open <unc>\\song.wav"),
+        ("open //NAS-SOMEONE/music/song.wav", "open <unc>/song.wav"),
+        ("\\\\?\\UNC\\NAS-SOMEONE\\music\\x", "<unc>\\x"),
+        ("saved C:\\Users\\Someone.", "saved <home>."),
+        (
+            '2026-08-17 16:50:02 E stemdeck  File "C:\\Users\\Someone\\x.py", line 3',
+            '2026-08-17 16:50:02 E stemdeck  File "<home>\\x.py", line 3',
+        ),
+    ],
+)
+def test_strips_any_users_folder_on_any_os(text, expected):
+    """A home that is not this process's own: another account, a log copied
+    from another machine, a desktop shell running as a different user, or a
+    short 8.3 name. The user name is the folder right after Users or home."""
+    assert redact(text) == expected
+
+
+def test_strips_the_user_name_as_a_path_segment_anywhere():
+    name = Path.home().name
+    assert redact(f"D:\\{name}\\Music\\x.wav") == "D:\\<user>\\Music\\x.wav"
+    assert redact(f"/mnt/{name}/x.wav") == "/mnt/<user>/x.wav"
+    assert redact(f"saved to D:\\{name}.") == "saved to D:\\<user>."
+
+
+def test_leaves_the_user_name_alone_inside_other_words():
+    """Only a whole path segment is the user's folder. Replacing the bare
+    name would rewrite any word that contains it, and a short or common name
+    (`al`, `max`, `music`) would shred every line of the log."""
+    name = Path.home().name
+    text = f"{name}s mix by pre{name}, {name} said hi"
+    assert redact(text) == text
+
+
+@pytest.fixture
+def folders(tmp_path, monkeypatch):
+    data = tmp_path / "StemDeckData"
+    monkeypatch.setattr(redact_mod, "DATA_DIR", data)
+    monkeypatch.setattr(redact_mod, "JOBS_DIR", data / "jobs")
+    monkeypatch.setattr(redact_mod, "CACHE_DIR", data / "cache")
+    monkeypatch.setattr(redact_mod, "MODELS_DIR", data / "models")
+    return data
+
+
+@pytest.mark.parametrize(
+    ("child", "expected"),
+    [
+        ("jobs/abc123def456/stems/vocals.wav", "<jobs>/abc123def456/stems/vocals.wav"),
+        ("cache/waveforms/x.bin", "<cache>/waveforms/x.bin"),
+        ("models/htdemucs.th", "<models>/htdemucs.th"),
+        ("settings.json", "<data>/settings.json"),
+        ("jobs", "<jobs>"),
+    ],
+)
+def test_strips_the_app_folders(folders, child, expected):
+    """The library and data folders name the user (a home path) or their
+    drives and disks. A placeholder keeps which folder a path was in, which
+    is the part that helps a diagnosis; the nested folder wins over the data
+    folder that contains it."""
+    path = folders / child
+    native = expected.replace("/", os.sep)
+    assert redact(path.as_posix()) == expected
+    assert redact(str(path)) == native
+    assert redact(f"saved to {path}.") == f"saved to {native}."
+
+
+def test_does_not_take_a_longer_sibling_for_an_app_folder(folders):
+    assert redact(str(folders) + "Old") == redact(str(folders.parent)) + os.sep + "StemDeckDataOld"
+
+
+def test_a_run_of_slashes_stays_linear(monkeypatch):
+    """uvicorn logs the request line, so anyone who can reach the server can
+    put a URL of slashes into backend.log. A folder pattern that starts on a
+    separator took seconds on 16,000 of them, and grows with the square."""
+    monkeypatch.setattr(redact_mod, "DATA_DIR", Path("//nas/share/StemDeckData"))
+    line = 'INFO: "GET /' + "/" * 50_000 + ' HTTP/1.1" 404'
+    started = time.perf_counter()
+    redact(line)
+    assert time.perf_counter() - started < 1.0
+
+
+def test_leaves_ordinary_log_lines_alone():
+    text = (
+        '2026-08-17 16:50:02 I stemdeck  INFO: "GET /api/jobs/abc/stems/vocals.wav HTTP/1.1" 200\n'
+        "see /usr/lib/python3/site.py and https://github.com/stemdeckapp/stemdeck/issues/277\n"
+        "[1786205373] [stemdeck] torch 2.5.1+cu124 ok\n"
+        "see https://users.example/home/x and https://example.com//a/b\n"
+    )
+    assert redact(text) == text
