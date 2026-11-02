@@ -34,7 +34,7 @@ import { initStreamer } from "./streamer/streamer.js";
 import { initMixMode } from "./mixMode.js";
 import { initModeStems } from "./modeStems.js";
 import { initStemsControl } from "./stemsControl.js";
-import { applyVocalSplitHealth, onVocalSplitAvailability, vocalSplitUnavailable, effectiveVocalSplitMode } from "./vocalSplitState.js";
+import { applyVocalSplitHealth, onVocalSplitAvailability, vocalSplitUnavailable, vocalSplitUnavailableText, effectiveVocalSplitMode } from "./vocalSplitState.js";
 
 // ─── Stem choice toggles on the import page ───
 //
@@ -90,7 +90,7 @@ function wireVocalModeToggle() {
       // Lead + Backing cannot be made on this install (#832): say why,
       // which a tooltip alone does not on a touch screen, and change nothing.
       if (mode === "split" && vocalSplitUnavailable()) {
-        showError(t("split.unavailable"), null, { retry: false });
+        showError(vocalSplitUnavailableText(), null, { retry: false });
         return;
       }
       // The mode as lit (Combined while Lead + Backing is unavailable), so

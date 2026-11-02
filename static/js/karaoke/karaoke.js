@@ -28,7 +28,7 @@ import { getCurrentTrackInfo, openTrackInStudio } from "../catalog.js";
 import { loadQueue, getQueue, shiftQueue, removeFromQueue, onQueueChange, mountQueue } from "./karaokeQueue.js";
 import { isRecording } from "../capture/recordUi.js";
 import { layoutState, changeLayout, requestSplit, onLayoutChange } from "../modeStems.js";
-import { splitFailedText, vocalSplitUnavailable, onVocalSplitAvailability } from "../vocalSplitState.js";
+import { splitFailedText, vocalSplitUnavailable, vocalSplitUnavailableText, onVocalSplitAvailability } from "../vocalSplitState.js";
 import { takeOpen as streamerTakeOpen } from "../streamer/streamerRecord.js";
 import {
   transposedKey, semitoneLabel, clockShort, clockLong,
@@ -955,7 +955,7 @@ function paintVoice() {
     b.classList.toggle("on", on);
     b.tabIndex = on ? 0 : -1;
     b.disabled = running || (f === "split" && blocked);
-    if (f === "split" && blocked) b.title = t("split.unavailable");
+    if (f === "split" && blocked) b.title = vocalSplitUnavailableText();
     else b.removeAttribute("title");
   }
 }

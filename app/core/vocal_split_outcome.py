@@ -21,6 +21,9 @@ TIMEOUT = "timeout"
 CANCELLED = "cancelled"
 # The app stopped while the split ran, so it never finished.
 INTERRUPTED = "interrupted"
+# This build has no split at all: audio-separator is not installed on Intel
+# macOS (pyproject.toml), so no update or retry brings it.
+UNSUPPORTED_PLATFORM = "unsupported_platform"
 
 MESSAGES: dict[str, str] = {
     DEPENDENCY_MISSING: (
@@ -38,6 +41,7 @@ MESSAGES: dict[str, str] = {
     TIMEOUT: "The split stopped responding and was stopped. Try again.",
     CANCELLED: "The split was cancelled.",
     INTERRUPTED: "StemDeck closed before the split finished. Try again.",
+    UNSUPPORTED_PLATFORM: "Lead + Backing is not available on Macs with an Intel processor.",
 }
 
 CODES = frozenset(MESSAGES)

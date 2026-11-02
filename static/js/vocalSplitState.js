@@ -20,6 +20,7 @@ export const SPLIT_REASONS = Object.freeze([
   "timeout",
   "cancelled",
   "interrupted",
+  "unsupported_platform",
 ]);
 const KNOWN = new Set(SPLIT_REASONS);
 
@@ -61,6 +62,14 @@ export function vocalSplitUnavailable() {
   return unavailable;
 }
 
+/** Why Lead + Backing cannot be made here. "Update StemDeck" is right for a
+ * missing part, and wrong on an Intel Mac, which no update brings it to. */
+export function vocalSplitUnavailableText() {
+  return unavailable === "unsupported_platform"
+    ? splitReasonText(unavailable)
+    : t("split.unavailable");
+}
+
 /** Called with the new reason (or null) whenever availability changes. */
 export function onVocalSplitAvailability(fn) {
   listeners.add(fn);
@@ -73,12 +82,13 @@ export function applyVocalSplitHealth(health) {
   setUnavailable(v && v.available === false ? splitReason(v.reason) : null);
 }
 
-/** What a split just did on this install: a missing dependency rules it out
- * until the server says otherwise, a success rules it back in. Any other
- * failure belongs to that one run and changes nothing. */
+/** What a split just did on this install: a missing dependency or a
+ * platform without the split rules it out until the server says otherwise,
+ * a success rules it back in. Any other failure belongs to that one run and
+ * changes nothing. */
 export function noteSplitOutcome(code) {
   if (code === null) setUnavailable(null);
-  else if (code === "dependency_missing") setUnavailable(code);
+  else if (code === "dependency_missing" || code === "unsupported_platform") setUnavailable(code);
 }
 
 /** The Vocals mode an import will actually ask for: "all" while Lead +

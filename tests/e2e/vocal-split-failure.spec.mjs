@@ -123,32 +123,40 @@ test.describe("a Lead + Backing split that did not work", () => {
 test.describe("Lead + Backing on an install that cannot make it", () => {
   const split = (page) => page.locator('#vocalModeToggle .vocal-mode-btn[data-mode="split"]');
 
-  test("is shown off, with the reason, before anyone picks it", async ({ page }) => {
-    await stubVocalSplitHealth(page, { available: false, reason: "dependency_missing" });
-    const posts = await failSplit(page, ["dependency_missing"]);
-    await openStudio(page);
+  // A missing part says to update StemDeck. An Intel Mac build has no split
+  // to update to, so it says that instead.
+  for (const [reason, key] of [
+    ["dependency_missing", "split.unavailable"],
+    ["unsupported_platform", "split.reason.unsupported_platform"],
+  ]) {
+    test(`is shown off, with the reason, before anyone picks it (${reason})`, async ({ page }) => {
+      await stubVocalSplitHealth(page, { available: false, reason });
+      const posts = await failSplit(page, [reason]);
+      await openStudio(page);
+      const why = await tr(page, key);
 
-    await expect(split(page)).toHaveAttribute("aria-disabled", "true");
-    await expect(split(page)).toHaveAttribute("title", await tr(page, "split.unavailable"));
-    // aria-disabled, not disabled: a person can still press it and hear why.
-    await split(page).click({ force: true });
-    // Nothing chosen: Combined stays the mode, and the reason is said.
-    await expect(split(page)).not.toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("#error")).toContainText(await tr(page, "split.unavailable"));
-    const mode = await page.evaluate(async () => (await import("/js/vocalSplitState.js")).effectiveVocalSplitMode());
-    expect(mode).toBe("all");
+      await expect(split(page)).toHaveAttribute("aria-disabled", "true");
+      await expect(split(page)).toHaveAttribute("title", why);
+      // aria-disabled, not disabled: a person can still press it and hear why.
+      await split(page).click({ force: true });
+      // Nothing chosen: Combined stays the mode, and the reason is said.
+      await expect(split(page)).not.toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#error")).toContainText(why);
+      const mode = await page.evaluate(async () => (await import("/js/vocalSplitState.js")).effectiveVocalSplitMode());
+      expect(mode).toBe("all");
 
-    // The Stems popover's split and Karaoke's Separate say the same.
-    await page.locator("#laneStemsBtn").click();
-    await expect(page.locator("#laneStemsPop .stems-pop-split")).toBeDisabled();
-    await expect(page.locator("#laneStemsPop .stems-pop-split-note")).toHaveText(await tr(page, "split.unavailable"));
-    await page.keyboard.press("Escape");
-    await chooseMode(page, "karaoke");
-    const separate = page.locator('#karaoke .kk-voice-btn[data-form="split"]');
-    await expect(separate).toBeDisabled();
-    await expect(separate).toHaveAttribute("title", await tr(page, "split.unavailable"));
-    expect(posts).toEqual([]);
-  });
+      // The Stems popover's split and Karaoke's Separate say the same.
+      await page.locator("#laneStemsBtn").click();
+      await expect(page.locator("#laneStemsPop .stems-pop-split")).toBeDisabled();
+      await expect(page.locator("#laneStemsPop .stems-pop-split-note")).toHaveText(why);
+      await page.keyboard.press("Escape");
+      await chooseMode(page, "karaoke");
+      const separate = page.locator('#karaoke .kk-voice-btn[data-form="split"]');
+      await expect(separate).toBeDisabled();
+      await expect(separate).toHaveAttribute("title", why);
+      expect(posts).toEqual([]);
+    });
+  }
 
   test("is offered as usual when it can be made", async ({ page }) => {
     await stubVocalSplitHealth(page, { available: true, reason: null });
@@ -160,14 +168,16 @@ test.describe("Lead + Backing on an install that cannot make it", () => {
     await expect(split(page)).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("a split that finds a dependency missing switches it off at once", async ({ page }) => {
-    await stubVocalSplitHealth(page, { available: true, reason: null });
-    await failSplit(page, ["dependency_missing"]);
-    await openStudio(page);
-    await expect(split(page)).toHaveAttribute("aria-disabled", "false");
+  for (const reason of ["dependency_missing", "unsupported_platform"]) {
+    test(`a split that fails with ${reason} switches it off at once`, async ({ page }) => {
+      await stubVocalSplitHealth(page, { available: true, reason: null });
+      await failSplit(page, [reason]);
+      await openStudio(page);
+      await expect(split(page)).toHaveAttribute("aria-disabled", "false");
 
-    await finishImportWithSplit(page);
+      await finishImportWithSplit(page);
 
-    await expect(split(page)).toHaveAttribute("aria-disabled", "true");
-  });
+      await expect(split(page)).toHaveAttribute("aria-disabled", "true");
+    });
+  }
 });

@@ -21,8 +21,7 @@
 // cycle.
 import { selectedStems } from "./state.js";
 import { STEM_NAMES } from "./constants.js";
-import { t } from "./i18n.js";
-import { effectiveVocalSplitMode, vocalSplitUnavailable } from "./vocalSplitState.js";
+import { effectiveVocalSplitMode, vocalSplitUnavailable, vocalSplitUnavailableText } from "./vocalSplitState.js";
 
 /**
  * Point every control in the Extract row at the current selection.
@@ -81,7 +80,7 @@ export function refreshStemChoiceVisuals() {
     );
     if (btn.dataset.mode !== "split") continue;
     btn.setAttribute("aria-disabled", String(unavailable));
-    if (unavailable) btn.title = t("split.unavailable");
+    if (unavailable) btn.title = vocalSplitUnavailableText();
     else btn.removeAttribute("title");
   }
 }

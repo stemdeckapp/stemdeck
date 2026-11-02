@@ -24,7 +24,7 @@ import {
 import { BASE_STEMS, sameNames, stemsReasonKey } from "./partChoice.js";
 import { isRecording } from "./capture/recordUi.js";
 import { isStreamerTakeOpen } from "./streamer/streamer.js";
-import { splitFailedText, vocalSplitUnavailable, onVocalSplitAvailability } from "./vocalSplitState.js";
+import { splitFailedText, vocalSplitUnavailable, vocalSplitUnavailableText, onVocalSplitAvailability } from "./vocalSplitState.js";
 import { activeVersionId, nextVersionNumber, songVersions } from "./versionScope.js";
 import {
   createVersion, deleteVersion, openVersion, renameVersion, versionLabel, versionStemsText,
@@ -328,7 +328,7 @@ function paint() {
   // unless the status line below is already saying it.
   const failedBefore = state.splitState === "error" && state.splitReason && !ui.status.textContent;
   ui.splitNote.textContent = unavailable
-    ? t("split.unavailable")
+    ? vocalSplitUnavailableText()
     : failedBefore
       ? splitFailedText(state.splitReason)
       : t("stems.splitNote");

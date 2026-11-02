@@ -7,6 +7,8 @@ remembered, and /api/health says so before anyone picks Lead + Backing.
 from __future__ import annotations
 
 import json
+import platform
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +18,7 @@ from app.core.vocal_split_outcome import (
     MODEL_UNAVAILABLE,
     OUT_OF_MEMORY,
     WORKER_FAILED,
+    message_for,
 )
 from app.pipeline import vocal_split_status as vss
 
@@ -61,6 +64,35 @@ def test_failure_code_from_text_alone():
     assert vss.failure_code("unknown", text="") == WORKER_FAILED
     assert vss.failure_code("unknown", text="No module named 'onnx2torch'") == DEPENDENCY_MISSING
     assert vss.failure_code("unknown", text="CUDA out of memory") == OUT_OF_MEMORY
+
+
+def _mac(monkeypatch, machine: str) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "machine", lambda: machine)
+
+
+@pytest.fixture
+def intel_mac(monkeypatch):
+    """audio-separator is not installed on macOS x86_64 (pyproject.toml markers)."""
+    _mac(monkeypatch, "x86_64")
+
+
+def test_an_intel_mac_is_told_it_cannot_have_the_split_not_to_update(intel_mac):
+    """No update brings the split to this build, so "Update StemDeck" is wrong."""
+    code = vss.failure_code("import", ImportError("No module named 'audio_separator'"))
+    assert code == "unsupported_platform"
+    assert message_for(code) not in (message_for(DEPENDENCY_MISSING), message_for(WORKER_FAILED))
+
+
+def test_an_intel_mac_reads_as_unavailable_before_any_split(intel_mac):
+    """Nothing recorded yet, as after an upgrade with no setup warmup."""
+    assert vss.capability() == {"available": False, "reason": "unsupported_platform"}
+
+
+def test_an_apple_silicon_mac_is_not_ruled_out(monkeypatch):
+    _mac(monkeypatch, "arm64")
+    assert vss.capability() == {"available": True, "reason": None}
+    assert vss.failure_code("import", ImportError("x")) == DEPENDENCY_MISSING
 
 
 def test_nothing_recorded_reads_as_available():
