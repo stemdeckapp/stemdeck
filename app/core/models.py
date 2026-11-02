@@ -16,6 +16,11 @@ class JobCancelled(Exception):
     """Raised inside a pipeline stage when the job's cancel flag is set."""
 
 
+class JobBusy(Exception):
+    """A finished song is being worked on (Job.post_hoc_running), so its folder
+    must not be deleted, moved or reset away. Answered as 409 "job_busy"."""
+
+
 JobStatus = Literal[
     "queued",
     "downloading",
@@ -479,6 +484,11 @@ class Job:
             "favorite": self.favorite,
             "created_at": self.created_at,
         }
+
+    def post_hoc_running(self) -> bool:
+        """A stem fill or a vocal split is writing into this song's folder.
+        The queue statuses do not show it: the song stays "done" meanwhile."""
+        return self.stem_fill == "running" or self.vocal_split == "running"
 
     def to_queue_state(self) -> dict[str, Any]:
         """The compact record the queue view needs. Deliberately not to_state():

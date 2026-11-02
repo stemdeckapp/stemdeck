@@ -20,13 +20,14 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 import uuid
 from pathlib import Path
 
 from app.core.config import DEMUCS_MODEL, STEM_NAMES, TIMEOUT_FFMPEG, ffmpeg_executable
 from app.core.models import Job
 from app.core.stem_files import stem_exists, stem_url
-from app.pipeline.cancel import run_registered
+from app.pipeline.cancel import check_cancel, run_registered
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import download
 from app.pipeline.separate import separate
@@ -38,6 +39,11 @@ logger = logging.getLogger("stemdeck.stem_fill")
 # default, which is what every song had before "best" was offered.
 FALLBACK_QUALITY = "standard"
 
+# The stand-in of each fill running now, by song id: its stages read the
+# stand-in's flag, not the song's, so this is how POST .../cancel reaches them.
+_STAND_INS: dict[str, Job] = {}
+_STAND_INS_LOCK = threading.Lock()
+
 
 class FillRefused(Exception):
     """The song cannot be filled as asked. `code` is a fixed word the API
@@ -46,6 +52,16 @@ class FillRefused(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def cancel_fill(job_id: str) -> bool:
+    """Ask the running fill of `job_id` to stop. True when one was running."""
+    with _STAND_INS_LOCK:
+        stand_in = _STAND_INS.get(job_id)
+        if stand_in is None:
+            return False
+        stand_in.cancel_requested = True
+        return True
 
 
 def missing_stems(stems_dir: Path, wanted: list[str]) -> list[str]:
@@ -117,19 +133,32 @@ def fill_stems(job: Job, job_dir: Path, wanted: list[str], source: Path | None) 
     if source is None and (not url or url.startswith("local:")):
         raise FillRefused("no_source")
 
-    stand_in = Job(id=job.id, source_url=job.source_url, title=job.title)
+    with _STAND_INS_LOCK:
+        # A cancel sent while the fill waited for the pipeline is on the song.
+        stand_in = Job(
+            id=job.id,
+            source_url=job.source_url,
+            title=job.title,
+            cancel_requested=job.cancel_requested,
+        )
+        _STAND_INS[job.id] = stand_in
     work = job_dir / f".fill-{uuid.uuid4().hex[:8]}"
-    work.mkdir()
     added: list[str] = []
     try:
+        check_cancel(stand_in)
+        work.mkdir()
         src = download(stand_in, url, work) if source is None else source
         src = _as_wav(stand_in, src, work)
+        # The separation only looks at the flag once it is over.
+        check_cancel(stand_in)
         quality = job.separation_quality or FALLBACK_QUALITY
         stems_root = separate(stand_in, src, work, quality=quality)
         for name in missing:
             if _place(stems_root / f"{name}.wav", stems_dir / f"{name}.wav"):
                 added.append(name)
     finally:
+        with _STAND_INS_LOCK:
+            _STAND_INS.pop(job.id, None)
         shutil.rmtree(work, ignore_errors=True)
     if not added:
         return []

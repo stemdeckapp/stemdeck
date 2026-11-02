@@ -4,7 +4,7 @@
 //
 // Run:  node tests/js/error-reason.test.mjs
 
-import { errorReason, RESTART_REQUIRED, responseErrorMessage } from "../../static/js/errorReason.js";
+import { codeMessage, errorReason, JOB_BUSY, RESTART_REQUIRED, responseErrorMessage } from "../../static/js/errorReason.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 
 let pass = 0,
@@ -48,6 +48,21 @@ eq(
   TRANSLATIONS.en["settings.stemsLocation.restartToSave"],
 );
 eq("an unknown code still gives the detail", responseErrorMessage(res(409, ""), { detail: "busy", code: "other" }), "busy");
+
+// A delete, a library move or a reset refused while a stem fill or a vocal
+// split runs: its own sentence, never the restart one.
+const busy = { detail: "server words", code: "job_busy" };
+eq("the busy code the server sends", JOB_BUSY, "job_busy");
+eq("a busy refusal gives the translated sentence", responseErrorMessage(res(409, "Conflict"), busy), TRANSLATIONS.en["library.songBusy"]);
+eq("codeMessage gives the same sentence", codeMessage(busy), TRANSLATIONS.en["library.songBusy"]);
+check("the busy sentence is not the restart one", codeMessage(busy) !== codeMessage(refused));
+eq("codeMessage is empty for an unknown code", codeMessage({ detail: "busy", code: "other" }), "");
+eq("codeMessage is empty for no body", codeMessage(null), "");
+for (const lang of ["pl", "ja", "zh-Hans", "de", "pt", "pt-PT", "id", "fr", "es", "ko"]) {
+  const text = TRANSLATIONS[lang]?.["library.songBusy"];
+  check(`the busy sentence is translated in ${lang}`, typeof text === "string" && text && text !== TRANSLATIONS.en["library.songBusy"]);
+}
+check("pt-PT has its own busy sentence", TRANSLATIONS["pt-PT"]["library.songBusy"] !== TRANSLATIONS.pt["library.songBusy"]);
 
 // errorReason
 eq("an Error's message", errorReason(new Error("Failed to fetch")), "Failed to fetch");
