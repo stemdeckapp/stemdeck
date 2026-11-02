@@ -13,7 +13,7 @@
 // seconds long. Every span here fits inside it. What 6 seconds cannot show is
 // whether a loop stays gapless over minutes; PLY-12 stays a human check.
 import { test, expect } from "@playwright/test";
-import { openStudio, waitForClickTrack } from "./helpers.mjs";
+import { openClickOptions, openStudio, waitForClickTrack } from "./helpers.mjs";
 
 // The engine has to really play for "playback stays inside the loop" to mean
 // anything. Muted, so a run makes no sound.
@@ -377,6 +377,77 @@ test.describe("loop and transport by hand", () => {
     await expect(page.locator("#t-play")).not.toHaveClass(/playing/);
     await expect(page.locator("#t-loop")).not.toHaveClass(/active/);
     await expect(page.locator("#t-metro")).not.toHaveClass(/active/);
+  });
+
+  /** Whether each keydown since the last call, bar the modifiers themselves, was handled. */
+  async function watchKeys(page) {
+    await page.evaluate(() => {
+      window.__keys = [];
+      window.addEventListener("keydown", (e) => {
+        if (!["Control", "Meta", "Alt", "Shift"].includes(e.key)) window.__keys.push(e.defaultPrevented);
+      });
+    });
+  }
+  const keysPrevented = (page) => page.evaluate(() => window.__keys.splice(0));
+
+  test("KEY-01 Ctrl, Cmd and Alt chords stay with the browser", async ({ page }) => {
+    await setUp(page);
+    await watchKeys(page);
+    const before = await player(page);
+
+    for (const chord of ["Control+l", "Meta+k", "Alt+[", "Control+]", "Alt+Space"]) {
+      await page.keyboard.press(chord);
+    }
+
+    expect(await keysPrevented(page)).toEqual(Array(5).fill(false));
+    const after = await player(page);
+    expect(after.playing).toBe(false);
+    expect(after.time).toBeCloseTo(before.time, 2);
+    expect(after.loopEnabled).toBe(false);
+    expect(after.metronome).toBe(false);
+    await expect(page.locator("#t-loop")).not.toHaveClass(/active/);
+    await expect(page.locator("#t-metro")).not.toHaveClass(/active/);
+
+    // I and O act only with a loop on, and the playhead at 0 is outside the
+    // default loop, so either one would move it.
+    await page.keyboard.press("l");
+    await expect(page.locator("#t-loop")).toHaveClass(/active/);
+    const loop = await player(page);
+    await keysPrevented(page);
+    await page.keyboard.press("Meta+i");
+    await page.keyboard.press("Control+o");
+    expect(await keysPrevented(page)).toEqual([false, false]);
+    const moved = await player(page);
+    expect(moved.loopStart).toBe(loop.loopStart);
+    expect(moved.loopEnd).toBe(loop.loopEnd);
+  });
+
+  test("KEY-01 a focused select keeps its own keys", async ({ page }) => {
+    await setUp(page);
+    await watchKeys(page);
+    await openClickOptions(page);
+    const select = page.locator("#t-metro-bar");
+    await select.focus();
+    await expect(select).toBeFocused();
+
+    // Space last: if it opens the select's list, the list has the keys after it.
+    await page.keyboard.press("k");
+    await page.keyboard.press("l");
+    await page.keyboard.press("Space");
+
+    expect(await keysPrevented(page)).toEqual([false, false, false]);
+    // Closes the list if Space opened it, and the options popover with it.
+    await page.keyboard.press("Escape");
+    const p = await player(page);
+    expect(p.playing).toBe(false);
+    expect(p.loopEnabled).toBe(false);
+    expect(p.metronome).toBe(false);
+    await expect(page.locator("#t-play")).not.toHaveClass(/playing/);
+
+    // Focus back on the page, the plain keys are shortcuts again.
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press("k");
+    await expect(page.locator("#t-metro")).toHaveClass(/active/);
   });
 
   // Found by this spec. The transport shows the song's length (from its

@@ -20,6 +20,7 @@ import { wireStemListControls, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
+import { ignoredByShortcuts } from "./libraryDeleteKey.js";
 import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
 import { initFooterFit, refitFooter } from "./footerFit.js";
 import { initArtistInfo } from "./artistInfo.js";
@@ -1173,9 +1174,9 @@ function wireAppShellControls() {
 
 document.addEventListener("keydown", (e) => {
   if (!transport()) return;
-  // Textareas were not excluded, so Space in the log viewer started playback
-  // instead of scrolling.
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  // Ctrl, Cmd and Alt chords are the browser's, and a focused field or select
+  // keeps its keys: Space there used to play the song instead.
+  if (ignoredByShortcuts(e)) return;
   if (e.code === "Space") {
     e.preventDefault();
     togglePlayPause();

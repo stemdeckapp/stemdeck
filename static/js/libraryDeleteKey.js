@@ -7,6 +7,9 @@
 // when the last click was in that list (a click on a row does not focus it,
 // and opening the song re-renders the list, so focus is on the body then).
 //
+// The studio's one-key shortcuts in main.js share the "is this typing" rule,
+// so their guard lives here too.
+//
 // No DOM access beyond `closest`, so the rule runs under node (tests/js).
 
 /** The song rows. Not the rail, the search box or the Trash bar above them. */
@@ -18,6 +21,15 @@ const TEXT_EDITING = "input, textarea, select, [contenteditable=''], [contentedi
 export function isTextEditingTarget(target) {
   if (!target || typeof target.closest !== "function") return false;
   return Boolean(target.isContentEditable || target.closest(TEXT_EDITING));
+}
+
+/**
+ * Whether the studio's one-key shortcuts (Space, [, ], L, K, I, O) leave this
+ * key alone: Ctrl, Cmd and Alt chords belong to the browser and the OS, and a
+ * field or select with focus keeps its own keys.
+ */
+export function ignoredByShortcuts(e) {
+  return Boolean(e.ctrlKey || e.metaKey || e.altKey || isTextEditingTarget(e.target));
 }
 
 /** Whether `target` is inside the library's song rows. */

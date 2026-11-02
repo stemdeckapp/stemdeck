@@ -3,7 +3,7 @@
 // They used to trash the open song from anywhere: with focus on Play, a mute
 // button, a stem switch or a Karaoke queue row, one key press sent the song
 // to the Trash with no confirmation.
-import { libraryDeleteTrackId, isTextEditingTarget } from '../../static/js/libraryDeleteKey.js';
+import { libraryDeleteTrackId, isTextEditingTarget, ignoredByShortcuts } from '../../static/js/libraryDeleteKey.js';
 
 let passed = 0;
 let failed = 0;
@@ -93,6 +93,26 @@ check('a Trash row is not trashed again', libraryDeleteTrackId(key(trashRow), op
 check('a queue row is not a song to trash', libraryDeleteTrackId(key(queueRow), opts()) === null);
 check('other keys do nothing', libraryDeleteTrackId(key(rowDel, 'x'), opts()) === null);
 check('no open song, nothing from the body', libraryDeleteTrackId(key(body), opts({ openTrackId: null, lastPointerInList: true })) === null);
+
+// The one-key shortcuts (Space, [, ], L, K, I, O) leave browser and OS chords
+// and keys meant for a focused field alone. Ctrl+L, Cmd+K and Alt+[ used to
+// be swallowed, and Space on a select played the song instead of opening it.
+const press = (target, mods = {}) => ({ code: 'Space', target, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+check('a plain key on the page is a shortcut', ignoredByShortcuts(press(body)) === false);
+check('a plain key on a button is a shortcut', ignoredByShortcuts(press(play)) === false);
+check('Shift alone keeps the shortcut', ignoredByShortcuts(press(body, { shiftKey: true })) === false);
+for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
+  check(`${mod} leaves the key to the browser`, ignoredByShortcuts(press(body, { [mod]: true })) === true);
+  check(`${mod} with Shift too`, ignoredByShortcuts(press(play, { [mod]: true, shiftKey: true })) === true);
+}
+check('Ctrl and Alt together (AltGr)', ignoredByShortcuts(press(body, { ctrlKey: true, altKey: true })) === true);
+for (const tag of ['input', 'textarea', 'select']) {
+  check(`a focused ${tag} keeps its keys`, ignoredByShortcuts(press(el([tag], player))) === true);
+}
+check('contenteditable keeps its keys', ignoredByShortcuts(press(editable)) === true);
+check('a child of contenteditable keeps its keys',
+  ignoredByShortcuts(press(el(['span'], el(['div', "[contenteditable='true']"], body)))) === true);
+check('the folder name editor keeps its keys', ignoredByShortcuts(press(el(['.folder-editor'], body))) === true);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
