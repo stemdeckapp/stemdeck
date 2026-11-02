@@ -510,8 +510,9 @@ EXPORT_LIMIT_LOSSY_DBTP = -1.5
 # Without one, ebur128 logs a line per 100 ms frame at "info". "verbose" moves
 # those lines below ffmpeg's default "info" level, so only the summary and any
 # printed metadata reach stderr. Not "quiet": ffmpeg 6.1 knows that value but
-# 5.1 (Debian 12) and 4.4 (Ubuntu 22.04) do not, and they reject the whole
-# filter graph, so nothing is measured at all.
+# 5.1 (Debian 12, the oldest StemDeck runs on: MIN_FFMPEG_VERSION in
+# app/pipeline/audio_encoders.py) does not, and it rejects the whole filter
+# graph, so nothing is measured at all.
 EBUR128_FRAMELOG = "verbose"
 
 # Reading an upload's tags (artist, title, album, lyrics) with ffprobe for the

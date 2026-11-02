@@ -697,6 +697,11 @@ function wireFooterControls() {
       if (panelOpen()) applyTransposeGate();
       // The same answer says whether Lead + Backing can be made (#832).
       applyVocalSplitHealth(health);
+      // An FFmpeg older than 5.1 cannot run any export: say so now, not at
+      // the first export.
+      if (health?.ffmpeg_too_old) {
+        showError(t("export.ffmpegTooOld", { version: health.ffmpeg_too_old }), null, { retry: false });
+      }
     })
     .catch((e) => console.warn("[export] format check failed:", e));
 

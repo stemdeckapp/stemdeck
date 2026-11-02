@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import signal
 import socket
 import time
@@ -40,6 +41,7 @@ from app.core.config import (
     available_torch_devices,
     configure_portable_environment,
     ensure_runtime_dirs,
+    ffmpeg_executable,
     torch_load_error,
 )
 from app.core.logging_setup import configure_logging
@@ -106,7 +108,12 @@ from app.core.stems_location import (
     move_library,
     validate_target,
 )
-from app.pipeline.audio_encoders import export_formats, transpose_export
+from app.pipeline.audio_encoders import (
+    MIN_FFMPEG_VERSION,
+    export_formats,
+    ffmpeg_too_old,
+    transpose_export,
+)
 from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
 from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_section_workspaces
 from app.pipeline.vocal_split_status import capability as vocal_split_capability
@@ -242,6 +249,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         _log.exception("could not sweep stale render files")
 
+    # An FFmpeg older than 5.1 cannot run any export (app/pipeline/audio_encoders.py).
+    # The server still starts, so imports and playback work and the page can
+    # say the same thing (/api/health ffmpeg_too_old).
+    too_old = await asyncio.to_thread(ffmpeg_too_old)
+    if too_old:
+        minimum = ".".join(map(str, MIN_FFMPEG_VERSION))
+        _log.error(
+            "FFmpeg %s at %s is too old: StemDeck needs FFmpeg %s or newer, and every "
+            "export and master will fail with this one. Install FFmpeg %s or newer, or "
+            "set STEMDECK_FFMPEG to one, then restart StemDeck.",
+            too_old,
+            shutil.which(ffmpeg_executable()) or ffmpeg_executable(),
+            minimum,
+            minimum,
+        )
+
     resumed = take_pending_resume()
     if resumed:
         jobqueue.pause()
@@ -350,6 +373,10 @@ def health() -> dict[str, object]:
         # so before a transposed mix is exported, rather than the export
         # failing with a 422 at the end (#858). Probed once per binary.
         "transpose_export": transpose_export(),
+        # The version of this ffmpeg when it is older than 5.1, which cannot
+        # run any export, else null. The page then says so. Read from the
+        # version line cached per binary, like transpose_export.
+        "ffmpeg_too_old": ffmpeg_too_old(),
         # {"available": bool, "reason": code or None}: whether Lead + Backing
         # can be made on this install. False only after setup or a real split
         # found a dependency missing on these exact packages, which the

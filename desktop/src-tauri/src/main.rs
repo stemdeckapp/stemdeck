@@ -6746,7 +6746,7 @@ fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
     let mut command = Command::new(path);
     command
         .arg("-version")
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
@@ -6759,7 +6759,44 @@ fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
             stderr.trim()
         ));
     }
+    let build = parse_ffmpeg_build(&String::from_utf8_lossy(&output.stdout));
+    if ffmpeg_too_old(&build) {
+        return Err(format!(
+            "FFmpeg at {} is version {}, and StemDeck needs FFmpeg {}.{} or newer. Do one of \
+             these, then start StemDeck again: point STEMDECK_FFMPEG at FFmpeg {}.{} or newer, \
+             or remove STEMDECK_FFMPEG and STEMDECK_FFMPEG_URL so StemDeck downloads its own.",
+            path.display(),
+            build.version.as_deref().unwrap_or_default(),
+            MIN_FFMPEG_VERSION.0,
+            MIN_FFMPEG_VERSION.1,
+            MIN_FFMPEG_VERSION.0,
+            MIN_FFMPEG_VERSION.1,
+        ));
+    }
     verify_ffmpeg_encoders(path)
+}
+
+// The oldest FFmpeg StemDeck runs on (MIN_FFMPEG_VERSION in
+// app/pipeline/audio_encoders.py): every export ends in alimiter's latency
+// option, which FFmpeg 5.1 added, and Ubuntu 22.04's apt ffmpeg is 4.4. An
+// older one fails verification, so a system or leftover copy is passed over
+// for the download, and one named by STEMDECK_FFMPEG stops setup with the
+// message above. A version that names no release (a git build) is not old.
+const MIN_FFMPEG_VERSION: (u32, u32) = (5, 1);
+
+fn ffmpeg_too_old(build: &FfmpegBuild) -> bool {
+    let Some(version) = build.version.as_deref() else {
+        return false;
+    };
+    let mut numbers = version
+        .strip_prefix('n')
+        .unwrap_or(version)
+        .split(|c: char| !c.is_ascii_digit())
+        .map(|part| part.parse::<u32>().ok());
+    match (numbers.next().flatten(), numbers.next().flatten()) {
+        (Some(major), Some(minor)) => (major, minor) < MIN_FFMPEG_VERSION,
+        _ => false,
+    }
 }
 
 // ffprobe gets the same run check ffmpeg does.
@@ -9353,6 +9390,39 @@ configuration: --cc=clang\n";
         assert_eq!(empty.version, None);
         assert_eq!(empty.gcc_major, None);
         assert!(!super::is_known_bad_ffmpeg_build(&empty));
+    }
+
+    #[test]
+    fn ffmpeg_older_than_5_1_is_too_old() {
+        let too_old = |line: &str| super::ffmpeg_too_old(&super::parse_ffmpeg_build(line));
+        // Ubuntu 22.04's apt ffmpeg, Debian 11's, a plain 5.0, a git-tag build.
+        assert!(too_old(
+            "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers"
+        ));
+        assert!(too_old(
+            "ffmpeg version 4.3.8-0+deb11u1 Copyright (c) 2000-2024"
+        ));
+        assert!(too_old("ffmpeg version 5.0.3 Copyright (c) 2000-2022"));
+        assert!(too_old("ffmpeg version n4.4 Copyright (c) 2000-2021"));
+        // Debian 12 (the Docker image), every pinned download, Homebrew.
+        assert!(!too_old(
+            "ffmpeg version 5.1.6-0+deb12u1 Copyright (c) 2000-2024"
+        ));
+        assert!(!too_old(FFMPEG_VERSION_GCC_15));
+        assert!(!too_old(FFMPEG_VERSION_CLANG));
+        assert!(!too_old(
+            "ffmpeg version 8.1.1-tessus  https://evermeet.cx/ffmpeg/"
+        ));
+        assert!(!too_old(
+            "ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/"
+        ));
+        assert!(!too_old("ffmpeg version 6.0 Copyright (c) 2000-2023"));
+        assert!(!too_old("ffmpeg version 10.0 Copyright (c) 2000-2030"));
+        // No release named, or no version line at all: not called old.
+        assert!(!too_old(
+            "ffmpeg version N-117000-g1234abcd-20241001 Copyright"
+        ));
+        assert!(!too_old(""));
     }
 
     // Run by hand against real binaries:
