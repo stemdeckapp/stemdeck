@@ -224,10 +224,18 @@ def test_the_reason_survives_a_restart(client, done_job, monkeypatch, tmp_path):
 def test_a_split_cut_off_by_a_restart_can_run_again():
     """A record saved while the split ran comes back failed, not running:
     "running" refused every later attempt with a 409 for good."""
-    job = Job(id=JOB_ID, status="done", title="Song", vocal_split="running")
+    job = Job(
+        id=JOB_ID,
+        status="done",
+        title="Song",
+        vocal_split="running",
+        stage_message="Splitting lead/backing vocals...",
+    )
     restored = Job.from_record(job.to_record())
     assert restored.vocal_split == "error"
     assert restored.vocal_split_reason == "interrupted"
+    # The row no longer says the split is running.
+    assert restored.stage_message == "Done"
 
 
 def test_a_stalled_split_reports_a_timeout(client, done_job, monkeypatch):
