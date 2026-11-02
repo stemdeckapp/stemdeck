@@ -281,7 +281,7 @@ def output_filter(encoder: str) -> str:
     return "format=nv12,hwupload" if encoder == "h264_vaapi" else "format=yuv420p"
 
 
-def size_cap_bytes(encoder: str, width: int, height: int, fps: int, duration: float) -> int:
+def size_cap_bytes(width: int, height: int, fps: int, duration: float) -> int:
     """The largest file a GPU render of this length may honestly be: its
     level's bitrate plus the 192 kbps AAC, with half again for the container
     and rounding. Anything bigger is a runaway encoder."""
@@ -1017,7 +1017,6 @@ def validate_output(
     height: int,
     fps: int,
     duration: float,
-    encoder: str,
     *,
     cancelled: Callable[[], bool] = lambda: False,
     on_proc: Callable[[subprocess.Popen | None], None] = lambda p: None,
@@ -1030,7 +1029,7 @@ def validate_output(
         raise OutputInvalid("missing") from None
     if size < max(4096, duration * 1000):
         raise OutputInvalid("filesize", f"{size} bytes")
-    if size > size_cap_bytes(encoder, width, height, fps, duration):
+    if size > size_cap_bytes(width, height, fps, duration):
         raise OutputInvalid("filesize", f"{size} bytes")
     rc, out, _err = _run_watched(
         [

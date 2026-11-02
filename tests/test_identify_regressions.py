@@ -146,7 +146,7 @@ def _join_lookups(job_id: str) -> None:
             assert not thread.is_alive(), f"{thread.name} never finished"
 
 
-def _collect(job, stems_root, job_dir):
+def _collect(stems_root, job_dir):
     stems = job_dir / "stems"
     stems.mkdir(parents=True, exist_ok=True)
     for name in FOUND:

@@ -683,7 +683,7 @@ def _file(tmp_path, size=200_000) -> Path:
 
 
 def test_validate_passes_a_good_file(fake, tmp_path):
-    ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0, "h264_nvenc")
+    ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0)
     decode = next(c for c in fake.calls if fake.kind(c) == "decode")
     assert decode[-3:] == ["-f", "null", "-"] and "-v" in decode
 
@@ -702,25 +702,25 @@ def test_validate_passes_a_good_file(fake, tmp_path):
 def test_validate_catches_a_wrong_file(fake, tmp_path, change, code):
     change(fake.ffprobe)
     with pytest.raises(ve.OutputInvalid) as exc:
-        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0, "h264_nvenc")
+        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0)
     assert exc.value.code == code
 
 
 def test_validate_catches_decode_errors_and_odd_sizes(fake, tmp_path):
     fake.decode = (0, "[h264 @ 0x1] error while decoding MB 12 4\n")
     with pytest.raises(ve.OutputInvalid) as exc:
-        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0, "h264_nvenc")
+        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0)
     assert exc.value.code == "decode"
     fake.decode = (1, "")
     with pytest.raises(ve.OutputInvalid):
-        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0, "h264_nvenc")
+        ve.validate_output(_file(tmp_path), 1920, 1080, 30, 10.0)
     fake.decode = (0, "")
     with pytest.raises(ve.OutputInvalid) as exc:
-        ve.validate_output(_file(tmp_path, 100), 1920, 1080, 30, 10.0, "h264_nvenc")
+        ve.validate_output(_file(tmp_path, 100), 1920, 1080, 30, 10.0)
     assert exc.value.code == "filesize"
-    huge = ve.size_cap_bytes("h264_nvenc", 1920, 1080, 30, 1.0) + 1
+    huge = ve.size_cap_bytes(1920, 1080, 30, 1.0) + 1
     with pytest.raises(ve.OutputInvalid) as exc:
-        ve.validate_output(_file(tmp_path, huge), 1920, 1080, 30, 1.0, "h264_nvenc")
+        ve.validate_output(_file(tmp_path, huge), 1920, 1080, 30, 1.0)
     assert exc.value.code == "filesize"
 
 

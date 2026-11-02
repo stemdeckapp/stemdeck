@@ -180,7 +180,7 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     _check_cancel(job)
     stems_root = separate(job, source, job_dir)
     mark = _lap(job, "separate", mark)
-    found = collect(job, stems_root, job_dir)
+    found = collect(stems_root, job_dir)
     stems_dir = job_dir / "stems"
     # Deleting the source is the bulk of disk reclaim per job, and it happens
     # before the ffmpeg amix steps below in case scratch space is tight. But

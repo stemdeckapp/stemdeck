@@ -79,7 +79,7 @@ def test_collect_moves_every_stem_and_removes_the_demucs_dir(tmp_path):
     for name in ("vocals", "drums"):
         _write_dc(stems_root / f"{name}.wav", 0.1)
 
-    found = collect(_job([]), stems_root, job_dir)
+    found = collect(stems_root, job_dir)
 
     assert found == ["vocals", "drums"]
     assert (job_dir / "stems" / "vocals.wav").is_file()
@@ -93,7 +93,7 @@ def test_collect_skips_a_missing_stem(tmp_path):
     stems_root.mkdir(parents=True)
     _write_dc(stems_root / "bass.wav", 0.1)
 
-    found = collect(_job([]), stems_root, job_dir)
+    found = collect(stems_root, job_dir)
 
     assert found == ["bass"]
     assert sorted(p.name for p in (job_dir / "stems").iterdir()) == ["bass.wav"]
@@ -105,7 +105,7 @@ def test_collect_without_any_stem_raises_and_still_cleans_up(tmp_path):
     stems_root.mkdir(parents=True)
 
     with pytest.raises(RuntimeError, match="no stems"):
-        collect(_job([]), stems_root, job_dir)
+        collect(stems_root, job_dir)
     assert not (job_dir / DEMUCS_MODEL).exists()
 
 
