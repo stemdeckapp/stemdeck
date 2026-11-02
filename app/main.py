@@ -910,15 +910,22 @@ def _line_time(line: str) -> float | None:
     return None
 
 
+def _tail_bytes(path: Path, limit: int) -> tuple[bytes, bool]:
+    """The last `limit` bytes of a file from a line start, without reading all
+    of it, and whether anything before them was left out."""
+    size = path.stat().st_size
+    with path.open("rb") as f:
+        if size <= limit:
+            return f.read(limit), False
+        f.seek(size - limit)
+        f.readline()  # discard the partial first line
+        return f.read(limit), True
+
+
 def _tail_lines(path: Path) -> list[str]:
-    """Last _LOG_TAIL_BYTES of a file as lines, without reading all of it."""
+    """Last _LOG_TAIL_BYTES of a file as lines."""
     try:
-        size = path.stat().st_size
-        with path.open("rb") as f:
-            if size > _LOG_TAIL_BYTES:
-                f.seek(size - _LOG_TAIL_BYTES)
-                f.readline()  # discard the partial first line
-            raw = f.read()
+        raw, _cut = _tail_bytes(path, _LOG_TAIL_BYTES)
     except OSError:
         return []
     return raw.decode("utf-8", errors="replace").splitlines()
@@ -963,7 +970,7 @@ def get_log_tail(view: str, minutes: int = 60) -> PlainTextResponse:
         body = (
             f"No entries in the last {window} minutes.\n"
             if lines
-            else f"No log file yet at {logs_dir / files[0]}.\n"
+            else f"No log file yet ({files[0]}).\n"
         )
         return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
@@ -983,14 +990,23 @@ def get_log_tail(view: str, minutes: int = 60) -> PlainTextResponse:
     return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
 
+# Per file in the zip. Above the application log's 5 MB rotation, so only
+# backend.log or setup.log, which rotate at launch and not by size, are cut.
+_LOG_ZIP_FILE_BYTES = 8_000_000
+
+
 @app.get("/api/logs.zip", tags=["settings"])
 def download_logs_zip() -> StreamingResponse:
     """Bundle the log files into a zip for support and bug reports.
 
     Only the known log names are read, never whatever else happens to be in the
     directory: the set is fixed above, so a stray file dropped in LOGS_DIR can
-    never be swept into a download. Built in memory -- these are capped at 5 MB
-    x 3 backups plus two small desktop logs, so the whole set is bounded.
+    never be swept into a download. Built in memory, bounded by
+    _LOG_ZIP_FILE_BYTES per file.
+
+    Redacted like the Logs viewer, because the Settings text offers this zip
+    for attaching to a public bug report. Decoded with surrogateescape so a
+    byte that is not UTF-8 goes back into the file unchanged.
     """
     logs_dir = LOGS_DIR.resolve()
     buf = io.BytesIO()
@@ -1001,15 +1017,21 @@ def download_logs_zip() -> StreamingResponse:
             try:
                 if not path.is_file():
                     continue
-                zf.writestr(name, path.read_bytes())
-                written += 1
+                raw, cut = _tail_bytes(path, _LOG_ZIP_FILE_BYTES)
             except OSError:
                 _log.warning("could not add %s to the log bundle", name, exc_info=True)
+                continue
+            text = redact(raw.decode("utf-8", errors="surrogateescape"))
+            if cut:
+                text = "[... earlier part of this log not included ...]\n" + text
+            zf.writestr(name, text.encode("utf-8", errors="surrogateescape"))
+            written += 1
         if written == 0:
             # An empty zip is a confusing download; say so inside it instead.
+            # No folder named: on desktop it is inside the user's home.
             zf.writestr(
                 "README.txt",
-                f"No log files were found in {logs_dir}.\n"
+                "No log files were found in the StemDeck logs folder.\n"
                 "Logging starts on the first message after the app launches.\n",
             )
 
