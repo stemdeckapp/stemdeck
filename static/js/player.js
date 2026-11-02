@@ -1313,6 +1313,10 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   setWaveformLoading(true);
   stopStemVuLoop();
   destroyMultitrack();
+  // Here, not on the engine path below: the transport reads
+  // `audioEngine ?? multitrack`, so an engine left over from the previous song
+  // would take Play on a song that plays on the streaming path.
+  if (audioEngine) { audioEngine.destroy(); setAudioEngine(null); }
   playBtn.classList.remove("playing");
   stopBtn.classList.remove("stopped");
   resetPitch();
@@ -1749,7 +1753,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
         updateStopVisual();
       };
       teardownMetronome();
-      if (audioEngine) { audioEngine.destroy(); setAudioEngine(null); }
       const onEnded = () => {
         playBtn.classList.remove("playing");
         updateStopVisual();
