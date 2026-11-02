@@ -2450,9 +2450,10 @@ export function stemRegionDragPayload(name, ext = "wav") {
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
   const stem = safe ? `${safe}_${name}` : name;
+  const url = `/api/jobs/${currentJobId}/mixdown.${ext}?${q}`;
   return {
-    url: _absolute(`/api/jobs/${currentJobId}/mixdown.${ext}?${q}`),
-    filename: `${stem}_region_${_loopSpan()}.${ext}`,
+    url: _absolute(url),
+    filename: `${stem}_region_${_loopSpan()}_${_shortHash(url)}.${ext}`,
   };
 }
 
