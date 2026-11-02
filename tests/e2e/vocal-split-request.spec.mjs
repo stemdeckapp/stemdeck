@@ -11,8 +11,11 @@
 import { test, expect } from "@playwright/test";
 import {
   JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, TRACK_TITLE,
-  fixtureTrack, seedCatalogState, seedLibrary, readCatalogState, stubUpdateCheck, stubVocalSplitHealth,
+  fixtureTrack, seedCatalogState, seedLibrary, readCatalogState, stubUpdateCheck, stubVocalSplitHealth, openStudio,
 } from "./helpers.mjs";
+
+// A test below plays the song through a split.
+test.use({ launchOptions: { args: ["--mute-audio", "--autoplay-policy=no-user-gesture-required"] } });
 
 const SPLIT_URL = `**/api/jobs/${JOB_ID}/vocal-split`;
 const NEW_JOB_ID = "e2e0a5c0848a";
@@ -61,6 +64,38 @@ async function openWithImportInProgress(page) {
 
 const savedStems = async (page) =>
   ((await readCatalogState(page))?.tracks?.[JOB_ID]?.audioStems || []).map((s) => s.name);
+
+/** The open song's lanes, by stem name. */
+const lanes = (page) =>
+  page.evaluate(async () => Object.keys((await import("/js/state.js")).trackIndex).filter((n) => !/^t[kr]_/.test(n)));
+
+/** The open song's split as the Stems control reads it. */
+const splitShown = (page) =>
+  page.evaluate(async () => {
+    const s = (await import("/js/modeStems.js")).layoutState();
+    return { jobId: s.jobId, state: s.splitState, reason: s.splitReason };
+  });
+
+const studioReady = (page) =>
+  page.waitForFunction(
+    () => !/\/\s*00:00\s*$/.test(document.querySelector("#t-time")?.textContent || "00:00 / 00:00"),
+    null,
+    { timeout: 20000 },
+  );
+
+/** Whether the transport plays, where, and whether its engine is the one
+ * kept as window.__before. */
+const transportNow = (page) =>
+  page.evaluate(async () => {
+    const st = await import("/js/state.js");
+    const tr = (await import("/js/transport.js")).transport();
+    return {
+      playing: Boolean(tr?.isPlaying?.()),
+      time: tr?.getCurrentTime?.() ?? 0,
+      sameEngine: st.audioEngine === window.__before,
+      beforePlaying: Boolean(window.__before?.isPlaying?.()),
+    };
+  });
 
 test.describe("Lead + Backing chosen at import", () => {
   test.beforeEach(async ({ page }) => {
@@ -200,4 +235,209 @@ test.describe("Lead + Backing chosen at import", () => {
     await expect.poll(async () => (await readCatalogState(page))?.tracks?.[JOB_ID]?.status).toBe("done");
     expect(posts).toEqual([]);
   });
+});
+
+// A split that ends while its song is open. The song used to keep one Vocals
+// lane and a "Splitting..." Stems button until it was opened again.
+test.describe("the open song when its split ends", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubVocalSplitHealth(page, { available: true, reason: null });
+  });
+
+  /** A split this page starts for the import and that runs until `release()`. */
+  async function holdSplit(page) {
+    const job = await serveJob(page, () => ({ vocal_split: "none", vocal_split_wanted: true }));
+    const posts = [];
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route(SPLIT_URL, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      posts.push(1);
+      job.set(() => ({ vocal_split: "running", vocal_split_wanted: true }));
+      const answer = await held;
+      job.set(answer.ok ? withPair : () => ({ vocal_split: "error", vocal_split_reason: answer.reason, vocal_split_wanted: true }));
+      return answer.ok
+        ? route.fulfill({ json: {} })
+        : route.fulfill({ status: 500, json: { detail: "vocal split failed", vocal_split_reason: answer.reason } });
+    });
+    await openWithImportInProgress(page);
+    await expect.poll(() => posts.length).toBe(1);
+    // The import is done and its split runs: the song opens with one Vocals lane.
+    await page.locator(`.cat-item[data-id="${JOB_ID}"]`).first().click();
+    await studioReady(page);
+    expect(await lanes(page)).not.toContain("lead_vocals");
+    expect(await splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "running" });
+    return { posts, release };
+  }
+
+  test("gets its Lead + Backing lanes", async ({ page }) => {
+    const { posts, release } = await holdSplit(page);
+
+    release({ ok: true });
+
+    await expect.poll(() => lanes(page)).toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    expect(await splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "done" });
+    expect(posts).toHaveLength(1);
+  });
+
+  test("keeps playing from where it was", async ({ page }) => {
+    const { release } = await holdSplit(page);
+    await page.waitForFunction(async () => {
+      const st = await import("/js/state.js");
+      if (!st.audioEngine || (await st.audioEngine.ready) !== true) return false;
+      window.__before = st.audioEngine;
+      return true;
+    }, null, { timeout: 20000 });
+    await page.locator("#t-play").click();
+    await expect.poll(async () => (await transportNow(page)).time).toBeGreaterThan(0.5);
+    const before = await transportNow(page);
+
+    release({ ok: true });
+
+    await expect.poll(() => lanes(page)).toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    await expect.poll(async () => {
+      const now = await transportNow(page);
+      return !now.sameEngine && now.playing && now.time >= before.time;
+    }).toBe(true);
+    // One song plays: the engine from before the split is not still going.
+    expect((await transportNow(page)).beforePlaying).toBe(false);
+  });
+
+  test("says why when the split fails", async ({ page }) => {
+    const { release } = await holdSplit(page);
+
+    release({ ok: false, reason: "out_of_memory" });
+
+    await expect(page.locator("#error")).toContainText(await tr(page, "split.reason.out_of_memory"));
+    await expect.poll(() => splitShown(page)).toEqual({ jobId: JOB_ID, state: "error", reason: "out_of_memory" });
+    expect(await lanes(page)).toContain("vocals");
+  });
+
+  test("a split no page here started is followed too", async ({ page }) => {
+    // A page reloaded during the split, or a second window: the song is done
+    // in the library and its split runs elsewhere.
+    const job = await serveJob(page, () => ({ vocal_split: "running", vocal_split_wanted: true }));
+    const posts = [];
+    await page.route(SPLIT_URL, (route) => {
+      posts.push(1);
+      return route.fulfill({ status: 409, json: { detail: "vocal split already running" } });
+    });
+    await openStudio(page);
+    expect(await splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "running" });
+
+    job.set(withPair);
+
+    await expect.poll(() => lanes(page), { timeout: 15_000 })
+      .toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+    expect(await splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "done" });
+    expect(posts).toEqual([]);
+  });
+
+  test("a split no page here started says why it failed", async ({ page }) => {
+    const job = await serveJob(page, () => ({ vocal_split: "running", vocal_split_wanted: true }));
+    await openStudio(page);
+    expect(await splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "running" });
+
+    job.set(() => ({ vocal_split: "error", vocal_split_reason: "timeout", vocal_split_wanted: true }));
+
+    await expect(page.locator("#error")).toContainText(await tr(page, "split.reason.timeout"), { timeout: 15_000 });
+    await expect.poll(() => splitShown(page)).toEqual({ jobId: JOB_ID, state: "error", reason: "timeout" });
+  });
+
+  test("a split that started after this page's own one ended is waited for", async ({ page }) => {
+    // This page's split failed earlier; another window runs it again, and the
+    // song reloads meanwhile (a mode switch, say).
+    const job = await serveJob(page, () => ({}));
+    await page.route(SPLIT_URL, (route) =>
+      route.fulfill({ status: 500, json: { detail: "vocal split failed", vocal_split_reason: "worker_failed" } }));
+    await openStudio(page);
+    await page.evaluate(async (id) => {
+      const job = await import("/js/job.js");
+      const state = await (await fetch(`/api/jobs/${id}`)).json();
+      await job.runVocalSplitIfWanted({ ...state, vocal_split_wanted: true });
+    }, JOB_ID);
+    job.set(() => ({ vocal_split: "running" }));
+    let loads = 0;
+    page.on("request", (req) => { if (req.url().endsWith(`/api/jobs/${JOB_ID}/peaks`)) loads++; });
+
+    await page.evaluate(async (id) => (await import("/js/reloadPlace.js")).reloadKeepingPlace(id), JOB_ID);
+    await expect.poll(() => splitShown(page)).toMatchObject({ jobId: JOB_ID, state: "running" });
+    // Still running: no reload follows the one asked for.
+    await page.waitForTimeout(3000);
+    expect(loads).toBe(1);
+
+    job.set(withPair);
+    await expect.poll(() => lanes(page), { timeout: 15_000 })
+      .toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+  });
+
+  test("another song opened meanwhile is left alone", async ({ page }) => {
+    const { release } = await holdSplit(page);
+    await page.locator(`.cat-item[data-id="${SIBLING_JOB_ID}"]`).first().click();
+    await expect.poll(() => page.evaluate(async () => (await import("/js/state.js")).currentJobId)).toBe(SIBLING_JOB_ID);
+    await studioReady(page);
+    await page.locator("#t-play").click();
+    await expect.poll(async () => (await transportNow(page)).playing).toBe(true);
+    const followed = page.evaluate(async (id) => {
+      const st = await import("/js/state.js");
+      const tr = (await import("/js/transport.js")).transport();
+      const reload = await import("/js/reloadPlace.js");
+      const paired = () => (JSON.parse(localStorage.getItem("stemdeck.folders"))?.tracks?.[id]?.audioStems || [])
+        .some((s) => s.name === "backing_vocals");
+      // Sampled on every frame until the split's song has its pair saved.
+      let paused = false;
+      let restoring = false;
+      while (!paired()) {
+        paused ||= !tr.isPlaying();
+        restoring ||= reload.restorePending();
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      for (let i = 0; i < 30; i++) {
+        paused ||= !tr.isPlaying();
+        restoring ||= reload.restorePending();
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return { paused, restoring, open: st.currentJobId };
+    }, JOB_ID);
+
+    release({ ok: true });
+
+    // Not paused, not reloaded, still the song the user chose.
+    expect(await followed).toEqual({ paused: false, restoring: false, open: SIBLING_JOB_ID });
+  });
+});
+
+// Try again while a split of the same song already runs (a 409): it waits
+// for that split and then shows its lanes (F52).
+test("Try again on a split already running waits for it and shows the pair", async ({ page }) => {
+  await stubVocalSplitHealth(page, { available: true, reason: null });
+  const job = await serveJob(page, () => ({}));
+  const posts = [];
+  await page.route(SPLIT_URL, (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posts.push(1);
+    if (posts.length === 1) {
+      return route.fulfill({ status: 500, json: { detail: "vocal split failed", vocal_split_reason: "worker_failed" } });
+    }
+    // Another window started it again meanwhile: running for two reads.
+    let reads = 0;
+    job.set((body) => (reads++ < 2 ? { vocal_split: "running" } : withPair(body)));
+    return route.fulfill({ status: 409, json: { detail: "vocal split already running" } });
+  });
+  await openStudio(page);
+  await page.evaluate(async (id) => {
+    const job = await import("/js/job.js");
+    const state = await (await fetch(`/api/jobs/${id}`)).json();
+    await job.runVocalSplitIfWanted({ ...state, vocal_split_wanted: true });
+  }, JOB_ID);
+  await expect(page.locator("#error .split-retry-btn")).toBeVisible();
+
+  await page.locator("#error .split-retry-btn").click();
+
+  // The overlay stays while it waits, and is gone once the pair is loaded.
+  await expect(page.locator("#waveLoadingOverlay")).toBeVisible();
+  await expect.poll(() => lanes(page), { timeout: 15_000 })
+    .toEqual(expect.arrayContaining(["lead_vocals", "backing_vocals"]));
+  await expect(page.locator("#waveLoadingOverlay")).toBeHidden();
+  expect(posts).toHaveLength(2);
 });

@@ -6,7 +6,7 @@ import {
   selectedStems, currentJobId,
 } from "./state.js";
 import { destroyPlayer, wireUpAudio, setWaveformLoading } from "./player.js";
-import { prepareLayout, waitForSplit } from "./modeStems.js";
+import { prepareLayout, waitForSplit, layoutState } from "./modeStems.js";
 import { extractAsVersion } from "./versions.js";
 import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -67,9 +67,51 @@ export async function runVocalSplitIfWanted(state) {
     return state;
   }
   if (state.job_id === foregroundJobId) setWaveformLoading(true, t("stems.splitRunning"));
-  const run = runVocalSplit(state);
+  const run = startSplit(state);
   splitRuns.set(state.job_id, run);
   return run;
+}
+
+// The split this page runs for each job, only while it runs.
+const splitsRunning = new Map();
+
+function startSplit(state) {
+  const run = runVocalSplit(state);
+  splitsRunning.set(state.job_id, run);
+  run.then(() => {
+    if (splitsRunning.get(state.job_id) === run) splitsRunning.delete(state.job_id);
+  });
+  return run;
+}
+
+// Songs whose running split this page follows for their lanes.
+const splitFollows = new Set();
+// Foreground imports whose song finishDoneJob loads once their split ends.
+const finishingJobs = new Set();
+
+/**
+ * The open song was loaded while its Lead + Backing split runs. When the split
+ * ends, the song reloads once with its place kept, if it is still the song
+ * open and still shows the split as running: it then has the pair, or the
+ * Stems control says why not. A split this page runs is awaited, and reports
+ * its own failure; one run elsewhere (this page before a reload, a second
+ * window) is polled. The foreground import loads its song itself
+ * (finishDoneJob), and a split the Stems control asked for reloads the song
+ * itself, after which it no longer shows as running.
+ */
+export function followVocalSplit(jobId) {
+  if (splitFollows.has(jobId)) return;
+  splitFollows.add(jobId);
+  const run = splitsRunning.get(jobId);
+  // Resolves why the split failed, or null.
+  const ended = run ? run.then(() => null) : waitForSplit(jobId).then(([, reason]) => reason);
+  ended.then((failed) => {
+    splitFollows.delete(jobId);
+    const shown = layoutState();
+    if (shown.jobId !== jobId || shown.splitState !== "running" || finishingJobs.has(jobId)) return;
+    if (failed) reportSplitFailure({ job_id: jobId }, failed);
+    reloadKeepingPlace(jobId);
+  }).catch((err) => console.warn("[job] following the split failed:", err));
 }
 
 /**
@@ -115,7 +157,7 @@ export async function retryVocalSplit(jobId) {
   if (state.status !== "done") return;
   const open = jobId === currentJobId;
   if (open) setWaveformLoading(true, t("stems.splitRunning"));
-  const finalState = await runVocalSplit(state);
+  const finalState = await startSplit(state);
   if (open && jobId === currentJobId) {
     if (finalState.vocal_split === "done") reloadKeepingPlace(jobId);
     else setWaveformLoading(false);
@@ -484,16 +526,22 @@ function applyStudioSummary(state) {
 // the already-done job. Best-effort: any failure just proceeds with the base
 // stems (the vocals lane), same as if the user had never asked for a split.
 async function finishDoneJob(state) {
-  const finalState = await runVocalSplitIfWanted(state);
-  // The open mode's lanes for the new song: its own selection unless a mode
-  // already chose (modeStems.js), never the Extract chips as they are now.
-  await prepareLayout(
-    finalState.job_id,
-    finalState.selected_stems || [],
-    (finalState.stems || []).filter((s) => s?.url).map((s) => s.name),
-    finalState.vocal_split || "none",
-    finalState.vocal_split_reason || null,
-  );
+  finishingJobs.add(state.job_id);
+  let finalState;
+  try {
+    finalState = await runVocalSplitIfWanted(state);
+    // The open mode's lanes for the new song: its own selection unless a mode
+    // already chose (modeStems.js), never the Extract chips as they are now.
+    await prepareLayout(
+      finalState.job_id,
+      finalState.selected_stems || [],
+      (finalState.stems || []).filter((s) => s?.url).map((s) => s.name),
+      finalState.vocal_split || "none",
+      finalState.vocal_split_reason || null,
+    );
+  } finally {
+    finishingJobs.delete(state.job_id);
+  }
   wireUpAudio(
     finalState.job_id,
     finalState.stems || [],
