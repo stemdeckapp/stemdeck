@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 import httpx
 import numpy as np
@@ -50,10 +51,10 @@ def client(jobs_dir):
     )
 
 
-def _make_job(jobs_dir, amp=0.1, names=tuple(FREQ), status="done") -> Job:
-    job = Job(id=JOB, status=status, title="Song", duration_sec=SEC)
+def _make_job(jobs_dir, amp=0.1, names=tuple(FREQ), status="done", job_id=JOB) -> Job:
+    job = Job(id=job_id, status=status, title="Song", duration_sec=SEC)
     _jobs[job.id] = job
-    stems = jobs_dir / JOB / "stems"
+    stems = jobs_dir / job_id / "stems"
     stems.mkdir(parents=True, exist_ok=True)
     t = np.arange(int(SR * SEC)) / SR
     for name in names:
@@ -70,6 +71,11 @@ def _read(path):
 
 def _sum(jobs_dir, names):
     return sum(_read(jobs_dir / JOB / "stems" / f"{n}.wav") for n in names)
+
+
+def _cache():
+    """Where the job's sums are kept: the data cache, not the song folder."""
+    return backing_mod.CACHE_ROOT / JOB
 
 
 # ─── Validation ──────────────────────────────────────────────────────────
@@ -113,7 +119,7 @@ async def test_the_backing_is_the_sum_of_the_other_stems(jobs_dir, client):
         assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
         ranged = await c.get(f"/api/jobs/{JOB}/backing/bass.wav", headers={"Range": "bytes=0-99"})
         assert ranged.status_code == 206 and len(ranged.content) == 100
-    out = _read(jobs_dir / JOB / "backing_without_bass.wav")
+    out = _read(_cache() / "backing_without_bass.wav")
     want = _sum(jobs_dir, [n for n in FREQ if n != "bass"])
     assert out.shape == want.shape
     assert np.max(np.abs(out - want)) < 2 / 32768, "the same as summing the other five"
@@ -149,10 +155,8 @@ async def test_a_second_request_does_not_rebuild(jobs_dir, client, monkeypatch):
     monkeypatch.setattr(backing_mod, "_mix", counted)
     async with client as c:
         assert (await c.get(f"/api/jobs/{JOB}/backing/drums.wav")).status_code == 200
-        mtime = (jobs_dir / JOB / "backing_without_drums.wav").stat().st_mtime_ns
         assert (await c.get(f"/api/jobs/{JOB}/backing/drums.wav")).status_code == 200
     assert len(builds) == 1
-    assert (jobs_dir / JOB / "backing_without_drums.wav").stat().st_mtime_ns == mtime
 
 
 async def test_concurrent_requests_build_once(jobs_dir, client, monkeypatch):
@@ -173,7 +177,7 @@ async def test_concurrent_requests_build_once(jobs_dir, client, monkeypatch):
     assert [r.status_code for r in rs] == [200] * 4
     assert len(builds) == 1
     assert len({r.content for r in rs}) == 1
-    assert not list((jobs_dir / JOB).glob(".backing_without_*.tmp.wav"))
+    assert not list(_cache().glob(".backing_without_*.tmp.wav"))
 
 
 def test_changed_stems_make_a_new_backing(jobs_dir):
@@ -362,3 +366,149 @@ async def test_rest_without_its_stems_says_so(jobs_dir, client):
     assert r.status_code == 404
     assert "missing" in r.json()["detail"]
     assert str(jobs_dir) not in r.text
+
+
+# ─── The data cache: its budget, eviction and rebuild ───────────────────────
+
+
+def _age(path, seconds):
+    then = time.time() - seconds
+    os.utime(path, (then, then))
+
+
+def _job_locks():
+    return [key for key in backing_mod._locks if key[0] == JOB]
+
+
+def test_the_sums_are_kept_in_the_cache_not_with_the_song(jobs_dir):
+    _make_job(jobs_dir)
+    job_dir = jobs_dir / JOB
+    backing, _ = backing_mod.ensure_backing(JOB, job_dir, "bass")
+    rest, _ = backing_mod.ensure_rest(JOB, job_dir, ("drums",))
+    assert not list(job_dir.glob("backing_without_*")), "the song folder holds no sum"
+    assert not list(job_dir.glob("rest_*"))
+    assert backing == _cache() / "backing_without_bass.wav"
+    assert rest == _cache() / "rest_drums.wav"
+    assert backing.with_suffix(".json").is_file() and rest.with_suffix(".json").is_file()
+
+
+def test_the_cache_stays_under_its_budget_least_recently_used_first(jobs_dir, monkeypatch):
+    _make_job(jobs_dir)
+    job_dir = jobs_dir / JOB
+    paths = [backing_mod.ensure_backing(JOB, job_dir, s)[0] for s in ("bass", "drums", "guitar")]
+    for i, path in enumerate(paths):
+        _age(path, 3600 - 60 * i)  # bass the oldest, guitar the newest
+    # Asked for again: bass is the most recent now, drums the oldest.
+    assert backing_mod.ensure_backing(JOB, job_dir, "bass") == (paths[0], False)
+    size = paths[0].stat().st_size
+    monkeypatch.setattr(backing_mod, "CACHE_MAX_BYTES", 2 * size + size // 2)
+    backing_mod.ensure_backing(JOB, job_dir, "piano")
+    left = sorted(p.name for p in _cache().glob("*.wav"))
+    assert left == ["backing_without_bass.wav", "backing_without_piano.wav"]
+    assert not (_cache() / "backing_without_drums.json").exists(), "its signature goes with it"
+    assert not (_cache() / "backing_without_guitar.json").exists()
+
+
+def test_a_sum_in_use_is_never_evicted(jobs_dir, monkeypatch):
+    _make_job(jobs_dir)
+    job_dir = jobs_dir / JOB
+    monkeypatch.setattr(backing_mod, "CACHE_MAX_BYTES", 1)
+    first, _ = backing_mod.ensure_backing(JOB, job_dir, "bass")
+    second, _ = backing_mod.ensure_backing(JOB, job_dir, "drums")
+    assert first.is_file() and second.is_file(), "both were served a moment ago"
+    # Not served for an hour, but a request holds its lock: still kept.
+    _age(first, 3600)
+    with backing_mod._lock(JOB, first.name):
+        backing_mod.ensure_backing(JOB, job_dir, "guitar")
+        assert first.is_file()
+    # Old and free: it goes with the next build.
+    backing_mod.ensure_backing(JOB, job_dir, "piano")
+    assert not first.exists()
+    assert second.is_file()
+
+
+async def test_an_evicted_sum_is_built_again(jobs_dir, client, monkeypatch):
+    _make_job(jobs_dir)
+    async with client as c:
+        before = await c.get(f"/api/jobs/{JOB}/rest/bass-drums.wav")
+        _age(_cache() / "rest_bass-drums.wav", 3600)
+        monkeypatch.setattr(backing_mod, "CACHE_MAX_BYTES", 1)
+        assert (await c.get(f"/api/jobs/{JOB}/rest/guitar.wav")).status_code == 200
+        assert not (_cache() / "rest_bass-drums.wav").exists()
+        after = await c.get(f"/api/jobs/{JOB}/rest/bass-drums.wav")
+    assert before.status_code == after.status_code == 200
+    assert after.content == before.content
+
+
+async def test_a_song_folder_from_an_earlier_build_still_plays(jobs_dir, client):
+    """Builds before the cache kept the sums in the song folder. They are made
+    again in the cache, and the old files in the song folder go."""
+    _make_job(jobs_dir)
+    job_dir = jobs_dir / JOB
+    for name in ("backing_without_bass", "rest_drums"):
+        (job_dir / f"{name}.wav").write_bytes(b"RIFF old")
+        (job_dir / f"{name}.json").write_text('{"sources": {}}', encoding="utf-8")
+    async with client as c:
+        backing = await c.get(f"/api/jobs/{JOB}/backing/bass.wav")
+        rest = await c.get(f"/api/jobs/{JOB}/rest/drums.wav")
+    assert backing.status_code == rest.status_code == 200
+    assert backing.content != b"RIFF old" and rest.content != b"RIFF old"
+    assert not list(job_dir.glob("backing_without_*")) and not list(job_dir.glob("rest_*"))
+
+
+# ─── A deleted song takes its sums and its locks with it ─────────────────────
+
+
+async def test_deleting_the_song_drops_its_sums_and_locks(jobs_dir, client):
+    _make_job(jobs_dir)
+    async with client as c:
+        assert (await c.get(f"/api/jobs/{JOB}/backing/bass.wav")).status_code == 200
+        assert (await c.get(f"/api/jobs/{JOB}/rest/drums.wav")).status_code == 200
+        assert _job_locks()
+        assert (await c.delete(f"/api/jobs/{JOB}")).status_code == 200
+    assert not _cache().exists()
+    assert not _job_locks()
+
+
+async def test_a_held_lock_outlives_the_delete(jobs_dir, client):
+    _make_job(jobs_dir)
+    lock = backing_mod._lock(JOB, "backing_without_bass.wav")
+    try:
+        with lock:
+            async with client as c:
+                assert (await c.delete(f"/api/jobs/{JOB}")).status_code == 200
+            assert backing_mod._locks.get((JOB, "backing_without_bass.wav")) is lock
+    finally:
+        backing_mod._locks.pop((JOB, "backing_without_bass.wav"), None)
+
+
+async def test_songs_made_and_deleted_leave_no_locks_behind(jobs_dir, client):
+    before = len(backing_mod._locks)
+    async with client as c:
+        for i in range(10):
+            job_id = f"bacc0ba0c1{i:02d}"
+            _make_job(jobs_dir, job_id=job_id)
+            assert (await c.get(f"/api/jobs/{job_id}/backing/bass.wav")).status_code == 200
+            assert (await c.get(f"/api/jobs/{job_id}/rest/drums.wav")).status_code == 200
+            assert (await c.delete(f"/api/jobs/{job_id}")).status_code == 200
+    assert len(backing_mod._locks) == before
+
+
+async def test_a_reset_drops_every_sum_and_lock(jobs_dir, client):
+    _make_job(jobs_dir)
+    async with client as c:
+        assert (await c.get(f"/api/jobs/{JOB}/backing/bass.wav")).status_code == 200
+        assert (await c.post("/api/reset")).status_code == 200
+    assert not _cache().exists()
+    assert not _job_locks()
+
+
+def test_the_auto_delete_drops_the_sums_of_what_it_removes(jobs_dir):
+    from app.pipeline.collect import sweep_old_jobs
+
+    _make_job(jobs_dir).created_at = 0
+    backing_mod.ensure_backing(JOB, jobs_dir / JOB, "bass")
+    sweep_old_jobs(jobs_dir, ttl_seconds=60)
+    assert not (jobs_dir / JOB).exists()
+    assert not _cache().exists()
+    assert not _job_locks()

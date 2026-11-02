@@ -95,6 +95,12 @@ def _no_discogs_api(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_backing_cache(tmp_path, monkeypatch):
+    """The backing and rest sums go to a temporary cache, never the real one."""
+    monkeypatch.setattr("app.pipeline.backing.CACHE_ROOT", tmp_path / "_backing_cache")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 

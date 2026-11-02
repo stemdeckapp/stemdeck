@@ -4,8 +4,8 @@ that rebuild Original exactly as playback does (docs/plans/0.21.0/mode-stem-choi
 GET /api/jobs/{id}/rest/{set}.wav: validation (job id, set whitelist and
 canonical spelling, job state, traversal), the mix (the sum of the set within
 2 LSB, never clipped, Voice with and without the split), caching (built once,
-rebuilt when a stem changes, one build under concurrent requests) and the cap
-on files per job.
+rebuilt when a stem changes, one build under concurrent requests). The
+cache's budget is tested with the backing (tests/test_backing.py).
 
 The export's lanes= parameter: Original is every stem that is neither a lane
 nor removed, whatever was muted; a mode showing Drums as a lane never exports
@@ -171,7 +171,7 @@ async def test_the_rest_is_the_sum_of_its_stems(jobs_dir, client, names):
         assert head.status_code == 200
         ranged = await c.get(f"/api/jobs/{JOB}/rest/{spelled}.wav", headers={"Range": "bytes=0-99"})
         assert ranged.status_code == 206 and len(ranged.content) == 100
-    out = _read(jobs_dir / JOB / f"rest_{spelled}.wav")
+    out = _read(backing_mod.CACHE_ROOT / JOB / f"rest_{spelled}.wav")
     want = _sum(jobs_dir, names)
     assert out.shape == want.shape
     assert np.max(np.abs(out - want)) <= 2 / 32768, "the sum of its stems within 2 LSB"
@@ -209,7 +209,7 @@ def test_without_vocals_wav_the_split_stands_in_for_voice(jobs_dir):
     assert names == {"bass.wav", "lead_vocals.wav", "backing_vocals.wav"}
 
 
-# ─── Caching, concurrency and the cap ────────────────────────────────────
+# ─── Caching and concurrency ─────────────────────────────────────────────
 
 
 async def test_a_second_request_does_not_rebuild(jobs_dir, client, monkeypatch):
@@ -247,7 +247,7 @@ async def test_concurrent_requests_build_once(jobs_dir, client, monkeypatch):
     assert [r.status_code for r in rs] == [200] * 4
     assert len(builds) == 1
     assert len({r.content for r in rs}) == 1
-    assert not list((jobs_dir / JOB).glob(".rest_*.tmp.wav"))
+    assert not list((backing_mod.CACHE_ROOT / JOB).glob(".rest_*.tmp.wav"))
 
 
 def test_changed_stems_make_a_new_rest(jobs_dir):
@@ -260,31 +260,6 @@ def test_changed_stems_make_a_new_rest(jobs_dir):
     os.utime(drums, ns=(drums.stat().st_atime_ns, drums.stat().st_mtime_ns + 10_000_000))
     _, rebuilt = backing_mod.ensure_rest(JOB, jobs_dir / JOB, ("bass", "drums"))
     assert rebuilt
-
-
-def test_at_most_four_rest_files_per_job_oldest_go_first(jobs_dir):
-    _make_job(jobs_dir)
-    job_dir = jobs_dir / JOB
-    sets = [("bass",), ("drums",), ("guitar",), ("other",), ("piano",), ("vocals",)]
-    for i, s in enumerate(sets):
-        path, _ = backing_mod.ensure_rest(JOB, job_dir, s)
-        # Distinct mtimes, in order, whatever the filesystem's resolution.
-        stamp = 1_700_000_000_000_000_000 + i * 1_000_000_000
-        os.utime(path, ns=(stamp, stamp))
-    kept = sorted(p.name for p in job_dir.glob("rest_*.wav"))
-    assert len(kept) == backing_mod.REST_MAX_FILES
-    assert kept == ["rest_guitar.wav", "rest_other.wav", "rest_piano.wav", "rest_vocals.wav"]
-    assert len(list(job_dir.glob("rest_*.json"))) == backing_mod.REST_MAX_FILES
-    # Asking again for a kept one makes it the newest: it survives the next.
-    backing_mod.ensure_rest(JOB, job_dir, ("guitar",))
-    backing_mod.ensure_rest(JOB, job_dir, ("bass",))
-    kept = {p.name for p in job_dir.glob("rest_*.wav")}
-    assert "rest_guitar.wav" in kept and "rest_bass.wav" in kept
-    assert "rest_other.wav" not in kept
-    # The backing (Streamer) is never counted or pruned.
-    backing_mod.ensure_backing(JOB, job_dir, "bass")
-    backing_mod.ensure_rest(JOB, job_dir, ("drums",))
-    assert (job_dir / "backing_without_bass.wav").is_file()
 
 
 # ─── lanes=: parsing ─────────────────────────────────────────────────────

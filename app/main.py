@@ -787,15 +787,21 @@ def reset_app_data() -> dict[str, object]:
         raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")
     # Clear the queue alongside the registry, or the worker would keep popping
     # ids that no longer resolve and the queue view would report ghosts.
+    from app.api.takes import forget_job_locks
     from app.pipeline import jobqueue
+    from app.pipeline.backing import forget_job as forget_backing
 
     jobqueue.clear()
+    job_ids = list(registry_all_jobs())
     # Anything that could not be removed is reported rather than swallowed: the
     # frontend used to take an unconditional {"ok": true} as licence to wipe its
     # own deletion tombstone, and any surviving directory was then re-adopted on
     # the next start with nothing left to suppress it (#521). reset_all also
     # records the survivors server-side, so they stay deleted regardless.
     undeleted = reset_registry(JOBS_DIR)
+    for job_id in job_ids:
+        forget_backing(job_id)
+        forget_job_locks(job_id)
     if undeleted:
         _log.warning("reset left %d entries on disk: %s", len(undeleted), undeleted)
     return {"ok": True, "undeleted": len(undeleted)}

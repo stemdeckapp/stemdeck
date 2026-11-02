@@ -8,9 +8,10 @@ the rest of a song for any set of stems (a studio mode's Original).
 parse_rest_set): one set has one spelling, so one cached file.
 
 `stem` is one of the six Demucs stems. The file is mixed from the stems on
-disk the first time it is asked for and kept (app/pipeline/backing.py); later
-requests are served from it, Range requests included (the audio engine reads
-WAVs in windows). Errors say what is wrong, never where on disk.
+disk the first time it is asked for and kept in the data cache
+(app/pipeline/backing.py); later requests are served from it, Range requests
+included (the audio engine reads WAVs in windows). Errors say what is wrong,
+never where on disk.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from app.pipeline.backing import (
     BackingError,
     ensure_backing,
     ensure_rest,
+    in_cache,
     parse_rest_set,
 )
 
@@ -39,7 +41,8 @@ router = APIRouter(tags=["jobs"])
 @router.api_route("/{job_id}/backing/{stem}.wav", methods=["GET", "HEAD"], response_model=None)
 async def get_backing(job_id: str, stem: str) -> FileResponse:
     # Validation order (security skill): the job id, then the stem against
-    # the whitelist, then the resolved path inside the jobs folder, then I/O.
+    # the whitelist, then the resolved job folder inside the jobs folder, then
+    # I/O; the built file is served only from inside the backing cache.
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     if stem not in REMOVABLE:
@@ -66,7 +69,8 @@ async def get_backing(job_id: str, stem: str) -> FileResponse:
         raise HTTPException(status_code=500, detail="the backing could not be made") from None
     if built:
         logger.info("[%s] backing without %s built", job_id, stem)
-    if not path.resolve().is_relative_to(root):
+    # Not a file: the song was deleted since (forget_job).
+    if not path.is_file() or not in_cache(path):
         raise HTTPException(status_code=404, detail="job not found")
     return FileResponse(path, media_type="audio/wav")
 
@@ -104,6 +108,6 @@ async def get_rest(job_id: str, stem_set: str) -> FileResponse:
         raise HTTPException(status_code=500, detail="the mix could not be made") from None
     if built:
         logger.info("[%s] rest %s built", job_id, stem_set)
-    if not path.resolve().is_relative_to(root):
+    if not path.is_file() or not in_cache(path):
         raise HTTPException(status_code=404, detail="job not found")
     return FileResponse(path, media_type="audio/wav")

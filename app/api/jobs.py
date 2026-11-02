@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, StrictBool, field_validator
 
-from app.api.takes import cancel_job_renders
+from app.api.takes import cancel_job_renders, forget_job_locks
 from app.core.config import (
     DISCOGS_LOOKUP_BUDGET_SEC,
     JOB_ID_RE,
@@ -82,6 +82,7 @@ from app.pipeline import discogs, jobqueue, vocal_split_status
 from app.pipeline.analyze import dynamic_range_db, measure_loudness
 from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
+from app.pipeline.backing import forget_job as forget_backing
 from app.pipeline.collect import merge_stem_peaks, presence_for_split, remove_job_dir
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
@@ -2205,6 +2206,10 @@ def delete_job(job_id: str) -> dict[str, str]:
     # re-adopted by restore() on the next start and the track reappears.
     registry_mark_deleted(job_id)
     registry_remove(job_id)
+    # Its cached backing and rest sums, and the locks it and its takes made:
+    # after the registry, so no new request for it gets that far.
+    forget_backing(job_id)
+    forget_job_locks(job_id)
     registry_persist(JOBS_DIR)
     if not removed:
         raise HTTPException(

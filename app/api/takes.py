@@ -822,6 +822,7 @@ async def delete_take(job_id: str, take_id: str) -> dict[str, str]:
         if _entry(job, take_id) is not None:
             _replace_entry(job, None, take_id)
     _take_locks.pop(f"{job_id}/{take_id}", None)
+    _forget_filmstrip_locks(folder)
     if not removed:
         raise HTTPException(status_code=500, detail="take files could not be deleted")
     return {"take_id": take_id, "status": "deleted"}
@@ -1013,6 +1014,7 @@ async def delete_track(job_id: str, track_id: str) -> dict[str, Any]:
             if not await asyncio.to_thread(_remove_take_folder, job_id, take_id, folder):
                 failed = True
         _take_locks.pop(f"{job_id}/{take_id}", None)
+        _forget_filmstrip_locks(folder)
     if any(t.get("id") in take_ids for t in job.takes):
         _commit(job, [t for t in job.takes if t.get("id") not in take_ids], list(job.tracks))
     logger.info("[%s] track %s deleted with %d takes", job_id, track_id, len(take_ids))
@@ -1059,8 +1061,30 @@ async def get_take_camera(job_id: str, take_id: str) -> FileResponse:
 
 _FILMSTRIP_IMAGE = "filmstrip.jpg"
 _FILMSTRIP_META = "filmstrip.json"
+# Keyed by the take's folder; dropped with the take or its job.
 _filmstrip_locks: dict[str, threading.Lock] = {}
 _filmstrip_locks_guard = threading.Lock()
+
+
+def _forget_filmstrip_locks(under: Path) -> None:
+    """Drop the filmstrip locks of every take folder in `under` (a take's
+    folder or a job's). One still held, by a build in flight, stays."""
+    with _filmstrip_locks_guard:
+        for key, lock in list(_filmstrip_locks.items()):
+            if Path(key).is_relative_to(under) and not lock.locked():
+                del _filmstrip_locks[key]
+
+
+def forget_job_locks(job_id: str) -> None:
+    """A deleted job's take and filmstrip locks go with it; held ones stay.
+    Called from a worker thread, so the take locks are read from a snapshot
+    (as cancel_job_renders reads _renders). A request already holding a
+    reference to a lock dropped here still uses it; the job is gone, so a
+    second lock for the same take cannot corrupt anything."""
+    for key, lock in list(_take_locks.items()):
+        if key.startswith(f"{job_id}/") and not lock.locked():
+            _take_locks.pop(key, None)
+    _forget_filmstrip_locks((JOBS_DIR / job_id).resolve())
 
 
 def _probe_video(path: Path) -> tuple[float, int, int]:

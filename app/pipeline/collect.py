@@ -29,6 +29,7 @@ from app.core.registry import remove as registry_remove
 from app.core.registry import set_proc
 from app.core.stem_files import is_stem_audio, stem_names_on_disk, stem_path
 from app.pipeline.audio_stats import scan_stem
+from app.pipeline.backing import forget_job as forget_backing
 
 logger = logging.getLogger("stemdeck.collect")
 
@@ -536,6 +537,7 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
             logger.info("auto-delete removed unregistered job folder %s: old and abandoned", d.name)
         _rmtree(d)
         registry_remove(d.name)
+        forget_backing(d.name)
         removed = True
     if removed:
         registry_persist(jobs_dir)
