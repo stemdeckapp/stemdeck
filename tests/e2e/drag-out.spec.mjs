@@ -120,7 +120,7 @@ test.describe("dragging audio out", () => {
     expect(url).toContain("/mixdown.wav");
     expect(url).toMatch(/[?&]start=/);
     expect(url).toMatch(/[?&]end=/);
-    expect(filename).toMatch(/_region_[\d_]+-[\d_]+\.wav$/);
+    expect(filename).toMatch(/_region_[\d_]+-[\d_]+_[0-9a-z]+\.wav$/);
   });
 
   test("two different regions of one song are two different files", async ({ page }) => {
@@ -134,6 +134,32 @@ test.describe("dragging audio out", () => {
     const [first, second] = await dragCalls(page);
     expect(first.args.filename).not.toBe(second.args.filename);
     expect(first.args.url).not.toBe(second.args.url);
+  });
+
+  // The same reuse, across a mix change: one loop, a fader moved in between.
+  // Sharing a name, the second drag would hand over the first mix's audio.
+  test("moving a fader between two drags of one loop gives a new file", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, GRIP);
+    const stem = new URL((await dragCalls(page))[0].args.url).searchParams.get("stems").split(",")[0];
+
+    await page.locator(`.lane-header[data-stem="${stem}"] .mx-fader-input`).fill("0.5");
+    await fireDragStart(page, GRIP);
+
+    const [first, second] = await dragCalls(page);
+    expect(first.args.url).not.toBe(second.args.url);
+    expect(first.args.filename).not.toBe(second.args.filename);
+  });
+
+  test("the same mix dragged twice is the same file", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await markLoop(page);
+    await fireDragStart(page, GRIP);
+    await fireDragStart(page, GRIP);
+
+    const [first, second] = await dragCalls(page);
+    expect(first.args.filename).toBe(second.args.filename);
   });
 
   test("a stem lane drags the stem, under the name its download uses", async ({ page }) => {

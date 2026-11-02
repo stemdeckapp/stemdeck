@@ -2401,17 +2401,25 @@ function _regionFilename(ext) {
 
 // The region a drag hands over, or null when there is nothing to drag.
 //
-// Named with the region bounds, unlike the Export Region filename: a dragged
-// file lands in a folder nothing ever cleans up, and the Rust side reuses a
-// file that is already there. Two different loops of one song sharing a name
-// would mean the second drag silently handed over the first one's audio.
-function _regionDragFilename(ext) {
+// Named with the region bounds and a short hash of its mixdown URL, unlike the
+// Export Region filename: a dragged file lands in a folder nothing ever cleans
+// up, and the Rust side reuses a file that is already there. Two loops, or two
+// mixes of one loop (a fader, mute, key or click changed in between), sharing
+// a name would mean the second drag silently handed over the first one's audio.
+function _regionDragFilename(ext, url) {
   const safe = _currentTitle
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
-  return `${safe || "region"}_region_${_loopSpan()}.${ext}`;
+  return `${safe || "region"}_region_${_loopSpan()}_${_shortHash(url)}.${ext}`;
+}
+
+// 32-bit FNV-1a in base 36: tells two renders apart in a filename.
+function _shortHash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
 }
 
 // The bounds, as a filename fragment. Both region drags carry it, because the
@@ -2455,7 +2463,7 @@ export function regionDragPayload(ext = "wav") {
   if (mixTransposeBlocked()) return null;
   const url = _mixdownUrl(ext, true);
   if (!url) return null;
-  return { url: _absolute(url), filename: _regionDragFilename(ext) };
+  return { url: _absolute(url), filename: _regionDragFilename(ext, url) };
 }
 
 // Render the region before the user reaches for it.
