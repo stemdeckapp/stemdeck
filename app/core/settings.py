@@ -709,8 +709,8 @@ def set_stem_storage(fmt: object = None, kbps: object = None) -> tuple[str, int]
 
 # ── video_encoder ──
 # The H.264 encoder of the take render (app/pipeline/video_encoder.py): "auto"
-# (default) uses a GPU encoder that passed a real test encode on this machine,
-# "cpu" always libx264, an encoder name only that one (libx264 when it fails).
+# (default) uses NVENC on Windows when it passes a real test encode here, else
+# libx264, "cpu" always libx264, an encoder name only that one (libx264 when it fails).
 # Read per render. STEMDECK_VIDEO_ENCODER overrides it (video_encoder.policy).
 def get_video_encoder() -> str:
     with _LOCK:
