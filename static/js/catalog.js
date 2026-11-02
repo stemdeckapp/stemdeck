@@ -5286,7 +5286,7 @@ function openLibraryEditor() {
             <div class="settings-row">
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.export.encoder.title">Video encoder</div>
-                <div class="settings-row-desc set-video-encoder-desc" data-i18n="settings.export.encoder.desc">Encoder for the Streamer MP4 export. Auto uses a GPU encoder that passed a test on this computer, else the CPU. A GPU file that fails its check is made again on the CPU.</div>
+                <div class="settings-row-desc set-video-encoder-desc" data-i18n="settings.export.encoder.desc">Encoder for the Performance MP4 export. Auto uses the GPU only with NVIDIA on Windows, the one GPU tested so far, and the CPU everywhere else. To use another GPU, press Test encoders, then pick one that works in this list. A GPU file that fails its check is made again on the CPU.</div>
               </div>
               <select class="settings-select settings-select-wide set-video-encoder" aria-label="Video encoder" data-i18n-aria-label="settings.export.encoder.title">
                 <option value="auto" data-i18n="settings.export.encoder.auto">Auto</option>

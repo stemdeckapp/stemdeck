@@ -233,6 +233,8 @@ def fake(tmp_path, monkeypatch):
     # The suite's kill switch off: these tests are about the GPU path.
     monkeypatch.setattr(ve, "VIDEO_ENCODER_OVERRIDE", "")
     monkeypatch.setattr(ve, "candidates", lambda platform=None: ("h264_nvenc", "h264_qsv"))
+    # Auto on Windows (NVENC) on every host the suite runs on.
+    monkeypatch.setattr(ve, "os_key", lambda platform=None: "windows")
     return f
 
 
@@ -571,15 +573,56 @@ def test_no_ffmpeg_is_a_transient_error(fake, tmp_path, monkeypatch):
 # ─── Policy ──────────────────────────────────────────────────────────────
 
 
-def test_auto_takes_the_first_candidate_that_passes(fake):
+def _probed(fake) -> set[str]:
+    return {fake.encoder(c) for c in fake.calls if fake.kind(c) == "probe"}
+
+
+# Every GPU encoder passes its test encode here, so only the policy decides.
+ALL_PASS = dict.fromkeys(VIDEO_GPU_ENCODERS, "ok")
+
+
+@pytest.mark.parametrize(
+    ("os_name", "expected"),
+    [("windows", "h264_nvenc"), ("linux", "libx264"), ("macos", "libx264")],
+)
+def test_auto_uses_only_the_encoder_measured_in_real_renders(fake, monkeypatch, os_name, expected):
+    monkeypatch.setattr(ve, "os_key", lambda platform=None: os_name)
+    monkeypatch.setattr(ve, "candidates", lambda platform=None: ve.CANDIDATES[os_name])
+    fake.probe = dict(ALL_PASS)
+    assert settings_mod.get_video_encoder() == "auto"
+    assert ve.choose(1920, 1080, 30).encoder == expected
+    assert _probed(fake) == ({"h264_nvenc"} if os_name == "windows" else set())
+
+
+def test_auto_without_nvenc_uses_the_cpu(fake):
     fake.probe = {"h264_nvenc": "fail", "h264_qsv": "ok"}
     assert settings_mod.get_video_encoder() == "auto"
-    assert ve.choose(1920, 1080, 30).encoder == "h264_qsv"
+    assert ve.choose(1920, 1080, 30).encoder == "libx264"
+    assert _probed(fake) == {"h264_nvenc"}, "QSV passes but Auto never tries it"
     fake.probe = {}
     ve.reset_state()
     ve._cache_path.unlink()
     c = ve.choose(1920, 1080, 30)
     assert c.encoder == "libx264" and c.reason == "missing"
+
+
+@pytest.mark.parametrize(
+    ("os_name", "encoder"),
+    [
+        ("windows", "h264_qsv"),
+        ("windows", "h264_amf"),
+        # (VAAPI is left out: its probe needs a /dev/dri render node first.)
+        ("linux", "h264_nvenc"),
+        ("linux", "h264_qsv"),
+        ("macos", "h264_videotoolbox"),
+    ],
+)
+def test_an_encoder_picked_in_settings_is_still_used(fake, monkeypatch, os_name, encoder):
+    monkeypatch.setattr(ve, "os_key", lambda platform=None: os_name)
+    fake.probe = dict(ALL_PASS)
+    settings_mod.set_video_encoder(encoder)
+    assert ve.choose(1920, 1080, 30).encoder == encoder
+    assert _probed(fake) == {encoder}
 
 
 def test_setting_cpu_never_probes(fake):
@@ -634,7 +677,8 @@ def test_two_failures_disable_an_encoder(fake):
     assert ve.choose(1920, 1080, 30).encoder == "h264_nvenc", "one failure is not enough"
     assert ve.record_failure("h264_nvenc", "invalid-size")
     assert ve.disabled() == ["h264_nvenc"]
-    assert ve.choose(1920, 1080, 30).encoder == "h264_qsv"
+    c = ve.choose(1920, 1080, 30)
+    assert c.encoder == "libx264" and c.reason == "disabled"
     assert not ve.record_failure("libx264", "exit"), "the CPU encoder is never disabled"
 
 

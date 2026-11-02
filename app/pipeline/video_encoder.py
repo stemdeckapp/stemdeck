@@ -6,7 +6,8 @@ is used only when all of this holds:
 1. The policy allows it: the `video_encoder` setting ("auto", "cpu" or one
    encoder), overridden by STEMDECK_VIDEO_ENCODER (config.VIDEO_ENCODER_OVERRIDE;
    "cpu" is the kill switch).
-2. It is a candidate on this OS (CANDIDATES), it has not failed
+2. The setting picks it, or Auto tries it on this OS (AUTO: only NVENC on
+   Windows, the one encoder measured in real renders), it has not failed
    VIDEO_ENCODER_MAX_FAILURES renders in this process, and a real test encode
    (probe) at the render's own size and rate passed. `ffmpeg -encoders` is not
    trusted: a build lists NVENC on a machine with no NVIDIA card, and 4K can
@@ -72,6 +73,13 @@ CANDIDATES: dict[str, tuple[str, ...]] = {
     "windows": ("h264_nvenc", "h264_qsv", "h264_amf"),
     "linux": ("h264_nvenc", "h264_vaapi", "h264_qsv"),
     "macos": ("h264_videotoolbox",),
+}
+
+# Auto tries only these; every other candidate runs only when picked in Settings.
+AUTO: dict[str, tuple[str, ...]] = {
+    "windows": ("h264_nvenc",),
+    "linux": (),
+    "macos": (),
 }
 
 # The vendor behind each encoder, for the "Encoded with" note.
@@ -843,7 +851,7 @@ def choose(width: int, height: int, fps: int, cancelled: Callable[[], bool] = _n
     value, _source = policy()
     if value == "cpu":
         return Choice(CPU, reason="policy")
-    order = (value,) if value in VIDEO_GPU_ENCODERS else candidates()
+    order = (value,) if value in VIDEO_GPU_ENCODERS else AUTO[os_key()]
     reason = "none"
     for encoder in order:
         if cancelled():
