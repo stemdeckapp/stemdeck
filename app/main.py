@@ -102,6 +102,7 @@ from app.core.stems_location import (
     abandon_relocation,
     begin_relocation,
     directory_size,
+    is_relocating,
     move_library,
     validate_target,
 )
@@ -1075,6 +1076,36 @@ async def limit_json_body_size(request: Request, call_next):
                 )
         elif declared.isdigit() and int(declared) > _JSON_BODY_LIMIT:
             return JSONResponse({"detail": "request body too large"}, status_code=413)
+    return await call_next(request)
+
+
+# After a stems folder move, JOBS_DIR in this process still names the folder the
+# library left until the restart (app/core/stems_location.py). A favourite, a
+# Trash, an edit or an import accepted now lands there and is gone on the next
+# start, when the moved registry wins. So every write is refused with a code the
+# UI translates, except the settings, which live outside the library, and the
+# lookups that POST only to carry a body. A second move is refused too: it would
+# move nothing out of the emptied folder, and a failed one would reopen the door.
+_WRITES_ALLOWED_DURING_MOVE = frozenset({"/api/settings", "/api/search", "/api/playlist/preview"})
+
+
+@app.middleware("http")
+async def refuse_writes_until_restart(request: Request, call_next):
+    path = request.url.path
+    if (
+        is_relocating()
+        and request.method in csrf.UNSAFE_METHODS
+        and path.startswith("/api/")
+        and path not in _WRITES_ALLOWED_DURING_MOVE
+    ):
+        return JSONResponse(
+            {
+                "detail": "Restart StemDeck to finish moving your stems folder. "
+                "Until then, changes are not saved.",
+                "code": "restart_required",
+            },
+            status_code=409,
+        )
     return await call_next(request)
 
 

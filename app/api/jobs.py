@@ -249,13 +249,6 @@ class JobRequest(BaseModel):
 async def create_job(request: Request) -> dict[str, str]:
     """Submit a YouTube URL (JSON body) or upload an audio file (multipart/form-data)
     to start a stem-separation job. Returns the new job ID."""
-    if is_relocating():
-        # The stems folder just moved. This process still writes to the old one,
-        # so anything accepted now would be orphaned by the restart.
-        raise HTTPException(
-            status_code=409,
-            detail="Restart StemDeck to finish moving your stems folder before importing",
-        )
     ct = request.headers.get("content-type", "")
     if "multipart/form-data" in ct:
         return await _create_local_job(request)

@@ -6,12 +6,20 @@
 // (HTTP/2 and HTTP/3 never send one). A rejected fetch can carry no message
 // either. Each of those showed "Failed to restore track:" with nothing after it.
 
+import { t } from "./i18n.js";
+
+// The server's code for a write it refuses after the stems folder moved and
+// before the restart (refuse_writes_until_restart in app/main.py).
+export const RESTART_REQUIRED = "restart_required";
+
 /**
- * The reason a non-ok response gives: its string `detail`, the `msg` of each
- * entry of a list `detail`, then the status text, then "HTTP <code>". Empty
- * only when there is no response at all.
+ * The reason a non-ok response gives: the translated sentence for a code this
+ * side knows, its string `detail`, the `msg` of each entry of a list `detail`,
+ * then the status text, then "HTTP <code>". Empty only when there is no
+ * response at all.
  */
 export function responseErrorMessage(res, data) {
+  if (data?.code === RESTART_REQUIRED) return t("settings.stemsLocation.restartToSave");
   const detail = data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail.trim();
   if (Array.isArray(detail)) {

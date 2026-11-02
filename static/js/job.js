@@ -730,7 +730,7 @@ async function postFileJob(file) {
   fd.append("stems", JSON.stringify([...selectedStems]));
   const res = await fetch("/api/jobs", { method: "POST", body: fd });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || res.statusText);
+  if (!res.ok) throw new Error(responseErrorMessage(res, data));
   return data.job_id;
 }
 
@@ -982,7 +982,7 @@ export function wireJobForm() {
     try {
       const res = await fetch(endpoint, fetchInit);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || res.statusText);
+      if (!res.ok) throw new Error(responseErrorMessage(res, data));
       jobId = data.job_id;
       if (data.source_url) newSourceUrl = data.source_url;
     } catch (err) {
