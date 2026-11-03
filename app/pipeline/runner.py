@@ -542,6 +542,7 @@ async def _run_async(
         # left the folder behind for good.
         if remove_files and not remove_job_dir(job_dir):
             logger.warning("[%s] cancelled job's folder could not be removed", job.id)
+        jobqueue.finish_deferred_delete(job, jobs_dir)
         return
     # A cancel or a trash that arrived after the last stage checked for it lost
     # the race, and the job finished anyway. Left set, the flags would make
@@ -552,6 +553,8 @@ async def _run_async(
     _set(job, status="done", progress=1.0, stage="Done")
     _write_metadata(job, job_dir)
     persist_registry(jobs_dir)
+    # Emptied from the Trash while it finished anyway.
+    jobqueue.finish_deferred_delete(job, jobs_dir)
     # One-line per-job summary: the timing telemetry that makes performance
     # regressions (and the CPU-vs-GPU question) answerable from logs (#293).
     t = job.stage_timings or {}

@@ -18,7 +18,7 @@ from app.core import stems_location
 from app.core.models import Job, JobCancelled
 from app.core.registry import _jobs, _procs, set_proc
 from app.pipeline import stem_fill as fill_mod
-from app.pipeline.lyrics_retime import claim_run, forget_run
+from app.pipeline.lyrics_retime import cancel_run, claim_run, forget_run
 
 JOB = "b1b2c3d4e5f6"
 OTHER = "c1b2c3d4e5f6"
@@ -244,3 +244,103 @@ async def test_cancel_reaches_the_fill_before_a_lyrics_timing_waiting_behind_it(
     # Stopped as a cancel, not ended as a failure by a worker killed under it.
     assert done.status_code == 409 and "cancelled" in done.json()["detail"]
     assert job.stem_fill == "error"
+
+
+# -- a cancel stops only the operation it was sent to
+
+
+@pytest.fixture
+def fresh_lock(monkeypatch):
+    """A pipeline lock of this test's own: one a waiter left bound to another
+    test's event loop refuses every later wait."""
+    monkeypatch.setattr(jobs_mod, "_pipeline_lock", asyncio.Semaphore(1))
+
+
+async def _until(predicate, timeout: float = 3.0) -> None:
+    for _ in range(int(timeout / 0.01)):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("timed out")
+
+
+async def test_a_split_is_refused_while_a_fill_runs(jobs_dir, client, monkeypatch, fresh_lock):
+    """Starting the split used to clear the cancel already sent to the fill,
+    and its own cancel then terminated the fill's demucs worker."""
+    job = _song(jobs_dir)
+    (jobs_dir / JOB / "source.wav").write_bytes(b"RIFF-source")
+    started, workers = threading.Event(), []
+    monkeypatch.setattr(fill_mod, "separate", _blocking_separate(started, workers, []))
+    monkeypatch.setattr(jobs_mod, "split_vocals", lambda job, stems_dir: [])
+    async with client as c:
+        fill = asyncio.create_task(c.post(f"/api/jobs/{JOB}/fill-stems", json={"stems": ["drums"]}))
+        assert await asyncio.to_thread(started.wait, 3)
+        try:
+            split = await asyncio.wait_for(c.post(f"/api/jobs/{JOB}/vocal-split"), 2)
+        finally:
+            await c.post(f"/api/jobs/{JOB}/cancel")
+            done = await asyncio.wait_for(fill, 5)
+    _assert_busy(split)
+    assert job.vocal_split == "none"
+    assert workers[0].terminated.is_set()
+    assert done.status_code == 409 and "cancelled" in done.json()["detail"]
+
+
+async def test_cancelling_a_waiting_split_leaves_the_lyrics_timing_alone(
+    jobs_dir, client, monkeypatch, fresh_lock
+):
+    """The split waits behind a lyrics timing of the same song, whose process
+    is registered under the song's id: the split's cancel must not reach it."""
+    job = _song(jobs_dir)
+    timing = _Worker()
+    registered = threading.Event()
+
+    def retime(job, job_dir, *, cancelled, report, lyrics):
+        set_proc(job.id, timing)
+        registered.set()
+        try:
+            while not cancelled():
+                threading.Event().wait(0.01)
+        finally:
+            set_proc(job.id, None)
+        raise JobCancelled()
+
+    monkeypatch.setattr(jobs_mod, "retime_job", retime)
+    lyrics = {"synced": "[00:01.00]One line\n[00:03.00]Two lines", "plain": ""}
+    async with client as c:
+        assert (await c.post(f"/api/jobs/{JOB}/lyrics/retime", json=lyrics)).status_code == 202
+        assert await asyncio.to_thread(registered.wait, 3)
+        split = asyncio.create_task(c.post(f"/api/jobs/{JOB}/vocal-split"))
+        try:
+            await _until(lambda: job.vocal_split == "running")
+            await c.post(f"/api/jobs/{JOB}/cancel")
+            timing_terminated = timing.terminated.is_set()
+        finally:
+            cancel_run(JOB)
+            r = await asyncio.wait_for(split, 5)
+    assert not timing_terminated, "the split's cancel killed the lyrics timing"
+    assert r.status_code == 500 and r.json()["vocal_split_reason"] == "cancelled"
+
+
+async def test_cancelling_a_waiting_split_leaves_another_songs_fill_alone(
+    jobs_dir, client, monkeypatch, fresh_lock
+):
+    _song(jobs_dir)
+    other = _song(jobs_dir, OTHER)
+    (jobs_dir / JOB / "source.wav").write_bytes(b"RIFF-source")
+    started, workers = threading.Event(), []
+    monkeypatch.setattr(fill_mod, "separate", _blocking_separate(started, workers, []))
+    async with client as c:
+        fill = asyncio.create_task(c.post(f"/api/jobs/{JOB}/fill-stems", json={"stems": ["drums"]}))
+        assert await asyncio.to_thread(started.wait, 3)
+        split = asyncio.create_task(c.post(f"/api/jobs/{OTHER}/vocal-split"))
+        try:
+            await _until(lambda: other.vocal_split == "running")
+            await c.post(f"/api/jobs/{OTHER}/cancel")
+            worker_terminated = workers[0].terminated.is_set()
+        finally:
+            await c.post(f"/api/jobs/{JOB}/cancel")
+            await asyncio.wait_for(fill, 5)
+            r = await asyncio.wait_for(split, 5)
+    assert not worker_terminated, "another song's cancel killed this song's demucs worker"
+    assert r.status_code == 500 and r.json()["vocal_split_reason"] == "cancelled"

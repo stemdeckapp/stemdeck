@@ -18,7 +18,7 @@ import { initSections } from "./sections.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
 import { formatKey } from "./keyLabel.js";
-import { errorReason, importFailure, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, errorReason, importFailure, responseErrorMessage } from "./errorReason.js";
 import { isReimportableSource } from "./utils.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
@@ -185,6 +185,13 @@ async function runVocalSplit(state) {
   }
   try {
     if (res.status === 409) {
+      // Refused while the song's missing stems are extracted: nothing ran,
+      // so nothing failed. It says so, and the song stays as it was.
+      const body = await res.json().catch(() => null);
+      if (body?.code === JOB_BUSY) {
+        showError(t("library.songBusy"), null, { retry: false });
+        return state;
+      }
       const [done, reason] = await waitForSplit(state.job_id);
       if (!done) {
         reportSplitFailure(state, reason);
