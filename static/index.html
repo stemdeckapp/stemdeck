@@ -604,6 +604,13 @@
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                   <span data-i18n="sections.add">Add</span>
                 </button>
+                <!-- The bar's own way out, so dismissing it does not mean
+                     finding Collapse > Sections first (#634). It is that same
+                     switch. An icon only: with Clear and Add, a word would
+                     overflow the 300px column in German. -->
+                <button class="sections-add-btn-label sections-hide-btn" id="sectionsHideBtn" type="button" title="Hide the sections bar. Collapse > Sections brings it back." aria-label="Hide the sections bar" data-i18n-title="sections.hideTitle" data-i18n-aria-label="sections.hideAria">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/><path d="M4 20 20 4"/></svg>
+                </button>
               </span>
             </div>
             <!-- The inner track is what carries the sections. It is the width
