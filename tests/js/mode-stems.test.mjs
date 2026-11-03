@@ -4,7 +4,7 @@
 import {
   BASE_STEMS, parseChoice, serializeChoice, mergeChoice, modeLayout, layoutLanes, baseLanes,
   restSetName, originalSource, jobOriginalSet, layoutSignature, songDefaultLanes, splitFreezePatches,
-  isSongDefault, choiceKey, STEM_MODES, stemsReasonKey,
+  isSongDefault, choiceKey, STEM_MODES, stemsReasonKey, showsSameLanes,
 } from "../../static/js/partChoice.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 import { buildPlaybackStems, sumPeaks } from "../../static/js/playbackStems.js";
@@ -130,6 +130,26 @@ for (const k of [...reasonKeys, stemsReasonKey("whatever")]) {
   for (const [code, table] of tables) if (!table[k]) missingText.push(`${code}:${k}`);
 }
 check("every refusal text is in all ten tables", tables.length === 10 && !missingText.length, missingText.join(" "));
+
+// ── Another version, or another mode, with the lanes on screen ──
+// Only a load that would show other lanes reloads the song; the same lanes
+// keep the loaded audio and only swap the mix.
+const onScreen = (jobId, layout, present) => {
+  const shown = layoutLanes(layout, new Set(present));
+  return { jobId, ...shown, sig: layoutSignature(shown) };
+};
+const allShown = onScreen(job, modeLayout("practice", null, all), all);
+check("a version with the same stems and its own mix shows the lanes on screen",
+  showsSameLanes(allShown, job, modeLayout("practice", null, [...all].reverse()), all));
+check("a version with other stems does not", !showsSameLanes(allShown, job, modeLayout("practice", null, ["vocals", "drums"]), all));
+check("a version whose own record chooses other lanes does not",
+  !showsSameLanes(allShown, job, modeLayout("practice", { v: 2, remove: "", lanes: ["drums"] }, all), all));
+check("Karaoke shows the voice whatever the version's stems",
+  showsSameLanes(onScreen(job, modeLayout("karaoke", null, all), all), job, modeLayout("karaoke", null, ["drums", "bass"]), all));
+check("the same stems with the voice split on one side only differ",
+  !showsSameLanes(onScreen(job, modeLayout("practice", { v: 2, remove: "", voice: "combined" }, all), split), job, modeLayout("practice", null, all), split));
+check("another song never shows the lanes on screen", !showsSameLanes(allShown, "f6e5d4c3b2a1", modeLayout("practice", null, all), all));
+check("nothing loaded under a layout shows no lanes to keep", !showsSameLanes(null, job, modeLayout("practice", null, all), all));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

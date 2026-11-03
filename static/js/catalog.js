@@ -5966,14 +5966,17 @@ export async function initCatalog() {
     const versions = songVersions(id).filter((v) => v.stems);
     if (!versions.length) return;
     const active = activeVersionId(id);
-    if (JSON.stringify(track.versions) === JSON.stringify(versions) && track.activeVersion === active) {
+    const sameList = JSON.stringify(track.versions) === JSON.stringify(versions);
+    if (sameList && track.activeVersion === active) {
       paintActiveVersionRows();
       return;
     }
     track.versions = versions;
     track.activeVersion = active;
     saveState();
-    render();
+    // The same rows with another one open need no rebuilt sidebar.
+    if (sameList) paintActiveVersionRows();
+    else render();
   });
   setDisplayedVersion(currentVersion);
   render();

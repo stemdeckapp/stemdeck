@@ -79,6 +79,67 @@ test.describe("versions of a song", () => {
     await expect.poll(() => lanes(page), { timeout: 15000 }).toBe("drums,original,vocals");
   });
 
+  test("a version with the same lanes opens without loading the song again, and keeps playing", async ({ page, request }) => {
+    const all = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+    await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Second mix", stems: all, select: false } });
+    await openStudio(page);
+    await expect(rows(page)).toHaveCount(2);
+    // The gain each lane was last given in the engine, which is what is heard.
+    await page.waitForFunction(async () => {
+      const st = await import("/js/state.js");
+      if (!st.audioEngine || (await st.audioEngine.ready) !== true) return false;
+      const eng = st.audioEngine;
+      window.__engine = eng;
+      window.__gains = {};
+      const setGain = eng.setGain;
+      eng.setGain = (name, v) => { window.__gains[name] = v; return setGain(name, v); };
+      return true;
+    }, null, { timeout: 20000 });
+    const gain = (name) => page.evaluate((n) => window.__gains[n], name);
+    const soloed = (name) => page.evaluate(async (n) => Boolean((await import("/js/state.js")).mixerState[n]?.soloed), name);
+    const playing = () => page.evaluate(async () => Boolean((await import("/js/state.js")).audioEngine?.isPlaying()));
+    const time = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.getCurrentTime());
+    const sameEngine = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine === window.__engine);
+
+    // Version 1's own mix: Bass muted.
+    await page.evaluate(async () => (await import("/js/mixer.js")).toggleStemMute("bass"));
+    await expect.poll(() => gain("bass")).toBe(0);
+    const loads = [];
+    page.on("request", (r) => {
+      if (/^\/api\/jobs\/[^/]+(\/stems\/.*|\/peaks|\/beats)?$/.test(new URL(r.url()).pathname)) loads.push(r.url());
+    });
+    await page.locator("#t-play").click();
+    await expect.poll(playing).toBe(true);
+
+    // Version 2: its own mix, heard at once, and the song plays on from where it was.
+    const before = await time();
+    await rows(page).nth(1).click();
+    await expect(rows(page).nth(1)).toHaveClass(/active/);
+    await expect.poll(() => muted(page, "bass")).toBe(false);
+    expect(await sameEngine()).toBe(true);
+    await expect.poll(() => gain("bass")).toBeGreaterThan(0);
+    expect(await playing()).toBe(true);
+    expect(await time()).toBeGreaterThan(before);
+
+    // Drums soloed in Version 2 stays in Version 2.
+    await page.evaluate(async () => (await import("/js/mixer.js")).toggleStemSolo("drums"));
+    await expect.poll(() => gain("vocals")).toBe(0);
+    await rows(page).nth(0).click();
+    await expect(rows(page).nth(0)).toHaveClass(/active/);
+    await expect.poll(() => muted(page, "bass")).toBe(true);
+    expect(await soloed("drums")).toBe(false);
+    await expect.poll(() => gain("vocals")).toBeGreaterThan(0);
+    expect(await gain("bass")).toBe(0);
+    await rows(page).nth(1).click();
+    await expect.poll(() => soloed("drums")).toBe(true);
+    await expect.poll(() => gain("vocals")).toBe(0);
+
+    // The same engine all along: no stem, peaks or song state was fetched again.
+    expect(await sameEngine()).toBe(true);
+    expect(loads).toEqual([]);
+    expect(await page.evaluate(async () => (await import("/js/reloadPlace.js")).restorePending())).toBe(false);
+  });
+
   test("rename and delete a version from the Stems popover", async ({ page, request }) => {
     await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Guitar study", stems: ["drums", "vocals"], select: true } });
     await page.setViewportSize({ width: 1024, height: 768 });
@@ -160,6 +221,41 @@ test.describe("versions of a song", () => {
     expect(filled).toBe(0);
     const listed = await (await request.get(`/api/jobs/${JOB_ID}/versions`)).json();
     expect(listed.versions).toHaveLength(2);
+  });
+
+  test("Extract that separates a missing stem loads the song again, even with the lanes on screen", async ({ page, request }) => {
+    await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Two", stems: ["vocals", "drums"], select: true } });
+    // The separation itself is the server's (tests/test_versions_api.py).
+    let filled = 0;
+    await page.route("**/api/jobs/*/fill-stems", (route) => {
+      filled += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    await openStudio(page);
+    await expect.poll(() => lanes(page)).toBe("drums,original,vocals");
+    await page.waitForFunction(async () => {
+      const st = await import("/js/state.js");
+      if (!st.audioEngine || (await st.audioEngine.ready) !== true) return false;
+      window.__engine = st.audioEngine;
+      return true;
+    }, null, { timeout: 20000 });
+    // The chips: Vocals, Drums and Guitar, which the song has no file for. Until
+    // the song loads again, its lanes read the same as the ones on screen.
+    await page.evaluate(async (id) => {
+      const { selectedStems } = await import("/js/state.js");
+      selectedStems.clear();
+      for (const n of ["vocals", "drums", "guitar"]) selectedStems.add(n);
+      (await import("/js/stemChoice.js")).refreshStemChoiceVisuals();
+      document.getElementById("submit").dataset.resplitJob = id;
+      document.getElementById("url").value = "";
+    }, JOB_ID);
+    await page.locator("#submit").click();
+    await expect(rows(page)).toHaveCount(3);
+    expect(filled).toBe(1);
+    await expect.poll(() => page.evaluate(async () => {
+      const st = await import("/js/state.js");
+      return Boolean(st.audioEngine) && st.audioEngine !== window.__engine;
+    }), { timeout: 15000 }).toBe(true);
   });
 
   test("the Guide explains every versions control", async ({ page, request }) => {

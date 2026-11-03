@@ -14,7 +14,7 @@
 // A song that loads later reads the record of the mode in force by itself.
 
 import { getMode, onModeChange } from "./mode.js";
-import { switchMixMode, refreshMixerVisuals, applyMix, applyAllLanePitches } from "./mixer.js";
+import { switchMixMode, reloadOpenMix, refreshMixerVisuals, applyMix, applyAllLanePitches } from "./mixer.js";
 import { applyAllLaneEq } from "./eqEngine.js";
 import { restoreGlobals } from "./transport.js";
 import { currentJobId } from "./state.js";
@@ -52,10 +52,19 @@ export function isMixSwitching() {
   return pending > 0;
 }
 
-export function syncMixMode() {
+// Queue `step(mode)`, which resolves whether it replaced the open song's mix
+// in memory; a replaced mix is then pushed out, unless the mode moved on.
+function enqueue(step) {
   pending += 1;
   chain = chain.then(async () => {
     const mode = wanted();
+    if (await step(mode) && mode === wanted()) pushMix(mode);
+  }).finally(() => { pending -= 1; });
+  return chain;
+}
+
+export function syncMixMode() {
+  return enqueue(async (mode) => {
     let replaced = false;
     try {
       replaced = await switchMixMode(mode);
@@ -67,15 +76,26 @@ export function syncMixMode() {
         try { cb(mode); } catch (err) { console.warn("[mixMode] settled listener failed:", err); }
       }
     }
-    if (!replaced || mode !== wanted()) return;
-    refreshMixerVisuals();
-    applyMix();
-    applyAllLanePitches();
-    applyAllLaneEq();
-    restoreGlobals();
-    document.dispatchEvent(new CustomEvent("stemdeck:mix-switched", { detail: { id: currentJobId, mode } }));
-  }).finally(() => { pending -= 1; });
-  return chain;
+    return replaced;
+  });
+}
+
+/** The open song's version changed with its lanes kept (modeStems.js): its
+ * record in the mode in force replaces the mix, in the same queue. */
+export function syncVersionMix() {
+  return enqueue(() => reloadOpenMix().catch((err) => {
+    console.warn("[mixMode] could not read the version's saved mix:", err);
+    return false;
+  }));
+}
+
+function pushMix(mode) {
+  refreshMixerVisuals();
+  applyMix();
+  applyAllLanePitches();
+  applyAllLaneEq();
+  restoreGlobals();
+  document.dispatchEvent(new CustomEvent("stemdeck:mix-switched", { detail: { id: currentJobId, mode } }));
 }
 
 export function initMixMode() {
