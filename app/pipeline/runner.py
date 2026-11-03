@@ -19,7 +19,7 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
-from app.core.registry import is_upload
+from app.core.registry import is_upload, saved_fields
 from app.core.registry import persist as persist_registry
 from app.pipeline import jobqueue
 from app.pipeline.analyze import analyze, refine_key_from_stems
@@ -390,6 +390,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "stage_timings": job.stage_timings,
         "stem_format": job.stem_format,
         "stem_mp3_kbps": job.stem_mp3_kbps,
+        **saved_fields(job),
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
