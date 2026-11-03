@@ -149,8 +149,9 @@ function Get-ProfileState {
 }
 
 # A path the package's own processes would write to: StemDeck by name, its
-# Tauri identifier, or this package folder in Windows' own records of it.
-$ownPattern = '(?i)(\\StemDeck(\\|$)|\\app\.stemdeck\.desktop(\\|$)|\\StemDeck[^\\]*\.[a-z0-9]{2,5}$|' +
+# Tauri identifier, a StemDeck file in Downloads (a window download in a
+# -Manual run), or this package folder in Windows' own records of it.
+$ownPattern = '(?i)(\\StemDeck(\\|$)|\\app\.stemdeck\.desktop(\\|$)|\\Downloads\\StemDeck[^\\]*$|' +
     [regex]::Escape($PackageDir) + '|' + [regex]::Escape($PackageDir.Replace('\', '#')) + ')'
 # A tool StemDeck runs, whose cache or crash dump could be StemDeck's or
 # another program's: listed for a person to read.
