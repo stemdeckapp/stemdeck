@@ -49,7 +49,11 @@ public static class SaveDialogs {
 }
 '@
 [SaveDialogs]::Close(${Number(pid)})`;
-  const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+  const powershell = `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+    encoding: "utf8",
+  });
   if (result.status !== 0) throw new Error(`closing the save dialog failed: ${result.stderr}`);
   return Number(result.stdout.trim());
 }
@@ -85,6 +89,10 @@ async function connect() {
 
 const browser = await connect();
 say("connected to the window");
+while (!browser.contexts()[0]?.pages().length) {
+  remaining();
+  await sleep(500);
+}
 const page = browser.contexts()[0].pages()[0];
 
 // Setup ends with the window moving to the backend's own address.
@@ -119,8 +127,14 @@ say("Settings opened");
 // zip by itself leaves it in Playwright's folder, where the leak check finds it.
 await page.locator('.settings-tab[data-tab="logs"]').click();
 await page.locator(".settings-export-logs").click();
-await sleep(5000);
-say(`Export logs pressed, save dialogs closed: ${closeSaveDialogs(appPid)}`);
+let closed = 0;
+for (const giveUp = Date.now() + 15_000; closed === 0 && Date.now() < giveUp; ) {
+  await sleep(1000);
+  closed = closeSaveDialogs(appPid);
+}
+// No dialog means the zip went some other way: the leak check then finds it
+// in Playwright's folder if the window downloaded it.
+say(closed ? "Export logs: save dialog shown and closed" : "WARNING: Export logs showed no save dialog");
 await page.keyboard.press("Escape");
 
 const bytes = [...readFileSync(wav)];

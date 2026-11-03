@@ -78,6 +78,19 @@ if (-not $Manual -and -not $Wav) {
 if (Get-ChildItem (Join-Path $PackageDir "data") -Recurse -File -Force -ErrorAction SilentlyContinue) {
     Write-Warning "data\ already holds files from an earlier run, so this is not a first run"
 }
+# The session imports and splits a song into the package's library. A package
+# used before may have its library set elsewhere, even to a real one.
+$settingsFile = Join-Path $PackageDir "data\settings.json"
+if (Test-Path $settingsFile) {
+    $library = (Get-Content $settingsFile -Raw | ConvertFrom-Json).PSObject.Properties["jobs_dir"]
+    if ($library -and $library.Value -and
+        -not ([IO.Path]::GetFullPath($library.Value)).StartsWith("$PackageDir\", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "this package's library is $($library.Value), outside the package: use a fresh extract"
+    }
+}
+if (-not $Manual -and (Get-NetTCPConnection -LocalPort $DevToolsPort -State Listen -ErrorAction SilentlyContinue)) {
+    throw "port $DevToolsPort is in use: the driver would reach whatever listens there, not this package"
+}
 
 $documents = [Environment]::GetFolderPath("MyDocuments")
 $roots = @(
@@ -209,20 +222,26 @@ if ($Manual) {
     Write-Host "Use StemDeck, then close its window."
     $app.WaitForExit()
 } else {
+  # The driver's own temporary files (Playwright's) go to -WorkDir, so they
+  # are not mistaken for the package's.
+  $driverTemp = Join-Path $WorkDir "driver-temp"
+  New-Item -ItemType Directory -Force $driverTemp | Out-Null
+  $userTemp = $env:TEMP, $env:TMP
+  # Whatever fails below, the app is closed and the report still written.
+  try {
     $driver = Join-Path $PSScriptRoot "drive-portable.mjs"
-    # The driver's own temporary files (Playwright's) go to -WorkDir, so they
-    # are not mistaken for the package's.
-    $driverTemp = Join-Path $WorkDir "driver-temp"
-    New-Item -ItemType Directory -Force $driverTemp | Out-Null
-    $userTemp = $env:TEMP, $env:TMP
     $env:TEMP = $driverTemp
     $env:TMP = $driverTemp
     $models = if ($WithModels) { "warmup" } else { "skip" }
+    # Windows PowerShell 5.1 turns a native stderr line into a terminating
+    # error under "Stop"; the driver's errors belong in its log.
+    $ErrorActionPreference = "Continue"
     & node $driver $DevToolsPort $app.Id (Resolve-Path $Wav).Path $Minutes $models 2>&1 |
-        Tee-Object -FilePath (Join-Path $WorkDir "drive.log") | Write-Host
+        ForEach-Object { "$_" } | Tee-Object -FilePath (Join-Path $WorkDir "drive.log") | Write-Host
     $driverExit = $LASTEXITCODE
-    $env:TEMP, $env:TMP = $userTemp
+    $ErrorActionPreference = "Stop"
     $driven = "drive-portable.mjs exit code $driverExit"
+    if ($driverExit -notin @(0, 3)) { $driven += " (see drive.log)" }
     if ($driverExit -eq 3) {
         # No DevTools port: setup runs by itself with -WithModels (with Skip it
         # waits for a press), so wait for the backend it starts and run the
@@ -242,7 +261,7 @@ if ($Manual) {
             try { Invoke-RestMethod "$base/api/health" -TimeoutSec 5 | Out-Null; break } catch { Start-Sleep -Seconds 2 }
         }
         Invoke-RestMethod "$base/api/settings" | Out-Null
-        $job = (& curl.exe -s -F "file=@$((Resolve-Path $Wav).Path)" "$base/api/jobs" | ConvertFrom-Json).job_id
+        $job = (& curl.exe -s -F "file=@`"$((Resolve-Path $Wav).Path)`"" "$base/api/jobs" | ConvertFrom-Json).job_id
         if (-not $job) { throw "the import over HTTP was refused" }
         do {
             Start-Sleep -Seconds 3
@@ -250,6 +269,11 @@ if ($Manual) {
         } while ($status -notin @("done", "error", "failed", "cancelled", "stopped") -and (Get-Date) -lt $until)
         $driven += ", session over HTTP instead: settings read, job $job $status"
     }
+  } catch {
+    $driven += ", session failed: $_"
+  } finally {
+    $ErrorActionPreference = "Stop"
+    $env:TEMP, $env:TMP = $userTemp
     Write-Host "Closing the window"
     [void]$app.CloseMainWindow()
     if (-not $app.WaitForExit(90000)) {
@@ -257,6 +281,7 @@ if ($Manual) {
         & taskkill /PID $app.Id /T /F | Out-Null
         $driven += ", window close did not end the app (taskkill used)"
     }
+  }
 }
 
 # The backend and WebView2 end shortly after the window: wait for every

@@ -35,6 +35,7 @@ test("desktop: the logs zip is saved where the user picks, never by the window",
   const [transfer] = await page.evaluate(() => window.__e2e.callsFor("download_to_path"));
   expect(transfer.args).toEqual({ token: "token-1", url: new URL("/api/logs.zip", page.url()).href });
   await expect(button).toBeDisabled();
+  await expect(button).toHaveText("Preparing…");
 
   await page.evaluate(() => window.__e2e.finishSave());
   await expect(button).toBeEnabled();
@@ -50,7 +51,23 @@ test("desktop: a cancelled save dialog exports nothing", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.__e2e.pickPending())).toBe(true);
   await page.evaluate(() => window.__e2e.cancelPick());
   await expect(button).toBeEnabled();
+  await expect(button).toHaveText("Export logs");
   expect(await page.evaluate(() => window.__e2e.callsFor("download_to_path"))).toEqual([]);
+  await expect(page.getByText("Could not export the logs.")).toHaveCount(0);
+});
+
+test("desktop: a failed save says so and gives the button back", async ({ page }) => {
+  await stubTauri(page);
+  await openLogs(page);
+  const button = page.locator(".settings-export-logs");
+  await button.click();
+  await expect.poll(() => page.evaluate(() => window.__e2e.pickPending())).toBe(true);
+  await page.evaluate(() => window.__e2e.choosePath());
+  await expect.poll(() => page.evaluate(() => window.__e2e.savePending())).toBe(true);
+  await page.evaluate(() => window.__e2e.failSave("backend returned HTTP 500"));
+  await expect(button).toBeEnabled();
+  await expect(button).toHaveText("Export logs");
+  await expect(page.getByText("Could not export the logs.").first()).toBeVisible();
 });
 
 test("browser: the logs zip is a browser download", async ({ page }) => {
