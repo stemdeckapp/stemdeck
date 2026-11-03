@@ -27,8 +27,12 @@ from pathlib import Path
 
 from app.core.config import JOBS_DIR
 from app.core.models import FINISHED_STATUSES, Job, _set, settle_cancelled
+from app.core.registry import deleted_ids as registry_deleted_ids
 from app.core.registry import get as registry_get
 from app.core.registry import persist as registry_persist
+from app.core.registry import remove as registry_remove
+from app.pipeline.collect import remove_job_dir
+from app.pipeline.identify import release_source
 
 logger = logging.getLogger("stemdeck.queue")
 
@@ -213,6 +217,25 @@ def _finalise_dropped_job(job: Job) -> None:
     if settle_cancelled(job):
         cleanup_job_dir(job.id)
     registry_persist(JOBS_DIR)
+    finish_deferred_delete(job, JOBS_DIR)
+
+
+def finish_deferred_delete(job: Job, jobs_dir: Path) -> None:
+    """Remove a job emptied from the Trash while its stop was settling, the
+    delete DELETE answered 202 for (#748).
+
+    Called after every final status write. DELETE marks the id deleted and
+    then reads the status, so whichever of the two comes second sees the
+    other: a job DELETE found still running is removed here, one it found
+    settled it removes itself, and both doing it is harmless."""
+    if job.id not in registry_deleted_ids():
+        return
+    # A fingerprint may still have the source open (Windows).
+    release_source(job.id)
+    if not remove_job_dir(jobs_dir / job.id):
+        logger.warning("[%s] deleted job's folder could not be removed", job.id)
+    registry_remove(job.id)
+    registry_persist(jobs_dir)
 
 
 async def _worker_loop() -> None:
