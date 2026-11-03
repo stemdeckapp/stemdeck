@@ -1013,6 +1013,9 @@ function applyTrackInfoToPanel(track) {
   }
 }
 
+// How long a trash of a song still in the Queue waits before it is sent again.
+const TRASH_RETRY_MS = 2000;
+
 /**
  * Tell the server a track was binned or brought back.
  *
@@ -1024,7 +1027,8 @@ function applyTrackInfoToPanel(track) {
  *
  * Deliberately not awaited by the callers. Binning a track must feel instant
  * and must not fail because the backend blinked; the reconcile on next load
- * catches anything that did not land.
+ * catches anything that did not land, except a song still importing, which it
+ * never lists: moveTrackToTrash sends that one again itself.
  */
 function syncTrashToServer(trackId, trashed) {
   const action = trashed ? "trash" : "restore";
@@ -1090,8 +1094,18 @@ function moveTrackToTrash(trackId) {
   // files kept (#748). Ask for the queue again once it has, so the row goes now rather
   // than whenever the next frame happens to arrive.
   const wasInQueue = currentIds(getQueueSnapshot()).has(trackId);
-  syncTrashToServer(trackId, true).then(() => {
-    if (wasInQueue) refreshQueue();
+  syncTrashToServer(trackId, true).then(async (res) => {
+    if (!wasInQueue) return;
+    // Sent once more when it did not land: the import would run on hidden,
+    // and the reconcile on load never sees it, as it reads finished songs only.
+    if (!res?.ok) {
+      await new Promise((r) => setTimeout(r, TRASH_RETRY_MS));
+      // Not when it was restored or deleted meanwhile.
+      if (!tracks[trackId] || !getTrashFolder()?.items.includes(trackId)) return;
+      const again = await syncTrashToServer(trackId, true);
+      if (!again?.ok) console.warn(`[catalog] the trash of ${trackId} did not land twice; it may still be importing`);
+    }
+    refreshQueue();
   });
   saveState();
   render();

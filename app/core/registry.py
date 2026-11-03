@@ -4,15 +4,18 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.core.config import (
     DEMUCS_MODEL,
@@ -21,10 +24,18 @@ from app.core.config import (
     LYRICS_FILE,
     STEM_NAMES,
     TAKE_ID_RE,
+    TAKES_DIRNAME,
     TRACK_ID_RE,
 )
-from app.core.models import Job, clean_artist, clean_audio_tags, clean_identity, clean_work
-from app.core.settings import quarantine_corrupt
+from app.core.models import (
+    FINISHED_STATUSES,
+    Job,
+    clean_artist,
+    clean_audio_tags,
+    clean_identity,
+    clean_work,
+)
+from app.core.settings import fsync_dir, quarantine_corrupt
 from app.core.stem_files import stem_exists, stem_url
 from app.core.takes import reconcile_tracks, recover_takes
 from app.core.versions import clean_stems
@@ -33,11 +44,21 @@ logger = logging.getLogger("stemdeck.registry")
 
 REGISTRY_VERSION = 2
 
+Operation = Literal["pipeline", "fill", "split", "retime"]
+
 _jobs: dict[str, Job] = {}
-# Active subprocesses keyed by job_id (currently only Demucs). Lets
-# POST /cancel terminate the running process from the API thread instead
-# of waiting for the pipeline thread to notice the cancel flag.
-_procs: dict[str, subprocess.Popen] = {}
+# Active subprocesses keyed by job id and operation. Lets POST /cancel
+# terminate the running process from the API thread instead of waiting for the
+# pipeline thread to notice the cancel flag. By operation too, because one song
+# can have several waiting (a fill, a split, a lyrics timing) while one of them
+# runs: keyed by id alone, cancelling one that waited terminated the process of
+# the one running, the shared Demucs worker included.
+_procs: dict[tuple[str, Operation], subprocess.Popen] = {}
+# The operation the processes registered from here on belong to. Set by the
+# endpoints that work on a finished song (see operation()); asyncio.to_thread
+# carries it into the thread that registers them. Anything else is the job's
+# own pipeline run.
+_operation: ContextVar[Operation] = ContextVar("operation", default="pipeline")
 _lock = threading.Lock()
 _REGISTRY_FILE = "registry.json"
 _TERMINAL = {"done"}
@@ -156,7 +177,8 @@ def get(job_id: str) -> Job | None:
 def remove(job_id: str) -> None:
     with _lock:
         _jobs.pop(job_id, None)
-        _procs.pop(job_id, None)
+        for key in [key for key in _procs if key[0] == job_id]:
+            del _procs[key]
 
 
 def set_trashed(job_id: str, trashed: bool) -> Job | None:
@@ -274,23 +296,6 @@ def persist(jobs_dir: Path) -> None:
             logger.warning("could not persist registry to %s", path, exc_info=True)
 
 
-def _fsync_dir(directory: Path) -> None:
-    """Make a rename in `directory` durable. POSIX only: Windows cannot open a
-    directory for fsync, and NTFS journals the rename itself."""
-    if os.name == "nt":
-        return
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass  # some filesystems (network shares) refuse; the rename still happened
-    finally:
-        os.close(fd)
-
-
 def _write_atomic(path: Path, payload: str) -> None:
     """Replace `path` with `payload` so that a crash at any moment leaves
     either the old file or the new one, never a torn or empty one.
@@ -309,7 +314,7 @@ def _write_atomic(path: Path, payload: str) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
 
 
 def _read_registry(path: Path) -> dict | None:
@@ -452,6 +457,7 @@ def restore(jobs_dir: Path) -> None:
                     )
             to_add = {}
             resume: list[Job] = []
+            deleted = deleted_ids()
             records = data.get("jobs", [])
             if not isinstance(records, list):
                 changed = _keep_bad_records(path, [records], "the jobs list was not a list")
@@ -487,6 +493,12 @@ def restore(jobs_dir: Path) -> None:
                         ", ".join(repaired),
                     )
                     bad.append(record)
+                if job.id in deleted:
+                    # Deleted while it was still stopping, and the process
+                    # ended before the stop settled (#748): finish the delete.
+                    shutil.rmtree(jobs_dir / job.id, ignore_errors=True)
+                    changed = True
+                    continue
                 held[job.id] = set(record) - set(repaired)
                 try:
                     # A stopped job may have no title yet: one trashed before
@@ -817,27 +829,119 @@ def _read_meta_fields(job: Job, meta: dict, names: Iterable[str]) -> None:
         setattr(job, name, getattr(kept, name))
 
 
+@contextmanager
+def operation(name: Operation) -> Iterator[None]:
+    """Register the processes started inside as `name`'s (see _operation)."""
+    token = _operation.set(name)
+    try:
+        yield
+    finally:
+        _operation.reset(token)
+
+
 def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:
+    """Register `proc` as the running process of `job_id`'s current operation,
+    or clear it with None.
+
+    A pipeline process registered after its job's cancel is terminated here
+    (#748). The cancel found nothing to terminate when it landed before this,
+    during the device probe ahead of the Demucs worker for one, so the trashed
+    song kept separating to the end. Checked under the lock the cancel's
+    get_proc takes, so one of the two always sees the other."""
+    key = (job_id, _operation.get())
     with _lock:
         if proc is None:
-            _procs.pop(job_id, None)
-        else:
-            _procs[job_id] = proc
+            _procs.pop(key, None)
+            return
+        _procs[key] = proc
+        job = _jobs.get(job_id)
+        cancelled = (
+            key[1] == "pipeline"
+            and job is not None
+            and job.cancel_requested
+            and job.status not in FINISHED_STATUSES
+        )
+    if cancelled and proc.poll() is None:
+        proc.terminate()
 
 
-def reset_all(jobs_dir: Path) -> list[str]:
-    """Delete every job directory and the registry file, clearing the
-    in-memory registry too. Desktop-only factory reset (Settings -> General
-    -> "Reset app data") -- the caller is responsible for checking no job is
-    actively running first (deleting a running job's directory out from
-    under it would corrupt that job, not just reset the library)."""
+def is_real_entry(entry: Path) -> bool:
+    """Whether `entry` is itself in its folder, not a link or a Windows
+    junction to somewhere else. Removing what is found by walking through one
+    deletes whatever it points at."""
+    return entry.resolve() == entry.parent.resolve() / entry.name
+
+
+def job_dirs(folder: Path) -> list[Path]:
+    """The job folders directly inside `folder` (the jobs folder, or its
+    failed/ quarantine): a job id for a name, and a real directory. The jobs
+    folder can be shared with other things, so nothing else in it is a job."""
+    if not folder.is_dir():
+        return []
+    return [
+        d for d in folder.iterdir() if JOB_ID_RE.match(d.name) and d.is_dir() and is_real_entry(d)
+    ]
+
+
+def holds_job_files(job_dir: Path) -> bool:
+    """Whether a job-id folder holds something StemDeck writes into a job. The
+    name alone does not make it ours: twelve hex characters is also a Docker
+    container's short id. A folder that cannot be read is not ours to remove."""
+    try:
+        return any(
+            (job_dir / name).exists() for name in ("stems", TAKES_DIRNAME, "metadata.json")
+        ) or any(job_dir.glob("source.*"))
+    except OSError:
+        return False
+
+
+def quarantine_dirs(jobs_dir: Path) -> list[Path]:
+    """The job folders in failed/ that are StemDeck's quarantine: the runner
+    writes error.txt into each before moving it there. Empty when failed/ is a
+    link, or holds only someone else's folders."""
+    failed_root = jobs_dir / "failed"
+    if not is_real_entry(failed_root):
+        return []
+    return [d for d in job_dirs(failed_root) if (d / "error.txt").is_file()]
+
+
+# The files reset removes beside the job folders: the registry, its temp and
+# set-aside copies (_write_atomic, quarantine_corrupt, _keep_bad_records), and
+# the desktop shell's store (#403).
+_OWN_FILE_RE = re.compile(
+    r"(registry\.json(\.(corrupt|bad)-[0-9a-f-]+)?|\.registry\.json\.[\w.-]+\.tmp|user-data\.json)\Z"
+)
+
+
+def reset_all(jobs_dir: Path) -> tuple[list[str], list[str]]:
+    """Delete StemDeck's entries in the jobs folder, clearing the in-memory
+    registry too. Factory reset (Settings -> General -> "Reset app data") --
+    the caller is responsible for checking no job is actively running first
+    (deleting a running job's directory out from under it would corrupt that
+    job, not just reset the library).
+
+    The jobs folder can be shared with other things (a volume mapped onto a
+    share, a folder the user already had), so only what StemDeck made goes:
+    job folders it has a record of or that hold job files, its quarantined
+    failures in failed/, and its own files. Nothing behind a link is touched. Returns the
+    names it could not remove and the names it left alone."""
     with _lock:
+        known = set(_jobs) | _deleted
         _jobs.clear()
         _procs.clear()
     if not jobs_dir.is_dir():
-        return []
+        return [], []
+    failed_root = jobs_dir / "failed"
+    quarantined = quarantine_dirs(jobs_dir)
+    targets = [d for d in job_dirs(jobs_dir) if d.name in known or holds_job_files(d)]
+    targets += quarantined
+    targets += [
+        f
+        for f in jobs_dir.iterdir()
+        if _OWN_FILE_RE.match(f.name) and f.is_file() and is_real_entry(f)
+    ]
     failed: list[str] = []
-    for entry in jobs_dir.iterdir():
+    for entry in targets:
         try:
             if entry.is_dir():
                 shutil.rmtree(entry)
@@ -846,18 +950,29 @@ def reset_all(jobs_dir: Path) -> list[str]:
         except OSError:
             logger.warning("reset: could not remove %s", entry, exc_info=True)
             failed.append(entry.name)
+    # failed/ itself goes only if it is empty now: rmdir refuses otherwise, and
+    # anything still in it is not ours.
+    if quarantined and not any(failed_root.iterdir()):
+        try:
+            failed_root.rmdir()
+        except OSError:
+            logger.warning("reset: could not remove %s", failed_root, exc_info=True)
+            failed.append(failed_root.name)
+    skipped = sorted(e.name for e in jobs_dir.iterdir() if e.name not in failed)
     # Anything that survived is still a job-shaped directory on disk, so the
     # next start would adopt it and the "reset" library would refill itself.
     # Record it as deleted and persist that, which also recreates the registry
-    # file this loop just removed.
+    # file this loop just removed. A known job left alone because it is a link
+    # is one of these too.
     surviving = [name for name in failed if JOB_ID_RE.match(name)]
+    surviving += [name for name in skipped if name in known]
     if surviving:
         with _lock:
             _deleted.update(surviving)
         persist(jobs_dir)
-    return failed
+    return failed, skipped
 
 
-def get_proc(job_id: str) -> subprocess.Popen | None:
+def get_proc(job_id: str, op: Operation = "pipeline") -> subprocess.Popen | None:
     with _lock:
-        return _procs.get(job_id)
+        return _procs.get((job_id, op))

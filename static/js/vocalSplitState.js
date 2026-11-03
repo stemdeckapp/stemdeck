@@ -10,6 +10,7 @@
 
 import { t } from "./i18n.js";
 import { vocalSplitMode } from "./state.js";
+import { JOB_BUSY } from "./errorReason.js";
 
 /** The codes the server sends, each with its sentence (split.reason.*). */
 export const SPLIT_REASONS = Object.freeze([
@@ -31,6 +32,8 @@ export function splitReason(code) {
 
 /** One line on why the split did not work and what to do about it. */
 export function splitReasonText(code) {
+  // Refused, not failed: the song's missing stems are being extracted.
+  if (code === JOB_BUSY) return t("library.songBusy");
   return t(`split.reason.${splitReason(code)}`);
 }
 

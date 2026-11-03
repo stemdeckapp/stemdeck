@@ -107,6 +107,7 @@ from app.core.stems_location import (
     directory_size,
     is_relocating,
     move_library,
+    remove_moved,
     validate_target,
 )
 from app.pipeline.audio_encoders import (
@@ -740,6 +741,10 @@ async def set_stems_location(request: Request) -> dict[str, object]:
         raise HTTPException(status_code=500, detail="Could not move the stems folder") from None
 
     _, persisted = set_jobs_dir(str(target))
+    if persisted:
+        # Not before: until the new location is saved, a restart reads the old
+        # folder, so it has to stay whole.
+        await asyncio.to_thread(remove_moved, JOBS_DIR, result.copied)
     _log.info(
         "stems library moved to %s (%d entries, %d bytes, persisted=%s)",
         target,
@@ -770,7 +775,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
 @app.post("/api/reset", tags=["settings"])
 def reset_app_data() -> dict[str, object]:
     """Factory reset (Settings -> General -> "Reset app data"): delete every
-    job directory and the registry, so no old work session can resurface
+    job directory and the registry (only StemDeck's own entries: see
+    registry.reset_all), so no old work session can resurface
     across package reinstalls -- on desktop, the runtime state that actually
     persists (~/Documents/StemDeck, not the extracted package's own bundled
     data/ folder) survives a fresh install otherwise. The browser-side
@@ -803,13 +809,16 @@ def reset_app_data() -> dict[str, object]:
     # own deletion tombstone, and any surviving directory was then re-adopted on
     # the next start with nothing left to suppress it (#521). reset_all also
     # records the survivors server-side, so they stay deleted regardless.
-    undeleted = reset_registry(JOBS_DIR)
+    undeleted, skipped = reset_registry(JOBS_DIR)
     for job_id in job_ids:
         forget_backing(job_id)
         forget_job_locks(job_id)
     if undeleted:
         _log.warning("reset left %d entries on disk: %s", len(undeleted), undeleted)
-    return {"ok": True, "undeleted": len(undeleted)}
+    if skipped:
+        # Not StemDeck's: the jobs folder is shared with something else.
+        _log.info("reset left %d entries that are not StemDeck's", len(skipped))
+    return {"ok": True, "undeleted": len(undeleted), "skipped": len(skipped)}
 
 
 @app.get("/api/registry", tags=["settings"])

@@ -7,6 +7,7 @@ destroy someone's library. Most of what follows is about refusing to.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,36 @@ def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
     _job_dir(target, "abcdefabcdef")
     (target / "user-data.json").write_text("{}", encoding="utf-8")
     assert validate_target(target, current) == target.resolve()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".DS_Store",
+        "desktop.ini",
+        "Thumbs.db",
+        "registry.json.corrupt-1762000000",
+        "registry.json.bad-1762000000-a1b2c3",
+    ],
+)
+def test_accepts_a_folder_holding_only_what_the_os_or_stemdeck_left_there(tmp_path, name):
+    """A folder Finder just made holds a .DS_Store, one Windows Explorer showed
+    holds desktop.ini or Thumbs.db, and one StemDeck used before can hold the
+    registry copies it set aside itself. None of them is someone else's file,
+    and none is moved over or deleted."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / name).write_bytes(b"theirs")
+    (current / name).write_bytes(b"mine")
+
+    assert validate_target(target, current) == target.resolve()
+    move_library(current, target)
+
+    assert (target / name).read_bytes() == b"theirs"
+    assert (current / name).read_bytes() == b"mine"
+    assert (target / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
 
 
 def test_rejects_a_file(tmp_path):
@@ -683,23 +714,338 @@ def test_a_refused_move_reopens_the_door(client, tmp_path):
 
 
 def _fail_on(monkeypatch, entry_name: str) -> dict[str, bool]:
-    """shutil.move as the stems move calls it, failing for one entry the way a
-    full disk or a file held open by another program does, while the returned
-    switch's "fail" is on."""
+    """One entry cannot be moved, the way a full disk or a file held open by
+    another program stops it, while the returned switch's "fail" is on: its
+    rename is refused, and so is every file the copy that follows reads."""
+    import os
     import shutil
+
+    real_rename, real_copy = os.rename, shutil.copyfile
+    switch = {"fail": True}
+
+    def stopped(src) -> bool:
+        return switch["fail"] and entry_name in Path(src).parts
+
+    def rename(src, dst):
+        if stopped(src):
+            raise OSError(18, "Invalid cross-device link")
+        return real_rename(src, dst)
+
+    def copyfile(src, dst, **kw):
+        if stopped(src):
+            raise OSError(28, "No space left on device")
+        return real_copy(src, dst, **kw)
+
+    monkeypatch.setattr(os, "rename", rename)
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+    return switch
+
+
+@pytest.fixture
+def other_drive(monkeypatch):
+    """Every rename refused the way one across drives is, so the move copies."""
+    import os
+
+    def rename(src, dst):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "rename", rename)
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def _library(root: Path) -> dict[str, bytes]:
+    """Two songs and the registry, as the move finds them."""
+    _job_dir(root, "aaaaaaaaaaaa", size=64)
+    _job_dir(root, "bbbbbbbbbbbb", size=64)
+    (root / "bbbbbbbbbbbb" / "stems" / "drums.wav").write_bytes(b"D" * 64)
+    _write_registry(root, Job(id="aaaaaaaaaaaa", status="done", favorite=True))
+    return _snapshot(root)
+
+
+def _copy_failing_at(monkeypatch, n: int, failure: BaseException) -> dict[str, bool]:
+    """The n-th file copied stops half written, with `failure`, while the
+    returned switch's "fail" is on."""
+    import shutil
+
+    real = shutil.copyfile
+    count = {"n": 0}
+    switch = {"fail": True}
+
+    def copyfile(src, dst, **kw):
+        count["n"] += 1
+        if switch["fail"] and count["n"] == n:
+            Path(dst).write_bytes(Path(src).read_bytes()[:3])
+            raise failure
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+    return switch
+
+
+class _Killed(BaseException):
+    """The process dying: no except clause sees it, so nothing tidies up."""
+
+
+@pytest.mark.parametrize("left", [b"RR", b"\0" * 32], ids=["cut short", "full size, lost data"])
+def test_a_partial_copy_from_an_earlier_attempt_is_replaced(tmp_path, left):
+    """A move across drives that died mid-copy left a song cut short under its
+    final name. The retry used to take it as finished and report the move
+    done, with the truncated song as the only one the app would read. A copy
+    an older version wrote without fsync can also have its full size and
+    zeros after a power cut."""
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa", size=32)
+    target = tmp_path / "new"
+    partial = target / "aaaaaaaaaaaa" / "stems"
+    partial.mkdir(parents=True)
+    (partial / "vocals.wav").write_bytes(left)
+
+    result = move_library(current, target)
+    stems_location.remove_moved(current, result.copied)
+
+    assert (target / "aaaaaaaaaaaa" / "stems" / "vocals.wav").read_bytes() == b"R" * 32
+
+
+def test_a_move_killed_mid_copy_leaves_the_old_library_whole_and_can_be_finished(
+    tmp_path, monkeypatch, other_drive
+):
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    before = _library(current)
+    target = tmp_path / "new"
+    power = _copy_failing_at(monkeypatch, 3, _Killed())
+
+    with pytest.raises(_Killed):
+        move_library(current, target)
+
+    assert _snapshot(current) == before, "nothing is taken from the old library mid-move"
+    assert not (target / "bbbbbbbbbbbb").exists(), "no song cut short under its real name"
+    power["fail"] = False
+
+    result = move_library(current, target)
+
+    assert _snapshot(target) == before
+    assert _snapshot(current) == before, "the originals wait until the setting is saved"
+    stems_location.remove_moved(current, result.copied)
+    assert list(current.iterdir()) == []
+
+
+def test_a_copy_that_does_not_match_its_original_is_not_used(tmp_path, monkeypatch, other_drive):
+    """A network share that reports success for a short write."""
+    import shutil
+
+    current = tmp_path / "old"
+    before = _library(current)
+    target = tmp_path / "new"
+    real = shutil.copyfile
+
+    def short(src, dst, **kw):
+        real(src, dst, **kw)
+        if Path(src).name == "drums.wav":
+            Path(dst).write_bytes(b"D" * 10)
+
+    monkeypatch.setattr(shutil, "copyfile", short)
+
+    with pytest.raises(StemsLocationError, match="Could not move bbbbbbbbbbbb"):
+        move_library(current, target)
+
+    assert _snapshot(current) == before
+    assert not (target / "bbbbbbbbbbbb").exists()
+
+
+def test_a_registry_copy_with_the_right_size_and_wrong_bytes_is_not_used(
+    tmp_path, monkeypatch, other_drive
+):
+    import shutil
+
+    current = tmp_path / "old"
+    before = _library(current)
+    target = tmp_path / "new"
+    real = shutil.copyfile
+
+    def flipped(src, dst, **kw):
+        real(src, dst, **kw)
+        if Path(src).name == "registry.json":
+            data = Path(dst).read_bytes()
+            Path(dst).write_bytes(data[:-2] + b"!!")
+
+    monkeypatch.setattr(shutil, "copyfile", flipped)
+
+    with pytest.raises(StemsLocationError, match="Could not move registry.json"):
+        move_library(current, target)
+
+    assert _snapshot(current) == before
+    assert not (target / "registry.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (OSError(28, "No space left on device"), "No space left on device"),
+        (PermissionError(13, "Permission denied"), "Permission denied"),
+        # Its text carries the full path; strerror is None.
+        (shutil.SpecialFileError("`/Users/me/jobs/x` is a named pipe"), "it could not be copied"),
+    ],
+)
+def test_a_copy_that_fails_keeps_the_old_library_and_the_setting(
+    client, tmp_path, monkeypatch, other_drive, failure, reason
+):
+    import app.core.settings as settings_mod
+    from app.core import stems_location
+
+    before = _library(client.jobs_dir)
+    target = tmp_path / "elsewhere"
+    _copy_failing_at(monkeypatch, 3, failure)
+
+    r = client.post("/api/settings/stems-location", json={"path": str(target)})
+
+    assert r.status_code == 500
+    detail = r.json()["detail"]
+    assert detail.startswith(f"Could not move bbbbbbbbbbbb: {reason}.")
+    assert str(tmp_path) not in detail, "no paths in errors"
+    assert _snapshot(client.jobs_dir) == before
+    assert sorted(p.name for p in target.iterdir()) == ["aaaaaaaaaaaa"], "no half copy left"
+    assert settings_mod.get_jobs_dir() is None
+    assert stems_location.is_relocating() is False
+
+
+def test_the_originals_are_removed_only_once_the_new_location_is_saved(
+    client, tmp_path, monkeypatch, other_drive
+):
+    import app.core.settings as settings_mod
+
+    before = _library(client.jobs_dir)
+    target = tmp_path / "elsewhere"
+    monkeypatch.setattr(settings_mod, "_save", lambda: False)
+
+    body = client.post("/api/settings/stems-location", json={"path": str(target)}).json()
+
+    assert body["persisted"] is False
+    assert _snapshot(client.jobs_dir) == before, "a restart reads this folder, so it stays whole"
+    assert _snapshot(target) == before
+
+
+def test_a_move_across_drives_drains_the_old_folder(client, tmp_path, other_drive):
+    before = _library(client.jobs_dir)
+    target = tmp_path / "elsewhere"
+
+    r = client.post("/api/settings/stems-location", json={"path": str(target)})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["moved_entries"] == 3
+    assert _snapshot(target) == before
+    assert list(client.jobs_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_a_link_inside_the_library_is_never_followed_out_of_it(
+    tmp_path, monkeypatch, other_drive, kind
+):
+    import os
+    import subprocess
 
     from app.core import stems_location
 
-    real = shutil.move
-    switch = {"fail": True}
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("not the library's", encoding="utf-8")
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    link = current / "aaaaaaaaaaaa" / "elsewhere"
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are a Windows thing")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(outside)], check=True, capture_output=True
+        )
+    else:
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks are not available here")
+    target = tmp_path / "new"
 
-    def flaky(src, dst):
-        if switch["fail"] and Path(src).name == entry_name:
-            raise OSError(28, "No space left on device")
-        return real(src, dst)
+    with pytest.raises(StemsLocationError, match="Could not move aaaaaaaaaaaa: a link"):
+        move_library(current, target)
 
-    monkeypatch.setattr(stems_location.shutil, "move", flaky)
-    return switch
+    assert list(target.iterdir()) == [], "nothing from outside is copied in"
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == "not the library's"
+    assert stems_location._is_link(link), "the link itself stays where it was"
+    assert (current / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
+
+
+@pytest.fixture
+def stat_without_the_junction_tag(monkeypatch):
+    """The stat module as Linux and macOS have it: no IO_REPARSE_TAG_* names."""
+    import stat
+
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+
+
+def test_a_move_across_drives_works_where_stat_names_no_junction_tag(
+    tmp_path, other_drive, stat_without_the_junction_tag
+):
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    before = _library(current)
+    target = tmp_path / "new"
+
+    result = move_library(current, target)
+    stems_location.remove_moved(current, result.copied)
+
+    assert _snapshot(target) == before
+    assert list(current.iterdir()) == []
+
+
+def test_a_symlink_is_refused_where_stat_names_no_junction_tag(
+    tmp_path, other_drive, stat_without_the_junction_tag
+):
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (current / "aaaaaaaaaaaa" / "elsewhere").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+
+    with pytest.raises(StemsLocationError, match="Could not move aaaaaaaaaaaa: a link"):
+        move_library(current, tmp_path / "new")
+
+
+def test_an_unfinished_copy_of_any_entry_is_cleared_by_the_retry(tmp_path):
+    """A crash mid-copy leaves `.<entry>.moving` in the target. It must not make
+    the retry refuse the folder as someone else's, whatever the entry is."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "registry.json.0f1e2d.tmp").write_text("{}", encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / ".registry.json.0f1e2d.tmp.moving").write_text("{", encoding="utf-8")
+
+    assert validate_target(target, current) == target.resolve()
+    move_library(current, target)
+
+    assert not (target / ".registry.json.0f1e2d.tmp.moving").exists()
+    assert (target / "registry.json.0f1e2d.tmp").read_text(encoding="utf-8") == "{}"
+
+
+def test_a_dot_moving_file_that_is_no_copy_of_ours_is_still_someone_elses(tmp_path):
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / ".my-notes.moving").write_text("mine", encoding="utf-8")
+
+    with pytest.raises(StemsLocationError, match="empty folder"):
+        validate_target(target, current)
 
 
 def test_a_half_failed_move_names_the_entry_and_keeps_the_setting(client, tmp_path, monkeypatch):
@@ -841,6 +1187,43 @@ def test_a_linked_registry_in_the_target_is_refused(tmp_path):
 
     with pytest.raises(StemsLocationError, match="already holds another StemDeck library"):
         validate_target(target, current)
+
+
+def test_a_library_can_be_pointed_at_from_a_folder_with_no_songs(client, tmp_path):
+    """Settings were lost while the library's drive was unplugged, so StemDeck
+    started in its default folder and wrote a registry there. Picking the
+    library again must point at it, not refuse it as another library, and must
+    not carry the stray registry over the real one."""
+    import app.core.settings as settings_mod
+
+    stray = _write_registry(client.jobs_dir, Job(id="dddddddddddd", status="done"))
+    (client.jobs_dir / "user-data.json").write_text('{"stray": 1}', encoding="utf-8")
+    library = tmp_path / "external-drive" / "StemDeck"
+    _job_dir(library, "aaaaaaaaaaaa")
+    real = _write_registry(library, Job(id="aaaaaaaaaaaa", status="done", favorite=True))
+    (library / "user-data.json").write_text('{"real": 1}', encoding="utf-8")
+
+    r = client.post("/api/settings/stems-location", json={"path": str(library)})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["moved_entries"] == 0
+    assert (library / "registry.json").read_text(encoding="utf-8") == real
+    assert (library / "user-data.json").read_text(encoding="utf-8") == '{"real": 1}'
+    assert (client.jobs_dir / "registry.json").read_text(encoding="utf-8") == stray
+    assert settings_mod.get_jobs_dir() == str(library.resolve())
+
+
+def test_a_folder_with_songs_still_refuses_another_library(tmp_path):
+    """Pointing away from a folder that holds songs would leave them behind."""
+    current = tmp_path / "default"
+    _job_dir(current, "dddddddddddd")
+    _write_registry(current, Job(id="dddddddddddd", status="done"))
+    library = tmp_path / "library"
+    _job_dir(library, "aaaaaaaaaaaa")
+    _write_registry(library, Job(id="aaaaaaaaaaaa", status="done"))
+
+    with pytest.raises(StemsLocationError, match="already holds another StemDeck library"):
+        validate_target(library, current)
 
 
 def test_a_registry_copied_but_not_yet_removed_is_our_own_progress(tmp_path):

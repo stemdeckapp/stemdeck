@@ -50,6 +50,7 @@ from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
 from app.core.registry import is_upload, saved_fields
 from app.core.registry import mark_deleted as registry_mark_deleted
+from app.core.registry import operation as registry_operation
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
@@ -592,7 +593,7 @@ def cancel_job(job_id: str) -> dict:
         if job.stem_fill == "running":
             job.cancel_requested = True
             if cancel_fill(job_id):
-                proc = registry_get_proc(job_id)
+                proc = registry_get_proc(job_id, "fill")
                 if proc is not None and proc.poll() is None:
                     proc.terminate()
         # A vocal split only ever runs on a done job, so this early return made
@@ -602,14 +603,14 @@ def cancel_job(job_id: str) -> dict:
         # split's own error path marks it failed and releases the lock.
         elif job.vocal_split == "running":
             job.cancel_requested = True
-            proc = registry_get_proc(job_id)
+            proc = registry_get_proc(job_id, "split")
             if proc is not None and proc.poll() is None:
                 proc.terminate()
         # A line-by-line timing of its lyrics (POST .../lyrics/retime) stops
         # the same way: the run sees its own flag, never the job's, and
         # leaves the lyrics as they were.
         elif cancel_run(job_id):
-            proc = registry_get_proc(job_id)
+            proc = registry_get_proc(job_id, "retime")
             if proc is not None and proc.poll() is None:
                 proc.terminate()
         return job.to_state()
@@ -838,6 +839,11 @@ async def start_vocal_split(job_id: str) -> Response:
         raise HTTPException(status_code=409, detail="vocal split already running")
     if job.vocal_split == "done":
         return JSONResponse(_job_state(job), status_code=202)
+    # Refused, not queued behind it: starting it here cleared the cancel sent
+    # to the fill. No await from here to "running", and the fill re-checks
+    # after its own, so the two never both start.
+    if job.stem_fill == "running":
+        raise JobBusy()
 
     stems_dir = (JOBS_DIR / job_id / "stems").resolve()
     if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
@@ -862,13 +868,14 @@ async def start_vocal_split(job_id: str) -> Response:
                 )
             logger.info("[%s] vocal split started", job_id)
             started = time.monotonic()
-            new_names = await asyncio.to_thread(split_vocals, job, stems_dir)
-            # The peaks are read from the new WAVs first; then the two are kept
-            # the way the song keeps its stems (#783). Neither raises.
-            rms_values = await asyncio.to_thread(
-                merge_stem_peaks, stems_dir, ["vocals", *new_names]
-            )
-            await asyncio.to_thread(store_split_stems, job, stems_dir, new_names)
+            with registry_operation("split"):
+                new_names = await asyncio.to_thread(split_vocals, job, stems_dir)
+                # The peaks are read from the new WAVs first; then the two are
+                # kept the way the song keeps its stems (#783). Neither raises.
+                rms_values = await asyncio.to_thread(
+                    merge_stem_peaks, stems_dir, ["vocals", *new_names]
+                )
+                await asyncio.to_thread(store_split_stems, job, stems_dir, new_names)
     except Exception as e:
         cause = classify_failure("\n".join([*(getattr(e, "tail", None) or []), str(e)]))
         logger.warning("[%s] vocal split failed: %s", job_id, e, exc_info=True)
@@ -1075,8 +1082,9 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     if source is None and (job.source_url or "local:").startswith("local:"):
         raise HTTPException(status_code=409, detail=_FILL_REFUSALS["no_source"])
     # Checked again here, after the await above: the first of two requests
-    # to get this far is the one that runs.
-    if job.stem_fill == "running":
+    # to get this far is the one that runs, and a split started meanwhile
+    # keeps the song.
+    if job.post_hoc_running():
         raise HTTPException(status_code=409, detail="the song is busy")
     # A cancel is for the run it was sent to, as for the vocal split.
     job.cancel_requested = False
@@ -1084,7 +1092,8 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     _set(job, stage="Extracting missing stems...")
     try:
         async with _pipeline_lock:
-            filled = await asyncio.to_thread(fill_stems, job, job_dir, wanted, source)
+            with registry_operation("fill"):
+                filled = await asyncio.to_thread(fill_stems, job, job_dir, wanted, source)
     except FillRefused as e:
         job.stem_fill = "error"
         _set(job, stage="Done")
@@ -1863,9 +1872,10 @@ async def _retime_task(job: Job, job_dir: Path, run: RetimeRun, lyrics: dict | N
             run.started = True
             if cancelled():
                 raise JobCancelled()
-            outcome = await asyncio.to_thread(
-                retime_job, job, job_dir, cancelled=cancelled, report=report, lyrics=lyrics
-            )
+            with registry_operation("retime"):
+                outcome = await asyncio.to_thread(
+                    retime_job, job, job_dir, cancelled=cancelled, report=report, lyrics=lyrics
+                )
         run.outcome = outcome
         run.state = outcome.state
     except JobCancelled:
@@ -2214,21 +2224,34 @@ def reset_beats(job_id: str) -> dict:
 
 
 @router.delete("/{job_id}")
-def delete_job(job_id: str) -> dict[str, str]:
-    """Delete a completed or failed job and remove its stem files from disk."""
+def delete_job(job_id: str, response: Response) -> dict[str, str]:
+    """Delete a completed or failed job and remove its stem files from disk.
+
+    A job emptied from the Trash while the stop its trash sent is still
+    settling answers 202: the page has already let it go, so a refusal left
+    its folder and record on disk with nothing showing them (#748). The id is
+    marked deleted first, and the runner removes the job once it settles
+    (jobqueue.finish_deferred_delete)."""
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in FINISHED_STATUSES:
-        raise HTTPException(status_code=409, detail="job is still running")
+        if job.trashed_at is None:
+            raise HTTPException(status_code=409, detail="job is still running")
+        registry_mark_deleted(job_id)
+        registry_persist(JOBS_DIR)
+        # Read after the mark: settled meanwhile, it is deleted below instead.
+        if job.status not in FINISHED_STATUSES:
+            response.status_code = 202
+            return {"job_id": job_id, "status": "deleting"}
     if job.post_hoc_running():
         raise JobBusy()
     # A timing of its lyrics in flight stops rather than write into a
     # directory being removed (it also checks the job is still registered).
     if cancel_run(job_id):
-        proc = registry_get_proc(job_id)
+        proc = registry_get_proc(job_id, "retime")
         if proc is not None and proc.poll() is None:
             proc.terminate()
         # The worker may still have the vocals open while it stops.

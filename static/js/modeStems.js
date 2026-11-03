@@ -24,6 +24,7 @@ import { setLaneLayout, shownLaneLayout } from "./player.js";
 import { mixModeInForce, onMixModeSettled, syncVersionMix } from "./mixMode.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { noteSplitOutcome, splitReason } from "./vocalSplitState.js";
+import { JOB_BUSY } from "./errorReason.js";
 import { scopeFor, activeVersionStems, songVersions } from "./versionScope.js";
 import { dismissFailuresByJobId } from "./notifications.js";
 import {
@@ -348,8 +349,11 @@ export async function runVocalSplit(jobId) {
   try {
     const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/vocal-split`, { method: "POST" });
     ok = res.ok || res.status === 202;
-    if (res.status === 409) [ok, reason] = await waitForSplit(jobId);
-    else if (!ok) reason = splitReason((await res.json().catch(() => ({})))?.vocal_split_reason);
+    const body = ok ? null : await res.json().catch(() => ({}));
+    // A 409 is a split already running, to wait for, or a song whose missing
+    // stems are being extracted, which refuses it (job_busy).
+    if (res.status === 409) [ok, reason] = body?.code === JOB_BUSY ? [false, JOB_BUSY] : await waitForSplit(jobId);
+    else if (!ok) reason = splitReason(body?.vocal_split_reason);
   } catch (err) {
     console.warn("[modeStems] the vocal split failed:", err);
   }
