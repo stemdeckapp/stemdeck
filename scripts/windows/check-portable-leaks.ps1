@@ -261,8 +261,15 @@ if ($Manual) {
             try { Invoke-RestMethod "$base/api/health" -TimeoutSec 5 | Out-Null; break } catch { Start-Sleep -Seconds 2 }
         }
         Invoke-RestMethod "$base/api/settings" | Out-Null
-        $job = (& curl.exe -s -F "file=@`"$((Resolve-Path $Wav).Path)`"" "$base/api/jobs" | ConvertFrom-Json).job_id
-        if (-not $job) { throw "the import over HTTP was refused" }
+        Add-Type -AssemblyName System.Net.Http
+        $client = New-Object System.Net.Http.HttpClient
+        $form = New-Object System.Net.Http.MultipartFormDataContent
+        $audio = New-Object System.Net.Http.ByteArrayContent(, [IO.File]::ReadAllBytes((Resolve-Path $Wav).Path))
+        $form.Add($audio, "file", (Split-Path $Wav -Leaf))
+        $response = $client.PostAsync("$base/api/jobs", $form).Result
+        $answer = $response.Content.ReadAsStringAsync().Result
+        if (-not $response.IsSuccessStatusCode) { throw "the import over HTTP was refused: $answer" }
+        $job = ($answer | ConvertFrom-Json).job_id
         do {
             Start-Sleep -Seconds 3
             $status = (Invoke-RestMethod "$base/api/jobs/$job").status
