@@ -9,7 +9,7 @@
 // job, whose stems are real files.
 
 import { test, expect } from "@playwright/test";
-import { JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, fixtureTrack, seedCatalogState, stubImportQueue, stubUpdateCheck } from "./helpers.mjs";
+import { JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, fixtureTrack, readCatalogState, seedCatalogState, stubImportQueue, stubUpdateCheck } from "./helpers.mjs";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 
 const en = TRANSLATIONS.en;
@@ -138,9 +138,15 @@ test.describe("a failed link import", () => {
 });
 
 test.describe("a failed upload", () => {
-  test("says its cause and to add the file again, and offers no Try again", async ({ page }) => {
+  test("says its cause, and Try again runs its job again from the kept file", async ({ page }) => {
     const queue = await stubImportQueue(page, UPLOAD, "My Song");
     await stubJob(page, UPLOAD, { ...failedState(UPLOAD, "local:My Song", `out-of-memory ${DASH} CUDA out of memory`), title: "My Song" });
+    const extracts = [];
+    await page.route(`**/api/jobs/${UPLOAD}/extract`, (route) => {
+      extracts.push(route.request().method());
+      return route.fulfill({ json: queuedState(UPLOAD) });
+    });
+    const posts = await stubSubmit(page, () => ({ json: { job_id: RETRIED } }));
     await openApp(page, {
       [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
       [UPLOAD]: { ...fixtureTrack(UPLOAD, "My Song"), status: "processing", sourceUrl: "local:My Song" },
@@ -153,9 +159,36 @@ test.describe("a failed upload", () => {
     const card = page.locator(".daw-notif-error").first();
     await expect(card).toContainText(sentence);
     await expect(card).not.toContainText("out-of-memory");
+    await page.locator("#notifBtn").click();
     const row = page.locator(`.cat-item[data-id="${UPLOAD}"]`).first();
-    await expect(row).toBeVisible();
+    const retry = row.locator(".cat-extract");
+    await expect(retry).toHaveText(en["job.tryAgain"]);
+    await retry.click();
+
+    await expect.poll(() => extracts).toEqual(["POST"]);
+    await expect.poll(async () => (await readCatalogState(page)).tracks[UPLOAD].status).toBe("queued");
     await expect(row.locator(".cat-extract")).toHaveCount(0);
+    expect(posts).toEqual([]);
+  });
+
+  test("refused, Try again says why and stays", async ({ page }) => {
+    await stubJob(page, UPLOAD, { ...failedState(UPLOAD, "local:My Song", "unknown"), title: "My Song" });
+    await page.route(`**/api/jobs/${UPLOAD}/extract`, (route) =>
+      route.fulfill({ status: 409, json: { detail: "the file is no longer kept" } }));
+    const posts = await stubSubmit(page, () => ({ json: { job_id: RETRIED } }));
+    await openApp(page, {
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
+      [UPLOAD]: { ...fixtureTrack(UPLOAD, "My Song"), status: "error", sourceUrl: "local:My Song" },
+    });
+
+    const row = page.locator(`.cat-item[data-id="${UPLOAD}"]`).first();
+    await row.locator(".cat-extract").click();
+
+    await page.locator("#notifBtn").click();
+    await expect(page.locator(".daw-notif-error").first()).toContainText("the file is no longer kept");
+    await expect(row.locator(".cat-extract")).toBeEnabled();
+    expect((await readCatalogState(page)).tracks[UPLOAD].status).toBe("error");
+    expect(posts).toEqual([]);
   });
 });
 

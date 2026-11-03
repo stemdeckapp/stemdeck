@@ -727,6 +727,126 @@ def test_get_failure_traceback_is_empty_list_when_absent(client, tmp_path, monke
     assert r.json()["traceback"] == []
 
 
+# ─── POST /jobs/{id}/extract: Try again for a failed upload ──────────────────
+
+
+def _failed_upload(job_id, *, keep_source=True):
+    """An upload whose job errored, quarantined by the runner itself:
+    jobs/failed/<id> with error.txt and, since #868, the source it kept."""
+    import app.api.jobs as jobs_mod
+    from app.core.registry import register
+    from app.pipeline.runner import _quarantine_failed_job
+
+    job_dir = jobs_mod.JOBS_DIR / job_id
+    job_dir.mkdir(parents=True)
+    (job_dir / "source.wav").write_bytes(b"RIFF")
+    job = Job(
+        id=job_id,
+        status="error",
+        title="My Song",
+        source_url="local:My Song",
+        error="Audio processing failed. Please try again.",
+    )
+    register(job)
+    _quarantine_failed_job(job, job_dir, jobs_mod.JOBS_DIR, RuntimeError("CUDA out of memory"))
+    failed_dir = jobs_mod.JOBS_DIR / "failed" / job_id
+    if not keep_source:
+        (failed_dir / "source.wav").unlink()
+    return job, failed_dir, job_dir
+
+
+def test_extract_runs_a_failed_upload_again_from_its_kept_source(client):
+    from app.pipeline.jobqueue import _find_local_source
+
+    job, failed_dir, job_dir = _failed_upload("abcdef000001")
+    assert job.error_detail
+
+    r = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+    assert _find_local_source(job_dir) == job_dir / "source.wav"
+    assert not failed_dir.exists()
+    assert not (job_dir / "error.txt").exists()
+    assert job.error is None
+    assert job.error_detail is None
+
+
+def test_extract_runs_a_failed_upload_its_quarantine_left_in_place(client):
+    """A quarantine that failed (disk full writing error.txt) leaves an
+    upload's folder where it was, source and all."""
+    import app.api.jobs as jobs_mod
+    from app.core.registry import register
+
+    job_dir = jobs_mod.JOBS_DIR / "abcdef000005"
+    job_dir.mkdir(parents=True)
+    (job_dir / "source.wav").write_bytes(b"RIFF")
+    (job_dir / "error.txt").write_text("cause: unknown\n", encoding="utf-8")
+    job = Job(id=job_dir.name, status="error", source_url="local:My Song")
+    register(job)
+
+    r = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert r.status_code == 200
+    assert (job_dir / "source.wav").is_file()
+    assert not (job_dir / "error.txt").exists()
+
+
+def test_extract_refuses_a_failed_upload_it_cannot_move_back(client, monkeypatch):
+    """A file held open on Windows: the kept file stays where it was."""
+    from pathlib import Path
+
+    job, failed_dir, job_dir = _failed_upload("abcdef000006")
+
+    def locked(self, target):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "rename", locked)
+    r = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert r.status_code == 409
+    assert job.status == "error"
+    assert (failed_dir / "source.wav").is_file()
+
+
+def test_extract_refuses_a_failed_upload_whose_file_is_gone(client):
+    job, failed_dir, job_dir = _failed_upload("abcdef000002", keep_source=False)
+
+    r = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert r.status_code == 409
+    assert job.status == "error"
+    assert (failed_dir / "error.txt").is_file()
+    assert not job_dir.exists()
+
+
+def test_extract_refuses_a_failed_link(client):
+    """A link is tried again as a new import of the link, not from here."""
+    from app.core.registry import register
+
+    job = Job(id="abcdef000003", status="error", source_url="https://youtu.be/dQw4w9WgXcQ")
+    register(job)
+
+    assert client.post(f"/api/jobs/{job.id}/extract").status_code == 409
+    assert job.status == "error"
+
+
+def test_extract_puts_a_failed_upload_back_when_the_queue_is_full(client):
+    from app.core.registry import register
+
+    for i in range(MAX_PENDING_UPLOAD_JOBS):
+        register(Job(id=f"aaaaaaaa{i:04x}", status="queued", source_url="local:Waiting"))
+    job, failed_dir, job_dir = _failed_upload("abcdef000004")
+
+    r = client.post(f"/api/jobs/{job.id}/extract")
+
+    assert r.status_code == 503
+    assert job.status == "error"
+    assert (failed_dir / "source.wav").is_file()
+    assert (failed_dir / "error.txt").is_file()
+    assert not job_dir.exists()
+
+
 # ─── POST /jobs/{id}/vocal-split (#275) ──────────────────────────────────────
 
 

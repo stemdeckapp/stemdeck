@@ -2020,19 +2020,23 @@ function extractButtonHtml(track) {
 }
 
 /**
- * A failed link import can be tried again: the server quarantines a failed
+ * A failed import can be tried again. A link: the server quarantines a failed
  * job and forgets it on restart, so this is a new import of the same link,
- * which takes over the failed row (addTrackToLibrary, by source). A failed
- * upload's file is kept in the quarantine (jobs/failed/<id>), but nothing can
- * queue a job from there, so it has no Try again.
+ * which takes over the failed row (addTrackToLibrary, by source). An upload
+ * cannot be fetched again, so Extract runs its job again from the file the
+ * quarantine kept (jobs/failed/<id>).
  */
 function canRetryImport(track) {
-  return track.status === "error" && isReimportableSource(track.sourceUrl);
+  return track.status === "error" && !!track.sourceUrl;
 }
 
 function retryFailedImport(trackId) {
   const track = tracks[trackId];
   if (!track || !canRetryImport(track)) return;
+  if (!isReimportableSource(track.sourceUrl)) {
+    extractStoppedTrack(trackId);
+    return;
+  }
   dismissFailuresByJobId(trackId);
   importFromUrl(track.sourceUrl, { title: track.title, stems: track.selectedStems });
 }
@@ -2048,6 +2052,8 @@ async function extractStoppedTrack(trackId) {
       return;
     }
     if (tracks[trackId]) tracks[trackId].status = "queued";
+    // A failed upload's cause card goes once its retry is accepted, not before.
+    dismissFailuresByJobId(trackId);
     // Like any import (#747): it opens when done, if the studio is still empty.
     armAutoOpen(trackId);
     saveState();
