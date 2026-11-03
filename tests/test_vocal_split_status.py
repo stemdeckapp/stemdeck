@@ -165,6 +165,8 @@ def test_a_failed_warmup_is_remembered(monkeypatch, capsys):
         raise ImportError("No module named 'torchvision'")
 
     monkeypatch.setattr(warmup, "_STEPS", (("vocal_split", broken),))
+    # The space check reads this machine's disk and model folders; not here.
+    monkeypatch.setattr(warmup, "_bytes_needed", lambda: 0)
     assert warmup.main() == 0
 
     assert "WARMUP_FAILED vocal_split" in capsys.readouterr().out
@@ -177,6 +179,8 @@ def test_a_good_warmup_clears_an_old_failure(monkeypatch):
 
     vss.record(False, DEPENDENCY_MISSING, source="warmup")
     monkeypatch.setattr(warmup, "_STEPS", (("vocal_split", lambda: None),))
+    # The space check reads this machine's disk and model folders; not here.
+    monkeypatch.setattr(warmup, "_bytes_needed", lambda: 0)
     warmup.main()
 
     vss.reset_state()

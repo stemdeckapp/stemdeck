@@ -163,14 +163,46 @@ struct BackendHandles {
     _job: Option<backendjob::KillOnCloseJob>,
 }
 
+struct SetupChild {
+    label: String,
+    #[cfg(unix)]
+    pid: u32,
+    /// The job it runs in (run_setup_child): ending the job ends whatever the
+    /// child started as well.
+    #[cfg(windows)]
+    job: Option<Arc<backendjob::KillOnCloseJob>>,
+}
+
+impl SetupChild {
+    fn stop(&self) -> Result<(), String> {
+        // SAFETY: the pid was stored right after spawn and is cleared once the
+        // child has been waited on; SIGTERM is best-effort.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(self.pid as libc::pid_t, libc::SIGTERM)
+        };
+        #[cfg(windows)]
+        match &self.job {
+            Some(job) => job
+                .terminate()
+                .map_err(|e| format!("could not stop the {}: {e}", self.label))?,
+            // spawn_in_job could not make a job and said so; there is no
+            // handle left here to end the child with.
+            None => return Err(format!("could not stop the {}: it has no job", self.label)),
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct BackendStateInner {
     handles: Option<BackendHandles>,
     /// True while start_backend is executing; prevents concurrent starts (#145).
     starting: bool,
-    /// PID of an in-progress setup-time subprocess (pip install, or the model
-    /// warmup download, #275); killed by stop_backend on window close (#140).
-    setup_child_pid: Option<u32>,
+    /// The setup-time subprocess in progress (pip install, or the model warmup
+    /// download, #275), stopped by stop_backend on window close (#140) and by
+    /// the wizard's Skip (#405).
+    setup_child: Option<SetupChild>,
     /// Save destinations the user has picked but not yet downloaded to (#338).
     ///
     /// The export is two commands so the UI can tell "choosing a folder" apart
@@ -572,6 +604,7 @@ fn main() {
             ensure_torch_device,
             repair_torchvision,
             warmup_models,
+            skip_model_warmup,
             start_backend,
             restart_backend,
             build_target,
@@ -1778,14 +1811,88 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
     })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct ModelWarmupStatus {
     demucs_ready: bool,
     beat_this_ready: bool,
     sections_ready: bool,
     vocal_split_ready: bool,
+    whisper_ready: bool,
+    /// The models that failed because their download host could not be
+    /// reached or stopped answering (WARMUP_OFFLINE).
+    offline: Vec<String>,
+    /// Set when the disk could not hold the models, so none was downloaded.
+    no_space: Option<NoSpace>,
 }
+
+#[derive(Serialize, Debug, PartialEq)]
+struct NoSpace {
+    needed: u64,
+    free: u64,
+}
+
+impl ModelWarmupStatus {
+    /// The status `app/pipeline/warmup.py` reported, from its stdout.
+    fn from_stdout(stdout: &str) -> Self {
+        let mut status = Self::default();
+        for line in stdout.lines() {
+            match line.split(' ').collect::<Vec<_>>().as_slice() {
+                ["WARMUP_OK", "demucs"] => status.demucs_ready = true,
+                ["WARMUP_OK", "beat_this"] => status.beat_this_ready = true,
+                ["WARMUP_OK", "sections"] => status.sections_ready = true,
+                ["WARMUP_OK", "vocal_split"] => status.vocal_split_ready = true,
+                ["WARMUP_OK", "whisper"] => status.whisper_ready = true,
+                ["WARMUP_OFFLINE", model] => status.offline.push(model.to_string()),
+                ["WARMUP_NO_SPACE", needed, free] => {
+                    if let (Ok(needed), Ok(free)) = (needed.parse(), free.parse()) {
+                        status.no_space = Some(NoSpace { needed, free });
+                    }
+                }
+                _ => {}
+            }
+        }
+        status
+    }
+}
+
+/// One `WARMUP_START <model> <n> <count>` line, sent to the setup screen as
+/// it arrives so it can say which model it is on (#405).
+#[derive(Clone, Serialize, Debug, PartialEq)]
+struct WarmupProgress {
+    model: String,
+    number: u32,
+    count: u32,
+}
+
+fn warmup_progress(line: &str) -> Option<WarmupProgress> {
+    let mut parts = line.strip_prefix("WARMUP_START ")?.split(' ');
+    let model = parts.next()?.to_string();
+    let number = parts.next()?.parse().ok()?;
+    let count = parts.next()?.parse().ok()?;
+    Some(WarmupProgress {
+        model,
+        number,
+        count,
+    })
+}
+
+const MODEL_WARMUP_LABEL: &str = "model warmup";
+
+/// How long the model warmup may say nothing on either stream before it is
+/// taken for hung (#405). It is not the download bound: the downloads in it
+/// give up by themselves and say so, and tqdm writes to stderr while bytes
+/// arrive. This catches a warmup stuck past those bounds. The longest silence
+/// any of them allows is audio-separator's 300 s read timeout: the real
+/// warmup behind a proxy that never answers was quiet on both streams for
+/// 300 s there and at most 77 s anywhere else. A minute over that, so a dead
+/// connection still gets its own message, naming the model.
+const WARMUP_STALL_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+
+/// Backstop for a warmup that keeps talking and never finishes. The largest
+/// model is 1.6 GB: about 35 minutes at 0.77 MB/s, the slowest connection a
+/// report has measured (#502).
+const WARMUP_HARD_CAP: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Eagerly downloads/caches the ML models StemDeck uses (Demucs, beat-this,
 /// automatic song sections, and the on-demand lead/backing vocal-split karaoke model, #275) via
@@ -1795,7 +1902,19 @@ struct ModelWarmupStatus {
 /// still proceeds, and that one feature falls back to its existing
 /// lazy-download-on-first-use behavior, same as before this step existed.
 #[tauri::command]
-fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus, String> {
+async fn warmup_models(app: tauri::AppHandle) -> Result<ModelWarmupStatus, String> {
+    // Off the main thread. A command that is not async runs on it, so while
+    // the models downloaded the window could not even be closed (#405), and
+    // the wizard's Skip could not have reached the shell.
+    tauri::async_runtime::spawn_blocking(move || run_model_warmup(&app.state(), &app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn run_model_warmup(
+    state: &BackendState,
+    app: &tauri::AppHandle,
+) -> Result<ModelWarmupStatus, String> {
     log_setup_step("model-warmup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1821,27 +1940,32 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
     // will load anything (#505).
     apply_ffmpeg_path(&mut command, &data_dir)?;
 
-    let output = run_setup_child(&mut command, &state, "model warmup", |child| {
-        child_output_with_timeout(child, Duration::from_secs(30 * 60), "model warmup")
-    })?;
+    // A fixed 30 minutes from spawn used to be the only bound: a dead
+    // connection held the screen that long, and a healthy slow one was killed
+    // at it. Silence is the honest signal, as for pip (#502).
+    let progress = app.clone();
+    let output = run_setup_child(&mut command, state, MODEL_WARMUP_LABEL, |child| {
+        child_output_streaming(
+            child,
+            WARMUP_STALL_TIMEOUT,
+            WARMUP_HARD_CAP,
+            MODEL_WARMUP_LABEL,
+            move |line| {
+                if let Some(step) = warmup_progress(line) {
+                    let _ = progress.emit("model-warmup-progress", step);
+                }
+            },
+        )
+    });
+    let output = output.inspect_err(|e| append_to_setup_log(&data_dir, e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut status = ModelWarmupStatus {
-        demucs_ready: false,
-        beat_this_ready: false,
-        sections_ready: false,
-        vocal_split_ready: false,
-    };
     for line in stdout.lines() {
-        match line {
-            "WARMUP_OK demucs" => status.demucs_ready = true,
-            "WARMUP_OK beat_this" => status.beat_this_ready = true,
-            "WARMUP_OK sections" => status.sections_ready = true,
-            "WARMUP_OK vocal_split" => status.vocal_split_ready = true,
-            _ if line.starts_with("WARMUP_FAILED") => {
-                append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
-            }
-            _ => {}
+        if ["WARMUP_FAILED", "WARMUP_NO_SPACE", "WARMUP_NOTE"]
+            .iter()
+            .any(|kind| line.starts_with(kind))
+        {
+            append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
         }
     }
     if !output.status.success() {
@@ -1854,30 +1978,71 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
             ),
         );
     }
-    Ok(status)
+    Ok(ModelWarmupStatus::from_stdout(&stdout))
 }
 
-/// Runs a setup child (pip, the model warmup) through `wait`, with its pid in
-/// `setup_child_pid` meanwhile so closing the window can stop it. On Windows,
-/// where that close path has no signal to send, the child runs in a job that
-/// StemDeck's exit closes, which ends it and whatever it started.
+/// Runs a setup child (pip, the model warmup) through `wait`, recorded in
+/// `setup_child` meanwhile so closing the window or Skip can stop it. On
+/// Windows the child runs in a job, which stopping ends and which StemDeck's
+/// exit closes, either way ending it and whatever it started.
 fn run_setup_child(
     command: &mut Command,
     state: &BackendState,
     label: &str,
     wait: impl FnOnce(Child) -> Result<Output, String>,
 ) -> Result<Output, String> {
-    // Held to the end of this function: dropping the job ends the child.
-    let (child, _job) =
-        backendjob::spawn_in_job(command).map_err(|e| format!("failed to start {label}: {e}"))?;
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
+    // One at a time: there is one slot to stop a child through, and two
+    // downloads into the same cache would only race each other. The check and
+    // the spawn share the lock so two callers cannot both pass it.
+    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if let Some(running) = &inner.setup_child {
+        return Err(format!(
+            "{label} not started: the {} is still running",
+            running.label
+        ));
     }
+    // Held to the end of this function: dropping the last handle to the job
+    // ends the child.
+    let (child, job) =
+        backendjob::spawn_in_job(command).map_err(|e| format!("failed to start {label}: {e}"))?;
+    let _job = job.map(Arc::new);
+    inner.setup_child = Some(SetupChild {
+        label: label.to_string(),
+        #[cfg(unix)]
+        pid: child.id(),
+        #[cfg(windows)]
+        job: _job.clone(),
+    });
+    drop(inner);
     let output = wait(child);
     if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
+        inner.setup_child = None;
     }
     output
+}
+
+/// The wizard's Skip on the model step (#405). Stops the model warmup and
+/// nothing else, so a stray call can never cut a pip install short. Each
+/// model then downloads the first time a feature needs it, as it would have
+/// if this step did not exist.
+#[tauri::command]
+fn skip_model_warmup(state: tauri::State<BackendState>) -> Result<(), String> {
+    if stop_setup_child(&state, MODEL_WARMUP_LABEL)? {
+        if let Ok(data_dir) = local_data_dir() {
+            append_to_setup_log(&data_dir, "model warmup: skipped by the user");
+        }
+    }
+    Ok(())
+}
+
+/// Stops the running setup child if it is the one named `label`, saying
+/// whether it did. Nothing to stop is not an error: it finished first.
+fn stop_setup_child(state: &BackendState, label: &str) -> Result<bool, String> {
+    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    match &inner.setup_child {
+        Some(child) if child.label == label => child.stop().map(|()| true),
+        _ => Ok(false),
+    }
 }
 
 /// Spawns the Python/uvicorn backend, waits for it to become healthy, and returns its URL.
@@ -3347,7 +3512,7 @@ const PIP_STALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Backstop for a pip that never goes quiet but never finishes either. Nothing
 /// legitimate approaches this: the reporter whose install prompted the change
 /// took about 17 minutes for the whole 3 GB pass on a slow link. The window
-/// close handler kills the child through `setup_child_pid` long before here.
+/// close handler kills the child through `setup_child` long before here.
 #[cfg(not(target_os = "macos"))]
 const PIP_HARD_CAP: Duration = Duration::from_secs(4 * 60 * 60);
 
@@ -4256,18 +4421,18 @@ async fn start_audio_drag(
 }
 
 fn stop_backend(state: &BackendState) {
-    let (handles, _setup_child_pid) = match state.inner.lock() {
-        Ok(mut guard) => (guard.handles.take(), guard.setup_child_pid.take()),
+    let (handles, setup_child) = match state.inner.lock() {
+        Ok(mut guard) => (guard.handles.take(), guard.setup_child.take()),
         Err(_) => return,
     };
 
-    // Kill any in-progress setup-time subprocess (pip install, model warmup)
-    // so it doesn't corrupt the venv/cache if the window is closed mid-setup (#140).
-    // On Windows its job (run_setup_child) ends it when StemDeck exits.
-    #[cfg(unix)]
-    if let Some(pid) = _setup_child_pid {
-        // SAFETY: pid was stored immediately after spawn; we send SIGTERM best-effort.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    // Stop any in-progress setup-time subprocess (pip install, model warmup)
+    // so it doesn't corrupt the venv/cache if the window is closed mid-setup
+    // (#140), on Windows too (#405).
+    if let Some(child) = setup_child {
+        if let Err(e) = child.stop() {
+            eprintln!("[stemdeck] {e}");
+        }
     }
 
     let Some(mut handles) = handles else { return };
@@ -7594,7 +7759,7 @@ fn update_setup_config<const N: usize>(
 /// not block: emitting a Tauri event or appending a line to a log is fine,
 /// anything slower would stall the very pipe this exists to drain.
 ///
-/// stderr is still read to EOF rather than streamed. It carries the failure
+/// stderr is collected whole rather than streamed. It carries the failure
 /// text used to classify an error, which is only wanted once, at the end.
 fn child_output_streaming<F>(
     mut child: Child,
@@ -7606,11 +7771,13 @@ fn child_output_streaming<F>(
 where
     F: FnMut(&str) + Send + 'static,
 {
-    // Every line stamps this, and the wait loop reads it. Only stdout counts as
-    // activity: pip writes its progress there, and stderr is read to EOF in one
-    // go rather than line by line, so it has nothing per-line to stamp with.
+    // Output on either stream stamps this, and the wait loop reads it. pip
+    // writes its progress to stdout; the model warmup's downloads write theirs
+    // (tqdm) to stderr, and its stdout is quiet for as long as one model takes,
+    // which on a slow connection is far longer than the stall budget (#405).
     let last_line = Arc::new(Mutex::new(Instant::now()));
     let stamp = Arc::clone(&last_line);
+    let stderr_stamp = Arc::clone(&last_line);
     let stdout_reader = child.stdout.take().map(|pipe| {
         thread::spawn(move || {
             let mut collected = Vec::new();
@@ -7628,9 +7795,22 @@ where
     });
     let stderr_reader = child.stderr.take().map(|mut pipe| {
         thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
+            let mut collected = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if let Ok(mut at) = stderr_stamp.lock() {
+                            *at = Instant::now();
+                        }
+                        collected.extend_from_slice(&chunk[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            collected
         })
     });
     let deadline = Deadline::Stall {
@@ -8213,8 +8393,18 @@ mod tests {
         let state = super::BackendState::default();
 
         let output = super::run_setup_child(&mut command, &state, "setup child", |mut child| {
-            let pid = state.inner.lock().unwrap().setup_child_pid;
-            assert_eq!(pid, Some(child.id()), "the close handler can find it");
+            let recorded = state
+                .inner
+                .lock()
+                .unwrap()
+                .setup_child
+                .as_ref()
+                .map(|c| (c.label.clone(), c.job.is_some()));
+            assert_eq!(
+                recorded,
+                Some(("setup child".to_string(), true)),
+                "the close handler can find it"
+            );
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             while !dir.path().join("started").exists() && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(50));
@@ -8229,7 +8419,7 @@ mod tests {
         .expect("ran");
 
         assert!(output.status.success());
-        assert_eq!(state.inner.lock().unwrap().setup_child_pid, None);
+        assert!(state.inner.lock().unwrap().setup_child.is_none());
         assert!(
             dir.path().join("started").exists(),
             "the setup child's own child never ran"
@@ -8239,6 +8429,243 @@ mod tests {
             !dir.path().join("late").exists(),
             "a process the setup child started outlived it"
         );
+    }
+
+    /// A setup child that starts a child of its own, which writes `started` in
+    /// `dir` at once and would write `late` about 3 seconds on, and then runs
+    /// for about 20 seconds itself. `started` coming from the grandchild means
+    /// it exists by the time a test sees the file.
+    fn long_setup_child(dir: &Path) -> Command {
+        #[cfg(windows)]
+        let command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = Command::new("cmd");
+            command.args(["/d", "/c"]).raw_arg(
+                "start /b cmd /d /c \"type nul > started & ping -n 4 127.0.0.1 >nul & type nul > late\" & ping -n 21 127.0.0.1 >nul",
+            );
+            command
+        };
+        #[cfg(unix)]
+        let command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "touch started; (sleep 3; touch late) & sleep 20"]);
+            command
+        };
+        let mut command = command;
+        command
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    /// Runs `long_setup_child` as a setup child labelled `label` on a thread
+    /// of its own, returning once it has started. The handle yields how long
+    /// it ran.
+    fn start_long_setup_child(
+        state: &std::sync::Arc<super::BackendState>,
+        dir: &Path,
+        label: &'static str,
+    ) -> std::thread::JoinHandle<Duration> {
+        let mut command = long_setup_child(dir);
+        let state = std::sync::Arc::clone(state);
+        let runner = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            super::run_setup_child(&mut command, &state, label, |mut child| {
+                let status = child.wait().map_err(|e| e.to_string())?;
+                Ok(std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })
+            })
+            .expect("ran");
+            started.elapsed()
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !dir.join("started").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            dir.join("started").exists(),
+            "the setup child never started"
+        );
+        runner
+    }
+
+    #[test]
+    fn closing_the_window_mid_setup_ends_the_setup_child() {
+        // #405: on Windows, closing the window during the model download left
+        // the warmup running (stop_backend only signalled it on unix). It has
+        // to end at once, and so does what it started.
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), "model warmup");
+
+        super::stop_backend(&state);
+
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the setup child ran on for {ran:?}"
+        );
+        #[cfg(windows)]
+        {
+            std::thread::sleep(Duration::from_secs(5));
+            assert!(
+                !dir.path().join("late").exists(),
+                "a process the setup child started outlived the close"
+            );
+        }
+    }
+
+    #[test]
+    fn skip_stops_the_model_warmup_and_nothing_else() {
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), super::MODEL_WARMUP_LABEL);
+        assert!(super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("stopped"));
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the warmup ran on for {ran:?}"
+        );
+
+        // A pip install is never cut short by Skip: it runs to its end.
+        let dir = make_tmp();
+        let runner = start_long_setup_child(&state, dir.path(), "CUDA torch install");
+        assert!(!super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("no error"));
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran > Duration::from_secs(15),
+            "the pip install was stopped at {ran:?}"
+        );
+
+        // Nothing running is not an error: the warmup finished first.
+        assert!(!super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("no error"));
+    }
+
+    #[test]
+    fn a_second_setup_child_is_refused_while_one_runs() {
+        // Two at once would share the one slot that stops a child (the second
+        // to start overwrites it, the first to end clears it), and download
+        // into the same cache side by side.
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), "CUDA torch install");
+
+        let second = make_tmp();
+        let refused = super::run_setup_child(
+            &mut long_setup_child(second.path()),
+            &state,
+            super::MODEL_WARMUP_LABEL,
+            |_child| unreachable!("the second child must not be started"),
+        );
+
+        let err = refused.expect_err("a second setup child was started");
+        assert!(err.contains("CUDA torch install is still running"), "{err}");
+        super::stop_backend(&state);
+        runner.join().expect("joined");
+    }
+
+    #[test]
+    fn output_on_stderr_alone_keeps_a_streamed_child_alive() {
+        // #405: the model warmup's downloads report progress on stderr (tqdm),
+        // and its stdout is silent for as long as one model takes. Under a
+        // stall budget that counted stdout only, a healthy slow download was
+        // killed. Eight seconds of stderr ticks against a three second budget.
+        #[cfg(windows)]
+        let mut command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = Command::new("cmd");
+            command
+                .args(["/d", "/c"])
+                .raw_arg("for /l %i in (1,1,8) do @(echo tick 1>&2 & ping -n 2 127.0.0.1 >nul)");
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "for i in 1 2 3 4 5 6 7 8; do echo tick >&2; sleep 1; done",
+            ]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn().expect("spawn");
+
+        let output = super::child_output_streaming(
+            child,
+            Duration::from_secs(3),
+            Duration::from_secs(120),
+            "stderr only",
+            |_line| {},
+        )
+        .expect("a child that keeps writing to stderr must be left to finish");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter(|line| line.trim() == "tick")
+                .count(),
+            8,
+            "every stderr line must still be collected"
+        );
+    }
+
+    #[test]
+    fn the_warmup_stall_budget_outlasts_one_download_try() {
+        // audio-separator waits up to 300 s for a read before it gives up by
+        // itself, the longest silence of any download in the warmup. The stall
+        // budget must outlast that, or it would end the whole warmup where the
+        // model's own failure, and the models after it, were still to come.
+        assert!(super::WARMUP_STALL_TIMEOUT >= Duration::from_secs(300 + 30));
+        assert!(super::WARMUP_STALL_TIMEOUT <= Duration::from_secs(15 * 60));
+        assert!(super::WARMUP_HARD_CAP >= Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn warmup_progress_reads_the_start_lines() {
+        assert_eq!(
+            super::warmup_progress("WARMUP_START beat_this 2 5"),
+            Some(super::WarmupProgress {
+                model: "beat_this".to_string(),
+                number: 2,
+                count: 5,
+            })
+        );
+        assert_eq!(super::warmup_progress("WARMUP_OK beat_this"), None);
+        assert_eq!(super::warmup_progress("WARMUP_START beat_this"), None);
+    }
+
+    #[test]
+    fn the_warmup_status_says_what_arrived_and_why_not() {
+        let status = super::ModelWarmupStatus::from_stdout(
+            "WARMUP_START demucs 1 5\nWARMUP_OK demucs\n\
+             WARMUP_START beat_this 2 5\n\
+             WARMUP_FAILED beat_this model download failed: x (DNS lookup failed)\n\
+             WARMUP_OFFLINE beat_this\nWARMUP_START whisper 5 5\nWARMUP_OK whisper\n",
+        );
+        assert!(status.demucs_ready && status.whisper_ready);
+        assert!(!status.beat_this_ready && !status.sections_ready);
+        assert_eq!(status.offline, vec!["beat_this".to_string()]);
+        assert_eq!(status.no_space, None);
+
+        let full = super::ModelWarmupStatus::from_stdout("WARMUP_NO_SPACE 200000000 1000\n");
+        assert_eq!(
+            full.no_space,
+            Some(super::NoSpace {
+                needed: 200_000_000,
+                free: 1000
+            })
+        );
+        assert!(!full.demucs_ready && full.offline.is_empty());
     }
 
     #[test]

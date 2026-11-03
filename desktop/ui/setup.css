@@ -177,6 +177,15 @@ h1 {
   100% { transform: translateX(400%); }
 }
 
+.notice {
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid rgba(216, 168, 74, 0.3);
+  border-radius: 8px;
+  color: #f1cf82;
+  background: rgba(216, 168, 74, 0.08);
+}
+
 .details {
   max-height: 180px;
   overflow: auto;
@@ -202,6 +211,11 @@ button {
   color: #f1cf82;
   font: inherit;
   cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .hidden {
