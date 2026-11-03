@@ -476,7 +476,9 @@ fn main() {
             // never be retried. Verified: after a real self-update both
             // backend.old and StemDeck.exe.old were still on disk. Three path
             // checks per launch is nothing; leaking ~30 MB forever is not.
-            sweep_update_leftovers();
+            if let Ok(root) = app_root() {
+                sweep_update_leftovers(&root);
+            }
 
             let version_file = data_dir.join("last_version.txt");
             let migration_flag = data_dir.join("store_migration_done");
@@ -1072,10 +1074,15 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
 /// Delete the `.old` siblings and staging dir an in-app update leaves at the
 /// app root (#421). Best-effort and idempotent: whatever is still locked by the
 /// outgoing process this launch is simply picked up on the next one.
-fn sweep_update_leftovers() {
-    let Ok(root) = app_root() else { return };
+///
+/// backend.old is kept while there is no backend/app: then it is the only
+/// copy of the app, left by a swap that stopped between its renames.
+fn sweep_update_leftovers(root: &Path) {
     for name in ["backend.old", "python.old", "_update_app.tmp"] {
         let stale = root.join(name);
+        if name == "backend.old" && !root.join("backend").join("app").is_dir() {
+            continue;
+        }
         if stale.is_dir() {
             let _ = fs::remove_dir_all(&stale);
         }
@@ -1184,9 +1191,12 @@ async fn check_app_update(query: AppUpdateQuery) -> Result<AppUpdateAvailability
 
 /// Fetch a small text file (a checksum, a version marker). Capped so a wrong
 /// URL that points at something huge cannot be read into memory unbounded.
+/// Held to the same release URLs as the archive, since the frontend verifies
+/// that archive against the checksum read here.
 #[cfg(any(windows, target_os = "linux"))]
 async fn fetch_text(url: &str) -> Result<String, String> {
     const MAX_BYTES: usize = 64 * 1024;
+    validate_release_url(url)?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
@@ -1422,17 +1432,23 @@ fn stop_backend_and_wait(state: &BackendState, timeout: Duration) -> Result<(), 
 ///
 /// Even once the backend process is gone, a virus scanner or the search
 /// indexer can hold a transient handle inside a directory that was just
-/// written or is about to move. These clear in well under a second; without a
-/// retry an unlucky scan turns into a failed update mid-swap.
+/// written or is about to move. Most clear in under a second; the budget is
+/// about 5 s so a slower scan of a freshly extracted backend/ does not turn
+/// into a failed update mid-swap. A missing path is not transient, and this
+/// runs on the window's thread, so that fails at once.
 #[cfg(any(windows, target_os = "linux"))]
 fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
-    const ATTEMPTS: u32 = 10;
+    const ATTEMPTS: u32 = 34;
     let mut last_err = None;
     for attempt in 0..ATTEMPTS {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
             Err(e) => {
+                let missing = e.kind() == std::io::ErrorKind::NotFound;
                 last_err = Some(e);
+                if missing {
+                    break;
+                }
                 if attempt + 1 < ATTEMPTS {
                     thread::sleep(Duration::from_millis(150));
                 }
@@ -1445,6 +1461,23 @@ fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
             .map(|e| e.to_string())
             .unwrap_or_else(|| "unknown error".to_string())
     ))
+}
+
+/// Run the update's renames in order. When one fails, the ones already done
+/// are undone, newest first, so a failed swap leaves the previous install in
+/// place instead of an install with no backend/ beside a backend.old.
+#[cfg(any(windows, target_os = "linux"))]
+fn rename_all_or_restore(moves: &[(&Path, &Path, &str)]) -> Result<(), String> {
+    for (done, (from, to, what)) in moves.iter().enumerate() {
+        if let Err(e) = rename_with_retry(from, to, what) {
+            for (from, to, what) in moves[..done].iter().rev() {
+                rename_with_retry(to, from, &format!("roll back \"{what}\""))
+                    .map_err(|undo| format!("{e}; {undo}"))?;
+            }
+            return Err(e);
+        }
+    }
+    Ok(())
 }
 
 /// Applies a previously downloaded+verified app update in place, then
@@ -1537,18 +1570,20 @@ fn apply_app_update(
             let _ = fs::remove_file(&exe_old);
         }
 
+        let staged_backend = staging.join("backend");
+        let mut moves = Vec::new();
         if backend_dir.exists() {
-            rename_with_retry(
-                &backend_dir,
-                &backend_old,
+            moves.push((
+                backend_dir.as_path(),
+                backend_old.as_path(),
                 "move the existing backend aside",
-            )?;
+            ));
         }
-        rename_with_retry(
-            &staging.join("backend"),
-            &backend_dir,
+        moves.push((
+            staged_backend.as_path(),
+            backend_dir.as_path(),
             "install the updated backend",
-        )?;
+        ));
 
         // The exe goes last. Windows allows renaming a running process's own
         // on-disk image -- the OS holds the file open by handle, not by path --
@@ -1563,8 +1598,17 @@ fn apply_app_update(
         // process to self-heal it on next launch. Closing it fully needs a
         // separate bootstrap launcher that is never itself replaced; flagging
         // it rather than treating it as solved.
-        rename_with_retry(&exe_path, &exe_old, "move the running app aside")?;
-        rename_with_retry(&new_exe, &exe_path, "install the updated app")?;
+        moves.push((
+            exe_path.as_path(),
+            exe_old.as_path(),
+            "move the running app aside",
+        ));
+        moves.push((
+            new_exe.as_path(),
+            exe_path.as_path(),
+            "install the updated app",
+        ));
+        rename_all_or_restore(&moves)?;
 
         let _ = fs::remove_dir_all(&staging);
         let _ = fs::remove_file(&app_archive);
@@ -3667,19 +3711,17 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Only localhost URLs, and only http(s). Guards against a compromised WebView
-/// using the desktop shell as an SSRF proxy (#138).
-/// Hosts an in-app update may be fetched from.
-///
-/// GitHub serves release assets from `github.com` and redirects to
-/// `objects.githubusercontent.com`, so both have to be here.
-const RELEASE_ASSET_HOSTS: [&str; 2] = ["github.com", "objects.githubusercontent.com"];
+/// Where this repository's release assets live. The frontend passes the
+/// releases API's `browser_download_url`, which always has this shape; the
+/// redirect GitHub answers it with is followed by reqwest and never comes back
+/// through this check.
+const RELEASE_ASSET_PREFIX: &str = "/stemdeckapp/stemdeck/releases/download/";
 
 /// Reject an update URL that does not point at our own release assets.
 ///
 /// `download_app_update` takes its URL from the WebView, and the SHA-256 it
 /// checks against comes from the same place -- so the checksum proves the file
-/// arrived intact, not that it came from us. Without a host check, anything
+/// arrived intact, not that it came from us. Without this check, anything
 /// able to run script on that page can hand the shell an archive that
 /// `apply_app_update` then extracts over StemDeck's own executable and
 /// backend/ (#510). The page is served over http by the Python backend, which
@@ -3695,12 +3737,17 @@ fn validate_release_url(url: &str) -> Result<(), String> {
         return Err("update URLs must use https".to_string());
     }
     let host = parsed.host_str().unwrap_or("");
-    if !RELEASE_ASSET_HOSTS.contains(&host) {
-        return Err(format!("refusing to download an update from {host}"));
+    if host != "github.com" || !parsed.path().starts_with(RELEASE_ASSET_PREFIX) {
+        return Err(format!(
+            "refusing to download an update from {host}{}",
+            parsed.path()
+        ));
     }
     Ok(())
 }
 
+/// Only localhost URLs, and only http(s). Guards against a compromised WebView
+/// using the desktop shell as an SSRF proxy (#138).
 fn validate_download_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("only http/https URLs are permitted".to_string());
@@ -4784,10 +4831,11 @@ fn app_root() -> Result<PathBuf, String> {
     if let Ok(root) = env::var("STEMDECK_ROOT") {
         return Ok(PathBuf::from(root));
     }
-    if let Ok(cwd) = env::current_dir() {
-        if let Some(root) = find_repo_root(&cwd) {
-            return Ok(root);
-        }
+    if let Some(root) = env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd_repo_root(&cwd, cfg!(debug_assertions)))
+    {
+        return Ok(root);
     }
     let exe = env::current_exe().map_err(|e| format!("failed to resolve current exe: {e}"))?;
     let exe_dir = exe
@@ -4806,6 +4854,13 @@ fn app_root() -> Result<PathBuf, String> {
         }
     }
     Ok(exe_dir.to_path_buf())
+}
+
+/// The source checkout around the working directory, for `cargo tauri dev`.
+/// Release builds never look: a portable exe started from a terminal inside
+/// a checkout would otherwise run that checkout instead of its own install.
+fn cwd_repo_root(cwd: &Path, debug_build: bool) -> Option<PathBuf> {
+    debug_build.then(|| find_repo_root(cwd)).flatten()
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -7554,14 +7609,24 @@ mod tests {
         // against a SHA-256 from the same caller, so the checksum proves the
         // bytes arrived intact, not that they came from us. apply_app_update
         // then extracts the result over StemDeck's own executable (#510).
+        // The three assets the updater reads, as the releases API lists them.
         for ok in [
-            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.16.1/x.zip",
-            "https://objects.githubusercontent.com/github-production-release-asset/1/2",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Windows-x64-app.zip",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Windows-x64-app.zip.sha256",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Linux-x64-runtime-version.json",
         ] {
             assert!(super::validate_release_url(ok).is_ok(), "should allow {ok}");
         }
 
         for bad in [
+            // Another repository's release, signed with its own checksum.
+            "https://github.com/someone/stemdeck/releases/download/v1/x.zip",
+            "https://github.com/stemdeckapp/stemdeck-fork/releases/download/v1/x.zip",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/../../../someone/x/releases/download/v1/x.zip",
+            // Ours, but not a release asset.
+            "https://github.com/stemdeckapp/stemdeck/archive/refs/heads/main.zip",
+            // An asset host URL names no repository at all.
+            "https://objects.githubusercontent.com/github-production-release-asset/1/2",
             "https://evil.example/x.zip",
             // Lookalikes: the check must be on the host, not a substring of it.
             "https://github.com.evil.example/x.zip",
@@ -7577,6 +7642,116 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn update_checksum_and_runtime_id_fetches_are_held_to_the_same_urls() {
+        // check_app_update reads the .sha256 and runtime-version.json from
+        // WebView-supplied URLs too, and that checksum is what the download is
+        // then held to. A refused URL never reaches the network.
+        let err = tauri::async_runtime::block_on(super::fetch_text(
+            "https://github.com/someone/stemdeck/releases/download/v1/x.sha256",
+        ))
+        .unwrap_err();
+        assert!(
+            err.starts_with("refusing to download an update from"),
+            "expected the URL check, got: {err}"
+        );
+    }
+
+    fn backend_with_app(root: &Path, name: &str) {
+        fs::create_dir_all(root.join(name).join("app")).unwrap();
+    }
+
+    #[test]
+    fn the_launch_sweep_keeps_backend_old_when_it_is_the_only_backend() {
+        // A swap that died between its two renames leaves backend.old as the
+        // only copy of the app; deleting it would need a full reinstall.
+        let root = make_tmp();
+        backend_with_app(root.path(), "backend.old");
+        super::sweep_update_leftovers(root.path());
+        assert!(root.path().join("backend.old").join("app").is_dir());
+
+        // With a working backend/ in place it is a leftover again.
+        backend_with_app(root.path(), "backend");
+        super::sweep_update_leftovers(root.path());
+        assert!(!root.path().join("backend.old").exists());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn a_failed_backend_install_puts_the_previous_backend_back() {
+        let root = make_tmp();
+        let backend = root.path().join("backend");
+        let backend_old = root.path().join("backend.old");
+        backend_with_app(root.path(), "backend");
+        // No staged backend: the second rename fails, as it does when a
+        // scanner holds a handle for longer than the retry budget.
+        let staged = root.path().join("_update_app.tmp").join("backend");
+
+        let result = super::rename_all_or_restore(&[
+            (&backend, &backend_old, "move the existing backend aside"),
+            (&staged, &backend, "install the updated backend"),
+        ]);
+
+        assert!(result.unwrap_err().contains("install the updated backend"));
+        assert!(backend.join("app").is_dir(), "the previous backend is back");
+        assert!(!backend_old.exists());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn a_failed_exe_install_puts_the_previous_backend_and_exe_back() {
+        // A new backend/ beside the old exe is a broken app, so a failure at
+        // the last step undoes the backend swap as well.
+        let root = make_tmp();
+        let staging = root.path().join("_update_app.tmp");
+        let (backend, backend_old) = (root.path().join("backend"), root.path().join("backend.old"));
+        let (staged, exe, exe_old) = (
+            staging.join("backend"),
+            root.path().join("app.exe"),
+            root.path().join("app.exe.old"),
+        );
+        backend_with_app(root.path(), "backend");
+        fs::write(backend.join("app").join("old"), "").unwrap();
+        fs::create_dir_all(staged.join("app")).unwrap();
+        fs::write(&exe, "old").unwrap();
+        let new_exe = staging.join("app.exe");
+
+        let result = super::rename_all_or_restore(&[
+            (&backend, &backend_old, "move the existing backend aside"),
+            (&staged, &backend, "install the updated backend"),
+            (&exe, &exe_old, "move the running app aside"),
+            (&new_exe, &exe, "install the updated app"),
+        ]);
+
+        assert!(result.unwrap_err().contains("install the updated app"));
+        assert!(
+            backend.join("app").join("old").is_file(),
+            "the previous backend is back"
+        );
+        assert!(
+            staged.join("app").is_dir(),
+            "the new backend is back in staging"
+        );
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+        assert!(!backend_old.exists() && !exe_old.exists());
+    }
+
+    #[test]
+    fn only_debug_builds_take_the_app_root_from_the_working_directory() {
+        // A release exe started from a terminal inside a source checkout must
+        // still run its own install, not the checkout.
+        let checkout = make_tmp();
+        fs::write(checkout.path().join("pyproject.toml"), "").unwrap();
+        fs::create_dir(checkout.path().join("app")).unwrap();
+
+        assert_eq!(
+            super::cwd_repo_root(checkout.path(), true).as_deref(),
+            Some(checkout.path())
+        );
+        assert_eq!(super::cwd_repo_root(checkout.path(), false), None);
     }
 
     #[test]
