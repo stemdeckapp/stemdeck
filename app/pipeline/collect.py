@@ -13,7 +13,6 @@ from pathlib import Path
 from app.core.config import (
     DEMUCS_MODEL,
     FAILED_TTL_SECONDS,
-    JOB_ID_RE,
     JOB_TTL_SECONDS,
     STEM_NAMES,
     TAKES_DIRNAME,
@@ -24,9 +23,9 @@ from app.core.config import (
 from app.core.models import FINISHED_STATUSES, Job
 from app.core.registry import all_jobs as registry_all
 from app.core.registry import deleted_ids as registry_deleted_ids
+from app.core.registry import holds_job_files, job_dirs, quarantine_dirs, set_proc
 from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
-from app.core.registry import set_proc
 from app.core.stem_files import is_stem_audio, stem_names_on_disk, stem_path
 from app.pipeline.audio_stats import scan_stem
 from app.pipeline.backing import forget_job as forget_backing
@@ -463,11 +462,8 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
     alone, so it also deleted the user's favourites, their recorded takes, and
     any folder at all in the library directory that was old enough, job or not.
     Every rule below keeps something the user would not count as "a finished
-    job I no longer need"; when in doubt, keep."""
-    if not JOB_ID_RE.match(job_dir.name):
-        # Not a job folder: something of the user's, or of another program,
-        # that happens to live in the library directory.
-        return "not a job folder"
+    job I no longer need"; when in doubt, keep. Only job folders reach here
+    (registry.job_dirs)."""
     if job is not None:
         if job.status not in _TERMINAL:
             return "job is still active"
@@ -500,6 +496,8 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
         return "unregistered folder holds recorded takes"
     if _has_stems_on_disk(job_dir):
         return "unregistered folder holds stems"
+    if not holds_job_files(job_dir):
+        return "unregistered folder holds nothing StemDeck writes"
     return None
 
 
@@ -512,20 +510,16 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
 
     Judged by Job.created_at, not directory mtime (which unrelated filesystem
     events touch). Never removes an active job, a stopped song, a favourite, a
-    job with recorded takes or tracks, or a folder whose name is not a job id; an
-    unregistered job folder goes only when it is old and abandoned. See
+    job with recorded takes or tracks, a folder whose name is not a job id, or a
+    link; an unregistered job folder goes only when it is old, abandoned and
+    holds something StemDeck writes. See
     _keep_reason for each rule. Every removal is logged with its reason."""
     cutoff = time.time() - (JOB_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
-    if not jobs_dir.is_dir():
-        return
     jobs = registry_all()
     deleted = registry_deleted_ids()
     removed = False
-    for d in jobs_dir.iterdir():
-        if not d.is_dir():
-            continue
-        if d.name == "failed":
-            continue  # the failure quarantine has its own TTL (sweep_failed_jobs)
+    # Not failed/: the failure quarantine has its own TTL (sweep_failed_jobs).
+    for d in job_dirs(jobs_dir):
         job = jobs.get(d.name)
         reason = _keep_reason(job, d, cutoff, deleted)
         if reason is not None:
@@ -548,13 +542,11 @@ def sweep_failed_jobs(jobs_dir: Path) -> None:
     FAILED_TTL_SECONDS. Runs unconditionally from the hourly sweep loop --
     unlike the job TTL sweep, which persistent-library deployments disable,
     failure evidence must never accumulate forever (#277)."""
-    failed_root = jobs_dir / "failed"
-    if not failed_root.is_dir():
-        return
     cutoff = time.time() - FAILED_TTL_SECONDS
-    for d in failed_root.iterdir():
+    for d in quarantine_dirs(jobs_dir):
         try:
-            if d.is_dir() and d.stat().st_mtime < cutoff:
+            if d.stat().st_mtime < cutoff:
+                logger.info("failed-job sweep removing %s: older than its TTL", d.name)
                 _rmtree(d)
         except OSError:
             logger.warning("failed-quarantine sweep could not stat %s", d, exc_info=True)
