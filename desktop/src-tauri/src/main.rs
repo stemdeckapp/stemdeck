@@ -203,6 +203,19 @@ struct BackendStateInner {
     /// download, #275), stopped by stop_backend on window close (#140) and by
     /// the wizard's Skip (#405).
     setup_child: Option<SetupChild>,
+    /// Set by stop_backend as the window closes. The setup commands run off
+    /// the main thread, so one can go on to its next child in the moment
+    /// before StemDeck exits; run_setup_child refuses it, as nothing would be
+    /// left to stop it.
+    closing: bool,
+    /// The setup step running (SetupStep): one at a time, so a second run of
+    /// the wizard, after a reload say, cannot work on python/ or the runtime
+    /// beside the first, or read the first one's busy slot as "no GPU".
+    setup_step: Option<&'static str>,
+    /// While apply_app_update renames the new build into place (UpdateSwap).
+    /// The close waits for it: cut between two renames, the install would
+    /// have no backend/ or no executable.
+    swapping: bool,
     /// Save destinations the user has picked but not yet downloaded to (#338).
     ///
     /// The export is two commands so the UI can tell "choosing a folder" apart
@@ -629,12 +642,15 @@ fn main() {
         .expect("failed to build StemDeck desktop app")
         .run(|app_handle, event| {
             if let tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::CloseRequested { .. },
+                event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } = event
             {
                 let state = app_handle.state::<BackendState>();
-                stop_backend(&state);
+                if !stop_backend(&state) {
+                    api.prevent_close();
+                    return;
+                }
                 #[cfg(target_os = "linux")]
                 dmabuf::clear_on_exit();
                 app_handle.exit(0);
@@ -912,7 +928,12 @@ fn clear_webkit_data() {
 
 /// Returns current runtime state: Python path, FFmpeg path, and persisted torch device.
 #[tauri::command]
-fn probe_runtime() -> Result<RuntimeProbe, String> {
+async fn probe_runtime() -> Result<RuntimeProbe, String> {
+    // It runs the interpreter and the FFmpeg pair.
+    off_main_thread(probe_runtime_blocking).await
+}
+
+fn probe_runtime_blocking() -> Result<RuntimeProbe, String> {
     log_setup_step("probe-runtime");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1017,7 +1038,11 @@ async fn download_runtime_pack(app_handle: tauri::AppHandle) -> Result<RuntimeAr
 
 /// Verifies the SHA256 of a previously downloaded runtime pack archive.
 #[tauri::command]
-fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
+async fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
+    off_main_thread(verify_runtime_pack_blocking).await
+}
+
+fn verify_runtime_pack_blocking() -> Result<RuntimeArchive, String> {
     let root = app_root()?;
     let data_dir = local_data_dir()?;
     let manifest = load_runtime_manifest(&root)?;
@@ -1028,7 +1053,14 @@ fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
 
 /// Extracts the verified runtime pack archive and atomically swaps it into place.
 #[tauri::command]
-fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
+async fn extract_runtime_pack(app: tauri::AppHandle) -> Result<RuntimePackStatus, String> {
+    // A close mid-extract is recovered from: runtime.tmp is cleared on the
+    // next try, and ensure_workspace puts runtime.old back.
+    off_main_thread(move || extract_runtime_pack_blocking(&app.state())).await
+}
+
+fn extract_runtime_pack_blocking(state: &BackendState) -> Result<RuntimePackStatus, String> {
+    let _step = SetupStep::take(state, "runtime install")?;
     log_setup_step("extract-runtime-pack");
     ensure_workspace()?;
     let root = app_root()?;
@@ -1475,8 +1507,8 @@ fn stop_backend_and_wait(state: &BackendState, timeout: Duration) -> Result<(), 
 /// indexer can hold a transient handle inside a directory that was just
 /// written or is about to move. Most clear in under a second; the budget is
 /// about 5 s so a slower scan of a freshly extracted backend/ does not turn
-/// into a failed update mid-swap. A missing path is not transient, and this
-/// runs on the window's thread, so that fails at once.
+/// into a failed update mid-swap. A missing path is not transient, and the
+/// window's close waits for the swap, so that fails at once.
 #[cfg(any(windows, target_os = "linux"))]
 fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
     const ATTEMPTS: u32 = 34;
@@ -1547,6 +1579,33 @@ impl Drop for UpdateClaim<'_> {
     }
 }
 
+/// Held while the update's renames run (`swapping`). A close that came first
+/// cancels the swap, and one that comes during it is held off until it ends:
+/// the renames retry for seconds on a scanner's handle, and stopped between
+/// two of them the install has no backend/ or no executable.
+#[cfg(any(windows, target_os = "linux"))]
+struct UpdateSwap<'a>(&'a BackendState);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<'a> UpdateSwap<'a> {
+    fn take(state: &'a BackendState) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if inner.closing {
+            return Err("StemDeck is closing; update cancelled".to_string());
+        }
+        inner.swapping = true;
+        Ok(Self(state))
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for UpdateSwap<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.swapping = false;
+    }
+}
+
 /// Applies a previously downloaded+verified app update in place, then
 /// relaunches. This is the one piece of the updater with no existing analog in
 /// the runtime-pack machinery above: it replaces the *running* exe, not an idle
@@ -1559,9 +1618,14 @@ impl Drop for UpdateClaim<'_> {
 /// an NVIDIA install keeps its CUDA torch and portable/GPU detection and user
 /// data all survive untouched.
 #[tauri::command]
-fn apply_app_update(
-    state: tauri::State<BackendState>,
-    app_handle: tauri::AppHandle,
+async fn apply_app_update(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // The checksum, the extract and the backend stop take seconds each.
+    off_main_thread(move || apply_app_update_blocking(&app_handle.state(), &app_handle)).await
+}
+
+fn apply_app_update_blocking(
+    state: &BackendState,
+    app_handle: &tauri::AppHandle,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -1570,7 +1634,7 @@ fn apply_app_update(
     }
     #[cfg(any(windows, target_os = "linux"))]
     {
-        let _claim = UpdateClaim::take(&state)?;
+        let _claim = UpdateClaim::take(state)?;
         let root = app_root()?;
         let data_dir = local_data_dir()?;
         let downloads = data_dir.join("downloads");
@@ -1624,7 +1688,7 @@ fn apply_app_update(
         //
         // The backend must be gone first: it runs from backend/, and Windows
         // will not rename a directory with live handles inside it.
-        stop_backend_and_wait(&state, Duration::from_secs(15))
+        stop_backend_and_wait(state, Duration::from_secs(15))
             .map_err(|e| format!("{e}; update cancelled"))?;
 
         let backend_dir = root.join("backend");
@@ -1677,6 +1741,9 @@ fn apply_app_update(
             exe_path.as_path(),
             "install the updated app",
         ));
+        // Held to the end, so a close cannot fall between the renames and
+        // the relaunch either.
+        let _swap = UpdateSwap::take(state)?;
         rename_all_or_restore(&moves)?;
 
         let _ = fs::remove_dir_all(&staging);
@@ -1798,7 +1865,14 @@ fn ensure_workspace() -> Result<(), String> {
 
 /// Downloads FFmpeg/ffprobe if absent and writes their paths to config.json.
 #[tauri::command]
-fn ensure_external_assets() -> Result<AssetStatus, String> {
+async fn ensure_external_assets(app: tauri::AppHandle) -> Result<AssetStatus, String> {
+    // It downloads FFmpeg. A close mid-swap is recovered from by
+    // ensure_workspace, which puts ffmpeg.old back.
+    off_main_thread(move || ensure_external_assets_blocking(&app.state())).await
+}
+
+fn ensure_external_assets_blocking(state: &BackendState) -> Result<AssetStatus, String> {
+    let _step = SetupStep::take(state, "FFmpeg download")?;
     log_setup_step("ensure-external-assets");
     ensure_workspace()?;
     let data_dir = local_data_dir()?;
@@ -1903,10 +1977,17 @@ const WARMUP_HARD_CAP: Duration = Duration::from_secs(2 * 60 * 60);
 /// lazy-download-on-first-use behavior, same as before this step existed.
 #[tauri::command]
 async fn warmup_models(app: tauri::AppHandle) -> Result<ModelWarmupStatus, String> {
-    // Off the main thread. A command that is not async runs on it, so while
-    // the models downloaded the window could not even be closed (#405), and
-    // the wizard's Skip could not have reached the shell.
-    tauri::async_runtime::spawn_blocking(move || run_model_warmup(&app.state(), &app))
+    off_main_thread(move || run_model_warmup(&app.state(), &app)).await
+}
+
+/// Runs a command's work on a blocking thread. A command that is not async
+/// runs on the main thread, so for as long as it ran the window could not
+/// paint or close and no other command reached the shell (#405): the model
+/// warmup's Skip, or the close during a CUDA torch install.
+async fn off_main_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1915,6 +1996,7 @@ fn run_model_warmup(
     state: &BackendState,
     app: &tauri::AppHandle,
 ) -> Result<ModelWarmupStatus, String> {
+    let _step = SetupStep::take(state, MODEL_WARMUP_LABEL)?;
     log_setup_step("model-warmup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1995,6 +2077,9 @@ fn run_setup_child(
     // downloads into the same cache would only race each other. The check and
     // the spawn share the lock so two callers cannot both pass it.
     let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if inner.closing {
+        return Err(format!("{label} not started: StemDeck is closing"));
+    }
     if let Some(running) = &inner.setup_child {
         return Err(format!(
             "{label} not started: the {} is still running",
@@ -2019,6 +2104,57 @@ fn run_setup_child(
         inner.setup_child = None;
     }
     output
+}
+
+/// The claim on `setup_step` a setup command holds while it works, released
+/// on drop. Off the main thread nothing else orders two of them.
+struct SetupStep<'a>(&'a BackendState);
+
+impl<'a> SetupStep<'a> {
+    fn take(state: &'a BackendState, step: &'static str) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(running) = inner.setup_step {
+            return Err(format!(
+                "{step} not started: the {running} is still running"
+            ));
+        }
+        inner.setup_step = Some(step);
+        Ok(Self(state))
+    }
+}
+
+impl Drop for SetupStep<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.setup_step = None;
+    }
+}
+
+/// Err once the window has closed. A probe stopped by the close reads as a
+/// failed one, so the GPU step asks this before it acts on a result: moving
+/// or deleting torch while StemDeck exits would leave it half moved.
+fn still_open(state: &BackendState) -> Result<(), String> {
+    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if inner.closing {
+        return Err("stopped: StemDeck is closing".to_string());
+    }
+    Ok(())
+}
+
+/// One of the GPU step's probes (nvidia-smi, a torch import check), run as a
+/// setup child so that closing the window stops it as it stops pip: on
+/// Windows through its job, which also ends what it started; elsewhere with
+/// SIGTERM. A check wedged in the GPU driver otherwise ran on to its timeout
+/// after StemDeck had gone (#502).
+fn setup_probe_output(
+    mut command: Command,
+    state: &BackendState,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    run_setup_child(&mut command, state, label, |child| {
+        child_output_with_timeout(child, timeout, label)
+    })
 }
 
 /// The wizard's Skip on the model step (#405). Stops the model warmup and
@@ -2047,9 +2183,14 @@ fn stop_setup_child(state: &BackendState, label: &str) -> Result<bool, String> {
 
 /// Spawns the Python/uvicorn backend, waits for it to become healthy, and returns its URL.
 #[tauri::command]
-fn start_backend(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<BackendState>,
+async fn start_backend(app_handle: tauri::AppHandle) -> Result<BackendStarted, String> {
+    // The health wait alone can take up to 90 seconds.
+    off_main_thread(move || start_backend_blocking(&app_handle, &app_handle.state())).await
+}
+
+fn start_backend_blocking(
+    app_handle: &tauri::AppHandle,
+    state: &BackendState,
 ) -> Result<BackendStarted, String> {
     // Gate concurrent calls: return immediately if already running or starting (#145).
     {
@@ -2064,8 +2205,8 @@ fn start_backend(
     }
 
     // Spawn and wait for health outside the lock; update state atomically on completion.
-    let spawned = spawn_backend(&app_handle, configured_port(), false);
-    store_backend(&state, spawned)
+    let spawned = spawn_backend(app_handle, configured_port(), false);
+    store_backend(state, spawned)
 }
 
 /// Stops the backend and starts it again, so a change to "Make StemDeck
@@ -2334,12 +2475,18 @@ fn build_target() -> BuildTarget {
 
 /// Detects GPU hardware, installs CUDA torch if needed, and persists the chosen device.
 #[tauri::command]
-fn ensure_torch_device(
-    state: tauri::State<BackendState>,
+async fn ensure_torch_device(app: tauri::AppHandle) -> Result<GpuSetup, String> {
+    // A CUDA torch install moves several GB through pip.
+    off_main_thread(move || set_up_torch_device(&app.state(), &app)).await
+}
+
+fn set_up_torch_device(
+    state: &BackendState,
     // Carried so the pip passes below can report progress to the setup screen.
     // macOS never runs them, hence the explicit discard in that branch.
-    app: tauri::AppHandle,
+    app: &tauri::AppHandle,
 ) -> Result<GpuSetup, String> {
+    let _step = SetupStep::take(state, "GPU step")?;
     log_setup_step("gpu-setup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -2369,8 +2516,8 @@ fn ensure_torch_device(
     #[cfg(target_os = "macos")]
     {
         // No pip pass on this platform: MPS ships in the bundled wheel.
-        let _ = (&state, &app);
-        let mps_available = verify_mps_torch(&python);
+        let _ = app;
+        let mps_available = verify_mps_torch(&python, state);
         let (device, reason) = if mps_available {
             ("mps", "mps")
         } else {
@@ -2393,13 +2540,14 @@ fn ensure_torch_device(
 
     #[cfg(not(target_os = "macos"))]
     {
-        let site = torch_site_packages(&python);
+        let site = torch_site_packages(&python, state);
         if site.is_none() {
             append_to_setup_log(
                 &data_dir,
                 "could not locate site-packages; torch swaps overlay",
             );
         }
+        still_open(state)?;
         // A swap that was interrupted (crash, forced quit, a rollback that did
         // not finish) is put back before anything else looks at torch.
         if let Some(site) = site.as_deref().filter(|s| torchswap::has_backup(s)) {
@@ -2414,7 +2562,7 @@ fn ensure_torch_device(
                 ),
             }
         }
-        let setup = match detect_nvidia_gpu(&data_dir) {
+        let setup = match detect_nvidia_gpu(&data_dir, state) {
             Some((gpu_name, cuda_version, compute_cap)) => {
                 // Try each candidate wheel in turn. A build that installs but
                 // cannot launch a kernel is not a reason to give up on the GPU
@@ -2436,12 +2584,13 @@ fn ensure_torch_device(
                 let mut swapped = false;
                 // A re-run (a new app version) on a CUDA build that already
                 // works has nothing to install.
-                let already = verify_cuda_torch(&python) == CudaVerify::Verified;
+                let already = verify_cuda_torch(&python, state) == CudaVerify::Verified;
                 if already {
                     append_to_setup_log(&data_dir, "CUDA torch already installed and verified");
                     cuda_verified = true;
                 }
                 for tag in candidates.iter().filter(|_| !already) {
+                    still_open(state)?;
                     append_to_setup_log(
                         &data_dir,
                         &format!(
@@ -2475,13 +2624,13 @@ fn ensure_torch_device(
                         }
                     }
                     let index_url = format!("https://download.pytorch.org/whl/{tag}");
-                    if let Err(e) = install_cuda_torch(&python, &index_url, &state, &app) {
+                    if let Err(e) = install_cuda_torch(&python, &index_url, state, app) {
                         append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
                         outcomes.push(None);
                         continue;
                     }
                     cuda_installed = true;
-                    let outcome = verify_cuda_torch(&python);
+                    let outcome = verify_cuda_torch(&python, state);
                     outcomes.push(Some(outcome));
                     if outcome == CudaVerify::Verified {
                         append_to_setup_log(&data_dir, &format!("{tag} verified"));
@@ -2490,6 +2639,8 @@ fn ensure_torch_device(
                     }
                     append_to_setup_log(&data_dir, &format!("{tag} installed but did not verify"));
                 }
+                // Left as it is, a swap is put back on the next launch.
+                still_open(state)?;
                 let reason = if cuda_verified {
                     if swapped {
                         if let Some(site) = &site {
@@ -2513,8 +2664,8 @@ fn ensure_torch_device(
                         &python,
                         site.as_deref(),
                         swapped,
-                        &state,
-                        &app,
+                        state,
+                        app,
                         &data_dir,
                     ) {
                         Ok(()) => stage,
@@ -2553,6 +2704,7 @@ fn ensure_torch_device(
         // cpu on a cpu-only package) as settled -- a CPU result born from a
         // failure is re-probed on the next launch instead of pinning the
         // install to CPU forever (#247).
+        still_open(state)?;
         persist_torch_device(&data_dir, &setup.torch_device, &setup.reason);
         append_to_setup_log(
             &data_dir,
@@ -2724,7 +2876,7 @@ fn persist_torch_device(data_dir: &std::path::Path, device: &str, reason: &str) 
 }
 
 #[cfg(target_os = "macos")]
-fn verify_mps_torch(python: &Path) -> bool {
+fn verify_mps_torch(python: &Path, state: &BackendState) -> bool {
     // Bounded for the same reason as verify_cuda_torch: a probe that imports
     // torch and asks the GPU a question can wedge, and an unbounded wait there
     // stops setup with nothing written anywhere (#502). Nothing has been seen
@@ -2738,7 +2890,7 @@ fn verify_mps_torch(python: &Path) -> bool {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "MPS verify")
+    setup_probe_output(command, state, GPU_VERIFY_TIMEOUT, "MPS verify")
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
@@ -2795,17 +2947,19 @@ fn nvidia_smi_exe() -> String {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)> {
+fn detect_nvidia_gpu(
+    data_dir: &Path,
+    state: &BackendState,
+) -> Option<(String, String, Option<String>)> {
     let smi = nvidia_smi_exe();
     append_to_setup_log(data_dir, &format!("GPU detection using: {smi}"));
     let mut cmd = Command::new(&smi);
     cmd.args(["--query-gpu=name", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut cmd);
     // 30s (vs 10s elsewhere): the first nvidia-smi call can be slow on Optimus
     // laptops that have to wake a sleeping dGPU (#247).
-    let name_out = match command_output_with_timeout(cmd, Duration::from_secs(30), "nvidia-smi") {
+    let name_out = match setup_probe_output(cmd, state, Duration::from_secs(30), "nvidia-smi") {
         Ok(out) => out,
         Err(e) => {
             append_to_setup_log(data_dir, &format!("nvidia-smi failed to run: {e}"));
@@ -2831,9 +2985,7 @@ fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)
     // Read CUDA version from the standard nvidia-smi header.
     let mut smi_cmd = Command::new(&smi);
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-    hide_console_window(&mut smi_cmd);
-    let smi_out =
-        command_output_with_timeout(smi_cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    let smi_out = setup_probe_output(smi_cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
     let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| "12.4".to_string());
 
@@ -2841,19 +2993,18 @@ fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)
     // "8.9" for Ada). Drives the wheel choice: stock torch 2.6 cu12x wheels
     // have no sm_120 kernels, so Blackwell needs a cu128 / torch 2.7 build.
     // Failure here is non-fatal — we fall back to the CUDA-version heuristic.
-    let compute_cap = detect_compute_cap(&smi);
+    let compute_cap = detect_compute_cap(&smi, state);
 
     Some((gpu_name, cuda_version, compute_cap))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_compute_cap(smi: &str) -> Option<String> {
+fn detect_compute_cap(smi: &str, state: &BackendState) -> Option<String> {
     let mut cmd = Command::new(smi);
     cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut cmd);
-    let out = command_output_with_timeout(cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    let out = setup_probe_output(cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     if !out.status.success() {
         return None;
     }
@@ -3612,7 +3763,7 @@ fn restore_cpu_torch(
 /// itself rather than assumed from the layout, which differs between the
 /// Windows and Linux bundles and the downloaded runtime pack.
 #[cfg(not(target_os = "macos"))]
-fn torch_site_packages(python: &Path) -> Option<PathBuf> {
+fn torch_site_packages(python: &Path, state: &BackendState) -> Option<PathBuf> {
     let mut command = Command::new(python);
     command
         .args([
@@ -3621,10 +3772,14 @@ fn torch_site_packages(python: &Path) -> Option<PathBuf> {
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut command);
-    let out = command_output_with_timeout(command, Duration::from_secs(60), "site-packages probe")
-        .ok()
-        .filter(|out| out.status.success())?;
+    let out = setup_probe_output(
+        command,
+        state,
+        Duration::from_secs(60),
+        "site-packages probe",
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     path.is_dir().then_some(path)
 }
@@ -3632,22 +3787,22 @@ fn torch_site_packages(python: &Path) -> Option<PathBuf> {
 /// Whether `import torch` works. A restore that leaves torch unimportable is
 /// a failed restore, whatever pip said (#731).
 #[cfg(not(target_os = "macos"))]
-fn verify_torch_imports(python: &Path) -> Result<(), String> {
-    verify_imports(python, "torch")
+fn verify_torch_imports(python: &Path, state: &BackendState) -> Result<(), String> {
+    verify_imports(python, "torch", state)
 }
 
 /// Whether `import <module>` works, with the last lines of the error if not.
 #[cfg(not(target_os = "macos"))]
-fn verify_imports(python: &Path, module: &str) -> Result<(), String> {
+fn verify_imports(python: &Path, module: &str, state: &BackendState) -> Result<(), String> {
     let code = format!("import {module}");
     let mut command = Command::new(python);
     command
         .args(["-c", code.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
-    let out = command_output_with_timeout(
+    let out = setup_probe_output(
         command,
+        state,
         GPU_VERIFY_TIMEOUT,
         &format!("{module} import check"),
     )?;
@@ -3678,7 +3833,7 @@ fn put_cpu_torch_back(
 ) -> Result<(), String> {
     if let (true, Some(site)) = (swapped, site) {
         match torchswap::restore(site) {
-            Ok(()) => match verify_torch_imports(python) {
+            Ok(()) => match verify_torch_imports(python, state) {
                 Ok(()) => {
                     append_to_setup_log(data_dir, "put the bundled torch back");
                     return Ok(());
@@ -3695,7 +3850,7 @@ fn put_cpu_torch_back(
         }
     }
     restore_cpu_torch(python, state, app)?;
-    let Err(first) = verify_torch_imports(python) else {
+    let Err(first) = verify_torch_imports(python, state) else {
         return Ok(());
     };
     append_to_setup_log(
@@ -3706,7 +3861,7 @@ fn put_cpu_torch_back(
     torchswap::discard_installed(site)
         .map_err(|e| format!("could not clear the broken torch ({e})"))?;
     restore_cpu_torch(python, state, app)?;
-    verify_torch_imports(python)
+    verify_torch_imports(python, state)
         .map_err(|e| format!("CPU torch does not import after a clean reinstall:\n{e}"))?;
     append_to_setup_log(data_dir, "CPU torch reinstalled into clean directories");
     Ok(())
@@ -3732,21 +3887,24 @@ struct TorchvisionRepair {
 /// reported, never raised: the rest of the app works without torchvision, and
 /// the next launch tries again.
 #[tauri::command]
-fn repair_torchvision(
-    state: tauri::State<BackendState>,
-    app: tauri::AppHandle,
-) -> TorchvisionRepair {
+async fn repair_torchvision(app: tauri::AppHandle) -> Result<TorchvisionRepair, String> {
     #[cfg(target_os = "macos")]
     {
         // macOS ships one torch build and never pairs it with a CUDA wheel.
-        let _ = (&state, &app);
-        TorchvisionRepair { outcome: "ok" }
+        let _ = app;
+        Ok(TorchvisionRepair { outcome: "ok" })
     }
     #[cfg(not(target_os = "macos"))]
     {
-        TorchvisionRepair {
-            outcome: repair_torchvision_if_needed(&state, &app),
-        }
+        // The repair is a pip download.
+        off_main_thread(move || {
+            let state = app.state();
+            let _step = SetupStep::take(&state, "torchvision repair")?;
+            Ok(TorchvisionRepair {
+                outcome: repair_torchvision_if_needed(&state, &app),
+            })
+        })
+        .await
     }
 }
 
@@ -3759,7 +3917,7 @@ fn repair_torchvision_if_needed(state: &BackendState, app: &tauri::AppHandle) ->
         return "ok";
     };
     patch_pyvenv_cfg(&python);
-    let Some(site) = torch_site_packages(&python) else {
+    let Some(site) = torch_site_packages(&python, state) else {
         return "ok";
     };
     // An interrupted CUDA swap is put back by ensure_torch_device first; until
@@ -3817,7 +3975,7 @@ fn repair_torchvision_if_needed(state: &BackendState, app: &tauri::AppHandle) ->
         app,
         label,
     )
-    .and_then(|()| verify_imports(&python, "torchvision"));
+    .and_then(|()| verify_imports(&python, "torchvision", state));
     match result {
         Ok(()) => {
             append_to_setup_log(&data_dir, &format!("torchvision repaired: {spec}"));
@@ -3973,7 +4131,7 @@ fn cuda_failure_stage(outcomes: &[Option<CudaVerify>]) -> &'static str {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn verify_cuda_torch(python: &Path) -> CudaVerify {
+fn verify_cuda_torch(python: &Path, state: &BackendState) -> CudaVerify {
     // Don't trust torch.cuda.is_available() alone: it returns True even when the
     // installed wheel has no kernels for the device (e.g. sm_120 on a cu124
     // build), which then crashes mid-extraction with "no kernel image is
@@ -3998,7 +4156,6 @@ fn verify_cuda_torch(python: &Path) -> CudaVerify {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
 
     let log = |msg: &str| {
         if let Ok(data_dir) = local_data_dir() {
@@ -4006,7 +4163,7 @@ fn verify_cuda_torch(python: &Path) -> CudaVerify {
         }
     };
 
-    match command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "CUDA verify") {
+    match setup_probe_output(command, state, GPU_VERIFY_TIMEOUT, "CUDA verify") {
         Ok(out) if out.status.success() => CudaVerify::Verified,
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4420,10 +4577,19 @@ async fn start_audio_drag(
     .map_err(|e| e.to_string())
 }
 
-fn stop_backend(state: &BackendState) {
+/// Stops everything for the window's close, and says whether StemDeck may
+/// exit now: not while an update's renames run (UpdateSwap), which then
+/// relaunches and exits by itself, or the close can be asked for again.
+fn stop_backend(state: &BackendState) -> bool {
     let (handles, setup_child) = match state.inner.lock() {
-        Ok(mut guard) => (guard.handles.take(), guard.setup_child.take()),
-        Err(_) => return,
+        Ok(mut guard) => {
+            if guard.swapping {
+                return false;
+            }
+            guard.closing = true;
+            (guard.handles.take(), guard.setup_child.take())
+        }
+        Err(_) => return true,
     };
 
     // Stop any in-progress setup-time subprocess (pip install, model warmup)
@@ -4435,7 +4601,9 @@ fn stop_backend(state: &BackendState) {
         }
     }
 
-    let Some(mut handles) = handles else { return };
+    let Some(mut handles) = handles else {
+        return true;
+    };
 
     // Drain the backend on a background thread so we don't block the Tauri
     // RunEvent main thread for up to 3 seconds (#144).
@@ -4461,6 +4629,7 @@ fn stop_backend(state: &BackendState) {
         let _ = handles.child.kill();
         let _ = handles.child.wait();
     });
+    true
 }
 
 /// Returns the persistent user data directory for StemDeck.
@@ -8567,6 +8736,209 @@ mod tests {
         assert!(err.contains("CUDA torch install is still running"), "{err}");
         super::stop_backend(&state);
         runner.join().expect("joined");
+    }
+
+    #[test]
+    fn no_setup_child_starts_once_the_window_is_closing() {
+        // The GPU step runs pip passes and probes one after another, off the
+        // main thread. Closing the window stops the one running; the next one
+        // must not start in the moment before StemDeck exits, or on Linux and
+        // macOS it would install into python/ with nothing left to stop it.
+        let state = super::BackendState::default();
+        super::stop_backend(&state);
+
+        let dir = make_tmp();
+        let refused = super::run_setup_child(
+            &mut long_setup_child(dir.path()),
+            &state,
+            "CUDA torch install",
+            |_child| unreachable!("a setup child was started after the close"),
+        );
+
+        let err = refused.expect_err("a setup child was started after the close");
+        assert!(err.contains("closing"), "{err}");
+        assert!(!dir.path().join("started").exists());
+        // And the GPU step stops before it moves or deletes torch.
+        assert!(super::still_open(&state).is_err());
+    }
+
+    #[test]
+    fn a_second_setup_step_is_refused_while_one_runs() {
+        // Off the main thread nothing ordered two setup runs. A reload during
+        // a CUDA install started the GPU step again beside it, whose nvidia-smi
+        // was refused the one setup slot and read as "no GPU".
+        let state = super::BackendState::default();
+        let gpu = super::SetupStep::take(&state, "GPU step").expect("first step");
+        let refused = super::SetupStep::take(&state, "runtime install").err();
+        assert_eq!(
+            refused.as_deref(),
+            Some("runtime install not started: the GPU step is still running")
+        );
+        drop(gpu);
+        assert!(super::SetupStep::take(&state, "runtime install").is_ok());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn the_close_waits_for_an_update_swap_and_cancels_one_not_begun() {
+        // Stopped between two renames, the install has no backend/ or no
+        // executable, and nothing is left to put it right.
+        let state = super::BackendState::default();
+        let swap = super::UpdateSwap::take(&state).expect("swap");
+        assert!(!super::stop_backend(&state), "closed mid-swap");
+        assert!(
+            super::still_open(&state).is_ok(),
+            "the held-off close stopped setup"
+        );
+        drop(swap);
+
+        assert!(super::stop_backend(&state));
+        let err = super::UpdateSwap::take(&state).err();
+        assert_eq!(
+            err.as_deref(),
+            Some("StemDeck is closing; update cancelled")
+        );
+    }
+
+    /// A stand-in interpreter that ignores its arguments and runs for about 20
+    /// seconds, as a torch import check wedged in a GPU driver does.
+    #[cfg(not(target_os = "macos"))]
+    fn wedged_python(dir: &Path) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let path = dir.join("python.cmd");
+            fs::write(&path, "@ping -n 21 127.0.0.1 >nul\r\n").expect("wrote");
+            path
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join("python");
+            // exec: one process, like python, so the stop reaches the one
+            // holding the stderr pipe. Without -c it ends at once, for the
+            // first run below.
+            fs::write(
+                &path,
+                "#!/bin/sh\n[ \"$1\" = -c ] || exit 0\nexec sleep 20\n",
+            )
+            .expect("wrote");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+            // A process another test forks while the file is open for writing
+            // keeps the write handle until it execs, and until then running
+            // the file fails with ETXTBSY. Run it once, retrying only that.
+            let mut attempts = 0;
+            loop {
+                match Command::new(&path).status() {
+                    Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                        attempts += 1;
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    ran => {
+                        assert!(ran.expect("the stand-in ran").success());
+                        break;
+                    }
+                }
+            }
+            path
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn closing_the_window_ends_a_gpu_step_probe() {
+        // The GPU step's own probes (nvidia-smi, the torch import checks) ran
+        // outside setup_child, so closing the window left a python.exe running
+        // until its timeout: up to two minutes for a check wedged in the GPU
+        // driver (#502).
+        let dir = make_tmp();
+        let python = wedged_python(dir.path());
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let probe = {
+            let state = std::sync::Arc::clone(&state);
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let result = super::verify_imports(&python, "torch", &state);
+                (result, started.elapsed())
+            })
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while state.inner.lock().unwrap().setup_child.is_none()
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        super::stop_backend(&state);
+
+        let (result, ran) = probe.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the probe ran on for {ran:?}"
+        );
+        assert!(result.is_err(), "a stopped probe reported success");
+    }
+
+    /// Every Tauri command that is not `async` runs on the main thread:
+    /// tauri-macros 2.6.0 picks `body_blocking` for it, and the IPC handler
+    /// calls that inline on the event loop. While one runs, the window cannot
+    /// paint, take a close, or reach any other command (#405). So only
+    /// commands that cannot run long may stay synchronous.
+    #[test]
+    fn no_command_that_can_run_long_holds_the_main_thread() {
+        // Each is a lock, a constant, a spawn that is never waited on, or a
+        // read or write of one small file or folder.
+        const QUICK: &[&str] = &[
+            "current_exports_dir",
+            "store_get",
+            "store_set",
+            "reset_user_data",
+            "mark_store_migration_done",
+            "runtime_pack_status",
+            "ensure_workspace",
+            "skip_model_warmup",
+            "build_target",
+            "native_file_drop",
+            "open_url",
+        ];
+        // Every command is in main.rs: generate_handler! lists them all, and
+        // no other module has one.
+        let source = include_str!("main.rs");
+        let mut commands = 0;
+        let mut lines = source.lines().map(str::trim);
+        let mut blocking = Vec::new();
+        while let Some(line) = lines.next() {
+            if !line.starts_with("#[tauri::command") {
+                continue;
+            }
+            commands += 1;
+            // The signature, past any doc comment or other attribute.
+            let signature = lines
+                .by_ref()
+                .find(|l| !l.starts_with("//") && !l.starts_with("#["))
+                .expect("a command attribute is followed by its function");
+            let (before, rest) = signature
+                .split_once("fn ")
+                .expect("a command attribute is followed by its function");
+            if !before.split_whitespace().any(|word| word == "async") {
+                let name = rest.split(['(', '<']).next().unwrap_or(rest);
+                blocking.push(name.to_string());
+            }
+        }
+        assert!(commands > 30, "found only {commands} commands");
+        let long: Vec<_> = blocking
+            .iter()
+            .filter(|name| !QUICK.contains(&name.as_str()))
+            .collect();
+        assert!(
+            long.is_empty(),
+            "these commands run on the main thread: {long:?}"
+        );
+        for name in QUICK {
+            assert!(
+                blocking.iter().any(|b| b == name),
+                "{name} is no longer a blocking command; take it off the list"
+            );
+        }
     }
 
     #[test]
