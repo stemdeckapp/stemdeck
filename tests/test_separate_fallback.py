@@ -9,20 +9,25 @@ end-to-end without demucs or a GPU.
 
 from __future__ import annotations
 
+import contextlib
+import socket
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 
 from app.core.models import Job, JobCancelled
 from app.pipeline import separate as sep_mod
-from app.pipeline.errors import SeparationError
+from app.pipeline.errors import SeparationError, classify_failure
 
-# A persistent worker stub: reads one JSON job request per line for as long
-# as stdin stays open, always succeeding (writes a stem WAV where the real
-# worker would, then "100%" + "@@DONE@@" to stderr) and keeps serving.
+# A persistent worker stub: says its model is loaded, then reads one JSON job
+# request per line for as long as stdin stays open, always succeeding (writes
+# a stem WAV where the real worker would, then "100%" + "@@DONE@@" to stderr)
+# and keeps serving.
 _SUCCESS_WORKER = """
 import sys, json, os
+sys.stderr.write("@@READY@@\\n")
 for line in sys.stdin:
     req = json.loads(line)
     d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
@@ -304,3 +309,235 @@ def test_cancel_kills_worker_next_job_spawns_fresh(tmp_path, monkeypatch):
     sep_mod.separate(Job(id="abcdefabc331"), tmp_path / "source.wav", tmp_path)
 
     assert calls == ["cpu", "cpu"]  # two spawns: cancelled, then fresh
+
+
+# ─── #125: the model download is its own, bounded phase ───────────────────
+
+
+def _separate_within(seconds: float, job, source: Path, job_dir: Path) -> Path:
+    """separate(), failing the test if it is still running after `seconds`.
+    The fixture's teardown kills the worker, which ends a run left waiting."""
+    result: dict = {}
+
+    def run():
+        try:
+            result["stems"] = sep_mod.separate(job, source, job_dir)
+        except BaseException as exc:  # handed to the test thread below
+            result["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    assert not thread.is_alive(), f"the Split was still waiting after {seconds} s"
+    if "error" in result:
+        raise result["error"]
+    return result["stems"]
+
+
+def _record_stages(monkeypatch) -> list[str]:
+    stages: list[str] = []
+    real = sep_mod._set
+
+    def record(job, **fields):
+        if "stage" in fields:
+            stages.append(fields["stage"])
+        real(job, **fields)
+
+    monkeypatch.setattr(sep_mod, "_set", record)
+    return stages
+
+
+def test_a_stalled_model_host_fails_the_split_in_seconds_and_names_the_file(
+    job, tmp_path, monkeypatch
+):
+    """The real worker, real demucs and torch.hub's real download, pointed at
+    a local host that accepts the connection and never answers. The old
+    worker waited on it for the 30-minute stall limit, then again on CPU."""
+    calls: list[str] = []
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        root_url = f"http://127.0.0.1:{server.getsockname()[1]}/demucs/"
+        accepted: list[socket.socket] = []
+
+        def stall():
+            with contextlib.suppress(OSError):
+                while True:
+                    accepted.append(server.accept()[0])
+
+        threading.Thread(target=stall, daemon=True).start()
+
+        def spawn(device: str) -> list[str]:
+            calls.append(device)
+            code = (
+                "import sys, demucs.pretrained as p; p.ROOT_URL = sys.argv[2]; "
+                "from app.pipeline.demucs_worker import main; main()"
+            )
+            return [sys.executable, "-c", code, device, root_url]
+
+        monkeypatch.setattr(sep_mod, "_spawn_worker_cmd", spawn)
+        monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+        monkeypatch.setenv("TORCH_HOME", str(tmp_path / "torch"))
+        monkeypatch.setenv("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ", "1")
+        monkeypatch.setenv("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", "2")
+        try:
+            with pytest.raises(SeparationError) as exc_info:
+                _separate_within(60, job, tmp_path / "source.wav", tmp_path)
+        finally:
+            for conn in accepted:
+                conn.close()
+
+    url = f"{root_url}hybrid_transformer/5c90dfd2-34c22ccb.th"
+    folder = tmp_path / "torch" / "hub" / "checkpoints"
+    assert str(exc_info.value) == (
+        f"demucs failed: model download failed: {url}; put the file in {folder} (no data for 1 s)"
+    )
+    assert classify_failure("\n".join(exc_info.value.tail)) == "model-download"
+    # The CPU worker would fetch the same file from the same host.
+    assert calls == ["cuda"]
+    assert job.gpu_fallback is False
+    assert not list(folder.iterdir()), "a failed download left a file behind"
+
+
+# Says where it is downloading, shows a progress bar, then the host goes quiet.
+_STALLED_DOWNLOAD_WORKER = """
+import sys
+sys.stderr.write('Downloading: "http://models.example/demucs/5c90dfd2-34c22ccb.th" to '
+                 '/cache/torch/hub/checkpoints/5c90dfd2-34c22ccb.th\\n')
+sys.stderr.write("  0%|          | 0.00/80.2M [00:00<?, ?B/s]\\r")
+sys.stderr.flush()
+sys.stdin.read()
+"""
+
+
+def test_a_worker_silent_before_ready_is_stopped_at_the_short_limit(job, tmp_path, monkeypatch):
+    calls: list[str] = []
+    stages = _record_stages(monkeypatch)
+
+    def spawn(device: str) -> list[str]:
+        calls.append(device)
+        return [sys.executable, "-c", _STALLED_DOWNLOAD_WORKER]
+
+    monkeypatch.setattr(sep_mod, "_spawn_worker_cmd", spawn)
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+    monkeypatch.setattr(sep_mod, "TIMEOUT_MODEL_STALL", 1)
+
+    with pytest.raises(SeparationError) as exc_info:
+        _separate_within(20, job, tmp_path / "source.wav", tmp_path)
+
+    assert exc_info.value.tail[-1] == (
+        "model download failed: http://models.example/demucs/5c90dfd2-34c22ccb.th"
+        "; put the file in /cache/torch/hub/checkpoints (no data for 1 s)"
+    )
+    assert calls == ["cuda"]
+    assert "Downloading the separation model 0%" in stages
+    assert not any(s.startswith("Separating 0") for s in stages)
+
+
+def test_a_slow_start_with_a_cached_model_is_not_held_to_the_short_limit(
+    job, tmp_path, monkeypatch
+):
+    """Importing torch on a cold machine and loading a model already on disk
+    say nothing until READY. That is not a download, so the short limit,
+    which only a download line switches on, must not stop it."""
+    slow_start = """
+import sys, json, os, time
+time.sleep(3)  # importing torch, loading the cached model
+sys.stderr.write("@@READY@@\\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "vocals.wav"), "wb").write(b"RIFF")
+    sys.stderr.write("@@DONE@@\\n")
+    sys.stderr.flush()
+"""
+    monkeypatch.setattr(sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", slow_start])
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(sep_mod, "TIMEOUT_MODEL_STALL", 1)
+
+    stems_root = _separate_within(30, job, tmp_path / "source.wav", tmp_path)
+
+    assert (stems_root / "vocals.wav").is_file()
+
+
+# Downloads its model on start, then serves jobs; a reused worker does not.
+_DOWNLOADING_WORKER = """
+import sys, json, os
+sys.stderr.write('Downloading: "http://models.example/m-0123abcd.th" to /c/m-0123abcd.th\\n')
+sys.stderr.write(" 45%|####      | 36.1M/80.2M\\r100%|##########| 80.2M/80.2M\\n@@READY@@\\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "vocals.wav"), "wb").write(b"RIFF")
+    sys.stderr.write(" 30%|###       |\\r@@DONE@@\\n")
+    sys.stderr.flush()
+"""
+
+
+def test_progress_before_ready_is_the_download_and_after_it_separation(tmp_path, monkeypatch):
+    stages = _record_stages(monkeypatch)
+    monkeypatch.setattr(
+        sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _DOWNLOADING_WORKER]
+    )
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    first = Job(id="abcdefabc340")
+
+    sep_mod.separate(first, tmp_path / "source.wav", tmp_path)
+
+    assert [s for s in stages if s.endswith("%")] == [
+        "Downloading the separation model 45%",
+        "Downloading the separation model 100%",
+        "Separating 30%",
+    ]
+    assert first.progress == pytest.approx(0.30)
+    assert "separate_startup" in (first.stage_timings or {})
+
+    # The warm worker said READY on the first job: its progress is separation.
+    stages.clear()
+    sep_mod.separate(Job(id="abcdefabc341"), tmp_path / "source.wav", tmp_path)
+    assert [s for s in stages if s.endswith("%")] == ["Separating 30%"]
+
+
+def test_after_ready_a_silent_worker_gets_the_long_limit(job, tmp_path, monkeypatch):
+    """Inference on a GPU can be silent for minutes; only the model's load and
+    download are held to the short limit."""
+    quiet = """
+import sys, json, os, time
+sys.stderr.write("@@READY@@\\n")
+sys.stderr.flush()
+req = json.loads(sys.stdin.readline())
+time.sleep(3)  # separating, without a word
+d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
+os.makedirs(d, exist_ok=True)
+open(os.path.join(d, "vocals.wav"), "wb").write(b"RIFF")
+sys.stderr.write("@@DONE@@\\n")
+sys.stderr.flush()
+sys.stdin.read()
+"""
+    monkeypatch.setattr(sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", quiet])
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(sep_mod, "TIMEOUT_MODEL_STALL", 1)
+
+    stems_root = _separate_within(30, job, tmp_path / "source.wav", tmp_path)
+
+    assert (stems_root / "vocals.wav").is_file()
+
+
+def test_a_model_download_failure_is_not_retried_on_cpu(job, tmp_path, monkeypatch):
+    attempts: list[str] = []
+
+    def fake_run(job, source, job_dir, device):
+        attempts.append(device)
+        return 1, ["model download failed: http://h/m.th; put the file in /c (HTTP 403)"]
+
+    monkeypatch.setattr(sep_mod, "_run_demucs", fake_run)
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+
+    with pytest.raises(SeparationError) as exc_info:
+        sep_mod.separate(job, tmp_path / "source.wav", tmp_path)
+
+    assert attempts == ["cuda"]
+    assert exc_info.value.device == "cuda"
+    assert job.gpu_fallback is False

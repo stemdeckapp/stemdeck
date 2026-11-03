@@ -63,6 +63,10 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "disk quota exceeded",
         ),
     ),
+    # The separation model's download (#125), in the words of
+    # app/core/model_download.py and separate.py's stall message. Only those
+    # words: a network error on its own is just as likely a song's download.
+    ("model-download", ("model download failed:",)),
     # Source-fetch failures (#434). Placed after the resource-level causes above
     # so a genuine disk-full or OOM during a download still classifies as such,
     # and before "bad-input" so yt-dlp's wording wins over the generic
@@ -105,7 +109,8 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def classify_failure(text: str) -> str:
     """Map failure output to one of: out-of-memory, unsupported-device,
-    disk-full, source-blocked, source-unavailable, bad-input, unknown."""
+    disk-full, model-download, source-blocked, source-unavailable, bad-input,
+    unknown."""
     low = text.lower()
     for cause, patterns in _CAUSE_PATTERNS:
         if any(p in low for p in patterns):

@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import textwrap
@@ -183,9 +184,69 @@ def test_demucs_worker_exits_on_the_first_failed_job(tmp_path):
 
     assert r.returncode == 1
     lines = [ln for ln in r.stderr.splitlines() if ln.startswith("@@")]
-    assert lines == ["@@DONE@@", '@@ERROR@@"cannot decode this source"']
+    assert lines == ["@@READY@@", "@@DONE@@", '@@ERROR@@"cannot decode this source"']
     # A worker in an unknown state never serves another job.
     assert not (never_dir / DEMUCS_MODEL).exists()
+
+
+def test_demucs_worker_reports_a_model_it_cannot_download(tmp_path):
+    """#125: the model's download from a host that accepts and then sends
+    nothing ends in a worded error, not a worker that waits forever."""
+    fakes = _write_pkg(
+        tmp_path / "fakes",
+        {
+            **_FAKE_DEMUCS,
+            "demucs/pretrained.py": """
+                import os
+
+                import torch.hub
+
+
+                def get_model(name):
+                    torch.hub.load_state_dict_from_url(os.environ["FAKE_MODEL_URL"], check_hash=True)
+            """,
+        },
+    )
+    job, job_dir = _demucs_job(tmp_path, "one", "0.5")
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        url = f"http://127.0.0.1:{server.getsockname()[1]}/demucs/5c90dfd2-34c22ccb.th"
+        accepted: list[socket.socket] = []
+
+        def stall():
+            # Accept, then never answer. Ends when the server socket closes.
+            with contextlib.suppress(OSError):
+                while True:
+                    accepted.append(server.accept()[0])
+
+        threading.Thread(target=stall, daemon=True).start()
+        try:
+            r = _run_worker(
+                "demucs_worker",
+                ["cpu"],
+                fakes,
+                tmp_path,
+                job + "\n",
+                extra_env={
+                    "FAKE_MODEL_URL": url,
+                    "TORCH_HOME": str(tmp_path / "torch"),
+                    "STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ": "1",
+                    "STEMDECK_MODEL_DOWNLOAD_ATTEMPTS": "2",
+                },
+            )
+        finally:
+            for conn in accepted:
+                conn.close()
+
+    assert r.returncode == 1
+    lines = [ln for ln in r.stderr.splitlines() if ln.startswith("@@")]
+    assert len(lines) == 1 and lines[0].startswith("@@ERROR@@"), r.stderr
+    message = json.loads(lines[0][len("@@ERROR@@") :])
+    assert message == (
+        f"model download failed: {url};"
+        f" put the file in {tmp_path / 'torch' / 'hub' / 'checkpoints'} (no data for 1 s)"
+    )
+    assert "model download try 1 of 2 failed (no data for 1 s), trying again in 2 s" in r.stderr
+    assert not (job_dir / DEMUCS_MODEL).exists()
 
 
 def test_demucs_worker_reports_a_request_that_is_not_json(tmp_path):

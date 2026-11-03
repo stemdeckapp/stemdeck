@@ -61,6 +61,7 @@ const CAUSE_KEYS = {
   "out-of-memory": "job.cause.outOfMemory",
   "unsupported-device": "job.cause.unsupportedDevice",
   "disk-full": "job.cause.diskFull",
+  "model-download": "job.cause.modelDownload",
   "source-blocked": "job.cause.sourceBlocked",
   "source-unavailable": "job.cause.sourceUnavailable",
   "bad-input": "job.cause.badInput",

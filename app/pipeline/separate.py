@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL
+from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL, TIMEOUT_MODEL_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device, get_separation_quality
@@ -21,6 +21,8 @@ from app.pipeline.errors import SeparationError, classify_failure
 logger = logging.getLogger("stemdeck.pipeline")
 
 _PCT_RE = re.compile(r"(\d{1,3})%")
+# The line torch.hub writes before it fetches a checkpoint.
+_DOWNLOADING_RE = re.compile(r'^Downloading: "(?P<url>[^"]+)" to (?P<dst>.+)$')
 # Terminate demucs if stderr produces no output for this many seconds.
 # GPU processing can be silent for minutes; 30 min covers legitimate pauses
 # while still catching genuine hangs (GPU deadlock, OOM stall, etc.).
@@ -149,20 +151,34 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     tail: list[str] = []
     last_output: list[float] = [time.monotonic()]
     job_ok: bool | None = None  # None while streaming; True/False once decided
+    # The model file the worker is downloading (#125): torch.hub's
+    # "Downloading:" line, until that file's 100% or @@READY@@. Only this
+    # phase has the short stall limit; importing torch and loading a cached
+    # model say nothing either, and are not held to it. A reused worker loaded
+    # its model on an earlier job, so it never downloads.
+    fetching: re.Match[str] | None = None
+    # Set by the watchdog when it stops a worker that stalled downloading.
+    stalled_fetching = threading.Event()
     # Event set by the reader loop when the job finishes so the watchdog can
     # wake up immediately instead of waiting out its 30 s sleep.
     _done_evt = threading.Event()
 
     def _watchdog() -> None:
-        while not _done_evt.wait(timeout=30):
-            if proc.poll() is not None:
+        while True:
+            limit = TIMEOUT_DEMUCS_STALL if fetching is None else TIMEOUT_MODEL_STALL
+            # Woken often enough for the short limit, which a download line
+            # can switch on between two checks.
+            if _done_evt.wait(timeout=min(30, TIMEOUT_MODEL_STALL)) or proc.poll() is not None:
                 return
-            if time.monotonic() - last_output[0] > TIMEOUT_DEMUCS_STALL:
+            if time.monotonic() - last_output[0] > limit:
                 logger.warning(
-                    "demucs worker stalled for %ss with no output, terminating job %s",
-                    TIMEOUT_DEMUCS_STALL,
+                    "demucs worker stalled for %ss with no output (%s), terminating job %s",
+                    limit,
+                    "separating" if fetching is None else "downloading the model",
                     job.id,
                 )
+                if fetching is not None:
+                    stalled_fetching.set()
                 proc.terminate()
                 return
 
@@ -182,6 +198,9 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                 buf = ""
                 if not line:
                     continue
+                if line == "@@READY@@":
+                    fetching = None
+                    continue
                 if line == "@@DONE@@":
                     job_ok = True
                     break
@@ -195,7 +214,13 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     job_ok = False
                     break
                 m = _PCT_RE.search(line)
-                if m:
+                if m and fetching is not None:
+                    # The model download's progress bar, not separation.
+                    pct = max(0, min(100, int(m.group(1))))
+                    _set(job, stage=f"Downloading the separation model {pct}%")
+                    if pct == 100:
+                        fetching = None
+                elif m:
                     if not startup_recorded:
                         startup_recorded = True
                         # A new dict, as runner._lap writes one.
@@ -206,6 +231,7 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     pct = max(0, min(100, int(m.group(1))))
                     _set(job, progress=pct / 100.0, stage=f"Separating {pct}%")
                 else:
+                    fetching = _DOWNLOADING_RE.match(line) or fetching
                     tail.append(line)
                     if len(tail) > 40:
                         tail.pop(0)
@@ -233,6 +259,13 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     # generic "demucs failed" path.
     if job.cancel_requested:
         raise JobCancelled()
+    if stalled_fetching.is_set() and fetching is not None:
+        # Said in words, or the job fails as a bare "exit status 1".
+        tail.append(
+            f"model download failed: {fetching['url']};"
+            f" put the file in {os.path.dirname(fetching['dst'])}"
+            f" (no data for {TIMEOUT_MODEL_STALL} s)"
+        )
     return (0, tail) if job_ok else (1, tail)
 
 
@@ -264,11 +297,12 @@ def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) 
     logger.info("[%s] separating on device=%s", job.id, device)
 
     rc, tail = _run_demucs(job, source, job_dir, device)
+    cause = classify_failure("\n".join(tail)) if rc != 0 else ""
 
     # A worker the shutdown killed is not a GPU failure: a CPU pass started
-    # now would keep the backend from exiting.
-    if rc != 0 and device != "cpu" and not jobqueue.is_stopping():
-        cause = classify_failure("\n".join(tail))
+    # now would keep the backend from exiting. Nor is a model that could not be
+    # downloaded: the CPU worker fetches the same file and fails the same way.
+    if rc != 0 and device != "cpu" and not jobqueue.is_stopping() and cause != "model-download":
         logger.warning(
             "[%s] demucs failed on %s (exit %s, cause=%s); retrying on CPU. tail:\n%s",
             job.id,
