@@ -9,6 +9,8 @@ change to the filter graph that halves or drops an input shows up here.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import struct
 import threading
 import time
@@ -203,6 +205,68 @@ def test_original_track_returns_none_when_ffmpeg_fails(tmp_path):
     (tmp_path / "drums.wav").write_bytes(b"garbage")
 
     assert make_original_track(_job(["vocals"]), tmp_path.parent, tmp_path) is None
+
+
+# --- written whole or not at all (F28) ----------------------------------------------
+
+
+class _Crash(BaseException):
+    """A kill between ffmpeg finishing and the rename."""
+
+
+def _make(make, tmp_path):
+    if make is make_selected_mix:
+        return make(_job(["vocals", "drums"]), tmp_path, ["vocals", "drums"])
+    return make(_job(["vocals"]), tmp_path.parent, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("make", "name"), [(make_selected_mix, "mix.wav"), (make_original_track, "original.wav")]
+)
+def test_a_kill_before_the_rename_leaves_no_final_file(tmp_path, monkeypatch, make, name):
+    """ffmpeg writes a dot temp name, so a kill leaves nothing that reads as a
+    whole stem to recovery after a lost registry."""
+    _write_dc(tmp_path / "vocals.wav", 0.1)
+    _write_dc(tmp_path / "drums.wav", 0.2)
+    real = os.replace
+    temps: list[str] = []
+
+    def crash(src, dst):
+        if Path(dst).parent == tmp_path:
+            temps.append(Path(src).name)
+            raise _Crash
+        real(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(_Crash):
+        _make(make, tmp_path)
+    assert not (tmp_path / name).exists()
+    # The name the startup sweep matches: a leading dot, a uuid, ".tmp".
+    assert re.fullmatch(rf"\.{re.escape(name)}\.[0-9a-f]{{32}}\.tmp", temps[0])
+
+
+@pytest.mark.parametrize(
+    ("make", "name"), [(make_selected_mix, "mix.wav"), (make_original_track, "original.wav")]
+)
+def test_a_finished_mix_leaves_only_the_final_file(tmp_path, make, name):
+    stems = tmp_path / "stems"
+    stems.mkdir()
+    _write_dc(stems / "vocals.wav", 0.1)
+    _write_dc(stems / "drums.wav", 0.2)
+
+    assert _make(make, stems) == stems / name
+    assert sorted(p.name for p in stems.iterdir()) == sorted(["drums.wav", name, "vocals.wav"])
+
+
+@pytest.mark.parametrize("make", [make_selected_mix, make_original_track])
+def test_a_failed_mix_leaves_no_temp_file(tmp_path, make):
+    stems = tmp_path / "stems"
+    stems.mkdir()
+    (stems / "vocals.wav").write_bytes(b"not audio at all")
+    (stems / "drums.wav").write_bytes(b"not audio either")
+
+    assert _make(make, stems) is None
+    assert sorted(p.name for p in stems.iterdir()) == ["drums.wav", "vocals.wav"]
 
 
 # --- _run_ffmpeg: registration, timeout, cancellation -------------------------------

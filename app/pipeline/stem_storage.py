@@ -11,8 +11,8 @@ next song without a restart):
   one is verified: ffmpeg and libsndfile, the two decoders the server reads
   stems with, must both decode it to exactly the WAV's frame count, and the
   start of the decoded audio must line up with the WAV's. Only when every stem
-  passed are the MP3s moved into place (rename, so never half-written) and the
-  WAVs deleted.
+  passed are the MP3s moved into place (rename, so never half-written) and,
+  once they and the folder are on the disk (fsync), the WAVs deleted.
 
 Any failure (ffmpeg without libmp3lame, a full disk, a stall, an output that
 does not decode or does not line up) removes the temporary files, keeps every
@@ -50,7 +50,7 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
-from app.core.settings import get_stem_format, get_stem_mp3_kbps
+from app.core.settings import fsync_dir, get_stem_format, get_stem_mp3_kbps
 from app.core.stem_files import stem_url
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -389,6 +389,7 @@ def store_stems(job: Job, job_dir: Path) -> None:
             made.append((wav, tmp))
             _encode(job, wav, tmp, kbps)
             verify_mp3(job, wav, tmp)
+            _fsync(tmp)
     except JobCancelled:
         _discard(made)
         raise
@@ -418,6 +419,7 @@ def store_stems(job: Job, job_dir: Path) -> None:
         _record(job, "wav", None)
         return
 
+    fsync_dir(stems_dir)
     before = sum(_size(w) for w in wavs)
     after = sum(_size(w.with_suffix(".mp3")) for w in wavs)
     for wav in wavs:
@@ -448,6 +450,15 @@ def _size(path: Path) -> int:
         return 0
 
 
+def _fsync(path: Path) -> None:
+    """Put the MP3's bytes on the disk before its WAV is deleted. A rename can
+    reach the disk before the data does, and a power cut then leaves an empty
+    MP3 with the WAV gone. Opened for writing because Windows only flushes a
+    handle that can write."""
+    with open(path, "r+b") as fh:
+        os.fsync(fh.fileno())
+
+
 def _discard(made: list[tuple[Path, Path]]) -> None:
     for _wav, tmp in made:
         try:
@@ -472,6 +483,7 @@ def store_split_stems(job: Job, stems_dir: Path, names: list[str]) -> None:
             made.append((wav, tmp))
             _encode(job, wav, tmp, int(job.stem_mp3_kbps))
             verify_mp3(job, wav, tmp)
+            _fsync(tmp)
         for wav, tmp in made:
             os.replace(tmp, wav.with_suffix(".mp3"))
     except Exception as exc:
@@ -482,6 +494,7 @@ def store_split_stems(job: Job, stems_dir: Path, names: list[str]) -> None:
                 wav.with_suffix(".mp3").unlink(missing_ok=True)
         logger.warning("[%s] split stems kept as WAV: %s", job.id, exc)
         return
+    fsync_dir(stems_dir)
     for wav, _tmp in made:
         try:
             wav.unlink()

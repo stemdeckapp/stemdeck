@@ -15,10 +15,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from app.core.config import TIMEOUT_VOCAL_SPLIT, VOCAL_SPLIT_WATCHDOG_POLL_SEC
@@ -69,20 +71,44 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
         raise VocalSplitError(
             "vocals.wav not found -- job has no vocals stem to split", code=WORKER_FAILED
         )
+    # The worker writes into the dot temp folder `.vocal_split.<hex>.tmp` beside
+    # the stems, and the pair moves in only once both are whole: a kill or a
+    # failure never leaves a half-written lead_vocals.wav that reads as a stem.
+    work = stems_dir / f".vocal_split.{uuid.uuid4().hex}.tmp"
     # audio-separator gets a WAV whatever the song keeps (#783): an MP3 vocals
     # stem is decoded by ffmpeg first, so the model reads exactly the samples
     # every other reader does.
     try:
+        work.mkdir()
         with decoded_wav(vocals_path) as wav_in:
-            return _split(job, wav_in, stems_dir)
+            names = _split(job, wav_in, work)
+        return _move_in(work, stems_dir, names)
     except SeparationError:
         raise
     except RuntimeError as exc:
         raise VocalSplitError("could not read the vocals stem", code=WORKER_FAILED) from exc
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
-def _split(job: Job, vocals_path: Path, stems_dir: Path) -> list[str]:
-    """split_vocals on a WAV vocals file."""
+def _move_in(work: Path, stems_dir: Path, names: list[str]) -> list[str]:
+    """Move the pair from `work` into the stems. A move that fails takes back
+    the one already made; a kill between the two renames is not covered."""
+    placed: list[Path] = []
+    try:
+        for name in names:
+            final = stems_dir / f"{name}.wav"
+            os.replace(work / f"{name}.wav", final)
+            placed.append(final)
+    except OSError as exc:
+        for final in placed:
+            final.unlink(missing_ok=True)
+        raise VocalSplitError("could not move the split stems in", code=WORKER_FAILED) from exc
+    return names
+
+
+def _split(job: Job, vocals_path: Path, out_dir: Path) -> list[str]:
+    """split_vocals on a WAV vocals file, writing the pair into `out_dir`."""
 
     device = get_demucs_device()
     env = os.environ.copy()
@@ -106,7 +132,7 @@ def _split(job: Job, vocals_path: Path, stems_dir: Path) -> list[str]:
 
     try:
         proc = subprocess.Popen(
-            _spawn_cmd(device, vocals_path, stems_dir),
+            _spawn_cmd(device, vocals_path, out_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             # utf-8/replace explicitly. text=True alone decodes with the locale
@@ -210,7 +236,7 @@ def _split(job: Job, vocals_path: Path, stems_dir: Path) -> list[str]:
         )
 
     for name in ("lead_vocals", "backing_vocals"):
-        if not (stems_dir / f"{name}.wav").is_file():
+        if not (out_dir / f"{name}.wav").is_file():
             raise VocalSplitError(
                 f"vocal split did not produce {name}.wav", code=WORKER_FAILED, device=device
             )
