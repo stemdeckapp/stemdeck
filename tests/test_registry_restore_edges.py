@@ -41,6 +41,8 @@ def _stems(jobs_dir: Path, job_id: str, *names: str) -> Path:
     stems.mkdir(parents=True, exist_ok=True)
     for name in names or ("vocals",):
         (stems / f"{name}.wav").write_bytes(b"RIFF")
+    # As a separation that finished leaves them.
+    _registry.mark_stems_complete(jobs_dir / job_id)
     return jobs_dir / job_id
 
 

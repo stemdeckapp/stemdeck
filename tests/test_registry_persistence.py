@@ -30,6 +30,8 @@ def _stems_dir(tmp_path: Path, job_id: str, names=("vocals", "drums")) -> None:
     d.mkdir(parents=True, exist_ok=True)
     for n in names:
         (d / f"{n}.wav").write_bytes(b"RIFF")
+    # As a separation that finished leaves them.
+    _registry.mark_stems_complete(tmp_path / job_id)
 
 
 def test_a_queued_job_survives_a_restart(tmp_path: Path):
@@ -279,14 +281,15 @@ def test_restore_recovers_automatic_sections_from_metadata(tmp_path: Path):
 
 
 def test_restore_recovers_orphan_without_metadata(tmp_path: Path):
-    """#284: a crash between status=done and the metadata write used to leave
-    a complete stems dir permanently unrecoverable. Now it comes back with a
-    placeholder title, and a minimal metadata.json is written so the next
-    restart takes the normal recovery path (self-healing)."""
+    """#284: a crash between the stems being marked complete and the metadata
+    write used to leave a complete stems dir permanently unrecoverable. Now it
+    comes back with a placeholder title, and a minimal metadata.json is written
+    so the next restart takes the normal recovery path (self-healing)."""
     job_dir = tmp_path / "abcdefabcde0"
     stems_dir = job_dir / "stems"
     stems_dir.mkdir(parents=True)
     (stems_dir / "vocals.wav").write_bytes(b"RIFF")
+    _registry.mark_stems_complete(job_dir)
 
     restore_registry(tmp_path)
 

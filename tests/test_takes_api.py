@@ -512,9 +512,10 @@ async def test_takes_survive_a_registry_rebuild_from_disk(jobs_dir, client):
     """_recover_done_job rebuilds a job from its folder; the takes are files
     first, so they come back with it."""
     skip_without_ffmpeg()
-    from app.core.registry import _recover_done_job
+    from app.core.registry import _recover_done_job, mark_stems_complete
 
     _make_job(jobs_dir)
+    mark_stems_complete(jobs_dir / JOB)
     async with client as c:
         tid = await _finished_take(c, jobs_dir)
         await _create(c)  # unfinished: not a lane

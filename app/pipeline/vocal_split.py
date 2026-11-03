@@ -93,7 +93,9 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
 
 def _move_in(work: Path, stems_dir: Path, names: list[str]) -> list[str]:
     """Move the pair from `work` into the stems. A move that fails takes back
-    the one already made; a kill between the two renames is not covered."""
+    the one already made. A kill between the two renames leaves a lead alone,
+    which a song rebuilt from its folder does not count as split
+    (registry._rebuild_from_folder)."""
     placed: list[Path] = []
     try:
         for name in names:

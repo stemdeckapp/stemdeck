@@ -47,6 +47,7 @@ def _done_job_dir(jobs_dir, job_id="a1b2c3d4e5f6"):
     stems = jobs_dir / job_id / "stems"
     stems.mkdir(parents=True)
     (stems / "vocals.wav").write_bytes(b"RIFF")
+    _registry.mark_stems_complete(jobs_dir / job_id)
     return jobs_dir / job_id
 
 

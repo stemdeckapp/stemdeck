@@ -37,7 +37,7 @@ from app.core.models import (
     clean_work,
 )
 from app.core.settings import fsync_dir, quarantine_corrupt
-from app.core.stem_files import stem_exists, stem_url
+from app.core.stem_files import stem_exists, stem_names_on_disk, stem_path, stem_url
 from app.core.takes import reconcile_tracks, recover_takes
 from app.core.versions import clean_stems
 
@@ -540,6 +540,8 @@ def restore(jobs_dir: Path) -> None:
             for job in to_add.values():
                 if _sync_tracks(job, jobs_dir / job.id):
                     changed = True
+                if job.status in _TERMINAL:
+                    _backfill_stems_complete(jobs_dir / job.id)
             if copy_saved:
                 # Songs finished before metadata.json kept a copy get one now,
                 # or a registry lost later would still reset all of them. A
@@ -668,13 +670,13 @@ def _copy_saved_fields(job: Job, jobs_dir: Path, held: set[str]) -> bool:
 def _resume_or_recover(job: Job, job_dir: Path) -> Job | None:
     """Decide what a job that was in flight when the process died becomes.
 
-    Three states of the same directory need telling apart. If the stems are all
-    there, the crash landed between the last stem being written and the "done"
-    persist, so the work is finished and re-running it would duplicate the
-    library entry. Otherwise the job goes back in the queue from the top, after
-    the partial demucs output is cleared so collect() cannot mistake it for
-    results. A job that has already burned its resume is failed loudly rather
-    than retried forever.
+    Three states of the same directory need telling apart. If the stems are
+    marked complete, the crash landed between the last stem being written and
+    the "done" persist, so the work is finished and re-running it would
+    duplicate the library entry. Otherwise the job goes back in the queue from
+    the top, after the partial demucs output is cleared so collect() cannot
+    mistake it for results. A job that has already burned its resume is failed
+    loudly rather than retried forever.
 
     A job the user trashed before the restart is not resumed (#748). It came
     back as a Paused row in the queue, offered to Start a song that was in the
@@ -789,6 +791,40 @@ def _stopped_from_source(job_dir: Path) -> Job | None:
     )
 
 
+# The last file a separation writes into stems/ (mark_stems_complete): a folder
+# without it was cut off part way.
+STEMS_COMPLETE = ".complete"
+
+
+def mark_stems_complete(job_dir: Path) -> None:
+    """Record that a separation wrote every stem file it makes in stems/.
+    Called last, so a kill at any point before leaves a folder without the
+    marker. Every stem file and the folder are on the disk before the marker
+    is: a power cut could otherwise keep the marker and lose a stem's bytes.
+    Raises OSError."""
+    stems_dir = job_dir / "stems"
+    for name in stem_names_on_disk(stems_dir):
+        # Opened for writing: Windows only flushes a handle that can write.
+        with open(stem_path(stems_dir, name), "r+b") as fh:
+            os.fsync(fh.fileno())
+    fsync_dir(stems_dir)
+    _write_atomic(stems_dir / STEMS_COMPLETE, "")
+
+
+def _backfill_stems_complete(job_dir: Path) -> None:
+    """The marker for a song made before it, which the registry holds as done,
+    so a registry lost later still brings it back (songs from before 0.2 have
+    no metadata.json either). Its stems are long on the disk: only the marker
+    is written. Never fatal: restore() runs at import time."""
+    stems_dir = job_dir / "stems"
+    try:
+        if (stems_dir / STEMS_COMPLETE).is_file() or not stem_names_on_disk(stems_dir):
+            return
+        _write_atomic(stems_dir / STEMS_COMPLETE, "")
+    except OSError:
+        logger.warning("could not mark the stems of %s complete", job_dir.name, exc_info=True)
+
+
 def _recover_done_job(job_dir: Path) -> Job | None:
     found = _rebuild_from_folder(job_dir)
     return found[0] if found is not None else None
@@ -796,29 +832,40 @@ def _recover_done_job(job_dir: Path) -> Job | None:
 
 def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     """A finished song rebuilt from its folder, and whether its metadata.json
-    held the SAVED_FIELDS (a folder written before they were kept has none)."""
+    held the SAVED_FIELDS (a folder written before they were kept has none).
+    None for a folder whose separation did not finish."""
     stems_dir = job_dir / "stems"
     if not stems_dir.is_dir():
         return None
+    # A restart between the split finishing and its next registry persist
+    # would otherwise report the job as never split -- derive from disk the
+    # same way `stems` below does, so the recovered library entry doesn't
+    # regress (#275). Both or neither: the pair moves in with two renames
+    # (vocal_split._move_in), and a kill between them leaves a lead alone.
+    has_split = all(stem_exists(stems_dir, name) for name in EXTRA_STEM_NAMES)
+    vocal_split = "done" if has_split else "none"
     # WAV or MP3, whichever the song was stored as (#783).
     stems = [
         {"name": name, "url": stem_url(job_dir.name, stems_dir, name)}
-        for name in ("original", *STEM_NAMES, *EXTRA_STEM_NAMES)
+        for name in ("original", *STEM_NAMES, *(EXTRA_STEM_NAMES if has_split else ()))
         if stem_exists(stems_dir, name)
     ]
     if not stems:
+        return None
+    meta_path = job_dir / "metadata.json"
+    # A song made before the marker gets it while the registry holds it
+    # (_backfill_stems_complete). One whose record was already gone has
+    # metadata.json, written once a song is done, and now only after the marker.
+    if not (stems_dir / STEMS_COMPLETE).is_file() and not meta_path.is_file():
+        logger.warning(
+            "%s holds stems of a separation that did not finish; not rebuilt as done",
+            job_dir.name,
+        )
         return None
     mix_url = None
     if stem_exists(stems_dir, "mix"):
         mix_url = stem_url(job_dir.name, stems_dir, "mix")
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
-    # A restart between the split finishing and its next registry persist
-    # would otherwise report the job as never split -- derive from disk the
-    # same way `stems` above does, so the recovered library entry doesn't
-    # regress (#275).
-    has_split = all(stem_exists(stems_dir, name) for name in EXTRA_STEM_NAMES)
-    vocal_split = "done" if has_split else "none"
-    meta_path = job_dir / "metadata.json"
     meta: dict = {}
     if meta_path.is_file():
         try:
@@ -828,11 +875,11 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         if not isinstance(meta, dict):
             meta = {}  # read as none, so the folders after this one still rebuild
     else:
-        # Crash window (#284): the process died between status=done and the
-        # metadata write, leaving a complete stems dir that used to be
-        # unrecoverable. Recover with a placeholder title and write a minimal
-        # metadata.json immediately, so the NEXT restart takes the normal
-        # path -- self-healing, not a permanent special case.
+        # Crash window (#284): the process died between the stems being
+        # marked complete and the metadata write, leaving a complete stems dir
+        # that used to be unrecoverable. Recover with a placeholder title and
+        # write a minimal metadata.json immediately, so the NEXT restart takes
+        # the normal path -- self-healing, not a permanent special case.
         meta = {"title": f"Recovered track {job_dir.name[:6]}"}
         try:
             meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

@@ -19,7 +19,7 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
-from app.core.registry import is_upload, saved_fields
+from app.core.registry import is_upload, mark_stems_complete, saved_fields
 from app.core.registry import persist as persist_registry
 from app.pipeline import jobqueue
 from app.pipeline.analyze import analyze, refine_key_from_stems
@@ -342,6 +342,17 @@ def _store_stems(job: Job, job_dir: Path) -> None:
     _lap(job, "store", mark)
 
 
+def _mark_stems_complete(job: Job, job_dir: Path) -> None:
+    """Last: nothing writes into stems/ after it. A failure costs the marker,
+    not the song, whose stems are whole: failing the job would delete them.
+    A song without the marker is rebuilt by the metadata.json it gets once
+    done, as a song made before the marker is."""
+    try:
+        mark_stems_complete(job_dir)
+    except OSError:
+        logger.exception("[%s] could not mark the stems complete", job.id)
+
+
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _check_cancel(job)
     mark = time.monotonic()
@@ -349,6 +360,7 @@ def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _lap(job, "download", mark)
     _run_with_band_lookup(job, source, job_dir)
     _store_stems(job, job_dir)
+    _mark_stems_complete(job, job_dir)
 
 
 def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
@@ -358,6 +370,7 @@ def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
     _lap(job, "prepare", mark)
     _run_with_band_lookup(job, source, job_dir)
     _store_stems(job, job_dir)
+    _mark_stems_complete(job, job_dir)
 
 
 def _write_metadata(job: Job, job_dir: Path) -> None:
