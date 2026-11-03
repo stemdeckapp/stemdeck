@@ -318,6 +318,10 @@ JOB_TTL_SECONDS = max(300, _env_int("STEMDECK_JOB_TTL_SECONDS", 24 * 3600))  # 2
 # Swept unconditionally -- even deployments with a persistent library must not
 # accumulate failure evidence forever.
 FAILED_TTL_SECONDS = max(3600, _env_int("STEMDECK_FAILED_TTL_SECONDS", 7 * 24 * 3600))  # 7 d
+# How long an export cache temp must have gone unwritten before the startup
+# sweep takes it. A second server that shares the cache folder (one started
+# with only STEMDECK_JOBS_DIR changed) may be writing it; an orphan is older.
+CACHE_TEMP_MIN_AGE_SECONDS = 600
 # Depth of the import queue: jobs waiting for their turn, not counting the one
 # running. Counted separately by kind, because the two cost wildly different
 # things. A queued upload holds its source file on disk for the whole wait, so

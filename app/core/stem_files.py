@@ -93,7 +93,9 @@ def is_stem_audio(path: Path) -> bool:
 @contextlib.contextmanager
 def decoded_wav(path: Path) -> Iterator[Path]:
     """`path` itself when it is a WAV, else a float32 WAV decoded from it by
-    ffmpeg in a temporary folder that is removed afterwards.
+    ffmpeg in a temporary folder beside it that is removed afterwards. Beside
+    it, not in the system temp folder, so the startup sweep
+    (collect.sweep_crash_leftovers) finds what a killed process left there.
 
     For a reader that hands the stem to a third-party library which may not
     decode MP3 the way ffmpeg does (the vocal split's audio-separator). Raises
@@ -101,7 +103,7 @@ def decoded_wav(path: Path) -> Iterator[Path]:
     if path.suffix.lower() == ".wav":
         yield path
         return
-    folder = Path(tempfile.mkdtemp(prefix="stemdeck-decode-"))
+    folder = Path(tempfile.mkdtemp(prefix=".decode-", dir=path.parent))
     try:
         out = folder / f"{path.stem}.wav"
         cmd = [

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 import wave
 from pathlib import Path
 
@@ -425,13 +426,18 @@ def _render_events(
     pcm = (buf * 32767.0).astype("<i2")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".wav.tmp")
-    with wave.open(str(tmp), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sample_rate)
-        w.writeframes(pcm.tobytes())
-    tmp.replace(dest)
+    # A unique dot name: two exports may render the same click at once, and
+    # the export cache's prune and the startup sweep both go by the dot.
+    tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with wave.open(str(tmp), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sample_rate)
+            w.writeframes(pcm.tobytes())
+        tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
     return dest
 
 
