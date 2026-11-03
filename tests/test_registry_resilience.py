@@ -113,6 +113,6 @@ async def test_a_dropped_job_that_was_not_cancelled_is_left_alone(tmp_path):
     _registry.register(job)
 
     jobqueue_mod = __import__("app.pipeline.jobqueue", fromlist=["jobqueue"])
-    jobqueue_mod._finalise_dropped_job(job)
+    await jobqueue_mod._finalise_dropped_job(job)
 
     assert job.status == "done"

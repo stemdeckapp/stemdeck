@@ -204,7 +204,7 @@ async def _dispatch(job: Job) -> None:
     await run_pipeline(job, source_url, JOBS_DIR)
 
 
-def _finalise_dropped_job(job: Job) -> None:
+async def _finalise_dropped_job(job: Job) -> None:
     """Complete a cancellation the API could not finish itself.
 
     cancel_job can only finalise a job it still finds in the queue. Between
@@ -215,12 +215,12 @@ def _finalise_dropped_job(job: Job) -> None:
     if not job.cancel_requested or job.status in FINISHED_STATUSES:
         return
     if settle_cancelled(job):
-        cleanup_job_dir(job.id)
+        await asyncio.to_thread(cleanup_job_dir, job.id)
     registry_persist(JOBS_DIR)
-    finish_deferred_delete(job, JOBS_DIR)
+    await finish_deferred_delete(job, JOBS_DIR)
 
 
-def finish_deferred_delete(job: Job, jobs_dir: Path) -> None:
+async def finish_deferred_delete(job: Job, jobs_dir: Path) -> None:
     """Remove a job emptied from the Trash while its stop was settling, the
     delete DELETE answered 202 for (#748).
 
@@ -232,7 +232,7 @@ def finish_deferred_delete(job: Job, jobs_dir: Path) -> None:
         return
     # A fingerprint may still have the source open (Windows).
     release_source(job.id)
-    if not remove_job_dir(jobs_dir / job.id):
+    if not await asyncio.to_thread(remove_job_dir, jobs_dir / job.id):
         logger.warning("[%s] deleted job's folder could not be removed", job.id)
     registry_remove(job.id)
     registry_persist(jobs_dir)
@@ -270,7 +270,7 @@ async def _worker_loop() -> None:
             # pending_count against the capacity limit, its uploaded source
             # never freed, and -- because "queued" is persisted -- re-queued
             # on every restart (#520).
-            _finalise_dropped_job(job)
+            await _finalise_dropped_job(job)
             continue
 
         # Claim it. No await between the pop and this status write, so a job is

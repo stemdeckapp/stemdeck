@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import shutil
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -823,3 +828,151 @@ def test_lyrics_stages_run_only_when_detect_lyrics_was_on(tmp_path: Path, auto_l
     assert lookup.called is looks
     assert transcribe.called is looks
     assert retime.called is looks
+
+
+# ─── cleanup after a failed or cancelled job stays off the event loop ───
+
+
+def _slow_rmtree(monkeypatch) -> threading.Event:
+    """Make every rmtree take 0.2 s, the way a multi-GB folder on a NAS does.
+    The event is set while one is in progress."""
+    real_rmtree = shutil.rmtree
+    removing = threading.Event()
+
+    def slow(*args, **kwargs):
+        removing.set()
+        try:
+            time.sleep(0.2)
+            return real_rmtree(*args, **kwargs)
+        finally:
+            removing.clear()
+
+    monkeypatch.setattr(shutil, "rmtree", slow)
+    return removing
+
+
+async def _ticks_while(removing: threading.Event, run) -> int:
+    """How often another coroutine got to run while an rmtree was in progress."""
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            if removing.is_set():
+                ticks += 1
+            await asyncio.sleep(0.005)
+
+    task = asyncio.create_task(ticker())
+    try:
+        await run
+    finally:
+        task.cancel()
+    return ticks
+
+
+async def test_failed_job_quarantine_leaves_the_loop_free(tmp_path: Path, monkeypatch):
+    """Every SSE stream and request stalled while a failed job's folder was
+    stripped and moved. The first "error" a page sees must already carry the
+    error_detail and the evidence, since the page records the failure then."""
+    job, _job_dir, _source = _failed_separation_job(
+        tmp_path, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+    removing = _slow_rmtree(monkeypatch)
+    seen_error: list[tuple[str | None, bool]] = []
+
+    async def watch():
+        while not seen_error:
+            if job.status == "error":
+                seen_error.append(
+                    (job.error_detail, (tmp_path / "failed" / job.id / "error.txt").is_file())
+                )
+            await asyncio.sleep(0.001)
+
+    watcher = asyncio.create_task(watch())
+    with patch("app.pipeline.runner._run_blocking", side_effect=_worker_died):
+        ticks = await _ticks_while(removing, run_pipeline(job, job.source_url, tmp_path))
+    await asyncio.wait_for(watcher, 1)
+
+    assert ticks > 0, "the quarantine blocked the event loop"
+    detail, evidence = seen_error[0]
+    assert detail is not None
+    assert evidence
+
+
+@pytest.mark.parametrize("ending", ["cancelled", "stopped", "emptied from the Trash"])
+async def test_end_of_run_cleanup_leaves_the_loop_free(tmp_path: Path, monkeypatch, ending):
+    """A cancel removes the folder, a stop removes the partial separation, and
+    a job emptied from the Trash while it ran is removed when it settles."""
+    from app.core import registry as _registry
+    from app.pipeline import runner as _runner
+
+    job = Job(
+        id="abcdefabc130",
+        cancel_requested=ending != "emptied from the Trash",
+        stop_requested=ending == "stopped",
+    )
+    monkeypatch.setitem(_jobs, job.id, job)
+    job_dir = tmp_path / job.id
+    (job_dir / _runner.DEMUCS_MODEL).mkdir(parents=True)
+    if ending == "emptied from the Trash":
+        _registry.mark_deleted(job.id)
+
+    def run(_job, _job_dir):
+        if job.cancel_requested:
+            raise JobCancelled()
+
+    removing = _slow_rmtree(monkeypatch)
+    ticks = await _ticks_while(removing, _runner._run_async(job, job_dir, tmp_path, run))
+
+    assert ticks > 0, "the cleanup blocked the event loop"
+    assert not (job_dir / _runner.DEMUCS_MODEL).exists()
+    assert job_dir.exists() is (ending == "stopped")
+
+
+async def test_cancel_before_claim_cleanup_leaves_the_loop_free(tmp_path: Path, monkeypatch):
+    """The queue worker removes a job cancelled between pop and claim (#520)."""
+    from app.pipeline import jobqueue
+
+    job = Job(id="abcdefabc131", status="queued", cancel_requested=True)
+    monkeypatch.setitem(_jobs, job.id, job)
+    jobqueue.enqueue(job.id)
+    (jobqueue.JOBS_DIR / job.id).mkdir(parents=True)
+    removing = _slow_rmtree(monkeypatch)
+
+    async def settle():
+        task = jobqueue.start_worker()
+        try:
+            while job.status != "cancelled" or (jobqueue.JOBS_DIR / job.id).exists():
+                await asyncio.sleep(0.01)
+        finally:
+            jobqueue.request_stop()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    ticks = await _ticks_while(removing, asyncio.wait_for(settle(), 5))
+
+    assert ticks > 0, "the cleanup blocked the event loop"
+
+
+async def test_failed_job_emptied_from_the_trash_during_its_quarantine_is_removed(
+    tmp_path: Path, monkeypatch
+):
+    """The job reads as running while its folder moves, so emptying the Trash
+    then answers 202 and leaves the removal to the runner (#748)."""
+    from app.core import registry as _registry
+    from app.pipeline import runner as _runner
+
+    job, job_dir, _source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    monkeypatch.setitem(_jobs, job.id, job)
+    real_quarantine = _runner._quarantine_failed_job
+
+    def quarantine_then_empty_the_trash(*args):
+        _registry.mark_deleted(job.id)
+        real_quarantine(*args)
+
+    monkeypatch.setattr(_runner, "_quarantine_failed_job", quarantine_then_empty_the_trash)
+    await _runner._run_async(job, job_dir, tmp_path, _worker_died)
+
+    assert job.status == "error"
+    assert job.id not in _registry.all_jobs(), "the deleted job's record stayed"
