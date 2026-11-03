@@ -331,6 +331,9 @@ MAX_PENDING_URL_JOBS = max(1, min(500, _env_int("STEMDECK_MAX_PENDING_URL_JOBS",
 # normalization. Unrelated to MAX_PENDING_JOBS, which bounds the queue itself --
 # a playlist larger than the queue has room for fills what it can and says so.
 PLAYLIST_MAX_ITEMS = max(1, min(200, _env_int("STEMDECK_PLAYLIST_MAX_ITEMS", 50)))
+# Old songs waiting for their loudness to be measured again (api/jobs.py), at up
+# to TIMEOUT_ANALYZE each. One opened past this is measured on a later open.
+LOUDNESS_UPGRADE_QUEUE_MAX = 8
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
