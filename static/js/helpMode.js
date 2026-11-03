@@ -53,6 +53,9 @@ const HELP = [
   ["#job-cancel", "help.jobCancel"],
   // Try again on the notice a failed Lead + Backing split shows (#832).
   [".split-retry-btn", "help.splitRetry"],
+  // Try again on the box a failed link import shows (#175), before the box's
+  // plain Try again, whose class it also has.
+  [".import-retry-btn", "help.importRetry"],
   ["#error .retry-btn", "help.errorRetry"],
   ["#error .error-close", "help.errorClose"],
   ["#fav-btn", "help.favorite"],

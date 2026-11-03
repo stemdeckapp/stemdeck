@@ -8,7 +8,7 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
-import { JOB_BUSY, RESTART_REQUIRED, codeMessage, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
@@ -16,7 +16,7 @@ import {
 } from "./queue.js";
 import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
 import { compareOldestFirst } from "./shared/jobs.js";
-import { takeStemsFromJob } from "./capture/takeLanes.js";
+import { showTrackNote, takeStemsFromJob } from "./capture/takeLanes.js";
 import { inLibraryList, libraryDeleteTrackId } from "./libraryDeleteKey.js";
 import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailuresByKind } from "./notifications.js";
 // Aliased (not the bare "t") -- this file already uses "t"/"tr" as local
@@ -2605,7 +2605,7 @@ async function completeSettledJob(jobId) {
     if (state.status === "error") {
       notifyFailure({
         kind: "import",
-        message: state.error || i18nT("job.audioProcessingFailed"),
+        message: importFailure(state).message,
         detail: state.error_detail || null,
         context: {
           jobId,
@@ -5829,17 +5829,29 @@ function watchNetworkStatus(overlay) {
 // Poll a job until it reaches a terminal state, so auto-restores run one at a
 // time (applyState/connectEvents drive a single active studio job — overlapping
 // restores would fight over the studio). Caps at 30 min as a safety net.
+// Resolves the job's final state, or null when it is gone or never ended.
 async function waitForJobTerminal(jobId) {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       const r = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
-      if (r.status === 404) return;
+      if (r.status === 404) return null;
       const s = await r.json();
-      if (["done", "error", "cancelled", "stopped"].includes(s.status)) return;
+      if (["done", "error", "cancelled", "stopped"].includes(s.status)) return s;
     } catch { /* transient — keep waiting */ }
   }
+  return null;
+}
+
+// What a Resync did, in one line (#175): it used to end with nothing said, so
+// it looked as if nothing had happened. A count of zero is left out.
+function resyncSummary(restored, failed, localOnly) {
+  return [
+    restored ? i18nPlural("settings.outOfSync.restored", restored) : "",
+    failed ? i18nPlural("settings.outOfSync.failed", failed) : "",
+    localOnly ? i18nPlural("settings.outOfSync.localOnly", localOnly) : "",
+  ].filter(Boolean).join(" ");
 }
 
 // "Sync again": reconcile the library with the backend, then auto-restore the
@@ -5870,26 +5882,44 @@ async function resyncLibrary() {
     const unavailable = Object.entries(tracks)
       .filter(([id, t]) => !trashIds.has(id) && t.status === "unavailable")
       .map(([, t]) => t);
-    const restorable = unavailable.filter((t) => t.sourceUrl && !t.sourceUrl.startsWith("local:"));
+    const restorable = unavailable.filter((t) => isReimportableSource(t.sourceUrl));
+    const localOnly = unavailable.length - restorable.length;
 
     if (restorable.length) {
       // Re-import each from its source. Close the editor so the studio overlay
       // shows progress; restore sequentially (single active studio job).
       closeLibraryEditor();
+      let restored = 0;
+      const failed = [];
       for (const t of restorable) {
+        let refused = "";
         const jobId = await importFromUrl(t.sourceUrl, {
           title: t.title,
           stems: t.selectedStems,
           vocalSplit: hadVocalSplit(t),
+          onRefused: (message) => { refused = message; },
         });
-        if (jobId) await waitForJobTerminal(jobId);
+        const end = jobId ? await waitForJobTerminal(jobId) : null;
+        if (end?.status === "done") {
+          restored += 1;
+          continue;
+        }
+        // A job that was cancelled, vanished or never ended has no reason to give.
+        const reason = end?.status === "error" ? importFailure(end).message : refused;
+        failed.push(reason ? i18nT("settings.outOfSync.failedTrack", { title: displayTitle(t.title), reason }) : displayTitle(t.title));
       }
+      // The editor is closed, so the result goes where the restores ran: the
+      // error box with each failure and its reason, or a note when all came back.
+      const summary = resyncSummary(restored, failed.length, localOnly);
+      if (failed.length) showError(summary, failed.join("\n"), { retry: false });
+      else showTrackNote(summary);
       return;
     }
 
-    // Nothing auto-restorable left — show the out-of-sync count (local-file
-    // tracks can't be re-fetched and stay flagged).
+    // Nothing a link can bring back: the out-of-sync count, or why each of
+    // those tracks stays as it is (a file has to be added again).
     refreshLibrarySyncSummary();
+    if (localOnly && statusEl) statusEl.textContent = resyncSummary(0, 0, localOnly);
   } catch (e) {
     console.warn("[catalog] resync failed:", e);
     if (statusEl) statusEl.textContent = i18nT("library.syncFailed");

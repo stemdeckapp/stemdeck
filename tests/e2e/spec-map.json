@@ -234,6 +234,11 @@
       "specs": ["report-failure", "release-full-download", "update-check", "error-banner"]
     },
     {
+      "why": "A failed import's cause sentence, its Try again, and the Resync result line (#175)",
+      "paths": ["static/js/errorReason.js", "static/js/job.js", "static/js/catalog.js", "static/js/notifications.js"],
+      "specs": ["import-failure"]
+    },
+    {
       "why": "Format icon and cover art",
       "paths": ["static/js/formatIcon.js", "static/img/**", "static/imgs/**"],
       "specs": ["format-icon", "now-playing-art", "brand-link", "we-recommend", "about-license"]
