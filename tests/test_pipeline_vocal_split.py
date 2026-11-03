@@ -8,6 +8,8 @@ GPU is needed.
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -69,8 +71,11 @@ def test_split_vocals_success(job, stems_dir, monkeypatch):
     result = vs_mod.split_vocals(job, stems_dir)
 
     assert result == ["lead_vocals", "backing_vocals"]
-    assert (stems_dir / "lead_vocals.wav").is_file()
-    assert (stems_dir / "backing_vocals.wav").is_file()
+    assert sorted(p.name for p in stems_dir.iterdir()) == [
+        "backing_vocals.wav",
+        "lead_vocals.wav",
+        "vocals.wav",
+    ]
     # vocals.wav itself must never be touched by the split.
     assert (stems_dir / "vocals.wav").read_bytes() == b"RIFF"
 
@@ -94,6 +99,66 @@ def test_split_vocals_missing_output_raises(job, stems_dir, monkeypatch):
 
     with pytest.raises(SeparationError):
         vs_mod.split_vocals(job, stems_dir)
+
+
+# Writes the lead vocal, then dies before the backing one: half a pair.
+_HALF_PAIR_WORKER = """
+import sys, os
+open(os.path.join(sys.argv[3], "lead_vocals.wav"), "wb").write(b"RIFF")
+sys.exit(1)
+"""
+
+
+class _Crash(BaseException):
+    """A kill between the worker's write and the rename into the stems."""
+
+
+def test_a_failed_split_leaves_no_lead_vocals(job, stems_dir, monkeypatch):
+    monkeypatch.setattr(vs_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(vs_mod, "_spawn_cmd", _stub(_HALF_PAIR_WORKER))
+
+    with pytest.raises(SeparationError):
+        vs_mod.split_vocals(job, stems_dir)
+
+    assert sorted(p.name for p in stems_dir.iterdir()) == ["vocals.wav"]
+
+
+def test_a_kill_before_the_rename_leaves_no_split_stem(job, stems_dir, monkeypatch):
+    monkeypatch.setattr(vs_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(vs_mod, "_spawn_cmd", _stub(_SUCCESS_WORKER))
+    real = os.replace
+    work: list[str] = []
+
+    def crash(src, dst):
+        if Path(dst).parent == stems_dir:
+            work.append(Path(src).parent.name)
+            raise _Crash
+        real(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(_Crash):
+        vs_mod.split_vocals(job, stems_dir)
+
+    assert sorted(p.name for p in stems_dir.iterdir()) == ["vocals.wav"]
+    # The folder name the startup sweep matches: a leading dot, a uuid, ".tmp".
+    assert re.fullmatch(r"\.vocal_split\.[0-9a-f]{32}\.tmp", work[0])
+
+
+def test_a_pair_that_cannot_be_moved_in_is_removed_whole(job, stems_dir, monkeypatch):
+    monkeypatch.setattr(vs_mod, "get_demucs_device", lambda: "cpu")
+    monkeypatch.setattr(vs_mod, "_spawn_cmd", _stub(_SUCCESS_WORKER))
+    real = os.replace
+
+    def second_fails(src, dst):
+        if Path(dst).name == "backing_vocals.wav":
+            raise PermissionError("held open")
+        real(src, dst)
+
+    monkeypatch.setattr(os, "replace", second_fails)
+    with pytest.raises(SeparationError):
+        vs_mod.split_vocals(job, stems_dir)
+
+    assert sorted(p.name for p in stems_dir.iterdir()) == ["vocals.wav"]
 
 
 def test_split_vocals_requires_vocals_stem(job, tmp_path, monkeypatch):

@@ -76,6 +76,24 @@ def _run_ffmpeg(job: Job, cmd: list[str]) -> bool:
         set_proc(job.id, None)
 
 
+def _write_wav(job: Job, cmd: list[str], out: Path) -> Path | None:
+    """Run `cmd` with a WAV output at the dot temp name `.<name>.<hex>.tmp`
+    beside `out`, renamed to `out` only once ffmpeg succeeded. A kill mid-write
+    then leaves a temp file, never an `out` that recovery takes for a whole
+    stem."""
+    tmp = out.with_name(f".{out.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        if not _run_ffmpeg(job, [*cmd, "-f", "wav", str(tmp)]):
+            return None
+        os.replace(tmp, out)
+        return out
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove %s", tmp, exc_info=True)
+
+
 def remove_job_dir(job_dir: Path) -> bool:
     """Remove a job's directory. False means files are still on disk.
 
@@ -163,7 +181,7 @@ def make_original_track(job: Job, job_dir: Path, stems_dir: Path) -> Path | None
         # Single complement stem -- copy as-is so we still produce a
         # canonical mix.wav-shaped output without invoking amix on a
         # 1-input graph (which is a no-op anyway).
-        cmd += ["-c:a", "pcm_s16le", *WAV_PLAIN_HEADER_ARGS, str(out)]
+        cmd += ["-c:a", "pcm_s16le", *WAV_PLAIN_HEADER_ARGS]
     else:
         filter_inputs = "".join(f"[{i}:a]" for i in range(len(inputs)))
         cmd += [
@@ -172,9 +190,8 @@ def make_original_track(job: Job, job_dir: Path, stems_dir: Path) -> Path | None
             "-c:a",
             "pcm_s16le",
             *WAV_PLAIN_HEADER_ARGS,
-            str(out),
         ]
-    return out if _run_ffmpeg(job, cmd) else None
+    return _write_wav(job, cmd, out)
 
 
 def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | None:
@@ -214,9 +231,8 @@ def make_selected_mix(job: Job, stems_dir: Path, found: list[str]) -> Path | Non
         "-c:a",
         "pcm_s16le",
         *WAV_PLAIN_HEADER_ARGS,
-        str(out),
     ]
-    return out if _run_ffmpeg(job, cmd) else None
+    return _write_wav(job, cmd, out)
 
 
 # Enough points to back the deepest zoom, not the 1x bar count: a full-width

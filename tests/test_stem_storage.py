@@ -292,6 +292,51 @@ def test_nothing_final_exists_until_every_stem_verified(jobs_dir, monkeypatch):
         assert wavs == ["bass.wav", "drums.wav", "vocals.wav"]
 
 
+def _watch_the_disk(monkeypatch, stems: Path, names) -> list[tuple[str, bool]]:
+    """Each fsync of a file or of the folder, with whether every WAV was still
+    there at that moment."""
+    seen: list[tuple[str, bool]] = []
+    real_fsync = os.fsync
+
+    def all_wavs() -> bool:
+        return all((stems / f"{n}.wav").is_file() for n in names)
+
+    def file_fsync(fd):
+        seen.append(("file", all_wavs()))
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", file_fsync)
+    monkeypatch.setattr(stem_storage, "fsync_dir", lambda d: seen.append(("dir", all_wavs())))
+    return seen
+
+
+def test_mp3s_and_the_folder_reach_the_disk_before_the_wavs_go(jobs_dir, monkeypatch):
+    """A power cut after the rename but before the writeback must not leave an
+    empty MP3 with its WAV already deleted (F22)."""
+    skip_without_ffmpeg()
+    names = ("vocals", "drums", "bass")
+    job = _job(jobs_dir, "a1b2c3d4e5fb", names=names)
+    stems = jobs_dir / job.id / "stems"
+    settings.set_stem_storage("mp3", 128)
+    seen = _watch_the_disk(monkeypatch, stems, names)
+    stem_storage.store_stems(job, jobs_dir / job.id)
+    assert seen == [("file", True)] * len(names) + [("dir", True)]
+    assert job.stem_format == "mp3" and not any((stems / f"{n}.wav").exists() for n in names)
+
+
+def test_split_mp3s_and_the_folder_reach_the_disk_before_the_wavs_go(
+    mp3_job, jobs_dir, monkeypatch
+):
+    names = ("lead_vocals", "backing_vocals")
+    stems = jobs_dir / mp3_job.id / "stems"
+    for i, name in enumerate(names):
+        sf.write(stems / f"{name}.wav", _signal(seed=10 + i), SR, subtype="PCM_16")
+    seen = _watch_the_disk(monkeypatch, stems, names)
+    stem_storage.store_split_stems(mp3_job, stems, list(names))
+    assert seen == [("file", True)] * len(names) + [("dir", True)]
+    assert not any((stems / f"{n}.wav").exists() for n in names)
+
+
 def test_transcript_and_envelope_kept_from_the_wav_stay_valid(jobs_dir):
     skip_without_ffmpeg()
     from app.pipeline.lyrics_retime import read_transcript, save_transcript
@@ -621,9 +666,11 @@ def test_vocal_split_hands_the_model_a_decoded_wav(mp3_job, jobs_dir, monkeypatc
 
     seen = {}
 
-    def fake(job, vocals_path, stems_dir):
+    def fake(job, vocals_path, out_dir):
         seen["path"] = vocals_path
         seen["frames"] = sf.info(str(vocals_path)).frames
+        for name in ("lead_vocals", "backing_vocals"):
+            (out_dir / f"{name}.wav").write_bytes(b"RIFF")
         return ["lead_vocals", "backing_vocals"]
 
     monkeypatch.setattr(vocal_split, "_split", fake)
