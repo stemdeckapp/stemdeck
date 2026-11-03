@@ -21,7 +21,7 @@ import {
 import {
   activeVersionId, nextVersionNumber, setSongVersions, songVersions, versionWithStems,
 } from "./versionScope.js";
-import { freezeVoiceInVersions, layoutBlockedReason, layoutState, runVocalSplit } from "./modeStems.js";
+import { freezeVoiceInVersions, layoutBlockedReason, layoutState, runVocalSplit, showOpenedVersion } from "./modeStems.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { splitFailedText } from "./vocalSplitState.js";
 import { openTrackInStudio } from "./catalog.js";
@@ -73,9 +73,10 @@ export function versionStemsText(stems) {
  * Make a version of `jobId` showing `lanes` and open it. `voice` ("split"
  * or "combined") is written for the modes that choose lanes; `copyMix`
  * starts it from the mix of the version open now, in every mode, else from
- * the defaults. Resolves the new version.
+ * the defaults. `filesChanged`: stems were just separated for it (openVersion).
+ * Resolves the new version.
  */
-export async function createVersion(jobId, { name = null, lanes, voice = null, copyMix = false } = {}) {
+export async function createVersion(jobId, { name = null, lanes, voice = null, copyMix = false, filesChanged = false } = {}) {
   const from = activeVersionId(jobId);
   const stems = BASE_STEMS.filter((n) => (lanes || []).includes(n));
   const mixes = {};
@@ -92,7 +93,7 @@ export async function createVersion(jobId, { name = null, lanes, voice = null, c
     for (const mode of LANE_MODES) await storeSet(choiceKey(jobId, mode, vid), serializeChoice({ voice }));
   }
   applyServerVersions(jobId, data.versions, data.active_version);
-  await openVersion(jobId, vid);
+  await openVersion(jobId, vid, filesChanged);
   return data.version;
 }
 
@@ -131,16 +132,18 @@ export async function deleteVersion(jobId, versionId) {
     }
   }
   applyServerVersions(jobId, data.versions, data.active_version);
-  if (wasOpen && jobId === currentJobId) reloadKeepingPlace(jobId);
+  if (wasOpen && jobId === currentJobId) await showOpenedVersion(jobId);
   return "";
 }
 
 /**
  * Open version `versionId` of `jobId`: it becomes the one that opens with the
- * song, and the song loads with its lanes and its mix (the place kept when
- * the song is already open).
+ * song, and the song loads with its lanes and its mix. A song already open
+ * keeps its place, and reloads only when the version shows other lanes or
+ * `filesChanged` (stems were separated for it): with the same lanes only the
+ * mix changes (modeStems.js showOpenedVersion).
  */
-export async function openVersion(jobId, versionId) {
+export async function openVersion(jobId, versionId, filesChanged = false) {
   const open = jobId === currentJobId;
   if (open && activeVersionId(jobId) === versionId) return;
   const data = await api(`${base(jobId)}/${encodeURIComponent(versionId)}/select`, { method: "POST" });
@@ -148,7 +151,7 @@ export async function openVersion(jobId, versionId) {
   // own record first: readSavedMix flushes it.
   if (open) await readSavedMix(jobId, getMixMode());
   applyServerVersions(jobId, data.versions, data.active_version);
-  if (open) reloadKeepingPlace(jobId);
+  if (open) await showOpenedVersion(jobId, filesChanged);
   else await openTrackInStudio(jobId);
 }
 
@@ -207,14 +210,16 @@ export async function extractAsVersion(stems, voice, onBusy = () => {}, expectJo
         }
       }
     }
+    // New stems on disk are new lanes the open song has not loaded.
+    const filesChanged = missing.length > 0 || (wantSplit && !splitDone);
     if (same) {
       // Already open, with new stems on disk: it reloads to show them.
       if (same.id === activeVersionId(jobId)) reloadKeepingPlace(jobId);
-      else await openVersion(jobId, same.id);
+      else await openVersion(jobId, same.id, filesChanged);
       return { handled: true, text: t("versions.opened", { name: versionLabel(same, versions.indexOf(same)) }) };
     }
     const name = t("versions.unnamed", { n: nextVersionNumber(versions) });
-    await createVersion(jobId, { name, lanes, voice: wantSplit ? "split" : null });
+    await createVersion(jobId, { name, lanes, voice: wantSplit ? "split" : null, filesChanged });
     return { handled: true, text: t("versions.created", { name }) };
   } catch (err) {
     console.warn("[versions] extract as a version failed:", err);

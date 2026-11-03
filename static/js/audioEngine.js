@@ -136,6 +136,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
   let _epoch = 0;
+  // destroy() aborts the stem downloads still running: an engine replaced
+  // before it loaded (another song or version opened) would otherwise
+  // download and decode every stem only to drop them.
+  const downloads = new AbortController();
   // Why ready() resolved false, as an i18n key the caller shows with t(). A key
   // and not text, so the phone page, which shares this engine, never loads the
   // string tables. Mirrors the same accessor on the chunked engine so callers
@@ -167,14 +171,16 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
         if (!s?.url) return;
         let bytes;
         try {
-          const res = await fetch(s.url);
+          const res = await fetch(s.url, { signal: downloads.signal });
           if (!res.ok) throw new Error(`fetch ${res.status}`);
           bytes = await res.arrayBuffer();
         } catch (e) {
+          if (destroyed) return;
           unreachable++;
           console.warn(`[audioEngine] fetch failed for ${s.name}:`, e);
           return;
         }
+        if (destroyed) return;
         try {
           const buffer = await ctx.decodeAudioData(bytes);
           if (destroyed) return;
@@ -204,6 +210,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
           routeTrack(track, true);
           duration = Math.max(duration, buffer.duration);
         } catch (e) {
+          if (destroyed) return;
           undecodable++;
           console.warn(`[audioEngine] decode failed for ${s.name}:`, e);
         }
@@ -461,6 +468,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
 
   function destroy() {
     destroyed = true;
+    downloads.abort();
     stopSources();
     resetProcessor();
     // destroyPlayer() tears the engine down without pausing first, so an engine

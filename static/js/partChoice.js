@@ -177,6 +177,13 @@ export function layoutSignature(shown) {
   return `${(shown?.lanes || []).join(",")}|${(shown?.original || []).join(",")}`;
 }
 
+/** Whether `layout` shows `jobId` with exactly the lanes on screen (`shown`:
+ * player.js shownLaneLayout, null when none was loaded under a layout), its
+ * stem files being `present`. Then the loaded audio stays and nothing reloads. */
+export function showsSameLanes(shown, jobId, layout, present) {
+  return Boolean(shown) && shown.jobId === jobId && shown.sig === layoutSignature(layoutLanes(layout, new Set(present)));
+}
+
 /**
  * Before a lead/backing split starts from `mode`: the records to write so
  * only that mode sees the pair. Every other mode with no voice of its own is

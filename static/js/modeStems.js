@@ -15,20 +15,20 @@
 //
 // A layout is read before the song's lanes are built (catalog.js and job.js
 // call prepareLayout before wireUpAudio). A change reloads the song with the
-// playhead and loop kept, as Streamer's "I play" does; a switch of mode
-// reloads only when the two modes show different lanes.
+// playhead and loop kept, as Streamer's "I play" does; a switch of mode or
+// of version reloads only when the two show different lanes.
 
 import { storeGet, storeSet } from "./utils.js";
 import { currentJobId } from "./state.js";
 import { setLaneLayout, shownLaneLayout } from "./player.js";
-import { mixModeInForce, onMixModeSettled } from "./mixMode.js";
+import { mixModeInForce, onMixModeSettled, syncVersionMix } from "./mixMode.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { noteSplitOutcome, splitReason } from "./vocalSplitState.js";
 import { scopeFor, activeVersionStems, songVersions } from "./versionScope.js";
 import { dismissFailuresByJobId } from "./notifications.js";
 import {
   BASE_STEMS, choiceKey, parseChoice, serializeChoice, mergeChoice, modeLayout, layoutLanes,
-  layoutSignature, songDefaultLanes, splitFreezePatches, STEM_MODES, LANE_MODES, VOICE_MODES,
+  showsSameLanes, songDefaultLanes, splitFreezePatches, STEM_MODES, LANE_MODES, VOICE_MODES,
 } from "./partChoice.js";
 
 // The open song as the last prepareLayout saw it: { jobId, songSelected,
@@ -183,12 +183,29 @@ export async function changeLayout(patch) {
 function applyIfChanged(jobId, mode) {
   const stored = sameScope(jobId) ? records.byMode[mode] ?? null : null;
   const layout = modeLayout(mode, stored, defaultLanes());
-  const want = layoutSignature(layoutLanes(layout, new Set(song.present)));
-  const shown = shownLaneLayout();
   setLaneLayout(jobId, { ...layout, songSelected: song.songSelected, extracted: extractedStems() });
-  if (shown && shown.jobId === jobId && shown.sig === want && !performanceLaneStale(jobId)) return false;
+  if (showsSameLanes(shownLaneLayout(), jobId, layout, song.present) && !performanceLaneStale(jobId)) return false;
   reloadKeepingPlace(jobId);
   return true;
+}
+
+/**
+ * The open song's version changed (versions.js): its lane records are read,
+ * and the song reloads only when that version shows other lanes than the
+ * ones on screen. With the same lanes the loaded audio stays and plays on,
+ * and the version's mix replaces the one in force, as a mode switch does.
+ * `filesChanged`: stems were separated for it, so it always reloads.
+ */
+export async function showOpenedVersion(jobId, filesChanged = false) {
+  if (filesChanged || song.jobId !== jobId) {
+    reloadKeepingPlace(jobId);
+    return;
+  }
+  const mode = mixModeInForce();
+  await prepareLayout(jobId, song.songSelected, song.present, song.splitState, song.splitReason);
+  // A mode switch meanwhile reads the new version's records itself (onModeSettled).
+  if (jobId !== currentJobId || mode !== mixModeInForce() || applyIfChanged(jobId, mode)) return;
+  await syncVersionMix();
 }
 
 // ── Performance's own track ──

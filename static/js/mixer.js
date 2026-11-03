@@ -172,9 +172,17 @@ let _switchToken = 0;
 export async function switchMixMode(mode) {
   if (mode === _activeMode) return false;
   const jobId = currentJobId;
-  const from = _activeMode;
-  if (jobId) await storeFlushPending(mixKey(jobId, from));
+  if (jobId) await storeFlushPending(mixKey(jobId, _activeMode));
   _activeMode = mode;
+  return reloadOpenMix();
+}
+
+/** Read the open song's record in the open mode again: after a mode switch,
+ * or a version switch (versionScope.js) that changed the record's key.
+ * Resolves as switchMixMode does. */
+export async function reloadOpenMix() {
+  const jobId = currentJobId;
+  const mode = _activeMode;
   const names = Object.keys(trackIndex || {});
   if (!jobId || !names.length) return false;
   const token = ++_switchToken;
