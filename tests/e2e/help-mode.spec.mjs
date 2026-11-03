@@ -320,4 +320,12 @@ test.describe("help mode leaves no control unexplained", () => {
     await expect(page.locator("#notifList .daw-notif-error")).toBeVisible();
     expect(await unexplained(page)).toEqual([]);
   });
+
+  test("on the sections bar, Hide names the way back", async ({ page }) => {
+    await openStudio(page);
+    await helpOn(page);
+    await page.locator("#sectionsHideBtn").hover();
+    await expect(tip(page).locator("b")).toHaveText("Hide the sections bar");
+    await expect(tip(page)).toContainText("Collapse > Sections brings it back");
+  });
 });

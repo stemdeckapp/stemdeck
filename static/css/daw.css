@@ -1548,11 +1548,13 @@ input, textarea { font-family: inherit; }
 }
 .daw-label-title { font-size: 12px; font-weight: 600; }
 .daw-label-sub { font-size: 9px; }
-.daw-sections-header { justify-content: space-between; }
-.daw-sections-title-group { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-/* Clear and Add belong together. The header is space-between, so without this
-   group each control drifts to its own corner and Clear ends up marooned. */
-.sections-header-actions { display: inline-flex; align-items: center; gap: 6px; }
+.daw-sections-header { justify-content: space-between; gap: 8px; }
+.daw-sections-title-group { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; }
+/* Clear, Add and Hide belong together. The header is space-between, so without
+   this group each control drifts to its own corner and Clear ends up marooned.
+   It may shrink, and only the save indicator inside it gives way: the column
+   is a fixed 300px, and in German the buttons alone nearly fill it. */
+.sections-header-actions { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .daw-sections-area {
   flex: 1;
   position: relative;
@@ -1689,12 +1691,15 @@ input, textarea { font-family: inherit; }
   caret-color: var(--sc, #4a7fff);
 }
 
-/* Sections save indicator */
+/* Sections save indicator. It takes only the room the buttons leave, so in a
+   long language its words are cut short instead of running over the title or
+   pushing the buttons out of the column. aria-live still reads them whole. */
 .sections-save-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
   white-space: nowrap;
   transition: opacity 400ms;
@@ -1702,11 +1707,22 @@ input, textarea { font-family: inherit; }
 .sections-save-indicator.hidden { display: none; }
 .sections-save-indicator.saved { color: #4caf7d; }
 /* A refusal, not a failure of something already in flight. It borrows this
-   element because it belongs beside the button that was pressed. */
-.sections-save-indicator.notice { color: var(--warn, #e6a23c); white-space: normal; }
+   element because it belongs beside the button that was pressed. Two lines
+   are what the 36px bar holds without growing. */
+.sections-save-indicator.notice {
+  color: var(--warn, #e6a23c);
+  white-space: normal;
+  line-height: 1.1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
 .sections-save-indicator::before {
   content: "";
-  display: block;
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 5px;
   width: 8px; height: 8px;
   border-radius: 50%;
   border: 1.5px solid currentColor;
@@ -1760,6 +1776,9 @@ input, textarea { font-family: inherit; }
   color: var(--muted);
   border-color: var(--border);
 }
+
+/* Hide carries no word, so the padding the label side needs goes. */
+.sections-hide-btn { padding: 3px 6px; }
 
 /* Clear-all sections. Neutral until it is armed, then it states plainly that
    the next click destroys something, because nothing here can be undone. */

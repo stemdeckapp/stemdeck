@@ -138,6 +138,7 @@ const HELP = [
   // The sections bar (sections.js): the lock and the cross sit inside a block.
   ["#sectionsAddBtn", "help.addSection"],
   ["#sectionsClearBtn", "help.clearSections"],
+  ["#sectionsHideBtn", "help.sectionsHide"],
   [".section-block .section-lock", "help.sectionLock"],
   [".section-block .section-del", "help.sectionDelete"],
   [".section-block", "help.section"],
