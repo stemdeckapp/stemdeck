@@ -282,15 +282,16 @@ def remove_moved(current: Path, names: tuple[str, ...]) -> None:
 def _is_link(path: Path) -> bool:
     """A symlink or a Windows junction. Neither is ever followed: what it points
     at is not the library's. The reparse tag, as shutil.rmtree checks it,
-    rather than os.path.isjunction, which Python 3.11 does not have."""
+    rather than os.path.isjunction, which Python 3.11 does not have. Only
+    Windows has junctions, and only its stat module names their tag."""
     try:
         st = path.lstat()
     except OSError:
         return False
-    return (
-        stat.S_ISLNK(st.st_mode)
-        or getattr(st, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
-    )
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    junction = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+    return os.name == "nt" and getattr(st, "st_reparse_tag", 0) == junction
 
 
 def _remove(path: Path) -> None:

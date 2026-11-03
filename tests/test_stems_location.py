@@ -980,6 +980,46 @@ def test_a_link_inside_the_library_is_never_followed_out_of_it(
     assert (current / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
 
 
+@pytest.fixture
+def stat_without_the_junction_tag(monkeypatch):
+    """The stat module as Linux and macOS have it: no IO_REPARSE_TAG_* names."""
+    import stat
+
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+
+
+def test_a_move_across_drives_works_where_stat_names_no_junction_tag(
+    tmp_path, other_drive, stat_without_the_junction_tag
+):
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    before = _library(current)
+    target = tmp_path / "new"
+
+    result = move_library(current, target)
+    stems_location.remove_moved(current, result.copied)
+
+    assert _snapshot(target) == before
+    assert list(current.iterdir()) == []
+
+
+def test_a_symlink_is_refused_where_stat_names_no_junction_tag(
+    tmp_path, other_drive, stat_without_the_junction_tag
+):
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (current / "aaaaaaaaaaaa" / "elsewhere").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+
+    with pytest.raises(StemsLocationError, match="Could not move aaaaaaaaaaaa: a link"):
+        move_library(current, tmp_path / "new")
+
+
 def test_an_unfinished_copy_of_any_entry_is_cleared_by_the_retry(tmp_path):
     """A crash mid-copy leaves `.<entry>.moving` in the target. It must not make
     the retry refuse the folder as someone else's, whatever the entry is."""
