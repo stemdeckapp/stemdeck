@@ -5144,7 +5144,7 @@ function openLibraryEditor() {
             <div class="settings-row settings-row-stack">
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.cookies.title">YouTube cookies</div>
-                <div class="settings-row-desc" data-i18n="settings.cookies.desc">Optional. Path to a cookies.txt file, used only when YouTube asks StemDeck to confirm it is not a bot. Leave this empty unless imports are failing.</div>
+                <div class="settings-row-desc" data-i18n="settings.cookies.desc">Optional. A cookies.txt file in the StemDeck data folder, used only when YouTube asks StemDeck to confirm it is not a bot. Leave this empty unless imports are failing.</div>
               </div>
               <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
               <div class="cookies-file-msg" role="status" aria-live="polite"></div>

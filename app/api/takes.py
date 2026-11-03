@@ -1104,6 +1104,8 @@ def _probe_video(path: Path) -> tuple[float, int, int]:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=TIMEOUT_FILMSTRIP,
     )
     if proc.returncode != 0:
@@ -1138,6 +1140,8 @@ def _decoded_duration(path: Path) -> float:
         [ffmpeg_executable(), "-nostdin", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=TIMEOUT_FILMSTRIP,
     )
     times = _DECODE_TIME_RE.findall(proc.stderr or "")
@@ -1166,6 +1170,8 @@ def _last_packet_end(path: Path) -> float:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=TIMEOUT_FILMSTRIP,
         )
     except (subprocess.SubprocessError, OSError):
@@ -1233,6 +1239,8 @@ def build_filmstrip(camera: Path, folder: Path) -> dict[str, Any]:
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=TIMEOUT_FILMSTRIP,
             )
             if proc.returncode != 0 or not tmp.is_file():

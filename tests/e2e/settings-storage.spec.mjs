@@ -218,15 +218,34 @@ test("a cookies file that does not exist is refused with a message", async ({ pa
   const input = page.locator(".set-cookies-file");
   await input.fill(path.join(SCRATCH, "missing", "cookies.txt"));
   await input.press("Tab");
-  await expect(page.locator(".cookies-file-msg")).toHaveText("File not found, or not readable.");
+  await expect(page.locator(".cookies-file-msg")).toHaveText(
+    "File not found, not readable, or not in the StemDeck data folder.",
+  );
+  expect((await (await request.get("/api/settings")).json()).cookies_file || "").toBe(
+    original.cookies_file || "",
+  );
+});
+
+test("a cookies file outside the data folder is refused like a missing one", async ({ page, request }) => {
+  fs.mkdirSync(SCRATCH, { recursive: true });
+  const outside = path.join(SCRATCH, "cookies.txt");
+  fs.writeFileSync(outside, "# Netscape HTTP Cookie File\n");
+  await openSettings(page, "general");
+  const input = page.locator(".set-cookies-file");
+  await input.fill(outside);
+  await input.press("Tab");
+  await expect(page.locator(".cookies-file-msg")).toHaveText(
+    "File not found, not readable, or not in the StemDeck data folder.",
+  );
   expect((await (await request.get("/api/settings")).json()).cookies_file || "").toBe(
     original.cookies_file || "",
   );
 });
 
 test("a cookies file that exists is kept, and clearing it clears it", async ({ page, request }) => {
-  fs.mkdirSync(SCRATCH, { recursive: true });
-  const cookies = path.join(SCRATCH, "cookies.txt");
+  // The backend's data folder: serve.sh puts the logs folder directly in it.
+  const dataDir = path.dirname((await (await request.get("/api/logs")).json()).dir);
+  const cookies = path.join(dataDir, "cookies.txt");
   fs.writeFileSync(cookies, "# Netscape HTTP Cookie File\n");
   await openSettings(page, "general");
   const input = page.locator(".set-cookies-file");

@@ -3,7 +3,7 @@ public report.
 
 The notification centre's "Report on GitHub"/"Report on Discord" flow and its
 opt-in "include recent logs" button both end with this text pasted somewhere
-public. Three things in particular have no business being there:
+public. Four things in particular have no business being there:
 
   - The reporter's home directory. On Windows the Python install path alone
     (`C:\\Users\\<name>\\...`) carries the OS username.
@@ -18,6 +18,9 @@ public. Three things in particular have no business being there:
     network access is on, so uvicorn's access log (captured into
     backend.log on desktop) can carry another device's address on the
     reporter's home network, not just their own.
+  - A line of the cookies file. yt-dlp writes a line it cannot parse to
+    stderr, which is backend.log on desktop, and into the job's error; that
+    line is the user's YouTube session.
 
 Paths are matched in any spelling a log carries them in (either slash,
 doubled backslashes from repr(), any case) and replaced by a placeholder
@@ -55,6 +58,13 @@ _SOURCE_URL_RE = re.compile(
 # timestamp (every log line has one), which would mangle every line's time
 # instead of catching the rare home IPv6 address.
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+# yt-dlp's cookies.py: "WARNING: skipping cookie file entry due to {e}: {line!r}",
+# and http.cookiejar's "invalid Netscape format cookies file {name!r}: {line!r}"
+# for a line that passes yt-dlp's checks, which yt-dlp reports as an error.
+_COOKIE_LINE_RE = re.compile(
+    r"(skipping cookie file entry|invalid Netscape format cookies file)[^\r\n]*"
+)
 
 # Every path pattern starts on a plain character, with any lookbehind after it
 # and ignore-case scoped to the rest: a leading lookbehind or a global
@@ -101,8 +111,9 @@ def _path_re(path: Path) -> re.Pattern[str]:
 
 def redact(text: str) -> str:
     """Strip the app's folders, any user's home folder and name, network
-    shares, any YouTube/SoundCloud source URL, and any IPv4 address from
-    `text`."""
+    shares, any YouTube/SoundCloud source URL, any IPv4 address and any
+    cookies file line from `text`."""
+    text = _COOKIE_LINE_RE.sub(r"\1 <cookie-line-redacted>", text)
     home = Path.home()
     folders = [
         (JOBS_DIR, "<jobs>"),
