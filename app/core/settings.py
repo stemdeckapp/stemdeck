@@ -83,15 +83,6 @@ def _default_allow_network() -> bool:
     return os.environ.get("STEMDECK_DESKTOP") != "1"
 
 
-def _mirror_path() -> Path | None:
-    """Where the per-user copy lives, or None when the shell did not set one.
-
-    The path comes from the shell (STEMDECK_SETTINGS_MIRROR) so the platform
-    logic stays in one place -- see _mirror_settings."""
-    target = os.environ.get("STEMDECK_SETTINGS_MIRROR", "").strip()
-    return Path(target) if target else None
-
-
 def _read_json_dict(path: Path) -> dict | None:
     """Parse `path` as a JSON object.
 
@@ -133,7 +124,7 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     write_text() truncates first and writes second, so a process that dies in
     between leaves a file that exists and does not parse -- which _load then
     could not distinguish from a first run, and the next setting change
-    persisted a one-key file over both this and the mirror (#509). Same
+    persisted a one-key file over it (#509). Same
     same-directory temp + replace the registry already uses; the temp name is
     unique per call so two concurrent writers cannot interleave on it.
 
@@ -189,8 +180,7 @@ def _load() -> dict:
 
     Conflating the two is what lost real user settings: a torn write left an
     unparsable file, this returned {} exactly as it would on a first run, and
-    the next set_*() then persisted a single key over both settings.json and
-    the mirror that existed to protect it."""
+    the next set_*() then persisted a single key over it."""
     if not _SETTINGS_PATH.exists():
         return {}  # no settings file yet — genuine first run; use defaults
 
@@ -198,19 +188,8 @@ def _load() -> dict:
     if data is not None:
         return data
 
-    # The file is there but unusable. Preserve it, then try the per-user copy
-    # the shell keeps outside the install directory.
+    # The file is there but unusable. Preserve it for diagnosis.
     _quarantine_corrupt(_SETTINGS_PATH)
-    mirror = _mirror_path()
-    if mirror is not None:
-        recovered = _read_json_dict(mirror)
-        if recovered:
-            _log.warning("recovered settings from mirror %s", mirror)
-            # Put them back immediately. Without this the recovery only lasts
-            # until the next start, which would read a now-absent primary and
-            # silently fall back to defaults again.
-            _atomic_write_json(_SETTINGS_PATH, recovered)
-            return recovered
     return {}
 
 
@@ -218,15 +197,6 @@ def _ensure() -> dict:
     global _state
     if _state is None:
         _state = _load()
-        # Seed the per-user copy from settings that already exist. Mirroring
-        # only on _save() would protect nobody who configured StemDeck before
-        # this shipped and never opens Settings again -- their next install
-        # would still start empty. Safe against recursion (_state is assigned
-        # first) and against clobbering: an empty dict means a genuine first
-        # run, and overwriting a good copy with it is exactly the data loss
-        # this whole mechanism exists to prevent.
-        if _state:
-            _mirror_settings()
     return _state
 
 
@@ -237,39 +207,7 @@ def _save() -> bool:
     is still reported back, because one caller (set_jobs_dir) is coupled to
     something irreversible enough that silently swallowing a failure there
     would be actively misleading rather than merely inconvenient (#403)."""
-    if not _atomic_write_json(_SETTINGS_PATH, _ensure()):
-        return False
-    _mirror_settings()
-    return True
-
-
-def _mirror_settings() -> None:
-    """Keep a per-user copy of settings.json outside the install directory.
-
-    A Windows portable package keeps its data in `<app>/data` (#399), so
-    settings.json lives *inside the install*. Upgrading by extracting the new
-    zip to a fresh folder therefore started that install with no settings at
-    all: the stems location, port, compute device, quality and language were
-    all silently back to defaults, and a relocated library looked empty.
-
-    The desktop shell restores from this copy -- `ensure_workspace` seeds a
-    fresh portable install from it before the backend ever reads
-    settings.json. A portable package itself writes nothing outside its own
-    folder, so the shell gives it no mirror; the copy it reads is the one an
-    installed StemDeck keeps.
-
-    Best-effort by definition: this is a redundant copy, and failing to write
-    it must never fail the setting the user just changed. The path comes from
-    the shell (STEMDECK_SETTINGS_MIRROR) so the platform logic stays in one
-    place and both halves cannot drift apart.
-    """
-    path = _mirror_path()
-    if path is None:
-        return
-    # Same-directory temp + replace: a torn write here would be restored
-    # verbatim into the user's next install. _atomic_write_json also gives the
-    # temp file a unique name, so two writers cannot interleave on it.
-    _atomic_write_json(path, _ensure())
+    return _atomic_write_json(_SETTINGS_PATH, _ensure())
 
 
 def _num(v: object) -> int | None:

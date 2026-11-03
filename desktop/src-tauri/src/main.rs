@@ -672,9 +672,32 @@ fn main() {
 /// ~/Documents/StemDeck/jobs, since the backend's own ensure_runtime_dirs
 /// (app/core/config.py) already mkdirs whichever JOBS_DIR actually wins that
 /// precedence -- this path only needs to exist when it is the one in use.
-fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let documents = app.path().document_dir().map_err(|e| e.to_string())?;
-    Ok(documents.join("StemDeck"))
+///
+/// None for a portable package (see installed_documents_dir), or when the OS
+/// has no Documents folder.
+fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let documents = || app.path().document_dir().ok().map(|d| d.join("StemDeck"));
+    match app_root() {
+        Ok(root) => installed_documents_dir(&root, documents),
+        Err(_) => documents(),
+    }
+}
+
+/// `documents` for an installed app, None for a portable package.
+///
+/// ~/Documents/StemDeck is where an installed StemDeck keeps its library. A
+/// portable package keeps its own in data/jobs, or in the folder the user picks
+/// in Settings, so it never looks there: a portable run that adopted that
+/// folder opened another install's songs, and its reset or sweep deleted them.
+fn installed_documents_dir(
+    root: &Path,
+    documents: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if is_portable_package(root) {
+        None
+    } else {
+        documents()
+    }
 }
 
 /// The stems/jobs folder as it exists right now: the backend's own
@@ -720,21 +743,13 @@ fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
     let new_path = jobs_dir.join("user-data.json");
     if !new_path.is_file() {
-        if let Ok(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
+        if let Some(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
             if old_path.is_file() && old_path != new_path {
                 let _ = fs::copy(&old_path, &new_path);
             }
         }
     }
     Ok(new_path)
-}
-
-/// True if `path` exists and contains at least one entry. Used to tell an
-/// already-in-use default folder apart from one nothing has ever written to.
-fn directory_has_entries(path: &Path) -> bool {
-    fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
 }
 
 /// The DEFAULT stems folder. Does NOT create it -- see documents_stemdeck_dir
@@ -746,45 +761,18 @@ fn directory_has_entries(path: &Path) -> bool {
 /// is the one that has to move the library when it changes, including
 /// creating whichever path wins (app/core/config.py's ensure_runtime_dirs).
 ///
-/// Two candidates, resolved in this order:
-///
-/// 1. ~/Documents/StemDeck/jobs, if it already has anything in it. Every
-///    install before this default existed used this path, so an existing
-///    user's real library lives there without any explicit `jobs_dir` in
-///    settings.json to record it -- it was simply "the default." Checking
-///    disk content directly (rather than writing a one-time migration flag
-///    into settings.json, which only the backend otherwise writes) keeps this
-///    self-contained: nothing to persist, no other-process race, and it stays
-///    correct on every future launch for as long as that folder holds data.
-/// 2. Otherwise, for the Windows portable package, local_data_dir()/jobs --
-///    i.e. next to data/cache and data/models inside the package itself,
-///    rather than leaving a footprint in Documents. Non-portable installs
-///    (installer builds, macOS, Linux) keep candidate 1 either way: the
-///    original Documents rationale (visible in Finder/Explorer, eligible for
-///    OneDrive/iCloud backup, survives reinstalls) still applies to them.
+/// ~/Documents/StemDeck/jobs for installer builds, macOS and Linux: visible in
+/// Finder/Explorer, eligible for OneDrive/iCloud backup, and it survives
+/// reinstalls. local_data_dir()/jobs for the Windows portable package, next to
+/// data/cache and data/models inside the package itself, and wherever the OS
+/// has no Documents folder.
 fn documents_dir_for_jobs(app: &tauri::AppHandle) -> PathBuf {
-    let legacy_default = match documents_stemdeck_dir(app) {
-        Ok(dir) => dir.join("jobs"),
-        Err(_) => {
-            return local_data_dir()
-                .map(|d| d.join("jobs"))
-                .unwrap_or_else(|_| PathBuf::from("jobs"));
-        }
-    };
-
-    if directory_has_entries(&legacy_default) {
-        return legacy_default;
+    match documents_stemdeck_dir(app) {
+        Some(dir) => dir.join("jobs"),
+        None => local_data_dir()
+            .map(|d| d.join("jobs"))
+            .unwrap_or_else(|_| PathBuf::from("jobs")),
     }
-
-    if let Ok(root) = app_root() {
-        if is_portable_package(&root) {
-            if let Ok(data_dir) = local_data_dir() {
-                return data_dir.join("jobs");
-            }
-        }
-    }
-
-    legacy_default
 }
 
 /// Native folder picker for the stems location. Returns None when the user
@@ -1762,58 +1750,11 @@ fn apply_app_update_blocking(
     }
 }
 
-/// The per-user directory holding the settings copy that survives reinstalling.
-///
-/// A portable package keeps its data in `<app>/data` (#399), which means
-/// settings.json lives *inside the install*. `ensure_workspace` seeds a freshly
-/// extracted package from the copy here, which it only ever reads: a portable
-/// package writes nothing outside its own folder, so `settings_mirror` gives
-/// it no copy to keep.
-///
-/// Deliberately the OS-standard data dir, i.e. exactly what `local_data_dir`
-/// returns for a NON-portable install, so the two layouts share one location
-/// and an install that switches between them keeps its settings either way.
-fn shared_settings_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        env::var("LOCALAPPDATA")
-            .ok()
-            .map(|base| PathBuf::from(base).join("StemDeck"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("StemDeck")
-        })
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Ok(xdg) = env::var("XDG_DATA_HOME") {
-            return Some(PathBuf::from(xdg).join("stemdeck"));
-        }
-        env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("stemdeck")
-        })
-    }
-}
-
-/// Where the backend keeps its per-user copy of settings.json
-/// (STEMDECK_SETTINGS_MIRROR), or None for a portable package, which writes
-/// nothing outside its own folder.
-fn settings_mirror(root: &Path) -> Option<PathBuf> {
-    if is_portable_package(root) {
-        return None;
-    }
-    shared_settings_dir().map(|dir| dir.join("settings.json"))
-}
-
 /// Creates required data directories and runs any pending data migrations.
+///
+/// A portable package starts from its own data folder only. It never takes the
+/// settings an installed StemDeck keeps in the OS data dir: they name that
+/// install's library, and a portable run must not open, reset or sweep it.
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
     log_setup_step("ensure-workspace");
@@ -1837,15 +1778,6 @@ fn ensure_workspace() -> Result<(), String> {
         }
     }
 
-    #[cfg(windows)]
-    if is_portable_package(&root) {
-        // Portable data moved from %LocalAppData% to <app>/data in #399. A
-        // freshly extracted package has an empty data directory, so carry the
-        // user's prior choices forward before the backend reads settings.json.
-        if let Some(shared) = shared_settings_dir() {
-            migrate_persisted_files(&shared, &data, &["settings.json"])?;
-        }
-    }
     migrate_legacy_data(&root, &data)?;
     fs::create_dir_all(&data).map_err(|e| format!("failed to create data dir: {e}"))?;
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
@@ -2373,8 +2305,7 @@ fn spawn_backend(
         cmd.env("PYTHONHOME", pythonhome);
     }
 
-    // Jobs (stem audio files) live in ~/Documents/StemDeck/jobs/ so the user's
-    // library is visible in Finder, backed up by iCloud, and survives app reinstalls.
+    // The default jobs (stem audio) folder: see documents_dir_for_jobs.
     let jobs_dir = documents_dir_for_jobs(app_handle);
 
     cmd.current_dir(&backend_dir)
@@ -2384,7 +2315,6 @@ fn spawn_backend(
         // Reported back by /api/settings as network_listening, so the
         // switch shows what is listening rather than what was saved.
         .env("STEMDECK_BIND_HOST", bind_host)
-        .envs(settings_mirror(&root).map(|path| ("STEMDECK_SETTINGS_MIRROR", path)))
         .env("STEMDECK_PARENT_PID", std::process::id().to_string())
         // How the backend proves it is ours when it answers /api/health.
         // The environment is the only channel that survives the Windows
@@ -11400,37 +11330,79 @@ configuration: --cc=clang\n";
     }
 
     #[test]
-    fn only_an_installed_app_mirrors_its_settings_to_the_profile() {
-        // B25b: the backend of a portable package kept a copy of settings.json
-        // in %LOCALAPPDATA%\StemDeck.
-        let root = make_tmp();
-        assert_eq!(
-            super::settings_mirror(root.path()),
-            super::shared_settings_dir().map(|dir| dir.join("settings.json"))
+    fn a_new_portable_folder_never_takes_an_installed_apps_settings() {
+        // The settings an installed StemDeck keeps in %LOCALAPPDATA%\StemDeck
+        // name that install's library. A portable run that started from them
+        // opened that library, and a reset or a sweep there deleted its songs.
+        // ensure_workspace reads LOCALAPPDATA and STEMDECK_ROOT, so it runs in
+        // a child test process with its own environment. Only Windows ships a
+        // portable package, so only there can this catch a regression.
+        let tmp = make_tmp();
+        let root = tmp.path().join("StemDeck");
+        let data = root.join("data");
+        let installed = tmp.path().join("LocalAppData");
+        fs::create_dir_all(installed.join("StemDeck")).unwrap();
+        fs::write(
+            installed.join("StemDeck").join("settings.json"),
+            br#"{"jobs_dir":"D:\\StemDeck\\jobs"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("portable.txt"), "").unwrap();
+
+        let status = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "tests::ensure_workspace_in_child", "--ignored"])
+            .env("STEMDECK_WORKSPACE_CHILD", "1")
+            .env("STEMDECK_ROOT", &root)
+            .env("STEMDECK_DATA_DIR", &data)
+            .env("LOCALAPPDATA", &installed)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+
+        assert!(status.success(), "ensure_workspace failed in the child");
+        assert!(data.join("config.json").is_file(), "the workspace was made");
+        assert!(
+            !data.join("settings.json").exists(),
+            "a portable folder copied the installed app's settings"
         );
+    }
+
+    #[test]
+    fn a_portable_package_never_looks_in_documents() {
+        let root = make_tmp();
         fs::write(root.path().join("portable.txt"), "").unwrap();
-        assert_eq!(super::settings_mirror(root.path()), None);
+        let found = super::installed_documents_dir(root.path(), || {
+            panic!("a portable package looked in Documents")
+        });
+        assert_eq!(found, None);
     }
 
     #[test]
-    fn directory_has_entries_true_for_a_populated_dir() {
-        let dir = make_tmp();
-        fs::write(dir.path().join("registry.json"), "{}").unwrap();
-        assert!(super::directory_has_entries(dir.path()));
+    fn an_installed_app_keeps_its_library_in_documents() {
+        let root = make_tmp();
+        let documents = PathBuf::from("Documents").join("StemDeck");
+        assert_eq!(
+            super::installed_documents_dir(root.path(), || Some(documents.clone())),
+            Some(documents)
+        );
     }
 
     #[test]
-    fn directory_has_entries_false_for_an_empty_dir() {
-        let dir = make_tmp();
-        assert!(!super::directory_has_entries(dir.path()));
-    }
-
-    #[test]
-    fn directory_has_entries_false_for_a_missing_dir() {
-        let dir = make_tmp();
-        assert!(!super::directory_has_entries(
-            &dir.path().join("does-not-exist")
-        ));
+    #[ignore = "run by a_new_portable_folder_never_takes_an_installed_apps_settings"]
+    fn ensure_workspace_in_child() {
+        // Anything but the environment the parent test sets up is someone's
+        // `cargo test -- --ignored` in their real environment, where
+        // ensure_workspace would migrate into their real data folder.
+        let Some(root) = env::var_os("STEMDECK_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let isolated = env::var_os("STEMDECK_WORKSPACE_CHILD").is_some()
+            && super::is_portable_package(&root)
+            && env::var_os("STEMDECK_DATA_DIR").map(PathBuf::from) == Some(root.join("data"));
+        if isolated {
+            super::ensure_workspace().unwrap();
+        }
     }
 
     #[test]

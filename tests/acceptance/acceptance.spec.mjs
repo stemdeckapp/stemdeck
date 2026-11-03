@@ -1717,23 +1717,24 @@ test(title("E6"), async ({ app }, testInfo) => {
 //
 // The library is tests/fixtures/upgrade-0.20.0, written by the 0.20.0 code
 // itself (make.py there), copied to data\acceptance-upg (git-ignored) with real
-// WAV stems added. An upgrader unzips the new version into a new folder: its
-// data folder has no settings.json, and the shell brings the old settings in
-// from %LOCALAPPDATA%\StemDeck\settings.json, which names the old library. So
-// the build starts with STEMDECK_DATA_DIR set to the package's own data folder
-// (the throwaway the harness resets, holding the runtime that is slow to
-// download) minus its settings.json, and LOCALAPPDATA set to the fixture's.
-// The user's real %LOCALAPPDATA% and library are never named.
+// WAV stems added. An upgrader unzips the new version over the old folder, or
+// the app updates itself: the data folder keeps the old settings.json, which
+// names the old library. (Unzipped into a new folder, a portable package starts
+// with its own defaults: it never reads settings from outside itself.) So the
+// build starts with STEMDECK_DATA_DIR set to the package's own data folder (the
+// throwaway the harness resets, holding the runtime that is slow to download)
+// holding the 0.20.0 settings.json. The user's real %LOCALAPPDATA% and library
+// are never named.
 
 const UPG_ROOT = path.join(REPO_ROOT, "data", "acceptance-upg");
 
 // Steps: with 0.20.0's library and settings in place, start the new version
-// from a new folder. Expect: the same songs, folders and settings show;
+// over the old folder. Expect: the same songs, folders and settings show;
 // Settings > Library > StemData location is the old folder.
 test(title("UPG-01"), async ({ app }, testInfo) => {
   test.skip(!desktop(), "Server target: an upgrade starts the desktop build on an old library.");
-  // If the old StemData location were lost, the shell's default would be
-  // Documents\StemDeck\jobs when that folder has anything in it, and that may
+  // If the old StemData location were lost, a build before 0.21.0 defaulted to
+  // Documents\StemDeck\jobs when that folder had anything in it, and that may
   // be a real library. Refuse rather than find out by opening it.
   const docsJobs = path.join(documentsDir(), "StemDeck", "jobs");
   test.skip(fs.existsSync(docsJobs), `${docsJobs} exists: a failed upgrade would open it. Move it aside for the run.`);
@@ -1741,9 +1742,9 @@ test(title("UPG-01"), async ({ app }, testInfo) => {
   await app.browser.close().catch(() => {});
   await stopRecordedApp();
   const upg = prepareUpgradeLibrary(UPG_ROOT);
-  fs.rmSync(path.join(DATA_DIR, "settings.json"), { force: true });
+  fs.writeFileSync(path.join(DATA_DIR, "settings.json"), JSON.stringify(upg.settings));
   writeState({ ...readState(), upgrade: { ready: false } });
-  await launchApp({ label: "upgrade", localAppData: upg.localAppData, env: { STEMDECK_DATA_DIR: DATA_DIR } });
+  await launchApp({ label: "upgrade", env: { STEMDECK_DATA_DIR: DATA_DIR } });
   const { browser, page } = await connect(chromium, { timeout: 5 * 60_000 });
   watchNetwork(page);
   try {

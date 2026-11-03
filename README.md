@@ -104,7 +104,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 
 **Docker and Unraid.** See [Build from source](docs/build-from-source.md#docker) for the `docker run` line, GPU passthrough and the Unraid volume mapping.
 
-**Updates.** The desktop app tells you when a new version is out. On Windows and Linux it usually installs the update for you. A version that changes the Python packages StemDeck runs on is a full download instead, and 0.21.0 is one: about 300 MB on Windows and 420 MB on Linux, once. On Windows, unzip it over your current StemDeck folder. The zip has no files inside `data`, so your songs, models and settings there stay as they are. Unzipped into a new folder, StemDeck starts without the songs from the old `data` folder and downloads FFmpeg and the model again. On macOS, download the new DMG.
+**Updates.** The desktop app tells you when a new version is out. On Windows and Linux it usually installs the update for you. A version that changes the Python packages StemDeck runs on is a full download instead, and 0.21.0 is one: about 300 MB on Windows and 420 MB on Linux, once. On Windows, unzip it over your current StemDeck folder. The zip has no files inside `data`, so your songs, models and settings there stay as they are. A portable StemDeck no longer opens a library in `Documents\StemDeck\jobs` on its own: if yours is there, choose that folder once in Settings, StemData location. Unzipped into a new folder, StemDeck starts with default settings, without the songs from the old `data` folder, and downloads FFmpeg and the model again. On macOS, download the new DMG.
 
 </details>
 

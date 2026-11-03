@@ -3,9 +3,8 @@
 `_save()` used to call `write_text`, which truncates first and writes second.
 A process that died in between left a file that existed and did not parse, and
 `_load()` returned `{}` for it -- indistinguishable from a first run. The next
-`set_*()` then persisted a single key over both settings.json and the mirror
-that exists to protect it, so a real user lost `port` and `allow_network` from
-both copies with only a warning in the log.
+`set_*()` then persisted a single key over it, so a real user lost `port` and
+`allow_network` with only a warning in the log.
 """
 
 from __future__ import annotations
@@ -26,19 +25,6 @@ def test_an_absent_file_is_a_first_run(tmp_path):
     assert _settings._load() == {}
 
 
-def test_an_unreadable_file_is_not_mistaken_for_a_first_run(tmp_path, monkeypatch):
-    # The distinction is the whole bug: defaults are right for a first run and
-    # catastrophic for a settings file we merely failed to read.
-    mirror = tmp_path / "shared" / "settings.json"
-    mirror.parent.mkdir(parents=True)
-    mirror.write_text(json.dumps({"port": 8081, "allow_network": True}), encoding="utf-8")
-    monkeypatch.setenv("STEMDECK_SETTINGS_MIRROR", str(mirror))
-
-    _settings._SETTINGS_PATH.write_text('{"port": 80', encoding="utf-8")  # torn write
-
-    assert _settings._load() == {"port": 8081, "allow_network": True}
-
-
 def test_an_unreadable_file_is_kept_for_diagnosis(tmp_path):
     _settings._SETTINGS_PATH.write_text('{"port": 80', encoding="utf-8")
 
@@ -49,30 +35,14 @@ def test_an_unreadable_file_is_kept_for_diagnosis(tmp_path):
     assert corrupt[0].read_text(encoding="utf-8") == '{"port": 80'
 
 
-def test_recovered_settings_are_written_back_immediately(tmp_path, monkeypatch):
-    # Recovering only into memory would last until the next start, which would
-    # read a now-absent primary and fall back to defaults again.
-    mirror = tmp_path / "shared" / "settings.json"
-    mirror.parent.mkdir(parents=True)
-    mirror.write_text(json.dumps({"port": 8081}), encoding="utf-8")
-    monkeypatch.setenv("STEMDECK_SETTINGS_MIRROR", str(mirror))
-    _settings._SETTINGS_PATH.write_text("", encoding="utf-8")  # truncated to nothing
-
-    _settings._load()
-
-    assert _read(_settings._SETTINGS_PATH) == {"port": 8081}
-
-
-def test_no_mirror_and_a_corrupt_file_falls_back_to_defaults(tmp_path, monkeypatch):
-    monkeypatch.delenv("STEMDECK_SETTINGS_MIRROR", raising=False)
+def test_a_corrupt_file_falls_back_to_defaults(tmp_path):
     _settings._SETTINGS_PATH.write_text("not json at all", encoding="utf-8")
 
     assert _settings._load() == {}
 
 
-def test_a_non_object_settings_file_is_treated_as_unusable(tmp_path, monkeypatch):
+def test_a_non_object_settings_file_is_treated_as_unusable(tmp_path):
     # Valid JSON, wrong shape. Returning it would make every later .get() raise.
-    monkeypatch.delenv("STEMDECK_SETTINGS_MIRROR", raising=False)
     _settings._SETTINGS_PATH.write_text("[1, 2, 3]", encoding="utf-8")
 
     assert _settings._load() == {}

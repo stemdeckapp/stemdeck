@@ -38,8 +38,12 @@ Notes
   (Prefetch), folders you picked in its file dialogs, and the firewall rule if
   you let it reach your network. The WebView2 runtime that draws the window is
   part of Windows, not of this folder.
-- A new portable folder starts with the settings of an installed StemDeck on
-  this PC, if there is one. It only reads them.
+- A new portable folder starts with its own default settings and keeps its
+  library in data/jobs/. It never reads the settings or the library of an
+  installed StemDeck on this PC. To use a library you already have, choose its
+  folder in Settings, StemData location. That includes a library an older
+  version opened in Documents/StemDeck/jobs without you choosing it: choose
+  that folder once, before you import a new song.
 - To install a new version by hand, extract it over this folder. The zip has no
   files inside data/, so your library, models and settings stay. Extracted into a
   new folder, StemDeck starts without the songs in this folder's data/jobs/.

@@ -7,8 +7,8 @@ what someone remembers 0.20.0 wrote; this runs the tagged code instead:
 - registry.json comes from 0.20.0's registry.persist, so every field of the
   0.20.0 Job record is there with its 0.20.0 default;
 - metadata.json from 0.20.0's runner._write_metadata;
-- settings.json from 0.20.0's settings setters (the mirror the desktop shell
-  restores into a fresh package);
+- settings.json from 0.20.0's settings setters (what the package keeps in its
+  data folder);
 - user-data.json is the desktop library store as 0.20.0's catalog.js wrote it
   (STORAGE_KEY "stemdeck.folders", version 2), through tauri-plugin-store,
   which keeps one JSON object keyed by store key.

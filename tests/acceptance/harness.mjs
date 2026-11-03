@@ -9,14 +9,14 @@
 //   server <url>       an already running backend (a dev server), driven in
 //                      Playwright's own Chromium. Nothing is reset or stopped.
 //
-// Isolation of the desktop build is the point of most of this file. A portable
-// package is not isolated by default: ensure_workspace restores settings.json
-// (and with it jobs_dir) from %LOCALAPPDATA%\StemDeck, and the backend mirrors
-// every setting change back there (STEMDECK_SETTINGS_MIRROR). So the build is
-// started with LOCALAPPDATA pointed at a throwaway folder, its own data folder
-// is given a settings.json naming its own jobs folder, and the WebView2
-// profile is put in the throwaway folder too. The user's real
-// %LOCALAPPDATA%\StemDeck and library are never read or written.
+// Isolation of the desktop build is the point of most of this file. Builds
+// before 0.21.0 were not isolated by default: ensure_workspace restored
+// settings.json (and with it jobs_dir) from %LOCALAPPDATA%\StemDeck, and the
+// backend mirrored every setting change back there. So the build is started
+// with LOCALAPPDATA pointed at a throwaway folder, its own data folder is
+// given a settings.json naming its own jobs folder, and the WebView2 profile
+// is put in the throwaway folder too. The user's real %LOCALAPPDATA%\StemDeck
+// and library are never read or written, whichever build is under test.
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -90,8 +90,9 @@ export function resetPackageState() {
     // Documents\StemDeck\jobs: possibly a real library. Refuse.
     throw new Error(`${PACKAGE_DIR} is not a portable package (no portable.txt).`);
   }
-  // The desktop store is copied from Documents\StemDeck\user-data.json into a
-  // new jobs folder once (documents_store_path). That file would be the user's
+  // A portable build before 0.21.0 copied the desktop store from
+  // Documents\StemDeck\user-data.json into a new jobs folder once
+  // (documents_store_path). That file would be the user's
   // real library layout, so refuse rather than import it into the test run.
   const docs = documentsDir();
   if (docs && fs.existsSync(path.join(docs, "StemDeck", "user-data.json"))) {
