@@ -370,7 +370,9 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         try:
             duration = await asyncio.to_thread(_probe_duration, source_path)
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Could not read file duration: {e}") from e
+            # The error names ffprobe's path and the job folder: log it, do not send it.
+            logger.warning("[%s] could not read the upload's duration", job_id, exc_info=True)
+            raise HTTPException(status_code=422, detail="Could not read file duration") from e
 
         max_duration = get_max_duration_sec()
         if duration > max_duration:

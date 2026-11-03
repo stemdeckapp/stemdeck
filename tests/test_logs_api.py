@@ -326,6 +326,21 @@ def test_tail_redacts_an_ip_address(client, logs_dir):
     assert "<ip>" in body
 
 
+def test_tail_redacts_a_cookie_file_entry(client, logs_dir):
+    """yt-dlp echoes every line of a cookies file it cannot parse to stderr,
+    which desktop captures into backend.log. The line is the file's content:
+    a session cookie, or any other file the setting was pointed at."""
+    (logs_dir / "backend.log").write_text(
+        f"{_stamp(1)} I stemdeck.download [abc] retrying with cookies\n"
+        "WARNING: skipping cookie file entry due to invalid length 1: "
+        "'.youtube.com\\tTRUE\\t/\\tTRUE\\t0\\tSID\\tSECRETVALUE'\n",
+        encoding="utf-8",
+    )
+    body = client.get("/api/logs/backend?minutes=60").text
+    assert "SECRETVALUE" not in body
+    assert "skipping cookie file entry" in body, "the warning itself is worth keeping"
+
+
 def test_tail_redacts_the_users_home_directory(client, logs_dir):
     """The notification centre's opt-in "include recent logs" button hands this
     straight to a public GitHub issue or Discord message with no filtering step

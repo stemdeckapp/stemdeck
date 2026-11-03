@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import locale
 import subprocess
 import time
 
@@ -1033,6 +1034,39 @@ def test_filmstrip_of_a_long_take_stays_within_the_frame_cap(tmp_path, monkeypat
     _test_camera(camera, 10, "mp4")
     meta = takes_mod.build_filmstrip(camera, tmp_path)
     assert meta["count"] == 4 and meta["interval"] == 2.5
+
+
+@pytest.fixture
+def cp1252_locale(monkeypatch):
+    """What text=True decodes with on a Western-European Windows. "ō" is C5 8D
+    in UTF-8, and 0x8D has no character in cp1252."""
+    monkeypatch.setattr(locale, "getencoding", lambda: "cp1252")
+    return "Tōkyō"
+
+
+def test_a_camera_path_outside_the_code_page_still_decodes(tmp_path, cp1252_locale, monkeypatch):
+    """ffmpeg's banner always prints the input path. Decoding it killed the
+    pipe's reader thread, stderr came back as None, and the decoder fallback
+    read every take in such a folder as 0 seconds long."""
+    skip_without_ffmpeg()
+    folder = tmp_path / cp1252_locale
+    folder.mkdir()
+    camera = folder / "camera.mp4"
+    _test_camera(camera, 2, "mp4")
+    monkeypatch.setattr(takes_mod, "_last_packet_end", lambda _path: 0.0)
+    assert abs(takes_mod._decoded_duration(camera) - 2.0) < 0.2
+
+
+def test_an_unreadable_camera_outside_the_code_page_fails_with_its_message(tmp_path, cp1252_locale):
+    """ffprobe's error names the file; undecoded, it was an AttributeError on
+    None and a 500."""
+    skip_without_ffmpeg()
+    folder = tmp_path / cp1252_locale
+    folder.mkdir()
+    camera = folder / "camera.webm"
+    camera.write_bytes(b"not a video")
+    with pytest.raises(RuntimeError, match="camera.webm"):
+        takes_mod.build_filmstrip(camera, folder)
 
 
 def test_take_entry_says_where_the_camera_starts_in_the_song():

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -223,6 +224,26 @@ def test_upload_rejects_empty_file(upload_client):
     )
     assert r.status_code == 422
     assert "empty" in r.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.TimeoutExpired([r"C:\Users\someone\ffmpeg\ffprobe.exe", "source.mp3"], 30),
+        FileNotFoundError(2, "No such file or directory", r"C:\Users\someone\ffmpeg\ffprobe.exe"),
+        RuntimeError(r"ffprobe failed: C:\Users\someone\jobs\abc\source.mp3: Invalid data"),
+    ],
+)
+def test_upload_duration_failure_names_no_path(upload_client, caplog, error):
+    """The probe's error text carries the ffprobe path and the job's source
+    path. The client gets a fixed sentence; the log keeps the cause."""
+    with patch("app.api.jobs._probe_duration", side_effect=error):
+        r = upload_client.post(
+            "/api/jobs", files={"file": ("my_track.mp3", io.BytesIO(b"ID3" + b"\x00" * 128))}
+        )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "Could not read file duration"}
+    assert any(rec.exc_info and rec.exc_info[1] is error for rec in caplog.records)
 
 
 def test_upload_mp3_returns_job_id(upload_client):

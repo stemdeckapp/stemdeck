@@ -489,20 +489,36 @@ def set_cookies_file(value: str | None) -> str | None:
     Raises ValueError when the path does not point at a readable file, so the
     Settings UI can say so immediately rather than the user discovering it as a
     failed import an hour later.
+
+    Only a file inside the data folder is accepted, and a bare name is looked
+    up there. Anyone who can reach Settings (the LAN, with network access on)
+    could otherwise point yt-dlp at any file on the machine, and yt-dlp echoes
+    each line it cannot parse into the backend log. One error for outside,
+    missing and unreadable, so the answer says nothing about other paths. A
+    path saved before this rule keeps working until it is changed.
     """
     with _LOCK:
         if value is None or not str(value).strip():
             _ensure().pop("cookies_file", None)
             _save()
             return None
-        resolved = Path(str(value)).expanduser().resolve()
-        if not resolved.is_file():
-            raise ValueError("cookies file not found")
+        resolved = None
         try:
-            with resolved.open("rb") as fh:
-                fh.read(1)
-        except OSError as e:
-            raise ValueError("cookies file is not readable") from e
+            # Checked by name before resolve() touches the disk: resolving a
+            # \\host\share path opens it, and Windows sends the user's NTLM
+            # hash to that host. Checked again after, for a symlink out.
+            named = Path(os.path.normpath(DATA_DIR / Path(str(value)).expanduser()))
+            if named.is_relative_to(DATA_DIR):
+                candidate = named.resolve()
+                if candidate.is_relative_to(DATA_DIR.resolve()) and candidate.is_file():
+                    with candidate.open("rb") as fh:
+                        fh.read(1)
+                    resolved = candidate
+        except (OSError, ValueError, RuntimeError):
+            # A NUL byte, a bad Windows name or a symlink loop: the same answer.
+            resolved = None
+        if resolved is None:
+            raise ValueError("cookies file must be a readable file in the data folder")
         _ensure()["cookies_file"] = str(resolved)
         _save()
         return str(resolved)

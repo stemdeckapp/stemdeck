@@ -557,7 +557,7 @@ async def update_settings(request: Request) -> dict[str, object]:
         try:
             set_cookies_file(body["cookies_file"])
         except ValueError as e:
-            # "cookies file not found" / "not readable" -- both safe to show.
+            # One fixed sentence for every refusal, so safe to show.
             raise HTTPException(status_code=422, detail=str(e)) from None
         except (TypeError, OSError):
             raise HTTPException(status_code=422, detail="invalid cookies file") from None

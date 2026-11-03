@@ -212,6 +212,30 @@ def test_a_run_of_slashes_stays_linear(monkeypatch):
     assert time.perf_counter() - started < 1.0
 
 
+def test_strips_the_content_of_a_cookie_file_entry():
+    """yt-dlp echoes each line of a cookies file it cannot parse, and the line
+    is the file's content."""
+    line = (
+        "WARNING: skipping cookie file entry due to invalid length 7: "
+        "'root:x:0:0:root:/root:/bin/bash\\n'"
+    )
+    result = redact(f"before\n{line}\r\nafter\n")
+    assert "root:x" not in result
+    assert result == "before\nWARNING: skipping cookie file entry <cookie-line-redacted>\r\nafter\n"
+
+
+def test_strips_the_content_of_an_invalid_cookie_file_error():
+    """A line that passes yt-dlp's own checks fails in http.cookiejar, which
+    names the line in its LoadError; yt-dlp prints it and fails the job on it."""
+    line = (
+        "ERROR: invalid Netscape format cookies file 'cookies.txt': "
+        "'youtube.com\\tTRUE\\t/\\tTRUE\\t1767225600\\tSID\\tSECRETVALUE\\n'"
+    )
+    result = redact(line)
+    assert "SECRETVALUE" not in result
+    assert result == "ERROR: invalid Netscape format cookies file <cookie-line-redacted>"
+
+
 def test_leaves_ordinary_log_lines_alone():
     text = (
         '2026-08-17 16:50:02 I stemdeck  INFO: "GET /api/jobs/abc/stems/vocals.wav HTTP/1.1" 200\n'
