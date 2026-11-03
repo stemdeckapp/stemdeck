@@ -82,8 +82,24 @@ def test_an_interrupted_job_without_stems_is_requeued(tmp_path: Path):
     restored = _jobs[job.id]
     assert restored.status == "queued"
     assert restored.progress == 0.0
-    assert restored.resume_attempts == 1
     assert _registry.take_pending_resume() == [job.id]
+
+
+@pytest.mark.parametrize("status", ["queued", "separating"])
+def test_restarts_of_a_queue_never_started_keep_every_job(tmp_path: Path, status: str):
+    """A restored queue waits, paused, for Start. Counting each restart as a
+    resume made the second restart without Start fail every job in it, and an
+    error is not saved, so they left the Library. A stale "separating" on disk
+    is no proof it ran: a status change mid-run is not saved."""
+    job = Job(id="abcdef000007", status=status, title="Waiting", source_url="local:Waiting")
+    _jobs[job.id] = job
+    persist_registry(tmp_path)
+
+    for _ in range(3):
+        _jobs.clear()
+        restore_registry(tmp_path)
+        assert _jobs[job.id].status == "queued"
+        assert _registry.take_pending_resume() == [job.id]
 
 
 def test_partial_demucs_output_is_cleared_before_a_resume(tmp_path: Path):
@@ -103,34 +119,25 @@ def test_partial_demucs_output_is_cleared_before_a_resume(tmp_path: Path):
     assert not (tmp_path / job.id / DEMUCS_MODEL).exists()
 
 
-def test_a_crash_loop_ends_without_the_job_ever_completing(tmp_path: Path):
-    """The counter has to reach disk during restore, not only when the job
-    finally finishes. A job that takes the process down never gets that far, so
-    if restore did not persist, every start would read resume_attempts back as 0
-    and retry it forever."""
-    job = Job(id="abcdef000006", status="separating", title="Poison")
+def test_a_job_interrupted_once_is_resumed(tmp_path: Path):
+    """Started once and the process died: its one resume. A record an older
+    version wrote with 1 after a single restart reads the same way."""
+    job = Job(id="abcdef000006", status="separating", title="Crashed", resume_attempts=1)
     _jobs[job.id] = job
     persist_registry(tmp_path)
-
-    # Crash 1: nothing ran, nothing else persisted -- just restart.
     _jobs.clear()
-    _registry._pending_resume.clear()
+
     restore_registry(tmp_path)
+
     assert _jobs[job.id].status == "queued"
-
-    # Crash 2: the retry took the process down again, still with no persist of
-    # its own. The restart must read the bumped count off disk and stop.
-    _jobs.clear()
-    _registry._pending_resume.clear()
-    restore_registry(tmp_path)
-    assert _jobs[job.id].status == "error"
-    assert _registry.take_pending_resume() == []
+    assert _registry.take_pending_resume() == [job.id]
 
 
 def test_a_job_interrupted_twice_fails_instead_of_looping(tmp_path: Path):
     """A job that reliably takes the process down would otherwise be re-queued
-    on every start, wedging the queue forever."""
-    job = Job(id="abcdef000005", status="separating", title="Poison", resume_attempts=1)
+    on every start, wedging the queue forever. Started twice, the resume
+    included, and the process died both times."""
+    job = Job(id="abcdef000005", status="separating", title="Poison", resume_attempts=2)
     _jobs[job.id] = job
     persist_registry(tmp_path)
     _jobs.clear()
