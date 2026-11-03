@@ -45,7 +45,6 @@ def _no_deployment_overrides(monkeypatch):
         "STEMDECK_STEM_FORMAT",
         "STEMDECK_STEM_MP3_KBPS",
         "STEMDECK_AUTO_LYRICS",
-        "STEMDECK_SETTINGS_MIRROR",
     ):
         monkeypatch.delenv(var, raising=False)
     # One test registers a job; conftest does not clear the registry.

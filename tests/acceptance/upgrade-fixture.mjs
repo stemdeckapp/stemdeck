@@ -2,8 +2,8 @@
 //
 // tests/fixtures/upgrade-0.20.0 holds what the 0.20.0 code wrote (make.py runs
 // the tagged code): registry.json, the song's metadata.json, the desktop
-// library store user-data.json, and the settings.json the desktop shell keeps
-// in %LOCALAPPDATA%\StemDeck. This copies it into a throwaway folder under the
+// library store user-data.json, and the settings.json the package keeps in its
+// data folder. This copies it into a throwaway folder under the
 // repository's git-ignored data\ and adds what the repository does not carry:
 // the stems, as real PCM16 WAVs, and their peaks.json, both where 0.20.0's
 // pipeline put them.
@@ -11,9 +11,9 @@
 // Layout of the copy, under `root`:
 //
 //   library\                 the old StemData location (jobs folder)
-//   LocalAppData\StemDeck\settings.json   the 0.20.0 settings, naming library\
 //
-// Nothing here reads or writes outside `root`.
+// The 0.20.0 settings, naming library\, are returned for the test to put in
+// the package's data folder. Nothing here reads or writes outside `root`.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -67,8 +67,8 @@ function peaks(points = 400) {
 }
 
 /**
- * Copy the fixture into `root` (emptied first). Returns the paths the test
- * needs: the library folder and the LOCALAPPDATA to start the build with.
+ * Copy the fixture into `root` (emptied first). Returns the library folder and
+ * the 0.20.0 settings that name it.
  */
 export function prepareUpgradeLibrary(root) {
   const resolved = path.resolve(root);
@@ -78,7 +78,6 @@ export function prepareUpgradeLibrary(root) {
   }
   fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   const library = path.join(resolved, "library");
-  const localAppData = path.join(resolved, "LocalAppData");
   fs.cpSync(path.join(FIXTURE_DIR, "library"), library, { recursive: true });
 
   const stems = path.join(library, UPG_JOB_ID, "stems");
@@ -89,7 +88,5 @@ export function prepareUpgradeLibrary(root) {
   fs.writeFileSync(path.join(library, UPG_JOB_ID, "source.wav"), wav(220));
 
   const settings = { ...oldSettings(), jobs_dir: library };
-  fs.mkdirSync(path.join(localAppData, "StemDeck"), { recursive: true });
-  fs.writeFileSync(path.join(localAppData, "StemDeck", "settings.json"), JSON.stringify(settings));
-  return { root: resolved, library, localAppData, settings };
+  return { root: resolved, library, settings };
 }
