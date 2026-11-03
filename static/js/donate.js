@@ -2,9 +2,9 @@
 // (index.html). Laid out like a donate page: a hero on top, the ways to give
 // with their amounts on the left, and sharing StemDeck on the right.
 //
-// The links live in donateLinks.js. A way is live only when its link is a real
-// https:// address; until then the arrow is a disabled "Coming soon" and the
-// dialog holds no link for it.
+// The links live in donateLinks.js, and its isConfigured() decides what shows:
+// a way's tile only once its link is a real https:// address, and the Donate
+// button only once at least one way is set. Nothing points nowhere.
 //
 // The amount (a preset or a custom whole-dollar amount, 2 or more) is a choice
 // in the dialog. It reaches the link only through an optional template in
@@ -17,7 +17,7 @@
 // this page. The QR code is drawn by this app's own server (/api/qr), when the
 // dialog first opens.
 
-import * as donateLinks from "./donateLinks.js";
+import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "./donateLinks.js";
 import { t, onLanguageChange } from "./i18n.js";
 
 export const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
@@ -25,25 +25,12 @@ export const AMOUNT_MIN = 2;
 export const AMOUNT_MAX = 10000;
 const WAY_NAMES = { stripe: "Stripe", liberapay: "Liberapay" };
 
-/** The address a link opens, or null while it is a placeholder. Only https. */
-export function donateHref(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  let url;
-  try {
-    url = new URL(value.trim());
-  } catch (err) {
-    console.warn("[donate] not a link, stays Coming soon:", value, err);
-    return null;
-  }
-  return url.protocol === "https:" ? url.href : null;
-}
-
 /**
  * Where the arrow goes for this way and amount, or null while the way is a
  * placeholder. The plain link decides whether the way is live; a template with
  * {amount} is used on top of it only when an amount is picked.
  */
-export function donateUrl(way, amount, links = donateLinks.DONATE_LINKS, templates = donateLinks.DONATE_LINK_TEMPLATES) {
+export function donateUrl(way, amount, links = DONATE_LINKS, templates = DONATE_LINK_TEMPLATES) {
   const plain = donateHref(links?.[way]);
   if (!plain) return null;
   const tpl = templates?.[way];
@@ -97,18 +84,24 @@ export function wireDonateDialog() {
   const dialog = document.getElementById("donateDialog");
   const close = document.getElementById("donateClose");
   if (!btn || !dialog || dialog.dataset.ready === "1") return;
+  dialog.dataset.ready = "1";
 
+  // A way whose link is not set has no tile, and with none set there is no
+  // Donate button (hidden in index.html until this runs) and nothing to wire.
   const tiles = [...dialog.querySelectorAll(".donate-way[data-way]")];
+  for (const tile of tiles) tile.hidden = !isConfigured(tile.dataset.way);
+  const live = tiles.filter((tile) => !tile.hidden);
+  btn.hidden = !live.length;
+  if (!live.length) return;
   const presets = [...dialog.querySelectorAll(".donate-preset[data-amount]")];
   const custom = document.getElementById("donateCustom");
   const go = document.getElementById("donateGo");
-  const soonWrap = document.getElementById("donateSoonWrap");
   const hintEl = document.getElementById("donateHint");
   const qr = document.getElementById("donateQr");
   const copyBtn = document.getElementById("donateCopy");
   const shareBtn = document.getElementById("donateShare");
 
-  const state = { way: tiles[0]?.dataset.way || "stripe", amount: null, fromPreset: false, hint: null };
+  const state = { way: live[0]?.dataset.way, amount: null, fromPreset: false, hint: null };
 
   const render = () => {
     for (const tile of tiles) tile.setAttribute("aria-pressed", String(tile.dataset.way === state.way));
@@ -116,7 +109,6 @@ export function wireDonateDialog() {
       p.setAttribute("aria-pressed", String(state.fromPreset && Number(p.dataset.amount) === state.amount));
     }
     const href = donateUrl(state.way, state.amount);
-    dialog.classList.toggle("is-soon", !href);
     if (go) {
       if (href) go.href = href;
       else go.removeAttribute("href");
@@ -125,7 +117,6 @@ export function wireDonateDialog() {
       go.setAttribute("aria-label", label);
       go.title = label;
     }
-    if (soonWrap) soonWrap.hidden = Boolean(href);
     if (hintEl) {
       hintEl.hidden = !state.hint;
       hintEl.textContent = state.hint
@@ -198,7 +189,6 @@ export function wireDonateDialog() {
 
   render();
   onLanguageChange(render);
-  dialog.dataset.ready = "1";
 
   let opener = null;
   const open = () => {

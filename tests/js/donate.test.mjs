@@ -1,12 +1,13 @@
-// The Donate dialog's logic (donate.js): which ways are live, where the arrow
-// goes with and without an {amount} template, and how the custom amount field
-// is read. A way opens a link only when donateLinks.js holds a real https://
-// address; anything else, including the empty placeholder, stays Coming soon.
+// The Donate dialog's logic (donate.js, donateLinks.js): which ways are set,
+// where the arrow goes with and without an {amount} template, and how the
+// custom amount field is read. A way is set only when donateLinks.js holds a
+// real https:// address; anything else, including the empty placeholder, is
+// not set, and a way that is not set shows no control.
 //
 // Run:  node tests/js/donate.test.mjs
 
-import { donateHref, donateUrl, readAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
-import { DONATE_LINKS, DONATE_LINK_TEMPLATES } from "../../static/js/donateLinks.js";
+import { donateUrl, readAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
+import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "../../static/js/donateLinks.js";
 
 let pass = 0,
   fail = 0;
@@ -23,12 +24,12 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const warn = console.warn;
 console.warn = () => {};
 
-// ── Placeholders stay Coming soon ──
+// ── Placeholders are not links ──
 for (const value of ["", "   ", undefined, null, 0, {}]) {
   check(`placeholder ${JSON.stringify(value)} is not a link`, donateHref(value) === null, String(donateHref(value)));
 }
 
-// ── Anything that is not https stays Coming soon ──
+// ── Anything that is not https is not a link ──
 for (const value of ["liberapay.com/someone", "http://example.org/give", "javascript:alert(1)", "ftp://example.org", "not a url"]) {
   check(`"${value}" is not a link`, donateHref(value) === null, String(donateHref(value)));
 }
@@ -36,6 +37,17 @@ for (const value of ["liberapay.com/someone", "http://example.org/give", "javasc
 // ── A real https address is used as written (trimmed) ──
 check("https link is live", donateHref("https://example.org/give") === "https://example.org/give");
 check("surrounding spaces are trimmed", donateHref("  https://example.org/give?x=1  ") === "https://example.org/give?x=1");
+
+// ── Which ways are set: the one check every Donate control follows ──
+const none = { stripe: "", liberapay: "" };
+const one = { stripe: "https://example.org/stripe", liberapay: "" };
+const bad = { stripe: "http://example.org/stripe", liberapay: "liberapay.com/x" };
+const both = { stripe: "https://example.org/stripe", liberapay: "https://example.org/lp" };
+check("no link: neither way is set", !isConfigured("stripe", none) && !isConfigured("liberapay", none));
+check("one link: only that way is set", isConfigured("stripe", one) && !isConfigured("liberapay", one));
+check("links that are not https are not set", !isConfigured("stripe", bad) && !isConfigured("liberapay", bad));
+check("both links: both ways are set", isConfigured("stripe", both) && isConfigured("liberapay", both));
+check("an unknown way is never set", !isConfigured("paypal", both));
 
 // ── Where the arrow goes ──
 const links = { stripe: "https://example.org/stripe", liberapay: "" };

@@ -5,15 +5,15 @@
 // tiles, preset amounts, a custom amount and an arrow) on the left and sharing
 // StemDeck (QR, copy, share, star, releases) on the right.
 //
-// The links live in donateLinks.js: while the chosen way's link is the empty
-// placeholder the arrow is a disabled "Coming soon" and the dialog holds no
-// link for it; once it holds an https:// address the arrow opens it through the
-// app's external-link path (open_url on desktop, a new tab in a browser). An
-// optional template with {amount} carries the chosen amount; without one the
-// arrow opens the plain link.
+// The links live in donateLinks.js. A way whose link is not set (the empty
+// placeholder, or anything that is not an https:// address) has no control at
+// all: its tile is hidden, and with no way set the Donate button is hidden
+// too. A set link opens through the app's external-link path (open_url on
+// desktop, a new tab in a browser). An optional template with {amount} carries
+// the chosen amount; without one the arrow opens the plain link.
 //
-// The filled state is tested by serving a filled donateLinks.js, the same
-// module the app reads, so a maintainer filling the file changes nothing else.
+// Each state is tested by serving the real donateLinks.js with only the two
+// addresses replaced, so a maintainer filling the file changes nothing else.
 // The addresses are on example.org, a reserved domain, and are stubbed: no test
 // reaches Stripe, Liberapay or GitHub.
 
@@ -23,19 +23,27 @@ import { seedLibrary, stubTauri, stubUpdateCheck } from "./helpers.mjs";
 const STRIPE = "https://example.org/stripe-test";
 const LIBERAPAY = "https://example.org/liberapay-test";
 const REPO = "https://github.com/stemdeckapp/stemdeck";
+const BOTH = { stripe: STRIPE, liberapay: LIBERAPAY };
+const NONE = { stripe: "", liberapay: "" };
 
-async function fillLinks(page, links, templates = { stripe: "", liberapay: "" }) {
-  await page.route("**/js/donateLinks.js", (route) =>
-    route.fulfill({
-      contentType: "application/javascript",
-      body:
-        `export const DONATE_LINKS = Object.freeze(${JSON.stringify(links)});\n` +
-        `export const DONATE_LINK_TEMPLATES = Object.freeze(${JSON.stringify(templates)});`,
-    }),
-  );
+/** Serve the real donateLinks.js with these links (and templates) in place of the ones it holds. */
+async function fillLinks(page, links, templates = null) {
+  await page.route("**/js/donateLinks.js", async (route) => {
+    const res = await route.fetch();
+    const source = await res.text();
+    const swap = (text, name, value) => {
+      const out = text.replace(new RegExp(`(export const ${name} = Object\\.freeze\\()\\{[^}]*\\}`), (_, head) => head + JSON.stringify(value));
+      if (out === text) throw new Error(`donateLinks.js has no ${name} block to fill`);
+      return out;
+    };
+    let body = swap(source, "DONATE_LINKS", links);
+    if (templates) body = swap(body, "DONATE_LINK_TEMPLATES", templates);
+    await route.fulfill({ response: res, body });
+  });
 }
 
-async function openApp(page, { tauri = false, language = null } = {}) {
+async function openApp(page, { tauri = false, language = null, links = BOTH, templates = null } = {}) {
+  await fillLinks(page, links, templates);
   if (language) await page.addInitScript((l) => localStorage.setItem("stemdeck.language", JSON.stringify(l)), language);
   await seedLibrary(page);
   if (tauri) await stubTauri(page);
@@ -54,7 +62,6 @@ const dialog = (page) => page.locator("#donateDialog");
 const tile = (page, way) => page.locator(`.donate-way[data-way="${way}"]`);
 const preset = (page, amount) => page.locator(`.donate-preset[data-amount="${amount}"]`);
 const go = (page) => page.locator("#donateGo");
-const soon = (page) => page.locator("#donateSoon");
 const custom = (page) => page.locator("#donateCustom");
 const hint = (page) => page.locator("#donateHint");
 
@@ -96,7 +103,6 @@ test("the dialog opens, closes with Escape, the close button and the backdrop, a
 });
 
 test("Tab stays inside the dialog", async ({ page }) => {
-  await fillLinks(page, { stripe: STRIPE, liberapay: LIBERAPAY });
   await openApp(page);
   await page.locator("#donateBtn").click();
   for (let i = 0; i < 24; i++) {
@@ -105,22 +111,49 @@ test("Tab stays inside the dialog", async ({ page }) => {
   }
 });
 
-test("placeholder links: both ways show a disabled Coming soon and the dialog holds no payment link", async ({ page }) => {
-  const { outside } = await openApp(page);
-  await page.locator("#donateBtn").click();
-  for (const way of ["stripe", "liberapay"]) {
-    await tile(page, way).click();
-    await expect(tile(page, way)).toHaveAttribute("aria-pressed", "true");
-    await expect(soon(page)).toBeVisible();
-    await expect(soon(page)).toBeDisabled();
-    await expect(soon(page)).toHaveText("Coming soon");
-    await expect(go(page)).toBeHidden();
-    await expect(go(page)).not.toHaveAttribute("href", /./);
-  }
-  // Only the two GitHub links on the share side carry an address.
-  const hrefs = await dialog(page).locator("a[href]").evaluateAll((els) => els.map((a) => a.href));
-  expect(hrefs.sort()).toEqual([REPO, `${REPO}/releases`].sort());
+test("no link set: there is no Donate control anywhere, not even before the script runs", async ({ page }) => {
+  // The page as served already holds the button hidden, so it never flashes.
+  const html = await (await page.request.get("/")).text();
+  expect(html).toMatch(/<button\b[^>]*\bid="donateBtn"[^>]*\shidden[\s>]/);
+
+  const { outside } = await openApp(page, { links: NONE });
+  await expect(page.locator("#donateBtn")).toBeHidden();
+  await expect(dialog(page)).toBeHidden();
+  // The dialog is closed, so its tiles are checked by their own hidden flag.
+  await expect(tile(page, "stripe")).toHaveJSProperty("hidden", true);
+  await expect(tile(page, "liberapay")).toHaveJSProperty("hidden", true);
+  await expect(go(page)).not.toHaveAttribute("href", /./);
   expect(outside).toEqual([]);
+});
+
+for (const [way, other, url] of [
+  ["stripe", "liberapay", STRIPE],
+  ["liberapay", "stripe", LIBERAPAY],
+]) {
+  test(`only ${way} set: Donate shows with only that way, already chosen, and the arrow goes there`, async ({ page }) => {
+    await openApp(page, { links: { ...NONE, [way]: url } });
+    await expect(page.locator("#donateBtn")).toBeVisible();
+    await page.locator("#donateBtn").click();
+    await expect(tile(page, way)).toBeVisible();
+    await expect(tile(page, way)).toHaveAttribute("aria-pressed", "true");
+    await expect(tile(page, other)).toBeHidden();
+    // The one tile takes the whole row.
+    const box = await tile(page, way).boundingBox();
+    const row = await dialog(page).locator(".donate-ways").boundingBox();
+    expect(Math.abs(box.width - row.width)).toBeLessThan(1);
+    await expect(go(page)).toBeVisible();
+    await expect(go(page)).toHaveAttribute("href", url);
+  });
+}
+
+test("both links set: both ways show and each has its own link", async ({ page }) => {
+  await openApp(page);
+  await page.locator("#donateBtn").click();
+  await expect(tile(page, "stripe")).toBeVisible();
+  await expect(tile(page, "liberapay")).toBeVisible();
+  await expect(go(page)).toHaveAttribute("href", STRIPE);
+  await tile(page, "liberapay").click();
+  await expect(go(page)).toHaveAttribute("href", LIBERAPAY);
 });
 
 test("choosing a tile and an amount: one of each is pressed at a time", async ({ page }) => {
@@ -174,10 +207,8 @@ test("the custom amount takes whole dollars from $2 and says why it changed", as
 });
 
 test("a filled link: the arrow opens it through the desktop app's open_url, with no template the amount stays in the dialog", async ({ page }) => {
-  await fillLinks(page, { stripe: STRIPE, liberapay: LIBERAPAY });
   const { outside } = await openApp(page, { tauri: true });
   await page.locator("#donateBtn").click();
-  await expect(soon(page)).toBeHidden();
   await expect(go(page)).toBeVisible();
   await expect(go(page)).toHaveAttribute("target", "_blank");
   await expect(go(page)).toHaveAttribute("rel", /noopener/);
@@ -199,8 +230,7 @@ test("a filled link: the arrow opens it through the desktop app's open_url, with
 });
 
 test("a filled link with an {amount} template carries the chosen amount", async ({ page }) => {
-  await fillLinks(page, { stripe: STRIPE, liberapay: LIBERAPAY }, { stripe: `${STRIPE}?amount={amount}`, liberapay: "" });
-  await openApp(page, { tauri: true });
+  await openApp(page, { tauri: true, templates: { stripe: `${STRIPE}?amount={amount}`, liberapay: "" } });
   await page.locator("#donateBtn").click();
   // No amount yet: the plain link.
   await expect(go(page)).toHaveAttribute("href", STRIPE);
@@ -218,29 +248,18 @@ test("a filled link with an {amount} template carries the chosen amount", async 
   expect(opened).toEqual([`${STRIPE}?amount=30`, `${STRIPE}?amount=2`]);
 });
 
-test("in a browser, the arrow opens the page in a new tab, and each way follows its own link", async ({ page, context }) => {
+test("in a browser, the arrow opens the page in a new tab", async ({ page, context }) => {
   await context.route("https://example.org/**", (route) => route.fulfill({ contentType: "text/html", body: "<p>stub</p>" }));
-  await fillLinks(page, { stripe: STRIPE, liberapay: "" });
   await openApp(page);
   await page.locator("#donateBtn").click();
   const [tab] = await Promise.all([context.waitForEvent("page"), go(page).click()]);
   await tab.waitForLoadState("domcontentloaded");
   expect(tab.url()).toBe(STRIPE);
-  await tile(page, "liberapay").click();
-  await expect(soon(page)).toBeVisible();
-  await expect(go(page)).toBeHidden();
-  await expect(go(page)).not.toHaveAttribute("href", /./);
 });
 
-test("a link that is not https stays Coming soon", async ({ page }) => {
-  await fillLinks(page, { stripe: "http://example.org/plain", liberapay: "liberapay.com/x" });
-  await openApp(page);
-  await page.locator("#donateBtn").click();
-  for (const way of ["stripe", "liberapay"]) {
-    await tile(page, way).click();
-    await expect(soon(page)).toBeVisible();
-    await expect(go(page)).toBeHidden();
-  }
+test("a link that is not https counts as not set", async ({ page }) => {
+  await openApp(page, { links: { stripe: "http://example.org/plain", liberapay: "liberapay.com/x" } });
+  await expect(page.locator("#donateBtn")).toBeHidden();
 });
 
 test("share: the QR code comes from this server, copy puts the address on the clipboard, star and releases open GitHub", async ({ page, context }) => {
@@ -289,7 +308,6 @@ test("share uses the system share menu when there is one", async ({ page }) => {
 });
 
 test("the Guide explains the button and every control in the dialog", async ({ page }) => {
-  await fillLinks(page, { stripe: STRIPE, liberapay: "" });
   await openApp(page);
   await page.locator("#helpModeBtn").click();
   await expect(page.locator("body")).toHaveClass(/help-mode/);
@@ -317,7 +335,7 @@ test("the Guide explains the button and every control in the dialog", async ({ p
     if (title) await expect(tip.locator("b")).toHaveText(title);
     await expect(tip).toContainText(text);
   }
-  // The live arrow (Stripe is filled here).
+  // The arrow, for the chosen way.
   await go(page).hover();
   await expect(tip.locator("b")).toHaveText("Continue to Stripe in your web browser");
   await expect(tip).toContainText("Opens the chosen way to donate");
@@ -328,24 +346,13 @@ test("the Guide explains the button and every control in the dialog", async ({ p
 
 });
 
-test("the Guide explains Coming soon and names the chosen way", async ({ page }) => {
-  await openApp(page);
-  await page.locator("#helpModeBtn").click();
-  await page.locator("#donateBtn").click();
-  await expect(dialog(page)).toBeVisible();
-  // The disabled button takes no pointer, so the pointer lands on its wrapper.
-  await soon(page).hover({ force: true });
-  await expect(page.locator("#helpTip b")).toHaveText("Coming soon");
-  await expect(page.locator("#helpTip")).toContainText("Donating through Stripe is not set up yet");
-});
-
 test("the dialog follows the interface language", async ({ page }) => {
   await openApp(page, { language: "de" });
   await expect(page.locator("#donateBtn")).toHaveText("Spenden");
   await page.locator("#donateBtn").click();
   await expect(page.locator("#donateTitle")).toHaveText("Unterstütze StemDeck, frei und offen für alle");
   await expect(tile(page, "stripe")).toContainText("Einmalige Spende");
-  await expect(soon(page)).toHaveText("Bald verfügbar");
+  await expect(go(page)).toHaveAttribute("aria-label", "Weiter zu Stripe im Webbrowser");
   await expect(custom(page)).toHaveAttribute("placeholder", "Eigener Betrag (ab $2)");
   await custom(page).fill("1");
   await custom(page).press("Enter");
