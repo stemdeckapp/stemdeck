@@ -27,6 +27,15 @@ export function compareOldestFirst(a, b) {
   return idA < idB ? -1 : idA > idB ? 1 : 0;
 }
 
+/** When a library row was added (seconds), the time the order above reads:
+ *  the job's created_at as the server sent it, whenever it has, so the Library
+ *  and the Queue order by one clock. The browser's clock can be skewed against
+ *  the server's (a Docker host), so `nowSec` only stamps a row the server has
+ *  not described yet, and the server's time replaces it once it arrives. */
+export function addedAt(serverCreatedAt, storedCreatedAt, nowSec = Date.now() / 1000) {
+  return serverCreatedAt ?? storedCreatedAt ?? nowSec;
+}
+
 export function deriveSource(sourceUrl) {
   if (!sourceUrl) return "Local file";
   if (sourceUrl.startsWith("local:")) return "Local file";
