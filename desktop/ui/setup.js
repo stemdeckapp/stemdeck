@@ -11,6 +11,9 @@ function startBackend() {
 const statusEl = document.getElementById("status");
 const detailsEl = document.getElementById("details");
 const retryBtn = document.getElementById("retry");
+const skipModelsBtn = document.getElementById("skip-models");
+const continueBtn = document.getElementById("continue");
+const noticeEl = document.getElementById("notice");
 const steps = [...document.querySelectorAll("[data-step]")];
 
 function setStep(name, state) {
@@ -127,6 +130,136 @@ async function startPipProgress(stopTimedMessages) {
     progressWrap.classList.add("hidden");
     progressFill.classList.remove("indeterminate");
   };
+}
+
+// The names app/pipeline/warmup.py gives its models, as this screen says them.
+const MODEL_LABELS = {
+  demucs: "stem separation",
+  beat_this: "beat detection",
+  sections: "song sections",
+  vocal_split: "karaoke split",
+  whisper: "lyrics transcription",
+};
+
+function modelsLater(separationMissing) {
+  return (
+    "StemDeck works without them: each one downloads the first time a feature needs it" +
+    (separationMissing ? ", so the first separation downloads the separation model before it starts." : ".")
+  );
+}
+
+const MODELS_SKIPPED = `AI model download skipped. ${modelsLater(true)}`;
+
+/**
+ * What to tell someone whose models did not all arrive (#405), or null when
+ * they did. Until this, a missing model only reached the console, and the
+ * first sign was a feature that quietly did less.
+ */
+function modelWarmupNotice(status) {
+  if (status?.noSpace) {
+    const gb = (bytes) => (bytes / 1e9).toFixed(1);
+    return (
+      `Not enough free disk space for the AI models: about ${gb(status.noSpace.needed)} GB ` +
+      `needed, ${gb(status.noSpace.free)} GB free, so none was downloaded. StemDeck works ` +
+      "without them: each one downloads the first time a feature needs it and there is " +
+      "room, so the first separation downloads the separation model before it starts."
+    );
+  }
+  // camelCase, because ModelWarmupStatus is #[serde(rename_all =
+  // "camelCase")]. Reading the Rust field names instead gives undefineds,
+  // `missing` is empty every time, and this says nothing.
+  const missing = [
+    [status?.demucsReady, MODEL_LABELS.demucs],
+    [status?.beatThisReady, MODEL_LABELS.beat_this],
+    [status?.sectionsReady, MODEL_LABELS.sections],
+    [status?.vocalSplitReady, MODEL_LABELS.vocal_split],
+    [status?.whisperReady, MODEL_LABELS.whisper],
+  ]
+    .filter(([ready]) => ready === false)
+    .map(([, label]) => label);
+  if (!missing.length) return null;
+  const cause = status.offline
+    ? "StemDeck could not reach the model download servers (no internet connection, " +
+      "or the connection stopped answering), so these AI models were not downloaded"
+    : "These AI models could not be downloaded";
+  return (
+    `${cause}: ${missing.join(", ")}. ${modelsLater(status.demucsReady === false)} ` +
+    "logs/setup.log in the StemDeck data folder has the details."
+  );
+}
+
+/** Shows `text` until the Continue button is pressed. */
+function showNotice(text) {
+  noticeEl.textContent = text;
+  noticeEl.classList.remove("hidden");
+  continueBtn.classList.remove("hidden");
+  continueBtn.focus();
+  return new Promise((resolve) => {
+    continueBtn.addEventListener(
+      "click",
+      () => {
+        continueBtn.classList.add("hidden");
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+/**
+ * The model step: downloads the AI models, saying which one it is on, and
+ * offers Skip. Returns what to tell the user afterwards, or null.
+ *
+ * Best-effort, per model: a model that does not download here falls back to
+ * its lazy download on first use, so nothing here fails setup.
+ */
+async function warmupModels() {
+  let current = "Starting the AI model download...";
+  let since = Date.now();
+  const show = () => setStatus(`${current} Elapsed: ${formatElapsed(since)}.`);
+  show();
+  const timer = window.setInterval(show, 1000);
+  let skipped = false;
+  const unlisten = await window.__TAURI__.event.listen("model-warmup-progress", (event) => {
+    if (skipped) return;
+    const { model, number, count } = event.payload ?? {};
+    // Offered from the first model on: only once the warmup has said
+    // something is it sure to be running, and so stoppable.
+    skipModelsBtn.classList.remove("hidden");
+    current = `Getting AI model ${number} of ${count}: ${MODEL_LABELS[model] ?? model}...`;
+    since = Date.now();
+    show();
+  });
+
+  skipModelsBtn.disabled = false;
+  skipModelsBtn.onclick = async () => {
+    skipModelsBtn.disabled = true;
+    skipped = true;
+    current = "Skipping the AI model download...";
+    show();
+    try {
+      await invoke("skip_model_warmup");
+    } catch (err) {
+      skipped = false;
+      skipModelsBtn.disabled = false;
+      current = `The download could not be stopped (${err}), so it goes on...`;
+      show();
+    }
+  };
+
+  try {
+    const status = await invoke("warmup_models");
+    return skipped ? MODELS_SKIPPED : modelWarmupNotice(status);
+  } catch (err) {
+    // The warmup could not run at all (no Python), or stopped answering.
+    if (skipped) return MODELS_SKIPPED;
+    return `The AI model download stopped: ${err}. ${modelsLater(true)}`;
+  } finally {
+    window.clearInterval(timer);
+    unlisten();
+    skipModelsBtn.classList.add("hidden");
+    skipModelsBtn.onclick = null;
+  }
 }
 
 function isMac() {
@@ -332,6 +465,7 @@ function ffmpegFailureHint(message) {
 async function runSetup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
+  noticeEl.classList.add("hidden");
   for (const step of steps) step.classList.remove("active", "done", "error");
 
   try {
@@ -524,59 +658,13 @@ async function runSetup() {
     // model through torchvision.
     await repairTorchvision();
 
+    let modelNotice = null;
     await runStep("model", async () => {
-      const stopProgress = startProgressStatus([
-        {
-          afterSeconds: 0,
-          text: "Downloading AI models... this can take a few minutes on first run.",
-        },
-        {
-          afterSeconds: 60,
-          text: "Still downloading AI models... slow networks can delay this.",
-        },
-        {
-          afterSeconds: 300,
-          text: "Still working... large models can take a while on a slow connection.",
-        },
-      ]);
-      try {
-        // Best-effort, per model: any model that doesn't download here just
-        // falls back to its existing lazy-download-on-first-use behavior --
-        // never fails setup over this (warmup_models itself never throws for
-        // an individual model failure; this catch is only for the whole
-        // subprocess failing to run at all, e.g. a missing Python).
-        //
-        // The per-model result was thrown away here, so a user whose beat
-        // model never arrived saw a clean setup and then a permanently worse
-        // beat grid, with nothing anywhere connecting the two (#502). Naming
-        // it at least puts it in the log that gets attached to bug reports.
-        //
-        // Deliberately not setStatus: the next step overwrites the status line
-        // immediately and then navigates away to the backend, so anything
-        // written here is invisible. Telling the user properly belongs in the
-        // main UI, where the affected feature actually lives, and is its own
-        // piece of work.
-        // camelCase, because ModelWarmupStatus is #[serde(rename_all =
-        // "camelCase")]. Reading the Rust field names instead gives four
-        // undefineds, `missing` is empty every time, and this says nothing.
-        const status = await invoke("warmup_models");
-        const missing = [
-          [status?.demucsReady, "stem separation"],
-          [status?.beatThisReady, "beat detection"],
-          [status?.sectionsReady, "song sections"],
-          [status?.vocalSplitReady, "karaoke split"],
-        ]
-          .filter(([ready]) => ready === false)
-          .map(([, label]) => label);
-        if (missing.length) {
-          console.warn("models not downloaded during setup:", missing.join(", "));
-        }
-      } catch (err) {
-        console.warn("model warmup failed (will download lazily on first use):", err);
-      } finally {
-        stopProgress();
-      }
+      modelNotice = await warmupModels();
     });
+    // Before the backend step, which overwrites the status line and then
+    // leaves this page: anything said only in passing here was never seen.
+    if (modelNotice) await showNotice(modelNotice);
 
     await runStep("backend", async () => {
       setStatus(gpuSummary ? `${gpuSummary} - starting backend...` : "Starting StemDeck backend...");

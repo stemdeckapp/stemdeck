@@ -54,7 +54,7 @@ mod windows_impl {
     };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
@@ -67,8 +67,21 @@ mod windows_impl {
     // SAFETY: a job handle is a kernel handle, usable from any thread; it is
     // only closed once, in Drop.
     unsafe impl Send for KillOnCloseJob {}
+    // SAFETY: shared use only terminates the job, which Windows allows from
+    // any thread on the same handle at once.
+    unsafe impl Sync for KillOnCloseJob {}
 
     impl KillOnCloseJob {
+        /// End every process in the job now, while StemDeck keeps running:
+        /// the setup wizard's Skip on the model step (#405).
+        pub fn terminate(&self) -> io::Result<()> {
+            // SAFETY: the handle is owned by `self` and open until Drop.
+            if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
         fn new() -> io::Result<Self> {
             // SAFETY: plain Win32 calls; the handle is owned by the returned
             // value, and `info` is a zeroed plain-data struct of the size given.
