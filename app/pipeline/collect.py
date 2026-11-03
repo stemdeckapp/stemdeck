@@ -454,6 +454,15 @@ def _has_stems_on_disk(job_dir: Path) -> bool:
         return True
 
 
+def _has_source_on_disk(job_dir: Path) -> bool:
+    """True when the job folder holds a source file of any kind: for an upload
+    it is the only copy StemDeck has (cleanup_source)."""
+    try:
+        return any(p.is_file() for p in job_dir.glob("source.*"))
+    except OSError:
+        return True
+
+
 def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str]) -> str | None:
     """Why the TTL sweep must leave `job_dir` alone, or None to remove it.
 
@@ -481,10 +490,12 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
         # the Trash has no purge of its own, and this sweep never had a
         # separate rule for it.
         return None
-    # Unregistered. restore() adopts every job folder that has stems, so one
-    # that is still unregistered is either a delete whose files outlived it
-    # (tombstoned, the user asked for it gone) or an import that never got as
-    # far as stems. Anything else is kept.
+    # Unregistered. restore() adopts every job folder that has stems or a kept
+    # upload, so one that is still unregistered is either a delete whose files
+    # outlived it (tombstoned, the user asked for it gone) or one that left only
+    # StemDeck's bookkeeping behind (metadata.json, an empty stems/). Anything
+    # else is kept, a source file included: one restore() could not adopt may
+    # still be the only copy.
     try:
         if job_dir.stat().st_mtime >= cutoff:
             return "unregistered folder is newer than the cutoff"
@@ -496,6 +507,8 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
         return "unregistered folder holds recorded takes"
     if _has_stems_on_disk(job_dir):
         return "unregistered folder holds stems"
+    if _has_source_on_disk(job_dir):
+        return "unregistered folder holds a source file"
     if not holds_job_files(job_dir):
         return "unregistered folder holds nothing StemDeck writes"
     return None
@@ -511,8 +524,8 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
     Judged by Job.created_at, not directory mtime (which unrelated filesystem
     events touch). Never removes an active job, a stopped song, a favourite, a
     job with recorded takes or tracks, a folder whose name is not a job id, or a
-    link; an unregistered job folder goes only when it is old, abandoned and
-    holds something StemDeck writes. See
+    link; an unregistered job folder goes only when it is old, abandoned,
+    holds something StemDeck writes and holds no source file. See
     _keep_reason for each rule. Every removal is logged with its reason."""
     cutoff = time.time() - (JOB_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
     jobs = registry_all()

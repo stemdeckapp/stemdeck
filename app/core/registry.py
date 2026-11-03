@@ -26,6 +26,7 @@ from app.core.config import (
     TAKE_ID_RE,
     TAKES_DIRNAME,
     TRACK_ID_RE,
+    UPLOAD_EXTS,
 )
 from app.core.models import (
     FINISHED_STATUSES,
@@ -434,7 +435,8 @@ def _repair_field_types(job: Job) -> list[str]:
 
 
 def restore(jobs_dir: Path) -> None:
-    """Load persisted jobs and recover completed orphan jobs from disk.
+    """Load persisted jobs and recover orphan jobs from disk: finished ones
+    from their stems, stopped ones from the source they kept.
 
     Nothing the user had is lost silently: a file that cannot be read as a
     whole is moved aside (registry.json.corrupt-<time>), and a record that
@@ -574,6 +576,7 @@ def restore(jobs_dir: Path) -> None:
             deleted = set(_deleted)
         rebuilt: list[str] = []
         unsaved: list[str] = []
+        stopped: list[str] = []
         for job_dir in jobs_dir.iterdir():
             if not job_dir.is_dir() or not JOB_ID_RE.match(job_dir.name) or job_dir.name in known:
                 continue
@@ -597,6 +600,21 @@ def restore(jobs_dir: Path) -> None:
                 rebuilt.append(recovered.id)
                 if not had_saved:
                     unsaved.append(recovered.id)
+            elif (kept := _stopped_from_source(job_dir)) is not None:
+                _sync_tracks(kept, job_dir)
+                with _lock:
+                    _jobs[kept.id] = kept
+                changed = True
+                stopped.append(kept.id)
+        if stopped:
+            more = f" and {len(stopped) - 20} more" if len(stopped) > 20 else ""
+            logger.warning(
+                "registry.json had no entry for %d song(s) that were never separated; "
+                "brought them back as stopped songs from the source they kept: %s%s",
+                len(stopped),
+                ", ".join(stopped[:20]),
+                more,
+            )
         if rebuilt:
             listed = ", ".join(unsaved[:20]) or "none"
             if len(unsaved) > 20:
@@ -726,6 +744,41 @@ def _sync_tracks(job: Job, job_dir: Path) -> bool:
         logger.warning("could not reconcile tracks for %s", job.id, exc_info=True)
         return False
     return changed or bool(found)
+
+
+def _stopped_from_source(job_dir: Path) -> Job | None:
+    """A song stopped before it was separated, rebuilt from the source it kept,
+    or None when the file Extract would run (the first source.*, as
+    jobqueue._find_local_source picks it) is not a type an upload can be.
+
+    Such a folder has no stems to rebuild from, so it stayed out of the
+    registry, out of reach of Extract, and the auto-delete sweep took it with
+    the only copy of an upload. Not a link's download cut off part way
+    (source.webm.part), and not a folder that is or holds a link: Extract
+    would write through it."""
+    try:
+        if not is_real_entry(job_dir) or not all(is_real_entry(p) for p in job_dir.iterdir()):
+            return None
+        source = next((p for p in sorted(job_dir.glob("source.*")) if p.is_file()), None)
+        created_at = job_dir.stat().st_mtime
+    except OSError:
+        logger.warning("could not read %s", job_dir, exc_info=True)
+        return None
+    if source is None or source.suffix.lower() not in UPLOAD_EXTS:
+        return None
+    # Placeholder, as for stems without metadata.json: a song stopped before
+    # it finished never wrote one, so its name went with the registry.
+    title = f"Recovered track {job_dir.name[:6]}"
+    return Job(
+        id=job_dir.name,
+        status="stopped",
+        stage_message="Stopped",
+        title=title,
+        source_url=f"local:{title}",
+        source_format=source.suffix[1:].lower(),
+        selected_stems=list(STEM_NAMES),
+        created_at=created_at,
+    )
 
 
 def _recover_done_job(job_dir: Path) -> Job | None:
