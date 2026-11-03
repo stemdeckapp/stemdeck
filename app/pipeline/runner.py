@@ -514,10 +514,17 @@ async def _run_async(
                 logger.info("[%s] interrupted by shutdown: %s", job.id, e)
                 return
             logger.exception("pipeline failed for job %s: %s", job.id, e)
-            _set(job, status="error", stage="Error: Processing failed", error=error_msg)
             # A fingerprint may still have the source open (Windows).
             release_source(job.id)
-            _quarantine_failed_job(job, job_dir, jobs_dir, e)
+            # Off the loop: stripping and moving a multi-GB folder on a NAS
+            # stalled every stream and request. The status changes after it,
+            # so the first "error" a page sees already carries error_detail
+            # and nothing can delete the folder mid-move.
+            await asyncio.to_thread(_quarantine_failed_job, job, job_dir, jobs_dir, e)
+            _set(job, status="error", stage="Error: Processing failed", error=error_msg)
+            # Emptied from the Trash while its folder moved. Before the
+            # persist, which forgets a deletion whose folder is gone.
+            await jobqueue.finish_deferred_delete(job, jobs_dir)
             persist_registry(jobs_dir)
             return
         logger.info(
@@ -531,7 +538,7 @@ async def _run_async(
             # be large; Extract clears the same folder (reset_for_rerun).
             # Cleared before the status changes, so nothing that sees
             # "stopped" can still find it.
-            shutil.rmtree(job_dir / DEMUCS_MODEL, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, job_dir / DEMUCS_MODEL, ignore_errors=True)
         remove_files = settle_cancelled(job)
         persist_registry(jobs_dir)
         release_source(job.id)
@@ -540,9 +547,9 @@ async def _run_async(
         # removal: right after the cancel terminated ffmpeg or the demucs
         # worker, Windows can still hold one of its files, and a single attempt
         # left the folder behind for good.
-        if remove_files and not remove_job_dir(job_dir):
+        if remove_files and not await asyncio.to_thread(remove_job_dir, job_dir):
             logger.warning("[%s] cancelled job's folder could not be removed", job.id)
-        jobqueue.finish_deferred_delete(job, jobs_dir)
+        await jobqueue.finish_deferred_delete(job, jobs_dir)
         return
     # A cancel or a trash that arrived after the last stage checked for it lost
     # the race, and the job finished anyway. Left set, the flags would make
@@ -554,7 +561,7 @@ async def _run_async(
     _write_metadata(job, job_dir)
     persist_registry(jobs_dir)
     # Emptied from the Trash while it finished anyway.
-    jobqueue.finish_deferred_delete(job, jobs_dir)
+    await jobqueue.finish_deferred_delete(job, jobs_dir)
     # One-line per-job summary: the timing telemetry that makes performance
     # regressions (and the CPU-vs-GPU question) answerable from logs (#293).
     t = job.stage_timings or {}

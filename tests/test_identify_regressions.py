@@ -521,8 +521,8 @@ async def test_cancel_while_the_lookups_are_out_frees_the_queue(monkeypatch, job
 
             r = await client.post(f"/api/jobs/{a.id}/cancel")
             assert r.status_code == 200
-            await _until(lambda: a.status == "cancelled")
-            assert not (jobs_dir / a.id).exists()
+            # The folder goes in a thread once the job reads "cancelled".
+            await _until(lambda: a.status == "cancelled" and not (jobs_dir / a.id).exists())
 
             await _until(lambda: b.status == "done")
             state = (await client.get(f"/api/jobs/{a.id}")).json()
