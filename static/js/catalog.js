@@ -1,5 +1,5 @@
 // catalog.js — library panel: folders, tracks, collapse, drag-and-drop
-import { wireUpAudio } from "./player.js";
+import { triggerDownload, wireUpAudio } from "./player.js";
 import { prepareLayout, shownTracks } from "./modeStems.js";
 import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
 import { activeVersionId, songVersions } from "./versionScope.js";
@@ -5007,23 +5007,34 @@ async function loadLogTail(overlay, view) {
 
 /** Download every log file as one zip, for attaching to a bug report. */
 async function exportLogs(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = i18nT("settings.exportLogs.preparing"); }
+  const preparing = () => { if (btn) btn.textContent = i18nT("settings.exportLogs.preparing"); };
+  if (btn) btn.disabled = true;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+  const filename = `stemdeck-logs-${stamp}.zip`;
   try {
-    const r = await fetch("/api/logs.zip", { cache: "no-store" });
-    if (!r.ok) throw new Error(`status ${r.status}`);
-    const blob = await r.blob();
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `stemdeck-logs-${stamp}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    // False when the user cancels the save dialog.
+    let saved = true;
+    if (window.__TAURI__?.core?.invoke) {
+      // Through the save dialog, like every other desktop export: a download
+      // inside the window is saved by WebView2 to the Downloads folder without
+      // asking, outside a portable StemDeck's folder.
+      saved = await triggerDownload("/api/logs.zip", filename, preparing);
+    } else {
+      preparing();
+      const r = await fetch("/api/logs.zip", { cache: "no-store" });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
     // Log export isn't tied to a track/job, so a plain by-kind dismiss is the
     // right granularity — it never touches a per-track export failure (#401).
-    dismissFailuresByKind("export");
+    if (saved) dismissFailuresByKind("export");
   } catch (e) {
     console.warn("[settings] log export failed:", e);
     showError(i18nT("settings.exportLogs.error"), null, { retry: false });
