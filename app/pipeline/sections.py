@@ -30,7 +30,7 @@ from app.core.config import (
     ffmpeg_executable,
 )
 from app.core.models import Job, JobCancelled
-from app.core.registry import set_proc
+from app.core.registry import job_dirs, set_proc
 
 logger = logging.getLogger("stemdeck.sections")
 
@@ -388,10 +388,10 @@ def sweep_orphaned_workspaces(jobs_dir: Path) -> int:
     """
     removed = 0
     try:
-        job_dirs = list(jobs_dir.iterdir())
+        folders = job_dirs(jobs_dir)
     except OSError:
         return 0
-    for job_dir in job_dirs:
+    for job_dir in folders:
         stems_dir = job_dir / "stems"
         try:
             candidates = list(stems_dir.iterdir()) if stems_dir.is_dir() else []

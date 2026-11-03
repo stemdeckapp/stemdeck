@@ -35,6 +35,7 @@ from app.core.config import (
     WAV_PLAIN_HEADER_ARGS,
     ffmpeg_executable,
 )
+from app.core.registry import job_dirs
 from app.pipeline import video_encoder
 
 logger = logging.getLogger("stemdeck.takes")
@@ -510,12 +511,13 @@ def sweep_render_temps(jobs_dir: Path) -> int:
     take of every job: called at startup, before anything renders. Returns
     how many went."""
     gone = 0
-    for path in jobs_dir.glob("*/takes/*/.render.mp4.*.tmp.mp4"):
-        try:
-            path.unlink()
-            gone += 1
-        except OSError:
-            logger.warning("stale render file not removed: %s", path.name)
+    for job_dir in job_dirs(jobs_dir):
+        for path in job_dir.glob("takes/*/.render.mp4.*.tmp.mp4"):
+            try:
+                path.unlink()
+                gone += 1
+            except OSError:
+                logger.warning("stale render file not removed: %s", path.name)
     return gone
 
 

@@ -25,6 +25,13 @@ def _mkdir(jobs_dir: Path, name: str) -> Path:
     return d
 
 
+def _quarantined(jobs_dir: Path, name: str) -> Path:
+    """A failed job as the runner leaves it: error.txt first, then moved."""
+    d = _mkdir(jobs_dir / "failed", name)
+    (d / "error.txt").write_text("evidence", encoding="utf-8")
+    return d
+
+
 def test_skip_active_job_even_if_old(tmp_path: Path):
     """An active (non-terminal) job's directory must never be swept,
     even if its created_at predates the TTL cutoff."""
@@ -189,8 +196,10 @@ def test_keeps_recent_terminal_job(tmp_path: Path):
 
 def test_orphan_dir_falls_back_to_mtime(tmp_path: Path):
     """Directories with no registry entry (e.g. left over from a prior
-    server run) still get swept by mtime."""
+    server run) still get swept by mtime, when they hold a file StemDeck
+    writes into a job."""
     d = _mkdir(tmp_path, "abcdefabcdec")
+    (d / "metadata.json").write_text("{}", encoding="utf-8")
     # Backdate the directory.
     old = time.time() - 999_999
     import os
@@ -209,7 +218,7 @@ def test_orphan_dir_falls_back_to_mtime(tmp_path: Path):
 def test_ttl_sweep_never_touches_failed_root(tmp_path: Path):
     """sweep_old_jobs must skip jobs/failed/ even when it looks ancient --
     the quarantine has its own, longer TTL."""
-    failed = _mkdir(tmp_path / "failed", "abcdefabcdef")
+    failed = _quarantined(tmp_path, "abcdefabcdef")
     old = time.time() - 999_999
     import os
 
@@ -225,8 +234,8 @@ def test_ttl_sweep_never_touches_failed_root(tmp_path: Path):
 def test_sweep_failed_jobs_expires_old_keeps_fresh(tmp_path: Path):
     from app.pipeline.collect import sweep_failed_jobs
 
-    old_dir = _mkdir(tmp_path / "failed", "abcdefabcde1")
-    fresh_dir = _mkdir(tmp_path / "failed", "abcdefabcde2")
+    old_dir = _quarantined(tmp_path, "abcdefabcde1")
+    fresh_dir = _quarantined(tmp_path, "abcdefabcde2")
     old = time.time() - 999_999
     import os
 
@@ -407,7 +416,7 @@ async def test_stopped_song_survives_a_full_sweep_pass_with_auto_delete_on(
     from app.core.settings import set_auto_delete_days, set_auto_delete_jobs
 
     job, source = _old_stopped_upload(tmp_path, "ccccccccccc2")
-    failed = _mkdir(tmp_path / "failed", "ccccccccccc3")
+    failed = _quarantined(tmp_path, "ccccccccccc3")
     _backdate(failed)
     set_auto_delete_jobs(True)
     set_auto_delete_days(1)

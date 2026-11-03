@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -16,7 +17,14 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal
 
-from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, LYRICS_FILE, STEM_NAMES
+from app.core.config import (
+    DEMUCS_MODEL,
+    EXTRA_STEM_NAMES,
+    JOB_ID_RE,
+    LYRICS_FILE,
+    STEM_NAMES,
+    TAKES_DIRNAME,
+)
 from app.core.models import (
     FINISHED_STATUSES,
     Job,
@@ -825,19 +833,83 @@ def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:
         proc.terminate()
 
 
-def reset_all(jobs_dir: Path) -> list[str]:
-    """Delete every job directory and the registry file, clearing the
-    in-memory registry too. Desktop-only factory reset (Settings -> General
-    -> "Reset app data") -- the caller is responsible for checking no job is
-    actively running first (deleting a running job's directory out from
-    under it would corrupt that job, not just reset the library)."""
+def is_real_entry(entry: Path) -> bool:
+    """Whether `entry` is itself in its folder, not a link or a Windows
+    junction to somewhere else. Removing what is found by walking through one
+    deletes whatever it points at."""
+    return entry.resolve() == entry.parent.resolve() / entry.name
+
+
+def job_dirs(folder: Path) -> list[Path]:
+    """The job folders directly inside `folder` (the jobs folder, or its
+    failed/ quarantine): a job id for a name, and a real directory. The jobs
+    folder can be shared with other things, so nothing else in it is a job."""
+    if not folder.is_dir():
+        return []
+    return [
+        d for d in folder.iterdir() if JOB_ID_RE.match(d.name) and d.is_dir() and is_real_entry(d)
+    ]
+
+
+def holds_job_files(job_dir: Path) -> bool:
+    """Whether a job-id folder holds something StemDeck writes into a job. The
+    name alone does not make it ours: twelve hex characters is also a Docker
+    container's short id. A folder that cannot be read is not ours to remove."""
+    try:
+        return any(
+            (job_dir / name).exists() for name in ("stems", TAKES_DIRNAME, "metadata.json")
+        ) or any(job_dir.glob("source.*"))
+    except OSError:
+        return False
+
+
+def quarantine_dirs(jobs_dir: Path) -> list[Path]:
+    """The job folders in failed/ that are StemDeck's quarantine: the runner
+    writes error.txt into each before moving it there. Empty when failed/ is a
+    link, or holds only someone else's folders."""
+    failed_root = jobs_dir / "failed"
+    if not is_real_entry(failed_root):
+        return []
+    return [d for d in job_dirs(failed_root) if (d / "error.txt").is_file()]
+
+
+# The files reset removes beside the job folders: the registry, its temp and
+# set-aside copies (_write_atomic, quarantine_corrupt, _keep_bad_records), and
+# the desktop shell's store (#403).
+_OWN_FILE_RE = re.compile(
+    r"(registry\.json(\.(corrupt|bad)-[0-9a-f-]+)?|\.registry\.json\.[\w.-]+\.tmp|user-data\.json)\Z"
+)
+
+
+def reset_all(jobs_dir: Path) -> tuple[list[str], list[str]]:
+    """Delete StemDeck's entries in the jobs folder, clearing the in-memory
+    registry too. Factory reset (Settings -> General -> "Reset app data") --
+    the caller is responsible for checking no job is actively running first
+    (deleting a running job's directory out from under it would corrupt that
+    job, not just reset the library).
+
+    The jobs folder can be shared with other things (a volume mapped onto a
+    share, a folder the user already had), so only what StemDeck made goes:
+    job folders it has a record of or that hold job files, its quarantined
+    failures in failed/, and its own files. Nothing behind a link is touched. Returns the
+    names it could not remove and the names it left alone."""
     with _lock:
+        known = set(_jobs) | _deleted
         _jobs.clear()
         _procs.clear()
     if not jobs_dir.is_dir():
-        return []
+        return [], []
+    failed_root = jobs_dir / "failed"
+    quarantined = quarantine_dirs(jobs_dir)
+    targets = [d for d in job_dirs(jobs_dir) if d.name in known or holds_job_files(d)]
+    targets += quarantined
+    targets += [
+        f
+        for f in jobs_dir.iterdir()
+        if _OWN_FILE_RE.match(f.name) and f.is_file() and is_real_entry(f)
+    ]
     failed: list[str] = []
-    for entry in jobs_dir.iterdir():
+    for entry in targets:
         try:
             if entry.is_dir():
                 shutil.rmtree(entry)
@@ -846,16 +918,27 @@ def reset_all(jobs_dir: Path) -> list[str]:
         except OSError:
             logger.warning("reset: could not remove %s", entry, exc_info=True)
             failed.append(entry.name)
+    # failed/ itself goes only if it is empty now: rmdir refuses otherwise, and
+    # anything still in it is not ours.
+    if quarantined and not any(failed_root.iterdir()):
+        try:
+            failed_root.rmdir()
+        except OSError:
+            logger.warning("reset: could not remove %s", failed_root, exc_info=True)
+            failed.append(failed_root.name)
+    skipped = sorted(e.name for e in jobs_dir.iterdir() if e.name not in failed)
     # Anything that survived is still a job-shaped directory on disk, so the
     # next start would adopt it and the "reset" library would refill itself.
     # Record it as deleted and persist that, which also recreates the registry
-    # file this loop just removed.
+    # file this loop just removed. A known job left alone because it is a link
+    # is one of these too.
     surviving = [name for name in failed if JOB_ID_RE.match(name)]
+    surviving += [name for name in skipped if name in known]
     if surviving:
         with _lock:
             _deleted.update(surviving)
         persist(jobs_dir)
-    return failed
+    return failed, skipped
 
 
 def get_proc(job_id: str, op: Operation = "pipeline") -> subprocess.Popen | None:
