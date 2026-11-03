@@ -110,7 +110,10 @@ def validate_target(target: Path, current: Path) -> Path:
         # documents_store_path), so re-selecting a folder StemDeck already
         # used must recognize it as "ours", same as registry.json.
         ours = {"registry.json", "failed", "user-data.json"}
-        if entries and not all(e.name in ours or _looks_like_job_dir(e) for e in entries):
+        if entries and not all(
+            e.name in ours or _looks_like_job_dir(e) or _left_by_os_or_stemdeck(e.name)
+            for e in entries
+        ):
             raise StemsLocationError("Pick an empty folder, or one StemDeck already uses.")
         if _holds_another_library(target, current):
             raise StemsLocationError(
@@ -157,6 +160,17 @@ def _holds_another_library(target: Path, current: Path) -> bool:
         except OSError:
             return True
     return False
+
+
+# What Finder (.DS_Store) and Explorer (desktop.ini, Thumbs.db) write into any
+# folder they show, and the registry copies StemDeck sets aside itself. None of
+# them makes a folder someone else's.
+_OS_FILES = frozenset({".ds_store", "desktop.ini", "thumbs.db"})
+_SET_ASIDE = ("registry.json.corrupt-", "registry.json.bad-")
+
+
+def _left_by_os_or_stemdeck(name: str) -> bool:
+    return name.lower() in _OS_FILES or name.startswith(_SET_ASIDE)
 
 
 def _looks_like_job_dir(entry: Path) -> bool:

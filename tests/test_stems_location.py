@@ -107,6 +107,36 @@ def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
     assert validate_target(target, current) == target.resolve()
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".DS_Store",
+        "desktop.ini",
+        "Thumbs.db",
+        "registry.json.corrupt-1762000000",
+        "registry.json.bad-1762000000-a1b2c3",
+    ],
+)
+def test_accepts_a_folder_holding_only_what_the_os_or_stemdeck_left_there(tmp_path, name):
+    """A folder Finder just made holds a .DS_Store, one Windows Explorer showed
+    holds desktop.ini or Thumbs.db, and one StemDeck used before can hold the
+    registry copies it set aside itself. None of them is someone else's file,
+    and none is moved over or deleted."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / name).write_bytes(b"theirs")
+    (current / name).write_bytes(b"mine")
+
+    assert validate_target(target, current) == target.resolve()
+    move_library(current, target)
+
+    assert (target / name).read_bytes() == b"theirs"
+    assert (current / name).read_bytes() == b"mine"
+    assert (target / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
+
+
 def test_rejects_a_file(tmp_path):
     current = tmp_path / "old"
     current.mkdir()
