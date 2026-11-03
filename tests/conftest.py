@@ -101,6 +101,15 @@ def _isolate_backing_cache(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_export_caches(tmp_path, monkeypatch):
+    """Exports render to a temporary cache, never the real one. The startup
+    sweep that every TestClient lifespan runs removes the half-written files
+    in these caches, which in the real one could be a running server's."""
+    monkeypatch.setattr("app.api.stems._MIXDOWN_CACHE_DIR", tmp_path / "_cache" / "mixdown")
+    monkeypatch.setattr("app.api.stems._CLICK_CACHE_DIR", tmp_path / "_cache" / "click")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 

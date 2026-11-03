@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import uuid
 import zipfile
 from collections import deque
@@ -1330,15 +1331,36 @@ async def _render_to_file(
 
 
 def _unlink_later(path: Path) -> None:
-    """Drop a rendered temp file once its response has been sent.
+    """Drop a rendered temp file once its response has been sent, or once its
+    render has failed.
 
-    Only ever attached to an uncached render. A cached one returns the cache
+    Only ever used on an uncached render or a zip. A cached one returns the cache
     entry itself, and deleting that would throw away the render the cache
     exists to keep."""
     try:
         path.unlink(missing_ok=True)
     except OSError:
         logger.debug("could not remove rendered export %s", path, exc_info=True)
+
+
+class _ZipTemp:
+    """The file a stems zip is built in. It goes once the request has given it
+    up (a failed build, or a cancel: the client or the server going away) and
+    the build thread has stopped writing it, whichever comes second. A cancel
+    does not stop the thread, so the request alone cannot tell when the file
+    is free, and on Windows removing it sooner fails."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        self._ended: set[str] = set()
+
+    def end(self, side: str) -> None:
+        with self._lock:
+            self._ended.add(side)
+            both = self._ended == {"build", "request"}
+        if both:
+            _unlink_later(self.path)
 
 
 async def _ensure_cached_mp3(src: Path) -> Path:
@@ -2277,7 +2299,9 @@ def _build_stems_zip(
                 zf.write(p, arcname=_arcname(prefix, name, fmt))
         return
     encode = _ENCODE_ARGS[fmt]
-    with tempfile.TemporaryDirectory() as td, zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
+    # Beside the zip, so the startup sweep finds what a killed build left.
+    work = tempfile.TemporaryDirectory(prefix=".zipwork-", dir=dest.parent)
+    with work as td, zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as zf:
         for name, p in sources:
             if p.suffix.lower() == f".{fmt}":
                 zf.write(p, arcname=_arcname(prefix, name, fmt))
@@ -2412,7 +2436,7 @@ def _build_stems_zip_with_click(
     if click is None:
         _build_stems_zip(sources, fmt, dest, prefix)
         return
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(prefix=".zipwork-", dir=dest.parent) as td:
         path = _render_click_stem(click, sources[0][1], fmt, Path(td))
         extra = [(CLICK_STEM_NAME, path)] if path is not None else []
         _build_stems_zip([*sources, *extra], fmt, dest, prefix)
@@ -2518,22 +2542,32 @@ async def get_all_stems_zip(
                 click_sound,
             )
 
-    fd, tmp = tempfile.mkstemp(prefix="stemdeck_zip_", suffix=".zip")
+    # In the export cache under a dot name, like a render: the cache prune
+    # leaves it alone, and the startup sweep removes it if the process dies.
+    _MIXDOWN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".stemdeck_zip_", suffix=".zip", dir=_MIXDOWN_CACHE_DIR)
     os.close(fd)
     tmp_path = Path(tmp)
+    temp = _ZipTemp(tmp_path)
+
+    def build() -> None:
+        try:
+            _build_stems_zip_with_click(sources, fmt, tmp_path, _title_slug(job.title), click_stem)
+        except Exception:
+            # Logged here: after a cancel nobody awaits the thread.
+            logger.exception("failed to build stems zip for job %s", job_id)
+            raise
+        finally:
+            temp.end("build")
+
     try:
-        await asyncio.to_thread(
-            _build_stems_zip_with_click,
-            sources,
-            fmt,
-            tmp_path,
-            _title_slug(job.title),
-            click_stem,
-        )
+        await asyncio.to_thread(build)
     except Exception:
-        tmp_path.unlink(missing_ok=True)
-        logger.exception("failed to build stems zip for job %s", job_id)
+        temp.end("request")
         raise HTTPException(status_code=500, detail="failed to build archive") from None
+    except BaseException:
+        temp.end("request")
+        raise
 
     filename = f"{_safe_title(job.title)}_stems.zip"
     return FileResponse(

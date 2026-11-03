@@ -116,7 +116,7 @@ from app.pipeline.audio_encoders import (
     ffmpeg_too_old,
     transpose_export,
 )
-from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
+from app.pipeline.collect import sweep_crash_leftovers, sweep_failed_jobs, sweep_old_jobs
 from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_section_workspaces
 from app.pipeline.vocal_split_status import capability as vocal_split_capability
 
@@ -250,6 +250,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sweep_render_temps, JOBS_DIR)
     except Exception:
         _log.exception("could not sweep stale render files")
+    # The same for a stem fill, a vocal split decode, a stem write, an export
+    # render and a stems zip.
+    try:
+        from app.api.stems import _CLICK_CACHE_DIR, _MIXDOWN_CACHE_DIR
+
+        await asyncio.to_thread(
+            sweep_crash_leftovers, JOBS_DIR, (_MIXDOWN_CACHE_DIR, _CLICK_CACHE_DIR)
+        )
+    except Exception:
+        _log.exception("could not sweep crash leftovers")
 
     # An FFmpeg older than 5.1 cannot run any export (app/pipeline/audio_encoders.py).
     # The server still starts, so imports and playback work and the page can

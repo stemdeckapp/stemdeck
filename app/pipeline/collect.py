@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from app.core.config import (
+    CACHE_TEMP_MIN_AGE_SECONDS,
     DEMUCS_MODEL,
     FAILED_TTL_SECONDS,
     JOB_TTL_SECONDS,
@@ -23,7 +26,7 @@ from app.core.config import (
 from app.core.models import FINISHED_STATUSES, Job
 from app.core.registry import all_jobs as registry_all
 from app.core.registry import deleted_ids as registry_deleted_ids
-from app.core.registry import holds_job_files, job_dirs, quarantine_dirs, set_proc
+from app.core.registry import holds_job_files, is_real_entry, job_dirs, quarantine_dirs, set_proc
 from app.core.registry import persist as registry_persist
 from app.core.registry import remove as registry_remove
 from app.core.stem_files import is_stem_audio, stem_names_on_disk, stem_path
@@ -563,3 +566,72 @@ def sweep_failed_jobs(jobs_dir: Path) -> None:
                 _rmtree(d)
         except OSError:
             logger.warning("failed-quarantine sweep could not stat %s", d, exc_info=True)
+
+
+# What a writer leaves when the process dies before its own cleanup runs: a
+# stem fill's work folder (stem_fill), a decode for the vocal split
+# (stem_files.decoded_wav), and a stem file or work folder written under a
+# dot temp name beside its final one (stem_storage, stems._ensure_cached_mp3).
+# Nothing a song keeps has one of these names.
+_JOB_TEMP_DIR_RE = re.compile(r"\.fill-[0-9a-f]{8}\Z")
+_STEMS_TEMP_DIR_RE = re.compile(r"\.decode-\w{8}\Z|\..+\.tmp\Z")
+_STEMS_TEMP_FILE_RE = re.compile(r"\..+\.tmp(\.mp3)?\Z")
+# The same in the export caches: a render or a click written beside its cache
+# entry (stems._render_to_file, stems._stream_ffmpeg, click_render), a stems
+# zip and the folder its stems are transcoded in (stems.get_all_stems_zip).
+_CACHE_TEMP_DIR_RE = re.compile(r"\.zipwork-\w{8}\Z")
+_CACHE_TEMP_FILE_RE = re.compile(r"\..+\.[0-9a-f]{32}\.tmp(\.\w+)?\Z|\.stemdeck_zip_\w{8}\.zip\Z")
+
+
+def _matching(folder: Path, dir_re: re.Pattern[str], file_re: re.Pattern[str]) -> list[Path]:
+    if not folder.is_dir() or not is_real_entry(folder):
+        return []
+    return [
+        p
+        for p in folder.iterdir()
+        if (dir_re.match(p.name) and p.is_dir()) or (file_re.match(p.name) and p.is_file())
+    ]
+
+
+def sweep_crash_leftovers(jobs_dir: Path, cache_dirs: Iterable[Path]) -> int:
+    """Remove what a killed process left half-written in every song folder and
+    in the export caches (`cache_dirs`). Returns how many went.
+
+    Call this at startup only, before the queue runs anything: no writer is
+    alive then, so every temp found is dead. Later it could take a file a
+    running job is writing. Only StemDeck's song folders are looked in, and no
+    link is followed or removed (registry.job_dirs, holds_job_files,
+    is_real_entry). A cache temp written in the last
+    CACHE_TEMP_MIN_AGE_SECONDS is left alone: it may be another server's."""
+    found: list[Path] = []
+    for job_dir in job_dirs(jobs_dir):
+        if not holds_job_files(job_dir):
+            continue
+        try:
+            found += [p for p in job_dir.iterdir() if _JOB_TEMP_DIR_RE.match(p.name) and p.is_dir()]
+            found += _matching(job_dir / "stems", _STEMS_TEMP_DIR_RE, _STEMS_TEMP_FILE_RE)
+        except OSError:
+            logger.warning("crash leftover sweep could not read %s", job_dir.name)
+    cutoff = time.time() - CACHE_TEMP_MIN_AGE_SECONDS
+    for cache_dir in cache_dirs:
+        try:
+            found += [
+                p
+                for p in _matching(cache_dir, _CACHE_TEMP_DIR_RE, _CACHE_TEMP_FILE_RE)
+                if p.stat().st_mtime < cutoff
+            ]
+        except OSError:
+            logger.warning("crash leftover sweep could not read %s", cache_dir.name)
+    gone = 0
+    for path in found:
+        if not is_real_entry(path):
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            gone += 1
+        except OSError:
+            logger.warning("crash leftover not removed: %s", path.name)
+    return gone
