@@ -14,13 +14,32 @@ Notes
 
 - This is a portable folder, not an installer.
 - No Start Menu shortcut, service, or registry integration is created.
-- Runtime, config, and logs stay under data/, next to StemDeck.exe, not in AppData.
-  So does the window's browser storage, in data/webview/.
-- FFmpeg is downloaded during first-run setup into data/ffmpeg/.
-- Demucs model weights are downloaded by the backend on first use into data/models/.
-- Your library is stored in data/jobs/, unless Documents/StemDeck/jobs already
-  held one from an older install. Move it anytime from Settings -> StemData
-  location if you would rather keep it elsewhere.
+- StemDeck keeps what it writes inside this folder, next to StemDeck.exe, not
+  in AppData, your user folder or the Windows temp folder:
+    data/            settings, setup state and update downloads
+    data/jobs/       your library (see below)
+    data/logs/       logs
+    data/ffmpeg/     FFmpeg, downloaded during first-run setup
+    data/models/     AI model weights, downloaded during setup or on first use
+    data/cache/      caches, also those of the tools StemDeck runs
+                     (pip, Hugging Face, yt-dlp, matplotlib)
+    data/tmp/        temporary files
+    data/webview/    the window's browser storage
+    data/certs/      the certificate phones use on your network
+    python/          the NVIDIA setup installs CUDA support here
+- The exceptions are places you choose: your library, if you move it with
+  Settings -> StemData location, and files you export or save to a folder you
+  pick. If Documents/StemDeck/jobs already held a library from an older
+  install, that library is used where it is.
+- Windows and your graphics driver still write a few things for any program
+  that runs, which StemDeck cannot keep in this folder: a shell cache in
+  AppData/Local/Microsoft/Windows/Caches, the graphics driver's shader cache
+  (for example AppData/Local/NVIDIA/DXCache), that the program was run
+  (Prefetch), folders you picked in its file dialogs, and the firewall rule if
+  you let it reach your network. The WebView2 runtime that draws the window is
+  part of Windows, not of this folder.
+- A new portable folder starts with the settings of an installed StemDeck on
+  this PC, if there is one. It only reads them.
 - To install a new version by hand, extract it over this folder. The zip has no
   files inside data/, so your library, models and settings stay. Extracted into a
   new folder, StemDeck starts without the songs in this folder's data/jobs/.

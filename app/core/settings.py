@@ -252,10 +252,11 @@ def _mirror_settings() -> None:
     all: the stems location, port, compute device, quality and language were
     all silently back to defaults, and a relocated library looked empty.
 
-    The desktop shell already restores from this copy -- `ensure_workspace`
-    seeds a fresh portable install from it before the backend ever reads
-    settings.json. Only the write half was missing, because #399 moved the
-    data directory and nothing took over writing the old location.
+    The desktop shell restores from this copy -- `ensure_workspace` seeds a
+    fresh portable install from it before the backend ever reads
+    settings.json. A portable package itself writes nothing outside its own
+    folder, so the shell gives it no mirror; the copy it reads is the one an
+    installed StemDeck keeps.
 
     Best-effort by definition: this is a redundant copy, and failing to write
     it must never fail the setting the user just changed. The path comes from
