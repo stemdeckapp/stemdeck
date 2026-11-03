@@ -213,6 +213,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .hidden {
   display: none;
 }

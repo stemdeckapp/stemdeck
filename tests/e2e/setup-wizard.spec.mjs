@@ -19,7 +19,7 @@ const ALL_READY = {
   sectionsReady: true,
   vocalSplitReady: true,
   whisperReady: true,
-  offline: false,
+  offline: [],
   noSpace: null,
 };
 
@@ -58,10 +58,10 @@ async function openWizard(page) {
           window.__setup.calls.push(cmd);
           if (cmd === "warmup_models") return new Promise((resolve) => (finishWarmup = resolve));
           if (cmd === "skip_model_warmup") {
-            // What the shell does: the warmup is stopped, so it returns with
-            // nothing ready.
-            finishWarmup({ demucsReady: false, beatThisReady: false, sectionsReady: false,
-              vocalSplitReady: false, whisperReady: false, offline: false, noSpace: null });
+            // What the shell does: the warmup is stopped during model 2, so
+            // it returns with only the first one ready.
+            finishWarmup({ demucsReady: true, beatThisReady: false, sectionsReady: false,
+              vocalSplitReady: false, whisperReady: false, offline: [], noSpace: null });
           }
           return Promise.resolve(answers[cmd] ?? null);
         },
@@ -98,8 +98,14 @@ test("the model step names the model it is on, and Skip says what the first use 
   await skip.click();
 
   const notice = page.locator("#notice");
-  await expect(notice).toContainText("AI model download skipped.");
-  await expect(notice).toContainText("the first separation downloads the separation model before it starts");
+  await expect(notice).toContainText(
+    "AI model download skipped, so these were not downloaded: beat detection, song sections, " +
+      "karaoke split, lyrics transcription. StemDeck works without them: each one downloads " +
+      "the first time a feature needs it."
+  );
+  // The separation model had arrived before Skip, so nothing about the first separation.
+  await expect(notice).not.toContainText("first separation");
+  await expect(page.locator("#status")).toHaveText("AI model step finished.");
   await expect(skip).toBeHidden();
   expect(await page.evaluate(() => window.__setup.calls)).toContain("skip_model_warmup");
   // Read before the backend step leaves the page.
@@ -111,15 +117,33 @@ test("the model step names the model it is on, and Skip says what the first use 
 
 test("offline: the notice names what did not arrive and why", async ({ page }) => {
   await openWizard(page);
-  await finish(page, { ...ALL_READY, beatThisReady: false, sectionsReady: false, offline: true });
+  await finish(page, {
+    ...ALL_READY,
+    beatThisReady: false,
+    sectionsReady: false,
+    offline: ["beat_this", "sections"],
+  });
 
   const notice = page.locator("#notice");
-  await expect(notice).toContainText("could not reach the model download servers");
-  await expect(notice).toContainText(": beat detection, song sections.");
+  await expect(notice).toContainText(
+    "could not reach the model download servers (no internet connection, or the connection " +
+      "stopped answering), so these AI models were not downloaded: beat detection, song sections."
+  );
+  await expect(notice).not.toContainText("These AI models could not be downloaded");
   // The separation model arrived, so nothing about the first separation.
   await expect(notice).not.toContainText("first separation");
   await page.locator("#continue").click();
   await expect(page).toHaveURL(`${ORIGIN}/started.html`);
+});
+
+test("a model that failed for another reason is not blamed on the connection", async ({ page }) => {
+  await openWizard(page);
+  await finish(page, { ...ALL_READY, demucsReady: false, vocalSplitReady: false, offline: ["demucs"] });
+
+  const notice = page.locator("#notice");
+  await expect(notice).toContainText("so these AI models were not downloaded: stem separation.");
+  await expect(notice).toContainText("These AI models could not be downloaded: karaoke split.");
+  await expect(notice).toContainText("the first separation downloads the separation model before it starts");
 });
 
 test("a full disk: the notice says how much room the models need", async ({ page }) => {

@@ -21,12 +21,17 @@ _FREE_BYTES = warmup._free_bytes
 
 @pytest.fixture(autouse=True)
 def _model_folders(monkeypatch, tmp_path):
-    """The space check reads the model folders and the disk: both point at
-    this test's own directory, with room to spare unless a test says not."""
+    """The space check reads the models folder and the disk: the folder is
+    this test's own, with room to spare unless a test says not. And no
+    request to the local test servers goes through a proxy this machine may
+    have set, which would also make it a real network request."""
     models = tmp_path / "models"
     monkeypatch.setattr(warmup, "MODELS_DIR", models)
-    monkeypatch.setattr(warmup, "_model_folders", lambda: (models, tmp_path / "hf"))
     monkeypatch.setattr(warmup, "_free_bytes", lambda: 1 << 50)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     return models
 
 
@@ -172,10 +177,10 @@ def test_a_host_that_answers_with_an_error_is_not_offline(serve, monkeypatch, ca
 def test_a_stalled_model_host_ends_the_model_instead_of_the_step(
     serve, monkeypatch, tmp_path, capsys
 ):
-    """The host takes the connection and sends nothing. Before #405 the warmup
-    had no read timeout at all, so this one model held the whole step until
-    the shell's 30-minute deadline. Now it fails like the separation model's
-    download does (#125), and the next model still gets its turn."""
+    """The host takes the connection and sends nothing. The model fails the way
+    the separation model's download does (#125), with its file and folder
+    named, and the next model still gets its turn, instead of this one holding
+    the whole step until the shell's deadline."""
     server = serve(lambda server, conn: server.released.wait(20))
     dst = tmp_path / "checkpoints" / "model-deadbeef.th"
     dst.parent.mkdir()
@@ -238,6 +243,35 @@ def test_models_already_on_disk_need_no_space(monkeypatch, capsys, _model_folder
     assert capsys.readouterr().out.splitlines() == ["WARMUP_START demucs 1 1", "WARMUP_OK demucs"]
 
 
+def test_a_download_cut_short_is_not_counted_as_a_model(monkeypatch, capsys, _model_folders):
+    monkeypatch.setattr(warmup, "_DOWNLOAD_BYTES", {"demucs": 4_000})
+    monkeypatch.setattr(warmup, "_STEPS", (("demucs", lambda: None),))
+    monkeypatch.setattr(warmup, "_free_bytes", lambda: 1_000)
+    checkpoints = _model_folders / "torch" / "hub" / "checkpoints"
+    checkpoints.mkdir(parents=True)
+    (checkpoints / "demucs.th.0123abcd.partial").write_bytes(b"\0" * 4_000)
+
+    warmup.main()
+
+    assert capsys.readouterr().out.splitlines() == ["WARMUP_NO_SPACE 4000 1000"]
+
+
+def test_a_space_check_that_cannot_run_does_not_stop_the_downloads(monkeypatch, capsys):
+    def broken():
+        raise OSError("settings unreadable")
+
+    monkeypatch.setattr(warmup, "_bytes_needed", broken)
+    monkeypatch.setattr(warmup, "_STEPS", (("demucs", lambda: None),))
+
+    warmup.main()
+
+    assert capsys.readouterr().out.splitlines() == [
+        "WARMUP_NOTE space not checked: settings unreadable",
+        "WARMUP_START demucs 1 1",
+        "WARMUP_OK demucs",
+    ]
+
+
 def test_free_space_is_read_before_the_models_folder_exists(tmp_path):
     folder = tmp_path / "data" / "models"
     with patch.object(warmup, "MODELS_DIR", folder):
@@ -266,12 +300,12 @@ sys.exit(warmup.main())
 
 def test_a_download_stopped_midway_leaves_no_file_that_looks_complete(serve, tmp_path):
     """The wizard's Skip, and closing the window, end the warmup mid-file
-    with a hard kill (#405). What decides whether that is safe is where the
+    with a hard kill. What decides whether that is safe is where the
     half file sits: torch.hub, which fetches the separation and beat models,
     writes to a temporary name and moves the file into place only once it is
     whole, so the next run, or the first Split, downloads it again instead of
     loading half a checkpoint."""
-    body = os.urandom(4 << 20)
+    body = os.urandom(8 << 20)
     server = serve(_send_slowly(body, 64 << 10, 0.05))
     checkpoints = tmp_path / "models" / "torch" / "hub" / "checkpoints"
     checkpoints.mkdir(parents=True)

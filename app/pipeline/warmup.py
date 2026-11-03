@@ -13,10 +13,15 @@ Lines on stdout tell the caller where it is (#405): "WARMUP_START <name> <n>
 "WARMUP_FAILED <name> <error>" on failure, followed by "WARMUP_OFFLINE <name>"
 when the download host could not be reached or stopped answering. When the
 disk cannot hold the models, the only line is "WARMUP_NO_SPACE <needed bytes>
-<free bytes>" and nothing is downloaded. Every download inside gets the same
-read timeout and tries as the separation model's (app/core/model_download.py),
-so a dead connection ends a model in about a minute and a half instead of
-holding the whole step.
+<free bytes>" and nothing is downloaded.
+
+The steps run inside bounded_downloads (app/core/model_download.py): a
+torch.hub download (the separation and beat models) gets the separation
+model's read timeout and tries, so a dead connection ends it in about a
+minute and a half, and every other socket that sets no timeout of its own
+(Whisper's) gets the read timeout. The Hugging Face hub and audio-separator
+set their own, audio-separator 300 s per read, which the shell's stall limit
+outlasts.
 
 A model failing to download here is never fatal to setup -- exactly like the
 lazy path it replaces, a missing model degrades only that one
@@ -39,11 +44,11 @@ vocal_split_artifacts point at a file audio-separator never writes.
 
 from __future__ import annotations
 
+import http.client
 import os
 import shutil
 import socket
 import sys
-from pathlib import Path
 
 from app.core.config import (
     BEAT_MODEL_CHECKPOINT,
@@ -171,14 +176,6 @@ def _remember_vocal_split(error: Exception | None) -> None:
         print(f"WARMUP_NOTE vocal_split status not recorded: {e}", flush=True)
 
 
-def _model_folders() -> tuple[Path, ...]:
-    """Where the models land: MODELS_DIR (torch.hub, Whisper and the vocal
-    split) and the Hugging Face cache (the sections model)."""
-    from huggingface_hub import constants
-
-    return (MODELS_DIR, Path(constants.HF_HUB_CACHE))
-
-
 def _free_bytes() -> int:
     """Free space on the disk MODELS_DIR is on, which may not exist yet."""
     folder = MODELS_DIR
@@ -188,22 +185,40 @@ def _free_bytes() -> int:
 
 
 def _bytes_needed() -> int:
-    """About what the downloads still need: every model's size, less what the
-    model folders already hold, so an install that has them all needs
-    nothing. Symlinks are skipped: the Hugging Face cache links each file to
-    a blob that is counted already."""
+    """About what the downloads still need: every model's size, less what
+    MODELS_DIR already holds, so an install that has them all needs nothing.
+
+    It errs towards trying. Whatever else sits in MODELS_DIR counts as
+    present, and the sections model's few MB in the Hugging Face cache are
+    always counted as needed rather than walking a cache the user may share
+    with other tools. A check that passes wrongly costs a download that fails
+    on the full disk with its own error, which the wizard reports; one that
+    fails wrongly would skip every model for nothing. A torch.hub ".partial"
+    is a download cut short, not a model."""
     total = 0
     for name, _ in _STEPS:
         key = _whisper_model() if name == "whisper" else name
         total += _DOWNLOAD_BYTES.get(key or "", 0)
     present = sum(
         path.stat().st_size
-        for folder in _model_folders()
-        if folder.is_dir()
-        for path in folder.rglob("*")
-        if path.is_file() and not path.is_symlink()
+        for path in (MODELS_DIR.rglob("*") if MODELS_DIR.is_dir() else ())
+        if path.is_file() and not path.is_symlink() and path.suffix != ".partial"
     )
     return max(0, total - present)
+
+
+def _enough_space() -> bool:
+    try:
+        needed, free = _bytes_needed(), _free_bytes()
+    except Exception as e:
+        # Only a courtesy: a full disk still fails each download with its own
+        # error. Not a reason to download nothing.
+        print(f"WARMUP_NOTE space not checked: {e}", flush=True)
+        return True
+    if needed > free:
+        print(f"WARMUP_NO_SPACE {needed} {free}", flush=True)
+        return False
+    return True
 
 
 def _unreachable(error: BaseException) -> bool:
@@ -214,7 +229,9 @@ def _unreachable(error: BaseException) -> bool:
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
-        if isinstance(current, (socket.gaierror, TimeoutError, ConnectionError)):
+        if isinstance(
+            current, (socket.gaierror, TimeoutError, ConnectionError, http.client.IncompleteRead)
+        ):
             return True
         seen.add(id(current))
         current = current.__cause__ or current.__context__
@@ -222,9 +239,7 @@ def _unreachable(error: BaseException) -> bool:
 
 
 def main() -> int:
-    needed, free = _bytes_needed(), _free_bytes()
-    if needed > free:
-        print(f"WARMUP_NO_SPACE {needed} {free}", flush=True)
+    if not _enough_space():
         return 0
     with bounded_downloads(TIMEOUT_MODEL_DOWNLOAD_READ, MODEL_DOWNLOAD_ATTEMPTS):
         for number, (name, fn) in enumerate(_STEPS, start=1):

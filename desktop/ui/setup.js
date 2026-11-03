@@ -148,14 +148,12 @@ function modelsLater(separationMissing) {
   );
 }
 
-const MODELS_SKIPPED = `AI model download skipped. ${modelsLater(true)}`;
-
 /**
  * What to tell someone whose models did not all arrive (#405), or null when
  * they did. Until this, a missing model only reached the console, and the
  * first sign was a feature that quietly did less.
  */
-function modelWarmupNotice(status) {
+function modelWarmupNotice(status, skipped) {
   if (status?.noSpace) {
     const gb = (bytes) => (bytes / 1e9).toFixed(1);
     return (
@@ -169,23 +167,29 @@ function modelWarmupNotice(status) {
   // "camelCase")]. Reading the Rust field names instead gives undefineds,
   // `missing` is empty every time, and this says nothing.
   const missing = [
-    [status?.demucsReady, MODEL_LABELS.demucs],
-    [status?.beatThisReady, MODEL_LABELS.beat_this],
-    [status?.sectionsReady, MODEL_LABELS.sections],
-    [status?.vocalSplitReady, MODEL_LABELS.vocal_split],
-    [status?.whisperReady, MODEL_LABELS.whisper],
+    ["demucs", status?.demucsReady],
+    ["beat_this", status?.beatThisReady],
+    ["sections", status?.sectionsReady],
+    ["vocal_split", status?.vocalSplitReady],
+    ["whisper", status?.whisperReady],
   ]
-    .filter(([ready]) => ready === false)
-    .map(([, label]) => label);
+    .filter(([, ready]) => ready === false)
+    .map(([name]) => name);
   if (!missing.length) return null;
-  const cause = status.offline
-    ? "StemDeck could not reach the model download servers (no internet connection, " +
-      "or the connection stopped answering), so these AI models were not downloaded"
-    : "These AI models could not be downloaded";
-  return (
-    `${cause}: ${missing.join(", ")}. ${modelsLater(status.demucsReady === false)} ` +
-    "logs/setup.log in the StemDeck data folder has the details."
-  );
+  const said = (names) => names.map((name) => MODEL_LABELS[name]).join(", ");
+  const later = modelsLater(missing.includes("demucs"));
+  if (skipped) return `AI model download skipped, so these were not downloaded: ${said(missing)}. ${later}`;
+  const offline = missing.filter((name) => status.offline?.includes(name));
+  const failed = missing.filter((name) => !offline.includes(name));
+  const causes = [];
+  if (offline.length) {
+    causes.push(
+      "StemDeck could not reach the model download servers (no internet connection, or the " +
+        `connection stopped answering), so these AI models were not downloaded: ${said(offline)}.`
+    );
+  }
+  if (failed.length) causes.push(`These AI models could not be downloaded: ${said(failed)}.`);
+  return `${causes.join(" ")} ${later} logs/setup.log in the StemDeck data folder has the details.`;
 }
 
 /** Shows `text` until the Continue button is pressed. */
@@ -217,48 +221,51 @@ async function warmupModels() {
   let current = "Starting the AI model download...";
   let since = Date.now();
   const show = () => setStatus(`${current} Elapsed: ${formatElapsed(since)}.`);
+  let skipped = false;
   show();
   const timer = window.setInterval(show, 1000);
-  let skipped = false;
-  const unlisten = await window.__TAURI__.event.listen("model-warmup-progress", (event) => {
-    if (skipped) return;
-    const { model, number, count } = event.payload ?? {};
-    // Offered from the first model on: only once the warmup has said
-    // something is it sure to be running, and so stoppable.
-    skipModelsBtn.classList.remove("hidden");
-    current = `Getting AI model ${number} of ${count}: ${MODEL_LABELS[model] ?? model}...`;
-    since = Date.now();
-    show();
-  });
-
-  skipModelsBtn.disabled = false;
-  skipModelsBtn.onclick = async () => {
-    skipModelsBtn.disabled = true;
-    skipped = true;
-    current = "Skipping the AI model download...";
-    show();
-    try {
-      await invoke("skip_model_warmup");
-    } catch (err) {
-      skipped = false;
-      skipModelsBtn.disabled = false;
-      current = `The download could not be stopped (${err}), so it goes on...`;
-      show();
-    }
-  };
-
+  let unlisten = null;
   try {
-    const status = await invoke("warmup_models");
-    return skipped ? MODELS_SKIPPED : modelWarmupNotice(status);
-  } catch (err) {
-    // The warmup could not run at all (no Python), or stopped answering.
-    if (skipped) return MODELS_SKIPPED;
-    return `The AI model download stopped: ${err}. ${modelsLater(true)}`;
+    unlisten = await window.__TAURI__.event.listen("model-warmup-progress", (event) => {
+      if (skipped) return;
+      const { model, number, count } = event.payload ?? {};
+      // Offered from the first model on: only once the warmup has said
+      // something is it sure to be running, and so stoppable.
+      skipModelsBtn.classList.remove("hidden");
+      current = `Getting AI model ${number} of ${count}: ${MODEL_LABELS[model] ?? model}...`;
+      since = Date.now();
+      show();
+    });
+
+    skipModelsBtn.disabled = false;
+    skipModelsBtn.onclick = async () => {
+      skipModelsBtn.disabled = true;
+      skipped = true;
+      current = "Skipping the AI model download...";
+      show();
+      try {
+        await invoke("skip_model_warmup");
+      } catch (err) {
+        skipped = false;
+        skipModelsBtn.disabled = false;
+        current = `The download could not be stopped (${err}), so it goes on...`;
+        show();
+      }
+    };
+
+    try {
+      return modelWarmupNotice(await invoke("warmup_models"), skipped);
+    } catch (err) {
+      // The warmup could not run at all (no Python), or stopped answering.
+      const what = skipped ? "AI model download skipped." : `The AI model download stopped: ${err}.`;
+      return `${what} ${modelsLater(true)}`;
+    }
   } finally {
     window.clearInterval(timer);
-    unlisten();
+    unlisten?.();
     skipModelsBtn.classList.add("hidden");
     skipModelsBtn.onclick = null;
+    setStatus("AI model step finished.");
   }
 }
 
@@ -462,10 +469,26 @@ function ffmpegFailureHint(message) {
   );
 }
 
+// Retry can be on screen while setup goes on (a GPU warning does not stop it),
+// and a second run beside the first would share the model step's buttons.
+let setupRunning = false;
+
 async function runSetup() {
+  if (setupRunning) return;
+  setupRunning = true;
+  try {
+    await setup();
+  } finally {
+    setupRunning = false;
+  }
+}
+
+async function setup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
   noticeEl.classList.add("hidden");
+  continueBtn.classList.add("hidden");
+  skipModelsBtn.classList.add("hidden");
   for (const step of steps) step.classList.remove("active", "done", "error");
 
   try {
