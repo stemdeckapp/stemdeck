@@ -1,9 +1,12 @@
 """Songs analysed before the loudness fix keep a reading about 4 LU too low
-(mono, 22 kHz, first 180 s). Opening one measures it again, once."""
+(mono, 22 kHz, first 180 s). Opening one measures it again, once, in the
+background: the open answers with the stored numbers (F11)."""
 
 from __future__ import annotations
 
 import json
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -24,8 +27,10 @@ def _fresh_state():
     _jobs.clear()
     api_jobs._LOUDNESS_TRIED.clear()
     yield
+    _settle()
     _jobs.clear()
     api_jobs._LOUDNESS_TRIED.clear()
+    api_jobs._LOUDNESS_PENDING.clear()
 
 
 @pytest.fixture
@@ -37,21 +42,31 @@ def client():
             yield c
 
 
-def _old_song(version: int | None) -> Job:
+def _settle() -> None:
+    """Wait for the background measurements to finish."""
+    from app.api import jobs as api_jobs
+
+    worker = api_jobs._LOUDNESS_WORKER
+    if worker is not None:
+        worker.join(10)
+        assert not worker.is_alive(), "the background measurement did not finish"
+
+
+def _old_song(version: int | None, job_id: str = JOB_ID) -> Job:
     """A finished song whose stems sum to a -20 dBFS stereo sine, stored as -30."""
     from app.core import config
 
-    stems = config.JOBS_DIR / JOB_ID / "stems"
+    stems = config.JOBS_DIR / job_id / "stems"
     stems.mkdir(parents=True)
     _sine_wav(stems / "vocals.wav", [(5.0, -26.0)])
     _sine_wav(stems / "drums.wav", [(5.0, -26.0)])
-    (config.JOBS_DIR / JOB_ID / "metadata.json").write_text(
+    (config.JOBS_DIR / job_id / "metadata.json").write_text(
         json.dumps({"title": "Old", "lufs": -30.0, "peak_db": -25.0}), encoding="utf-8"
     )
-    job = Job(id=JOB_ID, status="done", title="Old", lufs=-30.0, peak_db=-25.0)
+    job = Job(id=job_id, status="done", title="Old", lufs=-30.0, peak_db=-25.0)
     job.dynamic_range = 5.0
     job.loudness_version = version
-    _jobs[JOB_ID] = job
+    _jobs[job_id] = job
     return job
 
 
@@ -59,6 +74,8 @@ def test_an_old_song_is_measured_again_when_opened(client):
     skip_without_ffmpeg()
     job = _old_song(None)
 
+    client.get(f"/api/jobs/{JOB_ID}")
+    _settle()
     state = client.get(f"/api/jobs/{JOB_ID}").json()
 
     assert state["lufs"] == pytest.approx(-20.0, abs=0.15)
@@ -74,12 +91,36 @@ def test_an_old_song_is_measured_again_when_opened(client):
     assert meta["title"] == "Old", "the rest of the metadata is left alone"
 
 
+def test_opening_an_old_song_does_not_wait_for_the_measurement(client):
+    """F11: the first open answered only after a full-song ffmpeg run."""
+    job = _old_song(None)
+    release = threading.Event()
+
+    def slow_measure(_sources):
+        release.wait(5)
+        return -12.0, -1.0
+
+    with patch("app.api.jobs.measure_loudness", side_effect=slow_measure):
+        started = time.monotonic()
+        state = client.get(f"/api/jobs/{JOB_ID}").json()
+        waited = time.monotonic() - started
+        release.set()
+        _settle()
+
+    assert waited < 2, f"GET waited {waited:.1f} s for the measurement"
+    assert state["lufs"] == -30.0, "the stored numbers answer at once"
+    assert job.lufs == -12.0
+    assert job.loudness_version == LOUDNESS_VERSION
+
+
 def test_a_song_is_measured_once(client):
-    skip_without_ffmpeg()
     _old_song(None)
     with patch("app.api.jobs.measure_loudness", return_value=(-12.0, -1.0)) as measure:
         client.get(f"/api/jobs/{JOB_ID}")
         client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
     assert measure.call_count == 1
 
 
@@ -87,18 +128,21 @@ def test_a_song_already_at_the_current_version_is_left_alone(client):
     _old_song(LOUDNESS_VERSION)
     with patch("app.api.jobs.measure_loudness") as measure:
         state = client.get(f"/api/jobs/{JOB_ID}").json()
+        _settle()
     measure.assert_not_called()
     assert state["lufs"] == -30.0
 
 
 def test_a_failed_measurement_keeps_the_old_numbers_and_is_not_retried(client):
-    _old_song(None)
+    job = _old_song(None)
     with patch("app.api.jobs.measure_loudness", return_value=(None, None)) as measure:
-        first = client.get(f"/api/jobs/{JOB_ID}").json()
         client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
     assert measure.call_count == 1
-    assert first["lufs"] == -30.0
-    assert first["loudness_version"] is None
+    assert job.lufs == -30.0
+    assert job.loudness_version is None
 
 
 def test_a_song_that_is_not_done_is_not_measured(client):
@@ -106,6 +150,7 @@ def test_a_song_that_is_not_done_is_not_measured(client):
     job.status = "analyzing"
     with patch("app.api.jobs.measure_loudness") as measure:
         client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
     measure.assert_not_called()
 
 
@@ -114,10 +159,95 @@ def test_the_kept_upload_is_preferred_over_the_stems(client):
     skip_without_ffmpeg()
     from app.core import config
 
-    _old_song(None)
+    job = _old_song(None)
     _sine_wav(config.JOBS_DIR / JOB_ID / "source.wav", [(5.0, -14.0)])
-    state = client.get(f"/api/jobs/{JOB_ID}").json()
-    assert state["lufs"] == pytest.approx(-14.0, abs=0.1)
+    client.get(f"/api/jobs/{JOB_ID}")
+    _settle()
+    assert job.lufs == pytest.approx(-14.0, abs=0.1)
+
+
+def test_no_measurement_runs_beside_a_separation(client):
+    """The separation keeps the machine; the song is measured on a later open."""
+    job = _old_song(None)
+    with patch("app.api.jobs.measure_loudness", return_value=(-12.0, -1.0)) as measure:
+        with patch("app.api.jobs.jobqueue.running_id", return_value="fedcba987654"):
+            client.get(f"/api/jobs/{JOB_ID}")
+            _settle()
+        measure.assert_not_called()
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+    measure.assert_called_once()
+    assert job.loudness_version == LOUDNESS_VERSION
+
+
+def test_a_separation_that_starts_after_the_open_is_not_shared(client):
+    job = _old_song(None)
+    running = iter([None, "fedcba987654"])
+    with (
+        patch("app.api.jobs.measure_loudness", return_value=(-12.0, -1.0)) as measure,
+        patch("app.api.jobs.jobqueue.running_id", side_effect=lambda: next(running, None)),
+    ):
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+        measure.assert_not_called()
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+    measure.assert_called_once()
+    assert job.loudness_version == LOUDNESS_VERSION
+
+
+def test_queued_songs_share_one_registry_save(client):
+    ids = [f"abcdef01234{n}" for n in range(3)]
+    for job_id in ids:
+        _old_song(None, job_id)
+    release = threading.Event()
+
+    def slow_measure(_sources):
+        release.wait(5)
+        return -12.0, -1.0
+
+    with (
+        patch("app.api.jobs.measure_loudness", side_effect=slow_measure),
+        patch("app.api.jobs.registry_persist") as persist,
+    ):
+        for job_id in ids:
+            client.get(f"/api/jobs/{job_id}")
+        release.set()
+        _settle()
+
+    assert all(_jobs[job_id].loudness_version == LOUDNESS_VERSION for job_id in ids)
+    persist.assert_called_once()
+
+
+def test_a_full_queue_leaves_the_song_for_a_later_open(client):
+    """The queue is bounded, so opening many old songs cannot pile up work."""
+    ids = [f"abcdef01234{n}" for n in range(3)]
+    for job_id in ids:
+        _old_song(None, job_id)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_measure(_sources):
+        started.set()
+        release.wait(5)
+        return -12.0, -1.0
+
+    with (
+        patch("app.api.jobs.LOUDNESS_UPGRADE_QUEUE_MAX", 1),
+        patch("app.api.jobs.measure_loudness", side_effect=slow_measure) as measure,
+    ):
+        client.get(f"/api/jobs/{ids[0]}")
+        assert started.wait(5)
+        client.get(f"/api/jobs/{ids[1]}")
+        client.get(f"/api/jobs/{ids[2]}")
+        release.set()
+        _settle()
+        assert measure.call_count == 2
+        assert _jobs[ids[2]].loudness_version is None
+
+        client.get(f"/api/jobs/{ids[2]}")
+        _settle()
+    assert _jobs[ids[2]].loudness_version == LOUDNESS_VERSION
 
 
 def test_the_version_survives_a_registry_round_trip():

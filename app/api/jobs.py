@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Literal
 
@@ -23,6 +24,7 @@ from app.core.config import (
     DISCOGS_LOOKUP_BUDGET_SEC,
     JOB_ID_RE,
     JOBS_DIR,
+    LOUDNESS_UPGRADE_QUEUE_MAX,
     LYRICS_LOOKUP_BUDGET_SEC,
     LYRICS_OFFSET_MAX_SEC,
     LYRICS_TIMED_MAX_CHARS,
@@ -558,11 +560,15 @@ def set_favorite(job_id: str, body: FavoriteBody) -> dict:
     return {"job_id": job.id, "favorite": job.favorite}
 
 
-# Songs whose loudness was measured again this run, or tried and failed: one
-# attempt each, so a song with nothing to measure does not cost an ffmpeg run on
-# every request. A restart tries the failures once more.
+# Songs whose loudness was measured again this run, queued for it, or tried and
+# failed: one attempt each, so a song with nothing to measure does not cost an
+# ffmpeg run on every request. A restart tries the failures once more.
 _LOUDNESS_TRIED: set[str] = set()
+# The songs waiting for the one background thread that measures them, oldest
+# first. _LOUDNESS_LOCK covers the set, this queue and _LOUDNESS_WORKER.
+_LOUDNESS_PENDING: deque[str] = deque()
 _LOUDNESS_LOCK = threading.Lock()
+_LOUDNESS_WORKER: threading.Thread | None = None
 
 
 def _loudness_sources(job_id: str) -> list[Path]:
@@ -577,38 +583,80 @@ def _loudness_sources(job_id: str) -> list[Path]:
     return [p for p in (stem_path(stems_dir, n) for n in STEM_NAMES) if p.is_file()]
 
 
-def _upgrade_loudness(job: Job) -> None:
-    """Measure a finished song's loudness again when the stored numbers come
-    from an older measurement (see LOUDNESS_VERSION). Runs on the first request
-    for the song, about 2 s once, never for a song already at the current
-    version. Blocking: callers are threadpool routes. Best effort: on failure
-    the old numbers stay and the song is not retried until a restart."""
+def _queue_loudness_upgrade(job: Job) -> None:
+    """Queue a finished song whose stored loudness comes from an older
+    measurement (see LOUDNESS_VERSION) to be measured again in the background
+    (F11): the request answers with the stored numbers, and the next one has
+    the new. A full queue, or a separation running, leaves the song for a
+    later open."""
+    global _LOUDNESS_WORKER
     if job.status != "done" or job.loudness_version == LOUDNESS_VERSION:
         return
+    if jobqueue.running_id() is not None:
+        return
     with _LOUDNESS_LOCK:
-        # Re-checked under the lock: a second request waited here while the
-        # first measured, and must not measure again.
-        if job.loudness_version == LOUDNESS_VERSION or job.id in _LOUDNESS_TRIED:
+        if job.id in _LOUDNESS_TRIED or len(_LOUDNESS_PENDING) >= LOUDNESS_UPGRADE_QUEUE_MAX:
             return
         _LOUDNESS_TRIED.add(job.id)
-        sources = _loudness_sources(job.id)
-        if not sources or is_relocating():
-            return
-        lufs, peak_db = measure_loudness(sources)
-        if lufs is None or peak_db is None:
-            return
-        dr = dynamic_range_db(lufs, peak_db)
-        _set(job, lufs=lufs, peak_db=peak_db, dynamic_range=dr, loudness_version=LOUDNESS_VERSION)
-        _write_metadata_fields(
-            job.id,
-            {
-                "lufs": lufs,
-                "peak_db": peak_db,
-                "dynamic_range": dr,
-                "loudness_version": LOUDNESS_VERSION,
-            },
-        )
+        _LOUDNESS_PENDING.append(job.id)
+        if _LOUDNESS_WORKER is None:
+            worker = threading.Thread(
+                target=_upgrade_queued_loudness, name="loudness-upgrade", daemon=True
+            )
+            worker.start()
+            _LOUDNESS_WORKER = worker
+
+
+def _upgrade_queued_loudness() -> None:
+    """The background thread: one song at a time, then one registry save for
+    all of them. metadata.json gets each song's numbers as they come."""
+    global _LOUDNESS_WORKER
+    measured = False
+    while True:
+        with _LOUDNESS_LOCK:
+            if not _LOUDNESS_PENDING:
+                _LOUDNESS_WORKER = None
+                break
+            job_id = _LOUDNESS_PENDING.popleft()
+        try:
+            measured = _upgrade_loudness(job_id) or measured
+        except Exception:
+            logger.exception("[%s] loudness measurement failed", job_id)
+    if measured:
         registry_persist(JOBS_DIR)
+
+
+def _upgrade_loudness(job_id: str) -> bool:
+    """Measure one queued song, about 2 s, up to TIMEOUT_ANALYZE. Best effort:
+    on failure the old numbers stay and the song is not retried until a
+    restart. True when the song has new numbers."""
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        return False
+    if jobqueue.running_id() is not None:
+        # Never beside a separation (checked when queued, and again here for
+        # one that started since): this song is measured on a later open.
+        with _LOUDNESS_LOCK:
+            _LOUDNESS_TRIED.discard(job_id)
+        return False
+    sources = _loudness_sources(job_id)
+    if not sources or is_relocating():
+        return False
+    lufs, peak_db = measure_loudness(sources)
+    if lufs is None or peak_db is None:
+        return False
+    dr = dynamic_range_db(lufs, peak_db)
+    _set(job, lufs=lufs, peak_db=peak_db, dynamic_range=dr, loudness_version=LOUDNESS_VERSION)
+    _write_metadata_fields(
+        job_id,
+        {
+            "lufs": lufs,
+            "peak_db": peak_db,
+            "dynamic_range": dr,
+            "loudness_version": LOUDNESS_VERSION,
+        },
+    )
+    return True
 
 
 @router.get("/{job_id}")
@@ -617,7 +665,7 @@ def get_job(job_id: str) -> dict:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    _upgrade_loudness(job)
+    _queue_loudness_upgrade(job)
     return _job_state(job)
 
 
