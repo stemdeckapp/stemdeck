@@ -413,8 +413,9 @@
               <span><span data-i18n="nav.weRecommendLine1">We</span><br><span data-i18n="nav.weRecommendLine2">Recommend</span></span>
             </button>
             <!-- Donate (donate.js): opens the Donate dialog. Optional support,
-                 nothing in the app depends on it. -->
-            <button class="rail-btn rail-donate" id="donateBtn" type="button" title="Support StemDeck with a donation" aria-label="Support StemDeck with a donation" aria-haspopup="dialog" data-i18n-title="donate.buttonTitle" data-i18n-aria-label="donate.buttonTitle">
+                 nothing in the app depends on it. Hidden until donate.js finds
+                 at least one link set in donateLinks.js. -->
+            <button class="rail-btn rail-donate" id="donateBtn" type="button" title="Support StemDeck with a donation" aria-label="Support StemDeck with a donation" aria-haspopup="dialog" data-i18n-title="donate.buttonTitle" data-i18n-aria-label="donate.buttonTitle" hidden>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
@@ -1250,9 +1251,9 @@
     <!-- Donate dialog (donate.js), opened from the rail. Laid out like a donate
          page: a hero, the ways to give with amounts on the left, sharing on the
          right. Plain links only: nothing loads from Stripe or Liberapay until
-         the arrow is clicked, and then it opens in the system browser. While a
-         way's link is still a placeholder (donateLinks.js) the arrow is a
-         disabled "Coming soon". The QR code comes from this server (/api/qr). -->
+         the arrow is clicked, and then it opens in the system browser. A way
+         whose link is still a placeholder (donateLinks.js) has no tile. The QR
+         code comes from this server (/api/qr). -->
     <div class="about-backdrop hidden" id="donateDialog" role="dialog" aria-modal="true" aria-labelledby="donateTitle" aria-describedby="donateIntro">
       <div class="about-card donate-card">
         <button class="about-close" id="donateClose" type="button" aria-label="Close donate dialog" data-i18n-aria-label="donate.closeAria">
@@ -1327,9 +1328,6 @@
               <a class="donate-go" id="donateGo" target="_blank" rel="noopener noreferrer" hidden>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
               </a>
-              <span class="donate-soon-wrap" id="donateSoonWrap">
-                <button class="donate-soon" id="donateSoon" type="button" disabled><span data-i18n="donate.soon">Coming soon</span></button>
-              </span>
             </div>
             <p class="donate-hint" id="donateHint" aria-live="polite" hidden></p>
           </section>

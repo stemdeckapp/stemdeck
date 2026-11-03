@@ -17,8 +17,6 @@ const chipName = (el) => el.textContent.trim();
 const presenceName = (el) => t(`stem.${el.dataset.stem}`);
 /** A row of the Stems popover names its instrument ("Drums"). */
 const stemsRowName = (el) => el.closest(".stems-pop-row")?.querySelector(".stems-pop-name")?.textContent.trim() || "";
-/** The Donate dialog's Coming soon names the way that is chosen ("Stripe"). */
-const donateChosenWay = (el) => ({ stripe: "Stripe", liberapay: "Liberapay" })[el.closest("#donateDialog")?.querySelector('.donate-way[aria-pressed="true"]')?.dataset.way] || "";
 
 // Order matters only where selectors overlap: the first match wins.
 const HELP = [
@@ -77,16 +75,14 @@ const HELP = [
   ["#friendsBtn", "help.recommend"],
   ["#settingsBtn", "settings"],
   ["#aboutBtn", "help.about"],
-  // The Donate dialog (donate.js), opened from the rail. While the chosen
-  // way has no link yet, its Coming soon button is disabled and takes no
-  // pointer, so pointing at it lands on the wrapper around it.
+  // The Donate dialog (donate.js), opened from the rail. The button and each
+  // way's tile show only once its link is set (donateLinks.js).
   ["#donateClose", "help.donateClose"],
   ['.donate-way[data-way="stripe"]', "help.donateWayStripe"],
   ['.donate-way[data-way="liberapay"]', "help.donateWayLiberapay"],
   [".donate-preset", "help.donatePreset"],
   ["#donateCustom", "help.donateCustom"],
   ["#donateGo", "help.donateGo"],
-  ["#donateSoonWrap", "help.donateSoon", donateChosenWay],
   ["#donateQr", "help.donateQr", null, "donate.qrAlt"],
   ["#donateCopy", "help.donateCopy"],
   ["#donateShare", "help.donateShare"],

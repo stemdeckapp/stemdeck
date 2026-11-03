@@ -3811,6 +3811,7 @@ input, textarea { font-family: inherit; }
    their amounts on the left, sharing StemDeck on the right. The look is the
    app's own: the About card's frame, panel surfaces, the accent for what is
    chosen and for the action, and the rail's line icons. */
+.rail-donate[hidden] { display: none; }
 .rail-donate svg { color: var(--danger); }
 .rail-donate:hover svg { color: var(--danger); filter: brightness(1.15); }
 .donate-card {
@@ -3879,6 +3880,8 @@ input, textarea { font-family: inherit; }
 /* Ways to give: two tiles side by side; the chosen one is lighter with an
    accent border. */
 .donate-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Only one way has its link set: its tile takes the whole row. */
+.donate-ways:has(> [hidden]) { grid-template-columns: 1fr; }
 .donate-way {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0;
   padding: 14px 14px 13px; text-align: left; cursor: pointer;
@@ -3930,14 +3933,6 @@ input, textarea { font-family: inherit; }
 .donate-go:hover { filter: brightness(1.08); }
 .donate-go:focus-visible, .donate-way:focus-visible, .donate-preset:focus-visible, .donate-sq:focus-visible {
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
-}
-/* The wrapper takes the pointer for the Guide; the disabled button takes none. */
-.donate-soon-wrap { flex: 0 0 auto; display: flex; }
-.donate-soon {
-  height: 42px; padding: 0 14px; white-space: nowrap;
-  background: transparent; border: 1px dashed var(--border-strong); border-radius: var(--radius);
-  color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
-  cursor: default; pointer-events: none;
 }
 .donate-hint { margin: 8px 2px 0; font-size: 11.5px; line-height: 1.4; color: var(--accent); }
 

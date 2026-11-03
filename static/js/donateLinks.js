@@ -1,16 +1,16 @@
 // Where the Donate dialog's arrow button goes (donate.js). The only place these
-// links live.
+// links live, and the only thing that decides whether any Donate control shows.
 //
 // DONATE_LINKS: one plain address per way to give.
 //
 //   stripe     a Stripe Payment Link (the "One-time donation" tile)
 //   liberapay  the StemDeck page on liberapay.com (the "Recurring donation" tile)
 //
-// An empty string is a placeholder: while the selected way's link is empty the
-// arrow is a disabled "Coming soon" and the dialog holds no link. Paste the full
-// https:// address to make that way live; nothing else needs to change. Anything
-// that is not an https:// address is treated as a placeholder too, so a
-// half-pasted link never ships as a broken button.
+// An empty string is a placeholder: a way whose link is not set has no tile in
+// the dialog, and while neither is set the Donate button in the rail stays
+// hidden. Paste the full https:// address to make that way appear; nothing else
+// needs to change. Anything that is not an https:// address counts as not set
+// too, so a half-pasted link never ships as a broken button.
 //
 // DONATE_LINK_TEMPLATES (optional): an address with {amount} in it, for a page
 // that really does take the amount from its address. The amount a person picks
@@ -40,3 +40,21 @@ export const DONATE_LINK_TEMPLATES = Object.freeze({
   stripe: "",
   liberapay: "",
 });
+
+/** The address a link opens, or null while it is a placeholder. Only https. */
+export function donateHref(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch (err) {
+    console.warn("[donate] not a link, its way stays hidden:", value, err);
+    return null;
+  }
+  return url.protocol === "https:" ? url.href : null;
+}
+
+/** Whether this way's link is set, so its Donate controls show. */
+export function isConfigured(way, links = DONATE_LINKS) {
+  return donateHref(links[way]) !== null;
+}
