@@ -344,6 +344,67 @@ def test_trashed_favourite_is_still_kept(tmp_path: Path):
     assert d.is_dir()
 
 
+@pytest.mark.parametrize("field", ["stem_fill", "vocal_split"])
+def test_old_song_with_a_separation_running_survives(tmp_path: Path, field: str):
+    """A stem fill or a vocal split writes into a song that stays "done":
+    the same busy check that refuses delete, move and reset keeps it here."""
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaab1", **{field: "running"})
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+    assert job.id in _jobs
+
+
+def test_old_song_with_its_lyrics_being_timed_survives(tmp_path: Path):
+    from app.pipeline.lyrics_retime import claim_run, forget_run
+
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaab2")
+    assert claim_run(job.id) is not None
+    try:
+        sweep_old_jobs(tmp_path, ttl_seconds=60)
+    finally:
+        forget_run(job.id)
+    assert d.is_dir()
+    assert job.id in _jobs
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        [
+            {"id": "main", "name": None, "stems": ["vocals"], "created_at": 1.0},
+            {"id": "abcd1234", "name": "Live", "stems": ["drums"], "created_at": 2.0},
+        ],
+        [{"id": "main", "name": "Renamed", "stems": ["vocals"], "created_at": 1.0}],
+    ],
+    ids=["two", "renamed-default"],
+)
+def test_old_song_with_versions_survives(tmp_path: Path, versions):
+    """Versions are the user's own choices of stems, made after the import.
+    Any recorded list counts: one is written only when the user makes,
+    renames, deletes or picks a version."""
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaab3", versions=versions)
+    sweep_old_jobs(tmp_path, ttl_seconds=60)
+    assert d.is_dir()
+    assert job.id in _jobs
+
+
+def test_old_song_goes_once_its_work_has_ended(tmp_path: Path):
+    """The keep rules hold only while the work runs: a finished fill, split or
+    timing leaves an ordinary old song."""
+    from app.pipeline.lyrics_retime import claim_run, forget_run
+
+    job, d = _old_done_job(tmp_path, "aaaaaaaaaab4", stem_fill="done", vocal_split="done")
+    run = claim_run(job.id)
+    assert run is not None
+    run.state = "done"
+    try:
+        sweep_old_jobs(tmp_path, ttl_seconds=60)
+    finally:
+        forget_run(job.id)
+    assert not d.exists()
+    assert job.id not in _jobs
+
+
 @pytest.mark.parametrize("name", ["My Samples", "backup", "ABCDEFABCDEF", "abcdefabcdef0"])
 def test_old_folder_that_is_not_a_job_survives(tmp_path: Path, name: str):
     d = _mkdir(tmp_path, name)

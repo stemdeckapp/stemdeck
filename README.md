@@ -80,7 +80,7 @@ Each link downloads the latest release. [Release notes](https://github.com/stemd
 - **Advanced** gains an EQ on every lane, a Master with a loudness target, recording tracks and video tracks.
 - **A redesigned Settings,** with a section list and a search box.
 - **A GPU video encoder** for Performance exports, with an automatic fall-back to the CPU.
-- **Safer by default:** a guard against requests from other websites, auto-delete that skips favorites and songs with takes, and a library that survives one bad record.
+- **Safer by default:** a guard against requests from other websites, auto-delete that skips favorites, songs with takes or versions, and songs still being worked on, and a library that survives one bad record.
 - **Imports:** a Detect lyrics switch, and Try again on an import that failed.
 
 All of it, with credits to the people who reported each problem, is in the [release notes](https://github.com/stemdeckapp/stemdeck/releases/latest).
