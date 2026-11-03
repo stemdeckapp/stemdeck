@@ -2664,7 +2664,8 @@ fn installed_version(site: &Path, package: &str) -> Option<String> {
 }
 
 /// The pip spec that repairs a CUDA torchvision sitting beside CPU torch, or
-/// None when there is nothing to repair.
+/// a missing torchvision beside it (a pip run that stopped between uninstall
+/// and install). `None` when there is nothing to repair.
 ///
 /// That pairing is what the 0.20.0 Linux packages shipped: CPU torch, and the
 /// cu124 torchvision PyPI serves by default, whose compiled ops need CUDA
@@ -2678,11 +2679,16 @@ fn installed_version(site: &Path, package: &str) -> Option<String> {
 /// the CPU package. A torch line with no known torchvision is left alone
 /// rather than guessed at.
 #[cfg(any(not(target_os = "macos"), test))]
-fn torchvision_repair_spec(torch: &str, torchvision: &str) -> Option<String> {
+fn torchvision_repair_spec(torch: &str, torchvision: Option<&str>) -> Option<String> {
     let (torch_public, torch_tag) = torch.split_once('+')?;
-    let (_, vision_tag) = torchvision.split_once('+')?;
-    if torch_tag != "cpu" || !vision_tag.starts_with("cu") {
+    if torch_tag != "cpu" {
         return None;
+    }
+    if let Some(torchvision) = torchvision {
+        let (_, vision_tag) = torchvision.split_once('+')?;
+        if !vision_tag.starts_with("cu") {
+            return None;
+        }
     }
     torchvision_for_torch(torch_public).map(|vision| format!("torchvision=={vision}+cpu"))
 }
@@ -3376,20 +3382,27 @@ fn repair_torchvision_if_needed(state: &BackendState, app: &tauri::AppHandle) ->
     if torchswap::has_backup(&site) {
         return "ok";
     }
-    let (Some(torch), Some(vision)) = (
-        installed_version(&site, "torch"),
-        installed_version(&site, "torchvision"),
-    ) else {
+    let Some(torch) = installed_version(&site, "torch") else {
         return "ok";
     };
-    let Some(spec) = torchvision_repair_spec(&torch, &vision) else {
+    let vision = installed_version(&site, "torchvision");
+    // Only an absent version.py means torchvision is gone. One that is there
+    // but unreadable is not worth a download on every launch.
+    if vision.is_none() && site.join("torchvision").join("version.py").exists() {
+        return "ok";
+    }
+    let Some(spec) = torchvision_repair_spec(&torch, vision.as_deref()) else {
         return "ok";
     };
 
     log_setup_step("torchvision-repair");
+    let found = match &vision {
+        Some(vision) => format!("torchvision {vision} is a CUDA build"),
+        None => "torchvision is missing".to_string(),
+    };
     append_to_setup_log(
         &data_dir,
-        &format!("torchvision {vision} is a CUDA build beside torch {torch}; installing {spec}"),
+        &format!("{found} beside torch {torch}; installing {spec}"),
     );
     let label = "torchvision repair";
     // Puts a line on the setup screen before pip has said anything.
@@ -10011,19 +10024,33 @@ configuration: --cc=clang\n";
         use super::torchvision_repair_spec as spec;
         // The 0.20.0 Linux packages, CPU and NVIDIA alike (#778).
         assert_eq!(
-            spec("2.6.0+cpu", "0.21.0+cu124").as_deref(),
+            spec("2.6.0+cpu", Some("0.21.0+cu124")).as_deref(),
             Some("torchvision==0.21.0+cpu")
         );
         // Healthy: a fixed package, or the reporter's hand repair.
-        assert_eq!(spec("2.6.0+cpu", "0.21.0+cpu"), None);
+        assert_eq!(spec("2.6.0+cpu", Some("0.21.0+cpu")), None);
         // An NVIDIA install after the CUDA install: a working pair.
-        assert_eq!(spec("2.6.0+cu124", "0.21.0+cu124"), None);
-        assert_eq!(spec("2.8.0+cu128", "0.23.0+cu128"), None);
+        assert_eq!(spec("2.6.0+cu124", Some("0.21.0+cu124")), None);
+        assert_eq!(spec("2.8.0+cu128", Some("0.23.0+cu128")), None);
         // No local tag at all, as some PyPI builds report: nothing to judge.
-        assert_eq!(spec("2.6.0", "0.21.0"), None);
-        assert_eq!(spec("2.6.0+cpu", "0.21.0"), None);
+        assert_eq!(spec("2.6.0", Some("0.21.0")), None);
+        assert_eq!(spec("2.6.0+cpu", Some("0.21.0")), None);
         // A torch line with no known torchvision is not guessed at.
-        assert_eq!(spec("2.7.1+cpu", "0.22.1+cu126"), None);
+        assert_eq!(spec("2.7.1+cpu", Some("0.22.1+cu126")), None);
+    }
+
+    /// A pip run stopped after it uninstalled torchvision and before it put
+    /// the new one in: every package ships torchvision, so it is put back.
+    #[test]
+    fn a_missing_torchvision_beside_cpu_torch_is_repaired() {
+        use super::torchvision_repair_spec as spec;
+        assert_eq!(
+            spec("2.6.0+cpu", None).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // A CUDA torch is the CUDA install's to manage, not this repair's.
+        assert_eq!(spec("2.6.0+cu124", None), None);
+        assert_eq!(spec("2.7.1+cpu", None), None);
     }
 
     #[test]
@@ -10041,15 +10068,25 @@ configuration: --cc=clang\n";
         write("torch", "2.6.0+cpu");
         write("torchvision", "0.21.0+cu124");
         let torch = super::installed_version(site.path(), "torch").unwrap();
-        let vision = super::installed_version(site.path(), "torchvision").unwrap();
+        let vision = super::installed_version(site.path(), "torchvision");
         assert_eq!(
-            super::torchvision_repair_spec(&torch, &vision).as_deref(),
+            super::torchvision_repair_spec(&torch, vision.as_deref()).as_deref(),
             Some("torchvision==0.21.0+cpu")
         );
         // After the repair, the next launch has nothing to do.
         write("torchvision", "0.21.0+cpu");
-        let vision = super::installed_version(site.path(), "torchvision").unwrap();
-        assert_eq!(super::torchvision_repair_spec(&torch, &vision), None);
+        let vision = super::installed_version(site.path(), "torchvision");
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, vision.as_deref()),
+            None
+        );
+        // Uninstalled and never reinstalled.
+        fs::remove_dir_all(site.path().join("torchvision")).unwrap();
+        let vision = super::installed_version(site.path(), "torchvision");
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, vision.as_deref()).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
     }
 
     #[test]
