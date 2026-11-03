@@ -34,6 +34,7 @@ from app.core.config import (
     TIMEOUT_IDENTIFY_BACKFILL,
     TIMEOUT_LYRICS_LOOKUP,
     TIMEOUT_WORK_BACKFILL,
+    UPLOAD_EXTS,
     ffprobe_executable,
 )
 from app.core.models import (
@@ -128,7 +129,6 @@ from app.pipeline.work_lookup import find_work, might_have_work
 router = APIRouter(tags=["jobs"])
 logger = logging.getLogger("stemdeck.api")
 
-_ALLOWED_EXTS = frozenset((".mp3", ".wav", ".flac", ".mp4", ".m4a", ".ogg", ".opus"))
 _MAX_UPLOAD_BYTES = 400 * 1024 * 1024  # 400 MB
 _WS_RE = re.compile(r"\s+")
 
@@ -333,7 +333,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
 
     filename: str = getattr(upload, "filename", "") or ""
     ext = Path(filename).suffix.lower()
-    if ext not in _ALLOWED_EXTS:
+    if ext not in UPLOAD_EXTS:
         raise HTTPException(
             status_code=422,
             detail=f"Unsupported file type '{ext}': accepted formats are .mp3, .wav, .flac, .mp4, .m4a, .ogg, and .opus",
@@ -706,7 +706,7 @@ def _retained_source(job_id: str) -> Path | None:
         resolved = candidate.resolve()
         if (
             resolved.is_file()
-            and resolved.suffix.lower() in _ALLOWED_EXTS
+            and resolved.suffix.lower() in UPLOAD_EXTS
             and resolved.is_relative_to(JOBS_DIR.resolve())
         ):
             return resolved
