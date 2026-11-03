@@ -522,7 +522,7 @@ def get_settings(request: Request) -> dict[str, object]:
     # choice, network_listening is whether this process listens beyond
     # loopback, which only changes when the shell restarts it (#859). None
     # when the shell did not start this server.
-    listening = None if BIND_HOST is None else BIND_HOST != "127.0.0.1"
+    listening = None if BIND_HOST is None else not _is_loopback(BIND_HOST)
     return {
         **_settings_payload(),
         "port": port,

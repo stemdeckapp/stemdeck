@@ -1488,6 +1488,32 @@ fn rename_all_or_restore(moves: &[(&Path, &Path, &str)]) -> Result<(), String> {
     Ok(())
 }
 
+/// Holds `starting` for the whole of an app update, so no backend is started
+/// or restarted from backend/ while the update renames it, and the update does
+/// not begin while one is. Released on every way out of apply_app_update.
+#[cfg(any(windows, target_os = "linux"))]
+struct UpdateClaim<'a>(&'a BackendState);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<'a> UpdateClaim<'a> {
+    fn take(state: &'a BackendState) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if inner.starting {
+            return Err("StemDeck is restarting; try the update again in a moment".to_string());
+        }
+        inner.starting = true;
+        Ok(UpdateClaim(state))
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for UpdateClaim<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.starting = false;
+    }
+}
+
 /// Applies a previously downloaded+verified app update in place, then
 /// relaunches. This is the one piece of the updater with no existing analog in
 /// the runtime-pack machinery above: it replaces the *running* exe, not an idle
@@ -1511,11 +1537,7 @@ fn apply_app_update(
     }
     #[cfg(any(windows, target_os = "linux"))]
     {
-        // A backend being started or restarted is about to run from
-        // backend/, which the swap below renames.
-        if state.inner.lock().map_err(|e| e.to_string())?.starting {
-            return Err("StemDeck is restarting; try the update again in a moment".to_string());
-        }
+        let _claim = UpdateClaim::take(&state)?;
         let root = app_root()?;
         let data_dir = local_data_dir()?;
         let downloads = data_dir.join("downloads");
@@ -1887,10 +1909,22 @@ fn start_backend(
 /// only save the setting and ask for this. The same port is asked for again,
 /// because the page's origin, and with it everything it keeps in
 /// localStorage, is that port.
+///
+/// Off the main thread: the stop, the port wait and the health wait take
+/// seconds, and the window has to keep painting the dialog meanwhile.
 #[tauri::command]
-fn restart_backend(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<BackendState>,
+async fn restart_backend(app_handle: tauri::AppHandle) -> Result<BackendStarted, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<BackendState>();
+        restart_backend_blocking(&app_handle, &state)
+    })
+    .await
+    .map_err(|e| format!("the restart did not finish: {e}"))?
+}
+
+fn restart_backend_blocking(
+    app_handle: &tauri::AppHandle,
+    state: &BackendState,
 ) -> Result<BackendStarted, String> {
     let port = {
         let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
@@ -1900,14 +1934,14 @@ fn restart_backend(
         inner.starting = true;
         inner.handles.as_ref().map(|h| h.port)
     };
-    let spawned = stop_backend_and_wait(&state, Duration::from_secs(15)).and_then(|()| {
+    let spawned = stop_backend_and_wait(state, Duration::from_secs(15)).and_then(|()| {
         let port = port.unwrap_or_else(configured_port);
         if !wait_for_port_release(port, Duration::from_secs(5)) {
             eprintln!("[stemdeck] port {port} is still held after the restart; using a free one");
         }
-        spawn_backend(&app_handle, port, true)
+        spawn_backend(app_handle, port, true)
     });
-    store_backend(&state, spawned)
+    store_backend(state, spawned)
 }
 
 /// Waits until nothing holds `port` on loopback or on every interface, for at
@@ -2058,11 +2092,17 @@ fn spawn_backend(
         .stderr(stderr);
 
     // app/core/tls_listener reads these three together; any one missing
-    // means it stays off and the app is exactly what it was before.
+    // means it stays off and the app is exactly what it was before. Removed
+    // otherwise, so a copy in the user's own environment cannot start the
+    // LAN listener while network access is off.
     if let Some((ref cert, https_port, _)) = https {
         cmd.env("STEMDECK_SSL_CERT", &cert.cert)
             .env("STEMDECK_SSL_KEY", &cert.key)
             .env("STEMDECK_HTTPS_PORT", https_port.to_string());
+    } else {
+        cmd.env_remove("STEMDECK_SSL_CERT")
+            .env_remove("STEMDECK_SSL_KEY")
+            .env_remove("STEMDECK_HTTPS_PORT");
     }
 
     apply_ffmpeg_path(&mut cmd, &data_dir)?;
@@ -10936,6 +10976,31 @@ configuration: --cc=clang\n";
         assert!(!fresh.reuse_address().unwrap());
         let (_, after_stop) = super::claim_port(super::LOOPBACK, 0, true).unwrap();
         assert_eq!(after_stop.reuse_address().unwrap(), cfg!(unix));
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn an_update_and_a_restart_never_overlap() {
+        // The update renames backend/, which a backend being started or
+        // restarted runs from. Each refuses while the other holds `starting`.
+        let state = super::BackendState::default();
+        state.inner.lock().unwrap().starting = true;
+        assert!(
+            super::UpdateClaim::take(&state).is_err(),
+            "update ran during a restart"
+        );
+
+        state.inner.lock().unwrap().starting = false;
+        let claim = super::UpdateClaim::take(&state).unwrap();
+        assert!(
+            state.inner.lock().unwrap().starting,
+            "a restart could begin mid-update"
+        );
+        drop(claim);
+        assert!(
+            !state.inner.lock().unwrap().starting,
+            "a failed update left the backend unstartable"
+        );
     }
 
     #[test]
