@@ -189,6 +189,41 @@ test.describe("Resync", () => {
     await expect(box.locator(".import-retry-btn")).toHaveCount(0);
   });
 
+  test("gives the server's reason for a track it would not take", async ({ page }) => {
+    await emptyServerLibrary(page);
+    await stubSubmit(page, () => ({ status: 503, json: { detail: "Queue is full" } }));
+    await openApp(page, {
+      aaaaaaaaaaa2: { ...fixtureTrack("aaaaaaaaaaa2", "Blocked Song"), status: "unavailable", sourceUrl: LINK_B },
+    });
+
+    await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="library"]').click();
+    await page.locator(".library-editor-sync").click();
+
+    const box = page.locator("#error");
+    await expect(box.locator(".error-msg")).toContainText(count("settings.outOfSync.failed.one", 1));
+    await expect(box.locator(".error-detail")).toHaveText(
+      en["settings.outOfSync.failedTrack"]
+        .replace("{title}", "Blocked Song")
+        .replace("{reason}", en["job.restoreFailed"].replace("{message}", "Queue is full")),
+    );
+  });
+
+  test("says how many came back when none failed", async ({ page }) => {
+    await emptyServerLibrary(page);
+    await stubSubmit(page, () => ({ json: { job_id: JOB_ID } }));
+    await openApp(page, {
+      aaaaaaaaaaa1: { ...fixtureTrack("aaaaaaaaaaa1", "Comes Back"), status: "unavailable", sourceUrl: LINK },
+    });
+
+    await page.locator("#settingsBtn").click();
+    await page.locator('.settings-tab[data-tab="library"]').click();
+    await page.locator(".library-editor-sync").click();
+
+    await expect(page.locator("#trackNote")).toHaveText(count("settings.outOfSync.restored.one", 1), { timeout: 20000 });
+    await expect(page.locator("#error")).toBeHidden();
+  });
+
   test("with only local files says they must be added again", async ({ page }) => {
     await emptyServerLibrary(page);
     await openApp(page, {

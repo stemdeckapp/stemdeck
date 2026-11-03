@@ -76,7 +76,7 @@ const CAUSE_KEYS = {
 export function failureCause(detail) {
   const text = typeof detail === "string" ? detail.trim() : "";
   const m = /^([a-z-]+)(?:\s+\S\s+([\s\S]*))?$/.exec(text);
-  if (m && Object.hasOwn(CAUSE_KEYS, m[1])) return { cause: m[1], message: (m[2] || "").trim() };
+  if (m && Object.prototype.hasOwnProperty.call(CAUSE_KEYS, m[1])) return { cause: m[1], message: (m[2] || "").trim() };
   return { cause: "", message: text };
 }
 

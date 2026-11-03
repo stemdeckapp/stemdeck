@@ -8,13 +8,12 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
-import { JOB_BUSY, RESTART_REQUIRED, codeMessage, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
   startQueueStream, stopQueuedJob,
 } from "./queue.js";
-import { importFailure } from "./errorReason.js";
 import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
 import { compareOldestFirst } from "./shared/jobs.js";
 import { showTrackNote, takeStemsFromJob } from "./capture/takeLanes.js";
@@ -5893,15 +5892,21 @@ async function resyncLibrary() {
       let restored = 0;
       const failed = [];
       for (const t of restorable) {
+        let refused = "";
         const jobId = await importFromUrl(t.sourceUrl, {
           title: t.title,
           stems: t.selectedStems,
           vocalSplit: hadVocalSplit(t),
+          onRefused: (message) => { refused = message; },
         });
         const end = jobId ? await waitForJobTerminal(jobId) : null;
-        if (end?.status === "done") restored += 1;
-        else if (end?.status === "error") failed.push(i18nT("settings.outOfSync.failedTrack", { title: displayTitle(t.title), reason: importFailure(end).message }));
-        else failed.push(displayTitle(t.title));
+        if (end?.status === "done") {
+          restored += 1;
+          continue;
+        }
+        // A job that was cancelled, vanished or never ended has no reason to give.
+        const reason = end?.status === "error" ? importFailure(end).message : refused;
+        failed.push(reason ? i18nT("settings.outOfSync.failedTrack", { title: displayTitle(t.title), reason }) : displayTitle(t.title));
       }
       // The editor is closed, so the result goes where the restores ran: the
       // error box with each failure and its reason, or a note when all came back.

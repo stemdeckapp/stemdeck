@@ -872,7 +872,9 @@ function sanitizeFilename(name) {
 // import form's URL path). Used by the library "Sync again" auto-restore to
 // re-download + re-separate a track whose backend audio was swept. Takes over
 // the studio like a normal import. Returns the new job id, or null on failure.
-export async function importFromUrl(url, { title, stems, vocalSplit = false } = {}) {
+// `onRefused` hears the sentence shown when the server would not take it, so
+// Resync can say why a track did not come back.
+export async function importFromUrl(url, { title, stems, vocalSplit = false, onRefused = null } = {}) {
   if (!url || url.startsWith("local:")) return null; // local files can't auto-restore
   reset();
   setSubmitProcessing(true);
@@ -896,10 +898,9 @@ export async function importFromUrl(url, { title, stems, vocalSplit = false } = 
     // The real error, whatever the toast can say about it.
     console.error("[job] import for restore failed:", err);
     const reason = errorReason(err);
-    showError(reason ? t("job.restoreFailed", { message: reason }) : t("job.restoreFailedNoReason"), null, {
-      retry: false,
-      action: retryImportAction(url, { title, stems, vocalSplit }),
-    });
+    const message = reason ? t("job.restoreFailed", { message: reason }) : t("job.restoreFailedNoReason");
+    showError(message, null, { retry: false, action: retryImportAction(url, { title, stems, vocalSplit }) });
+    onRefused?.(message);
     setSubmitProcessing(false);
     return null;
   }

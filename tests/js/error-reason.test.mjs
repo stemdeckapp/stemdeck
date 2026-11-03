@@ -4,10 +4,8 @@
 //
 // Run:  node tests/js/error-reason.test.mjs
 
-import { codeMessage, errorReason, JOB_BUSY, RESTART_REQUIRED, responseErrorMessage } from "../../static/js/errorReason.js";
+import { codeMessage, errorReason, failureCause, importFailure, JOB_BUSY, RESTART_REQUIRED, responseErrorMessage } from "../../static/js/errorReason.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
-
-import { failureCause, importFailure } from "../../static/js/errorReason.js";
 
 let pass = 0,
   fail = 0;
