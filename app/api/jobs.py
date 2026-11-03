@@ -301,7 +301,7 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
     if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
         raise HTTPException(status_code=503, detail=_URL_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     _note_split_request(job)
     return {"job_id": job.id}
 
@@ -406,7 +406,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     _note_split_request(job)
     return {"job_id": job.id}
 
@@ -859,7 +859,7 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         shutil.rmtree(new_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(new_job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     _note_split_request(new_job)
     # source_url comes back because the client cannot derive it: it is
     # deliberately not the one it asked with, and the library keys its
@@ -902,7 +902,7 @@ async def start_vocal_split(job_id: str) -> Response:
     # Saved before it starts: a restart during the split then reads it as
     # interrupted, so a page that finds the job asking for Lead + Backing
     # (vocal_split_wanted) never starts it a second time.
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     try:
         async with _pipeline_lock:
             # Cancelled while it waited behind an import: never start.
@@ -935,7 +935,7 @@ async def start_vocal_split(job_id: str) -> Response:
         job.vocal_split = "error"
         job.vocal_split_reason = code
         _set(job, stage="Done")
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
         return JSONResponse(
             {
                 "detail": "vocal split failed",
@@ -967,7 +967,7 @@ async def start_vocal_split(job_id: str) -> Response:
     job.cancel_requested = False
     job.vocal_split = "done"
     _set(job, stage="Done")
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     return JSONResponse(_job_state(job))
 
 
@@ -1035,7 +1035,7 @@ async def create_version(job_id: str, body: VersionCreateBody) -> dict:
     versions.append(version)
     active = version["id"] if body.select else active_of(job, versions)
     _set(job, versions=versions, active_version=active)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     await asyncio.to_thread(_keep_saved_fields, job)
     return {"version": version, **_versions_payload(job)}
 
@@ -1053,7 +1053,7 @@ async def rename_version(job_id: str, version_id: str, body: VersionRenameBody) 
         raise HTTPException(status_code=404, detail="version not found")
     target["name"] = name
     _set(job, versions=versions, active_version=active_of(job, versions))
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
@@ -1073,7 +1073,7 @@ async def delete_version(job_id: str, version_id: str) -> dict:
     remaining = [v for v in versions if v["id"] != version_id]
     # The deleted one was opening with the song: the first left does now.
     _set(job, versions=remaining, active_version=active_of(job, remaining))
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
@@ -1087,7 +1087,7 @@ async def select_version(job_id: str, version_id: str) -> dict:
     if not any(v["id"] == version_id for v in versions):
         raise HTTPException(status_code=404, detail="version not found")
     _set(job, versions=versions, active_version=version_id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     await asyncio.to_thread(_keep_saved_fields, job)
     return _versions_payload(job)
 
@@ -1141,21 +1141,21 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     except FillRefused as e:
         job.stem_fill = "error"
         _set(job, stage="Done")
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
         raise HTTPException(status_code=409, detail=_FILL_REFUSALS[e.code]) from None
     except Exception:
         if not job.cancel_requested:
             logger.exception("[%s] filling missing stems failed", job_id)
         job.stem_fill = "error"
         _set(job, stage="Done")
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
         # Stopped by POST .../cancel: every stem the song had is still there.
         if job.cancel_requested:
             return JSONResponse({"detail": "the extraction was cancelled"}, status_code=409)
         return JSONResponse({"detail": "could not extract the missing stems"}, status_code=500)
     job.stem_fill = "done"
     _set(job, stage="Done")
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     return JSONResponse({"filled": filled, "state": _job_state(job)})
 
 
@@ -1478,7 +1478,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
         and not lyrics_path(job_dir).is_file()
         and await asyncio.to_thread(keep_answer, job, job_dir, lyrics)
     ):
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
     found: dict[str, object] = {}
     if tags and not job.audio_tags:
         found["audio_tags"] = tags
@@ -1490,7 +1490,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
         found["work"] = work
     if found:
         _set(job, **found)
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
         await asyncio.to_thread(_write_metadata_fields, job_id, found)
     return {
         "audio_tags": job.audio_tags,
@@ -1738,7 +1738,7 @@ async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None)
         and not lyrics_path(job_dir).is_file()
         and await asyncio.to_thread(keep_answer, job, job_dir, answer)
     ):
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
     try:
         return await asyncio.to_thread(get_lyrics, job_id)
     except HTTPException:

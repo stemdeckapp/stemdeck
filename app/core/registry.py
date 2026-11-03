@@ -61,6 +61,8 @@ _procs: dict[tuple[str, Operation], subprocess.Popen] = {}
 # own pipeline run.
 _operation: ContextVar[Operation] = ContextVar("operation", default="pipeline")
 _lock = threading.Lock()
+# Orders registry.json saves (see persist). Taken before _lock, never inside it.
+_write_lock = threading.Lock()
 _REGISTRY_FILE = "registry.json"
 _TERMINAL = {"done"}
 # Jobs that were queued or mid-flight when the process died. They are persisted
@@ -254,9 +256,9 @@ def _prune_deleted(jobs_dir: Path) -> None:
 
     A record only has to outlive the directory it refers to, so this keeps the
     set naturally bounded instead of growing for the life of the install.
-    Caller must not hold _lock."""
+    Caller must not hold _lock. The disk checks run outside it."""
+    stale = {job_id for job_id in deleted_ids() if not (jobs_dir / job_id).exists()}
     with _lock:
-        stale = {job_id for job_id in _deleted if not (jobs_dir / job_id).exists()}
         _deleted.difference_update(stale)
 
 
@@ -264,11 +266,14 @@ def persist(jobs_dir: Path) -> None:
     """Persist terminal jobs so completed library entries survive restarts.
 
     Callers run on the pipeline thread, API threads, and the sweep loop
-    concurrently, so the write+replace happens under the lock with a unique
-    temp name per call (#281) -- a shared temp path let two writers collide,
-    and on Windows os.replace over a file another writer holds open raises
-    PermissionError. Best-effort like the settings store: a failed persist
-    logs and returns rather than killing the caller."""
+    concurrently, so each save takes its snapshot and writes it under
+    _write_lock with a unique temp name per call (#281) -- a shared temp path
+    let two writers collide, and on Windows os.replace over a file another
+    writer holds open raises PermissionError. One lock for both keeps a later
+    snapshot from being overwritten by an earlier one. Only the snapshot takes
+    _lock: every get() waited on the fsync when the write did too. Blocking,
+    so async callers run it in a thread. Best-effort like the settings store:
+    a failed persist logs and returns rather than killing the caller."""
     try:
         jobs_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -276,18 +281,20 @@ def persist(jobs_dir: Path) -> None:
         return
     path = registry_path(jobs_dir)
     _prune_deleted(jobs_dir)
-    with _lock:
-        records = [
-            job.to_record()
-            for job in sorted(_jobs.values(), key=lambda item: item.created_at)
-            if job.status in _PERSISTED
-        ]
+    with _write_lock:
+        with _lock:
+            records = [
+                job.to_record()
+                for job in sorted(_jobs.values(), key=lambda item: item.created_at)
+                if job.status in _PERSISTED
+            ]
+            deleted = sorted(_deleted)
         payload = (
             json.dumps(
                 {
                     "version": REGISTRY_VERSION,
                     "jobs": records,
-                    "deleted": sorted(_deleted),
+                    "deleted": deleted,
                 },
                 indent=2,
             )
@@ -984,7 +991,9 @@ def reset_all(jobs_dir: Path) -> tuple[list[str], list[str]]:
     job folders it has a record of or that hold job files, its quarantined
     failures in failed/, and its own files. Nothing behind a link is touched. Returns the
     names it could not remove and the names it left alone."""
-    with _lock:
+    # A save still writing its snapshot finishes first: replacing the file
+    # after the loop below removed it brought the old library back.
+    with _write_lock, _lock:
         known = set(_jobs) | _deleted
         _jobs.clear()
         _procs.clear()
