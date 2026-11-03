@@ -119,7 +119,8 @@ export function followVocalSplit(jobId) {
  * The song is done and keeps one Vocals stem; this says that, why in one line,
  * and offers Try again, which runs the split on the same song without an
  * import. The card in the notification centre keeps it after the box is
- * closed. A cancel is the person's own doing, so it gets neither.
+ * closed. A cancel is the person's own doing, so it gets neither. An Intel
+ * Mac gets no Try again: the split does not exist in that build.
  */
 export function reportSplitFailure(state, code) {
   const jobId = state.job_id;
@@ -134,7 +135,10 @@ export function reportSplitFailure(state, code) {
   notifyFailure({ kind: "split", message, detail, context: { jobId, splitReason: reason } });
   showError(message, detail, {
     retry: false,
-    action: { label: t("job.tryAgain"), className: "split-retry-btn", run: () => retryVocalSplit(jobId) },
+    action:
+      reason === "unsupported_platform"
+        ? null
+        : { label: t("job.tryAgain"), className: "split-retry-btn", run: () => retryVocalSplit(jobId) },
   });
 }
 

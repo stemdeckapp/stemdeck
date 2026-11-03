@@ -14,7 +14,8 @@ Two jobs, both small:
   the data folder, and /api/health reports it, the way it reports an OGG
   encoder that is missing (#824).
 
-Only a missing dependency makes the split unavailable. It cannot fix itself
+Only a missing dependency, or a platform the split is not built for (Intel
+macOS), makes the split unavailable. A missing dependency cannot fix itself
 on this install: the next attempt fails the same way until StemDeck is
 updated or repaired. A model that did not download can still download on the
 next attempt, and memory, a crash or a stall belong to one run, not to the
@@ -31,6 +32,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
+import sys
 import threading
 import time
 import uuid
@@ -41,6 +44,7 @@ from app.core.vocal_split_outcome import (
     DEPENDENCY_MISSING,
     MODEL_UNAVAILABLE,
     OUT_OF_MEMORY,
+    UNSUPPORTED_PLATFORM,
     WORKER_FAILED,
 )
 from app.pipeline.errors import classify_failure
@@ -52,8 +56,10 @@ logger = logging.getLogger("stemdeck.pipeline")
 _PACKAGES = ("torch", "torchvision", "onnxruntime", "onnx", "onnx2torch", "audio-separator")
 
 # Lowercased substrings that name a missing or broken dependency: a module
-# that is not there, a shared library that would not load, or one of the
-# packages the model is run through failing on load (#778's torchvision).
+# that is not there, a shared library that would not load, or a torchvision
+# built for another torch (#778). Not onnxruntime or onnx2torch by name: they
+# read the model file, so they are named in the error a damaged model gives,
+# and that is the model, not the install.
 _DEPENDENCY_PATTERNS = (
     "no module named",
     "cannot open shared object",
@@ -62,8 +68,6 @@ _DEPENDENCY_PATTERNS = (
     "undefined symbol",
     "symbol not found",
     "torchvision",
-    "onnx2torch",
-    "onnxruntime",
 )
 
 # The model could not be fetched, or what was fetched is not a model.
@@ -88,9 +92,16 @@ _state: dict | None = None
 _fingerprint_cache: dict[str, str | None] | None = None
 
 
+def _unsupported_platform() -> bool:
+    """Intel macOS, where audio-separator is not installed (pyproject.toml)."""
+    return sys.platform == "darwin" and platform.machine() == "x86_64"
+
+
 def failure_code(phase: str, exc: BaseException | None = None, text: str = "") -> str:
     """The code for a failure in ``phase`` ("import", "load", "separate", or
     "unknown" when the caller cannot tell), from the exception or its text."""
+    if _unsupported_platform():
+        return UNSUPPORTED_PLATFORM
     words = f"{type(exc).__name__}: {exc}" if exc is not None else text
     low = words.lower()
     if isinstance(exc, MemoryError) or classify_failure(low) == "out-of-memory":
@@ -174,9 +185,12 @@ def record(ok: bool, code: str | None = None, *, source: str) -> None:
 def capability() -> dict[str, object]:
     """{"available": bool, "reason": code or None} for /api/health.
 
-    Unavailable only when the last outcome on this exact set of packages was
-    a missing dependency. Anything else, a record from other package versions
-    included, reads as available: a split is then tried as it always was."""
+    Unavailable on Intel macOS, or when the last outcome on this exact set of
+    packages was a missing dependency. Anything else, a record from other
+    package versions included, reads as available: a split is then tried as
+    it always was."""
+    if _unsupported_platform():
+        return {"available": False, "reason": UNSUPPORTED_PLATFORM}
     with _lock:
         data = dict(_load())
     if (

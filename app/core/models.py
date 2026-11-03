@@ -528,6 +528,9 @@ class Job:
         if job.vocal_split == "running":
             job.vocal_split = "error"
             job.vocal_split_reason = INTERRUPTED
+            # Saved as "Splitting lead/backing vocals...", which the song's row
+            # would keep showing. The split's own failure path says "Done".
+            job.stage_message = "Done"
         # Never fails the song: a damaged versions list loses only the
         # entries that are not a version (app/core/versions.py).
         job.versions = clean_versions(job.versions)

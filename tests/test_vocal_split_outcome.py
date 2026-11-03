@@ -116,6 +116,16 @@ DOWNLOAD_FAILS = (
     "UVR_MDXNET_KARA_2.onnx, response code: 404')\n"
     "w._load = boom"
 )
+CORRUPT_MODEL = (
+    "class S:\n"
+    "    def __init__(self, **kw): pass\n"
+    "w._import_separator = lambda: S\n"
+    "class InvalidProtobuf(Exception): pass\n"
+    "def boom(separator):\n"
+    "    raise InvalidProtobuf('[ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from "
+    "UVR_MDXNET_KARA_2.onnx failed:Protobuf parsing failed.')\n"
+    "w._load = boom"
+)
 OFFLINE_FAILS = (
     "class S:\n"
     "    def __init__(self, **kw): pass\n"
@@ -153,6 +163,7 @@ CRASHES = "import os\nos._exit(139)"
         (_worker(SHARED_LIB_FAILS), "dependency_missing"),
         (_worker(NMS_FAILS), "dependency_missing"),
         (_worker(DOWNLOAD_FAILS), "model_unavailable"),
+        (_worker(CORRUPT_MODEL), "model_unavailable"),
         (_worker(OFFLINE_FAILS), "model_unavailable"),
         (_worker(OOM_FAILS), "out_of_memory"),
         (_worker(SEPARATE_FAILS), "worker_failed"),
@@ -163,6 +174,7 @@ CRASHES = "import os\nos._exit(139)"
         "shared-library",
         "torchvision-op",
         "model-download",
+        "model-corrupt",
         "offline",
         "out-of-memory",
         "separate-raises",
@@ -212,10 +224,18 @@ def test_the_reason_survives_a_restart(client, done_job, monkeypatch, tmp_path):
 def test_a_split_cut_off_by_a_restart_can_run_again():
     """A record saved while the split ran comes back failed, not running:
     "running" refused every later attempt with a 409 for good."""
-    job = Job(id=JOB_ID, status="done", title="Song", vocal_split="running")
+    job = Job(
+        id=JOB_ID,
+        status="done",
+        title="Song",
+        vocal_split="running",
+        stage_message="Splitting lead/backing vocals...",
+    )
     restored = Job.from_record(job.to_record())
     assert restored.vocal_split == "error"
     assert restored.vocal_split_reason == "interrupted"
+    # The row no longer says the split is running.
+    assert restored.stage_message == "Done"
 
 
 def test_a_stalled_split_reports_a_timeout(client, done_job, monkeypatch):
@@ -283,6 +303,29 @@ def test_try_again_after_the_cause_is_fixed(client, done_job, monkeypatch):
     assert body["vocal_split_reason"] is None
     assert body["vocal_split_message"] is None
     assert {"lead_vocals", "backing_vocals"} <= {s["name"] for s in body["stems"]}
+
+
+def test_a_cancel_that_lost_the_race_does_not_outlive_the_split(client, done_job, monkeypatch):
+    """A cancel landing after the worker finished: the split still ends done,
+    and the flag must not stay set on the song. Left set, any later run on it
+    that reads the flag without clearing it first stops itself."""
+    import app.api.jobs as jobs_mod
+
+    job, _ = done_job
+    _use(monkeypatch, _raw(SUCCESS))
+    merge = jobs_mod.merge_stem_peaks
+
+    def cancel_then_merge(*args):
+        jobs_mod.cancel_job(job.id)
+        return merge(*args)
+
+    monkeypatch.setattr(jobs_mod, "merge_stem_peaks", cancel_then_merge)
+
+    r = client.post(f"/api/jobs/{job.id}/vocal-split")
+
+    assert r.status_code == 200
+    assert job.vocal_split == "done"
+    assert job.cancel_requested is False
 
 
 def test_an_older_worker_message_is_still_classified(client, done_job, monkeypatch):
