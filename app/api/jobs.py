@@ -465,9 +465,21 @@ def restore_job(job_id: str) -> dict:
     return {"job_id": job.id, "trashed_at": job.trashed_at}
 
 
+def _failed_dir(job_id: str) -> Path:
+    """jobs/failed/<id>, the quarantine _quarantine_failed_job moves a failed
+    job to. JOB_ID_RE rejects "failed", so the quarantine dir can never be
+    addressed as a job id; join it explicitly and re-verify the result stays
+    inside."""
+    failed_dir = (JOBS_DIR / "failed" / job_id).resolve()
+    if not failed_dir.is_relative_to((JOBS_DIR / "failed").resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    return failed_dir
+
+
 @router.post("/{job_id}/extract")
 def extract_stopped_job(job_id: str) -> dict:
-    """Run a stopped job again from the start, from the source it kept (#748).
+    """Run a stopped job, or a failed upload, again from the start, from the
+    source it kept (#748).
 
     The only way a job stopped by the Trash goes back in the queue. Restore
     does not do it: taking a song out of the Trash is not a request to spend
@@ -479,16 +491,46 @@ def extract_stopped_job(job_id: str) -> dict:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != "stopped":
-        raise HTTPException(status_code=409, detail="only a stopped job can be extracted again")
+    # A failed upload too: its file is the one copy, kept by the quarantine
+    # (#868). A failed link is tried again as a new import of the link.
+    failed_upload = job.status == "error" and is_upload(job)
+    if job.status != "stopped" and not failed_upload:
+        raise HTTPException(
+            status_code=409, detail="only a stopped job or a failed upload can be extracted again"
+        )
     if job.trashed_at is not None:
         raise HTTPException(status_code=409, detail="restore it from the Trash first")
+    job_dir = JOBS_DIR / job_id
+    failed_dir = _failed_dir(job_id)
+    # Not when the quarantine failed and left the folder where it was.
+    moved = failed_upload and not any(job_dir.glob("source.*"))
+    if moved:
+        if not any(failed_dir.glob("source.*")):
+            raise HTTPException(status_code=409, detail="the file is no longer kept")
+        try:
+            failed_dir.rename(job_dir)
+        except OSError as exc:
+            logger.warning("could not move %s back for extract", failed_dir, exc_info=True)
+            raise HTTPException(
+                status_code=409, detail="the kept file could not be moved back"
+            ) from exc
     limit = MAX_PENDING_UPLOAD_JOBS if is_upload(job) else MAX_PENDING_URL_JOBS
-    if not registry_requeue_if_capacity(job, JOBS_DIR / job_id, limit):
+    if not registry_requeue_if_capacity(job, job_dir, limit):
+        if moved:
+            try:
+                job_dir.rename(failed_dir)
+            except OSError:
+                # Not lost: the next press runs it from jobs/<id>.
+                logger.warning("could not put %s back after a full queue", job_dir, exc_info=True)
         raise HTTPException(
             status_code=503,
             detail=_UPLOAD_QUEUE_FULL_DETAIL if is_upload(job) else _URL_QUEUE_FULL_DETAIL,
         )
+    try:
+        (job_dir / "error.txt").unlink(missing_ok=True)
+    except OSError:
+        # The job is queued already; a stale error.txt only costs a few KB.
+        logger.warning("could not delete the old error.txt of %s", job_id, exc_info=True)
     registry_persist(JOBS_DIR)
     jobqueue.enqueue(job_id)
     return job.to_state()
@@ -2057,12 +2099,7 @@ def get_failure(job_id: str) -> dict:
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
 
-    # JOB_ID_RE rejects "failed", so the quarantine dir can never be addressed
-    # as a job id; join it explicitly and re-verify the result stays inside.
-    failed_dir = (JOBS_DIR / "failed" / job_id).resolve()
-    if not failed_dir.is_relative_to((JOBS_DIR / "failed").resolve()):
-        raise HTTPException(status_code=404, detail="job not found")
-    path = failed_dir / "error.txt"
+    path = _failed_dir(job_id) / "error.txt"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no failure evidence for this job")
 

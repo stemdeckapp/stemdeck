@@ -713,6 +713,7 @@ def reset_for_rerun(job: Job, job_dir: Path) -> None:
     job.cancel_requested = False
     job.stop_requested = False
     job.error = None
+    job.error_detail = None
     job.stems = []
     job.mix_url = None
     job.version += 1
