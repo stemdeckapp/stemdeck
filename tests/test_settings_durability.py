@@ -11,6 +11,7 @@ both copies with only a warning in the log.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 
 from app.core import settings as _settings
@@ -89,18 +90,39 @@ def test_a_failed_write_leaves_the_previous_settings_intact(tmp_path, monkeypatc
     path = _settings._SETTINGS_PATH
     path.write_text(json.dumps({"port": 8081, "allow_network": True}), encoding="utf-8")
 
-    real_write_text = pathlib.Path.write_text
+    def _boom(fd):
+        raise OSError(28, "No space left on device")
 
-    def _boom(self, *a, **kw):
-        if self.name.endswith(".tmp"):
-            raise OSError("disk full")
-        return real_write_text(self, *a, **kw)
-
-    monkeypatch.setattr("pathlib.Path.write_text", _boom)
+    monkeypatch.setattr(os, "fsync", _boom)
 
     assert _settings._atomic_write_json(path, {"port": 9000}) is False
     assert _read(path) == {"port": 8081, "allow_network": True}
     assert not list(tmp_path.glob("*.tmp")), "a failed write must not leave a temp file"
+
+
+def test_settings_reach_the_disk_before_they_replace_the_old_file(monkeypatch):
+    # A library move writes the new jobs_dir here and then deletes the originals.
+    # Replaced before its bytes were on the disk, a power cut could leave a torn
+    # settings.json, and the next start would fall back to the empty default.
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        calls.append("fsync")
+        real_fsync(fd)
+
+    def replace(src, dst):
+        calls.append(("replace", pathlib.Path(dst).name))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+
+    assert _settings._atomic_write_json(_settings._SETTINGS_PATH, {"port": 8081}) is True
+
+    assert calls[:2] == ["fsync", ("replace", "settings.json")]
+    if os.name != "nt":
+        assert calls[2:] == ["fsync"], "the rename itself must reach the disk too"
 
 
 def test_atomic_write_leaves_no_temp_files_behind(tmp_path):
