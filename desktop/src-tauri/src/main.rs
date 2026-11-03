@@ -21,7 +21,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -389,6 +389,7 @@ fn main() {
     // exists: the WebKit renderer switch is read once at WebKit init (#780).
     #[cfg(target_os = "linux")]
     dmabuf::apply_at_startup();
+    apply_portable_env();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1634,11 +1635,10 @@ fn apply_app_update(
 /// The per-user directory holding the settings copy that survives reinstalling.
 ///
 /// A portable package keeps its data in `<app>/data` (#399), which means
-/// settings.json lives *inside the install*. Upgrading by extracting the new
-/// zip to a fresh folder therefore lost every setting the user had changed:
-/// stems location, port, compute device, quality, language. `ensure_workspace`
-/// already restores from here, but nothing wrote it after #399 moved the data
-/// directory — the backend mirrors to it now, via STEMDECK_SETTINGS_MIRROR.
+/// settings.json lives *inside the install*. `ensure_workspace` seeds a freshly
+/// extracted package from the copy here, which it only ever reads: a portable
+/// package writes nothing outside its own folder, so `settings_mirror` gives
+/// it no copy to keep.
 ///
 /// Deliberately the OS-standard data dir, i.e. exactly what `local_data_dir`
 /// returns for a NON-portable install, so the two layouts share one location
@@ -1671,6 +1671,16 @@ fn shared_settings_dir() -> Option<PathBuf> {
                 .join("stemdeck")
         })
     }
+}
+
+/// Where the backend keeps its per-user copy of settings.json
+/// (STEMDECK_SETTINGS_MIRROR), or None for a portable package, which writes
+/// nothing outside its own folder.
+fn settings_mirror(root: &Path) -> Option<PathBuf> {
+    if is_portable_package(root) {
+        return None;
+    }
+    shared_settings_dir().map(|dir| dir.join("settings.json"))
 }
 
 /// Creates required data directories and runs any pending data migrations.
@@ -1946,14 +1956,7 @@ fn start_backend(
             .env("STEMDECK_DATA_DIR", &data_dir)
             .env("STEMDECK_DEFAULT_JOBS_DIR", &jobs_dir)
             .env("STEMDECK_DESKTOP", "1")
-            // Where the backend keeps the per-user copy of settings.json that
-            // survives extracting a new package into a fresh folder. Computed
-            // here so the write half and ensure_workspace's restore half can
-            // never point at different places.
-            .envs(
-                shared_settings_dir()
-                    .map(|dir| ("STEMDECK_SETTINGS_MIRROR", dir.join("settings.json"))),
-            )
+            .envs(settings_mirror(&root).map(|path| ("STEMDECK_SETTINGS_MIRROR", path)))
             .env("STEMDECK_PARENT_PID", std::process::id().to_string())
             // How the backend proves it is ours when it answers /api/health.
             // The environment is the only channel that survives the Windows
@@ -2302,6 +2305,90 @@ fn is_portable_package(root: &Path) -> bool {
 /// on Windows is %LOCALAPPDATA%\app.stemdeck.desktop\EBWebView.
 fn portable_webview_dir(root: &Path, data_dir: &Path) -> Option<PathBuf> {
     is_portable_package(root).then(|| data_dir.join("webview"))
+}
+
+/// The environment a portable package runs with, so that what other software
+/// writes to the user profile stays in its data dir too. Empty for anything
+/// else: an installed StemDeck keeps the system's locations.
+///
+/// - TEMP, TMP: the Windows temp folder. WebView2, pip's unpacking and
+///   Python's tempfile all write there; an upload over 1 MB is spooled there
+///   before the backend sees it.
+/// - TMPDIR: first in Python's tempfile search, ahead of the two above.
+/// - PIP_CACHE_DIR: the NVIDIA setup's CUDA torch install, whose wheels pip
+///   would otherwise cache in %LOCALAPPDATA%\pip.
+/// - MPLCONFIGDIR: matplotlib's font cache, otherwise %LOCALAPPDATA%\matplotlib.
+fn portable_env(root: &Path, data_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+    if !is_portable_package(root) {
+        return Vec::new();
+    }
+    let tmp = data_dir.join("tmp");
+    let cache = data_dir.join("cache");
+    vec![
+        ("TEMP", tmp.clone()),
+        ("TMP", tmp.clone()),
+        ("TMPDIR", tmp),
+        ("PIP_CACHE_DIR", cache.join("pip")),
+        ("MPLCONFIGDIR", cache.join("matplotlib")),
+    ]
+}
+
+/// Applies `portable_env` to this process, which every child inherits: the
+/// backend, the model warmup, pip and WebView2.
+///
+/// Edition 2021: set_var is safe to call, but it is only sound while no other
+/// thread reads the environment, so this runs first thing in main.
+fn apply_portable_env() {
+    let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) else {
+        return;
+    };
+    let vars = portable_env(&root, &data_dir);
+    // The temp folder has to exist: Python's tempfile passes over one that
+    // does not, to the next candidate. Without it nothing is redirected, and
+    // setup.log says why.
+    if let Some((_, tmp)) = vars.iter().find(|(name, _)| *name == "TEMP") {
+        if let Err(e) = fs::create_dir_all(tmp) {
+            append_to_setup_log(
+                &data_dir,
+                &format!(
+                    "could not create {}, temp files and tool caches go to the user profile: {e}",
+                    tmp.display()
+                ),
+            );
+            return;
+        }
+    }
+    let _ = USER_ENV.set(
+        vars.iter()
+            .map(|(name, _)| (*name, env::var_os(name)))
+            .collect(),
+    );
+    for (name, value) in vars {
+        env::set_var(name, value);
+    }
+}
+
+/// The values `apply_portable_env` replaced, as the user had them.
+static USER_ENV: OnceLock<Vec<(&'static str, Option<std::ffi::OsString>)>> = OnceLock::new();
+
+/// Gives a program started for the user (Explorer, and the browser it may
+/// start) the user's own temp folder and caches, not the portable package's:
+/// a browser started cold from it would keep them for its whole session.
+fn with_user_env(command: &mut Command) -> &mut Command {
+    restore_env(command, USER_ENV.get().map_or(&[], Vec::as_slice))
+}
+
+fn restore_env<'a>(
+    command: &'a mut Command,
+    saved: &[(&'static str, Option<std::ffi::OsString>)],
+) -> &'a mut Command {
+    for (name, value) in saved {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    command
 }
 
 /// A persisted "cpu-only-package" device decision is only trustworthy while the
@@ -3720,7 +3807,8 @@ fn open_url(url: String) -> Result<(), String> {
         // Use explorer.exe directly to avoid cmd.exe interpreting '&' in query strings.
         let mut cmd = Command::new("explorer.exe");
         cmd.arg(&url);
-        cmd.spawn()
+        with_user_env(&mut cmd)
+            .spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
     #[cfg(target_os = "macos")]
@@ -3942,8 +4030,7 @@ fn reveal_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
 async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> Result<(), String> {
     let path = saved_file(&state, &token)?;
     let (program, args) = reveal_command(&path);
-    let mut child = Command::new(program)
-        .args(&args)
+    let mut child = with_user_env(Command::new(program).args(&args))
         .spawn()
         .map_err(|e| format!("could not open the file manager: {e}"))?;
     std::thread::spawn(move || {
@@ -10284,6 +10371,69 @@ configuration: --cc=clang\n";
         let root = make_tmp();
         let data = root.path().join("data");
         assert_eq!(super::portable_webview_dir(root.path(), &data), None);
+    }
+
+    #[test]
+    fn a_portable_package_sends_temp_and_tool_caches_into_data() {
+        // B25b: a portable run wrote its temp files, and the NVIDIA setup its
+        // pip cache, into the user profile.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        let vars = super::portable_env(root.path(), &data);
+        let names: Vec<&str> = vars.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            ["TEMP", "TMP", "TMPDIR", "PIP_CACHE_DIR", "MPLCONFIGDIR"]
+        );
+        for (name, path) in &vars {
+            assert!(
+                path.starts_with(&data),
+                "{name} leaves the package: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_program_started_for_the_user_gets_the_users_temp_back() {
+        // Explorer, and a browser it may start, must not keep the portable
+        // package's temp folder: TMPDIR was unset, so it is removed.
+        use std::ffi::{OsStr, OsString};
+        let saved = [
+            (
+                "TEMP",
+                Some(OsString::from(r"C:\Users\u\AppData\Local\Temp")),
+            ),
+            ("TMPDIR", None),
+        ];
+        let mut command = Command::new("explorer.exe");
+        super::restore_env(&mut command, &saved);
+        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
+        assert!(envs.contains(&(
+            OsStr::new("TEMP"),
+            Some(OsStr::new(r"C:\Users\u\AppData\Local\Temp"))
+        )));
+        assert!(envs.contains(&(OsStr::new("TMPDIR"), None)));
+    }
+
+    #[test]
+    fn an_installed_app_keeps_the_system_temp_and_caches() {
+        let root = make_tmp();
+        let data = root.path().join("data");
+        assert!(super::portable_env(root.path(), &data).is_empty());
+    }
+
+    #[test]
+    fn only_an_installed_app_mirrors_its_settings_to_the_profile() {
+        // B25b: the backend of a portable package kept a copy of settings.json
+        // in %LOCALAPPDATA%\StemDeck.
+        let root = make_tmp();
+        assert_eq!(
+            super::settings_mirror(root.path()),
+            super::shared_settings_dir().map(|dir| dir.join("settings.json"))
+        );
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        assert_eq!(super::settings_mirror(root.path()), None);
     }
 
     #[test]
