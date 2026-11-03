@@ -15,6 +15,7 @@ Notes
 - This is a portable folder, not an installer.
 - No Start Menu shortcut, service, or registry integration is created.
 - Runtime, config, and logs stay under data/, next to StemDeck.exe, not in AppData.
+  So does the window's browser storage, in data/webview/.
 - FFmpeg is downloaded during first-run setup into data/ffmpeg/.
 - Demucs model weights are downloaded by the backend on first use into data/models/.
 - Your library is stored in data/jobs/, unless Documents/StemDeck/jobs already
