@@ -24,6 +24,9 @@
 | `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
 | `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
 | `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |
+| `STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ` | `30` | Give up on one try of the separation model's download after this many seconds without data. |
+| `STEMDECK_MODEL_DOWNLOAD_ATTEMPTS` | `3` | Tries for the separation model's download, 2 s then 5 s apart, before the Split fails and names the file and the folder to put it in by hand. |
+| `STEMDECK_TIMEOUT_MODEL_STALL` | `120` | Stop the separation worker if it is silent this many seconds while it downloads its model. Everything else, separating included, uses the Demucs stall limit above. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |

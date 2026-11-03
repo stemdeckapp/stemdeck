@@ -19,6 +19,14 @@ from app.pipeline.errors import SeparationError, classify_failure
         ("Invalid data found when processing input", "bad-input"),
         ("RuntimeError: no stems produced by demucs", "bad-input"),
         ("something entirely novel went wrong", "unknown"),
+        # The separation model's download (#125), in the worker's words. A
+        # bare network error is not one: a song's download says the same.
+        (
+            "model download failed: https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/"
+            "5c90dfd2-34c22ccb.th; put the file in <models>/torch/hub (no data for 30 s)",
+            "model-download",
+        ),
+        ("<urlopen error [Errno 11001] getaddrinfo failed>", "unknown"),
         ("", "unknown"),
         # Source-fetch failures (#434). Strings taken verbatim from the yt-dlp
         # output in the issue rather than paraphrased.

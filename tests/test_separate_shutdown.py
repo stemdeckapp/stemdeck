@@ -25,6 +25,7 @@ from app.pipeline import separate as sep_mod
 # Reports some progress, then separates until it is killed.
 _SLOW_WORKER = """
 import sys, time
+sys.stderr.write("@@READY@@\\n")
 sys.stdin.readline()
 sys.stderr.write("5%\\n")
 sys.stderr.flush()

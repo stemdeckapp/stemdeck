@@ -96,6 +96,7 @@ const CAUSE_KEYS = {
   "out-of-memory": "job.cause.outOfMemory",
   "unsupported-device": "job.cause.unsupportedDevice",
   "disk-full": "job.cause.diskFull",
+  "model-download": "job.cause.modelDownload",
   "source-blocked": "job.cause.sourceBlocked",
   "source-unavailable": "job.cause.sourceUnavailable",
   "bad-input": "job.cause.badInput",
@@ -129,6 +130,14 @@ for (const lang of ["pl", "ja", "zh-Hans", "de", "pt", "id", "fr", "es", "ko"]) 
 }
 eq("a job with no source is not called an upload", importFailure(failedLink(detail("disk-full", "x"), { source_url: null })).message, en["job.cause.diskFull"]);
 check("pt-PT says ficheiro, not arquivo", /ficheiro/.test(TRANSLATIONS["pt-PT"]["job.uploadFailed"] || ""));
+check("pt-PT says transferir and ficheiro for the model download", /transferir.*ficheiro/.test(TRANSLATIONS["pt-PT"]["job.cause.modelDownload"] || ""));
+
+// The separation model's download (#125): the server's words name the file's
+// address and the folder to put it in, and they stay whole as the detail line.
+const MODEL_WORDS = "model download failed: https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th; put the file in <models>\\torch\\hub\\checkpoints (no data for 30 s)";
+const modelFail = importFailure(failedLink(detail("model-download", MODEL_WORDS)));
+eq("a model download failure says its sentence", modelFail.message, en["job.cause.modelDownload"]);
+eq("a model download failure keeps the address and the folder as its detail", modelFail.detail, MODEL_WORDS);
 
 // A failure the pipeline did not classify (a job lost to two restarts, an
 // upload whose file went missing) has no error_detail: the server's words stay.

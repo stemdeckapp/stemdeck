@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import shutil
 import threading
 import time
@@ -220,6 +221,60 @@ async def test_download_failure_message_is_redacted(tmp_path: Path):
     assert job.error_detail.startswith("source-unavailable")
     assert "youtube.com" not in job.error_detail
     assert "dQw4w9WgXcQ" not in job.error_detail
+
+
+@pytest.mark.asyncio
+async def test_a_model_download_failure_names_the_file_and_a_redacted_folder(tmp_path: Path):
+    """#125: what the page shows under the sentence is the file's address,
+    whole, and the folder to put it in, with the user's home taken out."""
+    from app.pipeline.errors import SeparationError
+
+    job = Job(id="abcdefabcde5")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+    url = "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th"
+    folder = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+    words = f"model download failed: {url}; put the file in {folder} (no data for 30 s)"
+
+    def boom(*args, **kwargs):
+        raise SeparationError(f"demucs failed: {words}", tail=[words], device="cuda")
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    dash = chr(0x2014)  # the runner's separator between the cause and the words
+    shown = os.path.join("<home>", ".cache", "torch", "hub", "checkpoints")
+    assert job.error_detail == (
+        f"model-download {dash} model download failed: {url};"
+        f" put the file in {shown} (no data for 30 s)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_long_download_reason_never_cuts_off_the_folder(tmp_path: Path):
+    """error_detail keeps 200 characters. A proxy's TLS error is long, and it
+    is the reason, not the folder, that the cut may take."""
+    from app.core.model_download import ModelDownloadError
+    from app.pipeline.errors import SeparationError
+
+    job = Job(id="abcdefabcde4")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+    reason = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: " * 3
+    url = "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th"
+    words = str(ModelDownloadError(url, "/cache/torch/hub/checkpoints", reason))
+
+    def boom(*args, **kwargs):
+        raise SeparationError(f"demucs failed: {words}", tail=[words], device="cpu")
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert f"{url}; put the file in /cache/torch/hub/checkpoints (" in job.error_detail
 
 
 @pytest.mark.asyncio

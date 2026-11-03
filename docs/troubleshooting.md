@@ -6,7 +6,9 @@
 
 **`WARNING: [youtube] No supported JavaScript runtime`:** install deno (`brew install deno` on macOS) and restart. Downloads still work without it but may pick suboptimal formats.
 
-**First separation is very slow:** Demucs downloads `htdemucs_6s` weights (~170 MB) on first run; cached afterwards.
+**First separation is very slow:** Demucs downloads `htdemucs_6s` weights (~170 MB) on first run; cached afterwards. The stage reads "Downloading the separation model" while it does.
+
+**"Could not download the separation model":** the network blocked or stalled the connection to `dl.fbaipublicfiles.com`. Try another network, a VPN, or a proxy (`HTTPS_PROXY` is honoured). Or download the file the error names (`https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th` for `htdemucs_6s`) in a browser and put it, keeping its file name, in the folder the error names. The error writes StemDeck's models folder as `<models>`, so a bug report never carries your user name: it is `%LOCALAPPDATA%\StemDeck\models` on Windows (`data\models` beside `StemDeck.exe` for the portable zip), `~/Library/Application Support/StemDeck/models` on macOS and `~/.local/share/stemdeck/models` on Linux. The Docker image uses `/cache/torch/hub/checkpoints`. A file already in that folder is used as it is, without a download. The timeouts are in [Configuration](configuration.md).
 
 **Demucs runs on CPU only:** check the startup log for `device=mps` or `device=cuda`. If you see `cpu`, your torch install may be CPU-only.
 

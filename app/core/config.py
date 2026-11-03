@@ -341,6 +341,19 @@ LOUDNESS_UPGRADE_QUEUE_MAX = 8
 TIMEOUT_FFMPEG = _env_int("STEMDECK_TIMEOUT_FFMPEG", 300)
 TIMEOUT_ANALYZE = _env_int("STEMDECK_TIMEOUT_ANALYZE", 120)
 TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
+# The separation model's first download (#125). A network that opens the
+# connection and then sends nothing used to hold the first Split for the whole
+# 30-minute stall limit above. A read gives up after this many seconds without
+# a byte, the file is tried this many times with these pauses between tries,
+# and a worker silent this long while it downloads is stopped. The worker says
+# each failed try on stderr, which resets that limit, so its own error, which
+# names the file and the folder, usually arrives first; when the limit fires
+# instead (a host whose addresses each swallow the connection, say), the job's
+# error names them too.
+TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ", 30))
+MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
+MODEL_DOWNLOAD_BACKOFF = (2, 5)
+TIMEOUT_MODEL_STALL = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_STALL", 120))
 # Automatic functional-section analysis. Inference stays on CPU because the
 # persistent Demucs worker deliberately keeps its model resident on the chosen
 # accelerator between jobs; loading a second model beside it would make VRAM
