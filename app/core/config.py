@@ -99,7 +99,7 @@ STEM_NAMES: tuple[str, ...] = ("vocals", "drums", "bass", "guitar", "piano", "ot
 # GET /api/config contract all assume "the 6 Demucs stems" and must not change
 # just because a job happened to request this extra pass.
 EXTRA_STEM_NAMES: tuple[str, ...] = ("lead_vocals", "backing_vocals")
-JOB_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+JOB_ID_RE = re.compile(r"^[a-f0-9]{12}\Z")
 
 
 def _packaged_data_dir() -> Path | None:
@@ -376,14 +376,14 @@ TIMEOUT_BEATGRID = _env_int("STEMDECK_TIMEOUT_BEATGRID", 300)
 
 # Recorded takes (docs: audio capture). A take is a folder under
 # jobs/<job_id>/takes/<take_id>/ and lives and dies with the job folder.
-TAKE_ID_RE = re.compile(r"^t[0-9a-f]{8}$")
+TAKE_ID_RE = re.compile(r"^t[0-9a-f]{8}\Z")
 TAKES_DIRNAME = "takes"
 # One job can hold this many takes, finished or not. A bound on disk use by a
 # client that creates takes in a loop, not a musical limit.
 TAKE_MAX_PER_JOB = 50
 # Recording tracks (DAW-style): a track is one mixer lane that owns takes and
 # plays its active one. Stored in takes/tracks.json beside the take folders.
-TRACK_ID_RE = re.compile(r"^k[0-9a-f]{8}$")
+TRACK_ID_RE = re.compile(r"^k[0-9a-f]{8}\Z")
 TRACKS_FILE = "tracks.json"
 TRACK_MAX_PER_JOB = 32
 # A video take's filmstrip (GET .../takes/{id}/filmstrip): one sprite of

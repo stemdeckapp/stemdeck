@@ -3,15 +3,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import math
 import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -23,7 +23,9 @@ from app.core.config import (
     JOB_ID_RE,
     LYRICS_FILE,
     STEM_NAMES,
+    TAKE_ID_RE,
     TAKES_DIRNAME,
+    TRACK_ID_RE,
 )
 from app.core.models import (
     FINISHED_STATUSES,
@@ -110,6 +112,11 @@ SAVED_FIELDS = (
 
 def saved_fields(job: Job) -> dict[str, Any]:
     return {name: getattr(job, name) for name in SAVED_FIELDS}
+
+
+# Newer than 0.20.0, which drops them from every record it saves, and kept in
+# metadata.json: after a downgrade and back, that is their only copy.
+_BACK_FROM_METADATA = (*SAVED_FIELDS, "stem_format", "stem_mp3_kbps", "loudness_version")
 
 
 def register(job: Job) -> Job:
@@ -322,7 +329,9 @@ def _read_registry(path: Path) -> dict | None:
         data = json.loads(path.read_bytes().decode("utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, RecursionError, ValueError):
+        # RecursionError: nesting too deep for the parser, which used to stop
+        # the backend booting.
         logger.warning("registry at %s is unreadable", path, exc_info=True)
         quarantine_corrupt(path, "registry")
         return None
@@ -333,10 +342,12 @@ def _read_registry(path: Path) -> dict | None:
     return data
 
 
-def _keep_bad_records(path: Path, records: list, why: str) -> None:
+def _keep_bad_records(path: Path, records: list, why: str) -> bool:
     """Save the raw JSON of records the load skipped or repaired, beside the
     registry as registry.json.bad-<time>, so dropping them is never silent.
-    The next persist rewrites registry.json without them."""
+    True when they were kept: only then does restore() rewrite registry.json
+    without them for that reason, which stops the next start setting them
+    aside again."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     target = path.with_name(f"{path.name}.bad-{stamp}-{uuid.uuid4().hex[:6]}")
     try:
@@ -345,6 +356,14 @@ def _keep_bad_records(path: Path, records: list, why: str) -> None:
         logger.warning("kept %d registry record(s) aside in %s: %s", len(records), target, why)
     except (OSError, TypeError, ValueError):
         logger.warning("could not keep bad registry records aside", exc_info=True)
+        return False
+    return True
+
+
+# A take or track entry without its id stops them being reconciled with the
+# disk on every start. Reset, the list is filled again from the take folders
+# and tracks.json (_sync_tracks).
+_ENTRY_IDS = {"takes": TAKE_ID_RE, "tracks": TRACK_ID_RE}
 
 
 def _annotation_types(annotation: object) -> tuple[type, ...] | None:
@@ -393,6 +412,15 @@ def _repair_field_types(job: Job) -> list[str]:
         ok = isinstance(value, allowed)
         if ok and isinstance(value, bool) and bool not in allowed:
             ok = False  # bool is an int subclass; True is not a number here
+        elif ok and isinstance(value, (int, float)) and not isinstance(value, bool):
+            # NaN and infinity cannot be sent as JSON, and an int too big for a
+            # float made the whole library list fail (OverflowError).
+            ok = abs(value) <= sys.float_info.max
+        elif ok and f.name in _ENTRY_IDS:
+            ok = all(
+                isinstance(entry, dict) and _ENTRY_IDS[f.name].match(str(entry.get("id")))
+                for entry in value
+            )
         if ok:
             continue
         if f.default is not dataclasses.MISSING:
@@ -418,6 +446,10 @@ def restore(jobs_dir: Path) -> None:
     data = _read_registry(path) if path.is_file() else None
     if data is not None:
         try:
+            if not isinstance(data.get("version", 0), int):
+                # Read as the oldest, so every upgrade step runs and the
+                # records still load instead of the whole file moving aside.
+                data["version"] = 0
             copy_saved = data.get("version", 0) < 2
             data = _migrate(data)
             recorded = data.get("deleted")
@@ -433,7 +465,7 @@ def restore(jobs_dir: Path) -> None:
             deleted = deleted_ids()
             records = data.get("jobs", [])
             if not isinstance(records, list):
-                _keep_bad_records(path, [records], "the jobs list was not a list")
+                changed = _keep_bad_records(path, [records], "the jobs list was not a list")
                 records = []
             bad: list = []
             # The fields each record really held, not a default filled in.
@@ -443,24 +475,29 @@ def restore(jobs_dir: Path) -> None:
                 # load, and the persist after orphan recovery then wrote the
                 # survivors over everything else: favourites, the Trash, the
                 # queue and the delete tombstones.
+                rid = record.get("id") if isinstance(record, dict) else None
+                rid = rid if isinstance(rid, str) and JOB_ID_RE.match(rid) else None
+                # Only a well-formed id reaches the log. A second record for one
+                # song would otherwise replace the first unseen.
+                why = "no valid job id" if rid is None else "repeated" if rid in held else None
+                if why:
+                    logger.warning("skipping registry record %s: %s", rid or "?", why)
+                    bad.append(record)
+                    continue
                 try:
                     job = Job.from_record(record)
                     repaired = _repair_field_types(job)
-                except Exception:
-                    rid = record.get("id") if isinstance(record, dict) else None
-                    logger.warning("skipping unreadable registry record %r", rid, exc_info=True)
+                except Exception as exc:
+                    logger.warning("skipping registry record %s: %s", rid, type(exc).__name__)
                     bad.append(record)
                     continue
                 if repaired:
                     logger.warning(
-                        "registry record %s had wrong types in %s; reset to defaults",
+                        "registry record %s had wrong values in %s; reset to defaults",
                         job.id,
                         ", ".join(repaired),
                     )
                     bad.append(record)
-                    changed = True
-                if not JOB_ID_RE.match(job.id):
-                    continue
                 if job.id in deleted:
                     # Deleted while it was still stopping, and the process
                     # ended before the stop settled (#748): finish the delete.
@@ -489,14 +526,17 @@ def restore(jobs_dir: Path) -> None:
                 except Exception:
                     logger.warning("could not restore registry record %s", job.id, exc_info=True)
                     bad.append(record)
-            if bad:
-                _keep_bad_records(path, bad, "records that could not be loaded as they were")
+            if bad and _keep_bad_records(
+                path, bad, "records that could not be loaded as they were"
+            ):
+                changed = True
             for job in to_add.values():
                 if _sync_tracks(job, jobs_dir / job.id):
                     changed = True
             if copy_saved:
                 # Songs finished before metadata.json kept a copy get one now,
-                # or a registry lost later would still reset all of them.
+                # or a registry lost later would still reset all of them. A
+                # record 0.20.0 saved takes back from it what 0.20.0 dropped.
                 copied = sum(
                     _copy_saved_fields(job, jobs_dir, held.get(job.id, set()))
                     for job in to_add.values()
@@ -541,7 +581,13 @@ def restore(jobs_dir: Path) -> None:
                 # The user deleted this and its files outlived the delete.
                 # Adopting it here is what brought songs back (#521).
                 continue
-            found = _rebuild_from_folder(job_dir)
+            try:
+                found = _rebuild_from_folder(job_dir)
+            except Exception:
+                # One folder that cannot be read costs that song, not every
+                # folder after it and the save that follows.
+                logger.warning("could not rebuild %s from its folder", job_dir.name, exc_info=True)
+                continue
             if found is not None:
                 recovered, had_saved = found
                 _sync_tracks(recovered, job_dir)
@@ -572,7 +618,7 @@ def restore(jobs_dir: Path) -> None:
 
 def _copy_saved_fields(job: Job, jobs_dir: Path, held: set[str]) -> bool:
     """Put the job's SAVED_FIELDS into its metadata.json, changing nothing else
-    in it. A field the registry record did not hold only fills a gap: 0.20.0
+    in it. A field the registry record did not hold comes the other way: 0.20.0
     drops versions and the newer fields from the registry, so after a
     downgrade and back, metadata.json is their only copy. False when the song
     has no usable metadata.json."""
@@ -583,13 +629,14 @@ def _copy_saved_fields(job: Job, jobs_dir: Path, held: set[str]) -> bool:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         if not isinstance(meta, dict):
             return False
+        _read_meta_fields(job, meta, [n for n in _BACK_FROM_METADATA if n not in held])
         for name, value in saved_fields(job).items():
             if name in held or name not in meta:
                 meta[name] = value
         _write_atomic(meta_path, json.dumps(meta, indent=2) + "\n")
     except FileNotFoundError:
         return False
-    except (OSError, ValueError):
+    except (OSError, RecursionError, ValueError):
         logger.warning("could not copy saved fields into %s", meta_path, exc_info=True)
         return False
     return True
@@ -668,11 +715,17 @@ def _sync_tracks(job: Job, job_dir: Path) -> bool:
     if not job.takes and not job.tracks and not (job_dir / "takes").is_dir():
         return False
     try:
-        job.tracks, job.takes, changed = reconcile_tracks(job_dir, job.tracks, job.takes)
+        # Takes are files first. A record without them (0.20.0 drops them)
+        # gets the finished ones on disk, or reconciling would take every
+        # track's active take away and write that to tracks.json. A take
+        # whose folder outlived its delete comes back with them, as it does
+        # when the song is rebuilt from its folder.
+        found = [] if job.takes else recover_takes(job_dir)
+        job.tracks, job.takes, changed = reconcile_tracks(job_dir, job.tracks, job.takes or found)
     except Exception:
         logger.warning("could not reconcile tracks for %s", job.id, exc_info=True)
         return False
-    return changed
+    return changed or bool(found)
 
 
 def _recover_done_job(job_dir: Path) -> Job | None:
@@ -709,7 +762,7 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     if meta_path.is_file():
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, RecursionError, ValueError):
             pass
         if not isinstance(meta, dict):
             meta = {}  # read as none, so the folders after this one still rebuild
@@ -764,20 +817,21 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         # lost, so the lanes come back with the job.
         takes=recover_takes(job_dir),
     )
-    # A file on disk, so read through the same checks as a registry record: a
-    # value of the wrong type keeps what the folder gave instead of loading.
-    # NaN passes as a float but fails every JSON response the library sends.
-    saved = {
-        name: meta[name] for name in (*SAVED_FIELDS, "has_video", "video_status") if name in meta
-    }
-    if saved:
-        kept = Job.from_record({**saved, "id": job.id})
-        for name in saved.keys() - set(_repair_field_types(kept)):
-            value = getattr(kept, name)
-            if not isinstance(value, float) or math.isfinite(value):
-                setattr(job, name, value)
-        job.selected_stems = clean_stems(job.selected_stems) or selected
+    _read_meta_fields(job, meta, (*SAVED_FIELDS, "has_video", "video_status"))
+    job.selected_stems = clean_stems(job.selected_stems) or selected
     return job, any(name in meta for name in SAVED_FIELDS)
+
+
+def _read_meta_fields(job: Job, meta: dict, names: Iterable[str]) -> None:
+    """Set each of `names` that metadata.json holds on the job. A file on disk,
+    so read through the same checks as a registry record: a value of the wrong
+    type keeps what the job has instead of loading."""
+    found = {name: meta[name] for name in names if name in meta}
+    if not found:
+        return
+    kept = Job.from_record({**found, "id": job.id})
+    for name in found.keys() - set(_repair_field_types(kept)):
+        setattr(job, name, getattr(kept, name))
 
 
 @contextmanager
