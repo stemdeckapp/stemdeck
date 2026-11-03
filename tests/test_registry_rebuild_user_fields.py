@@ -243,6 +243,58 @@ def test_back_from_a_downgrade_the_copy_keeps_what_0_20_0_dropped(jobs_dir):
     assert meta["separation_quality"] == "best"
 
 
+# The fields 0.20.0's registry.persist writes: the fixture is its own output.
+FIELDS_0_20_0 = set(
+    json.loads((FIXTURE.parent / "registry.json").read_text(encoding="utf-8"))["jobs"][0]
+)
+
+
+def _saved_by_0_20_0(jobs_dir: Path) -> None:
+    """registry.json as 0.20.0 rewrites it on its first save: version 1, and
+    every record cut down to the fields 0.20.0 knows."""
+    path = registry_path(jobs_dir)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["version"] = 1
+    data["jobs"] = [{k: v for k, v in r.items() if k in FIELDS_0_20_0} for r in data["jobs"]]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_downgrade_to_0_20_0_and_back_loses_nothing(jobs_dir):
+    """0.20.0 loads a 0.21 library but its first save drops every newer field.
+    Back on 0.21 the song has its versions, stem format and takes again, and
+    the track still plays the take it played."""
+    from app.core.takes import make_track, recover_takes, write_tracks
+
+    take = jobs_dir / SONG / "takes" / "t0000aaaa"
+    take.mkdir(parents=True)
+    (take / "audio.wav").write_bytes(b"RIFF")
+    (take / "take.json").write_text(
+        json.dumps({"track_id": "k0000aaaa", "label": "Take 1", "created_at": 1790900000.0}),
+        encoding="utf-8",
+    )
+    track = {**make_track("k0000aaaa", "Guitar", 0), "active_take_id": "t0000aaaa"}
+    write_tracks(jobs_dir / SONG, [track])
+    newer = {"stem_format": "mp3", "stem_mp3_kbps": 192, "loudness_version": 2}
+    _finished(jobs_dir, **SAVED, **newer, takes=recover_takes(jobs_dir / SONG), tracks=[track])
+    assert FIELDS_0_20_0.isdisjoint({*newer, "versions", "takes", "tracks"}), "0.20.0's fields"
+
+    _saved_by_0_20_0(jobs_dir)
+    job = _restart(jobs_dir)
+
+    _assert_kept(job)
+    for name, value in newer.items():
+        assert getattr(job, name) == value, name
+    assert [t["id"] for t in job.takes] == ["t0000aaaa"]
+    assert [t["active_take_id"] for t in job.tracks] == ["t0000aaaa"]
+    on_disk = json.loads((jobs_dir / SONG / "takes" / "tracks.json").read_text(encoding="utf-8"))
+    assert [t["active_take_id"] for t in on_disk["tracks"]] == ["t0000aaaa"]
+    # And the registry holds them again, so a second start needs no metadata.
+    record = json.loads(registry_path(jobs_dir).read_text(encoding="utf-8"))["jobs"][0]
+    saved = Job.from_record(record)
+    _assert_kept(saved)
+    assert saved.stem_format == "mp3" and [t["id"] for t in saved.takes] == ["t0000aaaa"]
+
+
 def test_a_song_that_finished_as_the_process_died_keeps_the_registry_fields(jobs_dir):
     """Saved as running, stems complete on disk: the registry, the newer
     source, says what the user chose."""

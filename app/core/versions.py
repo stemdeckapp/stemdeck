@@ -21,8 +21,8 @@ song.
 from __future__ import annotations
 
 import logging
-import math
 import re
+import sys
 import time
 import unicodedata
 import uuid
@@ -64,7 +64,8 @@ def clean_stems(value: Any) -> list[str]:
 def _finite_time(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
-    return float(value) if math.isfinite(value) else 0.0
+    # Not math.isfinite: it raises OverflowError for an int too big for a float.
+    return float(value) if abs(value) <= sys.float_info.max else 0.0
 
 
 def _clean_one(raw: Any) -> dict[str, Any] | None:

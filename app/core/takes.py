@@ -112,15 +112,16 @@ def recover_takes(job_dir: Path) -> list[dict[str, Any]]:
         sidecar_path = folder / "take.json"
         if not sidecar_path.is_file() or not (folder / "audio.wav").is_file():
             continue
+        # A damaged take.json costs that take, not the song: this runs while
+        # the whole library loads.
         try:
             sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            sidecar["id"] = folder.name
+            entry = take_entry(job_dir.name, sidecar, camera_file(folder) is not None)
+        except (OSError, ArithmeticError, AttributeError, RecursionError, TypeError, ValueError):
             logger.warning("could not read %s", sidecar_path, exc_info=True)
             continue
-        if not isinstance(sidecar, dict):
-            continue
-        sidecar["id"] = folder.name
-        entries.append(take_entry(job_dir.name, sidecar, camera_file(folder) is not None))
+        entries.append(entry)
     entries.sort(key=lambda e: e["created_at"])
     return entries
 

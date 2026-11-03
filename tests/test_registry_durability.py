@@ -11,6 +11,8 @@ file in the first place.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import threading
 from pathlib import Path
@@ -65,6 +67,9 @@ def _sidecars(jobs_dir: Path, kind: str) -> list[Path]:
     ],
 )
 def test_one_bad_record_does_not_cost_the_others(tmp_path: Path, bad):
+    # A tombstone only matters while its folder outlives the delete; the save
+    # after a bad record prunes one without a folder.
+    (tmp_path / BAD).mkdir()
     _write(
         tmp_path,
         {
@@ -126,6 +131,163 @@ def test_wrong_types_per_field_are_repaired_not_fatal(tmp_path: Path, field, val
     assert GOOD_B in {r["id"] for r in on_disk["jobs"]}
 
 
+def test_a_bad_record_is_set_aside_once_not_on_every_start(tmp_path: Path):
+    _write(tmp_path, {"version": 2, "jobs": [_record(GOOD_A, favorite=True), "junk"]})
+
+    for _ in range(3):
+        _registry._jobs.clear()
+        _registry.restore(tmp_path)
+
+    assert len(_sidecars(tmp_path, "bad")) == 1
+    assert _registry.all_jobs()[GOOD_A].favorite is True
+
+
+@pytest.mark.parametrize(
+    ("records", "why"),
+    [
+        ([{**_record(GOOD_A), "id": "../../x\nFORGED LINE"}], "no valid job id"),
+        ([{**_record(GOOD_A), "id": GOOD_A + "\n"}], "no valid job id"),
+        ([{**_record(GOOD_A), "id": int("1" * 12)}], "no valid job id"),
+        ([{**_record(GOOD_A), "id": ["a", "list"]}], "no valid job id"),
+        ([_record(GOOD_B, favorite=False)], "repeated"),
+    ],
+    ids=["path", "newline", "number", "list", "duplicate"],
+)
+def test_a_record_with_a_bad_or_repeated_id_is_kept_aside_and_named_once(
+    tmp_path: Path, caplog, records, why
+):
+    """Skipped silently, it vanished at the next save with no copy, and a
+    second record for a song replaced the first unseen."""
+    _write(tmp_path, {"version": 2, "jobs": [_record(GOOD_B, favorite=True), *records]})
+
+    with caplog.at_level(logging.WARNING, logger="stemdeck.registry"):
+        _registry.restore(tmp_path)
+
+    jobs = _registry.all_jobs()
+    assert set(jobs) == {GOOD_B} and jobs[GOOD_B].favorite is True, "the first one wins"
+    [kept] = _sidecars(tmp_path, "bad")
+    assert json.loads(kept.read_text(encoding="utf-8"))["records"] == records
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("skipping")]
+    assert len(lines) == 1 and why in lines[0]
+    assert "FORGED" not in lines[0] and "\n" not in lines[0], "only a well-formed id is logged"
+    on_disk = json.loads(registry_path(tmp_path).read_text(encoding="utf-8"))
+    assert [r["id"] for r in on_disk["jobs"]] == [GOOD_B]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("created_at", 10**400),
+        ("duration_sec", 10**400),
+        ("created_at", float("nan")),
+        ("lufs", float("inf")),
+        ("takes", ["junk", {"id": "t0000aaaa"}]),
+        ("tracks", [{"name": "no id"}]),
+    ],
+    ids=["huge-created", "huge-duration", "nan", "infinity", "take-entry", "track-entry"],
+)
+def test_a_value_no_response_can_carry_is_reset_and_the_library_still_lists(
+    tmp_path: Path, field, value
+):
+    """An int too big for a float made GET /api/jobs fail for every song."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    record = _record(GOOD_A)
+    record[field] = value
+    _write(tmp_path, {"version": 2, "jobs": [record, _record(GOOD_B, favorite=True)]})
+
+    _registry.restore(tmp_path)
+
+    kept = getattr(_registry.get(GOOD_A), field)
+    if field == "created_at":
+        assert math.isfinite(kept) and kept < 10**12, "reset to now"
+    else:
+        assert kept == getattr(Job(id=GOOD_A), field)
+    listed = TestClient(app).get("/api/jobs")
+    assert listed.status_code == 200
+    assert {j["job_id"] for j in listed.json()} == {GOOD_A, GOOD_B}
+    assert len(_sidecars(tmp_path, "bad")) == 1
+
+
+def test_a_take_entry_without_an_id_comes_back_from_its_folder(tmp_path: Path):
+    take = tmp_path / GOOD_A / "takes" / "t0000aaaa"
+    take.mkdir(parents=True)
+    (take / "audio.wav").write_bytes(b"RIFF")
+    (take / "take.json").write_text('{"label": "Take 1", "created_at": 5}', encoding="utf-8")
+    _write(tmp_path, {"version": 2, "jobs": [_record(GOOD_A, takes=[{"label": "no id"}])]})
+
+    _registry.restore(tmp_path)
+
+    assert [t["id"] for t in _registry.get(GOOD_A).takes] == ["t0000aaaa"]
+
+
+HUGE_VERSION = '{"versions": [{"id": "ab12cd34", "stems": ["drums"], "created_at": 1%s}]}'
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("takes/t0000aaaa/take.json", '{"created_at": "yesterday"}'),
+        ("takes/t0000aaaa/take.json", '{"a":' * 100_000),
+        ("metadata.json", "[" * 100_000),
+        ("metadata.json", '{"bpm": 1%s}' % ("0" * 5000)),
+        ("metadata.json", HUGE_VERSION % ("0" * 400)),
+    ],
+    ids=["take-wrong-type", "take-too-deep", "meta-too-deep", "meta-too-long", "meta-version"],
+)
+def test_a_damaged_song_file_costs_that_file_not_the_library(tmp_path: Path, name, text):
+    """Folders rebuilt without a registry: one damaged file used to stop every
+    folder after it and the save."""
+    for job_id in (GOOD_A, GOOD_B):
+        (tmp_path / job_id / "stems").mkdir(parents=True)
+        (tmp_path / job_id / "stems" / "vocals.wav").write_bytes(b"RIFF")
+        (tmp_path / job_id / "metadata.json").write_text('{"title": "Kept"}', encoding="utf-8")
+    (tmp_path / GOOD_A / "takes" / "t0000aaaa").mkdir(parents=True)
+    (tmp_path / GOOD_A / "takes" / "t0000aaaa" / "audio.wav").write_bytes(b"RIFF")
+    (tmp_path / GOOD_A / name).write_text(text, encoding="utf-8")
+
+    _registry.restore(tmp_path)
+
+    assert set(_registry.all_jobs()) == {GOOD_A, GOOD_B}
+    on_disk = json.loads(registry_path(tmp_path).read_text(encoding="utf-8"))
+    assert {r["id"] for r in on_disk["jobs"]} == {GOOD_A, GOOD_B}
+
+
+def test_a_metadata_file_too_deep_on_the_way_back_from_0_20_0(tmp_path: Path):
+    """A version 1 registry reads every song's metadata.json once. One that
+    cannot be parsed used to move the whole registry aside."""
+    for job_id in (GOOD_A, GOOD_B):
+        (tmp_path / job_id).mkdir()
+    (tmp_path / GOOD_A / "metadata.json").write_text("[" * 100_000, encoding="utf-8")
+    (tmp_path / GOOD_B / "metadata.json").write_text('{"title": "Kept"}', encoding="utf-8")
+    _write(tmp_path, {"version": 1, "jobs": [_record(GOOD_A), _record(GOOD_B, favorite=True)]})
+
+    _registry.restore(tmp_path)
+
+    assert set(_registry.all_jobs()) == {GOOD_A, GOOD_B}
+    assert _sidecars(tmp_path, "corrupt") == []
+
+
+def test_a_version_with_a_huge_time_keeps_the_song(tmp_path: Path):
+    huge = [{"id": "ab12cd34", "name": "Beat", "stems": ["drums"], "created_at": 10**400}]
+    _write(tmp_path, {"version": 2, "jobs": [_record(GOOD_A, versions=huge)]})
+
+    _registry.restore(tmp_path)
+
+    assert _registry.get(GOOD_A).versions[0]["created_at"] == 0.0
+
+
+def test_an_id_with_a_trailing_newline_is_not_an_id():
+    """`$` matches before a final newline; a folder or record named that way
+    was adopted, then set aside on every start."""
+    from app.core.config import JOB_ID_RE, TAKE_ID_RE, TRACK_ID_RE
+
+    for regex, good in ((JOB_ID_RE, GOOD_A), (TAKE_ID_RE, "t0000aaaa"), (TRACK_ID_RE, "k0000aaaa")):
+        assert regex.match(good) and not regex.match(good + "\n")
+
+
 def test_a_good_registry_writes_no_sidecar(tmp_path: Path):
     _write(tmp_path, {"jobs": [_record(GOOD_A), _record(GOOD_B)]})
     _registry.restore(tmp_path)
@@ -163,6 +325,14 @@ def test_an_unreadable_registry_is_moved_aside_before_any_persist(tmp_path: Path
     assert GOOD_A in _registry.all_jobs(), "the jobs on disk are re-adopted"
     fresh = json.loads(registry_path(tmp_path).read_text(encoding="utf-8"))
     assert [r["id"] for r in fresh["jobs"]] == [GOOD_A]
+
+
+def test_a_registry_nested_too_deep_is_moved_aside_and_the_backend_starts(tmp_path: Path):
+    _write(tmp_path, '{"jobs": ' + "[" * 100_000)
+
+    _registry.restore(tmp_path)  # RecursionError used to escape at import time
+
+    assert len(_sidecars(tmp_path, "corrupt")) == 1
 
 
 def test_invalid_utf8_is_moved_aside(tmp_path: Path):
