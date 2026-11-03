@@ -68,6 +68,9 @@ function setAddEnabled(on) {
   for (const b of _addBtns) b.disabled = !on;
 }
 const _armed = new Set();
+// Each track row's level meter, by track id, kept as the rows are built:
+// recordUi.js draws the armed tracks' input into them on every frame.
+const _meters = new Map();
 // Tracks whose input the user picked in this session: never moved to the
 // input that has signal (autoPickChannel), whatever it hears.
 const _userPicked = new Set();
@@ -127,6 +130,11 @@ export function getTracks() {
 
 export function armedTracks() {
   return _tracks.filter((tr) => _armed.has(tr.id));
+}
+
+/** The track rows' level meters, track id to element. Read only: syncTakeLanes keeps it. */
+export function trackMeters() {
+  return _meters;
 }
 
 /** The input a track records from (its own, or the Settings default). */
@@ -224,6 +232,7 @@ export function syncTakeLanes(jobId, stems) {
   ensureMixerStateDefaults();
   closeTakeMenu();
   setAddEnabled(!!jobId);
+  _meters.clear();
   if (!mixerEl) return;
   for (const row of mixerEl.querySelectorAll(".lane-header[data-take], .take-folder-row")) row.remove();
   for (const track of _tracks) mixerEl.appendChild(buildRow(track));
@@ -238,7 +247,8 @@ export function syncTakeLanes(jobId, stems) {
 }
 
 function buildRow(track) {
-  const { row } = renderMixerRow({ name: track.id, url: track.url || "#" });
+  const { row, vuEl } = renderMixerRow({ name: track.id, url: track.url || "#" });
+  _meters.set(track.id, vuEl);
   row.dataset.take = track.id;
   row.classList.add("take-lane", "track-lane");
   row.classList.toggle("track-empty", !track.url);

@@ -321,6 +321,69 @@ test("arming opens the input: the armed track's meter shows it, disarming closes
   await expect.poll(vuIn).toBe(0);
 });
 
+test("the armed meters make no DOM lookup per frame, and follow a track added and removed", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(() => {
+    // Count the DOM lookups recordUi.js makes itself (the frame under the
+    // wrapper is the caller).
+    window.__recLookups = 0;
+    const count = (proto, name) => {
+      const orig = proto[name];
+      proto[name] = function (...args) {
+        if ((new Error().stack.split("\n")[2] || "").includes("/capture/recordUi.js")) window.__recLookups++;
+        return orig.apply(this, args);
+      };
+    };
+    for (const proto of [Document.prototype, Element.prototype]) {
+      count(proto, "querySelector");
+      count(proto, "querySelectorAll");
+    }
+    count(Document.prototype, "getElementById");
+  });
+  await openStudio(page);
+  await addTrack(page);
+  await waitForEngine(page);
+  const vuIn = (row) => row.locator(".lane-vu").evaluate((e) => parseFloat(e.style.getPropertyValue("--vu-in")) || 0);
+  // Chromium's fake device beeps; the meter catches a beep within a second or two.
+  const showsInput = (row) => expect.poll(async () => {
+    let best = 0;
+    for (let i = 0; i < 10; i++) { best = Math.max(best, await vuIn(row)); await page.waitForTimeout(50); }
+    return best;
+  }, { timeout: 10000 }).toBeGreaterThan(0);
+  // A second of metering, about sixty frames, with no lookup at all. Counted
+  // once the meter shows the input: reopening it after a reload looks up the
+  // panel's elements once, which is not per frame.
+  const lookupsDuringASecond = async (row) => {
+    await showsInput(row);
+    await page.evaluate(() => { window.__recLookups = 0; });
+    await page.waitForTimeout(1000);
+    const lookups = await page.evaluate(() => window.__recLookups);
+    await showsInput(row);
+    return lookups;
+  };
+
+  await trackRows(page).first().locator(".track-arm").click();
+  await showsInput(trackRows(page).first());
+  expect(await lookupsDuringASecond(trackRows(page).first())).toBe(0);
+
+  // A new row: the meter draws into it, armed beside the first.
+  await addTrack(page);
+  await waitForEngine(page);
+  await trackRows(page).nth(1).locator(".track-arm").click();
+  await expect(trackRows(page).nth(1)).toHaveClass(/armed/);
+  await showsInput(trackRows(page).nth(0));
+  await showsInput(trackRows(page).nth(1));
+
+  // The first row gone: the one left still meters, still without lookups.
+  await trackRows(page).first().locator(".take-menu-btn").click();
+  await page.locator(".take-menu .take-delete-track").click();
+  await page.locator(".take-menu .take-delete-track").click();
+  await expect(trackRows(page)).toHaveCount(1, { timeout: 20000 });
+  await waitForEngine(page);
+  await expect(trackRows(page).first()).toHaveClass(/armed/);
+  expect(await lookupsDuringASecond(trackRows(page).first())).toBe(0);
+});
+
 test("a track whose device is not connected says so, and Record refuses it", async ({ page }) => {
   const log = watchTakes(page);
   await openStudio(page);
