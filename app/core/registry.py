@@ -15,7 +15,7 @@ from typing import Any
 
 from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, LYRICS_FILE, STEM_NAMES
 from app.core.models import Job, clean_artist, clean_audio_tags, clean_identity, clean_work
-from app.core.settings import quarantine_corrupt
+from app.core.settings import fsync_dir, quarantine_corrupt
 from app.core.stem_files import stem_exists, stem_url
 from app.core.takes import reconcile_tracks, recover_takes
 from app.core.versions import clean_stems
@@ -260,23 +260,6 @@ def persist(jobs_dir: Path) -> None:
             logger.warning("could not persist registry to %s", path, exc_info=True)
 
 
-def _fsync_dir(directory: Path) -> None:
-    """Make a rename in `directory` durable. POSIX only: Windows cannot open a
-    directory for fsync, and NTFS journals the rename itself."""
-    if os.name == "nt":
-        return
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass  # some filesystems (network shares) refuse; the rename still happened
-    finally:
-        os.close(fd)
-
-
 def _write_atomic(path: Path, payload: str) -> None:
     """Replace `path` with `payload` so that a crash at any moment leaves
     either the old file or the new one, never a torn or empty one.
@@ -295,7 +278,7 @@ def _write_atomic(path: Path, payload: str) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
 
 
 def _read_registry(path: Path) -> dict | None:
