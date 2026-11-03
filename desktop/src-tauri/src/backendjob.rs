@@ -19,6 +19,10 @@
 //! The process is created suspended and only resumed once it is in the job,
 //! so the launcher cannot start the interpreter before the job applies.
 //!
+//! The setup children, pip and the model warmup, start the same way, so
+//! closing StemDeck mid-install ends them too; their job closes when they
+//! finish.
+//!
 //! macOS and Linux keep the plain spawn: there `stop_backend` sends SIGTERM
 //! first and the backend's shutdown stops its renders.
 
@@ -26,13 +30,13 @@ use std::io;
 use std::process::{Child, Command};
 
 #[cfg(windows)]
-pub use windows_impl::{spawn_backend_process, KillOnCloseJob};
+pub use windows_impl::{spawn_in_job, KillOnCloseJob};
 
 #[cfg(not(windows))]
 pub enum KillOnCloseJob {}
 
 #[cfg(not(windows))]
-pub fn spawn_backend_process(cmd: &mut Command) -> io::Result<(Child, Option<KillOnCloseJob>)> {
+pub fn spawn_in_job(cmd: &mut Command) -> io::Result<(Child, Option<KillOnCloseJob>)> {
     Ok((cmd.spawn()?, None))
 }
 
@@ -97,14 +101,14 @@ mod windows_impl {
         }
     }
 
-    /// Spawn the backend without a console window, inside a kill-on-close
-    /// job. When no job can be made the backend still starts, as before,
-    /// without one (logged): a missing safety net must not stop the app.
-    pub fn spawn_backend_process(cmd: &mut Command) -> io::Result<(Child, Option<KillOnCloseJob>)> {
+    /// Spawn without a console window, inside a kill-on-close job. When no
+    /// job can be made the process still starts, as before, without one
+    /// (logged): a missing safety net must not stop the app.
+    pub fn spawn_in_job(cmd: &mut Command) -> io::Result<(Child, Option<KillOnCloseJob>)> {
         let job = match KillOnCloseJob::new() {
             Ok(job) => job,
             Err(e) => {
-                eprintln!("[stemdeck] no job object for the backend: {e}");
+                eprintln!("[stemdeck] no job object for a child process: {e}");
                 cmd.creation_flags(CREATE_NO_WINDOW);
                 return Ok((cmd.spawn()?, None));
             }
@@ -124,7 +128,7 @@ mod windows_impl {
             return Err(e);
         }
         if !assigned {
-            eprintln!("[stemdeck] backend not in its job object: {assign_error}");
+            eprintln!("[stemdeck] child process not in its job object: {assign_error}");
             return Ok((child, None));
         }
         Ok((child, Some(job)))
@@ -157,7 +161,7 @@ mod windows_impl {
             if resumed {
                 Ok(())
             } else {
-                Err(io::Error::other("the backend process could not be resumed"))
+                Err(io::Error::other("the child process could not be resumed"))
             }
         }
     }
@@ -241,7 +245,7 @@ mod windows_impl {
 
         #[test]
         fn a_grandchild_dies_when_the_job_closes() {
-            let (mut child, job) = spawn_backend_process(&mut tree()).expect("spawned");
+            let (mut child, job) = spawn_in_job(&mut tree()).expect("spawned");
             let job = job.expect("the backend is in a job");
             let pid = child.id();
             assert!(
@@ -268,7 +272,7 @@ mod windows_impl {
         fn the_backend_is_resumed_and_runs_to_its_end() {
             let mut cmd = Command::new("cmd");
             cmd.args(["/d", "/c", "exit 7"]);
-            let (mut child, _job) = spawn_backend_process(&mut cmd).expect("spawned");
+            let (mut child, _job) = spawn_in_job(&mut cmd).expect("spawned");
             assert!(
                 eventually(|| matches!(child.try_wait(), Ok(Some(_)))),
                 "left suspended"

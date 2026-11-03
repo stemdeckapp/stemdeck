@@ -437,7 +437,12 @@ fn main() {
                 .cloned()
                 .ok_or("tauri.conf.json describes no main window")?;
             main_window.drag_drop_enabled = dropin::NATIVE_FILE_DROP;
-            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?;
+            let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?;
+            if let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) {
+                if let Some(dir) = portable_webview_dir(&root, &data_dir) {
+                    builder = builder.data_directory(dir);
+                }
+            }
             // Arms the launch crash guard and clears it once the page loads.
             #[cfg(target_os = "linux")]
             let builder = dmabuf::watch_first_load(builder);
@@ -1776,18 +1781,9 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
     // will load anything (#505).
     apply_ffmpeg_path(&mut command, &data_dir)?;
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start model warmup: {e}"))?;
-
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
-    }
-    let output = child_output_with_timeout(child, Duration::from_secs(30 * 60), "model warmup");
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
-    }
-    let output = output?;
+    let output = run_setup_child(&mut command, &state, "model warmup", |child| {
+        child_output_with_timeout(child, Duration::from_secs(30 * 60), "model warmup")
+    })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut status = ModelWarmupStatus {
@@ -1819,6 +1815,29 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
         );
     }
     Ok(status)
+}
+
+/// Runs a setup child (pip, the model warmup) through `wait`, with its pid in
+/// `setup_child_pid` meanwhile so closing the window can stop it. On Windows,
+/// where that close path has no signal to send, the child runs in a job that
+/// StemDeck's exit closes, which ends it and whatever it started.
+fn run_setup_child(
+    command: &mut Command,
+    state: &BackendState,
+    label: &str,
+    wait: impl FnOnce(Child) -> Result<Output, String>,
+) -> Result<Output, String> {
+    // Held to the end of this function: dropping the job ends the child.
+    let (child, _job) =
+        backendjob::spawn_in_job(command).map_err(|e| format!("failed to start {label}: {e}"))?;
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = Some(child.id());
+    }
+    let output = wait(child);
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child_pid = None;
+    }
+    output
 }
 
 /// Spawns the Python/uvicorn backend, waits for it to become healthy, and returns its URL.
@@ -1963,7 +1982,7 @@ fn start_backend(
 
         // On Windows also without a console window, and inside a job that
         // ends the whole backend tree with StemDeck (see backendjob.rs).
-        let (mut child, job) = backendjob::spawn_backend_process(&mut cmd)
+        let (mut child, job) = backendjob::spawn_in_job(&mut cmd)
             .map_err(|e| format!("failed to start backend: {e}"))?;
         // Release the reserved ports immediately after spawn so uvicorn can
         // bind them. Both, or the companion listener finds its own port held.
@@ -2276,6 +2295,13 @@ fn is_cpu_only_package(root: &Path) -> bool {
 /// extract is portable with zero user action. Never present on macOS/Linux.
 fn is_portable_package(root: &Path) -> bool {
     root.join("portable.txt").is_file()
+}
+
+/// Where a portable package keeps its WebView2 profile: in its data dir, like
+/// everything else it writes (#399). `None` keeps the platform default, which
+/// on Windows is %LOCALAPPDATA%\app.stemdeck.desktop\EBWebView.
+fn portable_webview_dir(root: &Path, data_dir: &Path) -> Option<PathBuf> {
+    is_portable_package(root).then(|| data_dir.join("webview"))
 }
 
 /// A persisted "cpu-only-package" device decision is only trustworthy while the
@@ -3161,26 +3187,16 @@ fn spawn_pip(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start {label}: {e}"))?;
-
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
-    }
-    let output = child_output_streaming(
-        child,
-        stall,
-        PIP_HARD_CAP,
-        label,
-        pip_line_reporter(app.clone(), label.to_string()),
-    );
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
-    }
-    output
+    run_setup_child(&mut command, state, label, |child| {
+        child_output_streaming(
+            child,
+            stall,
+            PIP_HARD_CAP,
+            label,
+            pip_line_reporter(app.clone(), label.to_string()),
+        )
+    })
 }
 
 /// Whether pip refused `--progress-bar raw` itself, as opposed to failing at
@@ -4043,6 +4059,7 @@ fn stop_backend(state: &BackendState) {
 
     // Kill any in-progress setup-time subprocess (pip install, model warmup)
     // so it doesn't corrupt the venv/cache if the window is closed mid-setup (#140).
+    // On Windows its job (run_setup_child) ends it when StemDeck exits.
     #[cfg(unix)]
     if let Some(pid) = _setup_child_pid {
         // SAFETY: pid was stored immediately after spawn; we send SIGTERM best-effort.
@@ -7909,6 +7926,58 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn what_a_setup_child_starts_does_not_outlive_it() {
+        // On Windows nothing ended pip or the model warmup when StemDeck
+        // closed, so either kept writing into python/ or the model cache. They
+        // run in a job that closes with StemDeck. Here the setup child starts
+        // its own child, which writes `started` at once and would write `late`
+        // two seconds on; once the setup child is done with, the job has to
+        // have ended that one too.
+        use std::os::windows::process::CommandExt;
+        let dir = make_tmp();
+        let mut command = Command::new("cmd");
+        command
+            .args(["/d", "/c"])
+            .raw_arg(
+                "start /b cmd /d /c \"type nul > started & ping -n 3 127.0.0.1 >nul & type nul > late\"",
+            )
+            .current_dir(dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let state = super::BackendState::default();
+
+        let output = super::run_setup_child(&mut command, &state, "setup child", |mut child| {
+            let pid = state.inner.lock().unwrap().setup_child_pid;
+            assert_eq!(pid, Some(child.id()), "the close handler can find it");
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !dir.path().join("started").exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let status = child.wait().map_err(|e| e.to_string())?;
+            Ok(std::process::Output {
+                status,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        })
+        .expect("ran");
+
+        assert!(output.status.success());
+        assert_eq!(state.inner.lock().unwrap().setup_child_pid, None);
+        assert!(
+            dir.path().join("started").exists(),
+            "the setup child's own child never ran"
+        );
+        std::thread::sleep(Duration::from_secs(5));
+        assert!(
+            !dir.path().join("late").exists(),
+            "a process the setup child started outlived it"
+        );
+    }
+
+    #[test]
     #[cfg(not(target_os = "macos"))]
     fn the_pip_stall_budget_outlasts_a_quiet_wheel_install() {
         // A large wheel decompresses and writes with no output at all, so the
@@ -10193,6 +10262,28 @@ configuration: --cc=clang\n";
         // Marker in the app root (ships with the package) does.
         fs::write(root.path().join("portable.txt"), "").unwrap();
         assert!(super::is_portable_package(root.path()));
+    }
+
+    #[test]
+    fn a_portable_package_keeps_its_webview_profile_in_data() {
+        // #399: the WebView2 profile went to %LOCALAPPDATA% even when every
+        // other file stayed in the portable folder.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        assert_eq!(
+            super::portable_webview_dir(root.path(), &data),
+            Some(data.join("webview"))
+        );
+    }
+
+    #[test]
+    fn an_installed_app_keeps_the_default_webview_profile() {
+        // Installers, macOS and Linux keep the profile where it always was,
+        // with whatever the user has stored in it.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        assert_eq!(super::portable_webview_dir(root.path(), &data), None);
     }
 
     #[test]
