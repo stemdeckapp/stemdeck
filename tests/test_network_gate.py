@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -383,3 +387,50 @@ def test_toggling_applies_without_a_restart(own_ips):
 
         assert host.post("/api/settings", json={"allow_network": False}).status_code == 200
         _assert_refused(outside.get("/api/settings"))
+
+
+# ── what the desktop backend actually listens on (#859) ──
+#
+# The shell binds loopback while network access is off and every interface
+# while it is on, and says which through STEMDECK_BIND_HOST. Settings reports
+# it, so the switch shows what is listening, not only what was saved.
+
+
+@pytest.mark.parametrize(
+    "bind_host,listening",
+    [("127.0.0.1", False), ("0.0.0.0", True), (None, None)],
+)
+def test_settings_report_what_the_backend_listens_on(monkeypatch, bind_host, listening):
+    monkeypatch.setattr("app.main.BIND_HOST", bind_host)
+    with _peer("127.0.0.1") as c:
+        assert c.get("/api/settings").json()["network_listening"] is listening
+
+
+@pytest.mark.parametrize(
+    "env,bind_host",
+    [("127.0.0.1", "127.0.0.1"), (" 0.0.0.0 ", "0.0.0.0"), ("", None), (None, None)],
+)
+def test_the_bind_host_is_read_from_the_shells_variable(tmp_path, env, bind_host):
+    # The variable the Rust shell sets, read the way a fresh backend reads it.
+    # A subprocess, because config reads it once at import.
+    child_env = {**os.environ, "STEMDECK_DATA_DIR": str(tmp_path)}
+    child_env.pop("STEMDECK_BIND_HOST", None)
+    if env is not None:
+        child_env["STEMDECK_BIND_HOST"] = env
+    out = subprocess.run(
+        [sys.executable, "-c", "from app.core import config; print(repr(config.BIND_HOST))"],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert out == repr(bind_host)
+
+
+def test_a_saved_choice_does_not_change_what_is_listening(monkeypatch):
+    # The new bind needs the restart; until then the report stays the old one.
+    monkeypatch.setattr("app.main.BIND_HOST", "127.0.0.1")
+    with _peer("127.0.0.1") as c:
+        body = c.post("/api/settings", json={"allow_network": True}).json()
+        assert body["allow_network"] is True
+        assert c.get("/api/settings").json()["network_listening"] is False

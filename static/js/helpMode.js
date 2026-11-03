@@ -89,6 +89,10 @@ const HELP = [
   ["#donateStar", "help.donateStar"],
   ["#donateReleases", "help.donateReleases"],
   ["#donateBtn", "help.donate"],
+  // The dialog the desktop network switch opens to restart StemDeck (#859).
+  [".net-restart-go", "help.netRestartGo"],
+  [".net-restart-cancel", "help.netRestartCancel"],
+  [".net-restart-retry", "help.netRestartRetry"],
   ["#catalogSearch, #catalogToggle", "help.searchLibrary"],
   ["#newFolderBtn", "help.newFolder"],
   ["#clearBinBtn", "help.emptyTrash"],

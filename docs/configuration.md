@@ -35,27 +35,32 @@
 
 ### Who can reach StemDeck
 
-The desktop app's backend listens on every network interface from the first
-launch. That is deliberate: whether other devices are served is decided by the
-app for each request, so the setting takes effect at once, with no restart.
-
-While **Make StemDeck available on your network** is off, StemDeck answers only
-the machine it runs on, through loopback (`127.0.0.1`, `::1`) or one of the
-machine's own addresses. A request from any other device gets a 403 that says
-StemDeck is not available on the network, before it reaches any page or API.
-Turning the setting on lets other devices in; see
+While **Make StemDeck available on your network** is off, the desktop app's
+backend listens on `127.0.0.1` only, and there is no https listener at all.
+Other devices cannot connect to it, and the operating system has no reason to
+ask about a firewall rule. Turning the setting on restarts the backend on
+every interface, with the https listener beside it, which takes a few seconds;
+turning it off restarts it back onto `127.0.0.1`. If a separation is running,
+StemDeck asks first, because the restart stops it: the song waits in the
+queue, paused, and starts again from the beginning when you press Start. See
 [the https section](#serving-other-devices-why-https-is-not-optional) for what a
-phone needs.
+phone needs once it is on.
+
+StemDeck also checks every request itself. While the setting is off it answers
+only the machine it runs on, through loopback (`127.0.0.1`, `::1`) or one of
+the machine's own addresses, and a request from any other device gets a 403
+that says StemDeck is not available on the network, before it reaches any page
+or API. On the desktop this covers the moment between saving the choice and
+the restart that applies it.
 
 Docker, Unraid and `run.sh` start with network access on, because a headless
-server exists to be reached from other devices. To start one with it off, set
+server exists to be reached from other devices. They listen on every interface
+(`run.sh`: `HOST`, default `0.0.0.0`) whatever the setting says, so for them
+the 403 above is the whole control. To start one with it off, set
 `STEMDECK_ALLOW_NETWORK=0` (any value other than `1` means off). In server
 mode the switch in Settings is shown on and read-only, so the variable is the
-way to change it.
-
-The refusal is made by StemDeck, not by your operating system. If you want the
-port unreachable from other devices at the network level, block it in your
-firewall.
+way to change it. If you want a server's port unreachable from other devices
+at the network level, block it in your firewall.
 
 ### Serving other devices: why https is not optional
 
@@ -94,13 +99,14 @@ two audiences that need opposite things.
   self-signed certificate would raise a warning page the app window has no way
   to click through.
 - **https on the LAN**, port 8443 by default, for phones and other computers.
-  This is the address Settings shows and the QR code points at.
+  This is the address Settings shows and the QR code points at. It runs only
+  while network access is on.
 
 Both listeners serve the same process, so there is one library, one queue and
 one Demucs worker either way.
 
 The certificate is generated on your own machine the first time the app
-starts, and lives in `<data>/certs/` beside `jobs/` and
+starts with network access on, and lives in `<data>/certs/` beside `jobs/` and
 `settings.json`. Nothing is shipped in the download: a certificate in the
 release would publish its private key to everyone who downloaded it, which is
 worse than plain http because it looks secure. It is regenerated automatically

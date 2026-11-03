@@ -37,9 +37,11 @@ What to expect:
 StemDeck is local-first and single-user by design: it runs on your own machine,
 has no authentication, and is same-origin only. Reports that it "has no login"
 or "no per-user access control" describe intended behavior, not vulnerabilities.
-The desktop backend listens on every network interface and, while network
-access is off, refuses other devices itself rather than through the firewall;
-see [Who can reach StemDeck](docs/configuration.md#who-can-reach-stemdeck).
+The desktop backend listens on `127.0.0.1` only while network access is off,
+so other devices cannot connect, and on every interface once it is on. A
+server (Docker, Unraid, `run.sh`) listens on every interface and refuses other
+devices itself while network access is off; see
+[Who can reach StemDeck](docs/configuration.md#who-can-reach-stemdeck).
 
 We are most interested in reports about:
 

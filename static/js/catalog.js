@@ -4104,11 +4104,12 @@ function renderLibraryRows(tbody) {
   }
 }
 
-// "Make StemDeck available on your network" toggle. The backend always binds
-// all interfaces and gates LAN access on a runtime flag (GET/POST /api/settings)
-// — so this works live, no restart, identically in the desktop app and the
-// self-hosted server. Loopback is always allowed, so the owner can't lock
-// themselves out of this control.
+// "Make StemDeck available on your network" toggle. The backend gates LAN
+// access on a runtime flag (GET/POST /api/settings), and loopback is always
+// allowed, so the owner can't lock themselves out of this control. On a
+// server that is the whole of it and it applies live. The desktop app also
+// listens on loopback only while it is off (#859), so there a change restarts
+// the backend: see restartForNetwork.
 function networkSettingsHtml() {
   return `
     <div class="settings-section">
@@ -4707,7 +4708,10 @@ async function wireNetworkSetting(overlay) {
     const r = await fetch("/api/settings", { cache: "no-store" });
     if (r.ok) {
       const data = await r.json();
-      enabled = data.allow_network === true;
+      // On desktop, on only when it is both saved and listening: a restart
+      // that has not happened yet must not leave the switch saying otherwise
+      // in either direction. A server reports null for network_listening.
+      enabled = data.allow_network === true && data.network_listening !== false;
       addresses = Array.isArray(data.lan_addresses) ? data.lan_addresses : [];
     }
   } catch { /* leave defaults */ }
@@ -4773,22 +4777,148 @@ async function wireNetworkSetting(overlay) {
   const refresh = () => netWrap?.classList.toggle("hidden", !input.checked);
   refresh();
 
+  // Only ever fires on desktop: in server mode the switch is disabled
+  // (openSettings). It moves only once the restart has applied the change,
+  // and stays disabled while the dialog is open, so one change is one restart.
   input.addEventListener("change", async () => {
     const want = input.checked;
+    input.checked = !want;
     input.disabled = true;
-    try {
-      const r = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_network: want }),
-      });
-      input.checked = r.ok ? (await r.json()).allow_network === true : !want;
-    } catch {
-      input.checked = !want; // revert on failure
-    } finally {
-      input.disabled = false;
-      refresh();
-    }
+    const saved = await restartForNetwork(want);
+    // Reached only when the dialog closed without a reload. A saved "off"
+    // already refuses other devices, so the switch says off.
+    input.checked = !want && !saved;
+    input.disabled = false;
+    refresh();
+    input.focus();
+  });
+}
+
+/** Whether a separation is running. Unknown counts as running, so a restart
+ *  never stops one without asking. */
+async function separationRunning() {
+  try {
+    const r = await fetch("/api/queue", { cache: "no-store" });
+    if (r.ok) return (await r.json()).running != null;
+    console.warn("queue check failed:", r.status);
+  } catch (err) {
+    console.warn("queue check failed:", err);
+  }
+  return true;
+}
+
+/** Desktop: save the network choice and restart the backend so it listens
+ *  where the choice says, then reload on the URL it answers on (#859).
+ *
+ *  Turning it off is saved first, so other devices are refused at once even
+ *  if the restart waits. Turning it on is saved only once the restart goes
+ *  ahead. A restart stops a running separation, which then waits in the
+ *  queue, paused, to start again from the beginning, so that is asked first.
+ *  A failure says why, with Try again; Not now (or Escape) closes the dialog
+ *  in every state but the restart itself. Resolves, when it closes without a
+ *  reload, with whether the choice was saved. */
+function restartForNetwork(want) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "reset-confirm-backdrop";
+    overlay.innerHTML = `
+      <div class="reset-confirm-card" role="dialog" aria-modal="true" tabindex="-1" aria-label="Restart StemDeck" data-i18n-aria-label="settings.network.restartAria">
+        <div class="reset-confirm-title" data-i18n="settings.network.restartTitle">Restart StemDeck now?</div>
+        <p class="reset-confirm-body net-restart-body" role="status" aria-live="polite"></p>
+        <div class="reset-confirm-msg" role="alert" aria-live="polite"></div>
+        <div class="reset-confirm-actions">
+          <button class="reset-confirm-cancel net-restart-cancel" type="button" data-i18n="settings.network.restartCancel">Not now</button>
+          <button class="reset-confirm-go net-restart-go" type="button" data-i18n="settings.network.restartNow">Restart now</button>
+          <button class="reset-confirm-go net-restart-retry" type="button" data-i18n="settings.network.tryAgain">Try again</button>
+        </div>
+      </div>
+    `;
+    applyTranslations(overlay);
+    const card = overlay.querySelector(".reset-confirm-card");
+    const title = overlay.querySelector(".reset-confirm-title");
+    const body = overlay.querySelector(".net-restart-body");
+    const msg = overlay.querySelector(".reset-confirm-msg");
+    const cancelBtn = overlay.querySelector(".net-restart-cancel");
+    const goBtn = overlay.querySelector(".net-restart-go");
+    const retryBtn = overlay.querySelector(".net-restart-retry");
+    let saved = false;
+    // Whether the restart may go ahead: nothing was running, or the user said so.
+    let confirmed = false;
+
+    // The attribute, not the class: .hidden only applies inside .daw, and
+    // this dialog sits on body, above Settings.
+    const show = ({ text = "", error = "", ask = false, retry = false }) => {
+      title.hidden = !ask;
+      goBtn.hidden = !ask;
+      retryBtn.hidden = !retry;
+      cancelBtn.hidden = !ask && !retry;
+      body.textContent = text;
+      msg.textContent = error;
+      (ask ? goBtn : retry ? retryBtn : card).focus();
+    };
+    let onKey = null;
+    const close = () => {
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      resolve(saved);
+    };
+    const save = async () => {
+      try {
+        const r = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ allow_network: want }),
+        });
+        if (!r.ok) throw new Error(`status ${r.status}`);
+        saved = true;
+      } catch (err) {
+        console.warn("network setting save failed:", err);
+        show({ error: i18nT("settings.network.saveFailed", { error: String(err?.message || err) }), retry: true });
+      }
+      return saved;
+    };
+    const restart = async () => {
+      show({ text: i18nT("settings.network.restarting") });
+      if (!saved && !(await save())) return;
+      try {
+        const { url } = await window.__TAURI__.core.invoke("restart_backend");
+        window.location.replace(url);
+      } catch (err) {
+        console.warn("network restart failed:", err);
+        show({ error: i18nT("settings.network.restartFailed", { error: String(err?.message || err) }), retry: true });
+      }
+    };
+
+    const begin = async () => {
+      // Nothing to say until it is known whether to ask.
+      show({});
+      if (!want && !saved && !(await save())) return;
+      if (await separationRunning()) {
+        const key = want ? "settings.network.restartJobConfirm" : "settings.network.restartJobConfirmOff";
+        show({ text: i18nT(key), ask: true });
+      } else {
+        confirmed = true;
+        await restart();
+      }
+    };
+
+    cancelBtn.addEventListener("click", close);
+    goBtn.addEventListener("click", () => {
+      confirmed = true;
+      restart();
+    });
+    retryBtn.addEventListener("click", () => (confirmed ? restart() : begin()));
+    // Escape belongs to this dialog while it is open, not to Settings below,
+    // whose handler is on document: capture runs first, wherever focus is.
+    onKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!cancelBtn.hidden) close();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(overlay);
+    begin();
   });
 }
 
