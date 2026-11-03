@@ -115,7 +115,7 @@ def validate_target(target: Path, current: Path) -> Path:
             for e in entries
         ):
             raise StemsLocationError("Pick an empty folder, or one StemDeck already uses.")
-        if _holds_another_library(target, current):
+        if _holds_another_library(target, current) and _holds_songs(current):
             raise StemsLocationError(
                 "That folder already holds another StemDeck library. Pick an empty folder instead."
             )
@@ -179,6 +179,10 @@ def _looks_like_job_dir(entry: Path) -> bool:
     return entry.is_dir() and bool(JOB_ID_RE.match(entry.name))
 
 
+def _holds_songs(folder: Path) -> bool:
+    return folder.is_dir() and any(_looks_like_job_dir(e) for e in folder.iterdir())
+
+
 def move_library(current: Path, target: Path) -> MoveResult:
     """Move every stem directory (and top-level file, e.g. registry.json and
     the desktop shell's user-data.json, #403) from `current` into `target`.
@@ -202,6 +206,12 @@ def move_library(current: Path, target: Path) -> MoveResult:
     moved = 0
     moved_bytes = 0
 
+    # No song here and another library there: settings were lost while that
+    # library's drive was away, and StemDeck started in its default folder.
+    # Point at the library and bring nothing, or this folder's stray registry
+    # would be taken for the real one.
+    if not _holds_songs(current) and _holds_another_library(target, current):
+        return MoveResult(str(current), str(target), 0, 0, same_fs)
     if not current.exists():
         return MoveResult(str(current), str(target), 0, 0, same_fs)
 

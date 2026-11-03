@@ -873,6 +873,43 @@ def test_a_linked_registry_in_the_target_is_refused(tmp_path):
         validate_target(target, current)
 
 
+def test_a_library_can_be_pointed_at_from_a_folder_with_no_songs(client, tmp_path):
+    """Settings were lost while the library's drive was unplugged, so StemDeck
+    started in its default folder and wrote a registry there. Picking the
+    library again must point at it, not refuse it as another library, and must
+    not carry the stray registry over the real one."""
+    import app.core.settings as settings_mod
+
+    stray = _write_registry(client.jobs_dir, Job(id="dddddddddddd", status="done"))
+    (client.jobs_dir / "user-data.json").write_text('{"stray": 1}', encoding="utf-8")
+    library = tmp_path / "external-drive" / "StemDeck"
+    _job_dir(library, "aaaaaaaaaaaa")
+    real = _write_registry(library, Job(id="aaaaaaaaaaaa", status="done", favorite=True))
+    (library / "user-data.json").write_text('{"real": 1}', encoding="utf-8")
+
+    r = client.post("/api/settings/stems-location", json={"path": str(library)})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["moved_entries"] == 0
+    assert (library / "registry.json").read_text(encoding="utf-8") == real
+    assert (library / "user-data.json").read_text(encoding="utf-8") == '{"real": 1}'
+    assert (client.jobs_dir / "registry.json").read_text(encoding="utf-8") == stray
+    assert settings_mod.get_jobs_dir() == str(library.resolve())
+
+
+def test_a_folder_with_songs_still_refuses_another_library(tmp_path):
+    """Pointing away from a folder that holds songs would leave them behind."""
+    current = tmp_path / "default"
+    _job_dir(current, "dddddddddddd")
+    _write_registry(current, Job(id="dddddddddddd", status="done"))
+    library = tmp_path / "library"
+    _job_dir(library, "aaaaaaaaaaaa")
+    _write_registry(library, Job(id="aaaaaaaaaaaa", status="done"))
+
+    with pytest.raises(StemsLocationError, match="already holds another StemDeck library"):
+        validate_target(library, current)
+
+
 def test_a_registry_copied_but_not_yet_removed_is_our_own_progress(tmp_path):
     """A cross-device move copies, then deletes the source. Interrupted between
     the two, both folders hold the same registry, and the retry must go on."""
