@@ -29,6 +29,7 @@ from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddlewar
 from app.core.config import (
     ACOUSTID_CHECK_KEY,
     ALLOWED_HOSTS,
+    BIND_HOST,
     DEMUCS_MODEL,
     DISCOGS_CHECK_TOKEN,
     FFMPEG_BIN,
@@ -516,7 +517,18 @@ def get_settings(request: Request) -> dict[str, object]:
     # Show the port the server is actually running on rather than the stored
     # preference (which only takes effect on the next restart) -- so the field
     # reflects reality. Editing it still saves the preference via POST.
-    return {**_settings_payload(), "port": port, "lan_addresses": addresses}
+    #
+    # The same for the network switch on desktop: allow_network is the saved
+    # choice, network_listening is whether this process listens beyond
+    # loopback, which only changes when the shell restarts it (#859). None
+    # when the shell did not start this server.
+    listening = None if BIND_HOST is None else BIND_HOST != "127.0.0.1"
+    return {
+        **_settings_payload(),
+        "port": port,
+        "lan_addresses": addresses,
+        "network_listening": listening,
+    }
 
 
 # The detail for a key AcoustID refuses, which the Settings field tells apart
@@ -1375,6 +1387,11 @@ async def secure_origin_gate(request: Request, call_next):
 # refuses requests from OTHER devices when availability is off. The host machine
 # (loopback or its own LAN IP) is always served, so the app keeps working
 # locally regardless of this setting.
+#
+# In server mode this is the whole control. On desktop the shell also binds
+# loopback only while the setting is off (#859), so this is the second line:
+# it covers the moment between saving the choice and the restart that applies
+# it, and anything that starts the desktop backend on every interface.
 @app.middleware("http")
 async def network_gate(request: Request, call_next):
     if not get_allow_network():

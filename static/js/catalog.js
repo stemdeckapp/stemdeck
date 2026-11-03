@@ -4104,11 +4104,12 @@ function renderLibraryRows(tbody) {
   }
 }
 
-// "Make StemDeck available on your network" toggle. The backend always binds
-// all interfaces and gates LAN access on a runtime flag (GET/POST /api/settings)
-// — so this works live, no restart, identically in the desktop app and the
-// self-hosted server. Loopback is always allowed, so the owner can't lock
-// themselves out of this control.
+// "Make StemDeck available on your network" toggle. The backend gates LAN
+// access on a runtime flag (GET/POST /api/settings), and loopback is always
+// allowed, so the owner can't lock themselves out of this control. On a
+// server that is the whole of it and it applies live. The desktop app also
+// listens on loopback only while it is off (#859), so there a change restarts
+// the backend: see restartForNetwork.
 function networkSettingsHtml() {
   return `
     <div class="settings-section">
@@ -4707,7 +4708,11 @@ async function wireNetworkSetting(overlay) {
     const r = await fetch("/api/settings", { cache: "no-store" });
     if (r.ok) {
       const data = await r.json();
-      enabled = data.allow_network === true;
+      // On desktop, what is listening rather than what was saved: a restart
+      // that did not happen must not leave the switch saying otherwise.
+      enabled = typeof data.network_listening === "boolean"
+        ? data.network_listening
+        : data.allow_network === true;
       addresses = Array.isArray(data.lan_addresses) ? data.lan_addresses : [];
     }
   } catch { /* leave defaults */ }
@@ -4775,6 +4780,12 @@ async function wireNetworkSetting(overlay) {
 
   input.addEventListener("change", async () => {
     const want = input.checked;
+    if (!serverMode) {
+      // The switch moves only once the restart has applied it.
+      input.checked = !want;
+      await restartForNetwork(want);
+      return;
+    }
     input.disabled = true;
     try {
       const r = await fetch("/api/settings", {
@@ -4790,6 +4801,86 @@ async function wireNetworkSetting(overlay) {
       refresh();
     }
   });
+}
+
+/** Whether a separation is running. Unknown counts as running, so a restart
+ *  never stops one without asking. */
+async function separationRunning() {
+  try {
+    const r = await fetch("/api/queue", { cache: "no-store" });
+    if (r.ok) return (await r.json()).running != null;
+    console.warn("queue check failed:", r.status);
+  } catch (err) {
+    console.warn("queue check failed:", err);
+  }
+  return true;
+}
+
+/** Desktop: save the network choice and restart the backend so it listens
+ *  where the choice says, then reload on the URL it answers on (#859). A
+ *  restart stops a running separation, which then waits in the queue, paused,
+ *  to start again from the beginning, so that is asked first; Cancel changes
+ *  nothing. The dialog stays up until the reload, because nothing on the page
+ *  works while the backend is down; a failure shows why, with Try again. */
+async function restartForNetwork(want) {
+  const askFirst = await separationRunning();
+  const overlay = document.createElement("div");
+  overlay.className = "reset-confirm-backdrop";
+  overlay.innerHTML = `
+    <div class="reset-confirm-card" role="dialog" aria-modal="true" aria-label="Restart StemDeck" data-i18n-aria-label="settings.network.restartAria">
+      <div class="reset-confirm-title" data-i18n="settings.network.restartTitle">Restart StemDeck now?</div>
+      <p class="reset-confirm-body net-restart-body"></p>
+      <div class="reset-confirm-msg" role="alert" aria-live="polite"></div>
+      <div class="reset-confirm-actions">
+        <button class="reset-confirm-cancel net-restart-cancel" type="button" data-i18n="settings.network.restartCancel">Cancel</button>
+        <button class="reset-confirm-go net-restart-go" type="button" data-i18n="settings.network.restartNow">Restart now</button>
+        <button class="reset-confirm-go net-restart-retry hidden" type="button" data-i18n="settings.network.tryAgain">Try again</button>
+      </div>
+    </div>
+  `;
+  applyTranslations(overlay);
+  const title = overlay.querySelector(".reset-confirm-title");
+  const body = overlay.querySelector(".net-restart-body");
+  const msg = overlay.querySelector(".reset-confirm-msg");
+  const cancelBtn = overlay.querySelector(".net-restart-cancel");
+  const goBtn = overlay.querySelector(".net-restart-go");
+  const retryBtn = overlay.querySelector(".net-restart-retry");
+
+  const restart = async () => {
+    title.classList.add("hidden");
+    cancelBtn.classList.add("hidden");
+    goBtn.classList.add("hidden");
+    retryBtn.classList.add("hidden");
+    msg.textContent = "";
+    body.textContent = i18nT("settings.network.restarting");
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_network: want }),
+      });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const { url } = await window.__TAURI__.core.invoke("restart_backend");
+      window.location.replace(url);
+    } catch (err) {
+      console.warn("network restart failed:", err);
+      body.textContent = "";
+      msg.textContent = i18nT("settings.network.restartFailed", { error: String(err?.message || err) });
+      retryBtn.classList.remove("hidden");
+      retryBtn.focus();
+    }
+  };
+
+  cancelBtn.addEventListener("click", () => overlay.remove());
+  goBtn.addEventListener("click", restart);
+  retryBtn.addEventListener("click", restart);
+  document.body.appendChild(overlay);
+  if (askFirst) {
+    body.textContent = i18nT("settings.network.restartJobConfirm");
+    goBtn.focus();
+  } else {
+    await restart();
+  }
 }
 
 async function loadRegistryView(overlay) {

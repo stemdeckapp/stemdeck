@@ -19,7 +19,9 @@ lifespan; see `lifespan="off"` below.
 
 None of this applies to server mode, where there is one listener and whoever
 launched uvicorn decides its scheme. This module is started only when
-STEMDECK_HTTPS_PORT is set, which is the desktop shell's doing.
+STEMDECK_HTTPS_PORT is set, which is the desktop shell's doing, and the shell
+sets it only while network access is on (#859). While it is off the primary
+listener is on loopback alone and this one does not exist.
 """
 
 from __future__ import annotations
