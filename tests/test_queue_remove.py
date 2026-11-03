@@ -171,6 +171,8 @@ async def test_removing_the_running_job_kills_its_process_and_keeps_the_song(
     assert res.status_code == 200
 
     await _until(lambda: job.status == "stopped")
+    # The running slot frees once the registry save after the status is done.
+    await _until(lambda: jobqueue.snapshot()[0] is None)
     assert started["proc"].poll() is not None, "the child process outlived the stop"
     assert registry_get_proc(job.id) is None
     assert jobqueue.snapshot() == (None, [])

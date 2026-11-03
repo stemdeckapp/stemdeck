@@ -159,7 +159,7 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
         jobqueue.enqueue(job.id)
         created.append({"job_id": job.id, "title": job.title or "", "source_url": item["url"]})
 
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     return {
         "playlist_title": result["playlist_title"],
         "jobs": created,

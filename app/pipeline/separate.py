@@ -198,11 +198,11 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                 if m:
                     if not startup_recorded:
                         startup_recorded = True
-                        if job.stage_timings is None:
-                            job.stage_timings = {}
-                        job.stage_timings["separate_startup"] = round(
-                            time.monotonic() - spawn_at, 1
-                        )
+                        # A new dict, as runner._lap writes one.
+                        job.stage_timings = {
+                            **(job.stage_timings or {}),
+                            "separate_startup": round(time.monotonic() - spawn_at, 1),
+                        }
                     pct = max(0, min(100, int(m.group(1))))
                     _set(job, progress=pct / 100.0, stage=f"Separating {pct}%")
                 else:

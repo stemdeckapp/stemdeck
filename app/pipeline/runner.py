@@ -150,11 +150,10 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
 def _lap(job: Job, name: str, start: float) -> float:
     """Record a stage duration in job.stage_timings; returns a new start mark.
     Timings feed the one-line completion summary, metadata.json, and the
-    failure quarantine's error.txt (#293)."""
+    failure quarantine's error.txt (#293). A new dict each time: a registry
+    save reads the old one from another thread, without a lock this takes."""
     now = time.monotonic()
-    if job.stage_timings is None:
-        job.stage_timings = {}
-    job.stage_timings[name] = round(now - start, 1)
+    job.stage_timings = {**(job.stage_timings or {}), name: round(now - start, 1)}
     return now
 
 
@@ -525,7 +524,7 @@ async def _run_async(
             # Emptied from the Trash while its folder moved. Before the
             # persist, which forgets a deletion whose folder is gone.
             await jobqueue.finish_deferred_delete(job, jobs_dir)
-            persist_registry(jobs_dir)
+            await asyncio.to_thread(persist_registry, jobs_dir)
             return
         logger.info(
             "pipeline cancelled%s for job %s",
@@ -540,7 +539,7 @@ async def _run_async(
             # "stopped" can still find it.
             await asyncio.to_thread(shutil.rmtree, job_dir / DEMUCS_MODEL, ignore_errors=True)
         remove_files = settle_cancelled(job)
-        persist_registry(jobs_dir)
+        await asyncio.to_thread(persist_registry, jobs_dir)
         release_source(job.id)
         # A job stopped from the Trash keeps its files until the Trash is
         # emptied (#748). A plain cancel's folder is retried like delete_job's
@@ -559,7 +558,7 @@ async def _run_async(
     job.stop_requested = False
     _set(job, status="done", progress=1.0, stage="Done")
     _write_metadata(job, job_dir)
-    persist_registry(jobs_dir)
+    await asyncio.to_thread(persist_registry, jobs_dir)
     # Emptied from the Trash while it finished anyway.
     await jobqueue.finish_deferred_delete(job, jobs_dir)
     # One-line per-job summary: the timing telemetry that makes performance
@@ -587,7 +586,7 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
             stage="Error: Processing failed",
             error="Audio processing failed. Please try another video.",
         )
-        persist_registry(jobs_dir)
+        await asyncio.to_thread(persist_registry, jobs_dir)
         return
     await _run_async(
         job,

@@ -130,6 +130,8 @@ async def test_a_trash_before_the_process_registers_still_stops_it(
     stage.go.set()
 
     await _until(lambda: job.status == "stopped", timeout=5)
+    # The running slot frees once the registry save after the status is done.
+    await _until(lambda: jobqueue.snapshot()[0] is None, timeout=5)
     assert stage.procs[0].poll() is not None, "the process ran on in the Trash"
     assert jobqueue.snapshot() == (None, []), "the Queue still shows the trashed song"
     assert (job_dir / "source.wav").is_file(), "a trash keeps the files"
