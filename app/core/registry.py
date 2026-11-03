@@ -10,11 +10,21 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.core.config import DEMUCS_MODEL, EXTRA_STEM_NAMES, JOB_ID_RE, LYRICS_FILE, STEM_NAMES
-from app.core.models import Job, clean_artist, clean_audio_tags, clean_identity, clean_work
+from app.core.models import (
+    FINISHED_STATUSES,
+    Job,
+    clean_artist,
+    clean_audio_tags,
+    clean_identity,
+    clean_work,
+)
 from app.core.settings import fsync_dir, quarantine_corrupt
 from app.core.stem_files import stem_exists, stem_url
 from app.core.takes import reconcile_tracks, recover_takes
@@ -24,11 +34,21 @@ logger = logging.getLogger("stemdeck.registry")
 
 REGISTRY_VERSION = 2
 
+Operation = Literal["pipeline", "fill", "split", "retime"]
+
 _jobs: dict[str, Job] = {}
-# Active subprocesses keyed by job_id (currently only Demucs). Lets
-# POST /cancel terminate the running process from the API thread instead
-# of waiting for the pipeline thread to notice the cancel flag.
-_procs: dict[str, subprocess.Popen] = {}
+# Active subprocesses keyed by job id and operation. Lets POST /cancel
+# terminate the running process from the API thread instead of waiting for the
+# pipeline thread to notice the cancel flag. By operation too, because one song
+# can have several waiting (a fill, a split, a lyrics timing) while one of them
+# runs: keyed by id alone, cancelling one that waited terminated the process of
+# the one running, the shared Demucs worker included.
+_procs: dict[tuple[str, Operation], subprocess.Popen] = {}
+# The operation the processes registered from here on belong to. Set by the
+# endpoints that work on a finished song (see operation()); asyncio.to_thread
+# carries it into the thread that registers them. Anything else is the job's
+# own pipeline run.
+_operation: ContextVar[Operation] = ContextVar("operation", default="pipeline")
 _lock = threading.Lock()
 _REGISTRY_FILE = "registry.json"
 _TERMINAL = {"done"}
@@ -142,7 +162,8 @@ def get(job_id: str) -> Job | None:
 def remove(job_id: str) -> None:
     with _lock:
         _jobs.pop(job_id, None)
-        _procs.pop(job_id, None)
+        for key in [key for key in _procs if key[0] == job_id]:
+            del _procs[key]
 
 
 def set_trashed(job_id: str, trashed: bool) -> Job | None:
@@ -401,6 +422,7 @@ def restore(jobs_dir: Path) -> None:
                     )
             to_add = {}
             resume: list[Job] = []
+            deleted = deleted_ids()
             records = data.get("jobs", [])
             if not isinstance(records, list):
                 _keep_bad_records(path, [records], "the jobs list was not a list")
@@ -430,6 +452,12 @@ def restore(jobs_dir: Path) -> None:
                     bad.append(record)
                     changed = True
                 if not JOB_ID_RE.match(job.id):
+                    continue
+                if job.id in deleted:
+                    # Deleted while it was still stopping, and the process
+                    # ended before the stop settled (#748): finish the delete.
+                    shutil.rmtree(jobs_dir / job.id, ignore_errors=True)
+                    changed = True
                     continue
                 held[job.id] = set(record) - set(repaired)
                 try:
@@ -744,12 +772,40 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     return job, any(name in meta for name in SAVED_FIELDS)
 
 
+@contextmanager
+def operation(name: Operation) -> Iterator[None]:
+    """Register the processes started inside as `name`'s (see _operation)."""
+    token = _operation.set(name)
+    try:
+        yield
+    finally:
+        _operation.reset(token)
+
+
 def set_proc(job_id: str, proc: subprocess.Popen | None) -> None:
+    """Register `proc` as the running process of `job_id`'s current operation,
+    or clear it with None.
+
+    A pipeline process registered after its job's cancel is terminated here
+    (#748). The cancel found nothing to terminate when it landed before this,
+    during the device probe ahead of the Demucs worker for one, so the trashed
+    song kept separating to the end. Checked under the lock the cancel's
+    get_proc takes, so one of the two always sees the other."""
+    key = (job_id, _operation.get())
     with _lock:
         if proc is None:
-            _procs.pop(job_id, None)
-        else:
-            _procs[job_id] = proc
+            _procs.pop(key, None)
+            return
+        _procs[key] = proc
+        job = _jobs.get(job_id)
+        cancelled = (
+            key[1] == "pipeline"
+            and job is not None
+            and job.cancel_requested
+            and job.status not in FINISHED_STATUSES
+        )
+    if cancelled and proc.poll() is None:
+        proc.terminate()
 
 
 def reset_all(jobs_dir: Path) -> list[str]:
@@ -785,6 +841,6 @@ def reset_all(jobs_dir: Path) -> list[str]:
     return failed
 
 
-def get_proc(job_id: str) -> subprocess.Popen | None:
+def get_proc(job_id: str, op: Operation = "pipeline") -> subprocess.Popen | None:
     with _lock:
-        return _procs.get(job_id)
+        return _procs.get((job_id, op))

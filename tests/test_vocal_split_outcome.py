@@ -263,9 +263,9 @@ def test_a_cancelled_split_says_cancelled(client, done_job, monkeypatch):
     t = threading.Thread(target=run)
     t.start()
     deadline = time.monotonic() + 20
-    while registry.get_proc(job.id) is None and time.monotonic() < deadline:
+    while registry.get_proc(job.id, "split") is None and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert registry.get_proc(job.id) is not None
+    assert registry.get_proc(job.id, "split") is not None
     client.post(f"/api/jobs/{job.id}/cancel")
     t.join(timeout=20)
 
