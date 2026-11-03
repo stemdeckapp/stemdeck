@@ -345,8 +345,9 @@ def _read_registry(path: Path) -> dict | None:
 def _keep_bad_records(path: Path, records: list, why: str) -> bool:
     """Save the raw JSON of records the load skipped or repaired, beside the
     registry as registry.json.bad-<time>, so dropping them is never silent.
-    True when they were kept: only then may registry.json be rewritten
-    without them, which also stops the next start setting them aside again."""
+    True when they were kept: only then does restore() rewrite registry.json
+    without them for that reason, which stops the next start setting them
+    aside again."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     target = path.with_name(f"{path.name}.bad-{stamp}-{uuid.uuid4().hex[:6]}")
     try:
@@ -445,6 +446,10 @@ def restore(jobs_dir: Path) -> None:
     data = _read_registry(path) if path.is_file() else None
     if data is not None:
         try:
+            if not isinstance(data.get("version", 0), int):
+                # Read as the oldest, so every upgrade step runs and the
+                # records still load instead of the whole file moving aside.
+                data["version"] = 0
             copy_saved = data.get("version", 0) < 2
             data = _migrate(data)
             recorded = data.get("deleted")

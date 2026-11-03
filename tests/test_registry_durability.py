@@ -283,9 +283,26 @@ def test_an_id_with_a_trailing_newline_is_not_an_id():
     """`$` matches before a final newline; a folder or record named that way
     was adopted, then set aside on every start."""
     from app.core.config import JOB_ID_RE, TAKE_ID_RE, TRACK_ID_RE
+    from app.core.versions import VERSION_ID_RE
 
-    for regex, good in ((JOB_ID_RE, GOOD_A), (TAKE_ID_RE, "t0000aaaa"), (TRACK_ID_RE, "k0000aaaa")):
+    for regex, good in (
+        (JOB_ID_RE, GOOD_A),
+        (TAKE_ID_RE, "t0000aaaa"),
+        (TRACK_ID_RE, "k0000aaaa"),
+        (VERSION_ID_RE, "ab12cd34"),
+    ):
         assert regex.match(good) and not regex.match(good + "\n")
+
+
+@pytest.mark.parametrize("version", [None, "2", [2]])
+def test_a_registry_version_that_is_not_a_number_still_loads_the_records(tmp_path, version):
+    """Compared with a number, it raised and moved the whole registry aside."""
+    _write(tmp_path, {"version": version, "jobs": [_record(GOOD_A, favorite=True)]})
+
+    _registry.restore(tmp_path)
+
+    assert _registry.get(GOOD_A).favorite is True
+    assert _sidecars(tmp_path, "corrupt") == []
 
 
 def test_a_good_registry_writes_no_sidecar(tmp_path: Path):

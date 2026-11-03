@@ -36,7 +36,7 @@ logger = logging.getLogger("stemdeck.versions")
 # mix is the one under the song's own store keys (no version suffix).
 DEFAULT_VERSION_ID = "main"
 # A version id: short, lowercase, safe in a URL path and a store key.
-VERSION_ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
+VERSION_ID_RE = re.compile(r"^[a-z0-9]{1,16}\Z")
 # A song with more versions than this is a script, not a person.
 MAX_VERSIONS = 32
 VERSION_NAME_MAX_CHARS = 60
