@@ -3003,18 +3003,22 @@ fn detect_compute_cap(smi: &str, state: &BackendState) -> Option<String> {
     }
 }
 
+/// The driver's CUDA version from the nvidia-smi header: the first
+/// "CUDA Version:" or "CUDA UMD Version:" (driver 616 and later) followed by a
+/// major.minor number. "N/A" is no version. The twin of `_CUDA_HEADER` in
+/// app/core/device_reason.py: keep the two one rule, and both tests on
+/// tests/fixtures/nvidia_smi_headers.json (#1012).
 #[cfg(not(target_os = "macos"))]
 fn parse_cuda_version(smi_output: &str) -> Option<String> {
-    for line in smi_output.lines() {
-        if let Some(pos) = line.find("CUDA Version:") {
-            let rest = &line[pos + "CUDA Version:".len()..];
-            let v = rest.split_whitespace().next()?.trim_matches('|').trim();
-            if !v.is_empty() && v != "N/A" {
-                return Some(v.to_string());
-            }
-        }
-    }
-    None
+    let digits = |s: &str| s.len() - s.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    smi_output.match_indices("CUDA ").find_map(|(at, label)| {
+        let rest = &smi_output[at + label.len()..];
+        let rest = rest.strip_prefix("UMD ").unwrap_or(rest);
+        let number = rest.strip_prefix("Version:")?.trim_start();
+        let major = digits(number);
+        let minor = digits(number[major..].strip_prefix('.')?);
+        (major > 0 && minor > 0).then(|| number[..major + 1 + minor].to_string())
+    })
 }
 
 /// A GPU setup can install a torch build for.
@@ -11347,18 +11351,66 @@ configuration: --cc=clang\n";
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
     }
 
+    /// The header forms nvidia-smi prints, and output that holds no version,
+    /// shared with tests/test_device_reason.py so the shell and the backend
+    /// read every one of them the same way (#1012).
+    #[cfg(not(target_os = "macos"))]
+    fn nvidia_smi_headers() -> Vec<(String, String, Option<String>)> {
+        let samples: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/nvidia_smi_headers.json"
+        ))
+        .expect("tests/fixtures/nvidia_smi_headers.json is valid JSON");
+        samples
+            .iter()
+            .map(|s| {
+                (
+                    s["name"].as_str().unwrap().to_string(),
+                    s["header"].as_str().unwrap().to_string(),
+                    s["cuda"].as_str().map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn every_header_form_gives_its_cuda_version() {
+        let samples = nvidia_smi_headers();
+        assert!(samples
+            .iter()
+            .any(|(_, h, _)| h.contains("CUDA UMD Version: 13.4")));
+        for (name, header, cuda) in samples {
+            assert_eq!(super::parse_cuda_version(&header), cuda, "{name}");
+        }
+    }
+
+    /// Driver 616.64 used to read as no version, so setup assumed CUDA 12.4
+    /// and an RTX 3080 under a CUDA 13 driver never started at cu128 (#1012).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_616_header_starts_an_rtx_3080_at_cu128() {
+        let (_, header, _) = nvidia_smi_headers()
+            .into_iter()
+            .find(|(_, h, _)| h.contains("NVIDIA-SMI 616.64"))
+            .unwrap();
+        let cuda = super::parse_cuda_version(&header).unwrap();
+        assert_eq!(
+            super::wheel_candidates(Some("8.6"), &cuda),
+            vec!["cu128", "cu124", "cu118"]
+        );
+    }
+
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_header_with_no_cuda_version_is_logged_with_the_line_it_had() {
-        // The header of driver 616.64 on an RTX 3080, verbatim. It names the
-        // version "CUDA UMD Version", so setup takes the 12.4 default (#247).
-        let header = "Wed Nov  4 05:13:22 2026\n\
-            +-----------------------------------------+\n\
-            | NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4     |\n";
+        // A driver with no CUDA support prints N/A, so setup takes the 12.4
+        // default and the log quotes what the driver printed (#247).
+        let header = "+-----------------------------------------+\n\
+            | NVIDIA-SMI 470.256.02   Driver Version: 470.256.02   CUDA Version: N/A      |\n";
         assert_eq!(
             super::no_cuda_header_note(header),
             "nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: \
-             NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4"
+             NVIDIA-SMI 470.256.02   Driver Version: 470.256.02   CUDA Version: N/A"
         );
         assert_eq!(
             super::no_cuda_header_note(""),
