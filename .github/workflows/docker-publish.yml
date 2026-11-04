@@ -5,7 +5,7 @@ name: Docker Publish
 # (ghcr.io/stemdeckapp/stemdeck). The image keeps the default Linux x86_64 torch
 # wheel, which is the CUDA build -- so the same image runs on CPU by default and
 # uses the GPU automatically when started with `--runtime=nvidia` (see the
-# Unraid template in templates/unraid/).
+# Unraid template in templates/stemdeck.xml).
 
 on:
   # Every merge to main publishes a rolling :edge image. The version is derived

@@ -1,6 +1,6 @@
 [package]
 name = "stemdeck"
-# Placeholder — stamped from the git tag at build time (Woodpecker / make-app.sh). #169
+# Placeholder: stamped from the git tag at build time (the release workflows and make-app.sh). #169
 version = "0.0.0"
 description = "StemDeck desktop launcher"
 authors = ["StemDeck contributors"]

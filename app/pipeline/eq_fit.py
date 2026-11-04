@@ -1,8 +1,8 @@
 """Suggest EQ: turn "measured spectrum minus target" into a few ordinary EQ
 bands, and pick a master loudness preset.
 
-This is the fitter agreed with the mastering report (01-mastering.md 5.5,
-``fit_master_eq``); it works for a lane as well as for the master. Its output
+This is the fitter agreed with the mastering report (01-mastering.md 5.5); it
+works for a lane as well as for the master. Its output
 is nothing but the E1 EQ descriptor's bands (bell, shelves, low cut, the
 Keys panel's tilt) with the engine's own maths (fx_filters.py), so a
 suggestion is an EQ the user can see, drag, preview, keep or undo.
@@ -513,11 +513,6 @@ def fit_eq(
         ordered = sorted(kept, key=lambda c: order.index(c[0].id))
     result.bands = [FitBand(c[0].id, _make_band(c[0], c[1], c[2], c[3])) for c in ordered]
     return result
-
-
-def fit_master_eq(mix_db, target_db, max_bands: int = MAX_BANDS_MASTER) -> FitResult:
-    """The interface named in 01-mastering.md 5.5: the master's fit."""
-    return fit_eq(mix_db, target_db, layout="master", max_bands=max_bands)
 
 
 def neutral_out_db(power: np.ndarray, bands: list[Band], base_out: float = 0.0) -> float:

@@ -1666,7 +1666,6 @@ async def _render_task(
                             gpu.height,
                             gpu.fps,
                             duration,
-                            encoder,
                             cancelled=cancelled,
                             on_proc=on_proc,
                         )

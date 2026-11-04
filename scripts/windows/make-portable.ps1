@@ -423,7 +423,7 @@ try {
   }
 
   if (-not $SkipTauriBuild) {
-    $env:CI = "true"  # Woodpecker sets CI=woodpecker; Tauri only accepts true/false
+    $env:CI = "true"  # Tauri only accepts true/false; some CI services set other values
     rustup default stable
     Invoke-TauriBuild
   } else {

@@ -1099,13 +1099,12 @@ def _anchor(
         if rate is not None:
             rates.append(rate)
         end = float(heard.ends[matched_at[points[-1][2]]])
-        start = _line_start(lyric, heard, matched_at, toks, points, first_t, rate, voice)
+        start = _line_start(heard, matched_at, toks, points, first_t, rate, voice)
         anchors[li] = (start, end, rate or 0.0)
     return anchors, rates
 
 
 def _line_start(
-    lyric: Lyric,
     heard: Heard,
     matched_at: dict[int, int],
     toks: list[int],

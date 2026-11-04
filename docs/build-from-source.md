@@ -6,7 +6,7 @@ Every way to run StemDeck from this repository: the macOS app, a web server on a
 
 ### macOS Native App
 
-Requires Rust, Node.js, and Python 3.12. Builds a self-contained `.app` that downloads its own runtime on first launch.
+Requires Rust, Node.js, and Python 3.11, 3.12 or 3.13. Builds a self-contained `.app` that downloads its own runtime on first launch.
 
 ```sh
 # First time only: add the cross-compilation targets
@@ -42,11 +42,11 @@ xattr -dr com.apple.quarantine desktop/src-tauri/target/aarch64-apple-darwin/rel
 
 ---
 
-### Web Server (macOS / Linux / Windows with Python 3.12+)
+### Web Server (macOS / Linux / Windows with Python 3.11 to 3.13)
 
 #### Prerequisites
 
-Python 3.12 or newer, FFmpeg 5.1 or newer on your PATH, and [uv](https://github.com/astral-sh/uv). Ubuntu 22.04's `ffmpeg` package is 4.4, which StemDeck reports as too old at startup, and exports do not work with it: install a newer FFmpeg there, or set `STEMDECK_FFMPEG` to one. Around 170 MB of free disk for the Demucs model, which downloads automatically on first run.
+Python 3.11, 3.12 or 3.13 (3.14 is not supported yet), FFmpeg 5.1 or newer on your PATH, and [uv](https://github.com/astral-sh/uv). Ubuntu 22.04's `ffmpeg` package is 4.4, which StemDeck reports as too old at startup, and exports do not work with it: install a newer FFmpeg there, or set `STEMDECK_FFMPEG` to one. Around 170 MB of free disk for the Demucs model, which downloads automatically on first run.
 
 Optional, for song identification with an AcoustID key: an FFmpeg built with chromaprint (Debian and Ubuntu's `ffmpeg` is), or Chromaprint's `fpcalc` on your PATH (`brew install chromaprint`, `apt install libchromaprint-tools`, or your distro's `chromaprint` package). `./run.sh setup` installs it when your FFmpeg needs it. Without either, songs are identified by their tags only.
 

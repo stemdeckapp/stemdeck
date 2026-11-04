@@ -472,8 +472,3 @@ export function initStemsControl() {
   });
   paint();
 }
-
-/** For tests and scripts: the current job's state as the control shows it. */
-export function stemsControlState() {
-  return { open: Boolean(pop && !pop.hidden), job: currentJobId, ...layoutState() };
-}

@@ -1371,15 +1371,3 @@ def test_directory_size_skips_a_file_it_cannot_stat(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "stat", stat)
     assert directory_size(tmp_path) == 100
-
-
-def test_same_filesystem_assumes_the_slow_case_when_it_cannot_tell(tmp_path, monkeypatch):
-    from app.core import stems_location
-
-    assert stems_location._same_filesystem(tmp_path, tmp_path / "new") is True
-
-    def broken(self, *a, **k):
-        raise OSError("gone")
-
-    monkeypatch.setattr(Path, "stat", broken)
-    assert stems_location._same_filesystem(tmp_path, tmp_path / "new") is False

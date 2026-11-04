@@ -43,8 +43,7 @@ export function effectiveStemOrder(presentNames) {
 // Recording tracks are lanes like any stem. The lane name is the track id
 // (`k` plus 8 hex digits, the backend's track id), the label is the user's
 // own text, and the audio is the track's active take. Set per job by
-// static/js/capture/takeLanes.js. TAKE_ID_RE is the take id inside a track.
-export const TAKE_ID_RE = /^t[0-9a-f]{8}$/;
+// static/js/capture/takeLanes.js.
 export const TRACK_ID_RE = /^k[0-9a-f]{8}$/;
 export const TAKE_COLOR = "#5ec8c0";
 export let TAKE_NAMES = [];

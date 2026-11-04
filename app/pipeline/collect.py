@@ -123,7 +123,7 @@ def remove_job_dir(job_dir: Path) -> bool:
 _TERMINAL = FINISHED_STATUSES
 
 
-def collect(job: Job, stems_root: Path, job_dir: Path) -> list[str]:
+def collect(stems_root: Path, job_dir: Path) -> list[str]:
     """Move Demucs-emitted stems into the job's stems/ dir and clean up
     the demucs intermediate dir. Does NOT delete the source download --
     cleanup_source() is called by the runner, for the jobs whose source

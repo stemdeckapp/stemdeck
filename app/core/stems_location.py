@@ -65,7 +65,6 @@ class MoveResult:
     target: str
     moved_entries: int
     bytes_moved: int
-    same_filesystem: bool
     # Copied rather than renamed: their originals wait for remove_moved.
     copied: tuple[str, ...] = ()
 
@@ -216,7 +215,6 @@ def move_library(current: Path, target: Path) -> MoveResult:
     target = target.expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    same_fs = _same_filesystem(current, target)
     moved = 0
     moved_bytes = 0
     copied: list[str] = []
@@ -226,9 +224,9 @@ def move_library(current: Path, target: Path) -> MoveResult:
     # Point at the library and bring nothing, or this folder's stray registry
     # would be taken for the real one.
     if not _holds_songs(current) and _holds_another_library(target, current):
-        return MoveResult(str(current), str(target), 0, 0, same_fs)
+        return MoveResult(str(current), str(target), 0, 0)
     if not current.exists():
-        return MoveResult(str(current), str(target), 0, 0, same_fs)
+        return MoveResult(str(current), str(target), 0, 0)
 
     for leftover in target.iterdir():
         if _partial_copy(leftover.name, current):
@@ -264,7 +262,7 @@ def move_library(current: Path, target: Path) -> MoveResult:
         moved += 1
         moved_bytes += size
 
-    return MoveResult(str(current), str(target), moved, moved_bytes, same_fs, tuple(copied))
+    return MoveResult(str(current), str(target), moved, moved_bytes, tuple(copied))
 
 
 def remove_moved(current: Path, names: tuple[str, ...]) -> None:
@@ -409,14 +407,3 @@ def _copy_verified(entry: Path, destination: Path) -> None:
             _remove(partial)
         raise
     fsync_dir(destination.parent)
-
-
-def _same_filesystem(a: Path, b: Path) -> bool:
-    """Whether the move is a rename or a copy. Only used to set expectations in
-    the UI, so an unanswerable question is answered with "assume the slow one"."""
-    try:
-        probe = a if a.exists() else a.parent
-        other = b if b.exists() else b.parent
-        return probe.stat().st_dev == other.stat().st_dev
-    except OSError:
-        return False

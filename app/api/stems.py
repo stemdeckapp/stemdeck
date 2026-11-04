@@ -1066,13 +1066,7 @@ def _expand_render_lanes(
         # Deliberately not `path`: that name holds the validated "original.wav"
         # this lane falls back to, and reusing it here left the fallback
         # pointing at whichever component was tried last.
-        paths: list[Path] = []
-        for comp in components:
-            comp_path = stem_path(JOBS_DIR / job_id / "stems", comp).resolve()
-            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
-                paths = []
-                break
-            paths.append(comp_path)
+        paths = _component_paths(job_id, components)
 
         if not paths:
             if remove:
@@ -1089,6 +1083,20 @@ def _expand_render_lanes(
             lanes_out.append(_RenderLane(path, gain, effective_pitch(comp, pitch), name))
 
     return lanes_out, unpitched
+
+
+def _component_paths(job_id: str, components: list[str]) -> list[Path]:
+    """The resolved stem file of every component, or [] when one is missing
+    or resolves outside the jobs folder: Original is then not rebuilt."""
+    jobs_root = JOBS_DIR.resolve()
+    stems = JOBS_DIR / job_id / "stems"
+    paths: list[Path] = []
+    for comp in components:
+        comp_path = stem_path(stems, comp).resolve()
+        if not comp_path.is_file() or not comp_path.is_relative_to(jobs_root):
+            return []
+        paths.append(comp_path)
+    return paths
 
 
 def _job_original_set(job_id: str) -> frozenset[str] | None:
@@ -1150,13 +1158,7 @@ def _expand_mode_lanes(
             # before lanes= existed, byte for byte.
             out.append(_RenderLane(_validate_stem_path(job_id, "original"), gain, 0, name))
             continue
-        paths: list[Path] = []
-        for comp in components:
-            comp_path = stem_path(JOBS_DIR / job_id / "stems", comp).resolve()
-            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
-                paths = []
-                break
-            paths.append(comp_path)
+        paths = _component_paths(job_id, components)
         if not paths:
             if own_set is not None and own_set == frozenset(components):
                 # An older job whose parts are gone: its file, unpitched,
@@ -1597,10 +1599,6 @@ async def get_stem(
     name: str,
     start: float | None = Query(default=None, ge=0, description="Trim start in seconds"),
     end: float | None = Query(default=None, gt=0, description="Trim end in seconds"),
-    click: bool = Query(default=False, description="Mix the click track into the export"),
-    click_mult: float = Query(default=1.0, description="Click rate: 0.5, 1 or 2"),
-    click_accent: int = Query(default=-1, ge=-1, le=32, description="-1 auto, 0 off, N per bar"),
-    click_gain: float = Query(default=0.6, ge=0, le=4, description="Click level"),
 ) -> FileResponse | StreamingResponse:
     """A stem, as the song stores it: WAV, or MP3 for a song stored as MP3
     (#783), with its own type and file name whatever this URL says. Optional

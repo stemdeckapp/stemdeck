@@ -110,7 +110,7 @@ def _detect_model(y: object, sr: int) -> tuple[list[float], list[float]] | None:
     return beats, downbeats
 
 
-def _detect_librosa(y: object, sr: int, onset_env: object) -> tuple[list[float], list[float]]:
+def _detect_librosa(sr: int, onset_env: object) -> tuple[list[float], list[float]]:
     """Classic tracker. Returns (beats, []) -- it has no downbeat notion."""
     import librosa
 
@@ -140,5 +140,5 @@ def detect(y: object, sr: int, onset_env: object) -> tuple[list[float], list[flo
             return got[0], got[1], "beat_this"
         if BEAT_DETECTOR == "model":
             raise RuntimeError("beat model required (STEMDECK_BEAT_DETECTOR=model) but unavailable")
-    beats, downbeats = _detect_librosa(y, sr, onset_env)
+    beats, downbeats = _detect_librosa(sr, onset_env)
     return beats, downbeats, "librosa"
