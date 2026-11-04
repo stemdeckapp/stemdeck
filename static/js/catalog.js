@@ -4457,6 +4457,7 @@ async function wireGeneralSettings(overlay) {
   const deviceDesc = overlay.querySelector(".set-demucs-desc");
   const qualitySel = overlay.querySelector(".set-separation-quality");
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
+  const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
   const cookiesMsg = overlay.querySelector(".cookies-file-msg");
   const autoDeleteInput = overlay.querySelector(".auto-delete-input");
@@ -4501,6 +4502,19 @@ async function wireGeneralSettings(overlay) {
     if (portInput && d.port) portInput.value = String(d.port);
     if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
     if (transcribeSel && d.transcribe_lyrics) transcribeSel.value = d.transcribe_lyrics;
+    // A ROCm build of torch serves an AMD GPU as "cuda", and Auto transcribes
+    // on it too (#825). Only there: elsewhere an AMD card never runs it.
+    // Through data-i18n, so a language switch keeps the right sentence.
+    const rocm = d.gpu_backend === "rocm";
+    const transcribeText = [
+      [transcribeDesc, rocm ? "settings.transcribe.descRocm" : "settings.transcribe.desc"],
+      [transcribeSel?.querySelector('option[value="auto"]'), rocm ? "settings.transcribe.autoRocm" : "settings.transcribe.auto"],
+    ];
+    for (const [el, key] of transcribeText) {
+      if (!el) continue;
+      el.dataset.i18n = key;
+      el.textContent = i18nT(key);
+    }
     if (stemFormatSel && d.stem_format) {
       stemFormatSel.value = d.stem_format;
       syncStemKbps();
@@ -4541,7 +4555,7 @@ async function wireGeneralSettings(overlay) {
       const avail = new Set(d.demucs_devices_available || []);
       for (const opt of deviceSel.options) {
         if (opt.dataset.baseLabel === undefined) opt.dataset.baseLabel = opt.textContent;
-        const base = opt.dataset.baseLabel;
+        const base = opt.value === "cuda" && rocm ? "ROCm (AMD)" : opt.dataset.baseLabel;
         const ok = opt.value === "auto" || avail.has(opt.value);
         opt.disabled = !ok;
         opt.textContent = ok ? base : `${base}${i18nT("settings.device.notAvailable")}`;
@@ -4552,7 +4566,8 @@ async function wireGeneralSettings(overlay) {
       }
     }
     if (deviceDesc) {
-      const resolved = d.demucs_device_resolved ? i18nT("settings.device.currently", { device: d.demucs_device_resolved }) : "";
+      const device = d.demucs_device_resolved === "cuda" && rocm ? "cuda, ROCm" : d.demucs_device_resolved;
+      const resolved = device ? i18nT("settings.device.currently", { device }) : "";
       // torch installed but unloadable stops separation on every device, CPU
       // included, so this replaces the usual line rather than sitting under a
       // device list that looks healthy (#730).
@@ -5448,7 +5463,7 @@ function openLibraryEditor() {
           <div class="settings-row">
             <div class="settings-row-text">
               <div class="settings-row-title" data-i18n="settings.transcribe.title">Transcribe lyrics</div>
-              <div class="settings-row-desc" data-i18n="settings.transcribe.desc">When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.</div>
+              <div class="settings-row-desc set-transcribe-desc" data-i18n="settings.transcribe.desc">When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.</div>
             </div>
             <select class="settings-select settings-select-wide set-transcribe-lyrics" aria-label="Transcribe lyrics" data-i18n-aria-label="settings.transcribe.title">
               <option value="auto" data-i18n="settings.transcribe.auto">Auto (NVIDIA GPU only)</option>

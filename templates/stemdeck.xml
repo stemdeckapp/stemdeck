@@ -36,6 +36,12 @@
     processing several times faster. Without a GPU it runs on CPU with no extra
     configuration. Note: very new Blackwell cards (RTX 50 series) may fall back
     to CPU until a newer CUDA build ships.
+
+    AMD GPU (optional, community-tested): change the Repository to
+    ghcr.io/stemdeckapp/stemdeck:rocm and set Extra Parameters to
+    --device /dev/kfd --device /dev/dri. The host needs the amdgpu driver loaded
+    (/dev/kfd must exist); the ROCm runtime is in the image. Cards the ROCm
+    build of PyTorch has no kernels for run on CPU.
   </Overview>
   <Description>Split songs into stems and play them in a DAW-style multitrack player. Self-hosted, GPU-accelerated with the Unraid Nvidia Driver plugin.</Description>
 

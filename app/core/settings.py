@@ -713,7 +713,8 @@ def set_video_encoder(value: str) -> str:
 # ── transcribe_lyrics ──
 # Whether a job with no lyrics found gets them transcribed from its vocals stem
 # with Whisper (app/pipeline/transcribe.py). "auto" (default) does it when the
-# job was separated on an NVIDIA GPU (cuda) only. Anywhere else, Apple's MPS
+# job was separated on a cuda GPU only: NVIDIA, or AMD under a ROCm build of
+# torch, which serves it as cuda too (#825). Anywhere else, Apple's MPS
 # included, Whisper runs on the CPU, about 200 s a song rather than 30 s, so
 # "auto" leaves it off; "on" and "off" force it. Read per job, so
 # a change applies to the next import. STEMDECK_TRANSCRIBE_LYRICS seeds the

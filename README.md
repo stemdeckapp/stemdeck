@@ -60,13 +60,13 @@ StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano 
 
 Each link downloads the latest release. [Release notes](https://github.com/stemdeckapp/stemdeck/releases/latest) · [Every version](https://github.com/stemdeckapp/stemdeck/releases)
 
-| Platform | NVIDIA or Apple Silicon | Everything else |
+| Platform | NVIDIA, AMD (Linux) or Apple Silicon | Everything else |
 |---|---|---|
 | <img src="imgs/readme/os-windows.svg" width="16" align="top" alt=""> &nbsp;**Windows** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
 | <img src="imgs/readme/os-apple.svg" width="16" align="top" alt=""> &nbsp;**macOS** | [Apple Silicon (M1 and later)](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) | [Intel Mac](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
-| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
+| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA or AMD GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA or AMD GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
 
-<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. On Unraid, search "StemDeck" in Apps.
+<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. For an AMD GPU (community-tested), use the `:rocm` tag with `--device /dev/kfd --device /dev/dri`. On Unraid, search "StemDeck" in Apps.
 
 <details>
 <summary><b>What's new in 0.21.0</b></summary>
@@ -92,7 +92,7 @@ All of it, with credits to the people who reported each problem, is in the [rele
 
 <br>
 
-**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings, and on Windows your songs by default, in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card sets up GPU support; later launches start in seconds.
+**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings, and on Windows your songs by default, in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card (or, on Linux, an AMD card ROCm supports, such as the RX 7000 and RX 9000 series) sets up GPU support; later launches start in seconds.
 
 **macOS.** Open the DMG and drag StemDeck to Applications. StemDeck is not code-signed yet, so clear the quarantine flag once, or macOS will say the app is damaged:
 
@@ -156,7 +156,7 @@ In Performance mode:
 
 - **Key, tempo and loudness,** found for you.
 - **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
-- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, StemDeck can also write them down from the vocals when none are found.
+- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, or an AMD one on Linux, StemDeck can also write them down from the vocals when none are found.
 - **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
 
 ### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share

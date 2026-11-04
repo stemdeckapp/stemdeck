@@ -43,6 +43,7 @@ from app.core.config import (
     configure_portable_environment,
     ensure_runtime_dirs,
     ffmpeg_executable,
+    torch_gpu_backend,
     torch_load_error,
 )
 from app.core.logging_setup import configure_logging
@@ -128,7 +129,10 @@ from app.pipeline.vocal_split_status import capability as vocal_split_capability
 # STEMDECK_LOG_LEVEL=DEBUG) to see them.
 configure_logging()
 logging.getLogger("stemdeck").info(
-    "demucs config: model=%s device=%s", DEMUCS_MODEL, get_demucs_device()
+    "demucs config: model=%s device=%s gpu=%s",
+    DEMUCS_MODEL,
+    get_demucs_device(),
+    torch_gpu_backend(available_torch_devices()),
 )
 
 configure_portable_environment()
@@ -432,6 +436,7 @@ def _is_lan_ipv4(ip: str) -> bool:
 
 
 def _settings_payload() -> dict[str, object]:
+    devices = available_torch_devices()
     return {
         "allow_network": get_allow_network(),
         # Off unless the user asked for it. The days value is published even
@@ -485,7 +490,11 @@ def _settings_payload() -> dict[str, object]:
         # available lets the UI gray out devices this machine can't use.
         "demucs_device": get_demucs_device_choice(),
         "demucs_device_resolved": get_demucs_device(),
-        "demucs_devices_available": available_torch_devices(),
+        "demucs_devices_available": devices,
+        # What drives "cuda": "cuda" (NVIDIA) | "rocm" (AMD) | None. A ROCm
+        # build serves an AMD GPU as "cuda", so the device alone cannot tell
+        # the user which kind of GPU separation runs on (#825).
+        "gpu_backend": torch_gpu_backend(devices),
         # Set when torch is installed but cannot load, which stops separation
         # on every device (#730). Read after the probe above refreshed it.
         "torch_error": torch_load_error(),

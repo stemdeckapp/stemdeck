@@ -10,7 +10,14 @@
 
 **"Could not download the separation model":** the network blocked or stalled the connection to `dl.fbaipublicfiles.com`. Try another network, a VPN, or a proxy (`HTTPS_PROXY` is honoured). Or download the file the error names (`https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th` for `htdemucs_6s`) in a browser and put it, keeping its file name, in the folder the error names. The error writes StemDeck's models folder as `<models>`, so a bug report never carries your user name: it is `%LOCALAPPDATA%\StemDeck\models` on Windows (`data\models` beside `StemDeck.exe` for the portable zip), `~/Library/Application Support/StemDeck/models` on macOS and `~/.local/share/stemdeck/models` on Linux. The Docker image uses `/cache/torch/hub/checkpoints`. A file already in that folder is used as it is, without a download. The timeouts are in [Configuration](configuration.md).
 
-**Demucs runs on CPU only:** check the startup log for `device=mps` or `device=cuda`. If you see `cpu`, your torch install may be CPU-only.
+**Demucs runs on CPU only:** check the startup log for `device=mps` or `device=cuda`. If you see `cpu`, your torch install may be CPU-only. On an AMD GPU, `device=cuda gpu=rocm` means the ROCm build is in use.
+
+**AMD GPU not used (Linux):**
+
+- `cannot open /dev/kfd` in `logs/setup.log`, or `No HIP GPUs are available`: your user cannot reach the GPU. Run `sudo usermod -aG render,video $USER`, then log out and in.
+- `no ROCm build StemDeck installs has kernels for gfxNNNN`: the official ROCm build of torch does not support that card (the RX 6600/6700 family, gfx1031/gfx1032, for example). StemDeck separates on the CPU there.
+- `KFD GPU` lines in `logs/setup.log` list every AMD GPU found, and `AMD GPU chosen` the one StemDeck uses: with an integrated GPU as well, the card ROCm supports is chosen.
+- The first separation on a new AMD card pauses for a while before it moves: MIOpen, ROCm's cuDNN, is compiling and caching kernels for that card. Later separations start straight away.
 
 **Transpose is greyed out on another machine:** the pitch stage is built on `AudioWorklet`, which browsers only expose on a *secure context*. `https://` and `localhost` count. A plain `http://192.168.x.x` does not, so a client opening StemDeck over the network is never given the API and transpose cannot work there. Changing the speed still works on such a client, but it resamples instead, so the key moves with it.
 

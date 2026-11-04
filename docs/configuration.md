@@ -4,7 +4,7 @@
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `STEMDECK_DEMUCS_DEVICE` | auto | Force Torch device: `cuda`, `mps`, or `cpu`. |
+| `STEMDECK_DEMUCS_DEVICE` | auto | Force Torch device: `cuda` (NVIDIA, or AMD with a ROCm build of torch), `mps`, or `cpu`. |
 | `STEMDECK_DEMUCS_MODEL` | `htdemucs_6s` | Demucs model name. |
 | `STEMDECK_JOBS_DIR` | `./jobs` | Where job directories land. |
 | `STEMDECK_DATA_DIR` | (none) | Portable mode root; sets all sub-dirs below to live inside it. |
