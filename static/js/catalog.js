@@ -1576,24 +1576,43 @@ function clearLibraryDragMarks() {
   document.getElementById("lanes")?.classList.remove("library-drop-target");
 }
 
+// The kind of pointer ("mouse", "touch", "pen") behind the last primary press,
+// and behind the library drag it started.
+let lastPressPointerType = null;
+let dragPointerType = null;
+
 /**
  * A drag whose dragend never arrived would leave dragId or folderDragId set,
- * and render() would then wait forever. Pointer events do not fire while an
- * HTML5 drag is under way (the browser sends pointercancel when it starts), so
- * a pointer event with a drag still recorded means that drag is over: clear it
- * and run the rebuild it held back.
+ * and render() would then wait forever. The dragging pointer sends no pointer
+ * events while an HTML5 drag is under way (the browser sends pointercancel
+ * when it starts), so a move of that pointer with a drag still recorded means
+ * the drag is over: clear it and run the rebuild it held back.
+ *
+ * Only a move, not a press: the rebuild would take the pressed row out of the
+ * page before its click, and the press would be lost. And only the pointer
+ * that drags: a second finger, or a pen or touch while the mouse drags, still
+ * reports moves during a drag, and must not end it.
  */
-function recoverFromLostDragEnd() {
-  if (!isLibraryDragging()) return;
+function recoverFromLostDragEnd(e) {
+  if (!isLibraryDragging() || !e.isPrimary) return;
+  if (dragPointerType && e.pointerType !== dragPointerType) return;
   console.warn("[catalog] a library drag ended without dragend; clearing it");
   dragId = null;
   folderDragId = null;
+  dragPointerType = null;
   clearLibraryDragMarks();
   renderHeldBack();
 }
 
+/** A library drag starts: remember which kind of pointer pressed for it. */
+function noteDragPointer() {
+  dragPointerType = lastPressPointerType;
+}
+
 function wireLostDragEndRecovery() {
-  document.addEventListener("pointerdown", recoverFromLostDragEnd, true);
+  document.addEventListener("pointerdown", (e) => {
+    if (e.isPrimary) lastPressPointerType = e.pointerType;
+  }, true);
   document.addEventListener("pointermove", recoverFromLostDragEnd, true);
 }
 
@@ -1611,6 +1630,7 @@ function startDrag(trackId, itemEl, event) {
   dragId = trackId;
   // Only one library drag at a time: a folder drag recorded now is stale.
   folderDragId = null;
+  noteDragPointer();
   if (event?.dataTransfer) {
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(TRACK_DRAG_TYPE, trackId);
@@ -2362,6 +2382,7 @@ function renderFolder(folder) {
       folderDragId = folder.id;
       // Only one library drag at a time: a song drag recorded now is stale.
       dragId = null;
+      noteDragPointer();
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData(FOLDER_DRAG_TYPE, folder.id);
       e.stopPropagation();

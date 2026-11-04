@@ -20,6 +20,7 @@ import {
   JOB_ID,
   SIBLING_JOB_ID,
   SIBLING_TITLE,
+  TRACK_TITLE,
   fixtureTrack,
   readCatalogState,
   seedCatalogState,
@@ -77,6 +78,14 @@ async function holdOverFolder(page, id = DRAGGED) {
   await page.mouse.move(from.x + 8, from.y + 4, { steps: 3 });
   await page.mouse.move(to.x, to.y, { steps: 8 });
 }
+
+// Tag the rows on the page now. A rebuild replaces every row, so tagged rows
+// still there mean the list was not rebuilt, and none left means it was.
+const tagRows = (page) =>
+  page.locator("#catalogList").evaluate((list) => {
+    for (const r of list.querySelectorAll(".cat-item")) r.dataset.beforeRebuild = "1";
+  });
+const taggedRows = (page) => page.locator("#catalogList .cat-item[data-before-rebuild]");
 
 /** The import has finished and its track is in the store: completeSettledJob ran. */
 async function importLanded(page) {
@@ -152,16 +161,67 @@ test.describe("a song dragged onto a folder while the library rebuilds", () => {
       el.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: new DataTransfer() }));
     });
     await expect(row(page, DRAGGED)).toHaveClass(/dragging/);
+    await tagRows(page);
     await queue.settle();
     await importLanded(page);
-    await expect(row(page, JOB_ID).locator(".cat-status")).toHaveClass(/processing/);
+    // The rebuild the import asked for is held.
+    await expect(taggedRows(page)).not.toHaveCount(0);
 
     // Pointer events do not fire during a real drag, so this one ends it.
     await page.mouse.move(10, 10);
     await page.mouse.move(20, 20);
 
-    await expect(row(page, JOB_ID).locator(".cat-status")).not.toHaveClass(/processing/);
+    await expect(taggedRows(page)).toHaveCount(0);
     await expect(page.locator(".cat-item.dragging")).toHaveCount(0);
+  });
+
+  test("another pointer moving during a held drag does not end it", async ({ page }) => {
+    const queue = await open(page);
+
+    // A mouse press starts the drag, and its dragend never arrives.
+    await row(page, DRAGGED).evaluate((el) => {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse", isPrimary: true, pointerId: 1 }));
+      el.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: new DataTransfer() }));
+    });
+    await tagRows(page);
+    await queue.settle();
+    await importLanded(page);
+
+    // A second finger, then a touch while the mouse drags: neither is the
+    // pointer that drags, so the drag stays and the rebuild stays held.
+    await page.evaluate(() => {
+      const move = (init) => document.body.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 30, clientY: 30, ...init }));
+      move({ pointerType: "touch", isPrimary: false, pointerId: 3 });
+      move({ pointerType: "touch", isPrimary: true, pointerId: 2 });
+    });
+    await expect(row(page, DRAGGED)).toHaveClass(/dragging/);
+    await expect(taggedRows(page)).not.toHaveCount(0);
+
+    // The mouse moving again is what ends it.
+    await page.mouse.move(10, 10);
+    await page.mouse.move(20, 20);
+    await expect(taggedRows(page)).toHaveCount(0);
+    await expect(page.locator(".cat-item.dragging")).toHaveCount(0);
+  });
+
+  test("a press after a lost dragend still opens the song it lands on", async ({ page }) => {
+    const queue = await open(page);
+    // The pointer is already over the song, so the press below comes with no move.
+    const at = center(await row(page, DRAGGED).boundingBox());
+    await page.mouse.move(at.x, at.y);
+
+    await row(page, DRAGGED).evaluate((el) => {
+      el.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: new DataTransfer() }));
+    });
+    await queue.settle();
+    await importLanded(page);
+    // The finished import opens itself in the empty studio first.
+    await expect(page.locator("#title")).toHaveText(TRACK_TITLE, { timeout: 15000 });
+
+    // The row must still be there for the press's click.
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(page.locator("#title")).toHaveText("E2E MP3 Track", { timeout: 15000 });
   });
 
   test("a song whose import is cancelled while it is held is not filed into the folder", async ({ page }) => {
