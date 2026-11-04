@@ -32,6 +32,7 @@ from app.core.registry import remove as registry_remove
 from app.core.stem_files import is_stem_audio, stem_names_on_disk, stem_path
 from app.pipeline.audio_stats import scan_stem
 from app.pipeline.backing import forget_job as forget_backing
+from app.pipeline.lyrics_retime import current_run as current_retime
 
 logger = logging.getLogger("stemdeck.collect")
 
@@ -495,6 +496,13 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
     if job is not None:
         if job.status not in _TERMINAL:
             return "job is still active"
+        # A finished song stays "done" while this work writes into or reads
+        # from its folder. The first is the check delete, move and reset use.
+        if job.post_hoc_running():
+            return "a stem fill or vocal split is running"
+        retime = current_retime(job.id)
+        if retime is not None and retime.state == "running":
+            return "its lyrics are being timed"
         if job.status == "stopped":
             # Never separated, and an upload's kept source is its only copy:
             # only the user deletes a stopped song.
@@ -503,6 +511,10 @@ def _keep_reason(job: Job | None, job_dir: Path, cutoff: float, deleted: set[str
             return "job is newer than the cutoff"
         if job.favorite:
             return "favourite"
+        if job.versions:
+            # Recorded only once the user makes, renames, deletes or picks one.
+            return "has versions"
+        # This also keeps a take while its video renders: a render needs one.
         if job.takes or job.tracks or _has_takes_on_disk(job_dir):
             return "holds recorded takes"
         # A job in the Trash follows the same rule as any other finished job:
@@ -541,7 +553,8 @@ def sweep_old_jobs(jobs_dir: Path, ttl_seconds: int | None = None) -> None:
     job, this one only decides what is old and what may go.
 
     Judged by Job.created_at, not directory mtime (which unrelated filesystem
-    events touch). Never removes an active job, a stopped song, a favourite, a
+    events touch). Never removes an active job, a song with a fill, split or
+    lyrics timing running, a stopped song, a favourite, a song with versions, a
     job with recorded takes or tracks, a folder whose name is not a job id, or a
     link; an unregistered job folder goes only when it is old, abandoned,
     holds something StemDeck writes and holds no source file. See
