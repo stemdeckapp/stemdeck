@@ -274,7 +274,12 @@ def test_a_downgrade_to_0_20_0_and_back_loses_nothing(jobs_dir):
     )
     track = {**make_track("k0000aaaa", "Guitar", 0), "active_take_id": "t0000aaaa"}
     write_tracks(jobs_dir / SONG, [track])
-    newer = {"stem_format": "mp3", "stem_mp3_kbps": 192, "loudness_version": 2}
+    newer = {
+        "stem_format": "mp3",
+        "stem_mp3_kbps": 192,
+        "loudness_version": 2,
+        "loudness_remeasured": "stems",
+    }
     _finished(jobs_dir, **SAVED, **newer, takes=recover_takes(jobs_dir / SONG), tracks=[track])
     assert FIELDS_0_20_0.isdisjoint({*newer, "versions", "takes", "tracks"}), "0.20.0's fields"
 

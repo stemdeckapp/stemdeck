@@ -253,3 +253,95 @@ def test_a_full_queue_leaves_the_song_for_a_later_open(client):
 def test_the_version_survives_a_registry_round_trip():
     job = Job(id=JOB_ID, status="done", loudness_version=LOUDNESS_VERSION)
     assert Job.from_record(job.to_record()).loudness_version == LOUDNESS_VERSION
+
+
+# #923: the card's numbers move when an old song is measured again, so the job
+# says so, and from what, until the song is analysed afresh. The page shows the
+# note once per song and keeps "seen" in its own library store.
+
+
+def _remeasure(client, job_id: str = JOB_ID) -> tuple[dict, list]:
+    """Open an old song, let the background measurement run, return the state
+    the open answered with and the files that were measured."""
+    measured: list = []
+
+    def fake_measure(sources):
+        measured.extend(sources)
+        return -10.5, -1.0
+
+    with patch("app.api.jobs.measure_loudness", side_effect=fake_measure):
+        first = client.get(f"/api/jobs/{job_id}").json()
+        _settle()
+    return first, measured
+
+
+def test_a_song_measured_from_its_stems_says_so(client):
+    _old_song(None)
+    first, measured = _remeasure(client)
+
+    assert first["loudness_remeasured"] is False, "the open answers with the old numbers"
+    assert first["loudness_basis"] is None
+    state = client.get(f"/api/jobs/{JOB_ID}").json()
+    assert state["lufs"] == -10.5
+    assert state["loudness_remeasured"] is True
+    assert state["loudness_basis"] == "stems"
+    assert {p.name for p in measured} == {"vocals.wav", "drums.wav"}
+
+
+def test_a_song_measured_from_its_kept_upload_says_so(client):
+    from app.core import config
+
+    _old_song(None)
+    _sine_wav(config.JOBS_DIR / JOB_ID / "source.wav", [(1.0, -14.0)])
+    _, measured = _remeasure(client)
+
+    state = client.get(f"/api/jobs/{JOB_ID}").json()
+    assert state["loudness_remeasured"] is True
+    assert state["loudness_basis"] == "source"
+    assert [p.name for p in measured] == ["source.wav"]
+
+
+def test_a_song_not_measured_again_says_nothing(client):
+    _old_song(LOUDNESS_VERSION)
+    first, measured = _remeasure(client)
+    second = client.get(f"/api/jobs/{JOB_ID}").json()
+
+    assert measured == []
+    for state in (first, second):
+        assert state["loudness_remeasured"] is False
+        assert state["loudness_basis"] is None
+
+
+def test_a_failed_measurement_says_nothing(client):
+    _old_song(None)
+    with patch("app.api.jobs.measure_loudness", return_value=(None, None)):
+        client.get(f"/api/jobs/{JOB_ID}")
+        _settle()
+    state = client.get(f"/api/jobs/{JOB_ID}").json()
+    assert state["loudness_remeasured"] is False
+    assert state["loudness_basis"] is None
+
+
+def test_the_remeasure_outlives_a_restart(client):
+    """Measured in the background after an open, so the next open, the one
+    that shows the new numbers, is often after the app was closed."""
+    from app.core import config
+    from app.core.registry import _recover_done_job
+
+    job = _old_song(None)
+    _remeasure(client)
+
+    meta = json.loads((config.JOBS_DIR / JOB_ID / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["loudness_remeasured"] == "stems"
+    assert Job.from_record(job.to_record()).loudness_remeasured == "stems"
+    rebuilt = _recover_done_job(config.JOBS_DIR / JOB_ID)
+    assert rebuilt is not None
+    assert rebuilt.loudness_remeasured == "stems"
+
+
+def test_an_unknown_basis_on_disk_is_not_reported():
+    job = Job(id=JOB_ID, status="done", loudness_version=LOUDNESS_VERSION)
+    job.loudness_remeasured = "elsewhere"
+    state = job.to_state()
+    assert state["loudness_remeasured"] is False
+    assert state["loudness_basis"] is None

@@ -143,7 +143,13 @@ def keep_added_time(job: Job, job_dir: Path) -> None:
 
 # Newer than 0.20.0, which drops them from every record it saves, and kept in
 # metadata.json: after a downgrade and back, that is their only copy.
-_BACK_FROM_METADATA = (*SAVED_FIELDS, "stem_format", "stem_mp3_kbps", "loudness_version")
+_BACK_FROM_METADATA = (
+    *SAVED_FIELDS,
+    "stem_format",
+    "stem_mp3_kbps",
+    "loudness_version",
+    "loudness_remeasured",
+)
 
 
 def register(job: Job) -> Job:
@@ -952,6 +958,7 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         peak_db=meta.get("peak_db"),
         dynamic_range=meta.get("dynamic_range"),
         loudness_version=meta.get("loudness_version"),
+        loudness_remeasured=meta.get("loudness_remeasured"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
