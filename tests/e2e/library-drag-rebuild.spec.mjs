@@ -69,8 +69,8 @@ async function open(page) {
 const center = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
 
 /** Press on the song and carry it over the folder, without releasing. */
-async function holdOverFolder(page) {
-  const from = center(await row(page, DRAGGED).boundingBox());
+async function holdOverFolder(page, id = DRAGGED) {
+  const from = center(await row(page, id).boundingBox());
   const to = center(await page.locator(MINE).boundingBox());
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
@@ -142,6 +142,50 @@ test.describe("a song dragged onto a folder while the library rebuilds", () => {
       .poll(async () => (await readCatalogState(page)).folders.find((f) => f.id === "f-other")?.parentId ?? null)
       .toBe("f-mine");
     await expect(page.locator(".folder.folder-dragging")).toHaveCount(0);
+  });
+
+  test("a drag whose dragend never arrives ends at the next pointer movement", async ({ page }) => {
+    const queue = await open(page);
+
+    // A dragstart with no dragend after it: what a lost dragend leaves behind.
+    await row(page, DRAGGED).evaluate((el) => {
+      el.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: new DataTransfer() }));
+    });
+    await expect(row(page, DRAGGED)).toHaveClass(/dragging/);
+    await queue.settle();
+    await importLanded(page);
+    await expect(row(page, JOB_ID).locator(".cat-status")).toHaveClass(/processing/);
+
+    // Pointer events do not fire during a real drag, so this one ends it.
+    await page.mouse.move(10, 10);
+    await page.mouse.move(20, 20);
+
+    await expect(row(page, JOB_ID).locator(".cat-status")).not.toHaveClass(/processing/);
+    await expect(page.locator(".cat-item.dragging")).toHaveCount(0);
+  });
+
+  test("a song whose import is cancelled while it is held is not filed into the folder", async ({ page }) => {
+    const queue = await open(page);
+    await page.route(`**/api/jobs/${JOB_ID}`, (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: JOB_ID, status: "cancelled", progress: 0, title: "Importing Song" }),
+      });
+    });
+
+    await holdOverFolder(page, JOB_ID);
+    await queue.settle();
+    // The cancelled import is gone from the store before the release.
+    await expect.poll(async () => JOB_ID in ((await readCatalogState(page))?.tracks ?? {}), { timeout: 15000 }).toBe(false);
+    await page.mouse.up();
+
+    // The drop and the drag's end have run by now, and with them the rebuild.
+    await expect(page.locator(".cat-item.dragging")).toHaveCount(0);
+    await expect(page.locator(`.cat-item[data-id="${JOB_ID}"]`)).toHaveCount(0);
+    // Read once, not retried: a ghost entry would show here at once.
+    expect(await page.locator('.folder[data-id="f-mine"] > .folder-head .f-count').textContent()).toBe("0");
   });
 
   test("a rebuild with no drag held still runs at once", async ({ page }) => {

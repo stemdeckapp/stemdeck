@@ -1565,6 +1565,38 @@ function renderHeldBack() {
   render();
 }
 
+/** Take every mark a library drag puts on the page back off. */
+function clearLibraryDragMarks() {
+  for (const el of document.querySelectorAll(".cat-item.dragging:not(.queue-row)")) el.classList.remove("dragging");
+  for (const el of document.querySelectorAll(".folder.folder-dragging")) el.classList.remove("folder-dragging");
+  for (const el of document.querySelectorAll(".folder.drop-target, .folder.drop-before, .folder.drop-after, .folder.drop-into")) {
+    el.classList.remove("drop-target", "drop-before", "drop-after", "drop-into");
+  }
+  document.querySelector(".rail-trash")?.classList.remove("drop-target");
+  document.getElementById("lanes")?.classList.remove("library-drop-target");
+}
+
+/**
+ * A drag whose dragend never arrived would leave dragId or folderDragId set,
+ * and render() would then wait forever. Pointer events do not fire while an
+ * HTML5 drag is under way (the browser sends pointercancel when it starts), so
+ * a pointer event with a drag still recorded means that drag is over: clear it
+ * and run the rebuild it held back.
+ */
+function recoverFromLostDragEnd() {
+  if (!isLibraryDragging()) return;
+  console.warn("[catalog] a library drag ended without dragend; clearing it");
+  dragId = null;
+  folderDragId = null;
+  clearLibraryDragMarks();
+  renderHeldBack();
+}
+
+function wireLostDragEndRecovery() {
+  document.addEventListener("pointerdown", recoverFromLostDragEnd, true);
+  document.addEventListener("pointermove", recoverFromLostDragEnd, true);
+}
+
 function isTrackDragEvent(event) {
   return dragId != null || Boolean(event?.dataTransfer?.types?.includes(TRACK_DRAG_TYPE));
 }
@@ -1577,6 +1609,8 @@ function getDraggedTrackId(event) {
 
 function startDrag(trackId, itemEl, event) {
   dragId = trackId;
+  // Only one library drag at a time: a folder drag recorded now is stale.
+  folderDragId = null;
   if (event?.dataTransfer) {
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(TRACK_DRAG_TYPE, trackId);
@@ -1596,7 +1630,10 @@ function endDrag(itemEl) {
 
 function dropOnFolder(folderId, trackId) {
   const id = trackId ?? dragId;
-  if (!id) return;
+  // The song can be gone by the time it is dropped: a cancelled import drops
+  // its row while it is held. Filing its id would leave a folder entry with no
+  // song behind it.
+  if (!id || !tracks[id]) return;
   // Remove from current folder
   for (const f of folders) {
     const idx = f.items.indexOf(id);
@@ -2323,6 +2360,8 @@ function renderFolder(folder) {
     grip.draggable = true;
     grip.addEventListener("dragstart", (e) => {
       folderDragId = folder.id;
+      // Only one library drag at a time: a song drag recorded now is stale.
+      dragId = null;
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData(FOLDER_DRAG_TYPE, folder.id);
       e.stopPropagation();
@@ -6212,6 +6251,7 @@ export function wireCatalogControls({ languageReady }) {
   wireMainPanelDrop();
   wireRailTrashDrop();
   wireRailLibraryDrop();
+  wireLostDragEndRecovery();
   wireLibraryDeleteKeys();
   wireAboutDialog();
   wireSupportersDialog(languageReady);
