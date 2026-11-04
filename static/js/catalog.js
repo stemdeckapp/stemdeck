@@ -231,6 +231,15 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 let folders = [];
 let tracks = {};
+// initCatalog reads the library from the store at the end of the start, but
+// its controls are wired before that (wireCatalogControls), so a press in the
+// first moments is not lost (#1010). Until it has loaded, render() draws
+// nothing (an empty library would offer New folder and Empty Trash over the
+// real one), and Settings waits for it (libraryReady). A read that fails ends
+// the wait too, with the error shown, so nothing waits forever.
+let libraryLoaded = false;
+let markLibraryLoaded;
+const libraryReady = new Promise((resolve) => { markLibraryLoaded = resolve; });
 let _deletedJobIds = new Set();
 let _currentTrackId = null;
 // The open track's tags as the last render() saw them. See setCurrentTrack().
@@ -2392,7 +2401,7 @@ function render() {
   const strip = document.getElementById("catalogStrip");
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
-  if (!list) return;
+  if (!list || !libraryLoaded) return;
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
@@ -2931,7 +2940,12 @@ function wireCatalogToggle() {
   const app = document.querySelector(".app");
   if (!app) return;
 
-  const collapsed = localStorage.getItem("stemdeck.catalog.collapsed") === "1";
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem("stemdeck.catalog.collapsed") === "1";
+  } catch (e) {
+    console.warn("[catalog] could not read sidebar state:", e);
+  }
   if (collapsed) {
     app.classList.add("cat-collapsed");
     collapseBtn?.setAttribute("aria-expanded", "false");
@@ -3743,14 +3757,18 @@ function friendCard(f) {
 // the partner cards, grouped by category. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url on
 // desktop).
-function wireSupportersDialog() {
+function wireSupportersDialog(languageReady) {
   const btn = document.getElementById("friendsBtn");
   const dialog = document.getElementById("friendsDialog");
   const close = document.getElementById("friendsClose");
   const grid = document.getElementById("friendsDialogGrid");
   if (!btn || !dialog) return;
 
-  if (grid && grid.dataset.ready !== "1") {
+  // Built on the first open rather than here: the categories are sorted on
+  // their translated names, and this button is wired before the language has
+  // been read.
+  const fillGrid = () => {
+    if (!grid || grid.dataset.ready === "1") return;
     grid.dataset.ready = "1";
     // Two columns with a rule between them, rather than one long list. Six
     // sections stacked is taller than the dialog on any normal window, so the
@@ -3809,11 +3827,14 @@ function wireSupportersDialog() {
       for (const f of group.members) row.appendChild(friendCard(f));
       col.appendChild(row);
     });
-  }
+  };
 
-  const open = () => dialog.classList.remove("hidden");
+  const open = () => {
+    fillGrid();
+    dialog.classList.remove("hidden");
+  };
   const hide = () => dialog.classList.add("hidden");
-  btn.addEventListener("click", open);
+  btn.addEventListener("click", () => languageReady.then(open));
   close?.addEventListener("click", hide);
   dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) hide(); });
   dialog.addEventListener("keydown", (e) => { if (e.code === "Escape") hide(); });
@@ -6148,11 +6169,20 @@ function wireSettingsMenu() {
   btn.dataset.menuReady = "1";
   // The only setting today is the library, so Settings opens the Edit Library
   // window directly (a centered modal, like the About dialog).
-  btn.addEventListener("click", openLibraryEditor);
+  // It counts and resyncs the library's out-of-sync songs, so a press before
+  // the library has loaded opens it once it has. After that it opens at once,
+  // not a promise later: artistInfo.js and recordingSettings.js press Settings
+  // and reach into the dialog on the next line, which works only then.
+  btn.addEventListener("click", () => {
+    if (libraryLoaded) openLibraryEditor();
+    else libraryReady.then(openLibraryEditor);
+  });
 }
 
-export async function initCatalog() {
-  await loadState();
+/** The library's controls, wired by main.js with the rest of the page, before
+ *  the start reads anything from the store (#1010). `languageReady` resolves
+ *  once the language has been read. */
+export function wireCatalogControls({ languageReady }) {
   wireCatalogToggle();
   wireCatalogRailViews();
   wireCatalogSearch();
@@ -6161,10 +6191,26 @@ export async function initCatalog() {
   wireRailLibraryDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
-  wireDonateDialog();
-  wireSupportersDialog();
+  wireSupportersDialog(languageReady);
   wireReleaseDialog();
   wireSettingsMenu();
+}
+
+export async function initCatalog() {
+  try {
+    await loadState();
+  } catch (e) {
+    // Reached only by a stored library in a shape loadState does not expect:
+    // it reads the store through storeGet, which never throws.
+    console.warn("[catalog] failed to read the library:", e);
+    showError(i18nT("library.loadFailed"), String(e?.message || e), { retry: false });
+  }
+  libraryLoaded = true;
+  // What waits runs after the rest of this function, so on a drawn library.
+  markLibraryLoaded();
+  // Not with the other controls: its button stays hidden until this runs, and
+  // its labels need the language, which has been read by now.
+  wireDonateDialog();
   // A take was kept, nudged, renamed or deleted: the server re-rendered, so
   // the open job's lanes are rebuilt from fresh state, as after a vocal split.
   document.addEventListener("stemdeck:takes-changed", (e) => {

@@ -17,7 +17,7 @@ import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange } from "./transport.js";
 import { setSectionsLoopBridge, refreshSectionsAddState } from "./sections.js";
 import { wireStemListControls, laneDragIcon } from "./mixer.js";
-import { initCatalog, collectDiagnostics } from "./catalog.js";
+import { initCatalog, collectDiagnostics, wireCatalogControls } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { runStoreMigrationIfNeeded } from "./utils.js";
 import { ignoredByShortcuts } from "./libraryDeleteKey.js";
@@ -536,6 +536,10 @@ onLanguageChange(refitFooter);
 // Every chip's label changes width with the language, so the count that fits
 // changes with it too.
 onLanguageChange(fitStemChips);
+// Here with everything else, not in initCatalog after the awaits below: on
+// the desktop app each of those is a round trip to the shell, and a press on
+// Settings in that time used to do nothing (#1010).
+wireCatalogControls({ languageReady: i18nReady });
 
 (async () => {
   await i18nReady;
