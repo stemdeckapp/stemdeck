@@ -966,7 +966,11 @@ export function paintTrackLoudnessNote(trackId, loudness) {
  *  note was dismissed for, so a later method change would show it again. */
 function keepLoudnessNoteSeen(trackId, version) {
   const track = tracks[trackId];
-  if (!track) return;
+  if (!track) {
+    // The note hides anyway; it shows again the next time the song opens.
+    console.warn("[catalog] loudness note dismissed for a song not in the library:", trackId);
+    return;
+  }
   track.loudnessNoteSeen = version;
   saveState();
 }

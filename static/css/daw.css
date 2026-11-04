@@ -1372,7 +1372,8 @@ input, textarea { font-family: inherit; }
 .loudness-note-text { flex: 1; min-width: 0; }
 .loudness-note-dismiss {
   flex-shrink: 0;
-  width: 22px; height: 22px;
+  /* 24 px: the smallest pointer target WCAG 2.2 (2.5.8) allows. */
+  width: 24px; height: 24px;
   display: grid; place-items: center;
   background: transparent; border: none; border-radius: var(--radius-sm);
   color: var(--muted); font-size: 16px; line-height: 1;
