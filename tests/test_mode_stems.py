@@ -387,6 +387,40 @@ def test_lanes_does_not_open_a_path_outside_the_job(jobs_dir):
     assert e.value.status_code == 404
 
 
+def test_a_rebuilt_original_uses_each_part_inside_the_jobs_folder(jobs_dir, tmp_path, monkeypatch):
+    """Both ways of rebuilding Original from its parts (with and without
+    lanes=) give every part's resolved file in the job, and give up when one
+    part resolves outside the jobs folder: the export then falls back to the
+    job's original.wav, unpitched."""
+    _make_job(jobs_dir, selected=("vocals", "drums"))
+    names, gains, pitches = ["original", "vocals", "drums"], [1.0] * 3, [2, 0, 0]
+    lanes = frozenset({"vocals", "drums"})
+    parts = ("bass", "guitar", "piano", "other")
+    expected = [(jobs_dir / JOB / "stems" / f"{n}.wav").resolve() for n in parts]
+
+    def original(render):
+        return [lane for lane in render if lane.name == "original"]
+
+    legacy, unpitched = stems_mod._expand_render_lanes(JOB, names, gains, pitches)
+    assert [lane.path for lane in original(legacy)] == expected and unpitched == []
+    laned, _ = stems_mod._expand_render_lanes(JOB, names, gains, pitches, lanes=lanes)
+    assert [lane.path for lane in original(laned)] == expected
+
+    outside = tmp_path / "elsewhere" / "piano.wav"
+    outside.parent.mkdir()
+    outside.write_bytes((jobs_dir / JOB / "stems" / "piano.wav").read_bytes())
+    real_stem_path = stems_mod.stem_path
+    monkeypatch.setattr(
+        stems_mod,
+        "stem_path",
+        lambda d, name: outside if name == "piano" else real_stem_path(d, name),
+    )
+    for kwargs in ({}, {"lanes": lanes}):
+        render, unpitched = stems_mod._expand_render_lanes(JOB, names, gains, pitches, **kwargs)
+        assert [(lane.path.name, lane.pitch) for lane in original(render)] == [("original.wav", 0)]
+        assert unpitched == ["original"]
+
+
 # ─── lanes=: real exports ────────────────────────────────────────────────
 
 

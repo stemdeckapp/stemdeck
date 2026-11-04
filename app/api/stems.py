@@ -1066,13 +1066,7 @@ def _expand_render_lanes(
         # Deliberately not `path`: that name holds the validated "original.wav"
         # this lane falls back to, and reusing it here left the fallback
         # pointing at whichever component was tried last.
-        paths: list[Path] = []
-        for comp in components:
-            comp_path = stem_path(JOBS_DIR / job_id / "stems", comp).resolve()
-            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
-                paths = []
-                break
-            paths.append(comp_path)
+        paths = _component_paths(job_id, components)
 
         if not paths:
             if remove:
@@ -1089,6 +1083,20 @@ def _expand_render_lanes(
             lanes_out.append(_RenderLane(path, gain, effective_pitch(comp, pitch), name))
 
     return lanes_out, unpitched
+
+
+def _component_paths(job_id: str, components: list[str]) -> list[Path]:
+    """The resolved stem file of every component, or [] when one is missing
+    or resolves outside the jobs folder: Original is then not rebuilt."""
+    jobs_root = JOBS_DIR.resolve()
+    stems = JOBS_DIR / job_id / "stems"
+    paths: list[Path] = []
+    for comp in components:
+        comp_path = stem_path(stems, comp).resolve()
+        if not comp_path.is_file() or not comp_path.is_relative_to(jobs_root):
+            return []
+        paths.append(comp_path)
+    return paths
 
 
 def _job_original_set(job_id: str) -> frozenset[str] | None:
@@ -1150,13 +1158,7 @@ def _expand_mode_lanes(
             # before lanes= existed, byte for byte.
             out.append(_RenderLane(_validate_stem_path(job_id, "original"), gain, 0, name))
             continue
-        paths: list[Path] = []
-        for comp in components:
-            comp_path = stem_path(JOBS_DIR / job_id / "stems", comp).resolve()
-            if not comp_path.is_file() or not comp_path.is_relative_to(JOBS_DIR.resolve()):
-                paths = []
-                break
-            paths.append(comp_path)
+        paths = _component_paths(job_id, components)
         if not paths:
             if own_set is not None and own_set == frozenset(components):
                 # An older job whose parts are gone: its file, unpitched,
