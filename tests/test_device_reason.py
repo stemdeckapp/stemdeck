@@ -13,6 +13,7 @@ import asyncio
 import json
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -227,6 +228,20 @@ def test_the_older_header_is_read(monkeypatch):
         "driver": "560.94",
         "cuda": "12.6",
     }
+
+
+# The header forms nvidia-smi prints, and output that holds no version, shared
+# with the desktop shell's parse_cuda_version tests in
+# desktop/src-tauri/src/main.rs, so both read each one the same way (#1012).
+NVIDIA_SMI_HEADERS = json.loads(
+    (Path(__file__).parent / "fixtures" / "nvidia_smi_headers.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("sample", NVIDIA_SMI_HEADERS, ids=lambda s: s["name"])
+def test_every_header_form_gives_its_cuda_version(monkeypatch, sample):
+    _fake_smi(monkeypatch, sample["header"])
+    assert device_reason.nvidia_gpu()["cuda"] == sample["cuda"]
 
 
 def test_nvidia_smi_is_asked_once_within_the_ttl(monkeypatch):
