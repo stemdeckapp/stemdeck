@@ -2850,12 +2850,6 @@ input, textarea { font-family: inherit; }
   position: absolute; inset: 0;
   width: 100%; height: 100%; display: block;
 }
-.footer-scrub {
-  position: absolute; inset: 0;
-  cursor: pointer; z-index: 2;
-  background: transparent;
-}
-.footer-scrub-fill { display: none; }
 
 .track-panel-info {
   flex: 1; min-width: 0;
@@ -5603,14 +5597,13 @@ input, textarea { font-family: inherit; }
 
 /* 7. The whole waveform strip in the bottom bar.
 
-   Read this before keeping it. The strip is three things in one: the waveform
-   drawing, the time ticks, and the scrub, which is the footer's seek control
-   and its only progress indicator. All three go together here, so after this
-   the only way to move through a track is the lanes above, and the footer no
-   longer shows where you are.
+   The strip is two things in one: the waveform drawing and the time ticks.
+   Both go together here, so the footer does not show where you are; the
+   lanes above do. Its seek control was deleted rather than shown again
+   (#934), so showing the strip again brings back no way to seek from it.
 
    If that turns out to be too much, hiding #footer-waveform alone removes the
-   drawing and leaves the ticks and the seek working. */
+   drawing and leaves the ticks. */
 .footer-wave-panel {
   display: none !important;
 }

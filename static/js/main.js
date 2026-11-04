@@ -1,7 +1,7 @@
 // The studio mode first: it sets the class the DAW controls are hidden by.
 import "./mode.js";
 import {
-  loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
+  loopBtn, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitModeReady, setVocalSplitMode,
   setAutoSectionsResetFn, onLoopChange, setTransposeExportAvailable,
@@ -855,28 +855,6 @@ function wireFooterControls() {
     else if (e.key === "ArrowDown") { e.preventDefault(); focusable[(idx + 1) % focusable.length]?.focus(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); focusable[(idx - 1 + focusable.length) % focusable.length]?.focus(); }
   });
-
-  // ── Scrub bar seek ──
-  const scrub = document.getElementById("footer-scrub");
-  if (scrub) {
-    function seekToX(clientX) {
-      // setPlayheadTime, not multitrack.setTime: on the default chunked engine
-      // the multitrack is silent and this whole bar did nothing. It also moves
-      // the playhead marker, footer times and presence playhead, which the old
-      // call never did (#515).
-      if (!totalDuration) return;
-      const rect = scrub.getBoundingClientRect();
-      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      setPlayheadTime(frac * totalDuration);
-    }
-    let _scrubbing = false;
-    scrub.addEventListener("mousedown", (e) => {
-      _scrubbing = true;
-      seekToX(e.clientX);
-    });
-    document.addEventListener("mousemove", (e) => { if (_scrubbing) seekToX(e.clientX); });
-    document.addEventListener("mouseup",   () => { _scrubbing = false; });
-  }
 
   // ── Close panels on outside click ──
   // Inside the menu is not "away": ticking an option must not dismiss it. The

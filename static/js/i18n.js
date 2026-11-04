@@ -975,7 +975,6 @@ const en = {
   "help.presence": "How loud the {name} part is next to the loudest instrument in the song. 100% is the loudest; a dash means it is not in the song.",
   "help.wavesTitle": "Waveforms",
   "help.waves": "Each instrument's sound, drawn over time. Click to jump to that moment. Drag across to loop that part.",
-  "help.footerSeek": "The whole song, from start to end. Click or drag along it to jump to that point.",
   "help.stop": "Stops the song.",
   "help.play": "Plays the song, or pauses it.",
   "help.loop": "Turns looping on or off: the part between the two times beside it repeats. The L key does the same.",
@@ -1115,7 +1114,6 @@ const en = {
   "footer.stemsCount.many": "{count} stems",
   "footer.extractedLabel": "Extracted",
   "fav.toggleAria": "Toggle favorite",
-  "footer.seekAria": "Seek",
 
   "export.optionsAria": "Export options",
   "export.formatAria": "Export format",
@@ -2850,7 +2848,6 @@ const pl = {
   "help.presence": "Jak głośne jest {name} w porównaniu z najgłośniejszym instrumentem w utworze. 100% to najgłośniejszy; kreska oznacza, że go nie ma.",
   "help.wavesTitle": "Przebiegi",
   "help.waves": "Dźwięk każdego instrumentu w czasie. Kliknij, aby przejść do tego momentu. Przeciągnij, aby zapętlić ten fragment.",
-  "help.footerSeek": "Cały utwór, od początku do końca. Kliknij lub przeciągnij wzdłuż paska, aby przejść w to miejsce.",
   "help.stop": "Zatrzymuje utwór.",
   "help.play": "Odtwarza utwór albo go wstrzymuje.",
   "help.loop": "Włącza lub wyłącza pętlę: fragment między dwoma czasami obok się powtarza. Klawisz L robi to samo.",
@@ -2988,7 +2985,6 @@ const pl = {
   "footer.stemsCount.many": "{count} ścieżek",
   "footer.extractedLabel": "Wyodrębniono",
   "fav.toggleAria": "Przełącz ulubione",
-  "footer.seekAria": "Przewiń",
 
   "export.optionsAria": "Opcje eksportu",
   "export.formatAria": "Format eksportu",
@@ -4718,7 +4714,6 @@ const ja = {
   "help.presence": "曲の中で最も大きい楽器と比べた{name}の音量です。100% が最大、ダッシュはその楽器が入っていないことを示します。",
   "help.wavesTitle": "波形",
   "help.waves": "各楽器の音を時間に沿って描いたものです。クリックでその位置へ移動し、ドラッグでその部分をループします。",
-  "help.footerSeek": "曲の最初から最後までです。クリックするか、沿ってドラッグすると、その位置に移ります。",
   "help.stop": "曲を止めます。",
   "help.play": "曲を再生、または一時停止します。",
   "help.loop": "ループのオンとオフを切り替えます。横の 2 つの時間の間が繰り返されます。L キーでも同じです。",
@@ -4855,7 +4850,6 @@ const ja = {
 
   "footer.extractedLabel": "抽出日時",
   "fav.toggleAria": "お気に入りを切り替え",
-  "footer.seekAria": "シーク",
 
   "export.optionsAria": "エクスポートオプション",
   "export.formatAria": "エクスポート形式",
@@ -6555,7 +6549,6 @@ const zhHans = {
   "help.presence": "{name}与歌曲中最响的乐器相比有多响。100% 为最响；横线表示歌曲中没有它。",
   "help.wavesTitle": "波形",
   "help.waves": "每种乐器的声音随时间的变化。点击跳到那一刻，拖动可循环那一段。",
-  "help.footerSeek": "整首歌，从开头到结尾。点击或沿着它拖动可跳到那个位置。",
   "help.stop": "停止播放。",
   "help.play": "播放歌曲，或暂停。",
   "help.loop": "开启或关闭循环：旁边两个时间之间的部分会重复。按 L 键效果相同。",
@@ -6692,7 +6685,6 @@ const zhHans = {
 
   "footer.extractedLabel": "提取于",
   "fav.toggleAria": "切换收藏",
-  "footer.seekAria": "跳转",
 
   "export.optionsAria": "导出选项",
   "export.formatAria": "导出格式",
@@ -8392,7 +8384,6 @@ const de = {
   "help.presence": "Wie laut {name} im Vergleich zum lautesten Instrument im Song ist. 100 % ist das lauteste; ein Strich heißt, es kommt nicht vor.",
   "help.wavesTitle": "Wellenformen",
   "help.waves": "Der Klang jedes Instruments über die Zeit. Klick, um an diese Stelle zu springen. Zieh darüber, um diesen Teil zu loopen.",
-  "help.footerSeek": "Der ganze Song, von Anfang bis Ende. Klick darauf oder zieh daran entlang, um an diese Stelle zu springen.",
   "help.stop": "Stoppt den Song.",
   "help.play": "Spielt den Song ab oder pausiert ihn.",
   "help.loop": "Schaltet den Loop an oder aus: Der Teil zwischen den beiden Zeiten daneben wiederholt sich. Die Taste L tut dasselbe.",
@@ -8530,7 +8521,6 @@ const de = {
   "footer.stemsCount.other": "{count} Stems",
   "footer.extractedLabel": "Extrahiert",
   "fav.toggleAria": "Favorit umschalten",
-  "footer.seekAria": "Suchlauf",
 
   "export.optionsAria": "Exportoptionen",
   "export.formatAria": "Exportformat",
@@ -10243,7 +10233,6 @@ const pt = {
   "help.presence": "O quão alto {name} está em relação ao instrumento mais alto da música. 100% é o mais alto; um traço significa que não está na música.",
   "help.wavesTitle": "Formas de onda",
   "help.waves": "O som de cada instrumento ao longo do tempo. Clique para pular para esse momento. Arraste para repetir esse trecho em loop.",
-  "help.footerSeek": "A música inteira, do início ao fim. Clique ou arraste ao longo dela para pular para esse ponto.",
   "help.stop": "Para a música.",
   "help.play": "Toca a música, ou pausa.",
   "help.loop": "Liga ou desliga o loop: o trecho entre os dois tempos ao lado se repete. A tecla L faz o mesmo.",
@@ -10381,7 +10370,6 @@ const pt = {
   "footer.stemsCount.other": "{count} stems",
   "footer.extractedLabel": "Extraído",
   "fav.toggleAria": "Alternar favorito",
-  "footer.seekAria": "Buscar",
 
   "export.optionsAria": "Opções de exportação",
   "export.formatAria": "Formato de exportação",
@@ -12096,7 +12084,6 @@ const id = {
   "help.presence": "Seberapa keras {name} dibanding instrumen paling keras di lagu. 100% adalah yang paling keras; tanda strip berarti tidak ada di lagu.",
   "help.wavesTitle": "Bentuk gelombang",
   "help.waves": "Suara tiap instrumen dari waktu ke waktu. Klik untuk melompat ke saat itu. Seret untuk mengulang bagian itu.",
-  "help.footerSeek": "Seluruh lagu, dari awal sampai akhir. Klik atau seret di sepanjang bilah untuk melompat ke titik itu.",
   "help.stop": "Menghentikan lagu.",
   "help.play": "Memutar lagu, atau menjedanya.",
   "help.loop": "Menyalakan atau mematikan pengulangan: bagian di antara dua waktu di sebelahnya diulang. Tombol L melakukan hal yang sama.",
@@ -12233,7 +12220,6 @@ const id = {
   "footer.stemsCount.other": "{count} stem",
   "footer.extractedLabel": "Diekstrak",
   "fav.toggleAria": "Alihkan favorit",
-  "footer.seekAria": "Cari posisi",
 
   "export.optionsAria": "Opsi ekspor",
   "export.formatAria": "Format ekspor",
@@ -13933,7 +13919,6 @@ const fr = {
   "help.presence": "Le volume de {name} par rapport à l'instrument le plus fort du morceau. 100 % est le plus fort ; un tiret signifie qu'il n'est pas dans le morceau.",
   "help.wavesTitle": "Formes d'onde",
   "help.waves": "Le son de chaque instrument dans le temps. Cliquez pour aller à ce moment. Faites glisser pour boucler ce passage.",
-  "help.footerSeek": "Le morceau entier, du début à la fin. Cliquez ou faites glisser le long de la barre pour aller à ce moment.",
   "help.stop": "Arrête le morceau.",
   "help.play": "Lance le morceau, ou le met en pause.",
   "help.loop": "Active ou désactive la boucle : le passage entre les deux temps à côté se répète. La touche L fait de même.",
@@ -14071,7 +14056,6 @@ const fr = {
   "footer.stemsCount.other": "{count} pistes",
   "footer.extractedLabel": "Extrait",
   "fav.toggleAria": "Ajouter/retirer des favoris",
-  "footer.seekAria": "Se déplacer",
 
   "export.optionsAria": "Options d'export",
   "export.formatAria": "Format d'export",
@@ -15506,7 +15490,6 @@ const ptPT = {
   "help.videoPreview": "O take da câmara desta faixa de vídeo no cursor de reprodução. Acompanha a música e não tem som próprio. Arraste a barra de cima para mover a janela, ou o canto para mudar o tamanho.",
   "help.videoPreviewClose": "Fecha a janela de pré-visualização. A faixa de vídeo e os takes dela mantêm-se.",
   "help.lyricsLineNudge": "Move esta linha mais cedo ou mais tarde pelo tempo escrito no botão. Com Mover as linhas seguintes ligado, as linhas depois dela vão também.",
-  "help.footerSeek": "A música inteira, do início ao fim. Clique ou arraste ao longo dela para saltar para esse ponto.",
 };
 
 const es = {
@@ -16267,7 +16250,6 @@ const es = {
   "help.presence": "Qué tan fuerte suena {name} frente al instrumento más fuerte de la canción. 100% es el más fuerte; un guion significa que no está en la canción.",
   "help.wavesTitle": "Formas de onda",
   "help.waves": "El sonido de cada instrumento a lo largo del tiempo. Haz clic para saltar a ese momento. Arrastra para repetir esa parte en bucle.",
-  "help.footerSeek": "La canción entera, de principio a fin. Haz clic o arrastra a lo largo de ella para saltar a ese punto.",
   "help.stop": "Detiene la canción.",
   "help.play": "Reproduce la canción, o la pausa.",
   "help.loop": "Activa o desactiva el bucle: la parte entre los dos tiempos de al lado se repite. La tecla L hace lo mismo.",
@@ -16405,7 +16387,6 @@ const es = {
   "footer.stemsCount.other": "{count} stems",
   "footer.extractedLabel": "Extraído",
   "fav.toggleAria": "Marcar o desmarcar como favorito",
-  "footer.seekAria": "Desplazar",
 
   "export.optionsAria": "Opciones de exportación",
   "export.formatAria": "Formato de exportación",
@@ -18141,7 +18122,6 @@ const ko = {
   "help.presence": "곡에서 가장 큰 악기와 비교한 {name}의 음량이에요. 100%가 가장 크고, 대시는 곡에 없다는 뜻이에요.",
   "help.wavesTitle": "파형",
   "help.waves": "악기마다 소리를 시간에 따라 그린 거예요. 클릭하면 그 순간으로 가고, 끌면 그 부분을 반복해요.",
-  "help.footerSeek": "곡 전체, 처음부터 끝까지예요. 클릭하거나 따라 끌면 그 지점으로 이동해요.",
   "help.stop": "곡을 멈춰요.",
   "help.play": "곡을 재생하거나 일시 정지해요.",
   "help.loop": "반복을 켜거나 꺼요. 옆의 두 시간 사이가 반복돼요. L 키도 같아요.",
@@ -18278,7 +18258,6 @@ const ko = {
 
   "footer.extractedLabel": "추출",
   "fav.toggleAria": "즐겨찾기 켜기/끄기",
-  "footer.seekAria": "이동",
 
   "export.optionsAria": "내보내기 옵션",
   "export.formatAria": "내보내기 형식",
