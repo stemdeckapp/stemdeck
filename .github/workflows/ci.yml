@@ -67,12 +67,13 @@ jobs:
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
   # Browser tests for static/js: the steps live in e2e.yml, shared with
-  # e2e-full.yml. A pull request to main, a push to main and a release run the
-  # whole suite. A pull request to any other base runs the scoped set (changed
-  # specs, smoke, mapped specs, and the core set for a hub change); the full
-  # run on the next push to big-release catches what that set misses.
-  # Checks show as "frontend-e2e / frontend-e2e (1)" to "(3)".
+  # e2e-full.yml. Runs the whole suite, and only for a pull request into main,
+  # a push to main or a release. A pull request into any other base (such as
+  # big-release) skips it (#1024): the full run on every push to big-release
+  # and the nightly run (e2e-full.yml) catch a broken spec on the merge commit.
+  # Checks show as "frontend-e2e / frontend-e2e (1)" to "(3)" on those events.
   frontend-e2e:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
     # A new push to a pull request cancels that pull request's older e2e run.
     # Anything else gets a group of its own (the run id), so a push to main or
     # a release is never cancelled and never waits behind another run. This
@@ -83,7 +84,7 @@ jobs:
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     uses: ./.github/workflows/e2e.yml
     with:
-      mode: ${{ (github.event_name == 'pull_request' && github.base_ref != 'main') && 'scoped' || 'full' }}
+      mode: full
       base-ref: ${{ github.base_ref }}
 
   # The Linux installer only ever runs on a user's machine, so nothing else
