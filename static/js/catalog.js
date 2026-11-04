@@ -231,6 +231,21 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 let folders = [];
 let tracks = {};
+// initCatalog reads the library from the store at the end of the start, but
+// its controls are wired before that (wireCatalogControls), so a press in the
+// first moments is not lost (#1010). Until it has loaded, render() draws
+// nothing (an empty library would offer New folder and Empty Trash over the
+// real one), and a control that needs it waits (whenLibraryLoaded).
+let libraryLoaded = false;
+let markLibraryLoaded;
+const libraryReady = new Promise((resolve) => { markLibraryLoaded = resolve; });
+/** Run `fn` now when the library has loaded, otherwise as soon as it has. Now,
+ *  not a promise later: artistInfo.js and recordingSettings.js press Settings
+ *  and reach into the dialog on the next line. */
+function whenLibraryLoaded(fn) {
+  if (libraryLoaded) fn();
+  else libraryReady.then(fn);
+}
 let _deletedJobIds = new Set();
 let _currentTrackId = null;
 // The open track's tags as the last render() saw them. See setCurrentTrack().
@@ -2392,7 +2407,7 @@ function render() {
   const strip = document.getElementById("catalogStrip");
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
-  if (!list) return;
+  if (!list || !libraryLoaded) return;
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
@@ -3750,7 +3765,11 @@ function wireSupportersDialog() {
   const grid = document.getElementById("friendsDialogGrid");
   if (!btn || !dialog) return;
 
-  if (grid && grid.dataset.ready !== "1") {
+  // Built on the first open rather than here: the categories are sorted on
+  // their translated names, and this button is wired before the language has
+  // been read.
+  const fillGrid = () => {
+    if (!grid || grid.dataset.ready === "1") return;
     grid.dataset.ready = "1";
     // Two columns with a rule between them, rather than one long list. Six
     // sections stacked is taller than the dialog on any normal window, so the
@@ -3809,11 +3828,15 @@ function wireSupportersDialog() {
       for (const f of group.members) row.appendChild(friendCard(f));
       col.appendChild(row);
     });
-  }
+  };
 
-  const open = () => dialog.classList.remove("hidden");
+  const open = () => {
+    fillGrid();
+    dialog.classList.remove("hidden");
+  };
   const hide = () => dialog.classList.add("hidden");
-  btn.addEventListener("click", open);
+  // The library loads after the language, so by then the names can be sorted.
+  btn.addEventListener("click", () => whenLibraryLoaded(open));
   close?.addEventListener("click", hide);
   dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) hide(); });
   dialog.addEventListener("keydown", (e) => { if (e.code === "Escape") hide(); });
@@ -6148,11 +6171,14 @@ function wireSettingsMenu() {
   btn.dataset.menuReady = "1";
   // The only setting today is the library, so Settings opens the Edit Library
   // window directly (a centered modal, like the About dialog).
-  btn.addEventListener("click", openLibraryEditor);
+  // It counts and resyncs the library's out-of-sync songs, so a press before
+  // the library has loaded opens it once it has.
+  btn.addEventListener("click", () => whenLibraryLoaded(openLibraryEditor));
 }
 
-export async function initCatalog() {
-  await loadState();
+/** The library's controls, wired by main.js with the rest of the page, before
+ *  the start reads anything from the store (#1010). */
+export function wireCatalogControls() {
   wireCatalogToggle();
   wireCatalogRailViews();
   wireCatalogSearch();
@@ -6161,10 +6187,19 @@ export async function initCatalog() {
   wireRailLibraryDrop();
   wireLibraryDeleteKeys();
   wireAboutDialog();
-  wireDonateDialog();
   wireSupportersDialog();
   wireReleaseDialog();
   wireSettingsMenu();
+}
+
+export async function initCatalog() {
+  // Not with the other controls: its button stays hidden until this runs, and
+  // its labels need the language, which has been read by now.
+  wireDonateDialog();
+  await loadState();
+  libraryLoaded = true;
+  // What waits runs after the rest of this function, so on a drawn library.
+  markLibraryLoaded();
   // A take was kept, nudged, renamed or deleted: the server re-rendered, so
   // the open job's lanes are rebuilt from fresh state, as after a vocal split.
   document.addEventListener("stemdeck:takes-changed", (e) => {
