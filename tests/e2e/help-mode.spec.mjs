@@ -216,10 +216,56 @@ test.describe("help mode", () => {
 });
 
 // Every control a person can see explains itself, in the views and states the
-// first pass above never opens.
+// first pass above never opens. The song has sections, so the controls that
+// show only with sections are on screen too.
 test.describe("help mode leaves no control unexplained", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1800, height: 1020 });
+    const sections = [
+      { id: "s1", name: "Verse", start: 0, end: 3, color: "#4a7fff" },
+      { id: "s2", name: "Chorus", start: 3, end: 6, color: "#e0a030" },
+    ];
+    const res = await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections } });
+    expect(res.ok(), "seeding sections").toBe(true);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections: [] } });
+  });
+
+  test("in the studio, in Advanced and in Practice", async ({ page }) => {
+    // openStudio opens Advanced (seedLibrary stores it).
+    await openStudio(page);
+    await expect(page.locator("html")).toHaveClass(/mode-daw/);
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await chooseMode(page, "practice");
+    await expect(page.locator("html")).toHaveClass(/mode-practice/);
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+  });
+
+  // daw.css rule 7 hides the footer's waveform strip and the seek bar in it,
+  // so no sweep above can reach it. Shown again, it has to explain itself.
+  test("in the footer's seek bar, once its strip is shown", async ({ page }) => {
+    await openStudio(page);
+    await page.locator(".footer-wave-panel").evaluate((el) => el.style.setProperty("display", "block", "important"));
+    await expect(page.locator("#footer-scrub")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+    await page.locator("#footer-scrub").hover();
+    await expect(tip(page).locator("b")).toHaveText("Seek");
+    await expect(tip(page)).toContainText("jump to that point");
+  });
+
+  test("in the library, with no song open", async ({ page }) => {
+    await seedLibrary(page);
+    await stubUpdateCheck(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.locator(".cat-item").first().waitFor();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
   });
 
   test("in Performance Mode, wide and narrow", async ({ page }) => {
@@ -231,6 +277,10 @@ test.describe("help mode leaves no control unexplained", () => {
     // Inside the live window, which has its own entry: Allow has its own.
     await page.locator("#streamer .sm-cam-act").hover();
     await expect(tip(page)).toContainText("Asks for permission");
+    // A section's marker on the timeline, headed by its section's name.
+    await page.locator("#streamer .sm-marker").last().hover();
+    await expect(tip(page).locator("b")).toHaveText("Chorus");
+    await expect(tip(page)).toContainText("move the playhead there");
     // Narrow, the output panel folds into a drawer behind its own button.
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 1100, height: 900 });

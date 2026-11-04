@@ -209,6 +209,8 @@ const HELP = [
   ['.daw-meta-card[data-meta="stability"]', "help.meta.stability"],
   [".stem-presence-panel .stem-card[data-stem]", "help.presence", presenceName],
   ["#ruler-time", "help.waves", null, "help.wavesTitle"],
+  // The footer's seek bar, inside the waveform strip daw.css hides (rule 7).
+  ["#footer-scrub", "help.footerSeek"],
   // The Master drawer (masterPanel.js). Its power button and its EQ reuse
   // the EQ panels' classes, so these come before the EQ entries.
   [".master-close", "help.masterClose", null, "master.close"],
@@ -301,6 +303,8 @@ const HELP = [
   ["#streamer .sm-play", "help.play"],
   ["#streamer .sm-history", "help.smUndo", null, "help.eqUndoTitle"],
   ["#streamer .sm-tl-ruler", "help.smRuler", null, "streamer.position"],
+  // A section's marker over the timeline, named by its section.
+  ["#streamer .sm-marker", "help.smMarker"],
   // The REC button sits inside the live window, so it comes first. Its own
   // name: the badge reads "READY" or the time, which says nothing about it.
   ["#streamer .sm-rec", "help.smRec", null, "streamer.recOn"],
