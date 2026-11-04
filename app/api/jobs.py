@@ -7,6 +7,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -206,36 +207,159 @@ def _rmtree_job(job_id: str) -> bool:
     return remove_job_dir(JOBS_DIR / job_id)
 
 
-def _job_files_missing(job: Job) -> bool:
+# GET /api/jobs reports every finished song's files as present or missing, on
+# every call (#976). Asking the disk afresh each time cost two path resolves, a
+# stat and a directory listing per song, which is one network round trip after
+# another on an SMB or NAS library. The answer is now kept per song, beside the
+# identity and modification time of the stems folder it was read from, and used
+# only while one lstat of that folder still returns exactly those values. The
+# song folder itself is checked from one listing of the jobs folder per request
+# (_LibraryView), not one call per song.
+#
+# What invalidates it: deleting, renaming or replacing the song folder or its
+# stems folder (the folder is gone from the listing, the lstat fails, or the
+# identity changes), adding or removing a file directly in the stems folder
+# (its modification time changes), either folder turned into a link or junction
+# (no longer a plain folder, so the full check runs and refuses a target
+# outside the library, as the serving routes do), and a different jobs folder
+# (part of the key). Nothing expires on a timer, because nothing needs to:
+# every change that alters the answer alters the key.
+#
+# What it cannot see: a stems folder put back with its exact identity and
+# modification time, which only a timestamp-preserving copy onto the same file
+# ID does. A change made within _RACY_WINDOW_NS of a listing could leave the
+# time unchanged on a filesystem that stores it coarsely (FAT keeps two
+# seconds), so a folder that recent is never trusted; a file server whose
+# clock runs behind this machine's narrows that guard by the difference.
+_RACY_WINDOW_NS = 3_000_000_000
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+_DirKey = tuple[str, int, int, int]
+_stems_answers: dict[str, tuple[_DirKey, bool]] = {}
+_no_source_seen: dict[str, tuple[str, int]] = {}
+
+
+class _LibraryView:
+    """One request's look at the jobs folder: JOBS_DIR resolved once, and,
+    for a request about many songs, one listing of it that says which song
+    folders exist and are plain folders, without a call per song."""
+
+    def __init__(self, *, listed: bool) -> None:
+        self.root = JOBS_DIR.resolve()
+        self._entries: dict[str, os.DirEntry] | None = None
+        if listed:
+            try:
+                with os.scandir(JOBS_DIR) as it:
+                    self._entries = {entry.name: entry for entry in it}
+            except OSError:
+                self._entries = None
+
+    def song_dir_is_plain(self, job_id: str) -> bool:
+        """Whether the song folder is a plain folder, not a file, link or
+        junction. Raises FileNotFoundError when it is not there.
+
+        Only the kind is read from the listing, never the time: NTFS updates
+        the copy of a folder's times kept in its parent's index lazily, so a
+        listing can show a song folder's old modification time after
+        something was added to it."""
+        if self._entries is None:
+            return _is_plain_dir(os.lstat(JOBS_DIR / job_id))
+        entry = self._entries.get(job_id)
+        if entry is None:
+            raise FileNotFoundError(job_id)
+        if not entry.is_dir(follow_symlinks=False):
+            return False
+        if os.name == "nt":
+            # Carried by the listing on Windows, so this costs no call. A
+            # junction reports itself as a folder and is told apart here.
+            return _is_plain_dir(entry.stat(follow_symlinks=False))
+        return True
+
+
+def _is_plain_dir(st: os.stat_result) -> bool:
+    """A real folder: not a file, and not a link or junction (lstat follows
+    neither, and a junction still reports itself as a folder)."""
+    return stat.S_ISDIR(st.st_mode) and not (
+        getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _settled(st: os.stat_result) -> bool:
+    """Changed long enough ago for its modification time to be trusted."""
+    return time.time_ns() - st.st_mtime_ns >= _RACY_WINDOW_NS
+
+
+def _stems_missing_on_disk(job_id: str, jobs_root: Path) -> bool:
+    """The full check: resolves the stems folder, refuses one that leads out
+    of the library (the serving routes refuse it too), and lists it."""
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    if not stems_dir.is_relative_to(jobs_root):
+        return True
+    return not stems_dir.is_dir() or not any(stems_dir.iterdir())
+
+
+def _job_files_missing(job: Job, view: _LibraryView | None = None) -> bool:
     """True when a "done" job's stem files are gone from disk: the folder was
     deleted or moved outside the app, not just an in-flight relocation (#354),
     which is a known, temporary absence and must not flap the library."""
     if is_relocating():
         return False
-    stems_dir = (JOBS_DIR / job.id / "stems").resolve()
-    if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+    view = view or _LibraryView(listed=False)
+    try:
+        song_dir_plain = view.song_dir_is_plain(job.id)
+        stems = os.lstat(JOBS_DIR / job.id / "stems")
+    except FileNotFoundError:
         return True
-    return not stems_dir.is_dir() or not any(stems_dir.iterdir())
+    except OSError:
+        return _stems_missing_on_disk(job.id, view.root)
+    if not song_dir_plain or not _is_plain_dir(stems) or not _settled(stems):
+        return _stems_missing_on_disk(job.id, view.root)
+    key = (str(view.root), stems.st_dev, stems.st_ino, stems.st_mtime_ns)
+    kept = _stems_answers.get(job.id)
+    if kept is not None and kept[0] == key:
+        return kept[1]
+    missing = _stems_missing_on_disk(job.id, view.root)
+    _stems_answers[job.id] = (key, missing)
+    return missing
 
 
-def _job_state(job: Job) -> dict:
+def _fill_source_format(job: Job, view: _LibraryView) -> None:
+    """Uploads made before the format was recorded still have it on disk: the
+    kept source is source.<ext>, the extension it was validated against. Kept
+    on the job once found, and persisted with it next time. Uploads finished
+    before sources were kept have nothing to find and stay None, which the
+    client shows as the plain note; for those the empty answer is kept beside
+    the song folder's modification time, so the folder is searched again only
+    once an entry in it has been added, removed or renamed."""
+    try:
+        # The folder's own lstat, not the listing's copy (see song_dir_is_plain).
+        song_dir = os.lstat(JOBS_DIR / job.id)
+    except OSError:
+        song_dir = None
+    key = None
+    if song_dir is not None and _is_plain_dir(song_dir) and _settled(song_dir):
+        key = (str(view.root), song_dir.st_mtime_ns)
+        if _no_source_seen.get(job.id) == key:
+            return
+    source = _retained_source(job.id)
+    if source is not None:
+        job.source_format = source.suffix.lower().removeprefix(".")
+        _no_source_seen.pop(job.id, None)
+    elif key is not None:
+        _no_source_seen[job.id] = key
+
+
+def _job_state(job: Job, view: _LibraryView | None = None) -> dict:
     """job.to_state() with "done" downgraded to "unavailable" when the stem
     files are missing from disk - ground truth for the client, replacing the
     old approach of the frontend guessing from a 404 or a disappearance from
     the job list, neither of which caught a job whose registry entry survived
     but whose stems folder did not."""
     if job.source_format is None and (job.source_url or "").startswith("local:"):
-        # Uploads made before the format was recorded still have it on disk:
-        # the kept source is source.<ext>, the extension it was validated
-        # against. Kept on the job once found, so the disk is asked once per
-        # job rather than on every state, and persisted with it next time.
-        # Uploads finished before sources were kept have nothing to find and
-        # stay None, which the client shows as the plain note.
-        source = _retained_source(job.id)
-        if source is not None:
-            job.source_format = source.suffix.lower().removeprefix(".")
+        view = view or _LibraryView(listed=False)
+        _fill_source_format(job, view)
     state = job.to_state()
-    if job.status == "done" and _job_files_missing(job):
+    if job.status == "done" and _job_files_missing(job, view):
         state["status"] = "unavailable"
     return state
 
@@ -423,9 +547,15 @@ def list_jobs(trashed: Literal["exclude", "include", "only"] = "exclude") -> lis
     Trash moved server-side it happily listed tracks the user had deleted on
     their desktop hours earlier.
     """
-    jobs = sorted(registry_all_jobs().values(), key=lambda j: j.created_at)
+    everything = registry_all_jobs()
+    # Answers kept for songs no longer in the registry would only grow.
+    for kept in (_stems_answers, _no_source_seen):
+        for job_id in [job_id for job_id in list(kept) if job_id not in everything]:
+            kept.pop(job_id, None)
+    jobs = sorted(everything.values(), key=lambda j: j.created_at)
+    view = _LibraryView(listed=True)
     return [
-        _job_state(job)
+        _job_state(job, view)
         for job in jobs
         if job.status == "done"
         and (trashed == "include" or (job.trashed_at is not None) == (trashed == "only"))
