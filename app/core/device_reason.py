@@ -54,8 +54,10 @@ _SETUP_REASONS = frozenset(
 _SETUP_VALUES = _SETUP_REASONS | {"verified", "mps", "mps-unavailable"}
 
 # Drivers before 616 print "CUDA Version: 12.6"; 616.64 prints
-# "CUDA UMD Version: 13.4" in the same header.
-_CUDA_HEADER = re.compile(r"CUDA (?:UMD )?Version:\s*(\d+\.\d+)")
+# "CUDA UMD Version: 13.4" in the same header. "N/A" is no version. The twin
+# of parse_cuda_version in desktop/src-tauri/src/main.rs: keep the two one
+# rule, and both tests on tests/fixtures/nvidia_smi_headers.json (#1012).
+_CUDA_HEADER = re.compile(r"CUDA (?:UMD )?Version:\s*([0-9]+\.[0-9]+)")
 
 _lock = threading.Lock()
 # Held while nvidia-smi runs, so requests that arrive meanwhile wait for its
