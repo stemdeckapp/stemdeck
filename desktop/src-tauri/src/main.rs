@@ -639,6 +639,7 @@ fn main() {
             start_audio_drag,
             store_get,
             store_set,
+            store_set_many,
             reset_user_data,
             mark_store_migration_done,
         ])
@@ -866,6 +867,52 @@ fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Re
     let store = app.store(path).map_err(|e| e.to_string())?;
     store.set(key, value);
     store.save().map_err(|e| e.to_string())
+}
+
+/// What store_set_many needs of the store: set a key in memory, and write the
+/// whole file. A trait so its unit test can count the writes.
+trait KeyValueStore {
+    fn set_value(&self, key: String, value: serde_json::Value);
+    fn save_file(&self) -> Result<(), String>;
+}
+
+impl<R: tauri::Runtime> KeyValueStore for tauri_plugin_store::Store<R> {
+    fn set_value(&self, key: String, value: serde_json::Value) {
+        self.set(key, value);
+    }
+    fn save_file(&self) -> Result<(), String> {
+        self.save().map_err(|e| e.to_string())
+    }
+}
+
+/// Every key in the store, then one write of the file; nothing written when
+/// there are no keys.
+fn set_all_then_save(
+    store: &impl KeyValueStore,
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    for (key, value) in entries {
+        store.set_value(key, value);
+    }
+    store.save_file()
+}
+
+/// Set several keys in the persistent user-data store and flush to disk once
+/// (#996). Each save writes the whole store file, which holds every song's
+/// mixes: on a 9 MB store one save took 47 to 83 ms, so a version delete that
+/// cleared its eight records with store_set took 386 to 626 ms. Synchronous
+/// like store_set, so both run in the order the page sent them.
+#[tauri::command]
+fn store_set_many(
+    app: tauri::AppHandle,
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let path = documents_store_path(&app)?;
+    let store = app.store(path).map_err(|e| e.to_string())?;
+    set_all_then_save(store.as_ref(), entries)
 }
 
 /// Clear the persistent user-data store entirely (Settings -> General ->
@@ -9203,6 +9250,63 @@ mod tests {
         assert!(result.is_err(), "a stopped probe reported success");
     }
 
+    /// A store that counts its saves, for store_set_many (#996).
+    #[derive(Default)]
+    struct CountingStore {
+        values: std::cell::RefCell<serde_json::Map<String, serde_json::Value>>,
+        saves: std::cell::Cell<usize>,
+        fail_save: bool,
+    }
+
+    impl super::KeyValueStore for CountingStore {
+        fn set_value(&self, key: String, value: serde_json::Value) {
+            self.values.borrow_mut().insert(key, value);
+        }
+        fn save_file(&self) -> Result<(), String> {
+            self.saves.set(self.saves.get() + 1);
+            if self.fail_save {
+                Err("disk full".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn entries(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_value(value).expect("an object")
+    }
+
+    /// #996: one store_set per key wrote the whole store file once per key.
+    /// store_set_many puts every key in the store and writes the file once.
+    #[test]
+    fn store_set_many_sets_every_key_and_saves_once() {
+        let store = CountingStore::default();
+        let given = serde_json::json!({ "a": null, "b": { "voice": "split" }, "c": 3 });
+        super::set_all_then_save(&store, entries(given.clone())).expect("saved");
+        assert_eq!(store.saves.get(), 1, "one save for three keys");
+        assert_eq!(
+            serde_json::Value::Object(store.values.borrow().clone()),
+            given
+        );
+    }
+
+    #[test]
+    fn store_set_many_with_no_keys_writes_nothing() {
+        let store = CountingStore::default();
+        super::set_all_then_save(&store, entries(serde_json::json!({}))).expect("nothing to do");
+        assert_eq!(store.saves.get(), 0);
+    }
+
+    #[test]
+    fn store_set_many_reports_a_failed_save() {
+        let store = CountingStore {
+            fail_save: true,
+            ..Default::default()
+        };
+        let result = super::set_all_then_save(&store, entries(serde_json::json!({ "a": 1 })));
+        assert_eq!(result, Err("disk full".to_string()));
+    }
+
     /// Every Tauri command that is not `async` runs on the main thread:
     /// tauri-macros 2.6.0 picks `body_blocking` for it, and the IPC handler
     /// calls that inline on the event loop. While one runs, the window cannot
@@ -9210,12 +9314,15 @@ mod tests {
     /// commands that cannot run long may stay synchronous.
     #[test]
     fn no_command_that_can_run_long_holds_the_main_thread() {
-        // Each is a lock, a constant, a spawn that is never waited on, or a
-        // read or write of one small file or folder.
+        // Each is a lock, a constant, a spawn that is never waited on, a read
+        // or write of one small file or folder, or one bounded save of the
+        // user-data store (store_set, store_set_many, reset_user_data), which
+        // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996).
         const QUICK: &[&str] = &[
             "current_exports_dir",
             "store_get",
             "store_set",
+            "store_set_many",
             "reset_user_data",
             "mark_store_migration_done",
             "runtime_pack_status",
