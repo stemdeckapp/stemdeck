@@ -7,11 +7,23 @@ sleeps first, which stands in for the round trip an SMB or NAS mount adds. That
 number is synthetic: it says how many round trips the list costs, not what one
 round trip costs on a given network.
 
-    uv run python scripts/bench_list_jobs.py --library data/f49/jobs --songs 300
-    uv run python scripts/bench_list_jobs.py --library data/f49/jobs --latency-ms 2
+    uv run python scripts/bench_list_jobs.py --songs 300
+    uv run python scripts/bench_list_jobs.py --songs 300 --latency-ms 2
 
-The library folder must be new or one this script made (it leaves a marker
-file). It refuses anything else, so it cannot be pointed at a real library.
+The list trusts a kept answer only for a folder changed longer ago than
+LIBRARY_RACY_WINDOW_NS, so a library built a moment ago would never show the
+saving. The script sets the song and stems folders' times back an hour after
+building them, as for a library that has sat a while.
+
+Where it may write. The library folder must be new or one this script made (it
+leaves a marker file), and it must be inside this repository. For a real
+network number, --allow-outside-repo accepts a folder elsewhere, such as an
+empty share on a NAS. Either way it refuses a folder that holds a registry.json
+or sits anywhere under a folder that does, or under a folder that looks like a
+StemDeck library (song folders with 12-hex names holding metadata.json), so
+it cannot be pointed into a real library. App data and cache always go under
+the repository's data/ folder. It prints the resolved folders and asks
+nothing.
 """
 
 from __future__ import annotations
@@ -21,6 +33,7 @@ import builtins
 import json
 import ntpath
 import os
+import re
 import statistics
 import sys
 import time
@@ -29,15 +42,53 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MARKER = ".bench_list_jobs"
 STEMS = ("vocals", "drums", "bass", "other", "guitar", "piano")
+_SONG_DIR_RE = re.compile(r"^[0-9a-f]{12}$")
+_AGED_BY_S = 3600
+
+
+def _looks_like_library(folder: Path) -> bool:
+    """registry.json, or a song folder (12-hex name holding metadata.json)."""
+    if (folder / "registry.json").exists():
+        return True
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return False
+    return any(
+        _SONG_DIR_RE.match(child.name) and (child / "metadata.json").is_file() for child in children
+    )
+
+
+def check_library(library: Path, root: Path, *, allow_outside_repo: bool) -> str | None:
+    """Why this folder must not be used, or None when it may be."""
+    library = library.resolve()
+    root = root.resolve()
+    if not allow_outside_repo and not library.is_relative_to(root):
+        return f"{library} is outside the repository (pass --allow-outside-repo for a NAS run)"
+    if library.exists():
+        if not (library / MARKER).is_file():
+            return f"{library} already exists and is not a library this script made"
+        if (library / "registry.json").exists():
+            return f"{library} holds a registry.json"
+    for ancestor in library.parents:
+        if _looks_like_library(ancestor):
+            return f"{library} is inside {ancestor}, which looks like a StemDeck library"
+    return None
+
+
+def data_dir_for(root: Path) -> Path:
+    """App data and cache for the run, always under the repository's data/."""
+    data = (root / "data" / "bench-list-jobs").resolve()
+    if not data.is_relative_to(root.resolve()):
+        raise SystemExit(f"refusing data folder {data}: outside the repository")
+    return data
 
 
 def _prepare_folder(library: Path) -> None:
     if library.exists():
-        if not (library / MARKER).is_file():
-            sys.exit(f"refusing {library}: not a library this script made")
         return
     library.mkdir(parents=True)
-    (library / MARKER).write_text("synthetic library for bench_list_jobs.py\n")
+    (library / MARKER).write_text("synthetic library for bench_list_jobs.py", encoding="utf-8")
 
 
 def _build(library: Path, songs: int) -> list:
@@ -46,6 +97,7 @@ def _build(library: Path, songs: int) -> list:
     sources were kept (source_format unknown, nothing on disk to find)."""
     from app.core.models import Job
 
+    aged = time.time() - _AGED_BY_S
     jobs = []
     for n in range(songs):
         job_id = f"{n:012x}"
@@ -59,6 +111,8 @@ def _build(library: Path, songs: int) -> list:
             (job_dir / "metadata.json").write_text(json.dumps({"title": f"Song {n}"}))
             if kind == 8:
                 (job_dir / "source.mp3").write_bytes(b"ID3")
+        os.utime(stems, (aged, aged))
+        os.utime(job_dir, (aged, aged))
         if kind == 8:
             source_url, source_format = f"local:Song {n}", "mp3"
         elif kind == 9:
@@ -120,11 +174,21 @@ def main() -> None:
     parser.add_argument("--songs", type=int, default=300)
     parser.add_argument("--latency-ms", type=float, default=0.0)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--allow-outside-repo",
+        action="store_true",
+        help="accept a library folder outside the repository, for a NAS run",
+    )
     args = parser.parse_args()
 
     library = args.library.resolve()
+    refusal = check_library(library, ROOT, allow_outside_repo=args.allow_outside_repo)
+    if refusal:
+        sys.exit(f"refusing: {refusal}")
+    data = data_dir_for(ROOT)
     _prepare_folder(library)
-    data = library.parent / "app-data"
+    print(f"library folder: {library}")
+    print(f"app data folder: {data}")
     os.environ["STEMDECK_JOBS_DIR"] = str(library)
     os.environ["STEMDECK_DATA_DIR"] = str(data)
     os.environ["STEMDECK_CACHE_DIR"] = str(data / "cache")

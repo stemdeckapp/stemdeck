@@ -160,6 +160,19 @@ def _isolate_job_queue():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_library_answers():
+    """The library list keeps each song's disk answer module-wide (#976). Tests
+    reuse job ids, so one test's kept answer must not meet the next test."""
+    from app.api import jobs as _jobs_api
+
+    _jobs_api._stems_answers.clear()
+    _jobs_api._no_source_seen.clear()
+    yield
+    _jobs_api._stems_answers.clear()
+    _jobs_api._no_source_seen.clear()
+
+
+@pytest.fixture(autouse=True)
 def _relax_secure_origin_gate(monkeypatch):
     """Server mode refuses a plaintext request from a non-local client, and
     TestClient's peer is "testclient" -- not loopback -- so the gate would 403

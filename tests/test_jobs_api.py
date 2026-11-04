@@ -681,7 +681,7 @@ _LONG_AGO = 1_600_000_000  # a modification time well outside the racy window
 def _age(*paths):
     """Set the modification time back, as for a library that has sat a while.
     A folder changed within the last moments is never trusted (see
-    _RACY_WINDOW_NS), so a test that wants the kept answer used must age it."""
+    LIBRARY_RACY_WINDOW_NS), so a test that wants the kept answer used must age it."""
     for path in paths:
         os.utime(path, (_LONG_AGO, _LONG_AGO))
 
@@ -936,6 +936,125 @@ def test_a_source_that_appears_for_an_old_upload_is_found(client, library):
     (library / job.id / "source.flac").write_bytes(b"fLaC")
     _statuses(client)
     assert job.source_format == "flac"
+
+
+# ─── The parts of the kept key, one test each (#976) ─────────────────────────
+#
+# The tests above change a folder "now", which the racy window alone already
+# catches. These set the changed folder's time to one well outside the window,
+# so only the named part of the key can tell the kept answer is stale.
+
+_LATER = _LONG_AGO + 1000
+
+
+def test_stems_emptied_long_ago_by_its_clock_are_unavailable(client, library):
+    """The stems folder's modification time is part of the key."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    (stems / "vocals.wav").unlink()
+    os.utime(stems, (_LATER, _LATER))
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_stems_folder_swapped_for_another_with_the_same_time_is_unavailable(
+    client, library, tmp_path
+):
+    """The stems folder's identity (file ID) is part of the key: a different,
+    empty folder with the old time in its place must not inherit the answer."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    stems.rename(tmp_path / "old-stems")
+    stems.mkdir()
+    _age(stems, stems.parent)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_stems_junction_into_the_library_is_checked_every_time(client, library, monkeypatch):
+    """A link or junction keeps its own time while its target changes, so a
+    stems folder that is one is never answered from the kept key. With the
+    racy window off, only the plain-folder check stands between the kept
+    answer and an emptied target."""
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "LIBRARY_RACY_WINDOW_NS", 0)
+    job = _done_song(library, "aaaaaaaaaa01")
+    stems = library / job.id / "stems"
+    shared = library / "shared-stems"
+    stems.rename(shared)
+    _link_dir(stems, shared)
+    assert _statuses(client) == {job.id: "done"}
+
+    (shared / "vocals.wav").unlink()
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_source_that_appears_long_ago_by_its_clock_is_found(client, library):
+    """The song folder's modification time is part of the no-source key."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    _statuses(client)
+    assert job.source_format is None
+
+    song = library / job.id
+    (song / "source.flac").write_bytes(b"fLaC")
+    os.utime(song, (_LATER, _LATER))
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_a_song_folder_swapped_for_one_with_a_source_and_the_same_time_is_searched(
+    client, library, tmp_path
+):
+    """The song folder's identity (file ID) is part of the no-source key."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    _statuses(client)
+    assert job.source_format is None
+
+    song = library / job.id
+    song.rename(tmp_path / "old-song")
+    (song / "stems").mkdir(parents=True)
+    (song / "stems" / "vocals.wav").write_bytes(b"RIFF1234")
+    (song / "source.flac").write_bytes(b"fLaC")
+    _age(song / "stems", song)
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_a_song_folder_changed_moments_ago_is_searched_again(client, library):
+    """A song folder inside the racy window keeps no empty answer: on a
+    filesystem with coarse times, a source added in the same tick leaves the
+    folder's time as it was."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    song = library / job.id
+    os.utime(song)  # now
+    before = os.stat(song).st_mtime_ns
+    _statuses(client)
+    assert job.source_format is None
+
+    (song / "source.flac").write_bytes(b"fLaC")
+    os.utime(song, ns=(before, before))
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_kept_answers_go_when_the_song_leaves_the_registry(client, library):
+    import app.api.jobs as jobs_mod
+
+    link = _done_song(library, "aaaaaaaaaa01")
+    upload = _done_song(library, "aaaaaaaaaa02", source_url="local:Old upload")
+    _statuses(client)
+    assert {link.id, upload.id} <= set(jobs_mod._stems_answers)
+    assert upload.id in jobs_mod._no_source_seen
+
+    del _jobs[link.id]
+    del _jobs[upload.id]
+    _statuses(client)
+    assert link.id not in jobs_mod._stems_answers
+    assert upload.id not in jobs_mod._stems_answers
+    assert upload.id not in jobs_mod._no_source_seen
 
 
 # ─── GET /jobs/{id}/failure: stderr tail and traceback sections ──────────────

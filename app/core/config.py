@@ -335,6 +335,12 @@ def js_solver_available() -> bool:
 DEMUCS_MODEL = os.environ.get("STEMDECK_DEMUCS_MODEL", "htdemucs_6s").strip() or "htdemucs_6s"
 MAX_DURATION_SEC = max(60, _env_int("STEMDECK_MAX_DURATION_SEC", 1200))  # 20 min default
 JOB_TTL_SECONDS = max(300, _env_int("STEMDECK_JOB_TTL_SECONDS", 24 * 3600))  # 24 h default
+# The library list keeps each song's files-present answer until its stems
+# folder changes (#976), keyed on the folder's modification time. A folder
+# changed more recently than this is never trusted, because a filesystem that
+# keeps times coarsely could leave the time unchanged by a change in the same
+# tick. FAT keeps two seconds, so this never goes below that.
+LIBRARY_RACY_WINDOW_NS = max(2000, _env_int("STEMDECK_LIBRARY_RACY_WINDOW_MS", 3000)) * 1_000_000
 # TTL for quarantined failed-job dirs (jobs/failed/<id>, kept for diagnostics).
 # Swept unconditionally -- even deployments with a persistent library must not
 # accumulate failure evidence forever.

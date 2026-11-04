@@ -25,6 +25,7 @@ from app.core.config import (
     DISCOGS_LOOKUP_BUDGET_SEC,
     JOB_ID_RE,
     JOBS_DIR,
+    LIBRARY_RACY_WINDOW_NS,
     LOUDNESS_UPGRADE_QUEUE_MAX,
     LYRICS_LOOKUP_BUDGET_SEC,
     LYRICS_OFFSET_MAX_SEC,
@@ -221,22 +222,25 @@ def _rmtree_job(job_id: str) -> bool:
 # identity changes), adding or removing a file directly in the stems folder
 # (its modification time changes), either folder turned into a link or junction
 # (no longer a plain folder, so the full check runs and refuses a target
-# outside the library, as the serving routes do), and a different jobs folder
-# (part of the key). Nothing expires on a timer, because nothing needs to:
-# every change that alters the answer alters the key.
+# outside the library, as the serving routes do). Nothing expires on a timer,
+# because nothing needs to: every change that alters the answer alters the key.
+# The jobs folder is not part of the key: JOBS_DIR is fixed for the life of the
+# process (a library move restarts it), and any other path to the same folder
+# goes through a link, which the plain-folder checks already refuse to trust.
 #
 # What it cannot see: a stems folder put back with its exact identity and
 # modification time, which only a timestamp-preserving copy onto the same file
-# ID does. A change made within _RACY_WINDOW_NS of a listing could leave the
-# time unchanged on a filesystem that stores it coarsely (FAT keeps two
+# ID does. A change made within LIBRARY_RACY_WINDOW_NS of a listing could leave
+# the time unchanged on a filesystem that stores it coarsely (FAT keeps two
 # seconds), so a folder that recent is never trusted; a file server whose
 # clock runs behind this machine's narrows that guard by the difference.
-_RACY_WINDOW_NS = 3_000_000_000
-_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-
-_DirKey = tuple[str, int, int, int]
+_DirKey = tuple[int, int, int]  # st_dev, st_ino, st_mtime_ns
 _stems_answers: dict[str, tuple[_DirKey, bool]] = {}
-_no_source_seen: dict[str, tuple[str, int]] = {}
+_no_source_seen: dict[str, _DirKey] = {}
+
+
+def _dir_key(st: os.stat_result) -> _DirKey:
+    return (st.st_dev, st.st_ino, st.st_mtime_ns)
 
 
 class _LibraryView:
@@ -280,13 +284,13 @@ def _is_plain_dir(st: os.stat_result) -> bool:
     """A real folder: not a file, and not a link or junction (lstat follows
     neither, and a junction still reports itself as a folder)."""
     return stat.S_ISDIR(st.st_mode) and not (
-        getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+        getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
     )
 
 
 def _settled(st: os.stat_result) -> bool:
     """Changed long enough ago for its modification time to be trusted."""
-    return time.time_ns() - st.st_mtime_ns >= _RACY_WINDOW_NS
+    return time.time_ns() - st.st_mtime_ns >= LIBRARY_RACY_WINDOW_NS
 
 
 def _stems_missing_on_disk(job_id: str, jobs_root: Path) -> bool:
@@ -314,7 +318,7 @@ def _job_files_missing(job: Job, view: _LibraryView | None = None) -> bool:
         return _stems_missing_on_disk(job.id, view.root)
     if not song_dir_plain or not _is_plain_dir(stems) or not _settled(stems):
         return _stems_missing_on_disk(job.id, view.root)
-    key = (str(view.root), stems.st_dev, stems.st_ino, stems.st_mtime_ns)
+    key = _dir_key(stems)
     kept = _stems_answers.get(job.id)
     if kept is not None and kept[0] == key:
         return kept[1]
@@ -323,14 +327,15 @@ def _job_files_missing(job: Job, view: _LibraryView | None = None) -> bool:
     return missing
 
 
-def _fill_source_format(job: Job, view: _LibraryView) -> None:
+def _fill_source_format(job: Job) -> None:
     """Uploads made before the format was recorded still have it on disk: the
     kept source is source.<ext>, the extension it was validated against. Kept
     on the job once found, and persisted with it next time. Uploads finished
     before sources were kept have nothing to find and stay None, which the
     client shows as the plain note; for those the empty answer is kept beside
-    the song folder's modification time, so the folder is searched again only
-    once an entry in it has been added, removed or renamed."""
+    the song folder's identity and modification time, so the folder is
+    searched again only once an entry in it has been added, removed or
+    renamed, or the folder itself replaced."""
     try:
         # The folder's own lstat, not the listing's copy (see song_dir_is_plain).
         song_dir = os.lstat(JOBS_DIR / job.id)
@@ -338,7 +343,7 @@ def _fill_source_format(job: Job, view: _LibraryView) -> None:
         song_dir = None
     key = None
     if song_dir is not None and _is_plain_dir(song_dir) and _settled(song_dir):
-        key = (str(view.root), song_dir.st_mtime_ns)
+        key = _dir_key(song_dir)
         if _no_source_seen.get(job.id) == key:
             return
     source = _retained_source(job.id)
@@ -356,8 +361,7 @@ def _job_state(job: Job, view: _LibraryView | None = None) -> dict:
     the job list, neither of which caught a job whose registry entry survived
     but whose stems folder did not."""
     if job.source_format is None and (job.source_url or "").startswith("local:"):
-        view = view or _LibraryView(listed=False)
-        _fill_source_format(job, view)
+        _fill_source_format(job)
     state = job.to_state()
     if job.status == "done" and _job_files_missing(job, view):
         state["status"] = "unavailable"
