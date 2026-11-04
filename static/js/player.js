@@ -19,6 +19,7 @@ import { isPractice, onModeChange } from "./mode.js";
 import { addFilmstrip, isVideoLane } from "./video/videoLane.js";
 import { setEqContext, syncEqRows, syncEqRowOrder, eqPanelsHeight } from "./eq/eqRows.js";
 import { laneLayout } from "./eq/eqPanelKinds.js";
+import { hideLoudnessNote } from "./loudnessNote.js";
 import {
   mixerEl, multitrackContainer, bpmChip, keyChip, stemsChip, timeEl,
   titleEl, npThumb, rulerTime, wavesGrid, playBtn,
@@ -239,6 +240,8 @@ function resetAnalysisCards() {
     summaryConfidence.classList.add("hidden");
   }
   if (loudnessCard) loudnessCard.classList.add("hidden");
+  // The note is about the previous song's numbers (#923).
+  hideLoudnessNote();
 }
 
 /**

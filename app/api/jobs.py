@@ -572,16 +572,17 @@ _LOUDNESS_LOCK = threading.Lock()
 _LOUDNESS_WORKER: threading.Thread | None = None
 
 
-def _loudness_sources(job_id: str) -> list[Path]:
-    """What to measure for a finished song: its kept upload if it has one, else
-    the sum of its stems (the mix; the link's source is deleted once separated)."""
+def _loudness_sources(job_id: str) -> tuple[str, list[Path]]:
+    """What to measure for a finished song, and which of LOUDNESS_BASES that
+    is: its kept upload if it has one ("source"), else the sum of its stems
+    ("stems", the mix; the link's source is deleted once separated)."""
     source = _retained_source(job_id)
     if source is not None:
-        return [source]
+        return "source", [source]
     stems_dir = (JOBS_DIR / job_id / "stems").resolve()
     if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
-        return []
-    return [p for p in (stem_path(stems_dir, n) for n in STEM_NAMES) if p.is_file()]
+        return "stems", []
+    return "stems", [p for p in (stem_path(stems_dir, n) for n in STEM_NAMES) if p.is_file()]
 
 
 def _queue_loudness_upgrade(job: Job) -> None:
@@ -640,23 +641,26 @@ def _upgrade_loudness(job_id: str) -> bool:
         with _LOUDNESS_LOCK:
             _LOUDNESS_TRIED.discard(job_id)
         return False
-    sources = _loudness_sources(job_id)
+    basis, sources = _loudness_sources(job_id)
     if not sources or is_relocating():
         return False
     lufs, peak_db = measure_loudness(sources)
     if lufs is None or peak_db is None:
         return False
     dr = dynamic_range_db(lufs, peak_db)
-    _set(job, lufs=lufs, peak_db=peak_db, dynamic_range=dr, loudness_version=LOUDNESS_VERSION)
-    _write_metadata_fields(
-        job_id,
-        {
-            "lufs": lufs,
-            "peak_db": peak_db,
-            "dynamic_range": dr,
-            "loudness_version": LOUDNESS_VERSION,
-        },
-    )
+    # _set writes in this order, and a GET can read the job between two
+    # writes. The basis goes first and the version last, so no reader sees
+    # the current version without the basis that says the numbers moved
+    # (#923): the page would take the song as never measured again.
+    fields = {
+        "loudness_remeasured": basis,
+        "lufs": lufs,
+        "peak_db": peak_db,
+        "dynamic_range": dr,
+        "loudness_version": LOUDNESS_VERSION,
+    }
+    _set(job, **fields)
+    _write_metadata_fields(job_id, fields)
     return True
 
 
