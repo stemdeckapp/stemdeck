@@ -1023,6 +1023,29 @@ def test_a_song_folder_swapped_for_one_with_a_source_and_the_same_time_is_search
     assert job.source_format == "flac"
 
 
+def test_a_song_folder_junction_into_the_library_is_searched_every_time(
+    client, library, monkeypatch
+):
+    """A source added in a linked song folder's target leaves the link's own
+    time as it was, so a song folder that is a link or junction keeps no
+    empty answer. With the racy window off, only the plain-folder check
+    stands between the kept answer and the new source."""
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "LIBRARY_RACY_WINDOW_NS", 0)
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    song = library / job.id
+    shared = library / "shared-song"
+    song.rename(shared)
+    _link_dir(song, shared)
+    _statuses(client)
+    assert job.source_format is None
+
+    (shared / "source.flac").write_bytes(b"fLaC")
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
 def test_a_song_folder_changed_moments_ago_is_searched_again(client, library):
     """A song folder inside the racy window keeps no empty answer: on a
     filesystem with coarse times, a source added in the same tick leaves the

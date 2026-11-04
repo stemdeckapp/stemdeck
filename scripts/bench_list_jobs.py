@@ -20,10 +20,14 @@ leaves a marker file), and it must be inside this repository. For a real
 network number, --allow-outside-repo accepts a folder elsewhere, such as an
 empty share on a NAS. Either way it refuses a folder that holds a registry.json
 or sits anywhere under a folder that does, or under a folder that looks like a
-StemDeck library (song folders with 12-hex names holding metadata.json), so
-it cannot be pointed into a real library. App data and cache always go under
-the repository's data/ folder. It prints the resolved folders and asks
-nothing.
+StemDeck library (song folders with 12-hex names holding metadata.json). App
+data and cache always go under the repository's data/ folder. It prints the
+resolved folders and asks nothing.
+
+Those two signs are the only way it recognises a library. A real library that
+is brand new and still empty has neither, so with --allow-outside-repo a new
+folder inside it would be accepted. Pass a folder created for the benchmark
+and nothing else.
 """
 
 from __future__ import annotations

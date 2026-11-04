@@ -77,17 +77,23 @@ def test_an_existing_folder_without_the_marker_is_refused(bench, repo, tmp_path)
 
 
 def test_a_real_library_itself_is_refused(bench, repo, tmp_path):
+    """Refused by the marker rule: it exists and this script did not make it."""
     real = _fake_real_library(tmp_path / "jobs", with_registry=True)
-    assert bench.check_library(real, repo, allow_outside_repo=True) is not None
+    refusal = bench.check_library(real, repo, allow_outside_repo=True)
+    assert refusal is not None and "not a library this script made" in refusal
 
 
-def test_a_marked_folder_with_a_registry_is_refused(bench, repo):
-    marked = repo / "data" / "f49" / "jobs"
-    marked.mkdir(parents=True)
-    (marked / bench.MARKER).write_text("x")
-    assert bench.check_library(marked, repo, allow_outside_repo=False) is None
-    (marked / "registry.json").write_text("{}")
-    assert bench.check_library(marked, repo, allow_outside_repo=False) is not None
+def test_a_marked_folder_with_a_registry_is_refused(bench, repo, tmp_path):
+    """The marker alone is not enough: a marked folder that has since been
+    used as a real library (it holds a registry.json) is refused too. This is
+    the only test that reaches that rule, inside and outside the repo."""
+    for marked in (repo / "data" / "f49" / "jobs", tmp_path / "nas" / "bench"):
+        marked.mkdir(parents=True)
+        (marked / bench.MARKER).write_text("x")
+        assert bench.check_library(marked, repo, allow_outside_repo=True) is None
+        (marked / "registry.json").write_text("{}")
+        refusal = bench.check_library(marked, repo, allow_outside_repo=True)
+        assert refusal is not None and "holds a registry.json" in refusal
 
 
 def test_the_app_data_folder_is_always_under_the_repo(bench, repo):
