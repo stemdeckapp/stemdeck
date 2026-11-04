@@ -130,6 +130,11 @@
       "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]
     },
     {
+      "why": "A song or folder dragged while the library list rebuilds (#979): render() holds the rebuild until the drag ends",
+      "paths": ["static/js/catalog.js"],
+      "specs": ["library-drag-rebuild"]
+    },
+    {
       "why": "Settings: navigation, every settings pane, and the config endpoint behind them",
       "paths": ["static/js/settingsNav.js", "static/css/settings.css", "app/api/config.py"],
       "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle"]
