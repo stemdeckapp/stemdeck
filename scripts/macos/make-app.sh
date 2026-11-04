@@ -35,8 +35,8 @@ sed -i '' "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$REPO_ROOT/deskt
 
 cd "$REPO_ROOT/desktop"
 
-# Tauri CLI reads CI env var as a boolean flag; Woodpecker sets CI=woodpecker
-# which fails the boolean parser. Force a valid value.
+# Tauri CLI reads the CI env var as a boolean flag; a CI service that sets it
+# to anything else fails the boolean parser. Force a valid value.
 export CI=true
 
 npm ci
