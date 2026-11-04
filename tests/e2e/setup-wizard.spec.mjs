@@ -26,8 +26,10 @@ const ALL_READY = {
 /**
  * `platform` stands in for the OS the shell runs on, which decides whether
  * setup may mention an AMD GPU; `gpu` for what the shell's GPU step answers.
+ * `holdBackend` keeps the backend from answering, so the page stays on the
+ * status line the GPU step's summary goes into.
  */
-async function openWizard(page, { platform, gpu } = {}) {
+async function openWizard(page, { platform, gpu, holdBackend } = {}) {
   await page.route(`${ORIGIN}/**`, async (route) => {
     const name = new URL(route.request().url()).pathname.slice(1);
     if (name === "started.html") {
@@ -37,7 +39,7 @@ async function openWizard(page, { platform, gpu } = {}) {
     const body = await readFile(path.join(UI, path.basename(name)));
     return route.fulfill({ contentType: types[path.extname(name).slice(1)], body });
   });
-  await page.addInitScript(({ origin, platform, gpu }) => {
+  await page.addInitScript(({ origin, platform, gpu, holdBackend }) => {
     if (platform) {
       Object.defineProperty(Navigator.prototype, "platform", { get: () => platform });
       Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform }) });
@@ -65,6 +67,7 @@ async function openWizard(page, { platform, gpu } = {}) {
         invoke(cmd) {
           window.__setup.calls.push(cmd);
           if (cmd === "warmup_models") return new Promise((resolve) => (finishWarmup = resolve));
+          if (cmd === "start_backend" && holdBackend) return new Promise(() => {});
           if (cmd === "skip_model_warmup") {
             // What the shell does: the warmup is stopped during model 2, so
             // it returns with only the first one ready.
@@ -83,7 +86,7 @@ async function openWizard(page, { platform, gpu } = {}) {
         },
       },
     };
-  }, { origin: ORIGIN, platform, gpu });
+  }, { origin: ORIGIN, platform, gpu, holdBackend });
   await page.goto(`${ORIGIN}/index.html`);
   await expect(page.locator('[data-step="model"]')).toHaveClass(/active/);
   await expect.poll(() => page.evaluate(() => window.__setup.calls)).toContain("warmup_models");
@@ -193,6 +196,39 @@ test("Windows, NVIDIA GPU no CUDA build supports: setup names CUDA", async ({ pa
       torchDevice: "cpu", cudaVerified: false, reason: "cuda-unsupported-gpu" },
   });
   await expect(page.locator("#details")).toContainText("none of the CUDA builds StemDeck can install support it");
+});
+
+// The CPU download skips GPU detection altogether (#1011), so its summary may
+// not say whether this computer has a GPU: nobody looked.
+const CPU_PACKAGE = { gpuDetected: false, torchDevice: "cpu", cudaVerified: false, reason: "cpu-only-package" };
+
+async function gpuSummary(page, options) {
+  await openWizard(page, { ...options, holdBackend: true });
+  await finish(page, ALL_READY);
+  await expect.poll(() => page.evaluate(() => window.__setup.calls)).toContain("start_backend");
+  return page.locator("#status").textContent();
+}
+
+test("Windows, CPU download: setup says it is the CPU download, not that there is no GPU", async ({ page }) => {
+  const status = await gpuSummary(page, { platform: "Win32", gpu: CPU_PACKAGE });
+  expect(status).toBe(
+    "This is the CPU download of StemDeck - stem separation will use CPU (the NVIDIA download uses an NVIDIA GPU) - starting backend..."
+  );
+});
+
+test("Linux, CPU download: the GPU download it names covers AMD too", async ({ page }) => {
+  const status = await gpuSummary(page, { platform: "Linux x86_64", gpu: CPU_PACKAGE });
+  expect(status).toBe(
+    "This is the CPU download of StemDeck - stem separation will use CPU (the NVIDIA download uses an NVIDIA or AMD GPU) - starting backend..."
+  );
+});
+
+test("NVIDIA download that found no GPU: setup says it found none", async ({ page }) => {
+  const status = await gpuSummary(page, {
+    platform: "Win32",
+    gpu: { gpuDetected: false, torchDevice: "cpu", cudaVerified: false, reason: "no-gpu-detected" },
+  });
+  expect(status).toBe("No NVIDIA GPU found - stem separation will use CPU - starting backend...");
 });
 
 test("everything arrived: setup goes straight on", async ({ page }) => {

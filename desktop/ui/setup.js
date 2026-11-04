@@ -681,11 +681,17 @@ async function setup() {
               `GPU detected (${gpu.gpuName}) but ${api} setup failed - stem separation will use CPU.\nCheck logs/setup.log in the StemDeck data folder for details.`
             );
           }
-          gpuSummary = gpu.gpuDetected
-            ? gpu.cudaVerified
-              ? `${gpu.gpuName} - ${api} ${gpu.cudaVersion} enabled`
-              : `${gpu.gpuName} found - falling back to CPU (${api} unverified)`
-            : `No ${gpuKinds} GPU - stem separation will use CPU`;
+          // The CPU download skips GPU detection, so it cannot say whether
+          // this computer has a GPU (#1011).
+          if (gpu.reason === "cpu-only-package") {
+            gpuSummary = `This is the CPU download of StemDeck - stem separation will use CPU (the NVIDIA download uses an ${gpuKinds} GPU)`;
+          } else {
+            gpuSummary = gpu.gpuDetected
+              ? gpu.cudaVerified
+                ? `${gpu.gpuName} - ${api} ${gpu.cudaVersion} enabled`
+                : `${gpu.gpuName} found - falling back to CPU (${api} unverified)`
+              : `No ${gpuKinds} GPU found - stem separation will use CPU`;
+          }
         }
         return gpu;
       } finally {
