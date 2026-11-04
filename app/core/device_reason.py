@@ -159,14 +159,15 @@ def nvidia_gpu() -> dict[str, str | None] | None:
     return gpu
 
 
-def _torch_build() -> tuple[str, str | None] | None:
-    """(torch version, CUDA version it was built for or None), or None when
-    torch cannot be imported."""
+def _torch_build() -> tuple[str, str | None, str | None] | None:
+    """(torch version, CUDA version it was built for, ROCm (HIP) version it
+    was built for), or None when torch cannot be imported. A CPU build has
+    neither."""
     try:
         import torch
     except Exception:  # noqa: BLE001 -- the device probe reports why (#730)
         return None
-    return str(torch.__version__), torch.version.cuda
+    return str(torch.__version__), torch.version.cuda, torch.version.hip
 
 
 def _setup_reason() -> str | None:
@@ -197,7 +198,10 @@ def cpu_reason() -> str | None:
     gpu = nvidia_gpu()
     if build is None or gpu is None:
         return None
-    _version, torch_cuda = build
+    _version, torch_cuda, torch_hip = build
+    if torch_hip is not None:
+        # The AMD build (#825): none of the NVIDIA sentences describes it.
+        return None
     if torch_cuda is None:
         # Setup's outcome describes the CPU torch it left in place, so it is
         # trusted only while that is still the torch installed. With a GPU
@@ -215,7 +219,7 @@ def device_diagnostics(why: str | None) -> str:
     """The facts behind `why` (what cpu_reason() returned) on one line, for a
     bug report."""
     gpu = nvidia_gpu() or {}
-    version, torch_cuda = _torch_build() or (None, None)
+    version, torch_cuda, _hip = _torch_build() or (None, None, None)
     setup = _setup_reason()
     if setup is not None and setup.removesuffix("-cpu-restore-failed") not in _SETUP_VALUES:
         setup = "other"

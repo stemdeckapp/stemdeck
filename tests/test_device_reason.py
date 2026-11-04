@@ -56,7 +56,9 @@ def facts(monkeypatch, tmp_path):
 
     def set_facts(devices, torch_build, gpu, setup_reason=None):
         monkeypatch.setattr(device_reason, "available_torch_devices", lambda: devices)
-        monkeypatch.setattr(device_reason, "_torch_build", lambda: torch_build)
+        # (version, cuda) for a CPU or CUDA build; (version, None, hip) for ROCm.
+        build = (*torch_build, None)[:3] if torch_build else None
+        monkeypatch.setattr(device_reason, "_torch_build", lambda: build)
         monkeypatch.setattr(device_reason, "nvidia_gpu", lambda: gpu)
         if setup_reason is not None:
             (tmp_path / "config.json").write_text(
@@ -136,6 +138,13 @@ def test_a_verified_setup_does_not_hide_a_cuda_that_stopped_working(facts):
 def test_mps_unavailable_on_a_mac(facts):
     facts(["cpu"], ("2.6.0", None), None, setup_reason="mps-unavailable")
     assert device_reason.cpu_reason() == "mps-unavailable"
+
+
+def test_no_reason_for_the_amd_build(facts):
+    # The ROCm build (#825) is no CPU-only build, and no NVIDIA sentence fits
+    # it, even with an NVIDIA card in the same machine.
+    facts(["cpu"], ("2.6.0+rocm6.4", None, "6.4.43482"), RTX)
+    assert device_reason.cpu_reason() is None
 
 
 def test_no_reason_when_torch_is_absent(facts):

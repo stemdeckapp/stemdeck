@@ -22,6 +22,7 @@ ROCM_HIP = "6.4.43482-0f2d60242"
 
 def _fake_torch(*, cuda: bool, hip: str | None) -> types.ModuleType:
     torch = types.ModuleType("torch")
+    torch.__version__ = "2.6.0+rocm6.4" if hip else "2.6.0+cu124"
     torch.version = types.SimpleNamespace(cuda=None if hip else "12.4", hip=hip)
     torch.cuda = types.SimpleNamespace(
         is_available=lambda: cuda,
