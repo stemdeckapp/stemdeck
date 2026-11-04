@@ -134,7 +134,7 @@ async def stop() -> None:
     server.should_exit = True  # type: ignore[attr-defined]
     try:
         await asyncio.wait_for(task, timeout=3)
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         # Past the graceful window. The process is going away regardless, and
         # blocking shutdown on a stuck connection is worse than a stray socket.
         task.cancel()
