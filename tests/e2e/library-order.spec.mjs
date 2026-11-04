@@ -8,7 +8,9 @@
 // orders it the same way.
 
 import { test, expect } from "@playwright/test";
-import { fixtureTrack, seedCatalogState, stubExportEndpoints, stubUpdateCheck } from "./helpers.mjs";
+import {
+  JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, TRACK_TITLE, fixtureTrack, readCatalogState, seedCatalogState, stubExportEndpoints, stubUpdateCheck,
+} from "./helpers.mjs";
 
 const A = "0d0d0d0d0d01";
 const B = "0d0d0d0d0d02";
@@ -67,6 +69,30 @@ test("songs added at the same moment keep one fixed order", async ({ page }) => 
 
   const order = (await shownOrder(page)).filter((id) => id === X || id === Y);
   expect(order).toEqual([X, Y]);
+});
+
+test("a song stamped by a skewed browser clock takes the server's time on startup", async ({ page }) => {
+  // Saved in an earlier session by a browser whose clock ran far behind the
+  // server's (#978): stamped before A, though the server added it after.
+  await seedCatalogState(page, {
+    folders: [
+      { id: "f-unsorted", name: "Unsorted", items: [JOB_ID, SIBLING_JOB_ID, A], color: null },
+      { id: "trash", name: "Trash", items: [], color: null },
+    ],
+    tracks: {
+      [JOB_ID]: { ...fixtureTrack(JOB_ID, TRACK_TITLE), createdAt: 500 },
+      // Its sibling shares its source; without it the startup dedup renames JOB_ID.
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
+      [A]: track(A, "Song 1", 1000),
+    },
+  });
+  await stubUpdateCheck(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.locator(`.cat-item[data-id="${A}"]`).waitFor({ timeout: 20000 });
+
+  const server = await (await page.request.get(`/api/jobs/${JOB_ID}`)).json();
+  await expect.poll(async () => (await readCatalogState(page)).tracks[JOB_ID].createdAt).toBe(server.created_at);
+  await expect.poll(async () => (await shownOrder(page)).filter((id) => id === A || id === JOB_ID)).toEqual([A, JOB_ID]);
 });
 
 test("the phone's Library shows the first song added first", async ({ page }) => {

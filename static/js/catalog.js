@@ -15,7 +15,7 @@ import {
   startQueueStream, stopQueuedJob,
 } from "./queue.js";
 import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
-import { compareOldestFirst } from "./shared/jobs.js";
+import { addedAt, compareOldestFirst } from "./shared/jobs.js";
 import { showTrackNote, takeStemsFromJob } from "./capture/takeLanes.js";
 import { inLibraryList, libraryDeleteTrackId } from "./libraryDeleteKey.js";
 import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailuresByKind } from "./notifications.js";
@@ -553,7 +553,7 @@ export function addTrackToLibrary(track) {
     // Likewise the identity and the work behind a soundtrack, once known.
     ...(existing.identity ? { identity: existing.identity } : {}),
     ...(existing.work ? { work: existing.work } : {}),
-    createdAt: existing.createdAt ?? track.createdAt ?? (Date.now() / 1000),
+    createdAt: addedAt(track.createdAt, existing.createdAt),
     favorite: existing.favorite ?? false,
   };
   const alreadyPlaced = folders.some((folder) => folder.items.includes(track.id));
@@ -830,7 +830,7 @@ function stateMetadataToTrack(state, fallbackTrack) {
     // Its versions (#804): the library shows them under the song.
     versions: Array.isArray(state.versions) ? state.versions : fallbackTrack.versions ?? null,
     activeVersion: state.active_version ?? fallbackTrack.activeVersion ?? null,
-    createdAt: fallbackTrack.createdAt ?? state.created_at,
+    createdAt: state.created_at ?? fallbackTrack.createdAt,
     favorite: fallbackTrack.favorite ?? false,
     // The band (#699): the one saved on the track first, since a band chosen
     // in the artist box always wins, and the server never hears of that one,
@@ -3882,6 +3882,13 @@ async function syncWithServer() {
         // whole library shows its icons at startup.
         if (!known.sourceFormat && state.source_format) {
           known.sourceFormat = state.source_format;
+          backfilled = true;
+        }
+        // A row stamped by this browser's clock in an earlier session takes
+        // the server's time, which the Queue orders by (#978).
+        const createdAt = addedAt(state.created_at, known.createdAt);
+        if (known.createdAt !== createdAt) {
+          known.createdAt = createdAt;
           backfilled = true;
         }
         // Likewise the band the server found while the job ran (#699), for a
