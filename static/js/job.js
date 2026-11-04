@@ -11,7 +11,7 @@ import { extractAsVersion } from "./versions.js";
 import { showTrackNote } from "./capture/takeLanes.js";
 import { notifyFailure, dismissFailuresByJobId } from "./notifications.js";
 import { getStagePhrases } from "./phrases.js";
-import { getCurrentTrackInfo, findDoneTrackBySource, openTrackInStudio, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen, setTrackVocalSplit, trackSourceUrl } from "./catalog.js";
+import { getCurrentTrackInfo, findDoneTrackBySource, openTrackInStudio, addTrackToLibrary, setCurrentTrack, updateTrackStatus, applyStemPresenceCards, paintTrackLoudnessNote, libraryAudioTags, libraryArtist, libraryIdentity, libraryWork, paintFinishedTrackNames, armAutoOpen, setTrackVocalSplit, trackSourceUrl } from "./catalog.js";
 import { splitReason, splitReasonText, noteSplitOutcome, effectiveVocalSplitMode } from "./vocalSplitState.js";
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { initSections } from "./sections.js";
@@ -546,6 +546,12 @@ function applyStudioSummary(state) {
   if (state.stem_presence != null) {
     applyStemPresenceCards(state.stem_presence);
   }
+  // The cards now show this job's numbers, so the note follows them (#923).
+  paintTrackLoudnessNote(state.job_id, {
+    remeasured: state.loudness_remeasured,
+    basis: state.loudness_basis,
+    version: state.loudness_version,
+  });
 }
 
 // Chains the on-demand vocal split onto a foreground job's completion (see

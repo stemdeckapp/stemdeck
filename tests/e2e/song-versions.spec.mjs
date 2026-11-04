@@ -196,6 +196,184 @@ test.describe("versions of a song", () => {
     await expect.poll(() => lanes(page), { timeout: 15000 }).toBe("bass,drums,other,vocals");
   });
 
+  // On the desktop each store_set saves the whole user-data store to disk
+  // (#996): a delete that cleared its eight records one by one rewrote the
+  // file eight times. Its records go in one store_set_many, which saves once.
+  test("on the desktop, deleting a version clears its records in one store write", async ({ page, request }) => {
+    const made = await (await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Guitar study", stems: ["drums", "vocals"], select: false } })).json();
+    const vid = made.version.id;
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    await expect(rows(page)).toHaveCount(2);
+
+    const del = rows(page).nth(1).locator(".cat-version-del");
+    await rows(page).nth(1).hover();
+    await del.click();
+    await del.click();
+    await expect(rows(page)).toHaveCount(0);
+
+    const scoped = `${JOB_ID}~${vid}:`;
+    const writes = (await page.evaluate(() => window.__e2e.calls.filter((c) => c.cmd.startsWith("store_set"))))
+      .filter((c) => c.cmd === "store_set" ? c.args.key.includes(scoped) : Object.keys(c.args.entries).some((k) => k.includes(scoped)));
+    expect(writes.map((c) => c.cmd)).toEqual(["store_set_many"]);
+    const modes = ["practice", "daw", "karaoke", "streamer"];
+    expect(Object.keys(writes[0].args.entries).sort()).toEqual(
+      modes.flatMap((m) => [`stemdeck:mix:${scoped}${m}`, `stemdeck:stems:${scoped}${m}`]).sort(),
+    );
+    expect(Object.values(writes[0].args.entries).every((v) => v === null)).toBe(true);
+  });
+
+  test("on the desktop, a new version's mixes and voice are written in one store write", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    const modes = ["practice", "daw", "karaoke", "streamer"];
+    // A saved mix in every mode of the version open now, for copyMix to carry.
+    await page.evaluate(async ([job, modes]) => {
+      const { storeSet } = await import("/js/utils.js");
+      for (const m of modes) await storeSet(`stemdeck:mix:${job}:${m}`, { drums: { volume: 0.5, muted: true, soloed: false, pitch: 0, fx: [] } });
+    }, [JOB_ID, modes]);
+    const vid = await page.evaluate(async (job) => {
+      const { createVersion } = await import("/js/versions.js");
+      return (await createVersion(job, { name: "Two", lanes: ["drums", "vocals"], voice: "split", copyMix: true })).id;
+    }, JOB_ID);
+
+    const scoped = `${JOB_ID}~${vid}:`;
+    const writes = (await page.evaluate(() => window.__e2e.calls.filter((c) => c.cmd.startsWith("store_set"))))
+      .filter((c) => c.cmd === "store_set" ? c.args.key.includes(scoped) : Object.keys(c.args.entries).some((k) => k.includes(scoped)));
+    // The first write of the new version's records holds all of them; the
+    // mix the open song saves later as it is played is its own write.
+    expect(writes[0].cmd).toBe("store_set_many");
+    const entries = writes[0].args.entries;
+    expect(Object.keys(entries).sort()).toEqual([
+      ...modes.map((m) => `stemdeck:mix:${scoped}${m}`),
+      `stemdeck:stems:${scoped}practice`,
+      `stemdeck:stems:${scoped}daw`,
+    ].sort());
+    for (const m of modes) expect(entries[`stemdeck:mix:${scoped}${m}`].drums.muted).toBe(true);
+    expect(entries[`stemdeck:stems:${scoped}practice`].voice).toBe("split");
+    expect(entries[`stemdeck:stems:${scoped}daw`].voice).toBe("split");
+  });
+
+  test("on the desktop, Extract with Lead + Backing writes the matching version's voice in one store write", async ({ page, request }) => {
+    const made = await (await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Two", stems: ["vocals", "drums"], select: false } })).json();
+    const vid = made.version.id;
+    // The split itself is the server's; here it only has to answer done.
+    let split = 0;
+    await page.route("**/api/jobs/*/vocal-split", (route) => {
+      split += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    await expect(rows(page)).toHaveCount(2);
+
+    await page.evaluate(async (job) => {
+      const { extractAsVersion } = await import("/js/versions.js");
+      await extractAsVersion(["vocals", "drums"], "split", () => {}, job);
+    }, JOB_ID);
+    expect(split).toBe(1);
+
+    const scoped = `${JOB_ID}~${vid}:`;
+    const many = (await page.evaluate(() => window.__e2e.callsFor("store_set_many")))
+      .filter((c) => Object.keys(c.args.entries).some((k) => k.includes(scoped)));
+    // First the freeze before the split (every version at one Vocals lane),
+    // then this version's own voice, which replaces it.
+    expect(many).toHaveLength(2);
+    expect(Object.values(many[0].args.entries).every((r) => r.voice === "combined")).toBe(true);
+    const entries = many[1].args.entries;
+    expect(Object.keys(entries).sort()).toEqual([`stemdeck:stems:${scoped}daw`, `stemdeck:stems:${scoped}practice`]);
+    expect(entries[`stemdeck:stems:${scoped}practice`].voice).toBe("split");
+    expect(entries[`stemdeck:stems:${scoped}daw`].voice).toBe("split");
+  });
+
+  // Before a Lead + Backing split, every mode of every version with no voice
+  // of its own is frozen at one Vocals lane. One store_set per record saved
+  // the whole store file once each (#996); the records go in one
+  // store_set_many, written before the split starts.
+  test("on the desktop, freezing the other versions' voice before a split is one store write", async ({ page, request }) => {
+    const made = await (await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Two", stems: ["vocals", "drums"], select: false } })).json();
+    const vid = made.version.id;
+    let callsAtSplit = -1;
+    await page.route("**/api/jobs/*/vocal-split", async (route) => {
+      callsAtSplit = await page.evaluate(() => window.__e2e.calls.length);
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    await expect(rows(page)).toHaveCount(2);
+
+    // Version 1's Karaoke has a voice of its own: it is not frozen.
+    const own = `stemdeck:stems:${JOB_ID}:karaoke`;
+    const start = await page.evaluate(async (key) => {
+      const { storeSet } = await import("/js/utils.js");
+      await storeSet(key, { remove: "", voice: "split" });
+      return window.__e2e.calls.length;
+    }, own);
+
+    await page.evaluate(async (job) => {
+      const { extractAsVersion } = await import("/js/versions.js");
+      await extractAsVersion(["vocals", "drums"], "split", () => {}, job);
+    }, JOB_ID);
+    expect(callsAtSplit).toBeGreaterThan(start);
+
+    const stems = `stemdeck:stems:${JOB_ID}`;
+    const touches = (c) => c.cmd === "store_set" ? c.args.key.startsWith(stems) : Object.keys(c.args.entries).some((k) => k.startsWith(stems));
+    const all = await page.evaluate(() => window.__e2e.calls);
+    const before = all.slice(start, callsAtSplit).filter((c) => c.cmd.startsWith("store_set") && touches(c));
+    expect(before.map((c) => c.cmd)).toEqual(["store_set_many"]);
+    const entries = before[0].args.entries;
+    const scoped = `${stems}~${vid}:`;
+    expect(Object.keys(entries)).toEqual([
+      `${stems}:practice`, `${stems}:daw`, `${stems}:streamer`,
+      `${scoped}practice`, `${scoped}daw`, `${scoped}karaoke`, `${scoped}streamer`,
+    ]);
+    expect(own in entries).toBe(false);
+    for (const rec of Object.values(entries)) expect(rec.voice).toBe("combined");
+  });
+
+  test("on the desktop, Lead + Backing asked for in the open song writes each version's modes in one store write", async ({ page, request }) => {
+    const made = await (await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Two", stems: ["vocals", "drums"], select: false } })).json();
+    const vid = made.version.id;
+    await page.addInitScript(() => localStorage.setItem("stemdeck.mode", "practice"));
+    // The split answers an error: the song is not reloaded, so the calls stay.
+    let callsAtSplit = -1;
+    await page.route("**/api/jobs/*/vocal-split", async (route) => {
+      callsAtSplit = await page.evaluate(() => window.__e2e.calls.length);
+      return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    await expect(rows(page)).toHaveCount(2);
+
+    const voice = () => page.evaluate(async () => {
+      const s = (await import("/js/modeStems.js")).layoutState();
+      return { mode: s.mode, voice: s.voice, chosen: s.chosen };
+    });
+    expect(await voice()).toEqual({ mode: "practice", voice: null, chosen: false });
+    const start = await page.evaluate(() => window.__e2e.calls.length);
+    expect(await page.evaluate(async () => (await import("/js/modeStems.js")).requestSplit())).toBe("failed");
+    expect(callsAtSplit).toBeGreaterThan(start);
+    // The open song's records in memory hold the new voice as well: the
+    // Stems control and Karaoke read them, not the store.
+    expect(await voice()).toEqual({ mode: "practice", voice: "split", chosen: true });
+
+    const stems = `stemdeck:stems:${JOB_ID}`;
+    const touches = (c) => c.cmd === "store_set" ? c.args.key.startsWith(stems) : Object.keys(c.args.entries).some((k) => k.startsWith(stems));
+    const all = await page.evaluate(() => window.__e2e.calls);
+    const before = all.slice(start, callsAtSplit).filter((c) => c.cmd.startsWith("store_set") && touches(c));
+    expect(before.map((c) => c.cmd)).toEqual(["store_set_many", "store_set_many"]);
+    // The open version first: the pair in Practice, one Vocals lane elsewhere.
+    const open = before[0].args.entries;
+    expect(Object.keys(open)).toEqual(["practice", "daw", "karaoke", "streamer"].map((m) => `${stems}:${m}`));
+    expect(Object.entries(open).map(([k, r]) => [k.split(":").pop(), r.voice])).toEqual([
+      ["practice", "split"], ["daw", "combined"], ["karaoke", "combined"], ["streamer", "combined"],
+    ]);
+    // Then the other version, every mode at one Vocals lane.
+    const other = before[1].args.entries;
+    expect(Object.keys(other)).toEqual(["practice", "daw", "karaoke", "streamer"].map((m) => `${stems}~${vid}:${m}`));
+    for (const rec of Object.values(other)) expect(rec.voice).toBe("combined");
+  });
+
   test("Extract with other chips on the open song makes a version and separates nothing", async ({ page, request }) => {
     let filled = 0;
     await page.route("**/api/jobs/*/fill-stems", (route) => { filled += 1; return route.continue(); });

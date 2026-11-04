@@ -155,7 +155,7 @@ async def _run_analysis(inputs: list[str], graph: str) -> tuple[Spectrum, Loudne
         await asyncio.wait_for(read(), timeout=TIMEOUT_FFMPEG)
         await asyncio.wait_for(proc.wait(), timeout=30)
         await drainer
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise AnalysisError("analysis timed out") from None
     finally:
         # A cancelled request (the client went away) unwinds through here.

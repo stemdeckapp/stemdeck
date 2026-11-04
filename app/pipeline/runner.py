@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import (
@@ -390,6 +390,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "peak_db": job.peak_db,
         "dynamic_range": job.dynamic_range,
         "loudness_version": job.loudness_version,
+        "loudness_remeasured": job.loudness_remeasured,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "sections": job.sections,
@@ -469,7 +470,7 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         # URL or the reporter's home directory.
         redacted_tail = [redact(line) for line in tail]
         lines = [
-            f"time: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+            f"time: {datetime.now(UTC).isoformat(timespec='seconds')}",
             f"job: {job.id}",
             f"title: {job.title or '(unknown)'}",
             f"source: {job.source_url or '(unknown)'}",

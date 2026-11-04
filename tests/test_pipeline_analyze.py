@@ -484,6 +484,19 @@ def test_analyze_keeps_loudness_when_librosa_is_missing(job, jobs_dir):
     assert job.loudness_version == LOUDNESS_VERSION
 
 
+def test_a_fresh_analysis_clears_the_remeasure_note(job, jobs_dir):
+    """#923: a song separated again is measured afresh from its source, so the
+    card no longer holds numbers that were measured again."""
+    job.loudness_remeasured = "stems"
+    with (
+        patch.object(az, "measure_loudness", return_value=(-12.0, -1.0)),
+        patch.dict("sys.modules", {"librosa": None}),
+    ):
+        az.analyze(job, jobs_dir / "missing.wav")
+    assert job.lufs == -12.0
+    assert job.loudness_remeasured is None
+
+
 def test_analyze_reports_tempo_stability(job, jobs_dir):
     """A machine-perfect click should read as very stable. This is the field
     the click track leans on, and there is nothing to notice when it is wrong."""

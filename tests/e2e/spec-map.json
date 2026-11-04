@@ -67,6 +67,11 @@
 
   "rules": [
     {
+      "why": "The note under the loudness cards after an older song was measured again (#923), and the seed that keeps the fixture songs from showing it.",
+      "paths": ["static/js/loudnessNote.js", "tests/e2e/seed.py"],
+      "specs": ["loudness-note", "help-mode"]
+    },
+    {
       "why": "The string tables. Specs that switch language or check translated text, the Guide sentences, and the queue strings (#799). A changed English string a spec asserts elsewhere surfaces at the pull request to main.",
       "paths": ["static/js/i18n.js"],
       "specs": ["about-license", "artist-languages", "brand-link", "library-rows", "lyrics-cjk", "stem-chip-overflow", "track-header", "help-mode", "queue-progress", "modes", "donate"]

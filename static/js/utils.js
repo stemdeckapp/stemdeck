@@ -27,6 +27,25 @@ export async function storeSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("[store] localStorage set failed", e); }
 }
 
+/** Write several keys at once: `entries` is { key: value }, null clearing a
+ * record as storeSet does. On the desktop it is one store_set_many, which
+ * saves the store file once (#996): every store_set saves the whole file,
+ * which holds every song's mixes. In a browser each key is written, and one
+ * that cannot be does not stop the others. Never throws; failures are logged. */
+export async function storeSetMany(entries) {
+  const keys = Object.keys(entries || {});
+  if (!keys.length) return;
+  if (window.__TAURI__?.core?.invoke) {
+    try {
+      await window.__TAURI__.core.invoke("store_set_many", { entries });
+    } catch (e) { console.warn("[store] set failed for", keys.join(", "), e); }
+    return;
+  }
+  for (const key of keys) {
+    try { localStorage.setItem(key, JSON.stringify(entries[key])); } catch (e) { console.warn("[store] localStorage set failed for", key, e); }
+  }
+}
+
 // Debounced variant — coalesces rapid writes (e.g. mixer slider moves) into
 // a single store write ~300ms after the last call. Each call snapshots the
 // value so no mutation races occur.
