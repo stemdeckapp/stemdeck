@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import (
@@ -469,7 +469,7 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         # URL or the reporter's home directory.
         redacted_tail = [redact(line) for line in tail]
         lines = [
-            f"time: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+            f"time: {datetime.now(UTC).isoformat(timespec='seconds')}",
             f"job: {job.id}",
             f"title: {job.title or '(unknown)'}",
             f"source: {job.source_url or '(unknown)'}",

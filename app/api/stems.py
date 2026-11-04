@@ -1236,7 +1236,7 @@ async def _stream_ffmpeg(cmd: list[str], context: str = "", cache_path: Path | N
         await proc.wait()
         try:
             await asyncio.wait_for(drain_task, timeout=5)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             drain_task.cancel()
         if finished and proc.returncode != 0:
             logger.warning(
@@ -1299,12 +1299,12 @@ async def _render_to_file(
     try:
         try:
             await asyncio.wait_for(proc.wait(), timeout=TIMEOUT_FFMPEG)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             proc.kill()
             await proc.wait()
         try:
             await asyncio.wait_for(drain_task, timeout=5)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             drain_task.cancel()
         if proc.returncode != 0:
             logger.warning(
@@ -1394,7 +1394,7 @@ async def _ensure_cached_mp3(src: Path) -> Path:
     )
     try:
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT_FFMPEG)
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         tmp.unlink(missing_ok=True)

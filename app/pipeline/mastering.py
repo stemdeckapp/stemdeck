@@ -377,7 +377,7 @@ async def _measure(inputs: list[str], graph: str, chain: str, rate: int) -> Loud
     )
     try:
         _out, err = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT_FFMPEG)
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise MeasureError("loudness measurement timed out") from None

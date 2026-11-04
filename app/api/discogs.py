@@ -46,7 +46,7 @@ async def _bounded(func: Any, *args: Any) -> Any:
         return await asyncio.wait_for(
             asyncio.to_thread(func, *args, cancelled=cancelled), DISCOGS_SEARCH_BUDGET_SEC + 1
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("Discogs artist request timed out")
         return None
 
