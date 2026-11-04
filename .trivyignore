@@ -8,6 +8,18 @@
 # the torchaudio/torchcodec story stabilises and the pin can be lifted.
 CVE-2025-32434
 
+# CVE-2026-24747: torch below 2.10.0, memory corruption in the weights_only
+# unpickler. Exploiting it needs a victim process to torch.load() a crafted
+# checkpoint file. StemDeck's app/ has no torch.load() call (checked with
+# grep; the only matches are the names of the torch_load_error helpers in
+# app/core/config.py). All model weights are fetched by Demucs from its own
+# trusted cache, and no checkpoint is ever loaded from user input.
+# torch cannot move yet: pyproject.toml pins torch and torchaudio to 2.6.x
+# (2.2.x on Intel macOS) because torchaudio 2.7 and later need torchcodec,
+# which has ABI problems with newer torch. Tracked in #1016.
+# Drop this ignore once the pin moves to torch 2.10 or later.
+CVE-2026-24747
+
 # DS-0002: Dockerfile missing USER instruction.
 # The image intentionally starts as root so the entrypoint script
 # (build/docker-entrypoint.sh) can re-chown the bind-mounted /app/jobs
