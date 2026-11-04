@@ -165,14 +165,14 @@ def test_an_orphan_in_a_read_only_folder_is_recovered_with_a_placeholder(
     tmp_path, monkeypatch, caplog
 ):
     job_dir = _stems(tmp_path, OTHER)
-    real = Path.write_text
+    real = _registry._write_atomic
 
-    def read_only(self, *a, **k):
-        if self.name == "metadata.json":
+    def read_only(path, payload):
+        if path.name == "metadata.json":
             raise PermissionError(13, "read-only")
-        return real(self, *a, **k)
+        return real(path, payload)
 
-    monkeypatch.setattr(Path, "write_text", read_only)
+    monkeypatch.setattr(_registry, "_write_atomic", read_only)
 
     with caplog.at_level(logging.WARNING, logger="stemdeck"):
         _registry.restore(tmp_path)

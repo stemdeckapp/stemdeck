@@ -51,7 +51,7 @@ from app.core.models import (
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
-from app.core.registry import is_upload, saved_fields
+from app.core.registry import is_upload, keep_added_time, metadata_lock, saved_fields
 from app.core.registry import mark_deleted as registry_mark_deleted
 from app.core.registry import operation as registry_operation
 from app.core.registry import pending_count as registry_pending_count
@@ -404,6 +404,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         auto_lyrics=get_auto_lyrics(),
         vocal_split_wanted=form.get("vocal_split") == "true" and "vocals" in selected,
     )
+    await asyncio.to_thread(keep_added_time, job, job_dir)
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
@@ -903,6 +904,7 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         auto_lyrics=get_auto_lyrics(),
         vocal_split_wanted=body.vocal_split and "vocals" in selected,
     )
+    await asyncio.to_thread(keep_added_time, new_job, new_dir)
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(new_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
@@ -1209,7 +1211,6 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
-_SECTIONS_WRITE_LOCK = threading.RLock()
 
 
 def _write_json_atomic(path: Path, data: dict) -> None:
@@ -1299,7 +1300,7 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
         raise HTTPException(status_code=404, detail="job not found")
     meta_path = job_dir / "metadata.json"
 
-    with _SECTIONS_WRITE_LOCK:
+    with metadata_lock:
         meta: dict = {}
         try:
             if meta_path.is_file():
@@ -1350,7 +1351,7 @@ def _write_metadata_fields(job_id: str, fields: dict[str, object]) -> None:
     if not meta_path.is_relative_to(JOBS_DIR.resolve()):
         return
     # The same lock as the sections editor, the other read-modify-write here.
-    with _SECTIONS_WRITE_LOCK:
+    with metadata_lock:
         try:
             if not meta_path.is_file():
                 return
@@ -1367,7 +1368,7 @@ def _keep_saved_fields(job: Job) -> None:
     """Copy what the user set on a song (favourite, Trash, versions) into its
     metadata.json, so a registry rebuilt from the folders keeps it. Read under
     the lock, so of two quick changes the later one is what stays."""
-    with _SECTIONS_WRITE_LOCK:
+    with metadata_lock:
         _write_metadata_fields(job.id, saved_fields(job))
 
 
