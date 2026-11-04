@@ -10,19 +10,21 @@
 // first frame, so no press can land early there. These tests take the desktop
 // path (stubTauri) and hold one store read open until the test lets it go:
 // the language, which is the first read of the start, and the library, which
-// is the last.
+// is the last. The last two check that a read that fails stops nothing.
 
 import { test, expect } from "@playwright/test";
-import { JOB_ID, SIBLING_JOB_ID, seedLibrary, stubTauri, stubUpdateCheck } from "./helpers.mjs";
+import {
+  JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, TRACK_TITLE, fixtureTrack, seedCatalogState, seedLibrary, stubTauri, stubUpdateCheck,
+} from "./helpers.mjs";
 
 const LANGUAGE_KEY = "stemdeck.language";
 const LIBRARY_KEY = "stemdeck.folders";
 
 /** Start the desktop app with every read of `key` held until release(page). */
-async function startWithHeldRead(page, key) {
+async function startWithHeldRead(page, key, { seed = seedLibrary } = {}) {
   const errors = [];
   page.on("pageerror", (err) => errors.push(String(err)));
-  await seedLibrary(page);
+  await seed(page);
   await stubTauri(page);
   await page.addInitScript((heldKey) => {
     const invoke = window.__TAURI__.core.invoke;
@@ -89,11 +91,60 @@ test("About, a rail view and search pressed before the library loads all take ef
   expect(errors).toEqual([]);
 });
 
-test("We Recommend pressed before the library loads opens with its cards", async ({ page }) => {
-  const errors = await startWithHeldRead(page, LIBRARY_KEY);
+test("We Recommend pressed while the language is still being read opens with its cards", async ({ page }) => {
+  const errors = await startWithHeldRead(page, LANGUAGE_KEY);
   await page.locator("#friendsBtn").click();
   await release(page);
   await expect(page.locator("#friendsDialog")).toBeVisible();
   await expect(page.locator("#friendsDialogGrid .lib-friend").first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("We Recommend needs only the language, so it opens while the library still loads", async ({ page }) => {
+  const errors = await startWithHeldRead(page, LIBRARY_KEY);
+  await page.locator("#friendsBtn").click();
+  await expect(page.locator("#friendsDialog")).toBeVisible();
+  await expect(page.locator("#friendsDialogGrid .lib-friend").first()).toBeVisible();
+  await release(page);
+  expect(errors).toEqual([]);
+});
+
+test("a stored library that cannot be read is reported, and Settings still opens", async ({ page }) => {
+  // Trash items stored as text rather than a list: loadState throws on it.
+  const corrupt = (p) => seedCatalogState(p, {
+    folders: [
+      { id: "f-unsorted", name: "Unsorted", items: [JOB_ID, SIBLING_JOB_ID], color: null },
+      { id: "trash", name: "Trash", items: "not a list", color: null },
+    ],
+    tracks: {
+      [JOB_ID]: fixtureTrack(JOB_ID, TRACK_TITLE),
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
+    },
+  });
+  const errors = await startWithHeldRead(page, LIBRARY_KEY, { seed: corrupt });
+  await page.locator("#settingsBtn").click();
+  await release(page);
+  await expect(page.locator(".library-editor")).toBeVisible();
+  await expect(page.locator("#error")).toContainText("Your library could not be read in full");
+  expect(errors).toEqual([]);
+});
+
+test("a sidebar state that cannot be read does not stop the start", async ({ page }) => {
+  // Some browsers refuse storage outright (a SecurityError) for a page they
+  // treat as third-party or in a locked-down profile.
+  const errors = [];
+  page.on("pageerror", (err) => errors.push(String(err)));
+  await seedLibrary(page);
+  await page.addInitScript(() => {
+    const getItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key) {
+      if (key === "stemdeck.catalog.collapsed") throw new DOMException("denied", "SecurityError");
+      return getItem.call(this, key);
+    };
+  });
+  await stubUpdateCheck(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator(".library-editor")).toBeVisible();
   expect(errors).toEqual([]);
 });

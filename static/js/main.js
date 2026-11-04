@@ -539,7 +539,7 @@ onLanguageChange(fitStemChips);
 // Here with everything else, not in initCatalog after the awaits below: on
 // the desktop app each of those is a round trip to the shell, and a press on
 // Settings in that time used to do nothing (#1010).
-wireCatalogControls();
+wireCatalogControls({ languageReady: i18nReady });
 
 (async () => {
   await i18nReady;
