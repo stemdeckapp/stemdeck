@@ -122,7 +122,7 @@
     {
       "why": "The library sidebar: rows, folders, tags, favorites, trash",
       "paths": ["static/js/libraryDeleteKey.js"],
-      "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]
+      "specs": ["library-rows", "library-status-dot", "library-tag-search", "library-tags", "trash-persistence", "trash-restore", "trash-queue", "unsorted-head", "library-drag-rebuild", "favorite-reach", "favorite-sync", "format-icon", "we-recommend"]
     },
     {
       "why": "Settings: navigation, every settings pane, and the config endpoint behind them",

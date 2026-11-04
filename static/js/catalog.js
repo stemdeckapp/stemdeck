@@ -1548,6 +1548,22 @@ function openFolderEditor(folderId) {
 
 let dragId = null;
 let folderDragId = null;
+// A rebuild asked for while a song or a folder is being dragged (#979).
+// render() empties the list, which throws away the dragged row and the folder
+// under the cursor, and the browser then delivers the drop to neither: the
+// song stays where it was. So render() waits, and the drag's end runs it once.
+let renderAfterDrag = false;
+
+function isLibraryDragging() {
+  return dragId != null || folderDragId != null;
+}
+
+/** The drag is over: run the rebuild it held back, if any. */
+function renderHeldBack() {
+  if (isLibraryDragging() || !renderAfterDrag) return;
+  renderAfterDrag = false;
+  render();
+}
 
 function isTrackDragEvent(event) {
   return dragId != null || Boolean(event?.dataTransfer?.types?.includes(TRACK_DRAG_TYPE));
@@ -1575,6 +1591,7 @@ function endDrag(itemEl) {
   for (const el of document.querySelectorAll(".folder.drop-target")) el.classList.remove("drop-target");
   document.querySelector(".rail-trash")?.classList.remove("drop-target");
   document.getElementById("lanes")?.classList.remove("library-drop-target");
+  renderHeldBack();
 }
 
 function dropOnFolder(folderId, trackId) {
@@ -2317,6 +2334,7 @@ function renderFolder(folder) {
       for (const f of document.querySelectorAll(".folder.drop-before, .folder.drop-after, .folder.drop-into")) {
         f.classList.remove("drop-before", "drop-after", "drop-into");
       }
+      renderHeldBack();
     });
   }
 
@@ -2402,6 +2420,11 @@ function render() {
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
   if (!list || !libraryLoaded) return;
+  // Not while a library drag is held: see renderAfterDrag.
+  if (isLibraryDragging()) {
+    renderAfterDrag = true;
+    return;
+  }
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
