@@ -14,7 +14,7 @@ import {
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
-  footerTimeElapsed, footerTimeTotal, footerWaveTicks, footerWaveDrawFn,
+  footerTimeElapsed, footerTimeTotal,
   loopStartInput, loopEndInput,
   metroBtn, metroPanel, metroMoreBtn, metroVolEl, metroVolBtn, metroVolPanel, metroVolLabel, metroBarEl, metroBarCustomEl, metroGroupEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl, metroSoundEl,
@@ -125,14 +125,14 @@ export function setPlayheadTime(sec) {
 
 // Spacing of the timeline's labelled ticks: rulerTicks.js, a module of its own
 // so node can test it. `contentWidthPx` is the width the ticks will actually
-// occupy; omitted (the footer strip) the step is the plain duration-based one.
+// occupy.
 // The step the ruler was last built with. buildRuler mutates elements inside
 // .wave-scroll, which is the element the resize observer watches, so rebuilding
 // unconditionally from that callback can re-trigger it. Comparing against this
 // makes the rebuild idempotent: once the ruler matches the width, it settles.
 let _rulerStep = 0;
 
-function tickStep(durationSec, contentWidthPx = 0) {
+function tickStep(durationSec, contentWidthPx) {
   return tickStepAt(durationSec, contentWidthPx, waveZoom);
 }
 
@@ -327,10 +327,9 @@ export function updatePlayheadMarker(currentSec) {
 }
 
 // Mirror the elapsed/total time into the transport-footer's two side
-// labels (which used to show hardcoded "00:00.000" / "03:38.000"), and
-// redraw the footer waveform's progress. Driven from the
-// same wavesurfer "timeupdate" event that already updates #t-time, so
-// every label stays in sync without extra event plumbing.
+// labels (which used to show hardcoded "00:00.000" / "03:38.000"). Driven
+// from the same wavesurfer "timeupdate" event that already updates #t-time,
+// so every label stays in sync without extra event plumbing.
 //
 // Written only when the text actually changes. This runs every frame while
 // playing, and assigning textContent replaces the text node even when the
@@ -342,25 +341,6 @@ export function updateFooterTimes(currentSec) {
   const total = fmtTime(totalDuration);
   if (footerTimeElapsed && footerTimeElapsed.textContent !== elapsed) footerTimeElapsed.textContent = elapsed;
   if (footerTimeTotal && footerTimeTotal.textContent !== total) footerTimeTotal.textContent = total;
-  const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
-  footerWaveDrawFn?.(pct / 100);
-}
-
-// Time labels above the footer waveform. Same ticks as the ruler over the
-// lanes, positioned the same way (percent of duration), because the footer
-// strip is now indented to share that ruler's left edge and width.
-export function buildFooterWaveTicks(durationSec) {
-  if (!footerWaveTicks) return;
-  footerWaveTicks.innerHTML = "";
-  if (!durationSec || durationSec <= 0) return;
-  const step = tickStep(durationSec);
-  for (let t = 0; t <= durationSec; t += step) {
-    const tick = document.createElement("div");
-    tick.className = "tick";
-    tick.style.left = `${(t / durationSec) * 100}%`;
-    tick.innerHTML = `<span class="tick-label">${fmtTickLabel(t)}</span>`;
-    footerWaveTicks.appendChild(tick);
-  }
 }
 
 // Build the presence-panel ruler labels from the actual track duration.

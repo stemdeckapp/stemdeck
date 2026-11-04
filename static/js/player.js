@@ -30,7 +30,7 @@ import {
   setMultitrack, setCurrentJobId, setTrackIndex, setTotalDuration,
   setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume,
   waveScroll, selectedStems,
-  setFooterWaveDrawFn, setOverviewRerenderFn, autoSectionsResetFn,
+  setOverviewRerenderFn, autoSectionsResetFn,
   metronome, setMetronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar,
   metronomeCountInBars, metronomeGrouping, metronomeSound,
   exportClickEl, exportClickWrap, exportCountInEl, exportCountInWrap,
@@ -39,7 +39,6 @@ import {
 import { transposeExportBlocked } from "./transposeExport.js";
 import { createAudioEngine, estimateDecodedBytes } from "./audioEngine.js";
 import { createChunkedAudioEngine } from "./chunkedAudioEngine.js";
-import { createPlaybackContext } from "./audioContext.js";
 import { effectivePitch } from "./pitchBus.js";
 import { addVisualOnlyStems, buildPlaybackStems, hasCompressedStems, stemFileExt, sumPeaks } from "./playbackStems.js";
 import { layoutLanes, originalSource, jobOriginalSet, layoutSignature, baseLanes } from "./partChoice.js";
@@ -59,7 +58,7 @@ import {
 import {
   buildRuler, updatePlayheadMarker, updateLoopRegionVisual,
   applyWaveZoom, resetWaveZoom, WAVE_ZOOM_MAX,
-  buildPresenceRuler, buildFooterWaveTicks, updateFooterTimes,
+  buildPresenceRuler, updateFooterTimes,
   updatePresencePlayhead, resetSpeed, resetPitch, updatePitchAvailability, restoreGlobals,
   updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
@@ -280,12 +279,7 @@ const ADD_TRACK_ROW_HEIGHT = 40;
 let visualRenderToken = 0;
 // Rows in the stack before any take folder opens (stems, original, tracks).
 let _baseVisibleCount = 0;
-let visualAudioContext = null;
 let stemVuRafId = null;
-let _footerWavePeaks = null;
-let _lastFooterProgress = 0;
-let _footerPlaceholderResizeObs = null;
-const _FOOTER_BARS = 300;
 
 function isAudioBufferLike(value) {
   return value && typeof value.getChannelData === "function";
@@ -294,8 +288,8 @@ function isAudioBufferLike(value) {
 /**
  * Destroy the multitrack view, and close the AudioContext it made for itself
  * (Multitrack creates one per instance and its destroy() leaves it open: one
- * leaked per song loaded). Never a context something else plays on: the
- * engine's own, or the visual context.
+ * leaked per song loaded). Never the engine's context, which something else
+ * plays on.
  */
 function destroyMultitrack() {
   const mt = multitrack;
@@ -303,7 +297,7 @@ function destroyMultitrack() {
   const ctx = mt.audioContext;
   mt.destroy();
   setMultitrack(null);
-  const shared = ctx && (ctx === audioEngine?.audioContext || ctx === visualAudioContext);
+  const shared = ctx && ctx === audioEngine?.audioContext;
   if (ctx && !shared && typeof ctx.close === "function" && ctx.state !== "closed") {
     ctx.close().catch((err) => console.warn("[player] closing the view's audio context failed:", err));
   }
@@ -1023,10 +1017,6 @@ export function destroyPlayer() {
     setAudioEngine(null);
   }
   destroyMultitrack();
-  if (visualAudioContext) {
-    visualAudioContext.close().catch(() => {});
-    visualAudioContext = null;
-  }
   renderPlaceholderTracks();
   clearOverviewWaveforms();
   setEqContext({ jobId: null, lanes: [], enabled: false });
@@ -1075,7 +1065,6 @@ export function destroyPlayer() {
   setTrackIndex({});
   applyWaveZoom();
   buildPresenceRuler(0);
-  buildFooterWaveTicks(0);
   updateFooterTimes(0);
   updatePresencePlayhead(0);
   if (waveScroll) waveScroll.scrollLeft = 0;
@@ -1083,14 +1072,6 @@ export function destroyPlayer() {
   playBtn.classList.remove("playing");
   stopBtn.classList.remove("stopped");
   loopRegionEl.classList.add("hidden");
-  _footerWavePeaks = null;
-  _lastFooterProgress = 0;
-  _footerPlaceholderResizeObs?.disconnect();
-  _footerPlaceholderResizeObs = null;
-  _footerWaveResizeObs?.disconnect();
-  setFooterWaveDrawFn(null);
-  const cv = document.getElementById("footer-waveform");
-  if (cv) { const c = cv.getContext("2d"); c?.clearRect(0, 0, cv.width, cv.height); }
 }
 
 export function renderEmptyShell() {
@@ -1154,7 +1135,6 @@ function renderAllMiniWaves(mt, stems) {
 let _loadingShownAt = 0;
 const _LOADING_MIN_MS = 900;
 let _currentStems = [];
-let _mixUrl = null;
 let _currentTitle = "";
 // Whether the current job has a preserved video track (mp4 upload). Gates the
 // "Export Mix (with video)" item (CSS .has-video) and downloadCurrentVideo().
@@ -1301,7 +1281,7 @@ function clearLoadingTimers() {
   _loadingTimers = [];
 }
 
-export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, title = "", peaksPromise = null, hasVideo = false, videoStatus = null) {
+export function wireUpAudio(jobId, stems, duration, thumbnail, title = "", peaksPromise = null, hasVideo = false, videoStatus = null) {
   const rawStems = stems.filter((stem) => stem?.name && stem?.url);
   // Recorded takes ride along in `stems` as lanes named by take id. They must
   // be registered before the mix state loads, so their volume and mute are
@@ -1426,7 +1406,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   const playbackStems = buildPlaybackStems(rawForPlayback, stems, STEM_NAMES, exclude);
   const fullDecodeStems = addVisualOnlyStems(playbackStems, stems);
   _currentStems = stems;
-  _mixUrl = mixUrl || null;
   _currentTitle = title || "";
   _currentHasVideo = !!hasVideo;
   const exportWrap = document.getElementById("footer-export-wrap");
@@ -1436,19 +1415,11 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   exportWrap?.classList.toggle("video-failed", videoStatus === "failed");
   applyStemSelectionFilter(new Set(stems.map((s) => s.name)));
 
-  // Reset footer waveform state — will be re-populated below after peaks fetch.
-  _footerWavePeaks = null;
-  setFooterWaveDrawFn(null);
-  const waveformUrl = _mixUrl
-    || stems.find((s) => s.name === "original")?.url
-    || stems[0]?.url;
-
   // Use the pre-started peaks promise from catalog.js (started in parallel with
   // the job-data fetch) so peaks.json is resolved before Multitrack.create fires
   // its stem WAV fetches. This keeps peaks.json out of Safari's 6-connection-per-
   // origin window, preventing stem WAV queuing that causes buffer underruns.
   let precomputedPeaks = {};
-  const _footerStemName = stems.find((s) => s.name === "original") ? "original" : stems[0]?.name;
   const synthOriginal = _syntheticOriginal;
   // Recording-track lanes borrow their active take's peaks (keyed by take id).
   const _peaksPromise = (peaksPromise ?? (jobId
@@ -1597,15 +1568,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
   _peaksPromise.then((peaks) => {
     if (token !== visualRenderToken) return;
     precomputedPeaks = peaks;
-    const footerPeaks = peaks[_footerStemName] || peaks[Object.keys(peaks)[0]];
-    if (footerPeaks?.length) {
-      const step = Math.ceil(footerPeaks.length / _FOOTER_BARS);
-      _footerWavePeaks = footerPeaks.filter((_, i) => i % step === 0).slice(0, _FOOTER_BARS);
-      setFooterWaveDrawFn(_drawFooterWave);
-      _drawFooterWave(0);
-    } else if (waveformUrl) {
-      initFooterWaveform(waveformUrl);
-    }
     // Render the overview as soon as peaks arrive — independent of the audio
     // `canplay` event, so the waveform appears even if the engine owns playback
     // (null-URL multitrack) or canplay is delayed. Idempotent: the canplay
@@ -1657,7 +1619,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
     timeEl.textContent = `00:00 / ${fmtTime(totalDuration)}`;
     buildRuler(totalDuration);
     buildPresenceRuler(totalDuration);
-    buildFooterWaveTicks(totalDuration);
     updateFooterTimes(0);
     updatePresencePlayhead(0);
     mixReady.then(() => { if (currentJobId === jobId && multitrack === mt) applyMix(); });
@@ -1958,140 +1919,6 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, mixUrl = null, ti
       setLaneKeysAvailable(false);
     }
   });
-}
-
-export function drawFooterPlaceholder() {
-  _drawPlaceholderWave();
-  const bar = document.getElementById("footer-waveform")?.closest(".footer-wave-bar");
-  if (bar) {
-    _footerPlaceholderResizeObs?.disconnect();
-    _footerPlaceholderResizeObs = new ResizeObserver(() => { if (!_footerWavePeaks) _drawPlaceholderWave(); });
-    _footerPlaceholderResizeObs.observe(bar);
-  }
-}
-
-function _drawPlaceholderWave() {
-  const canvas = document.getElementById("footer-waveform");
-  if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (!w || !h) return;
-  canvas.width = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const n = 300;
-  const barW = canvas.width / n;
-  const gap = 1;
-  const cy = canvas.height / 2;
-  for (let i = 0; i < n; i++) {
-    const t = i / n;
-    const amp = 0.15 + 0.55 * (
-      0.5 * Math.abs(Math.sin(t * Math.PI * 3.7 + 0.5)) +
-      0.3 * Math.abs(Math.sin(t * Math.PI * 9.1 + 1.2)) +
-      0.2 * Math.abs(Math.sin(t * Math.PI * 21.3 + 2.8))
-    );
-    const barH = Math.max(3, amp * canvas.height * 0.78);
-    const x = Math.round(i * barW);
-    const nextX = i === n - 1 ? canvas.width : Math.round((i + 1) * barW);
-    const bw = Math.max(1, nextX - x - gap);
-    ctx.fillStyle = "rgba(255,255,255,0.07)";
-    ctx.fillRect(x, cy - barH / 2, bw, barH);
-  }
-}
-
-// The footer canvas's size, kept rather than read every frame. This draw runs
-// every frame while playing, after the playhead has moved, so reading
-// clientWidth here forced a layout inside the frame's script, a second one
-// per frame (121 a second instead of 60). A ResizeObserver says when the size
-// changes, and redraws at once so the canvas never shows stretched.
-let _footerSize = null;
-let _footerSizeObs = null;
-function footerCanvasSize(canvas) {
-  if (typeof ResizeObserver !== "function") return { w: canvas.clientWidth, h: canvas.clientHeight };
-  if (_footerSizeObs?.target !== canvas) {
-    _footerSizeObs?.disconnect();
-    _footerSizeObs = new ResizeObserver(() => {
-      _footerSize = null;
-      if (_footerWavePeaks) _drawFooterWave(_lastFooterProgress);
-    });
-    _footerSizeObs.target = canvas;
-    _footerSizeObs.observe(canvas);
-    _footerSize = null;
-  }
-  _footerSize ??= { w: canvas.clientWidth, h: canvas.clientHeight };
-  return _footerSize;
-}
-
-function _drawFooterWave(progress) {
-  _lastFooterProgress = progress;
-  const canvas = document.getElementById("footer-waveform");
-  if (!canvas) return;
-  if (!_footerWavePeaks) { _drawPlaceholderWave(); return; }
-  const dpr = window.devicePixelRatio || 1;
-  const { w, h } = footerCanvasSize(canvas);
-  if (!w || !h) return;
-  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-  }
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const n = _footerWavePeaks.length;
-  let maxAbs = 0;
-  for (const [mn, mx] of _footerWavePeaks) {
-    if (mx > maxAbs) maxAbs = mx;
-    if (-mn > maxAbs) maxAbs = -mn;
-  }
-  const norm = maxAbs > 0 ? 1 / maxAbs : 1;
-  const cy = canvas.height / 2;
-  const barW = canvas.width / n;
-  const gap = 1;
-  const playedIdx = Math.floor(progress * n);
-  for (let i = 0; i < n; i++) {
-    const [mn, mx] = _footerWavePeaks[i];
-    const top = cy - mx * norm * cy * 0.78;
-    const bot = cy - mn * norm * cy * 0.78;
-    const barH = Math.max(3, bot - top);
-    const x = Math.round(i * barW);
-    const nextX = i === n - 1 ? canvas.width : Math.round((i + 1) * barW);
-    const bw = Math.max(1, nextX - x - gap);
-    ctx.fillStyle = i < playedIdx ? "#f4b740" : "rgba(255,255,255,0.13)";
-    ctx.fillRect(x, top, bw, barH);
-  }
-  if (progress > 0.001 && progress < 0.999) {
-    const px = progress * canvas.width;
-    ctx.beginPath();
-    ctx.arc(px, cy, 4 * dpr, 0, Math.PI * 2);
-    ctx.fillStyle = "#f4b740";
-    ctx.fill();
-  }
-}
-
-let _footerWaveResizeObs = null;
-async function initFooterWaveform(stemUrl) {
-  const canvas = document.getElementById("footer-waveform");
-  if (!canvas || !stemUrl) return;
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtx) return;
-  try {
-    // Decode-only, for the footer's peaks. It never plays anything, so a
-    // 192 kHz device would cost it four times the buffer for four times the
-    // samples per peak bar and not one pixel of extra detail (#578).
-    visualAudioContext ??= createPlaybackContext(AudioCtx);
-    const res = await fetch(stemUrl, { cache: "force-cache" });
-    if (!res.ok) return;
-    const buf = await visualAudioContext.decodeAudioData(await res.arrayBuffer());
-    _footerWavePeaks = bufferMinMaxPeaks(buf, _FOOTER_BARS);
-    setFooterWaveDrawFn(_drawFooterWave);
-    _drawFooterWave(0);
-    // Redraw on resize so the canvas fills its container correctly
-    _footerWaveResizeObs?.disconnect();
-    _footerWaveResizeObs = new ResizeObserver(() => _drawFooterWave(_lastFooterProgress));
-    _footerWaveResizeObs.observe(canvas.parentElement || canvas);
-  } catch (e) {
-    console.warn("[player] footer waveform:", e);
-  }
 }
 
 // Returns a promise that settles when the file is actually on disk, or `true`

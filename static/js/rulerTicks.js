@@ -1,8 +1,5 @@
 // Spacing of the timeline's labelled ticks, kept apart from transport.js so it
 // can be tested without a DOM (the same reason loopRegion.js is its own module).
-// Shared by the ruler above the lanes and the one on the footer waveform: the
-// two strips are the same width and start at the same x, so a time has to land
-// at the same place in both.
 
 // Label spacing the ruler will not go below, comfortably wider than a "10:00"
 // label so neighbours never crowd each other.
@@ -22,9 +19,9 @@ export function baseTickStep(durationSec) {
   );
 }
 
-// `contentWidthPx` is the width the ticks will actually occupy. Omitted (the
-// footer strip, which always shows the whole track) the step is the plain
-// duration-based one, which is also what 1x has always used.
+// `contentWidthPx` is the width the ticks will actually occupy. Unknown (0,
+// before the ruler has a width) the step is the plain duration-based one,
+// which is also what 1x has always used.
 export function tickStepAt(durationSec, contentWidthPx, zoom) {
   const base = baseTickStep(durationSec);
   // Zoom is the only thing that subdivides it. Spreading the same handful of

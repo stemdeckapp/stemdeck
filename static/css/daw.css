@@ -2784,21 +2784,14 @@ input, textarea { font-family: inherit; }
   display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
   min-height: 34px;
 }
-/* Tier 3: the timeline. Full-bleed rather than an inset rounded panel -- its
-   left edge has to land exactly on the lane waveforms' left edge, and a side
-   border would offset the canvas by its own width. Top and bottom rules only,
-   the way the ruler area above the lanes is drawn. */
-/* Bottom tier: the gutter, then the timeline. Two columns rather than one, so
-   the timeline's left edge lands exactly on the lane waveforms' left edge and
-   a position reads at the same x in both -- while the 300px that alignment
-   costs carries Export Mix instead of standing empty. */
+/* Bottom tier: the click track's note, under the controls. */
 .footer-wave-region {
   display: flex; align-items: stretch;
   padding: 0 18px 14px 0; flex-shrink: 0;
 }
-/* Exactly the mixer column's width: that offset is what puts the timeline
-   beside it on the lanes' x, so the alignment and the block that fills the
-   gutter are one fact rather than two numbers that have to agree. */
+/* The loaded track's card. Built for the footer gutter, which was the mixer
+   column's width; it sits in the composer now, where rule 6 lets the column
+   decide its width. */
 .footer-track-slot {
   width: var(--daw-col-w); flex: none;
   box-sizing: border-box;
@@ -2810,45 +2803,6 @@ input, textarea { font-family: inherit; }
 .footer-wave-col {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
-}
-.footer-wave-panel {
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  /* Closes the strip's open left edge and lands on the same x as the mixer
-     panel's right border, so that seam runs on down the page. Drawn as an
-     outset shadow rather than a border: a border would sit inside the box and
-     push the canvas a pixel off the lane waveforms it has to line up with. */
-  box-shadow: -1px 0 0 var(--border);
-  background: var(--panel);
-  overflow: hidden;
-}
-/* Ticks at the same times as the lanes ruler (buildFooterWaveTicks shares its
-   step), positioned by percentage so both rulers mark a time at the same x. */
-.footer-wave-ticks {
-  height: 18px; position: relative;
-}
-/* No track, no timeline to label -- an empty ruler strip above the placeholder
-   waveform would be measuring nothing. */
-.footer-wave-ticks:empty { display: none; }
-.footer-wave-ticks .tick {
-  position: absolute; top: 0; bottom: 0;
-  border-left: 1px solid var(--border-strong);
-  padding-left: 4px;
-  display: flex; align-items: flex-start;
-  pointer-events: none;
-}
-.footer-wave-ticks .tick-label {
-  font-family: var(--font-mono); font-size: 9px; line-height: 1.6;
-  color: var(--muted-2);
-  font-variant-numeric: tabular-nums;
-}
-.footer-wave-bar {
-  height: 31px; flex-shrink: 0;
-  position: relative; overflow: hidden;
-}
-#footer-waveform {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%; display: block;
 }
 
 .track-panel-info {
@@ -3425,10 +3379,9 @@ input, textarea { font-family: inherit; }
 /* A refused grouping: the box snapping back on its own reads as a bug unless
    something says the numbers did not add up. */
 .metro-group.invalid { border-color: var(--danger); color: var(--danger); }
-/* Detection confidence / unavailability note: its own line under the
-   waveform, where it reads as a caption on the timeline it describes (design
-   1b). Hidden until it has text, clipped to one line with the full text as a
-   native tooltip. */
+/* Detection confidence / unavailability note: its own line under the footer
+   controls. Hidden until it has text, clipped to one line with the full text
+   as a native tooltip. */
 .metro-note {
   /* Starts where the controls it describes start.
      It used to inherit its left edge from .footer-wave-region, which insets
@@ -5578,19 +5531,6 @@ input, textarea { font-family: inherit; }
   max-height: calc(2.7em + 2px);
   white-space: nowrap;
   overflow: hidden;
-}
-
-/* 7. The whole waveform strip in the bottom bar.
-
-   The strip is two things in one: the waveform drawing and the time ticks.
-   Both go together here, so the footer does not show where you are; the
-   lanes above do. Its seek control was deleted rather than shown again
-   (#934), so showing the strip again brings back no way to seek from it.
-
-   If that turns out to be too much, hiding #footer-waveform alone removes the
-   drawing and leaves the ticks. */
-.footer-wave-panel {
-  display: none !important;
 }
 
 /* 9. An upload's format where it has no artwork (#690).

@@ -87,3 +87,11 @@ test("playing advances the readout and pausing holds it", async ({ page }) => {
   expect(await engineTime(page)).toBeCloseTo(held, 1);
   await expect(elapsed(page)).toHaveText(shown);
 });
+
+// The footer used to carry a waveform strip with time ticks above it, hidden
+// by daw.css, which the playback loop still redrew every frame and which
+// decoded a whole stem of its own when a song had no peaks. No one could see
+// it, so it was deleted: the lanes above are where a position is shown (#934).
+test("the footer has no waveform strip, shown or hidden", async ({ page }) => {
+  await expect(page.locator(".footer-wave-panel, #footer-waveform, #footer-wave-ticks")).toHaveCount(0);
+});

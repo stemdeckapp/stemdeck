@@ -48,7 +48,6 @@ export const presenceRulerEl = $("presence-ruler");
 export const presencePlayheadEl = $("presence-playhead");
 export const footerTimeElapsed = $("footer-time-elapsed");
 export const footerTimeTotal = $("footer-time-total");
-export const footerWaveTicks = $("footer-wave-ticks");
 export const loopStartInput = $("t-loop-start");
 export const loopEndInput = $("t-loop-end");
 export const metroBtn = $("t-metro");
@@ -199,10 +198,6 @@ export function setPlaybackSpeed(v) { playbackSpeed = v; }
 // tools are only available at 1.
 export let waveZoom = 1;
 export function setWaveZoom(v) { waveZoom = v; }
-
-// Footer waveform draw callback — set by player.js, called by transport.js
-export let footerWaveDrawFn = null;
-export function setFooterWaveDrawFn(fn) { footerWaveDrawFn = fn; }
 
 // Redraws the overview bars at the current zoom. Registered by player.js, which
 // owns the renderer, and called by transport.js, which owns the zoom. Passed as
