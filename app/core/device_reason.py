@@ -125,18 +125,38 @@ def _query_nvidia_gpu() -> dict[str, str | None] | None:
     }
 
 
-def nvidia_gpu() -> dict[str, str | None] | None:
-    """{"name", "driver", "cuda" (the newest CUDA the driver runs)} of the first
-    NVIDIA GPU, or None when there is none or nvidia-smi cannot say."""
+def _fresh() -> bool:
+    return _gpu_at is not None and time.monotonic() - _gpu_at < NVIDIA_SMI_TTL_SEC
+
+
+def refresh_nvidia_gpu() -> dict[str, str | None] | None:
+    """Ask nvidia-smi now unless an answer is fresh, and keep it. Started at
+    server start (app/main.py lifespan), so Settings never waits for the first
+    answer; a GPU waking up can take seconds."""
     global _gpu, _gpu_at
     with _probe_lock:
         with _lock:
-            if _gpu_at is not None and time.monotonic() - _gpu_at < NVIDIA_SMI_TTL_SEC:
+            if _fresh():
                 return _gpu
         gpu = _query_nvidia_gpu()
         with _lock:
             _gpu, _gpu_at = gpu, time.monotonic()
         return gpu
+
+
+def nvidia_gpu() -> dict[str, str | None] | None:
+    """{"name", "driver", "cuda" (the newest CUDA the driver runs)} of the first
+    NVIDIA GPU, or None when there is none or nvidia-smi cannot say.
+
+    Waits only for the very first answer. An expired one is still returned,
+    and a new one is asked for in the background."""
+    with _lock:
+        known, fresh, gpu = _gpu_at is not None, _fresh(), _gpu
+    if not known:
+        return refresh_nvidia_gpu()
+    if not fresh and not _probe_lock.locked():
+        threading.Thread(target=refresh_nvidia_gpu, name="nvidia-smi", daemon=True).start()
+    return gpu
 
 
 def _torch_build() -> tuple[str, str | None] | None:

@@ -46,7 +46,7 @@ from app.core.config import (
     torch_gpu_backend,
     torch_load_error,
 )
-from app.core.device_reason import cpu_reason, device_diagnostics
+from app.core.device_reason import cpu_reason, device_diagnostics, refresh_nvidia_gpu
 from app.core.logging_setup import configure_logging
 from app.core.models import JobBusy
 from app.core.process import process_exists as _process_exists
@@ -282,6 +282,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             minimum,
             minimum,
         )
+
+    # The first nvidia-smi answer, asked now so opening Settings does not wait
+    # for it (app/core/device_reason.py, #247). Not awaited: the shell is
+    # polling /api/health to learn that this server is up.
+    gt = asyncio.create_task(asyncio.to_thread(refresh_nvidia_gpu))
+    _background_tasks.add(gt)
+    gt.add_done_callback(_background_tasks.discard)
 
     resumed = take_pending_resume()
     if resumed:

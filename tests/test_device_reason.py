@@ -33,9 +33,18 @@ HEADER_OLD = "| NVIDIA-SMI 560.94       Driver Version: 560.94       CUDA Versio
 
 @pytest.fixture(autouse=True)
 def _fresh_probe_cache():
-    device_reason.reset_state()
+    # A probe a server start began in another test may still be running.
+    with device_reason._probe_lock:
+        device_reason.reset_state()
     yield
+    _join_background_probes()
     device_reason.reset_state()
+
+
+def _join_background_probes():
+    for t in threading.enumerate():
+        if t.name == "nvidia-smi":
+            t.join(5)
 
 
 @pytest.fixture
@@ -218,14 +227,31 @@ def test_nvidia_smi_is_asked_once_within_the_ttl(monkeypatch):
     assert len(calls) == 2  # the query and the header, once
 
 
-def test_nvidia_smi_is_asked_again_after_the_ttl(monkeypatch):
+def test_an_expired_answer_is_returned_at_once_and_refreshed_behind_it(monkeypatch):
     calls = _fake_smi(monkeypatch, HEADER_616)
     clock = [1000.0]
     monkeypatch.setattr(device_reason.time, "monotonic", lambda: clock[0])
     device_reason.nvidia_gpu()
     clock[0] += device_reason.NVIDIA_SMI_TTL_SEC + 1
-    device_reason.nvidia_gpu()
+    assert device_reason.nvidia_gpu() == RTX
+    _join_background_probes()
     assert len(calls) == 4
+
+
+def test_the_server_start_asks_nvidia_smi_before_settings_does(monkeypatch):
+    # Settings must not wait for the first answer: the lifespan asks for it.
+    from app.main import app
+
+    asked = threading.Event()
+
+    def query():
+        asked.set()
+        return RTX
+
+    monkeypatch.setattr(device_reason, "_query_nvidia_gpu", query)
+    with TestClient(app):
+        assert asked.wait(5)
+    assert device_reason.nvidia_gpu() == RTX
 
 
 def test_concurrent_first_requests_share_one_probe(monkeypatch):
