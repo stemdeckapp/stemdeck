@@ -19,7 +19,7 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
-from app.core.registry import is_upload, mark_stems_complete, saved_fields
+from app.core.registry import is_upload, keep_added_time, mark_stems_complete, saved_fields
 from app.core.registry import persist as persist_registry
 from app.pipeline import jobqueue
 from app.pipeline.analyze import analyze, refine_key_from_stems
@@ -514,6 +514,10 @@ async def _run_async(
 ) -> None:
     """Common async wrapper: acquires the pipeline lock, runs blocking_fn in a
     thread, then handles success / cancel / error outcomes uniformly."""
+    # Before the run writes into the folder and moves its time: a link's
+    # folder is made just now, and a song added before the add time was kept
+    # gets it here.
+    await asyncio.to_thread(keep_added_time, job, job_dir)
     try:
         async with _pipeline_lock:
             await asyncio.to_thread(blocking_fn, job, *fn_args, job_dir)

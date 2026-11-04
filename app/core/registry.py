@@ -117,6 +117,30 @@ def saved_fields(job: Job) -> dict[str, Any]:
     return {name: getattr(job, name) for name in SAVED_FIELDS}
 
 
+# Held by the requests that change a song's metadata.json (app/api/jobs.py)
+# and by the write that starts one, so neither replaces the other's change.
+metadata_lock = threading.RLock()
+
+
+def keep_added_time(job: Job, job_dir: Path) -> None:
+    """Start the song's metadata.json with the time it was added, when its
+    folder has none yet, so a song rebuilt from its folder keeps its place in
+    the library (#772). The folder's own time moves with every file written
+    into it. Never fails the caller: without it, the rebuild takes the
+    folder's time, as it always did."""
+    meta_path = job_dir / "metadata.json"
+    with metadata_lock:
+        try:
+            if meta_path.exists():
+                return
+            # Whole or not at all: a file that cannot be read counts as a
+            # finished run's, and would make a separation cut off part way a
+            # done song.
+            _write_atomic(meta_path, json.dumps({"created_at": job.created_at}, indent=2) + "\n")
+        except OSError:
+            logger.warning("could not write the add time of %s", job.id, exc_info=True)
+
+
 # Newer than 0.20.0, which drops them from every record it saves, and kept in
 # metadata.json: after a downgrade and back, that is their only copy.
 _BACK_FROM_METADATA = (*SAVED_FIELDS, "stem_format", "stem_mp3_kbps", "loudness_version")
@@ -426,6 +450,10 @@ def _repair_field_types(job: Job) -> list[str]:
             # NaN and infinity cannot be sent as JSON, and an int too big for a
             # float made the whole library list fail (OverflowError).
             ok = abs(value) <= sys.float_info.max
+            if f.name == "created_at":
+                # No song was added before 1970. The auto-delete sweep would
+                # take one that says so as long expired.
+                ok = ok and value >= 0
         elif ok and f.name in _ENTRY_IDS:
             ok = all(
                 isinstance(entry, dict) and _ENTRY_IDS[f.name].match(str(entry.get("id")))
@@ -777,9 +805,9 @@ def _stopped_from_source(job_dir: Path) -> Job | None:
     if source is None or source.suffix.lower() not in UPLOAD_EXTS:
         return None
     # Placeholder, as for stems without metadata.json: a song stopped before
-    # it finished never wrote one, so its name went with the registry.
+    # it finished has no title there, so its name went with the registry.
     title = f"Recovered track {job_dir.name[:6]}"
-    return Job(
+    job = Job(
         id=job_dir.name,
         status="stopped",
         stage_message="Stopped",
@@ -789,6 +817,22 @@ def _stopped_from_source(job_dir: Path) -> Job | None:
         selected_stems=list(STEM_NAMES),
         created_at=created_at,
     )
+    meta = _read_metadata(job_dir / "metadata.json")
+    if isinstance(meta, dict):
+        _read_meta_fields(job, meta, ("created_at",))
+    return job
+
+
+def _read_metadata(meta_path: Path) -> Any:
+    """metadata.json as parsed, {} when there is none, or None when it cannot
+    be read as JSON."""
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, RecursionError, ValueError):
+        logger.warning("could not read %s", meta_path, exc_info=True)
+        return None
 
 
 # The last file a separation writes into stems/ (mark_stems_complete): a folder
@@ -853,10 +897,19 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     if not stems:
         return None
     meta_path = job_dir / "metadata.json"
+    meta = _read_metadata(meta_path)
+    # metadata.json starts with the add time (keep_added_time), and a finished
+    # run writes it whole, the title always among it. Only a file with the add
+    # time and no title is from before the song was done: any other one,
+    # unreadable included, is taken as a finished run's, as it always was.
+    started_only = isinstance(meta, dict) and "created_at" in meta and "title" not in meta
+    finished_meta = meta_path.is_file() and not started_only
+    if not isinstance(meta, dict):
+        meta = {}  # read as none, so the folders after this one still rebuild
     # A song made before the marker gets it while the registry holds it
-    # (_backfill_stems_complete). One whose record was already gone has
-    # metadata.json, written once a song is done, and now only after the marker.
-    if not (stems_dir / STEMS_COMPLETE).is_file() and not meta_path.is_file():
+    # (_backfill_stems_complete). One whose record was already gone has the
+    # metadata.json of its finished run, now written only after the marker.
+    if not (stems_dir / STEMS_COMPLETE).is_file() and not finished_meta:
         logger.warning(
             "%s holds stems of a separation that did not finish; not rebuilt as done",
             job_dir.name,
@@ -866,23 +919,17 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     if stem_exists(stems_dir, "mix"):
         mix_url = stem_url(job_dir.name, stems_dir, "mix")
     selected = [stem["name"] for stem in stems if stem["name"] in STEM_NAMES] or list(STEM_NAMES)
-    meta: dict = {}
-    if meta_path.is_file():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, RecursionError, ValueError):
-            pass
-        if not isinstance(meta, dict):
-            meta = {}  # read as none, so the folders after this one still rebuild
-    else:
+    if not finished_meta:
         # Crash window (#284): the process died between the stems being
         # marked complete and the metadata write, leaving a complete stems dir
         # that used to be unrecoverable. Recover with a placeholder title and
-        # write a minimal metadata.json immediately, so the NEXT restart takes
-        # the normal path -- self-healing, not a permanent special case.
-        meta = {"title": f"Recovered track {job_dir.name[:6]}"}
+        # write it into metadata.json immediately, beside the add time, so the
+        # NEXT restart takes the normal path -- self-healing, not a permanent
+        # special case.
+        meta["title"] = f"Recovered track {job_dir.name[:6]}"
         try:
-            meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+            # Replaced, not written through: the file may hold the add time.
+            _write_atomic(meta_path, json.dumps(meta, indent=2) + "\n")
         except OSError:
             logger.warning("could not write recovery metadata for %s", job_dir.name, exc_info=True)
     job = Job(
@@ -927,7 +974,8 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
     )
     _read_meta_fields(job, meta, (*SAVED_FIELDS, "has_video", "video_status"))
     job.selected_stems = clean_stems(job.selected_stems) or selected
-    return job, any(name in meta for name in SAVED_FIELDS)
+    # The add time is there from the start: it says nothing of the rest.
+    return job, any(name in meta for name in SAVED_FIELDS if name != "created_at")
 
 
 def _read_meta_fields(job: Job, meta: dict, names: Iterable[str]) -> None:
