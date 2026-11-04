@@ -127,8 +127,8 @@ export async function deleteVersion(jobId, versionId) {
     return err.message || "failed";
   }
   // Its records go in one write: each desktop store write saves the whole
-  // file. The version is gone on the server either way, so a failure here is
-  // logged and the list still updates.
+  // file. storeSetMany logs a failed write itself; the catch is for a key
+  // that cannot be built (mixKey, choiceKey), so the list still updates.
   try {
     const cleared = {};
     for (const mode of STEM_MODES) {

@@ -254,6 +254,35 @@ test.describe("versions of a song", () => {
     expect(entries[`stemdeck:stems:${scoped}daw`].voice).toBe("split");
   });
 
+  test("on the desktop, Extract with Lead + Backing writes the matching version's voice in one store write", async ({ page, request }) => {
+    const made = await (await request.post(`/api/jobs/${JOB_ID}/versions`, { data: { name: "Two", stems: ["vocals", "drums"], select: false } })).json();
+    const vid = made.version.id;
+    // The split itself is the server's; here it only has to answer done.
+    let split = 0;
+    await page.route("**/api/jobs/*/vocal-split", (route) => {
+      split += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await openStudio(page, { tauri: true });
+    await expect(rows(page)).toHaveCount(2);
+
+    await page.evaluate(async (job) => {
+      const { extractAsVersion } = await import("/js/versions.js");
+      await extractAsVersion(["vocals", "drums"], "split", () => {}, job);
+    }, JOB_ID);
+    expect(split).toBe(1);
+
+    const scoped = `${JOB_ID}~${vid}:`;
+    const many = (await page.evaluate(() => window.__e2e.callsFor("store_set_many")))
+      .filter((c) => Object.keys(c.args.entries).some((k) => k.includes(scoped)));
+    expect(many).toHaveLength(1);
+    const entries = many[0].args.entries;
+    expect(Object.keys(entries).sort()).toEqual([`stemdeck:stems:${scoped}daw`, `stemdeck:stems:${scoped}practice`]);
+    expect(entries[`stemdeck:stems:${scoped}practice`].voice).toBe("split");
+    expect(entries[`stemdeck:stems:${scoped}daw`].voice).toBe("split");
+  });
+
   test("Extract with other chips on the open song makes a version and separates nothing", async ({ page, request }) => {
     let filled = 0;
     await page.route("**/api/jobs/*/fill-stems", (route) => { filled += 1; return route.continue(); });

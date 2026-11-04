@@ -9314,8 +9314,10 @@ mod tests {
     /// commands that cannot run long may stay synchronous.
     #[test]
     fn no_command_that_can_run_long_holds_the_main_thread() {
-        // Each is a lock, a constant, a spawn that is never waited on, or a
-        // read or write of one small file or folder.
+        // Each is a lock, a constant, a spawn that is never waited on, a read
+        // or write of one small file or folder, or one bounded save of the
+        // user-data store (store_set, store_set_many, reset_user_data), which
+        // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996).
         const QUICK: &[&str] = &[
             "current_exports_dir",
             "store_get",
