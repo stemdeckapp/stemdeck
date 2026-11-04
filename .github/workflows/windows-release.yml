@@ -17,11 +17,15 @@ on:
 permissions: {}
 
 concurrency:
-  # A manual run shares the group of the release it builds into, so publishing
-  # that draft cancels a candidate build still uploading to it. On a release
-  # event inputs.tag is empty and the group is the same as before.
+  # A manual run shares the group of the release it builds into. Only a
+  # release event cancels what is in progress: publishing a draft cancels a
+  # candidate build still running for it, while a manual run never cancels a
+  # release build. The group comes from the raw input and applies before the
+  # guard, so a manual run typed with a published tag waits behind that
+  # release's build, and its guard then refuses. On a release event inputs.tag
+  # is empty and the group is the same as before.
   group: ${{ github.workflow }}-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'release' }}
 
 jobs:
   guard:
@@ -134,6 +138,39 @@ jobs:
           foreach ($f in $required) {
             if (-not (Test-Path $f)) { Write-Error "missing release asset: $f"; exit 1 }
           }
+
+      # The guard ran once, at the start of this run, and "Re-run failed jobs"
+      # reuses its result. Check again on every attempt, right before the
+      # upload, that the guarded release is still a draft with the guarded tag,
+      # so a re-run after publishing cannot overwrite the published assets.
+      - name: check the release is still the guarded draft
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_URL: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.guard.outputs.release_id }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          if ($env:RELEASE_ID -notmatch '^[0-9]+$' -or -not $env:TAG) {
+            throw "Refusing to upload: the guard set no release id or tag."
+          }
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          $headers = @{
+            "Authorization"        = "Bearer $env:GH_TOKEN"
+            "Accept"               = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $uri = "$env:API_URL/repos/$env:REPO/releases/$env:RELEASE_ID"
+          $release = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+          Write-Host "Release $($env:RELEASE_ID): tag=$($release.tag_name) draft=$($release.draft) prerelease=$($release.prerelease)"
+          if ($release.tag_name -cne $env:TAG) {
+            throw "Refusing to upload: release $($env:RELEASE_ID) now has the tag $($release.tag_name), not $($env:TAG)."
+          }
+          if ($release.draft -ne $true) {
+            throw "Refusing to upload: release $($env:TAG) is no longer a draft; its own release build owns its assets."
+          }
+          Write-Host "Decision: UPLOAD to draft $($env:TAG) (release $($env:RELEASE_ID))."
 
       - name: upload artifacts
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3

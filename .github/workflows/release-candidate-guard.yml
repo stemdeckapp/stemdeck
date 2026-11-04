@@ -14,7 +14,14 @@ name: Release Candidate Guard
 #   4. That release is marked pre-release.
 #   5. The commit this run builds is the commit the release will be tagged at:
 #      the existing git tag's commit if the tag already exists, otherwise the
-#      draft's target_commitish resolved to a SHA.
+#      draft's target_commitish, which must then be a full 40-character SHA.
+#      A branch target is refused: it is compared with the branch tip when
+#      each platform's guard runs, so two platforms could pass on different
+#      commits, and publishing would tag whatever the tip is by then.
+#
+# The guard runs once per run, and "Re-run failed jobs" reuses its result. So
+# each build job checks again, on every attempt, right before it uploads, that
+# the release with the guarded id is still a draft with the guarded tag.
 #
 # The job checks out no code and only reads from the API. It still needs
 # `contents: write`, because the releases API lists drafts only to callers with
@@ -31,6 +38,9 @@ on:
       tag:
         description: "The validated tag. Set only when every check passed."
         value: ${{ jobs.check.outputs.tag }}
+      release_id:
+        description: "The draft's numeric release id. Set only when every check passed."
+        value: ${{ jobs.check.outputs.release_id }}
 
 permissions: {}
 
@@ -42,6 +52,7 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.check.outputs.tag }}
+      release_id: ${{ steps.check.outputs.release_id }}
     steps:
       - name: check the tag names a draft pre-release on this commit
         id: check
@@ -105,11 +116,11 @@ jobs:
             expected="$(gh api "repos/$REPO/commits/$tag_ref" --jq .sha)" ||
               refuse "the existing tag $TAG could not be resolved to a commit."
           else
-            if [ -z "$target" ]; then
-              refuse "draft $TAG has no target commit. Set its target branch or commit."
+            if ! [[ "$target" =~ ^[0-9a-f]{40}$ ]]; then
+              refuse "draft $TAG targets '$target', not a full commit SHA. A branch target moves, so set the draft's target to the full 40-character SHA to build: gh release edit $TAG --target <sha>"
             fi
             source="target_commitish $target"
-            fix="Run the workflow from the branch the draft targets, or change the draft's target."
+            fix="Run the workflow from a branch whose tip is that commit, or change the draft's target."
             expected="$(gh api "repos/$REPO/commits/$target" --jq .sha)" ||
               refuse "the draft's target $target could not be resolved to a commit."
           fi
@@ -119,5 +130,12 @@ jobs:
             refuse "this run builds $RUN_SHA but $TAG points at $expected ($source). $fix"
           fi
 
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            refuse "release $TAG has no numeric id."
+          fi
+
           echo "Decision: BUILD. Installers will upload to draft pre-release $TAG (release $id) from $RUN_SHA."
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "release_id=$id"
+          } >> "$GITHUB_OUTPUT"
