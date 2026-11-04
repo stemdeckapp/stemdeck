@@ -2965,7 +2965,10 @@ fn detect_nvidia_gpu(
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     let smi_out = setup_probe_output(smi_cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
-    let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| "12.4".to_string());
+    let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| {
+        append_to_setup_log(data_dir, &no_cuda_header_note(&smi_text));
+        "12.4".to_string()
+    });
 
     // Read the GPU's compute capability (e.g. "12.0" for Blackwell sm_120,
     // "8.9" for Ada). Drives the wheel choice: stock torch 2.6 cu12x wheels
@@ -3328,6 +3331,20 @@ fn detect_amd_gpu(root: &Path, data_dir: &Path) -> Option<DetectedGpu> {
         candidates,
         unusable,
     })
+}
+
+/// The setup.log line for an nvidia-smi header with no CUDA version, which
+/// leaves the wheel choice on its 12.4 default. It quotes the header line, so
+/// a report shows what the driver printed instead (#247).
+#[cfg(not(target_os = "macos"))]
+fn no_cuda_header_note(smi_output: &str) -> String {
+    let header = smi_output
+        .lines()
+        .find(|line| line.contains("NVIDIA-SMI"))
+        .map_or("none", |line| {
+            line.trim_matches(|c: char| c == '|' || c.is_whitespace())
+        });
+    format!("nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: {header}")
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -11328,6 +11345,25 @@ configuration: --cc=clang\n";
         // Missing / unparseable compute capability also falls back.
         assert_eq!(super::wheel_tag(None, "12.1"), "cu124");
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_header_with_no_cuda_version_is_logged_with_the_line_it_had() {
+        // The header of driver 616.64 on an RTX 3080, verbatim. It names the
+        // version "CUDA UMD Version", so setup takes the 12.4 default (#247).
+        let header = "Wed Nov  4 05:13:22 2026\n\
+            +-----------------------------------------+\n\
+            | NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4     |\n";
+        assert_eq!(
+            super::no_cuda_header_note(header),
+            "nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: \
+             NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4"
+        );
+        assert_eq!(
+            super::no_cuda_header_note(""),
+            "nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: none"
+        );
     }
 
     // --- CUDA runtime dependency pass (#324) ---

@@ -354,6 +354,7 @@ const SETTINGS = [
   ["settings.tab.general", [
     ["settings.language.title", "help.set.language"],
     ["settings.device.title", "help.set.device"],
+    ["settings.device.copyDetails", "help.set.deviceCopy"],
     ["settings.quality.title", "help.set.quality"],
     ["settings.maxDuration.title", "help.set.maxDuration"],
     ["settings.playlistLimit.title", "help.set.playlistLimit"],

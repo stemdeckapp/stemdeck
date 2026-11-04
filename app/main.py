@@ -46,6 +46,7 @@ from app.core.config import (
     torch_gpu_backend,
     torch_load_error,
 )
+from app.core.device_reason import cpu_reason, device_diagnostics, refresh_nvidia_gpu
 from app.core.logging_setup import configure_logging
 from app.core.models import JobBusy
 from app.core.process import process_exists as _process_exists
@@ -282,6 +283,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             minimum,
         )
 
+    # The first nvidia-smi answer, asked now so opening Settings does not wait
+    # for it (app/core/device_reason.py, #247). Not awaited: the shell is
+    # polling /api/health to learn that this server is up.
+    gt = asyncio.create_task(asyncio.to_thread(refresh_nvidia_gpu))
+    _background_tasks.add(gt)
+    gt.add_done_callback(_background_tasks.discard)
+
     resumed = take_pending_resume()
     if resumed:
         jobqueue.pause()
@@ -437,6 +445,7 @@ def _is_lan_ipv4(ip: str) -> bool:
 
 def _settings_payload() -> dict[str, object]:
     devices = available_torch_devices()
+    why = cpu_reason()
     return {
         "allow_network": get_allow_network(),
         # Off unless the user asked for it. The days value is published even
@@ -498,6 +507,11 @@ def _settings_payload() -> dict[str, object]:
         # Set when torch is installed but cannot load, which stops separation
         # on every device (#730). Read after the probe above refreshed it.
         "torch_error": torch_load_error(),
+        # Why the NVIDIA GPU is not used, as one code (app/core/device_reason.py),
+        # or None when it is in use or the machine has none (#247). The
+        # diagnostics line is what Copy GPU details puts on the clipboard.
+        "demucs_device_why": why,
+        "device_diagnostics": device_diagnostics(why),
     }
 
 
@@ -659,7 +673,8 @@ async def update_settings(request: Request) -> dict[str, object]:
         except ValueError as e:
             # The message lists the whitelist; it never echoes the value.
             raise HTTPException(status_code=422, detail=str(e)) from None
-    return _settings_payload()
+    # Off the event loop: the payload can run nvidia-smi (app/core/device_reason.py).
+    return await asyncio.to_thread(_settings_payload)
 
 
 _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")

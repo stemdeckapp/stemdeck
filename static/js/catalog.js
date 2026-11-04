@@ -4454,6 +4454,11 @@ async function wireGeneralSettings(overlay) {
   const portInput = overlay.querySelector(".set-port");
   const deviceSel = overlay.querySelector(".set-demucs-device");
   const deviceDesc = overlay.querySelector(".set-demucs-desc");
+  const deviceWhyRow = overlay.querySelector(".device-why");
+  const deviceWhy = overlay.querySelector(".set-demucs-why");
+  const deviceCopy = overlay.querySelector(".set-device-copy");
+  const deviceCopyStatus = overlay.querySelector(".set-device-copy-status");
+  let deviceDiagnostics = "";
   const qualitySel = overlay.querySelector(".set-separation-quality");
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
@@ -4575,7 +4580,29 @@ async function wireGeneralSettings(overlay) {
         : i18nT("settings.device.desc", { resolved });
       deviceDesc.classList.toggle("is-broken", !!d.torch_error);
     }
+    // Why an NVIDIA GPU is not used, from the server's one code (#247), so a
+    // missing GPU, a CPU-only build and a CUDA that cannot start no longer all
+    // read as "currently: cpu". Absent while the GPU works or there is none.
+    if (deviceWhyRow && deviceWhy) {
+      const why = d.demucs_device_why;
+      deviceWhyRow.hidden = !why;
+      deviceWhy.textContent = why ? i18nT(`settings.device.why.${why}`) : "";
+      deviceDiagnostics = d.device_diagnostics || "";
+      if (deviceCopyStatus) deviceCopyStatus.textContent = "";
+    }
   };
+  deviceCopy?.addEventListener("click", async () => {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(deviceDiagnostics);
+      copied = true;
+    } catch (err) {
+      console.warn("[settings] clipboard write failed:", err);
+    }
+    if (deviceCopyStatus) {
+      deviceCopyStatus.textContent = i18nT(copied ? "settings.export.encoder.copied" : "settings.export.encoder.copyFailed");
+    }
+  });
 
   // Keep the text inputs digit-only as the user types (maxlength caps the rest).
   const digitsOnly = (input) => input?.addEventListener("input", () => {
@@ -5279,6 +5306,11 @@ function openLibraryEditor() {
                 <option value="mps">MPS (Apple Silicon)</option>
                 <option value="cpu">CPU</option>
               </select>
+            </div>
+            <div class="device-why" hidden>
+              <span class="settings-row-desc set-demucs-why"></span>
+              <button class="settings-btn settings-registry-refresh set-device-copy" type="button" data-i18n="settings.device.copyDetails">Copy GPU details</button>
+              <span class="settings-row-desc set-device-copy-status" role="status"></span>
             </div>
             <div class="settings-row">
               <div class="settings-row-text">
