@@ -46,6 +46,7 @@ from app.core.config import (
     torch_gpu_backend,
     torch_load_error,
 )
+from app.core.device_reason import cpu_reason, device_diagnostics
 from app.core.logging_setup import configure_logging
 from app.core.models import JobBusy
 from app.core.process import process_exists as _process_exists
@@ -498,6 +499,11 @@ def _settings_payload() -> dict[str, object]:
         # Set when torch is installed but cannot load, which stops separation
         # on every device (#730). Read after the probe above refreshed it.
         "torch_error": torch_load_error(),
+        # Why the NVIDIA GPU is not used, as one code (app/core/device_reason.py),
+        # or None when it is in use or the machine has none (#247). The
+        # diagnostics line is what Copy GPU details puts on the clipboard.
+        "demucs_device_why": cpu_reason(),
+        "device_diagnostics": device_diagnostics(),
     }
 
 

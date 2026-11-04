@@ -209,6 +209,10 @@
 .settings-row.settings-row-flash { outline: 2px solid var(--accent); outline-offset: 8px; }
 /* The separation engine cannot load at all (#730). */
 .set-demucs-desc.is-broken { color: var(--danger); }
+/* Why the NVIDIA GPU is not used, under the Compute device picker (#247). */
+.device-why { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 0 18px; }
+.device-why[hidden] { display: none; }
+.device-why .settings-row-desc { margin-top: 0; }
 
 /* A row whose control is wide (a path, a key) puts it under the text. */
 .settings-row-stack { display: block; }

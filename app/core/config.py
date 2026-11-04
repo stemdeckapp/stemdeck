@@ -507,6 +507,12 @@ TIMEOUT_AUDIO_ENCODER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_ENCODER_LIST", 15)
 # `ffmpeg -filters`, asked once per ffmpeg binary whether it has rubberband,
 # which a transposed export needs (app/pipeline/audio_encoders.py, #858).
 TIMEOUT_AUDIO_FILTER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_FILTER_LIST", 15)
+# `nvidia-smi`, asked why separation runs on the CPU (app/core/device_reason.py,
+# #247). About 0.2 s on an RTX 3080; the first call can take seconds while an
+# Optimus laptop wakes its GPU. The answer is kept for NVIDIA_SMI_TTL_SEC, since
+# Settings asks on every open and a GPU does not come and go within minutes.
+TIMEOUT_NVIDIA_SMI = _env_int("STEMDECK_TIMEOUT_NVIDIA_SMI", 10)
+NVIDIA_SMI_TTL_SEC = 300
 # How long a probe result is trusted. A pass for a week, a failure for a day (a
 # driver installed today is tried tomorrow, or at once with Test encoders), a
 # timeout or a busy device for ten minutes (never as a lasting answer).
