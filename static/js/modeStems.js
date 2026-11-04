@@ -331,26 +331,30 @@ export async function waitForSplit(jobId) {
  * Freeze every mode of the versions `versionIds` of `jobId` that has no
  * voice of its own at one Vocals lane, before a Lead + Backing split starts:
  * a split asked for in one version never changes what another shows.
- * Every record is read first, then all of them go in one write: on the
- * desktop each store write saves the whole store file (#996).
+ * Every record is read first, all at once (no read depends on another),
+ * then all of them go in one write, in the order of `versionIds` and of
+ * STEM_MODES: on the desktop each store write saves the whole store file
+ * (#996).
  */
 export async function freezeVoiceInVersions(jobId, versionIds) {
-  const patches = {};
-  for (const vid of versionIds || []) {
-    const current = {};
-    for (const m of STEM_MODES) {
-      try {
-        current[m] = await storeGet(choiceKey(jobId, m, vid), null);
-      } catch (err) {
-        console.warn("[modeStems] reading a version's stem choice failed:", err);
-        current[m] = null;
-      }
+  const ids = versionIds || [];
+  const read = async (vid, m) => {
+    try {
+      return await storeGet(choiceKey(jobId, m, vid), null);
+    } catch (err) {
+      console.warn("[modeStems] reading a version's stem choice failed:", err);
+      return null;
     }
+  };
+  const stored = await Promise.all(ids.map((vid) => Promise.all(STEM_MODES.map((m) => read(vid, m)))));
+  const patches = {};
+  ids.forEach((vid, i) => {
+    const current = Object.fromEntries(STEM_MODES.map((m, j) => [m, stored[i][j]]));
     // "" asks for the pair in no mode: all of them are frozen.
     for (const [m, rec] of Object.entries(splitFreezePatches("", current))) {
       patches[choiceKey(jobId, m, vid)] = rec;
     }
-  }
+  });
   await storeSetMany(patches);
 }
 

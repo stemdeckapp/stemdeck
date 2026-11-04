@@ -345,9 +345,17 @@ test.describe("versions of a song", () => {
     await openStudio(page, { tauri: true });
     await expect(rows(page)).toHaveCount(2);
 
+    const voice = () => page.evaluate(async () => {
+      const s = (await import("/js/modeStems.js")).layoutState();
+      return { mode: s.mode, voice: s.voice, chosen: s.chosen };
+    });
+    expect(await voice()).toEqual({ mode: "practice", voice: null, chosen: false });
     const start = await page.evaluate(() => window.__e2e.calls.length);
     expect(await page.evaluate(async () => (await import("/js/modeStems.js")).requestSplit())).toBe("failed");
     expect(callsAtSplit).toBeGreaterThan(start);
+    // The open song's records in memory hold the new voice as well: the
+    // Stems control and Karaoke read them, not the store.
+    expect(await voice()).toEqual({ mode: "practice", voice: "split", chosen: true });
 
     const stems = `stemdeck:stems:${JOB_ID}`;
     const touches = (c) => c.cmd === "store_set" ? c.args.key.startsWith(stems) : Object.keys(c.args.entries).some((k) => k.startsWith(stems));
