@@ -2,7 +2,8 @@
 //
 // Removing a control means removing its Guide entry and its help.* sentence in
 // the same change. A sentence no code reads is left over from a control that
-// is gone, and it stays in all ten tables for translators to keep up.
+// is gone, and it stays in all ten tables for translators to keep up. This
+// catches a sentence left behind, not a Guide entry for a control CSS hides.
 //
 // The footer's seek strip (#footer-scrub) was hidden by daw.css rule 7, so no
 // person could reach it, and it was deleted rather than shown again (#934).

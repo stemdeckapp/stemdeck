@@ -327,8 +327,8 @@ export function updatePlayheadMarker(currentSec) {
 }
 
 // Mirror the elapsed/total time into the transport-footer's two side
-// labels (which used to show hardcoded "00:00.000" / "03:38.000") and
-// the footer waveform's progress. Driven from the
+// labels (which used to show hardcoded "00:00.000" / "03:38.000"), and
+// redraw the footer waveform's progress. Driven from the
 // same wavesurfer "timeupdate" event that already updates #t-time, so
 // every label stays in sync without extra event plumbing.
 //

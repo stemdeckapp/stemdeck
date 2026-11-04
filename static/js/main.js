@@ -1,7 +1,7 @@
 // The studio mode first: it sets the class the DAW controls are hidden by.
 import "./mode.js";
 import {
-  loopBtn, totalDuration, loopEnabled, loopStart, loopEnd,
+  loopBtn, loopEnabled, loopStart, loopEnd,
   setLoopStart, setLoopEnd, selectedStems, saveSelectedStems, stemSelectionReady,
   currentJobId, vocalSplitModeReady, setVocalSplitMode,
   setAutoSectionsResetFn, onLoopChange, setTransposeExportAvailable,
