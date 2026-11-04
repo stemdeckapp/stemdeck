@@ -263,6 +263,8 @@ class Job:
     # Persisted, since the measurement runs after an open and the next open,
     # the first to show the new numbers, is often after a restart. The page
     # tells the user once per song why the card's numbers moved.
+    # Here a string, in to_state() two keys: "loudness_remeasured" is a bool
+    # (a known basis is stored) and "loudness_basis" carries the string.
     loudness_remeasured: str | None = None
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100

@@ -958,7 +958,6 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         peak_db=meta.get("peak_db"),
         dynamic_range=meta.get("dynamic_range"),
         loudness_version=meta.get("loudness_version"),
-        loudness_remeasured=meta.get("loudness_remeasured"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
@@ -979,7 +978,11 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         # lost, so the lanes come back with the job.
         takes=recover_takes(job_dir),
     )
-    _read_meta_fields(job, meta, (*SAVED_FIELDS, "has_video", "video_status"))
+    # loudness_remeasured too (#923): checked like a registry record, so a
+    # hand-edited value of the wrong type keeps the default instead of loading.
+    _read_meta_fields(
+        job, meta, (*SAVED_FIELDS, "has_video", "video_status", "loudness_remeasured")
+    )
     job.selected_stems = clean_stems(job.selected_stems) or selected
     # The add time is there from the start: it says nothing of the rest.
     return job, any(name in meta for name in SAVED_FIELDS if name != "created_at")

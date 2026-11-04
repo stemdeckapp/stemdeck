@@ -648,13 +648,16 @@ def _upgrade_loudness(job_id: str) -> bool:
     if lufs is None or peak_db is None:
         return False
     dr = dynamic_range_db(lufs, peak_db)
+    # _set writes in this order, and a GET can read the job between two
+    # writes. The basis goes first and the version last, so no reader sees
+    # the current version without the basis that says the numbers moved
+    # (#923): the page would take the song as never measured again.
     fields = {
+        "loudness_remeasured": basis,
         "lufs": lufs,
         "peak_db": peak_db,
         "dynamic_range": dr,
         "loudness_version": LOUDNESS_VERSION,
-        # So the card can say why its numbers moved (#923).
-        "loudness_remeasured": basis,
     }
     _set(job, **fields)
     _write_metadata_fields(job_id, fields)

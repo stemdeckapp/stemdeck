@@ -339,6 +339,25 @@ def test_the_remeasure_outlives_a_restart(client):
     assert rebuilt.loudness_remeasured == "stems"
 
 
+def test_the_basis_is_written_before_the_version(client):
+    """A GET that reads the job while the re-measure writes it must never see
+    the new version without its basis: the page would take the song as
+    measured with the current method and show no note."""
+    from app.api import jobs as api_jobs
+    from app.core.models import _set as real_set
+
+    order: list[str] = []
+
+    def recording_set(job, **fields):
+        order.extend(fields)
+        real_set(job, **fields)
+
+    _old_song(None)
+    with patch.object(api_jobs, "_set", side_effect=recording_set):
+        _remeasure(client)
+    assert order.index("loudness_remeasured") < order.index("loudness_version")
+
+
 def test_an_unknown_basis_on_disk_is_not_reported():
     job = Job(id=JOB_ID, status="done", loudness_version=LOUDNESS_VERSION)
     job.loudness_remeasured = "elsewhere"
