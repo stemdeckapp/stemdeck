@@ -127,3 +127,24 @@ def test_a_backend_without_a_data_sibling_is_not_a_package(tmp_path, monkeypatch
     backend.mkdir(parents=True)
     monkeypatch.setattr(config, "ROOT", backend)
     assert config._packaged_data_dir() is None
+
+
+def test_a_library_racy_window_below_the_floor_is_raised_with_a_warning(monkeypatch, caplog):
+    """The library list never trusts a folder time younger than this (#976).
+    Below two seconds a FAT folder's time could miss a change, so the floor
+    wins and the log says so."""
+    import app.core.config as cfg
+
+    monkeypatch.setenv("STEMDECK_LIBRARY_RACY_WINDOW_MS", "500")
+    with caplog.at_level("WARNING", logger="stemdeck.config"):
+        assert cfg._library_racy_window_ns() == 2_000_000_000
+    assert "below the 2000 ms floor" in caplog.text
+
+
+def test_a_library_racy_window_at_or_above_the_floor_is_kept_quietly(monkeypatch, caplog):
+    import app.core.config as cfg
+
+    monkeypatch.setenv("STEMDECK_LIBRARY_RACY_WINDOW_MS", "4000")
+    with caplog.at_level("WARNING", logger="stemdeck.config"):
+        assert cfg._library_racy_window_ns() == 4_000_000_000
+    assert "floor" not in caplog.text

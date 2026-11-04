@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import shutil
 import subprocess
 from unittest.mock import patch
 
@@ -663,6 +665,419 @@ def test_missing_stems_are_not_flagged_while_relocating(client, tmp_path, monkey
     r = client.get("/api/jobs")
     [state] = r.json()
     assert state["status"] == "done"
+
+
+# ─── The list does not go back to the disk for what has not changed (#976) ───
+#
+# GET /api/jobs used to resolve, stat and list every finished song's stems
+# folder on every call, which is one network round trip after another on an
+# SMB or NAS library. The answer is now kept per song and trusted only while
+# the folder is the same folder with the same modification time, so every case
+# below must still change the answer on the very next call.
+
+_LONG_AGO = 1_600_000_000  # a modification time well outside the racy window
+
+
+def _age(*paths):
+    """Set the modification time back, as for a library that has sat a while.
+    A folder changed within the last moments is never trusted (see
+    LIBRARY_RACY_WINDOW_NS), so a test that wants the kept answer used must age it."""
+    for path in paths:
+        os.utime(path, (_LONG_AGO, _LONG_AGO))
+
+
+def _done_song(root, job_id, **fields):
+    job = Job(id=job_id, status="done", title=job_id, **fields)
+    _jobs[job.id] = job
+    stems = root / job_id / "stems"
+    stems.mkdir(parents=True)
+    (stems / "vocals.wav").write_bytes(b"RIFF1234")
+    _age(stems, stems.parent)
+    return job
+
+
+@pytest.fixture
+def library(tmp_path, monkeypatch):
+    import app.api.jobs as jobs_mod
+
+    root = tmp_path / "lib"
+    root.mkdir()
+    monkeypatch.setattr(jobs_mod, "JOBS_DIR", root)
+    return root
+
+
+@pytest.fixture
+def listings(monkeypatch):
+    """Every directory listing the process makes, by folder."""
+    seen: list[str] = []
+    real_listdir, real_scandir = os.listdir, os.scandir
+
+    def listdir(path="."):
+        seen.append(os.fspath(path))
+        return real_listdir(path)
+
+    def scandir(path="."):
+        seen.append(os.fspath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    monkeypatch.setattr(os, "scandir", scandir)
+    return seen
+
+
+def _statuses(client, **params):
+    r = client.get("/api/jobs", params=params)
+    assert r.status_code == 200
+    return {s["job_id"]: s["status"] for s in r.json()}
+
+
+def test_listing_twice_lists_each_stems_folder_once(client, library, listings):
+    for n in range(3):
+        _done_song(library, f"aaaaaaaaaa0{n}")
+
+    assert set(_statuses(client).values()) == {"done"}
+    assert set(_statuses(client).values()) == {"done"}
+
+    stems_listings = [p for p in listings if p.endswith("stems")]
+    assert len(stems_listings) == 3
+
+
+def test_a_warm_list_resolves_no_path_per_song(client, library, monkeypatch):
+    """The jobs folder is resolved once per request, not once per song."""
+    from pathlib import Path
+
+    for n in range(4):
+        _done_song(library, f"aaaaaaaaaa0{n}")
+    _statuses(client)
+
+    calls = []
+    real_resolve = Path.resolve
+
+    def resolve(self, strict=False):
+        calls.append(self)
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    _statuses(client)
+    assert len(calls) <= 1
+
+
+def test_a_stems_folder_deleted_between_lists_is_unavailable_at_once(client, library):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    shutil.rmtree(library / job.id / "stems")
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_whole_song_folder_deleted_between_lists_is_unavailable(client, library):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    shutil.rmtree(library / job.id)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_stems_folder_emptied_between_lists_is_unavailable(client, library):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    (library / job.id / "stems" / "vocals.wav").unlink()
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_stems_moved_away_and_back(client, library, tmp_path):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    parked = tmp_path / "parked-stems"
+    stems.rename(parked)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+    parked.rename(stems)
+    assert _statuses(client) == {job.id: "done"}
+
+
+def test_stems_filled_in_after_a_list_are_seen(client, library):
+    """The reverse of a deletion: an empty folder that gets its files back
+    must not stay unavailable."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    stems = library / job.id / "stems"
+    (stems / "vocals.wav").unlink()
+    _age(stems)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+    (stems / "vocals.wav").write_bytes(b"RIFF1234")
+    assert _statuses(client) == {job.id: "done"}
+
+
+def _link_dir(link, target):
+    """A symlink, or a junction on Windows where a symlink needs a privilege."""
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def test_stems_moved_out_of_the_library_behind_a_link_are_unavailable(client, library, tmp_path):
+    """The serving routes refuse a stems folder that resolves outside the
+    library, so the list must not keep calling it done because the folder
+    itself (same identity, same time) did not change."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    outside = tmp_path / "outside-stems"
+    stems.rename(outside)
+    _link_dir(stems, outside)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_song_folder_moved_out_of_the_library_behind_a_link_is_unavailable(
+    client, library, tmp_path
+):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    song = library / job.id
+    outside = tmp_path / "outside-song"
+    song.rename(outside)
+    _link_dir(song, outside)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_folder_changed_moments_ago_is_listed_again(client, library, listings):
+    """Some filesystems keep a folder's time to the second or coarser, so a
+    change in the same tick as a listing would leave the time unchanged. A
+    folder whose time is that recent is never trusted."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    os.utime(library / job.id / "stems")  # now
+
+    _statuses(client)
+    _statuses(client)
+    assert len([p for p in listings if p.endswith("stems")]) == 2
+
+
+def test_a_new_import_shows_on_the_next_list(client, library):
+    first = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {first.id: "done"}
+
+    second = _done_song(library, "aaaaaaaaaa02")
+    assert _statuses(client) == {first.id: "done", second.id: "done"}
+
+
+def test_a_song_that_finishes_after_a_list_shows_as_done(client, library):
+    job = Job(id="aaaaaaaaaa01", status="separating", title="Running")
+    _jobs[job.id] = job
+    assert _statuses(client) == {}
+
+    stems = library / job.id / "stems"
+    stems.mkdir(parents=True)
+    (stems / "vocals.wav").write_bytes(b"RIFF1234")
+    job.status = "done"
+    assert _statuses(client) == {job.id: "done"}
+
+
+def test_trash_and_restore_move_a_song_between_lists_at_once(client, library):
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    assert client.post(f"/api/jobs/{job.id}/trash").status_code == 200
+    assert _statuses(client) == {}
+    assert _statuses(client, trashed="only") == {job.id: "done"}
+
+    assert client.post(f"/api/jobs/{job.id}/restore").status_code == 200
+    assert _statuses(client) == {job.id: "done"}
+    assert _statuses(client, trashed="only") == {}
+
+
+def test_a_registry_rebuilt_from_disk_lists_what_is_on_disk(client, library):
+    """restore() builds fresh Job objects from registry.json and the folders.
+    A song deleted while the registry was down must not come back as done
+    from an answer kept for the old object."""
+    from app.core import registry
+
+    kept = _done_song(library, "aaaaaaaaaa01")
+    gone = _done_song(library, "aaaaaaaaaa02")
+    assert _statuses(client) == {kept.id: "done", gone.id: "done"}
+
+    registry.persist(library)
+    _jobs.clear()
+    shutil.rmtree(library / gone.id / "stems")
+    registry.restore(library)
+
+    assert _statuses(client).get(kept.id) == "done"
+    assert _statuses(client).get(gone.id) in (None, "unavailable")
+
+
+def test_an_old_upload_with_no_source_is_searched_once(client, library, listings):
+    """Uploads finished before sources were kept have no source.* to find.
+    The search used to run on every list; it now runs again only when the
+    song's folder changes."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    assert job.source_format is None
+
+    for _ in range(3):
+        _statuses(client)
+
+    song_listings = [p for p in listings if os.path.basename(p) == job.id]
+    assert len(song_listings) == 1
+    assert job.source_format is None
+
+
+def test_a_source_that_appears_for_an_old_upload_is_found(client, library):
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    _statuses(client)
+    assert job.source_format is None
+
+    (library / job.id / "source.flac").write_bytes(b"fLaC")
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+# ─── The parts of the kept key, one test each (#976) ─────────────────────────
+#
+# The tests above change a folder "now", which the racy window alone already
+# catches. These set the changed folder's time to one well outside the window,
+# so only the named part of the key can tell the kept answer is stale.
+
+_LATER = _LONG_AGO + 1000
+
+
+def test_stems_emptied_long_ago_by_its_clock_are_unavailable(client, library):
+    """The stems folder's modification time is part of the key."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    (stems / "vocals.wav").unlink()
+    os.utime(stems, (_LATER, _LATER))
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_stems_folder_swapped_for_another_with_the_same_time_is_unavailable(
+    client, library, tmp_path
+):
+    """The stems folder's identity (file ID) is part of the key: a different,
+    empty folder with the old time in its place must not inherit the answer."""
+    job = _done_song(library, "aaaaaaaaaa01")
+    assert _statuses(client) == {job.id: "done"}
+
+    stems = library / job.id / "stems"
+    stems.rename(tmp_path / "old-stems")
+    stems.mkdir()
+    _age(stems, stems.parent)
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_stems_junction_into_the_library_is_checked_every_time(client, library, monkeypatch):
+    """A link or junction keeps its own time while its target changes, so a
+    stems folder that is one is never answered from the kept key. With the
+    racy window off, only the plain-folder check stands between the kept
+    answer and an emptied target."""
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "LIBRARY_RACY_WINDOW_NS", 0)
+    job = _done_song(library, "aaaaaaaaaa01")
+    stems = library / job.id / "stems"
+    shared = library / "shared-stems"
+    stems.rename(shared)
+    _link_dir(stems, shared)
+    assert _statuses(client) == {job.id: "done"}
+
+    (shared / "vocals.wav").unlink()
+    assert _statuses(client) == {job.id: "unavailable"}
+
+
+def test_a_source_that_appears_long_ago_by_its_clock_is_found(client, library):
+    """The song folder's modification time is part of the no-source key."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    _statuses(client)
+    assert job.source_format is None
+
+    song = library / job.id
+    (song / "source.flac").write_bytes(b"fLaC")
+    os.utime(song, (_LATER, _LATER))
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_a_song_folder_swapped_for_one_with_a_source_and_the_same_time_is_searched(
+    client, library, tmp_path
+):
+    """The song folder's identity (file ID) is part of the no-source key."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    _statuses(client)
+    assert job.source_format is None
+
+    song = library / job.id
+    song.rename(tmp_path / "old-song")
+    (song / "stems").mkdir(parents=True)
+    (song / "stems" / "vocals.wav").write_bytes(b"RIFF1234")
+    (song / "source.flac").write_bytes(b"fLaC")
+    _age(song / "stems", song)
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_a_song_folder_junction_into_the_library_is_searched_every_time(
+    client, library, monkeypatch
+):
+    """A source added in a linked song folder's target leaves the link's own
+    time as it was, so a song folder that is a link or junction keeps no
+    empty answer. With the racy window off, only the plain-folder check
+    stands between the kept answer and the new source."""
+    import app.api.jobs as jobs_mod
+
+    monkeypatch.setattr(jobs_mod, "LIBRARY_RACY_WINDOW_NS", 0)
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    song = library / job.id
+    shared = library / "shared-song"
+    song.rename(shared)
+    _link_dir(song, shared)
+    _statuses(client)
+    assert job.source_format is None
+
+    (shared / "source.flac").write_bytes(b"fLaC")
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_a_song_folder_changed_moments_ago_is_searched_again(client, library):
+    """A song folder inside the racy window keeps no empty answer: on a
+    filesystem with coarse times, a source added in the same tick leaves the
+    folder's time as it was."""
+    job = _done_song(library, "aaaaaaaaaa01", source_url="local:Old upload")
+    song = library / job.id
+    os.utime(song)  # now
+    before = os.stat(song).st_mtime_ns
+    _statuses(client)
+    assert job.source_format is None
+
+    (song / "source.flac").write_bytes(b"fLaC")
+    os.utime(song, ns=(before, before))
+    _statuses(client)
+    assert job.source_format == "flac"
+
+
+def test_kept_answers_go_when_the_song_leaves_the_registry(client, library):
+    import app.api.jobs as jobs_mod
+
+    link = _done_song(library, "aaaaaaaaaa01")
+    upload = _done_song(library, "aaaaaaaaaa02", source_url="local:Old upload")
+    _statuses(client)
+    assert {link.id, upload.id} <= set(jobs_mod._stems_answers)
+    assert upload.id in jobs_mod._no_source_seen
+
+    del _jobs[link.id]
+    del _jobs[upload.id]
+    _statuses(client)
+    assert link.id not in jobs_mod._stems_answers
+    assert upload.id not in jobs_mod._stems_answers
+    assert upload.id not in jobs_mod._no_source_seen
 
 
 # ─── GET /jobs/{id}/failure: stderr tail and traceback sections ──────────────
