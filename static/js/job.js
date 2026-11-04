@@ -575,7 +575,6 @@ async function finishDoneJob(state) {
     finalState.stems || [],
     finalState.duration || 0,
     finalState.thumbnail,
-    finalState.mix_url ?? null,
     finalState.title || "",
     null,
     finalState.has_video ?? false,

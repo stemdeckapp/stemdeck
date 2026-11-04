@@ -821,7 +821,6 @@ function stateMetadataToTrack(state, fallbackTrack) {
     sourceFormat: state.source_format ?? fallbackTrack.sourceFormat ?? null,
     // The source's own artist, title, album and lyrics (#699), read at import.
     audioTags: state.audio_tags ? libraryAudioTags(state.audio_tags) : fallbackTrack.audioTags ?? null,
-    mixUrl: state.mix_url ?? fallbackTrack.mixUrl ?? null,
     vocalSplit: state.vocal_split ?? fallbackTrack.vocalSplit ?? null,
     // Not `??`: a null from the server means the reason was cleared.
     vocalSplitReason: "vocal_split_reason" in state ? state.vocal_split_reason : fallbackTrack.vocalSplitReason ?? null,
@@ -1250,7 +1249,7 @@ async function loadTrackIntoStudio(trackId) {
   );
   if (token !== _loadTrackToken) return;
   // Performance's own track is a lane in Performance only (modeStems.js).
-  wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.mixUrl ?? null, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
+  wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
   // Its lanes change when the split ends.
   if (track.vocalSplit === "running") followVocalSplit(trackId);

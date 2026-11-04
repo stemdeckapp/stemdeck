@@ -8,7 +8,7 @@ import {
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, drawFooterPlaceholder, regionDragPayload, stemRegionDragPayload, prewarmRegionMix, mixTransposeBlocked } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, regionDragPayload, stemRegionDragPayload, prewarmRegionMix, mixTransposeBlocked } from "./player.js";
 import { transposeExportFromHealth } from "./transposeExport.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
@@ -503,7 +503,6 @@ setSectionsLoopBridge({
 onLoopChange(refreshSectionsAddState);
 wireBeatGridUi();
 wireFooterControls();
-requestAnimationFrame(drawFooterPlaceholder);
 wireStemListControls();
 wireStemChoiceButtons();
 wireAllButton();
