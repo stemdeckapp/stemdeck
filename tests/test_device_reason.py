@@ -9,8 +9,10 @@ that carries it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +29,13 @@ HEADER_616 = (
     "| NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4     |\n"
 )
 HEADER_OLD = "| NVIDIA-SMI 560.94       Driver Version: 560.94       CUDA Version: 12.6     |\n"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_probe_cache():
+    device_reason.reset_state()
+    yield
+    device_reason.reset_state()
 
 
 @pytest.fixture
@@ -141,7 +150,7 @@ def test_an_unreadable_config_is_no_setup_reason(facts, tmp_path):
 
 def test_diagnostics_carry_the_facts(facts):
     facts(["cpu"], ("2.6.0+cpu", None), RTX, setup_reason="no-gpu-detected")
-    assert device_reason.device_diagnostics() == (
+    assert device_reason.device_diagnostics(device_reason.cpu_reason()) == (
         "gpu=NVIDIA GeForce RTX 3080, driver=616.64, driver_cuda=13.4, "
         "torch=2.6.0+cpu, torch_cuda=none, cuda_available=no, "
         "setup=no-gpu-detected, why=no-gpu-detected"
@@ -150,10 +159,25 @@ def test_diagnostics_carry_the_facts(facts):
 
 def test_diagnostics_without_a_gpu_or_torch(facts):
     facts(["cpu"], None, None)
-    assert device_reason.device_diagnostics() == (
+    assert device_reason.device_diagnostics(None) == (
         "gpu=none, driver=none, driver_cuda=none, torch=none, torch_cuda=none, "
         "cuda_available=no, setup=none, why=none"
     )
+
+
+@pytest.mark.parametrize(
+    ("setup_reason", "shown"),
+    [
+        ("cuda-verify-failed-cpu-restore-failed", "cuda-verify-failed-cpu-restore-failed"),
+        ("verified", "verified"),
+        (r"pip failed in C:\Users\someone\AppData", "other"),
+    ],
+)
+def test_diagnostics_carry_only_known_setup_words(facts, setup_reason, shown):
+    # The line reaches other devices on the network through /api/settings, so
+    # free text in config.json (a path, an error) is never echoed.
+    facts(["cpu"], ("2.6.0+cpu", None), RTX, setup_reason=setup_reason)
+    assert f"setup={shown}," in device_reason.device_diagnostics(None)
 
 
 # The nvidia-smi probe itself.
@@ -204,6 +228,34 @@ def test_nvidia_smi_is_asked_again_after_the_ttl(monkeypatch):
     assert len(calls) == 4
 
 
+def test_concurrent_first_requests_share_one_probe(monkeypatch):
+    # Settings opened by several clients at once, before the first answer:
+    # one nvidia-smi run, not one per request.
+    calls = []
+    release = threading.Event()
+
+    def run(args, **_kw):
+        calls.append(args)
+        release.wait(5)
+        out = "NVIDIA GeForce RTX 3080, 616.64\n" if len(args) > 1 else HEADER_616
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(device_reason, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(device_reason.subprocess, "run", run)
+    results = []
+    threads = [
+        threading.Thread(target=lambda: results.append(device_reason.nvidia_gpu()))
+        for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    release.set()
+    for t in threads:
+        t.join(5)
+    assert results == [RTX] * 4
+    assert len(calls) == 2
+
+
 def test_a_failing_nvidia_smi_is_no_gpu(monkeypatch):
     _fake_smi(monkeypatch, "", query="", code=9)
     assert device_reason.nvidia_gpu() is None
@@ -245,3 +297,27 @@ def test_settings_carry_no_reason_while_cuda_is_in_use(facts):
     with TestClient(app) as c:
         body = c.get("/api/settings").json()
     assert body["demucs_device_why"] is None
+
+
+def test_saving_a_setting_runs_the_probe_off_the_event_loop(facts, monkeypatch):
+    # POST /api/settings is async and answers with the same payload, and a
+    # cold nvidia-smi can take seconds: on the loop, that would stall every
+    # other request and stream for as long.
+    from app.main import app
+
+    facts(["cpu"], ("2.6.0+cpu", None), RTX)
+    on_loop = []
+
+    def gpu():
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return RTX
+
+    monkeypatch.setattr(device_reason, "nvidia_gpu", gpu)
+    with TestClient(app) as c:
+        body = c.post("/api/settings", json={}).json()
+    assert body["demucs_device_why"] == "cpu-torch-build"
+    assert on_loop and not any(on_loop)

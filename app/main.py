@@ -438,6 +438,7 @@ def _is_lan_ipv4(ip: str) -> bool:
 
 def _settings_payload() -> dict[str, object]:
     devices = available_torch_devices()
+    why = cpu_reason()
     return {
         "allow_network": get_allow_network(),
         # Off unless the user asked for it. The days value is published even
@@ -502,8 +503,8 @@ def _settings_payload() -> dict[str, object]:
         # Why the NVIDIA GPU is not used, as one code (app/core/device_reason.py),
         # or None when it is in use or the machine has none (#247). The
         # diagnostics line is what Copy GPU details puts on the clipboard.
-        "demucs_device_why": cpu_reason(),
-        "device_diagnostics": device_diagnostics(),
+        "demucs_device_why": why,
+        "device_diagnostics": device_diagnostics(why),
     }
 
 
@@ -665,7 +666,8 @@ async def update_settings(request: Request) -> dict[str, object]:
         except ValueError as e:
             # The message lists the whitelist; it never echoes the value.
             raise HTTPException(status_code=422, detail=str(e)) from None
-    return _settings_payload()
+    # Off the event loop: the payload can run nvidia-smi (app/core/device_reason.py).
+    return await asyncio.to_thread(_settings_payload)
 
 
 _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")

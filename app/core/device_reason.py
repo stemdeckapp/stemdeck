@@ -49,12 +49,18 @@ _SETUP_REASONS = frozenset(
         "cpu-only-package",
     }
 )
+# Every value the shell writes. Anything else in config.json is reported as
+# "other", so the diagnostics line only ever carries a known word.
+_SETUP_VALUES = _SETUP_REASONS | {"verified", "mps", "mps-unavailable"}
 
 # Drivers before 616 print "CUDA Version: 12.6"; 616.64 prints
 # "CUDA UMD Version: 13.4" in the same header.
 _CUDA_HEADER = re.compile(r"CUDA (?:UMD )?Version:\s*(\d+\.\d+)")
 
 _lock = threading.Lock()
+# Held while nvidia-smi runs, so requests that arrive meanwhile wait for its
+# answer instead of each starting their own.
+_probe_lock = threading.Lock()
 _gpu: dict[str, str | None] | None = None
 _gpu_at: float | None = None
 
@@ -76,8 +82,12 @@ def _nvidia_smi_path() -> str | None:
     system32 = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
     if (system32 / "nvidia-smi.exe").is_file():
         return str(system32 / "nvidia-smi.exe")
-    hits = list((system32 / "DriverStore" / "FileRepository").glob("nv*/nvidia-smi.exe"))
-    return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
+    try:
+        hits = list((system32 / "DriverStore" / "FileRepository").glob("nv*/nvidia-smi.exe"))
+        return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
+    except OSError as exc:
+        logger.warning("could not search the DriverStore for nvidia-smi: %s", exc)
+        return None
 
 
 def _run_smi(smi: str, *args: str) -> str | None:
@@ -119,13 +129,14 @@ def nvidia_gpu() -> dict[str, str | None] | None:
     """{"name", "driver", "cuda" (the newest CUDA the driver runs)} of the first
     NVIDIA GPU, or None when there is none or nvidia-smi cannot say."""
     global _gpu, _gpu_at
-    with _lock:
-        if _gpu_at is not None and time.monotonic() - _gpu_at < NVIDIA_SMI_TTL_SEC:
-            return _gpu
-    gpu = _query_nvidia_gpu()
-    with _lock:
-        _gpu, _gpu_at = gpu, time.monotonic()
-    return gpu
+    with _probe_lock:
+        with _lock:
+            if _gpu_at is not None and time.monotonic() - _gpu_at < NVIDIA_SMI_TTL_SEC:
+                return _gpu
+        gpu = _query_nvidia_gpu()
+        with _lock:
+            _gpu, _gpu_at = gpu, time.monotonic()
+        return gpu
 
 
 def _torch_build() -> tuple[str, str | None] | None:
@@ -169,7 +180,9 @@ def cpu_reason() -> str | None:
     _version, torch_cuda = build
     if torch_cuda is None:
         # Setup's outcome describes the CPU torch it left in place, so it is
-        # trusted only while that is still the torch installed.
+        # trusted only while that is still the torch installed. With a GPU
+        # visible here, "no-gpu-detected" is setup's own miss (its probe found
+        # no nvidia-smi), which is why it installed no GPU support (#247).
         cause = (setup or "").removesuffix("-cpu-restore-failed")
         return cause if cause in _SETUP_REASONS else "cpu-torch-build"
     driver_major, torch_major = _major(gpu["cuda"]), _major(torch_cuda)
@@ -178,10 +191,14 @@ def cpu_reason() -> str | None:
     return "cuda-unavailable"
 
 
-def device_diagnostics() -> str:
-    """The facts behind cpu_reason() on one line, for a bug report."""
+def device_diagnostics(why: str | None) -> str:
+    """The facts behind `why` (what cpu_reason() returned) on one line, for a
+    bug report."""
     gpu = nvidia_gpu() or {}
     version, torch_cuda = _torch_build() or (None, None)
+    setup = _setup_reason()
+    if setup is not None and setup.removesuffix("-cpu-restore-failed") not in _SETUP_VALUES:
+        setup = "other"
     facts = {
         "gpu": gpu.get("name"),
         "driver": gpu.get("driver"),
@@ -189,7 +206,7 @@ def device_diagnostics() -> str:
         "torch": version,
         "torch_cuda": torch_cuda,
         "cuda_available": "yes" if "cuda" in available_torch_devices() else "no",
-        "setup": _setup_reason(),
-        "why": cpu_reason(),
+        "setup": setup,
+        "why": why,
     }
     return ", ".join(f"{key}={value or 'none'}" for key, value in facts.items())

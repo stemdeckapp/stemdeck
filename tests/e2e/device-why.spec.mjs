@@ -51,6 +51,8 @@ test("Copy GPU details puts the diagnostics line on the clipboard", async ({ pag
 test("nothing is shown while the GPU is in use or the machine has none", async ({ page }) => {
   await openSettings(page, null);
   await expect(page.locator(".set-demucs-device")).toBeVisible();
+  // The row is there and hidden, so this cannot pass on a page without it.
+  await expect(page.locator(".device-why")).toHaveCount(1);
   await expect(page.locator(".device-why")).toBeHidden();
 });
 
@@ -58,7 +60,7 @@ test("the reason follows the language", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("stemdeck.language", JSON.stringify("de")));
   await openSettings(page, "driver-too-old");
   await expect(page.locator(".set-demucs-why")).toHaveText(
-    "Das Zerlegen läuft auf dem Prozessor: Der NVIDIA-Treiber ist zu alt für die installierte " +
+    "Die Trennung läuft auf dem Prozessor: Der NVIDIA-Treiber ist zu alt für die installierte " +
       "GPU-Unterstützung. Ein neuerer NVIDIA-Treiber behebt das.",
   );
 });
