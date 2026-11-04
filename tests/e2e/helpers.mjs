@@ -44,10 +44,18 @@ export function fixtureTrack(id, title) {
  * Tests that care about which folder a track is in build the state themselves
  * and call this. seedLibrary is the default arrangement on top of it.
  */
-export async function seedCatalogState(page, { folders, tracks }) {
+export async function seedCatalogState(page, { folders, tracks }, { once = false } = {}) {
+  // once: only on the tab's first load, so a test can reload and read back
+  // what the page itself saved. An init script otherwise runs on every load.
   await page.addInitScript(
-    ([key, value]) => window.localStorage.setItem(key, JSON.stringify(value)),
-    [STORAGE_KEY, { v: STORAGE_VERSION, folders, tracks }],
+    ([key, value, onlyOnce]) => {
+      if (onlyOnce) {
+        if (window.sessionStorage.getItem("e2e.catalogSeeded")) return;
+        window.sessionStorage.setItem("e2e.catalogSeeded", "1");
+      }
+      window.localStorage.setItem(key, JSON.stringify(value));
+    },
+    [STORAGE_KEY, { v: STORAGE_VERSION, folders, tracks }, once],
   );
   // The suite tests the full studio: DAW mode (static/js/mode.js), where
   // Record, the EQ and the master are. Practice is the app's default; a test

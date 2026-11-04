@@ -167,6 +167,12 @@ def _build_job(jobs_dir: Path, job_id: str, title: str, seconds: int) -> dict:
         # hardcoded timestamp is reaped before the first test opens the page,
         # leaving a registry entry pointing at nothing.
         "created_at": time.time(),
+        # Analysed with the current loudness method (LOUDNESS_VERSION in
+        # app/core/models.py; not imported, for the reason _ffmpeg gives).
+        # Without it, the first open measures the song again in the
+        # background, and every later spec in the run sees the "measured
+        # again" note under the cards (#923), depending on spec order.
+        "loudness_version": 2,
         "bpm": 120,
         "key": "C maj",
         "scale": "Major",

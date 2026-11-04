@@ -1354,6 +1354,33 @@ input, textarea { font-family: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Why the loudness cards changed for a song from before 0.21.0 (#923). A row
+   of its own under the cards, not inside the LUFS card: the card is about
+   135 px wide at a 950 px window, and the sentence is the point. Shown once
+   per song, so the height it takes is not kept. */
+.loudness-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px clamp(8px, 1vw, 16px);
+  border-bottom: 1px solid var(--border);
+  font-size: clamp(10px, 0.8vw, 12px);
+  line-height: 1.3;
+  color: var(--muted);
+}
+.loudness-note[hidden] { display: none; }
+.loudness-note-text { flex: 1; min-width: 0; }
+.loudness-note-dismiss {
+  flex-shrink: 0;
+  /* 24 px: the smallest pointer target WCAG 2.2 (2.5.8) allows. */
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--muted); font-size: 16px; line-height: 1;
+  cursor: pointer;
+}
+.loudness-note-dismiss:hover { background: var(--panel-3); color: var(--fg); }
+.loudness-note-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .daw-cover {
   width: 64px; height: 64px;
   border-radius: 8px;

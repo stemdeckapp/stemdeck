@@ -116,6 +116,28 @@ def test_a_rebuilt_song_keeps_what_the_user_set(jobs_dir, damage):
     _assert_kept(Job.from_record(json.loads(path.read_text(encoding="utf-8"))["jobs"][0]))
 
 
+@pytest.mark.parametrize("value", [["stems"], 5, {"basis": "stems"}])
+def test_a_hand_edited_remeasure_basis_does_not_load(jobs_dir, value):
+    """#923: metadata.json is a file a person can edit. A loudness_remeasured
+    that is not a string keeps the job's default instead of loading, so the
+    rebuilt registry saves and loads again as a whole."""
+    _finished(jobs_dir, loudness_version=2, loudness_remeasured="stems")
+    meta_path = jobs_dir / SONG / "metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["loudness_remeasured"] = value
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    registry_path(jobs_dir).unlink()
+
+    job = _restart(jobs_dir)
+    assert job.loudness_remeasured is None
+    assert job.to_state()["loudness_remeasured"] is False
+
+    # Saved by the rebuild, and loaded again whole: nothing set aside.
+    job = _restart(jobs_dir)
+    assert job.loudness_remeasured is None
+    assert not list(jobs_dir.glob("registry.json.bad-*"))
+
+
 def test_changes_made_after_the_song_finished_survive_a_rebuild(jobs_dir):
     _finished(jobs_dir, selected_stems=["vocals", "drums"], source_url="local:Song")
     client = TestClient(app)
@@ -274,7 +296,12 @@ def test_a_downgrade_to_0_20_0_and_back_loses_nothing(jobs_dir):
     )
     track = {**make_track("k0000aaaa", "Guitar", 0), "active_take_id": "t0000aaaa"}
     write_tracks(jobs_dir / SONG, [track])
-    newer = {"stem_format": "mp3", "stem_mp3_kbps": 192, "loudness_version": 2}
+    newer = {
+        "stem_format": "mp3",
+        "stem_mp3_kbps": 192,
+        "loudness_version": 2,
+        "loudness_remeasured": "stems",
+    }
     _finished(jobs_dir, **SAVED, **newer, takes=recover_takes(jobs_dir / SONG), tracks=[track])
     assert FIELDS_0_20_0.isdisjoint({*newer, "versions", "takes", "tracks"}), "0.20.0's fields"
 
