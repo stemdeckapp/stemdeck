@@ -622,8 +622,11 @@ async function setup() {
 
     await runStep("gpu", async () => {
       const macGPU = isMac();
+      // The CPU download neither looks for a GPU nor installs anything here
+      // (#1011), so it gets none of the checking and installing messages.
+      const cpuPackage = !macGPU && (await invoke("build_target")).gpu === "cpu";
       const gpuKinds = isLinux() ? "NVIDIA or AMD" : "NVIDIA";
-      const stopProgress = startProgressStatus(
+      const stopProgress = cpuPackage ? null : startProgressStatus(
         macGPU
           ? [
               {
@@ -654,8 +657,9 @@ async function setup() {
               },
             ]
       );
-      // macOS never runs a pip pass here, so there is nothing to listen for.
-      const stopPipProgress = macGPU ? null : await startPipProgress(stopProgress);
+      // macOS and the CPU download never run a pip pass here, so there is
+      // nothing to listen for.
+      const stopPipProgress = macGPU || cpuPackage ? null : await startPipProgress(stopProgress);
 
       try {
         const gpu = await invoke("ensure_torch_device");
@@ -684,7 +688,7 @@ async function setup() {
           // The CPU download skips GPU detection, so it cannot say whether
           // this computer has a GPU (#1011).
           if (gpu.reason === "cpu-only-package") {
-            gpuSummary = `This is the CPU download of StemDeck - stem separation will use CPU (the NVIDIA download uses an ${gpuKinds} GPU)`;
+            gpuSummary = `This is the CPU download of StemDeck - stem separation will use CPU (to use an ${gpuKinds} GPU, get the NVIDIA download)`;
           } else {
             gpuSummary = gpu.gpuDetected
               ? gpu.cudaVerified
@@ -695,7 +699,7 @@ async function setup() {
         }
         return gpu;
       } finally {
-        stopProgress();
+        stopProgress?.();
         stopPipProgress?.();
       }
     });
