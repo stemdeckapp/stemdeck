@@ -3,15 +3,40 @@ name: macOS Release
 on:
   release:
     types: [published]
+  # Release candidate build (#1027): builds the commit this run is started on
+  # and uploads to an existing draft pre-release with this tag. The guard job
+  # refuses any tag that is not exactly one draft pre-release targeting that
+  # commit, so a published release can never be overwritten from here. The
+  # signing check below still refuses to build without every secret.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing draft pre-release, e.g. v0.21.0-rc.1"
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # A manual run shares the group of the release it builds into, so publishing
+  # that draft cancels a candidate build still uploading to it. On a release
+  # event inputs.tag is empty and the group is the same as before.
+  group: ${{ github.workflow }}-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  guard:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/release-candidate-guard.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ inputs.tag }}
+
   build-and-upload:
+    needs: guard
+    # A release event skips the guard; a manual run builds only if it passed.
+    if: ${{ !cancelled() && (github.event_name == 'release' || needs.guard.result == 'success') }}
     # Runner must be darwin/arm64 with Rosetta 2, Xcode CLT, Homebrew, rustup, and zstd.
     runs-on: [self-hosted, macOS, ARM64]
     # Four notarizations (app and DMG, for arm64 and x64) can each be slow.
@@ -30,9 +55,10 @@ jobs:
       - name: write version files
         env:
           # github.ref_name (evaluated by Actions) instead of $GITHUB_REF_NAME,
-          # which is only injected by runner >= 2.290 — empty on older
-          # self-hosted runners.
-          REF_NAME: ${{ github.ref_name }}
+          # which is only injected by runner >= 2.290, so it is empty on older
+          # self-hosted runners. A manual run takes the tag the guard
+          # validated; if the guard set nothing it is empty and this step stops.
+          REF_NAME: ${{ github.event_name == 'release' && github.ref_name || needs.guard.outputs.tag }}
         run: |
           if [ -z "${REF_NAME:-}" ]; then
             echo "REF_NAME is not set" >&2
@@ -169,7 +195,12 @@ jobs:
           # pre-release to the latest release -- which also fires `released`,
           # pushing :latest to GHCR, and makes the in-app updater offer a build
           # that was never verified.
-          prerelease: ${{ github.event.release.prerelease }}
+          prerelease: ${{ github.event.release.prerelease || github.event_name == 'workflow_dispatch' }}
+          # A manual run uploads to the draft named by the guarded tag. Without
+          # draft: true the action publishes the draft after uploading. On a
+          # release event both are empty and the action keeps its defaults.
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && needs.guard.outputs.tag || '' }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           files: |
             .build/macos-dist/StemDeck-macOS-arm64.dmg
             .build/StemDeck-runtime-macOS-arm64.tar.zst

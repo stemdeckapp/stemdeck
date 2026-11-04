@@ -3,24 +3,39 @@ name: Linux Release
 on:
   release:
     types: [published]
-  # Manual test build: builds and scans both variants on the self-hosted runner
-  # but does NOT upload (no release to attach to). Lets you validate the runner
-  # toolchain and the CUDA build without cutting a release tag.
+  # Release candidate build (#1027): builds the commit this run is started on
+  # and uploads to an existing draft pre-release with this tag. The guard job
+  # refuses any tag that is not exactly one draft pre-release targeting that
+  # commit, so a published release can never be overwritten from here.
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version for the test build (must be valid PEP 440, e.g. 0.0.0)"
-        required: false
-        default: "0.0.0"
+      tag:
+        description: "Tag of an existing draft pre-release, e.g. v0.21.0-rc.1"
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # A manual run shares the group of the release it builds into, so publishing
+  # that draft cancels a candidate build still uploading to it. On a release
+  # event inputs.tag is empty and the group is the same as before.
+  group: ${{ github.workflow }}-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  guard:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/release-candidate-guard.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ inputs.tag }}
+
   build-and-upload:
+    needs: guard
+    # A release event skips the guard; a manual run builds only if it passed.
+    if: ${{ !cancelled() && (github.event_name == 'release' || needs.guard.result == 'success') }}
     # Runner must be linux/x64 with rustup, Node.js, Docker, and sudo apt access.
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
@@ -77,17 +92,13 @@ jobs:
 
       - name: write version files
         env:
-          DISPATCH_VERSION: ${{ inputs.version }}
           # github.ref_name (evaluated by Actions) instead of $GITHUB_REF_NAME,
-          # which is only injected by runner >= 2.290 — empty on older
-          # self-hosted runners.
-          REF_NAME: ${{ github.ref_name }}
+          # which is only injected by runner >= 2.290, so it is empty on older
+          # self-hosted runners. A manual run takes the tag the guard
+          # validated; if the guard set nothing it is empty and this step stops.
+          REF_NAME: ${{ github.event_name == 'release' && github.ref_name || needs.guard.outputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${DISPATCH_VERSION#v}"
-          else
-            VERSION="${REF_NAME#v}"
-          fi
+          VERSION="${REF_NAME#v}"
           if [ -z "$VERSION" ]; then
             echo "Could not determine a version" >&2
             exit 1
@@ -143,7 +154,6 @@ jobs:
       # missing updater asset published a release that looked fine and went
       # green, and the in-app updater then 404'd for every installed user.
       - name: verify every asset exists
-        if: github.event_name == 'release'
         run: |
           for f in \
             dist/StemDeck-Linux-x64.tar.gz \
@@ -157,8 +167,6 @@ jobs:
           done
 
       - name: upload artifacts
-        # Only attach to a real release; a manual test build has nothing to upload to.
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           # Carry the release's own flag. The action defaults `prerelease` to
@@ -166,7 +174,12 @@ jobs:
           # pre-release to the latest release -- which also fires `released`,
           # pushing :latest to GHCR, and makes the in-app updater offer a build
           # that was never verified.
-          prerelease: ${{ github.event.release.prerelease }}
+          prerelease: ${{ github.event.release.prerelease || github.event_name == 'workflow_dispatch' }}
+          # A manual run uploads to the draft named by the guarded tag. Without
+          # draft: true the action publishes the draft after uploading. On a
+          # release event both are empty and the action keeps its defaults.
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && needs.guard.outputs.tag || '' }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           fail_on_unmatched_files: true
           files: |
             dist/StemDeck-Linux-x64.tar.gz
