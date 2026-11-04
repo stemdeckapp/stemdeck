@@ -72,6 +72,23 @@ def available_torch_devices() -> list[str]:
     return devices
 
 
+def torch_gpu_backend(devices: list[str]) -> str | None:
+    """What drives the "cuda" device in `devices` (an available_torch_devices()
+    result): "cuda" for NVIDIA, "rocm" for AMD, None without one (#825).
+
+    A ROCm build of torch serves an AMD GPU through the same torch.cuda API, so
+    the device is "cuda" either way and every device setting, job record and
+    worker stays as it is; only what the user is shown has to tell them apart.
+    Read off the build (torch.version.hip is set on ROCm only), never by asking
+    the card: GPU work belongs to the worker processes. Takes the probe's
+    result rather than probing again."""
+    if "cuda" not in devices:
+        return None
+    import torch
+
+    return "rocm" if getattr(torch.version, "hip", None) else "cuda"
+
+
 def detect_torch_device() -> str:
     """Best available Torch device for Demucs by hardware probe: cuda > mps >
     cpu. Apple Silicon needs the explicit MPS check -- demucs's CLI default is

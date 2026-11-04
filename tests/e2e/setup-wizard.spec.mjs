@@ -23,7 +23,11 @@ const ALL_READY = {
   noSpace: null,
 };
 
-async function openWizard(page) {
+/**
+ * `platform` stands in for the OS the shell runs on, which decides whether
+ * setup may mention an AMD GPU; `gpu` for what the shell's GPU step answers.
+ */
+async function openWizard(page, { platform, gpu } = {}) {
   await page.route(`${ORIGIN}/**`, async (route) => {
     const name = new URL(route.request().url()).pathname.slice(1);
     if (name === "started.html") {
@@ -33,13 +37,17 @@ async function openWizard(page) {
     const body = await readFile(path.join(UI, path.basename(name)));
     return route.fulfill({ contentType: types[path.extname(name).slice(1)], body });
   });
-  await page.addInitScript((origin) => {
+  await page.addInitScript(({ origin, platform, gpu }) => {
+    if (platform) {
+      Object.defineProperty(Navigator.prototype, "platform", { get: () => platform });
+      Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => ({ platform }) });
+    }
     const listeners = {};
     let finishWarmup = null;
     const answers = {
       probe_runtime: { pythonReady: true, ffmpegReady: true, torchDevice: null, pythonPath: "python" },
       runtime_pack_status: { manifest: { version: "1" }, installedVersion: "1" },
-      ensure_torch_device: { gpuDetected: false, torchDevice: "cpu", reason: "no-gpu" },
+      ensure_torch_device: gpu ?? { gpuDetected: false, torchDevice: "cpu", reason: "no-gpu" },
       repair_torchvision: { outcome: "ok" },
       start_backend: { url: `${origin}/started.html` },
     };
@@ -75,7 +83,7 @@ async function openWizard(page) {
         },
       },
     };
-  }, ORIGIN);
+  }, { origin: ORIGIN, platform, gpu });
   await page.goto(`${ORIGIN}/index.html`);
   await expect(page.locator('[data-step="model"]')).toHaveClass(/active/);
   await expect.poll(() => page.evaluate(() => window.__setup.calls)).toContain("warmup_models");
@@ -159,6 +167,32 @@ test("a full disk: the notice says how much room the models need", async ({ page
   });
 
   await expect(page.locator("#notice")).toContainText("about 1.8 GB needed, 0.4 GB free, so none was downloaded");
+});
+
+// An AMD GPU through ROCm (#825), as the shell reports one. The detection
+// itself is covered by the shell's cargo tests against a fake sysfs.
+const AMD = { gpuDetected: true, gpuName: "AMD Radeon RX 7900 XTX (gfx1100)", backend: "rocm",
+  cudaVersion: "6.4", torchDevice: "cpu", cudaVerified: false };
+
+test("Linux, AMD GPU without /dev/kfd access: setup says how to get it", async ({ page }) => {
+  await openWizard(page, { platform: "Linux x86_64", gpu: { ...AMD, reason: "rocm-no-kfd-access" } });
+  const details = page.locator("#details");
+  await expect(details).toContainText("GPU detected (AMD Radeon RX 7900 XTX (gfx1100)), but StemDeck cannot open /dev/kfd");
+  await expect(details).toContainText("sudo usermod -aG render,video $USER");
+});
+
+test("Linux, AMD GPU no ROCm build supports: setup names ROCm, not CUDA", async ({ page }) => {
+  await openWizard(page, { platform: "Linux x86_64", gpu: { ...AMD, reason: "rocm-unsupported-gpu" } });
+  await expect(page.locator("#details")).toContainText("none of the ROCm builds StemDeck can install support it");
+});
+
+test("Windows, NVIDIA GPU no CUDA build supports: setup names CUDA", async ({ page }) => {
+  await openWizard(page, {
+    platform: "Win32",
+    gpu: { gpuDetected: true, gpuName: "NVIDIA GeForce GTX 750", backend: "cuda", cudaVersion: "12.4",
+      torchDevice: "cpu", cudaVerified: false, reason: "cuda-unsupported-gpu" },
+  });
+  await expect(page.locator("#details")).toContainText("none of the CUDA builds StemDeck can install support it");
 });
 
 test("everything arrived: setup goes straight on", async ({ page }) => {

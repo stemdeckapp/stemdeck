@@ -4,8 +4,8 @@ StemDeck Linux Portable Alpha
 This comes in two variants. Pick one:
 
 - StemDeck-Linux-x64.tar.gz         CPU-only (smaller; runs anywhere)
-- StemDeck-Linux-x64.NVIDIA.tar.gz  NVIDIA/CUDA (larger; much faster on an
-                                    NVIDIA GPU, falls back to CPU if no GPU)
+- StemDeck-Linux-x64.NVIDIA.tar.gz  GPU: NVIDIA/CUDA, or AMD/ROCm (much faster
+                                    on a GPU, falls back to CPU if no GPU)
 
 Run
 ---
@@ -84,8 +84,29 @@ needs an internet connection and some disk space. You do NOT need a separate
 CUDA toolkit install, only the driver.
 
 If no usable GPU is detected, the NVIDIA build still runs and falls back to CPU.
-If you do not have an NVIDIA GPU, use the CPU-only tarball instead — it skips
-the CUDA download entirely.
+If you have neither an NVIDIA GPU nor a supported AMD GPU (see below), use the
+CPU-only tarball instead: it skips the GPU download entirely.
+
+AMD GPUs (same tarball, community-tested)
+-----------------------------------------
+
+Despite its name, the NVIDIA tarball also sets up an AMD GPU. When it finds no
+NVIDIA card, it looks for an AMD one through the amdgpu kernel driver and
+downloads the ROCm build of PyTorch (about 3-4 GB) on first launch. Nothing else
+needs installing: the ROCm runtime comes inside that download, so no ROCm
+packages from your distribution are needed.
+
+Supported: the cards the official ROCm build of PyTorch has kernels for, which
+includes the RX 9000 series (RDNA4), the RX 7000 series (RDNA3), the RX 6800 /
+6900 family (gfx1030) and Instinct accelerators. Cards outside that list stay
+on the CPU, and setup says so. With an integrated AMD GPU as well, the card
+ROCm supports is the one used.
+
+Your user needs read/write access to /dev/kfd, which is usually owned by the
+render group:
+
+    ls -l /dev/kfd
+    sudo usermod -aG render,video $USER    # then log out and back in
 
 Notes
 -----

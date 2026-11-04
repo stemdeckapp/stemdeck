@@ -15,6 +15,18 @@ from app.pipeline.errors import SeparationError, classify_failure
         ("OSError: cannot allocate memory", "out-of-memory"),
         ("RuntimeError: no kernel image is available for execution", "unsupported-device"),
         ("AssertionError: Torch not compiled with CUDA enabled", "unsupported-device"),
+        # A ROCm build of torch reports an AMD GPU through torch.cuda, in HIP's
+        # and MIOpen's words (#825). The first two are caught by older
+        # patterns, kept here so a reordering cannot lose them.
+        ("torch.OutOfMemoryError: HIP out of memory. Tried to allocate 1.50 GiB", "out-of-memory"),
+        ("RuntimeError: HIP error: invalid device function", "unsupported-device"),
+        (
+            "hipErrorNoBinaryForGpu: Unable to find code object for all current devices!",
+            "unsupported-device",
+        ),
+        ("RuntimeError: No HIP GPUs are available", "unsupported-device"),
+        ("RuntimeError: miopenStatusUnknownError", "unsupported-device"),
+        ("RuntimeError: miopenStatusAllocFailed", "out-of-memory"),
         ("OSError: [Errno 28] No space left on device", "disk-full"),
         ("Invalid data found when processing input", "bad-input"),
         ("RuntimeError: no stems produced by demucs", "bad-input"),

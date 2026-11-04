@@ -66,6 +66,26 @@ COPY static/ ./static/
 ARG VERSION=0.0.0
 RUN SETUPTOOLS_SCM_PRETEND_VERSION="${VERSION#v}" pip install . --timeout 300
 
+# The :rocm image, for AMD GPUs (#825): swap in the ROCm build of torch, which
+# drives an AMD GPU through the same torch.cuda API, so nothing else changes.
+# Empty by default, which keeps the CUDA build the line above installed.
+# torch 2.8.0, the line the desktop app installs for AMD too, on rocm6.4, the
+# newest ROCm index it is published on. --no-deps, so pip touches only these
+# three wheels; the nvidia-* runtime and triton the CUDA build pulled in are
+# then dead weight and removed. The last line fails the build if the swap did
+# not take.
+ARG TORCH_INDEX_URL=
+RUN if [ -n "${TORCH_INDEX_URL}" ]; then \
+        tag="${TORCH_INDEX_URL##*/}" \
+        && pip uninstall -y torch torchaudio torchvision \
+        && pip install --timeout 300 --no-deps \
+            "torch==2.8.0+${tag}" "torchaudio==2.8.0+${tag}" "torchvision==0.23.0+${tag}" \
+            --index-url "${TORCH_INDEX_URL}" \
+        && pip freeze | sed -n 's/^\(nvidia-[^=]*\)==.*/\1/p; s/^\(triton\)==.*/\1/p' \
+            | xargs -r pip uninstall -y \
+        && python -c "import torch, torchaudio; assert torch.version.hip, torch.__version__"; \
+    fi
+
 # Drop the ~930 yt-dlp extractors StemDeck can never reach. The container gets
 # the same treatment as the desktop bundles and for the same reason: several
 # dozen of them are adult sites, named as such, and lazy_extractors.py lists
@@ -82,7 +102,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     TORCH_HOME=/cache/torch \
-    XDG_CACHE_HOME=/cache
+    XDG_CACHE_HOME=/cache \
+    MIOPEN_USER_DB_PATH=/cache/miopen \
+    MIOPEN_CUSTOM_CACHE_DIR=/cache/miopen
 
 # Runtime-only OS deps. ffmpeg has many shared libs (libav*, libsw*,
 # libpostproc), so we install via apt rather than copy-pasting binaries

@@ -42,6 +42,9 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cannot allocate memory",
             "out of memory",
             "memoryerror",
+            # MIOpen, ROCm's cuDNN, failing to allocate on an AMD GPU (#825).
+            # Here, ahead of the other MIOpen statuses below.
+            "miopenstatusallocfailed",
         ),
     ),
     (
@@ -53,6 +56,13 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cudnn error",
             "not currently implemented for the mps device",
             "torch not compiled with cuda",
+            # A ROCm build of torch on an AMD GPU (#825): no kernels for the
+            # card's gfx target (HIP's "invalid device function" is caught
+            # above), a HIP runtime that cannot reach the card (no /dev/kfd
+            # access), and any other MIOpen failure.
+            "hiperrornobinaryforgpu",
+            "no hip gpus are available",
+            "miopenstatus",
         ),
     ),
     (

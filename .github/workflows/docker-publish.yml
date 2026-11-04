@@ -6,6 +6,14 @@ name: Docker Publish
 # wheel, which is the CUDA build -- so the same image runs on CPU by default and
 # uses the GPU automatically when started with `--runtime=nvidia` (see the
 # Unraid template in templates/stemdeck.xml).
+#
+# A second image carries the ROCm build of torch for AMD GPUs (#825), with the
+# same tags plus a -rocm suffix (:rocm where the default image gets :latest).
+# It is a separate image rather than the default because the ROCm runtime is
+# several GB more, which every CPU and NVIDIA user would otherwise pull for
+# nothing. Each image is its own matrix leg: its own runner, disk and timeout,
+# built in parallel, and fail-fast is off, so a ROCm failure can never stop or
+# delay the default image.
 
 on:
   # Every merge to main publishes a rolling :edge image. The version is derived
@@ -41,8 +49,28 @@ env:
 
 jobs:
   build-and-push:
+    name: build-and-push (${{ matrix.image }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: default
+            edge: edge
+            suffix: ""
+            latest: latest
+            torch_index: ""
+            timeout: 60
+          # Not measured yet: the ROCm wheels are about 3.6 GB on top of the
+          # CUDA stack the project install pulls first (torch<2.7 in
+          # pyproject.toml), so the leg gets twice the default's time.
+          - image: rocm
+            edge: edge-rocm
+            suffix: "-rocm"
+            latest: rocm
+            torch_index: https://download.pytorch.org/whl/rocm6.4
+            timeout: 120
     permissions:
       contents: read
       packages: write
@@ -76,9 +104,17 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=edge,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version == '') }}
-            type=raw,value=${{ steps.ver.outputs.value }},enable=${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && (github.event.action == 'released' || (github.event.action == 'published' && !github.event.release.prerelease)) }}
+            type=raw,value=${{ matrix.edge }},enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version == '') }}
+            type=raw,value=${{ steps.ver.outputs.value }}${{ matrix.suffix }},enable=${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') }}
+            type=raw,value=${{ matrix.latest }},enable=${{ github.event_name == 'release' && (github.event.action == 'released' || (github.event.action == 'published' && !github.event.release.prerelease)) }}
+
+      # The ROCm wheels unpack to several GB on top of the CUDA stack the
+      # project install pulls first, more than a hosted runner has free.
+      - name: free disk space for the ROCm build
+        if: matrix.image == 'rocm'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
@@ -94,11 +130,13 @@ jobs:
         with:
           context: .
           file: build/Dockerfile
-          # Unraid is x86_64; arm64 has no CUDA torch and is not a target.
+          # Unraid is x86_64; arm64 has no CUDA or ROCm torch and is not a target.
           platforms: linux/amd64
           push: true
+          # Empty for the default image, which keeps the CUDA build.
           build-args: |
             VERSION=${{ steps.ver.outputs.value }}
+            TORCH_INDEX_URL=${{ matrix.torch_index }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false

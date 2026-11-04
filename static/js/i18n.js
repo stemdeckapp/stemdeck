@@ -1421,6 +1421,8 @@ const en = {
   "settings.transcribe.title": "Transcribe lyrics",
   "settings.transcribe.desc": "When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA GPU. The first run downloads a speech model (1.6 GB for an NVIDIA GPU, 0.5 GB otherwise). Applies to the next track.",
   "settings.transcribe.auto": "Auto (NVIDIA GPU only)",
+  "settings.transcribe.descRocm": "When no lyrics are found for a track, transcribe them from its vocals locally with Whisper. Auto does this only on an NVIDIA/AMD GPU. The first run downloads a speech model (1.6 GB for an NVIDIA/AMD GPU, 0.5 GB otherwise). Applies to the next track.",
+  "settings.transcribe.autoRocm": "Auto (NVIDIA/AMD GPU only)",
   "settings.transcribe.on": "On",
   "settings.transcribe.off": "Off",
 
@@ -3293,6 +3295,8 @@ const pl = {
   "settings.transcribe.title": "Transkrypcja tekstów",
   "settings.transcribe.desc": "Gdy dla utworu nie ma tekstu, zostanie spisany z wokalu lokalnie przez Whisper. Auto robi to tylko na GPU NVIDIA. Za pierwszym razem pobierany jest model mowy (1,6 GB dla GPU NVIDIA, 0,5 GB w pozostałych przypadkach). Dotyczy następnego utworu.",
   "settings.transcribe.auto": "Auto (tylko GPU NVIDIA)",
+  "settings.transcribe.descRocm": "Gdy dla utworu nie ma tekstu, zostanie spisany z wokalu lokalnie przez Whisper. Auto robi to tylko na GPU NVIDIA/AMD. Za pierwszym razem pobierany jest model mowy (1,6 GB dla GPU NVIDIA/AMD, 0,5 GB w pozostałych przypadkach). Dotyczy następnego utworu.",
+  "settings.transcribe.autoRocm": "Auto (tylko GPU NVIDIA/AMD)",
   "settings.transcribe.on": "Włączona",
   "settings.transcribe.off": "Wyłączona",
 
@@ -5154,6 +5158,8 @@ const ja = {
   "settings.transcribe.title": "歌詞の文字起こし",
   "settings.transcribe.desc": "トラックの歌詞が見つからないとき、Whisperでボーカルからローカルに文字起こしします。自動ではNVIDIA GPUのときだけ行います。初回は音声モデルをダウンロードします(NVIDIA GPU用1.6 GB、それ以外0.5 GB)。次のトラックから適用されます。",
   "settings.transcribe.auto": "自動 (NVIDIA GPUのみ)",
+  "settings.transcribe.descRocm": "トラックの歌詞が見つからないとき、Whisperでボーカルからローカルに文字起こしします。自動ではNVIDIA/AMD GPUのときだけ行います。初回は音声モデルをダウンロードします(NVIDIA/AMD GPU用1.6 GB、それ以外0.5 GB)。次のトラックから適用されます。",
+  "settings.transcribe.autoRocm": "自動 (NVIDIA/AMD GPUのみ)",
   "settings.transcribe.on": "オン",
   "settings.transcribe.off": "オフ",
 
@@ -6989,6 +6995,8 @@ const zhHans = {
   "settings.transcribe.title": "转写歌词",
   "settings.transcribe.desc": "找不到曲目的歌词时,用 Whisper 在本地从人声转写歌词。自动模式仅在 NVIDIA GPU 上进行。首次使用会下载语音模型(NVIDIA GPU 1.6 GB,其他 0.5 GB)。从下一首曲目开始生效。",
   "settings.transcribe.auto": "自动(仅 NVIDIA GPU)",
+  "settings.transcribe.descRocm": "找不到曲目的歌词时,用 Whisper 在本地从人声转写歌词。自动模式仅在 NVIDIA/AMD GPU 上进行。首次使用会下载语音模型(NVIDIA/AMD GPU 1.6 GB,其他 0.5 GB)。从下一首曲目开始生效。",
+  "settings.transcribe.autoRocm": "自动(仅 NVIDIA/AMD GPU)",
   "settings.transcribe.on": "开启",
   "settings.transcribe.off": "关闭",
 
@@ -8827,6 +8835,8 @@ const de = {
   "settings.transcribe.title": "Songtexte transkribieren",
   "settings.transcribe.desc": "Wird für einen Track kein Songtext gefunden, wird er lokal mit Whisper aus dem Gesang transkribiert. Auto macht das nur auf einer NVIDIA-GPU. Beim ersten Mal wird ein Sprachmodell heruntergeladen (1,6 GB für eine NVIDIA-GPU, sonst 0,5 GB). Gilt ab dem nächsten Track.",
   "settings.transcribe.auto": "Auto (nur NVIDIA-GPU)",
+  "settings.transcribe.descRocm": "Wird für einen Track kein Songtext gefunden, wird er lokal mit Whisper aus dem Gesang transkribiert. Auto macht das nur auf einer NVIDIA/AMD-GPU. Beim ersten Mal wird ein Sprachmodell heruntergeladen (1,6 GB für eine NVIDIA/AMD-GPU, sonst 0,5 GB). Gilt ab dem nächsten Track.",
+  "settings.transcribe.autoRocm": "Auto (nur NVIDIA/AMD-GPU)",
   "settings.transcribe.on": "An",
   "settings.transcribe.off": "Aus",
 
@@ -10676,6 +10686,8 @@ const pt = {
   "settings.transcribe.title": "Transcrever letras",
   "settings.transcribe.desc": "Quando nenhuma letra é encontrada para uma faixa, ela é transcrita localmente a partir dos vocais com o Whisper. No automático, isso só acontece em uma GPU NVIDIA. Na primeira vez, um modelo de fala é baixado (1,6 GB para GPU NVIDIA, 0,5 GB nos demais casos). Aplica-se à próxima faixa.",
   "settings.transcribe.auto": "Automático (só GPU NVIDIA)",
+  "settings.transcribe.descRocm": "Quando nenhuma letra é encontrada para uma faixa, ela é transcrita localmente a partir dos vocais com o Whisper. No automático, isso só acontece em uma GPU NVIDIA/AMD. Na primeira vez, um modelo de fala é baixado (1,6 GB para GPU NVIDIA/AMD, 0,5 GB nos demais casos). Aplica-se à próxima faixa.",
+  "settings.transcribe.autoRocm": "Automático (só GPU NVIDIA/AMD)",
   "settings.transcribe.on": "Ativado",
   "settings.transcribe.off": "Desativado",
 
@@ -12524,6 +12536,8 @@ const id = {
   "settings.transcribe.title": "Transkripsikan lirik",
   "settings.transcribe.desc": "Jika lirik sebuah trek tidak ditemukan, lirik ditranskripsikan dari vokalnya secara lokal dengan Whisper. Otomatis hanya melakukannya di GPU NVIDIA. Pertama kali akan mengunduh model suara (1,6 GB untuk GPU NVIDIA, 0,5 GB untuk lainnya). Berlaku mulai trek berikutnya.",
   "settings.transcribe.auto": "Otomatis (hanya GPU NVIDIA)",
+  "settings.transcribe.descRocm": "Jika lirik sebuah trek tidak ditemukan, lirik ditranskripsikan dari vokalnya secara lokal dengan Whisper. Otomatis hanya melakukannya di GPU NVIDIA/AMD. Pertama kali akan mengunduh model suara (1,6 GB untuk GPU NVIDIA/AMD, 0,5 GB untuk lainnya). Berlaku mulai trek berikutnya.",
+  "settings.transcribe.autoRocm": "Otomatis (hanya GPU NVIDIA/AMD)",
   "settings.transcribe.on": "Aktif",
   "settings.transcribe.off": "Nonaktif",
 
@@ -14363,6 +14377,8 @@ const fr = {
   "settings.transcribe.title": "Transcrire les paroles",
   "settings.transcribe.desc": "Si les paroles d'un morceau sont introuvables, elles sont transcrites localement à partir de la voix avec Whisper. Auto ne le fait que sur un GPU NVIDIA. La première fois, un modèle vocal est téléchargé (1,6 Go pour un GPU NVIDIA, 0,5 Go sinon). S'applique au prochain morceau.",
   "settings.transcribe.auto": "Auto (GPU NVIDIA uniquement)",
+  "settings.transcribe.descRocm": "Si les paroles d'un morceau sont introuvables, elles sont transcrites localement à partir de la voix avec Whisper. Auto ne le fait que sur un GPU NVIDIA/AMD. La première fois, un modèle vocal est téléchargé (1,6 Go pour un GPU NVIDIA/AMD, 0,5 Go sinon). S'applique au prochain morceau.",
+  "settings.transcribe.autoRocm": "Auto (GPU NVIDIA/AMD uniquement)",
   "settings.transcribe.on": "Activé",
   "settings.transcribe.off": "Désactivé",
 
@@ -15146,6 +15162,7 @@ const ptPT = {
   "lyrics.sync.snapTitle": "Os toques e arrastos ficam onde o canto começa, se estiver perto. Mantenha Alt ao arrastar para posicionar livremente.",
   "lyrics.align.doneTitle": "Fechar o painel. As alterações já estão guardadas.",
   "settings.transcribe.desc": "Quando não é encontrada nenhuma letra para uma faixa, esta é transcrita localmente a partir das vozes com o Whisper. No automático, isto só acontece numa GPU NVIDIA. Da primeira vez, é transferido um modelo de fala (1,6 GB para GPU NVIDIA, 0,5 GB nos restantes casos). Aplica-se à próxima faixa.",
+  "settings.transcribe.descRocm": "Quando não é encontrada nenhuma letra para uma faixa, esta é transcrita localmente a partir das vozes com o Whisper. No automático, isto só acontece numa GPU NVIDIA/AMD. Da primeira vez, é transferido um modelo de fala (1,6 GB para GPU NVIDIA/AMD, 0,5 GB nos restantes casos). Aplica-se à próxima faixa.",
   "pitch.insecureOrigin": "A transposição não está disponível através de uma ligação de rede",
   "position.loopScrollHint": "Desloque para ajustar",
   "settings.autoDelete.title": "Eliminar automaticamente as faixas concluídas",
@@ -16694,6 +16711,8 @@ const es = {
   "settings.transcribe.title": "Transcribir letras",
   "settings.transcribe.desc": "Si no se encuentra la letra de una pista, se transcribe localmente a partir de la voz con Whisper. Automático solo lo hace en una GPU NVIDIA. La primera vez se descarga un modelo de voz (1,6 GB para GPU NVIDIA, 0,5 GB en los demás casos). Se aplica a la siguiente pista.",
   "settings.transcribe.auto": "Automático (solo GPU NVIDIA)",
+  "settings.transcribe.descRocm": "Si no se encuentra la letra de una pista, se transcribe localmente a partir de la voz con Whisper. Automático solo lo hace en una GPU NVIDIA/AMD. La primera vez se descarga un modelo de voz (1,6 GB para GPU NVIDIA/AMD, 0,5 GB en los demás casos). Se aplica a la siguiente pista.",
+  "settings.transcribe.autoRocm": "Automático (solo GPU NVIDIA/AMD)",
   "settings.transcribe.on": "Activado",
   "settings.transcribe.off": "Desactivado",
 
@@ -18562,6 +18581,8 @@ const ko = {
   "settings.transcribe.title": "가사 받아쓰기",
   "settings.transcribe.desc": "트랙의 가사를 찾지 못하면 Whisper로 보컬에서 로컬로 받아써요. 자동은 NVIDIA GPU에서만 해요. 처음 한 번은 음성 모델을 내려받아요(NVIDIA GPU 1.6GB, 그 외 0.5GB). 다음 트랙부터 적용돼요.",
   "settings.transcribe.auto": "자동 (NVIDIA GPU만)",
+  "settings.transcribe.descRocm": "트랙의 가사를 찾지 못하면 Whisper로 보컬에서 로컬로 받아써요. 자동은 NVIDIA/AMD GPU에서만 해요. 처음 한 번은 음성 모델을 내려받아요(NVIDIA/AMD GPU 1.6GB, 그 외 0.5GB). 다음 트랙부터 적용돼요.",
+  "settings.transcribe.autoRocm": "자동 (NVIDIA/AMD GPU만)",
   "settings.transcribe.on": "켜기",
   "settings.transcribe.off": "끄기",
 

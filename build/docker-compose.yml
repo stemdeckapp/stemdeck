@@ -21,6 +21,16 @@ services:
       # Demucs model weights (~170 MB) survive container rebuilds.
       - stemdeck-cache:/cache
     restart: unless-stopped
+    # AMD GPU: build with the ROCm torch (or use ghcr.io/stemdeckapp/stemdeck:rocm)
+    # and hand the container the GPU's device nodes. The host needs only the
+    # amdgpu kernel driver; the ROCm runtime is inside the image. No group_add:
+    # the entrypoint keeps the groups the device nodes belong to.
+    # build:
+    #   args:
+    #     TORCH_INDEX_URL: https://download.pytorch.org/whl/rocm6.4
+    # devices:
+    #   - /dev/kfd
+    #   - /dev/dri
 
 volumes:
   stemdeck-cache:
