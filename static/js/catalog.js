@@ -7,6 +7,7 @@ import { initSections } from "./sections.js";
 import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedStems, titleEl } from "./state.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
+import { paintLoudnessNote, wireLoudnessNote } from "./loudnessNote.js";
 import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
 import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
 import {
@@ -820,6 +821,11 @@ function stateMetadataToTrack(state, fallbackTrack) {
     keyConfidence: state.key_confidence ?? fallbackTrack.keyConfidence,
     lufs: state.lufs ?? fallbackTrack.lufs,
     peakDb: state.peak_db ?? fallbackTrack.peakDb,
+    // An older song measured again (#923), and from what; loudnessNoteSeen,
+    // kept on the row, is only ever set by the note's own dismiss button.
+    loudnessVersion: state.loudness_version ?? fallbackTrack.loudnessVersion ?? null,
+    loudnessRemeasured: state.loudness_remeasured ?? fallbackTrack.loudnessRemeasured ?? false,
+    loudnessBasis: "loudness_basis" in state ? state.loudness_basis : fallbackTrack.loudnessBasis ?? null,
     stemPresence: state.stem_presence ?? fallbackTrack.stemPresence,
     dynamicRange: state.dynamic_range ?? fallbackTrack.dynamicRange,
     tempoStability: state.tempo_stability ?? fallbackTrack.tempoStability,
@@ -947,8 +953,31 @@ export function paintFinishedTrackNames(trackId) {
   if (track && trackId === _currentTrackId) paintNowPlayingNames(track);
 }
 
+/**
+ * The note under the cards for an older song measured again (#923), once per
+ * song: ``loudness`` is its {remeasured, basis, version}, from its row or from
+ * a job's server state. Whether it was dismissed is kept on the row.
+ */
+export function paintTrackLoudnessNote(trackId, loudness) {
+  paintLoudnessNote(trackId, loudness, tracks[trackId]?.loudnessNoteSeen);
+}
+
+/** The note's dismiss button: keeps, on the row, the loudness version the
+ *  note was dismissed for, so a later method change would show it again. */
+function keepLoudnessNoteSeen(trackId, version) {
+  const track = tracks[trackId];
+  if (!track) return;
+  track.loudnessNoteSeen = version;
+  saveState();
+}
+
 function applyTrackInfoToPanel(track) {
   paintNowPlayingNames(track);
+  paintTrackLoudnessNote(track.id, {
+    remeasured: track.loudnessRemeasured,
+    basis: track.loudnessBasis,
+    version: track.loudnessVersion,
+  });
   bpmChip.textContent = track.bpm ? `${track.bpm} BPM` : "— BPM";
   keyChip.textContent = track.key || "— —";
   applyStemPresenceCards(track.stemPresence);
@@ -6208,6 +6237,7 @@ export async function initCatalog() {
   libraryLoaded = true;
   // What waits runs after the rest of this function, so on a drawn library.
   markLibraryLoaded();
+  wireLoudnessNote(keepLoudnessNoteSeen);
   // Not with the other controls: its button stays hidden until this runs, and
   // its labels need the language, which has been read by now.
   wireDonateDialog();
