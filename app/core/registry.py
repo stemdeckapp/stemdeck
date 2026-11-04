@@ -143,7 +143,13 @@ def keep_added_time(job: Job, job_dir: Path) -> None:
 
 # Newer than 0.20.0, which drops them from every record it saves, and kept in
 # metadata.json: after a downgrade and back, that is their only copy.
-_BACK_FROM_METADATA = (*SAVED_FIELDS, "stem_format", "stem_mp3_kbps", "loudness_version")
+_BACK_FROM_METADATA = (
+    *SAVED_FIELDS,
+    "stem_format",
+    "stem_mp3_kbps",
+    "loudness_version",
+    "loudness_remeasured",
+)
 
 
 def register(job: Job) -> Job:
@@ -972,7 +978,11 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         # lost, so the lanes come back with the job.
         takes=recover_takes(job_dir),
     )
-    _read_meta_fields(job, meta, (*SAVED_FIELDS, "has_video", "video_status"))
+    # loudness_remeasured too (#923): checked like a registry record, so a
+    # hand-edited value of the wrong type keeps the default instead of loading.
+    _read_meta_fields(
+        job, meta, (*SAVED_FIELDS, "has_video", "video_status", "loudness_remeasured")
+    )
     job.selected_stems = clean_stems(job.selected_stems) or selected
     # The add time is there from the start: it says nothing of the rest.
     return job, any(name in meta for name in SAVED_FIELDS if name != "created_at")

@@ -233,6 +233,8 @@ def settle_cancelled(job: Job) -> bool:
 # an older one are measured again. 1 (no field) was the mono 22 kHz, first 180 s
 # reading; 2 is BS.1770-4 on the whole stereo mix (analyze.measure_loudness).
 LOUDNESS_VERSION = 2
+# What a song measured again was read from (Job.loudness_remeasured).
+LOUDNESS_BASES = ("source", "stems")
 
 
 @dataclass
@@ -255,6 +257,15 @@ class Job:
     # before 2 hold a mono 22 kHz first-180-s reading, about 4 LU too low; they
     # are measured again the first time they are opened (jobs._upgrade_loudness).
     loudness_version: int | None = None
+    # What an older song's numbers were measured again from (#923): "source"
+    # for its kept upload, "stems" for the sum of its stems (a link song keeps
+    # no source). None when the numbers come from the song's own analysis.
+    # Persisted, since the measurement runs after an open and the next open,
+    # the first to show the new numbers, is often after a restart. The page
+    # tells the user once per song why the card's numbers moved.
+    # Here a string, in to_state() two keys: "loudness_remeasured" is a bool
+    # (a known basis is stored) and "loudness_basis" carries the string.
+    loudness_remeasured: str | None = None
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
     sections: list[dict] | None = None  # [{id, name, kind?, start, end, color}]
@@ -446,6 +457,10 @@ class Job:
             "peak_db": self.peak_db,
             "dynamic_range": self.dynamic_range,
             "loudness_version": self.loudness_version,
+            "loudness_remeasured": self.loudness_remeasured in LOUDNESS_BASES,
+            "loudness_basis": self.loudness_remeasured
+            if self.loudness_remeasured in LOUDNESS_BASES
+            else None,
             "tempo_stability": self.tempo_stability,
             "stem_presence": self.stem_presence,
             "sections": self.sections,

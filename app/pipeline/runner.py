@@ -390,6 +390,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "peak_db": job.peak_db,
         "dynamic_range": job.dynamic_range,
         "loudness_version": job.loudness_version,
+        "loudness_remeasured": job.loudness_remeasured,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "sections": job.sections,

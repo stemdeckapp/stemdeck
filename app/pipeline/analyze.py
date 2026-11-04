@@ -399,6 +399,8 @@ def analyze(job: Job, source: Path) -> tuple[int | None, str | None]:
         peak_db=peak_db,
         dynamic_range=dynamic_range_db(lufs, peak_db),
         loudness_version=LOUDNESS_VERSION,
+        # Measured afresh from the source, not measured again (#923).
+        loudness_remeasured=None,
     )
     try:
         import librosa

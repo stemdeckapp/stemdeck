@@ -204,6 +204,8 @@ const HELP = [
   ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
   ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],
   ['.daw-meta-card[data-meta="lufs"]', "help.meta.lufs"],
+  // The note under the cards after an older song was measured again (#923).
+  ["#loudness-note-dismiss", "help.meta.loudnessNoteDismiss"],
   ['.daw-meta-card[data-meta="duration"]', "help.meta.duration"],
   ['.daw-meta-card[data-meta="dr"]', "help.meta.dr"],
   ['.daw-meta-card[data-meta="stability"]', "help.meta.stability"],

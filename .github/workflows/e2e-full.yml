@@ -1,7 +1,7 @@
 # The whole Playwright suite on big-release, the integration branch. A pull
-# request into big-release runs only a scoped set (ci.yml), so this is where a
-# spec outside that set shows up broken: within minutes of the merge that broke
-# it, on that merge's commit. It never blocks a pull request.
+# request into big-release does not run Playwright (ci.yml), so this is where a
+# broken spec shows up: within minutes of the merge that broke it, on that
+# merge's commit. It never blocks a pull request.
 #
 # Triggers:
 # - every push to big-release (each merged pull request);
