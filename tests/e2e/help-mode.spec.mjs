@@ -246,19 +246,6 @@ test.describe("help mode leaves no control unexplained", () => {
     expect(await unexplained(page)).toEqual([]);
   });
 
-  // daw.css rule 7 hides the footer's waveform strip and the seek bar in it,
-  // so no sweep above can reach it. Shown again, it has to explain itself.
-  test("in the footer's seek bar, once its strip is shown", async ({ page }) => {
-    await openStudio(page);
-    await page.locator(".footer-wave-panel").evaluate((el) => el.style.setProperty("display", "block", "important"));
-    await expect(page.locator("#footer-scrub")).toBeVisible();
-    await helpOn(page);
-    expect(await unexplained(page)).toEqual([]);
-    await page.locator("#footer-scrub").hover();
-    await expect(tip(page).locator("b")).toHaveText("Seek");
-    await expect(tip(page)).toContainText("jump to that point");
-  });
-
   test("in the library, with no song open", async ({ page }) => {
     await seedLibrary(page);
     await stubUpdateCheck(page);

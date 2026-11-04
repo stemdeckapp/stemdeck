@@ -1,11 +1,8 @@
 // The footer's position readout (elapsed / total) against every way a person
 // moves the playhead: a click on the time ruler, the [ and ] keys, and playing.
 // The readout, the engine's clock and the ruler playhead must agree; the seek
-// path used to move nothing on the default engine (#515).
-//
-// The footer's own seek bar (#footer-scrub) is not tested here: daw.css hides
-// the whole waveform strip it lives in (rule 7, display: none !important), so
-// no person can reach it. The fixture is 6 s, enough for fractions of a song.
+// path used to move nothing on the default engine (#515). The fixture is 6 s,
+// enough for fractions of a song.
 
 import { test, expect } from "@playwright/test";
 import { openStudio } from "./helpers.mjs";

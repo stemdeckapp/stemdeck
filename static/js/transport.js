@@ -14,7 +14,7 @@ import {
   multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
-  footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
+  footerTimeElapsed, footerTimeTotal, footerWaveTicks, footerWaveDrawFn,
   loopStartInput, loopEndInput,
   metroBtn, metroPanel, metroMoreBtn, metroVolEl, metroVolBtn, metroVolPanel, metroVolLabel, metroBarEl, metroBarCustomEl, metroGroupEl, metroNoteEl,
   metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl, metroSoundEl,
@@ -328,7 +328,7 @@ export function updatePlayheadMarker(currentSec) {
 
 // Mirror the elapsed/total time into the transport-footer's two side
 // labels (which used to show hardcoded "00:00.000" / "03:38.000") and
-// drive the small scrub bar in the now-playing card. Driven from the
+// the footer waveform's progress. Driven from the
 // same wavesurfer "timeupdate" event that already updates #t-time, so
 // every label stays in sync without extra event plumbing.
 //
@@ -343,7 +343,6 @@ export function updateFooterTimes(currentSec) {
   if (footerTimeElapsed && footerTimeElapsed.textContent !== elapsed) footerTimeElapsed.textContent = elapsed;
   if (footerTimeTotal && footerTimeTotal.textContent !== total) footerTimeTotal.textContent = total;
   const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
-  if (npScrubFill) npScrubFill.style.width = `${pct}%`;
   footerWaveDrawFn?.(pct / 100);
 }
 

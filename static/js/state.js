@@ -82,7 +82,6 @@ export const bgSnapEl = $("bg-snap");
 export const bgBarLenEl = $("bg-barlen");
 export const bgHintEl = $("bg-hint");
 export const stemListEl = document.querySelector(".stem-list");
-export const npScrubFill     = $("footer-scrub-fill");
 
 // ─── Mutable state ───
 
