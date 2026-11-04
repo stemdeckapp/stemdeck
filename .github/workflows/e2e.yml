@@ -1,5 +1,5 @@
 # Browser tests for static/js (#339), as one reusable workflow. ci.yml calls it
-# for pull requests and pushes to main; e2e-full.yml calls it for every push to
+# for pull requests into main, pushes to main and releases; e2e-full.yml calls it for every push to
 # big-release, the nightly run and a manual run. The steps live only here.
 #
 # This drives the real UI against the real backend, including the Tauri code
@@ -18,7 +18,7 @@ on:
   workflow_call:
     inputs:
       mode:
-        description: "full runs every spec; scoped runs the set scripts/ci/select-e2e.mjs picks for the diff against base-ref"
+        description: "full runs every spec (every caller uses it today); scoped runs the set scripts/ci/select-e2e.mjs picks for the diff against base-ref"
         type: string
         required: true
       base-ref:

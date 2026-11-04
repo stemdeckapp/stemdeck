@@ -11,7 +11,7 @@
 // its open version changes, for the library rows and the Stems popover.
 
 import { currentJobId } from "./state.js";
-import { storeGet, storeSet } from "./utils.js";
+import { storeGet, storeSetMany } from "./utils.js";
 import { readSavedMix, getMixMode, mixKey } from "./mixer.js";
 import { laneLabel } from "./constants.js";
 import { t } from "./i18n.js";
@@ -85,13 +85,16 @@ export async function createVersion(jobId, { name = null, lanes, voice = null, c
   }
   const data = await api(base(jobId), jsonInit("POST", { name, stems, select: false }));
   const vid = data.version.id;
-  // Its records are written before it is chosen, so it opens with them.
+  // Its records are written before it is chosen, so it opens with them. One
+  // write for all of them: each desktop store write saves the whole file.
+  const records = {};
   for (const [mode, mix] of Object.entries(mixes)) {
-    if (mix) await storeSet(mixKey(jobId, mode, vid), mix);
+    if (mix) records[mixKey(jobId, mode, vid)] = mix;
   }
   if (voice) {
-    for (const mode of LANE_MODES) await storeSet(choiceKey(jobId, mode, vid), serializeChoice({ voice }));
+    for (const mode of LANE_MODES) records[choiceKey(jobId, mode, vid)] = serializeChoice({ voice });
   }
+  await storeSetMany(records);
   applyServerVersions(jobId, data.versions, data.active_version);
   await openVersion(jobId, vid, filesChanged);
   return data.version;
@@ -123,13 +126,18 @@ export async function deleteVersion(jobId, versionId) {
     console.warn("[versions] delete failed:", err);
     return err.message || "failed";
   }
-  for (const mode of STEM_MODES) {
-    try {
-      await storeSet(mixKey(jobId, mode, versionId), null);
-      await storeSet(choiceKey(jobId, mode, versionId), null);
-    } catch (err) {
-      console.warn("[versions] clearing a deleted version's records failed:", err);
+  // Its records go in one write: each desktop store write saves the whole
+  // file. storeSetMany logs a failed write itself; the catch is for a key
+  // that cannot be built (mixKey, choiceKey), so the list still updates.
+  try {
+    const cleared = {};
+    for (const mode of STEM_MODES) {
+      cleared[mixKey(jobId, mode, versionId)] = null;
+      cleared[choiceKey(jobId, mode, versionId)] = null;
     }
+    await storeSetMany(cleared);
+  } catch (err) {
+    console.warn("[versions] clearing a deleted version's records failed:", err);
   }
   applyServerVersions(jobId, data.versions, data.active_version);
   if (wasOpen && jobId === currentJobId) await showOpenedVersion(jobId);
@@ -204,10 +212,12 @@ export async function extractAsVersion(stems, voice, onBusy = () => {}, expectJo
       if (!ok) return { handled: true, text: splitFailedText(reason) };
       // The version these chips match asked for the pair: it shows it.
       if (same) {
+        const choices = {};
         for (const mode of LANE_MODES) {
           const key = choiceKey(jobId, mode, same.id);
-          await storeSet(key, serializeChoice(mergeChoice(await storeGet(key, null), { voice: "split" })));
+          choices[key] = serializeChoice(mergeChoice(await storeGet(key, null), { voice: "split" }));
         }
+        await storeSetMany(choices);
       }
     }
     // New stems on disk are new lanes the open song has not loaded.

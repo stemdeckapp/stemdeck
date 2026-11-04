@@ -1439,7 +1439,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                 tags = await asyncio.wait_for(
                     asyncio.to_thread(_lookup_audio_tags, job), timeout=TIMEOUT_FETCH_TAGS
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[%s] audio tag lookup timed out after %ds", job_id, TIMEOUT_FETCH_TAGS
                 )
@@ -1475,7 +1475,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=TIMEOUT_IDENTIFY_BACKFILL,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] identification timed out", job_id)
         work = None
         # The work behind a soundtrack, once the identity says which recording
@@ -1492,7 +1492,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=TIMEOUT_WORK_BACKFILL,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] work lookup timed out", job_id)
         lyrics = None
         query = build_query(job, audio_tags=tags, band=artist, identity=identity)
@@ -1512,7 +1512,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] lyrics lookup timed out", job_id)
     finally:
         _TAG_LOOKUPS.discard(job_id)
@@ -1649,7 +1649,7 @@ async def get_artist_extra(job_id: str) -> dict:
     try:
         # Shielded, so one caller giving up does not cancel another's answer.
         answer = await asyncio.wait_for(asyncio.shield(task), DISCOGS_LOOKUP_BUDGET_SEC + 1)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("[%s] Discogs lookup timed out", job_id)
         answer = None
     except Exception:
@@ -1776,7 +1776,7 @@ async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None)
             ),
             timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("[%s] lyrics lookup timed out", job_id)
         raise HTTPException(status_code=502, detail="lyrics service unreachable") from None
     except Exception:

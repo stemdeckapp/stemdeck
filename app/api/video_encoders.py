@@ -94,7 +94,7 @@ async def test_video_encoders() -> dict:
                 # the last probe hangs past it (each probe has its own timeout).
                 timeout=VIDEO_ENCODER_TEST_BUDGET_SEC + 60,
             )
-        except asyncio.TimeoutError:  # not the builtin before Python 3.11
+        except TimeoutError:
             raise HTTPException(status_code=504, detail="the encoder test took too long") from None
         except Exception:
             logger.exception("video encoder test failed")
