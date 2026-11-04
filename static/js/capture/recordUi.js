@@ -37,7 +37,7 @@ import { recordBlockReason } from "./takeMath.js";
 import { startTake, onTakeEvent } from "./takeRecorder.js";
 import {
   requestTakesReload, armedTracks, getTracks, setArmed, trackInput, addTrack, initTrackControls,
-  refreshTrackInputs, showTrackNote, autoPickChannel,
+  refreshTrackInputs, showTrackNote, autoPickChannel, trackMeters,
 } from "./takeLanes.js";
 import { channelsNeeded, defaultInputId } from "./trackInputs.js";
 
@@ -237,9 +237,9 @@ function startArmMeter() {
   const loop = () => {
     armRaf = 0;
     const armed = audioArmed();
-    const rows = document.querySelectorAll(".lane-header.track-lane .lane-vu");
+    const meters = trackMeters();
     if (!armed.length) {
-      for (const vu of rows) vu.style.removeProperty("--vu-in");
+      for (const vu of meters.values()) vu.style.removeProperty("--vu-in");
       return;
     }
     let c = liveCapture();
@@ -255,16 +255,15 @@ function startArmMeter() {
       closeCapture();
       c = null;
     }
-    const ids = new Set(armed.map((tr) => tr.id));
-    for (const vu of rows) {
-      const id = vu.dataset.stem;
-      if (!ids.has(id)) { vu.style.removeProperty("--vu-in"); continue; }
-      const track = armed.find((tr) => tr.id === id);
+    const byId = new Map(armed.map((tr) => [tr.id, tr]));
+    for (const [id, vu] of meters) {
+      const track = byId.get(id);
+      if (!track) { vu.style.removeProperty("--vu-in"); continue; }
       const peak = c ? c.channelLevel(trackInput(track).channels) : 0;
       vu.style.setProperty("--vu-in", `${Math.round(meterFraction(peak) * 100)}%`);
       autoPick(c, track, peak);
     }
-    for (const id of silentRuns.keys()) if (!ids.has(id)) silentRuns.delete(id);
+    for (const id of silentRuns.keys()) if (!byId.has(id)) silentRuns.delete(id);
     armRaf = requestAnimationFrame(loop);
   };
   armRaf = requestAnimationFrame(loop);
