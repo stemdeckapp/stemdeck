@@ -18,6 +18,7 @@ import errno
 import filecmp
 import logging
 import os
+import re
 import shutil
 import stat
 from dataclasses import dataclass
@@ -116,8 +117,12 @@ def validate_target(target: Path, current: Path) -> Path:
         # documents_store_path), so re-selecting a folder StemDeck already
         # used must recognize it as "ours", same as registry.json.
         ours = {"registry.json", "failed", "user-data.json"}
+        # The copies the shell's save keeps (#1023) are ours only beside a
+        # library: a folder holding nothing else is not one StemDeck used.
+        records_beside = any(e.name in _LIBRARY_RECORDS or _looks_like_job_dir(e) for e in entries)
         if entries and not all(
             e.name in ours
+            or (_is_store_copy(e.name) and records_beside)
             or _looks_like_job_dir(e)
             or _left_by_os_or_stemdeck(e.name)
             or _partial_copy(e.name, current)
@@ -144,6 +149,22 @@ def validate_target(target: Path, current: Path) -> Path:
 # behind and its favourites, Trash and tags would be lost (#798).
 _LIBRARY_RECORDS = ("registry.json", "user-data.json")
 
+# The copies the desktop shell's save keeps beside user-data.json (#1023): the
+# previous file (.bak), a save that stopped partway (.tmp), and damaged files it
+# set aside (.corrupt-<unix time>, -<n> for a second in the same second).
+_STORE_COPY_RE = re.compile(r"user-data\.json\.(bak|tmp|corrupt-[0-9]+(-[0-9]+)?)\Z")
+
+
+def _is_store_copy(name: str) -> bool:
+    return bool(_STORE_COPY_RE.match(name))
+
+
+def _store_copies(folder: Path) -> list[str]:
+    try:
+        return sorted(e.name for e in folder.iterdir() if _is_store_copy(e.name))
+    except OSError:
+        return []
+
 
 def _holds_another_library(target: Path, current: Path) -> bool:
     """Whether the target has library records of its own that the move would
@@ -153,8 +174,10 @@ def _holds_another_library(target: Path, current: Path) -> bool:
     entry no longer exists in the source, so a records file present in only one
     place is our own progress. Both exist when a move across drives copied it
     and has not removed the original yet, and then the two files are identical.
+    The copies the shell's save keeps (#1023) count the same way: a different
+    one in each folder is another library's.
     """
-    for name in _LIBRARY_RECORDS:
+    for name in (*_LIBRARY_RECORDS, *_store_copies(target)):
         theirs = target / name
         mine = current / name
         if not os.path.lexists(theirs) or not mine.is_file():
@@ -234,14 +257,25 @@ def move_library(current: Path, target: Path) -> MoveResult:
 
     for entry in sorted(current.iterdir()):
         destination = target / entry.name
-        size = directory_size(entry) if entry.is_dir() else entry.stat().st_size
+        try:
+            size = directory_size(entry) if entry.is_dir() else entry.stat().st_size
+        except FileNotFoundError:
+            # Gone since the listing: the shell renames its .tmp away at the end
+            # of every save (#1023).
+            continue
         try:
             if os.path.lexists(destination):
                 if _holds_all_of(destination, entry):
                     # An earlier attempt finished this one.
                     copied.append(entry.name)
                     continue
-                if _is_link(entry) or not _looks_like_job_dir(entry):
+                if _replaces_stale_copy(entry, destination, current):
+                    _remove(destination)
+                    if _renamed(entry, destination):
+                        moved += 1
+                        moved_bytes += size
+                        continue
+                elif _is_link(entry) or not _looks_like_job_dir(entry):
                     # Such as the target's own .DS_Store: never written over.
                     logger.info("stems move: a different %s is at the target", entry.name)
                     continue
@@ -263,6 +297,22 @@ def move_library(current: Path, target: Path) -> MoveResult:
         moved_bytes += size
 
     return MoveResult(str(current), str(target), moved, moved_bytes, tuple(copied))
+
+
+def _replaces_stale_copy(entry: Path, destination: Path, current: Path) -> bool:
+    """Whether the source's copy of user-data.json (#1023) replaces a different
+    one at the target. It does once our user-data.json is at the target: the
+    copies belong with the file they were made from, and the target's one is
+    then a leftover that nothing reads but a recovery, which would restore the
+    wrong library from it. Ours is never left behind in the old folder. Before
+    that, or with a link on either side, the target's copy stays as it is."""
+    if not _is_store_copy(entry.name) or _is_link(entry) or _is_link(destination):
+        return False
+    if not destination.is_file():
+        return False
+    ours = current / "user-data.json"
+    theirs = destination.with_name("user-data.json")
+    return not os.path.lexists(ours) or _holds_all_of(theirs, ours)
 
 
 def remove_moved(current: Path, names: tuple[str, ...]) -> None:

@@ -5,6 +5,7 @@ mod dmabuf;
 mod dragout;
 mod dropin;
 mod mediaperm;
+mod store_file;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -28,7 +29,6 @@ use std::{
 };
 use tar::{Archive, EntryType};
 use tauri::{Emitter, Manager};
-use tauri_plugin_store::StoreExt;
 #[cfg(windows)]
 use zip::ZipArchive;
 
@@ -445,7 +445,6 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             // A portable folder the user cannot write to (Program Files, say)
             // cannot work at all: setup, the CUDA swap and the updater all
@@ -591,6 +590,7 @@ fn main() {
             Ok(())
         })
         .manage(BackendState::default())
+        .manage(store_file::UserData::default())
         .manage(dropin::DropInbox::default())
         // Only ever fires where the native drop handler is on, which is Linux
         // (see dropin::NATIVE_FILE_DROP). Elsewhere the page handles drops.
@@ -646,6 +646,9 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
         .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                save_unsaved_user_data(app_handle);
+            }
             if let tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
@@ -749,7 +752,14 @@ fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let new_path = jobs_dir.join("user-data.json");
     if !new_path.is_file() {
         if let Some(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
-            if old_path.is_file() && old_path != new_path {
+            // A missing file beside a complete copy a save keeps (#1023) is a
+            // save that stopped partway, which opening the store recovers
+            // from. Copying the pre-#403 file in would hide that copy behind a
+            // much older library. A .tmp cut short is no such copy.
+            if old_path.is_file()
+                && old_path != new_path
+                && !store_file::has_recoverable_copy(&new_path)
+            {
                 let _ = fs::copy(&old_path, &new_path);
             }
         }
@@ -819,10 +829,11 @@ async fn pick_exports_folder(app: tauri::AppHandle) -> Result<Option<String>, St
     };
 
     let chosen = picked.to_string();
-    let store_path = documents_store_path(&app)?;
-    let store = app.store(store_path).map_err(|e| e.to_string())?;
-    store.set(EXPORTS_DIR_KEY, serde_json::Value::String(chosen.clone()));
-    store.save().map_err(|e| e.to_string())?;
+    let value = serde_json::Value::String(chosen.clone());
+    with_user_data(&app, |store| {
+        store.set(EXPORTS_DIR_KEY.to_string(), value);
+        save_user_data(store)
+    })??;
     Ok(Some(chosen))
 }
 
@@ -835,9 +846,7 @@ fn current_exports_dir(app: tauri::AppHandle) -> Result<String, String> {
 /// Read a string out of the persistent store, or None if it is absent or is
 /// not a string. Never fails the caller: a missing store means "not chosen".
 fn stored_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
-    let path = documents_store_path(app).ok()?;
-    let store = app.store(path).ok()?;
-    let value = store.get(key)?;
+    let value = with_user_data(app, |store| store.get(key)).ok()??;
     value.as_str().map(|s| s.to_string())
 }
 
@@ -852,43 +861,84 @@ fn exports_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Run `f` on the user-data store (user-data.json in the jobs folder),
+/// opening it from disk first when it is not open yet or the jobs folder has
+/// moved. A start that finds the file missing, empty or not valid JSON
+/// recovers from the copy a save keeps (#1023) and says so in the log. Err,
+/// starting with store_file::UNAVAILABLE, while the file is there but cannot
+/// be read.
+fn with_user_data<T>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&mut store_file::OpenStore) -> T,
+) -> Result<T, String> {
+    let path = documents_store_path(app)?;
+    let data = app.state::<store_file::UserData>();
+    data.with(&path, report_user_data_problem, f)
+}
+
+/// To stderr and setup.log, the shell log a bug report carries, so a
+/// recovered or emptied library list is never silent.
+fn report_user_data_problem(line: &str) {
+    eprintln!("[stemdeck] {line}");
+    if let Ok(data_dir) = local_data_dir() {
+        append_to_setup_log(&data_dir, line);
+    }
+}
+
+/// At exit, the save a command could not make, tried once more.
+fn save_unsaved_user_data(app: &tauri::AppHandle) {
+    if let Some(Err(e)) = app.state::<store_file::UserData>().save_unsaved() {
+        report_user_data_problem(&format!("could not save user-data.json at exit: {e}"));
+    }
+}
+
+fn save_user_data(store: &mut store_file::OpenStore) -> Result<(), String> {
+    store
+        .save()
+        .map_err(|e| format!("could not save user-data.json: {e}"))
+}
+
 /// Get a value from the persistent user-data store.
 #[tauri::command]
 fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
     let path = documents_store_path(&app)?;
-    let store = app.store(path).map_err(|e| e.to_string())?;
-    Ok(store.get(&key))
+    app.state::<store_file::UserData>()
+        .get(&path, report_user_data_problem, &key)
 }
 
 /// Set a value in the persistent user-data store and immediately flush to disk.
+/// Refused for a key the page asked for while the store could not be opened:
+/// the page holds a stand-in for it, not its value.
 #[tauri::command]
 fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
-    let path = documents_store_path(&app)?;
-    let store = app.store(path).map_err(|e| e.to_string())?;
-    store.set(key, value);
-    store.save().map_err(|e| e.to_string())
+    app.state::<store_file::UserData>()
+        .refuse_unread(std::iter::once(&key))?;
+    with_user_data(&app, |store| {
+        store.set(key, value);
+        save_user_data(store)
+    })?
 }
 
 /// What store_set_many needs of the store: set a key in memory, and write the
 /// whole file. A trait so its unit test can count the writes.
 trait KeyValueStore {
-    fn set_value(&self, key: String, value: serde_json::Value);
-    fn save_file(&self) -> Result<(), String>;
+    fn set_value(&mut self, key: String, value: serde_json::Value);
+    fn save_file(&mut self) -> Result<(), String>;
 }
 
-impl<R: tauri::Runtime> KeyValueStore for tauri_plugin_store::Store<R> {
-    fn set_value(&self, key: String, value: serde_json::Value) {
+impl KeyValueStore for store_file::OpenStore {
+    fn set_value(&mut self, key: String, value: serde_json::Value) {
         self.set(key, value);
     }
-    fn save_file(&self) -> Result<(), String> {
-        self.save().map_err(|e| e.to_string())
+    fn save_file(&mut self) -> Result<(), String> {
+        save_user_data(self)
     }
 }
 
 /// Every key in the store, then one write of the file; nothing written when
 /// there are no keys.
 fn set_all_then_save(
-    store: &impl KeyValueStore,
+    store: &mut impl KeyValueStore,
     entries: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
     if entries.is_empty() {
@@ -904,28 +954,34 @@ fn set_all_then_save(
 /// (#996). Each save writes the whole store file, which holds every song's
 /// mixes: on a 9 MB store one save took 47 to 83 ms, so a version delete that
 /// cleared its eight records with store_set took 386 to 626 ms. Synchronous
-/// like store_set, so both run in the order the page sent them.
+/// like store_set, so both run in the order the page sent them, and refused
+/// whole like store_set when one of its keys was not read.
 #[tauri::command]
 fn store_set_many(
     app: tauri::AppHandle,
     entries: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
-    let path = documents_store_path(&app)?;
-    let store = app.store(path).map_err(|e| e.to_string())?;
-    set_all_then_save(store.as_ref(), entries)
+    app.state::<store_file::UserData>()
+        .refuse_unread(entries.keys())?;
+    with_user_data(&app, |store| set_all_then_save(store, entries))?
 }
 
 /// Clear the persistent user-data store entirely (Settings -> General ->
 /// "Reset app data"). Complements the backend's own job-data wipe (POST
 /// /api/reset) -- together they fully clear a user's local StemDeck state,
 /// including the per-job mixer-state keys (stemdeck:mix:<job_id>) that have
-/// no fixed enumeration to clear individually.
+/// no fixed enumeration to clear individually. The copies a save keeps go
+/// first (store_file::OpenStore::reset), or a later start that found the store
+/// damaged would bring the old library back from one.
 #[tauri::command]
 fn reset_user_data(app: tauri::AppHandle) -> Result<(), String> {
-    let path = documents_store_path(&app)?;
-    let store = app.store(path).map_err(|e| e.to_string())?;
-    store.clear();
-    store.save().map_err(|e| e.to_string())
+    with_user_data(&app, |store| {
+        store
+            .reset(report_user_data_problem)
+            .map_err(|e| format!("could not save user-data.json: {e}"))
+    })??;
+    app.state::<store_file::UserData>().forget_unread();
+    Ok(())
 }
 
 /// Called by JS after the one-time localStorage → store migration completes.
@@ -9259,10 +9315,10 @@ mod tests {
     }
 
     impl super::KeyValueStore for CountingStore {
-        fn set_value(&self, key: String, value: serde_json::Value) {
+        fn set_value(&mut self, key: String, value: serde_json::Value) {
             self.values.borrow_mut().insert(key, value);
         }
-        fn save_file(&self) -> Result<(), String> {
+        fn save_file(&mut self) -> Result<(), String> {
             self.saves.set(self.saves.get() + 1);
             if self.fail_save {
                 Err("disk full".into())
@@ -9280,9 +9336,9 @@ mod tests {
     /// store_set_many puts every key in the store and writes the file once.
     #[test]
     fn store_set_many_sets_every_key_and_saves_once() {
-        let store = CountingStore::default();
+        let mut store = CountingStore::default();
         let given = serde_json::json!({ "a": null, "b": { "voice": "split" }, "c": 3 });
-        super::set_all_then_save(&store, entries(given.clone())).expect("saved");
+        super::set_all_then_save(&mut store, entries(given.clone())).expect("saved");
         assert_eq!(store.saves.get(), 1, "one save for three keys");
         assert_eq!(
             serde_json::Value::Object(store.values.borrow().clone()),
@@ -9292,18 +9348,19 @@ mod tests {
 
     #[test]
     fn store_set_many_with_no_keys_writes_nothing() {
-        let store = CountingStore::default();
-        super::set_all_then_save(&store, entries(serde_json::json!({}))).expect("nothing to do");
+        let mut store = CountingStore::default();
+        super::set_all_then_save(&mut store, entries(serde_json::json!({})))
+            .expect("nothing to do");
         assert_eq!(store.saves.get(), 0);
     }
 
     #[test]
     fn store_set_many_reports_a_failed_save() {
-        let store = CountingStore {
+        let mut store = CountingStore {
             fail_save: true,
             ..Default::default()
         };
-        let result = super::set_all_then_save(&store, entries(serde_json::json!({ "a": 1 })));
+        let result = super::set_all_then_save(&mut store, entries(serde_json::json!({ "a": 1 })));
         assert_eq!(result, Err("disk full".to_string()));
     }
 
@@ -9317,7 +9374,13 @@ mod tests {
         // Each is a lock, a constant, a spawn that is never waited on, a read
         // or write of one small file or folder, or one bounded save of the
         // user-data store (store_set, store_set_many, reset_user_data), which
-        // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996).
+        // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996), plus
+        // the sync and renames of #1023. While Windows holds the file a save
+        // retries at most four steps for 200 ms each (0.8 s), and the first
+        // command, which opens the store, up to five more (1 s): reading the
+        // file and its two copies, setting a damaged one aside, and putting a
+        // recovered .tmp in place. After a failed open, commands fail at once
+        // for one second instead of trying the disk again.
         const QUICK: &[&str] = &[
             "current_exports_dir",
             "store_get",

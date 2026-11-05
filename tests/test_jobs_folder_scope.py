@@ -82,6 +82,10 @@ def test_reset_removes_stemdecks_entries_and_leaves_foreign_ones(jobs_dir: Path)
     (jobs_dir / "registry.json").write_text("{}", encoding="utf-8")
     (jobs_dir / "registry.json.corrupt-1700000000").write_text("{", encoding="utf-8")
     (jobs_dir / "user-data.json").write_text("{}", encoding="utf-8")
+    (jobs_dir / "user-data.json.bak").write_text("{}", encoding="utf-8")
+    (jobs_dir / "user-data.json.tmp").write_text("{", encoding="utf-8")
+    (jobs_dir / "user-data.json.corrupt-1762000000").write_text("{", encoding="utf-8")
+    (jobs_dir / "user-data.json.corrupt-1762000000-1").write_text("{", encoding="utf-8")
     (jobs_dir / "failed" / "abcdefabcde1").mkdir(parents=True)
     (jobs_dir / "failed" / "abcdefabcde1" / "error.txt").write_text("x", encoding="utf-8")
     (jobs_dir / "My Photos").mkdir()
@@ -95,6 +99,12 @@ def test_reset_removes_stemdecks_entries_and_leaves_foreign_ones(jobs_dir: Path)
     assert not (jobs_dir / "registry.json").exists()
     assert not (jobs_dir / "registry.json.corrupt-1700000000").exists()
     assert not (jobs_dir / "user-data.json").exists()
+    # #1023: the shell restores a damaged store from these, so a reset that
+    # left them would bring the old library back.
+    assert not (jobs_dir / "user-data.json.bak").exists()
+    assert not (jobs_dir / "user-data.json.tmp").exists()
+    assert not (jobs_dir / "user-data.json.corrupt-1762000000").exists()
+    assert not (jobs_dir / "user-data.json.corrupt-1762000000-1").exists()
     assert not (jobs_dir / "failed").exists()
     assert (jobs_dir / "My Photos" / "beach.jpg").read_bytes() == b"JPEG"
     assert (jobs_dir / "notes.txt").read_text(encoding="utf-8") == "mine"
@@ -102,6 +112,23 @@ def test_reset_removes_stemdecks_entries_and_leaves_foreign_ones(jobs_dir: Path)
     failed, skipped = result
     assert failed == []
     assert sorted(skipped) == ["My Photos", "notes.txt", "registry.json.bak"]
+
+
+def test_reset_skips_a_linked_store_copy_and_what_it_points_at(jobs_dir: Path, tmp_path: Path):
+    """A user-data.json.bak that is a link (#1023) is not StemDeck's file: the
+    reset neither removes it nor follows it to what it points at."""
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text('{"theirs": 1}', encoding="utf-8")
+    link = jobs_dir / "user-data.json.bak"
+    try:
+        link.symlink_to(elsewhere)
+    except OSError:
+        pytest.skip("file symlinks need a privilege this Windows account lacks")
+
+    registry.reset_all(jobs_dir)
+
+    assert link.is_symlink(), "the link is left alone"
+    assert elsewhere.read_text(encoding="utf-8") == '{"theirs": 1}'
 
 
 def test_reset_keeps_a_folder_named_like_a_job_that_is_not_stemdecks(jobs_dir: Path):
