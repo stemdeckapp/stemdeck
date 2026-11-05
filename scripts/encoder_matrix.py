@@ -121,7 +121,7 @@ def _forced_node():
     """STEMDECK_VAAPI_DEVICE as the app reads it (app/core/config.py): a node
     name or /dev/dri path, else None (unset or not a render node)."""
     raw = os.environ.get("STEMDECK_VAAPI_DEVICE", "").strip()
-    match = re.fullmatch(r"(?:/dev/dri/)?(renderD\d+)", raw)
+    match = re.fullmatch(r"(?:/dev/dri/)?(renderD[0-9]+)", raw)
     return match.group(1) if match else None
 
 
@@ -136,7 +136,7 @@ def render_nodes():
         return [str(DRI_DIR / forced)] if (DRI_DIR / forced).exists() else []
     try:
         found = [(int(m.group(1)), p) for p in DRI_DIR.iterdir()
-                 if (m := re.fullmatch(r"renderD(\d+)", p.name))]
+                 if (m := re.fullmatch(r"renderD([0-9]+)", p.name))]
     except OSError:
         return []
     return [str(p) for _n, p in sorted(found)]

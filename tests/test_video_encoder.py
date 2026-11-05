@@ -1460,3 +1460,55 @@ async def test_real_ffmpeg_fallback_produces_a_valid_mp4(tmp_path, monkeypatch, 
     assert video["codec_name"] == "h264" and (video["width"], video["height"]) == (1280, 720)
     assert any(s["codec_type"] == "audio" for s in info["streams"])
     assert take_render.VIDEO_CPU_ENCODER == "libx264"
+
+
+def test_render_nodes_take_only_ascii_digits(fake, dri, tmp_path, monkeypatch):
+    # "\d" also matches other scripts' digits: int("٣١") is 31, a node that
+    # is not there.
+    dri(128)
+    (tmp_path / "dri" / "renderD\u0661\u0663\u0660").write_bytes(b"")
+    assert [Path(p).name for p in ve.render_nodes()] == ["renderD128"]
+    monkeypatch.setenv("STEMDECK_VAAPI_DEVICE", "renderD\u0663\u0661")
+    assert config_mod._env_render_node("STEMDECK_VAAPI_DEVICE") == ""
+    monkeypatch.setenv("STEMDECK_VAAPI_DEVICE", "/dev/dri/renderD\uff11\uff12\uff19")
+    assert config_mod._env_render_node("STEMDECK_VAAPI_DEVICE") == ""
+
+
+def test_a_tampered_cache_row_never_reaches_the_command(fake, dri):
+    # The JSON cache is a file on disk: a row whose device is not the node
+    # its key names is not trusted, so no path from it reaches -vaapi_device.
+    (node,) = dri(129)
+    fake.vaapi = {"renderD129": "ok"}
+    ident, _version = ve.ffmpeg_identity()
+    key = ve._key(ident, "h264_vaapi", 1920, 1080, 30, node)
+    row = ve.ProbeResult(
+        "h264_vaapi", 1920, 1080, 30, ok=True, speed=9.0, device="/tmp/evil", checked_at=time.time()
+    )
+    ve._cache_path.write_text(
+        json.dumps({"v": 1, "ffmpeg": ident, "entries": {key: ve.asdict(row)}}), encoding="utf-8"
+    )
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.device == node
+    assert ve.cached_results()[0].device == node
+    assert not any("/tmp/evil" in arg for c in fake.calls for arg in c)
+    assert fake.count("probe") == 1, "the node was probed again instead"
+
+
+def test_settings_show_nothing_while_an_earlier_node_is_untested(fake, dri):
+    # renderD129 passed, renderD128 (tried first) has no answer yet: a render
+    # would probe renderD128 before using renderD129, so Settings must not
+    # claim renderD129.
+    dri(129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    assert ve.probe("h264_vaapi", 1920, 1080, 30).ok
+    dri(128)
+    assert [r for r in ve.cached_results() if r.encoder == "h264_vaapi"] == []
+
+
+def test_a_missing_vaapi_encoder_is_probed_once(fake, dri):
+    # h264_vaapi not compiled into this ffmpeg: every node would say so.
+    dri(128, 129, 130)
+    fake.vaapi = {"renderD128": "missing", "renderD129": "ok", "renderD130": "ok"}
+    result = ve.probe("h264_vaapi", 1920, 1080, 30)
+    assert not result.ok and result.reason == "missing"
+    assert _nodes_probed(fake) == ["renderD128"]

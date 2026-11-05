@@ -531,7 +531,7 @@ def _env_render_node(name: str) -> str:
     raw = os.environ.get(name, "").strip()
     if not raw:
         return ""
-    match = re.fullmatch(r"(?:/dev/dri/)?(renderD\d+)", raw)
+    match = re.fullmatch(r"(?:/dev/dri/)?(renderD[0-9]+)", raw)
     if match is None:
         logger.warning(
             "%s=%r is not a render node such as renderD128 or /dev/dri/renderD128; ignored",

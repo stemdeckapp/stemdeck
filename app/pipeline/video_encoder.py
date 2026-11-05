@@ -273,7 +273,7 @@ def encoder_args(encoder: str, width: int, height: int, fps: int, variant: int =
 # Where the DRM render nodes are (a module attribute so a test can point it at
 # a fake tree).
 DRI_DIR = Path("/dev/dri")
-_RENDER_NODE_RE = re.compile(r"renderD(\d+)")
+_RENDER_NODE_RE = re.compile(r"renderD([0-9]+)")
 
 
 def _host_platform() -> str:
@@ -764,6 +764,9 @@ def probe(
         if result.ok or result.reason == "cancelled":
             return result
         failures.append(result)
+        if result.reason == "missing":
+            # This ffmpeg has no h264_vaapi: the same on every node.
+            break
     return _none_passed(failures)
 
 
@@ -831,14 +834,14 @@ def _probe_device(
     if not force:
         # A cached answer needs no probe lock, which another probe (Settings'
         # Test encoders) can hold for minutes (#791).
-        hit = _valid_hit(ident, key)
+        hit = _valid_hit(ident, key, device)
         if hit is not None:
             return hit
     while not _probe_lock.acquire(timeout=_CANCEL_POLL_SEC):
         if cancelled():
             return gave_up()
     try:
-        hit = _valid_hit(ident, key)
+        hit = _valid_hit(ident, key, device)
         if hit is not None and not force:
             return hit
         if cancelled():
@@ -869,12 +872,15 @@ def _probe_device(
         _probe_lock.release()
 
 
-def _valid_hit(ident: str, key: str) -> ProbeResult | None:
-    """The cached result for `key` while it is still trusted, else None."""
+def _valid_hit(ident: str, key: str, device: str = "") -> ProbeResult | None:
+    """The cached result for `key` while it is still trusted, else None.
+    `device` is the render node the key was built for: a row naming any
+    other (an edited or damaged video_encoders.json) is not trusted, so only
+    a node render_nodes() listed can reach -vaapi_device."""
     _load_cache(ident)
     with _cache_lock:
         hit = _cache.get(key)
-    if hit is not None and hit.expires_at() > time.time():
+    if hit is not None and hit.device == device and hit.expires_at() > time.time():
         return hit
     return None
 
@@ -911,7 +917,7 @@ def _vaapi_cached(
         return _valid_hit(ident, _key(ident, VAAPI, width, height, fps))
     failures = []
     for node in nodes:
-        hit = _valid_hit(ident, _key(ident, VAAPI, width, height, fps, node))
+        hit = _valid_hit(ident, _key(ident, VAAPI, width, height, fps, node), node)
         if hit is None:
             return None
         if hit.ok:
