@@ -224,7 +224,9 @@ check "leading zeros: stripped before use" \
   "$([[ "$(has_opt 4242:4243 && echo y)" == y && "$OUT" == *"entries to 4242:4243 in "* ]] && echo 1 || echo 0)" "$OUT"
 reset_logs
 OUT="$(run_reown 000 0 "$T4")"
-check "leading zeros: a lone 0 stays 0" "$(yes_if has_opt 0:0)" "$OUT"
+# As root the tree is already 0:0 and chown is not called, so read the log.
+check "leading zeros: a lone 0 stays 0" \
+  "$([[ "$OUT" == *"owned by 0:0, nothing changed"* || "$OUT" == *"entries to 0:0 in "* ]] && echo 1 || echo 0)" "$OUT"
 
 # A chown that fails on every entry, as on a read-only or root_squash mount.
 reset_logs
