@@ -624,8 +624,8 @@ def set_separation_quality(value: str) -> str:
 
 
 # ── idle_unload_minutes ──
-# Minutes without use before the separation worker and the beat model are
-# unloaded (#975), 0 for never. Read on every check of the idle timer
+# Minutes with no separation or analysis running before the separation worker
+# and the beat model are unloaded (#975), 0 for never. Read on every check of the idle timer
 # (app/pipeline/idle_unload.py), so a change applies without a restart.
 # STEMDECK_IDLE_UNLOAD_MINUTES seeds the default; a value saved here wins.
 def get_idle_unload_minutes() -> int:

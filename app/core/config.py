@@ -400,8 +400,8 @@ TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_R
 MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
 MODEL_DOWNLOAD_BACKOFF = (2, 5)
 TIMEOUT_MODEL_STALL = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_STALL", 120))
-# Minutes without use before the idle Demucs worker is stopped and the beat
-# model dropped (#975); 0 never unloads. The worker exists to skip a model
+# Minutes with no separation or analysis running before the idle Demucs
+# worker is stopped and the beat model dropped (#975); 0 never unloads. The worker exists to skip a model
 # load per job (#309), so this trades memory for the next job's start: measured
 # on an RTX 3080, 2026-11-05, a 3 min 53 s song: the idle CUDA worker held
 # 1.93 GB of RAM and 1.11 GB of VRAM (CPU worker: 1.46 GB of RAM), and the

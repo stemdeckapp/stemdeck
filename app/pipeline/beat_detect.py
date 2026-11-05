@@ -103,7 +103,6 @@ def _drop_model() -> None:
     global _model
     with _lock:
         _model = None
-    gc.collect()
 
 
 # Dropped by the idle timer with the separation worker (#975). Reloading costs
@@ -112,7 +111,14 @@ def _drop_model() -> None:
 # load reuses them, flat over ten cycles); what the drop gives back on Linux is
 # not measured.
 MODEL = idle_unload.register(
-    IdleResource("beat model", lambda: _model is not None, lambda: _drop_model())
+    IdleResource(
+        "beat model",
+        lambda: _model is not None,
+        lambda: _drop_model(),
+        # Outside the idle lock, so a detection arriving meanwhile does not
+        # wait on a full collection.
+        after_unload=gc.collect,
+    )
 )
 
 

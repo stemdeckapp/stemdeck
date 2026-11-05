@@ -61,7 +61,7 @@
 
   <Config Name="Stem MP3 bitrate (kbps)" Target="STEMDECK_STEM_MP3_KBPS" Default="" Description="Bitrate of MP3 stems: 128 (the default when empty), 192 or 256. Only used when the storage format is mp3." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 
-  <Config Name="Free memory when idle (minutes)" Target="STEMDECK_IDLE_UNLOAD_MINUTES" Default="" Description="Minutes without a new track before the separation models are unloaded from memory: 10 when empty, 0 keeps them loaded. The next track loads them again and starts a few seconds later. A value saved in Settings wins over this." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Free memory when idle (minutes)" Target="STEMDECK_IDLE_UNLOAD_MINUTES" Default="" Description="Minutes with no separation or analysis running before the separation models are unloaded from memory: 10 when empty, 0 keeps them loaded. The next track loads them again and starts a few seconds later. A value saved in Settings wins over this." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 
   <Config Name="PUID" Target="PUID" Default="99" Description="User ID the app runs as. Unraid's default is 99 (nobody), so files written to appdata are owned correctly." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
 

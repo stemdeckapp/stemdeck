@@ -49,20 +49,52 @@ def _spawn_worker_cmd(device: str) -> list[str]:
     return [sys.executable, "-m", "app.pipeline.demucs_worker", device]
 
 
+# How long a killed worker gets to exit before it is given up on. The idle
+# lock is held across this (idle_unload.py), and the next job and shutdown
+# wait on that lock, so it must end even for a worker wedged in a CUDA call.
+_KILL_REAP_TIMEOUT_SEC = 10
+
+
 def _kill_worker() -> None:
     proc = _worker.pop("proc", None)
     _worker.pop("device", None)
-    if proc is not None and proc.poll() is None:
+    if proc is None:
+        return
+    if proc.poll() is None:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            # kill() only sends the signal. Without the reap a worker wedged in
-            # an uninterruptible CUDA call becomes a zombie whose pipes are
-            # closed only incidentally, whenever the Popen refcount happens to
-            # drop. vocal_split.py already pairs the two.
-            proc.communicate()
+            # kill() only sends the signal; the wait reaps it, so it does not
+            # stay a zombie. Bounded, unlike the communicate() this replaced:
+            # a worker wedged in an uninterruptible call must not hold the
+            # idle lock, and with it the next job and shutdown, forever.
+            try:
+                proc.wait(timeout=_KILL_REAP_TIMEOUT_SEC)
+            except subprocess.TimeoutExpired:
+                logger.error(
+                    "demucs worker %s did not exit %s s after kill; left behind",
+                    proc.pid,
+                    _KILL_REAP_TIMEOUT_SEC,
+                )
+                # Its pipes stay open: a job thread may still be blocked
+                # reading stderr, and closing under it would block here.
+                return
+    _close_pipes(proc)
+
+
+def _close_pipes(proc: subprocess.Popen) -> None:
+    """Close an exited worker's pipes now, rather than whenever the Popen is
+    collected (a ResourceWarning under -X dev, and a handle held until then)."""
+    for pipe in (proc.stdin, proc.stderr):
+        if pipe is None:
+            continue
+        try:
+            pipe.close()
+        except OSError:
+            # stdin's close flushes, and the reader end is gone.
+            pass
 
 
 # Stopped by the idle timer after the Settings' idle minutes without a

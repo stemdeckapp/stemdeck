@@ -208,8 +208,60 @@ async def test_the_timer_does_not_look_while_the_pipeline_is_busy(
         jobqueue._queue.clear()
         monkeypatch.setattr(jobqueue, "_stopping", False)
     assert sep_mod._worker["proc"].poll() is None
-    # And once it is quiet, the same check unloads.
+    # The busy look counted as a use: idle starts again from there.
+    assert await idle_unload.check() == []
+    clock.t += 10 * MIN
     assert "separation worker" in await idle_unload.check()
+
+
+async def test_idle_counts_from_when_the_pipeline_goes_quiet(tmp_path, clock, spawns, monkeypatch):
+    """Lyrics and sections run after the separation, inside the same job. A
+    12 minute stage after it must not count as 12 idle minutes."""
+    monkeypatch.setattr(idle_unload, "get_idle_unload_minutes", lambda: 10)
+    _separate(tmp_path, "aaaa")
+    jobqueue._set_running("aaaa00000000")  # the job's later stages
+    try:
+        for _ in range(24):  # 12 minutes of 30 s ticks
+            clock.t += 30
+            assert await idle_unload.check() == []
+    finally:
+        jobqueue._set_running(None)
+    clock.t += 9 * MIN
+    assert await idle_unload.check() == [], "only 9 quiet minutes"
+    assert sep_mod._worker["proc"].poll() is None
+    clock.t += 1 * MIN
+    assert "separation worker" in await idle_unload.check()
+
+
+async def test_a_paused_queue_with_waiting_jobs_counts_as_idle(
+    tmp_path, clock, spawns, monkeypatch
+):
+    """Restored jobs wait for Start, possibly for days; nothing runs until
+    then, so they do not keep the worker loaded."""
+    monkeypatch.setattr(idle_unload, "get_idle_unload_minutes", lambda: 10)
+    _separate(tmp_path, "aaaa")
+    clock.t += 10 * MIN
+    monkeypatch.setattr(jobqueue, "_paused", True)
+    jobqueue._queue.append("dddddddddddd")
+    try:
+        assert "separation worker" in await idle_unload.check()
+    finally:
+        jobqueue._queue.clear()
+
+
+def test_the_after_unload_hook_runs_outside_the_lock():
+    clock = Clock()
+    seen: list[bool] = []
+    res = IdleResource(
+        "x",
+        lambda: True,
+        lambda: None,
+        clock=clock,
+        after_unload=lambda: seen.append(res._lock.locked()),
+    )
+    clock.t += 2 * MIN
+    assert res.unload_if_idle(MIN) is True
+    assert seen == [False]
 
 
 def test_a_job_that_arrives_during_an_unload_waits_and_then_loads_afresh(
@@ -552,7 +604,126 @@ def test_settings_api_reads_and_writes_it():
 
         r = c.post("/api/settings", json={"idle_unload_minutes": "soon"})
         assert r.status_code == 422
-        assert r.json()["detail"] == "idle_unload_minutes must be an integer"
         r = c.post("/api/settings", json={"idle_unload_minutes": None})
         assert r.status_code == 422
         assert c.get("/api/settings").json()["idle_unload_minutes"] == 1440, "nothing changed"
+
+
+# --- stopping the worker --------------------------------------------------------
+
+
+def test_a_stopped_worker_leaves_no_open_pipe(spawns):
+    """Its pipes close with it, not whenever the Popen is collected: under
+    -X dev that was a ResourceWarning for each stopped worker."""
+    import gc
+    import warnings
+
+    proc = sep_mod._get_worker("cpu")
+    pipes = (proc.stdin, proc.stderr)
+    sep_mod._kill_worker()
+    assert all(p.closed for p in pipes)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        del proc, pipes
+        gc.collect()
+    assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
+
+
+def test_a_worker_that_will_not_die_is_given_up_on(monkeypatch, caplog):
+    """A worker wedged in an uninterruptible call must not hold the idle lock,
+    and with it the next job and shutdown, forever."""
+    import subprocess
+
+    class Wedged:
+        pid = 4242
+        stdin = stderr = None
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def poll(self):
+            return None
+
+        def terminate(self) -> None:
+            self.calls.append("terminate")
+
+        def kill(self) -> None:
+            self.calls.append("kill")
+
+        def wait(self, timeout=None):
+            self.calls.append(f"wait {timeout}")
+            raise subprocess.TimeoutExpired("demucs", timeout)
+
+        def communicate(self, *a, **k):
+            raise AssertionError("an unbounded reap")
+
+    wedged = Wedged()
+    sep_mod._worker["proc"] = wedged
+    monkeypatch.setattr(sep_mod, "_KILL_REAP_TIMEOUT_SEC", 0.01)
+    sep_mod._kill_worker()
+    assert wedged.calls == ["terminate", "wait 5", "kill", "wait 0.01"]
+    assert "did not exit" in caplog.text
+    assert "proc" not in sep_mod._worker
+
+
+# --- POST /api/settings refuses what would change the setting by accident -----
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"idle_unload_minutes": true}',
+        '{"idle_unload_minutes": false}',
+        '{"idle_unload_minutes": "5"}',
+        '{"idle_unload_minutes": "soon"}',
+        '{"idle_unload_minutes": -1}',
+        '{"idle_unload_minutes": 5.5}',
+        '{"idle_unload_minutes": Infinity}',
+        '{"idle_unload_minutes": 1e400}',
+        '{"idle_unload_minutes": NaN}',
+        '{"idle_unload_minutes": null}',
+        '{"idle_unload_minutes": [5]}',
+    ],
+)
+def test_settings_api_refuses_a_value_that_is_not_whole_minutes(raw):
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    settings.set_idle_unload_minutes(20)
+    with TestClient(main_mod.app) as c:
+        r = c.post("/api/settings", content=raw, headers={"Content-Type": "application/json"})
+        assert r.status_code == 422, r.text
+        assert "idle_unload_minutes" in r.json()["detail"]
+    assert settings.get_idle_unload_minutes() == 20, "nothing changed"
+
+
+def test_settings_api_takes_a_whole_float():
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    with TestClient(main_mod.app) as c:
+        r = c.post(
+            "/api/settings",
+            content='{"idle_unload_minutes": 5.0}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 200 and r.json()["idle_unload_minutes"] == 5
+
+
+@pytest.mark.parametrize("key", ["port", "auto_delete_days", "max_duration_sec"])
+@pytest.mark.parametrize("value", ["Infinity", "-Infinity", "1e400"])
+def test_settings_api_answers_422_not_500_for_an_infinite_integer(key, value):
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    with TestClient(main_mod.app) as c:
+        r = c.post(
+            "/api/settings",
+            content=f'{{"{key}": {value}}}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"] == f"{key} must be an integer"

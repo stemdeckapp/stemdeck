@@ -27,7 +27,7 @@
 | `STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ` | `30` | Give up on one try of the separation model's download after this many seconds without data. |
 | `STEMDECK_MODEL_DOWNLOAD_ATTEMPTS` | `3` | Tries for the separation model's download, 2 s then 5 s apart, before the Split fails and names the file and the folder to put it in by hand. |
 | `STEMDECK_TIMEOUT_MODEL_STALL` | `120` | Stop the separation worker if it is silent this many seconds while it downloads its model. Everything else, separating included, uses the Demucs stall limit above. |
-| `STEMDECK_IDLE_UNLOAD_MINUTES` | `10` | Minutes without a new track before the separation worker and the beat model are unloaded from memory; `0` keeps them loaded. The next track loads them again and starts a few seconds later. A value saved in Settings > General wins over this. |
+| `STEMDECK_IDLE_UNLOAD_MINUTES` | `10` | Minutes with no separation or analysis running before the separation worker and the beat model are unloaded from memory; `0` keeps them loaded. The next track loads them again and starts a few seconds later. Unloading frees the graphics card's memory, and another program may take it meanwhile, so the next separation on the GPU can fall back to the CPU (its progress line says so). A value saved in Settings > General wins over this. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |

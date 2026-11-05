@@ -5,6 +5,7 @@ import functools
 import io
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -578,6 +579,16 @@ ACOUSTID_KEY_REFUSED = "AcoustID does not accept this key"
 DISCOGS_TOKEN_REFUSED = "Discogs does not accept this token"
 
 
+def _whole_minutes(value: object) -> bool:
+    """A JSON number with no fraction, 0 or more. Not a bool (a JSON true is
+    an int in Python) and not a string, "5" included."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, float) and not (math.isfinite(value) and value.is_integer()):
+        return False
+    return value >= 0
+
+
 @app.post("/api/settings", tags=["settings"])
 async def update_settings(request: Request) -> dict[str, object]:
     """Update runtime settings. Reachable from the host machine always; from a
@@ -597,6 +608,13 @@ async def update_settings(request: Request) -> dict[str, object]:
         set_auto_sections(bool(body["auto_sections"]))
     if "auto_lyrics" in body:
         set_auto_lyrics(bool(body["auto_lyrics"]))
+    if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
+        # Refused rather than clamped: true would be stored as 1 minute and -1
+        # as 0, which turns the unload off, so a typo must not change it.
+        raise HTTPException(
+            status_code=422,
+            detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
+        )
     for key, setter in (
         ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),
@@ -608,7 +626,9 @@ async def update_settings(request: Request) -> dict[str, object]:
         if key in body:
             try:
                 setter(int(body[key]))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: JSON Infinity or 1e400 parses to a float inf,
+                # and int(inf) raises it, which used to answer 500.
                 raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
     if "export_sample_rate" in body:
         try:
