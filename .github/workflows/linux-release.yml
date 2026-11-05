@@ -172,8 +172,10 @@ jobs:
 
       # The guard ran once, at the start of this run, and "Re-run failed jobs"
       # reuses its result. Check again on every attempt, right before the
-      # upload, that the guarded release is still a draft with the guarded tag,
-      # so a re-run after publishing cannot overwrite the published assets.
+      # upload, that the guarded release is still a draft pre-release with the
+      # guarded tag, pointing at the commit this run built. Without this, a
+      # re-run after publishing would overwrite the published assets, and a
+      # re-run of an older run would overwrite a retargeted draft's newer ones.
       - name: check the release is still the guarded draft
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -182,6 +184,7 @@ jobs:
           REPO: ${{ github.repository }}
           RELEASE_ID: ${{ needs.guard.outputs.release_id }}
           TAG: ${{ needs.guard.outputs.tag }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           node - <<'NODE'
           // Throw rather than process.exit(): exiting with a fetch socket still
@@ -189,22 +192,62 @@ jobs:
           const stop = (why) => {
             throw new Error(why);
           };
+          const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
           (async () => {
-            const { GH_TOKEN, API_URL, REPO, RELEASE_ID, TAG } = process.env;
-            if (!/^[0-9]+$/.test(RELEASE_ID || '') || !TAG) stop('the guard set no release id or tag.');
+            const { GH_TOKEN, API_URL, REPO, RELEASE_ID, TAG, RUN_SHA } = process.env;
+            if (!/^[0-9]+$/.test(RELEASE_ID || '') || !TAG || !/^[0-9a-f]{40}$/.test(RUN_SHA || '')) {
+              stop('the guard set no release id or tag, or the run has no commit SHA.');
+            }
             if (typeof fetch !== 'function') stop('this check needs Node.js 18 or newer on the runner.');
-            const res = await fetch(`${API_URL}/repos/${REPO}/releases/${RELEASE_ID}`, {
-              headers: {
-                Authorization: `Bearer ${GH_TOKEN}`,
-                Accept: 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28',
-              },
-            });
-            if (!res.ok) stop(`release ${RELEASE_ID} could not be read (HTTP ${res.status}).`);
-            const rel = await res.json();
-            console.log(`Release ${RELEASE_ID}: tag=${rel.tag_name} draft=${rel.draft} prerelease=${rel.prerelease}`);
+            const get = async (path) => {
+              const res = await fetch(`${API_URL}/repos/${REPO}/${path}`, {
+                headers: {
+                  Authorization: `Bearer ${GH_TOKEN}`,
+                  Accept: 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                },
+              });
+              if (!res.ok) stop(`${path} could not be read (HTTP ${res.status}).`);
+              return res.json();
+            };
+
+            const rel = await get(`releases/${RELEASE_ID}`);
+            if (
+              !isObject(rel) ||
+              typeof rel.tag_name !== 'string' ||
+              typeof rel.draft !== 'boolean' ||
+              typeof rel.prerelease !== 'boolean' ||
+              typeof rel.target_commitish !== 'string'
+            ) {
+              stop(`release ${RELEASE_ID} did not come back as a release object.`);
+            }
+            console.log(
+              `Release ${RELEASE_ID}: tag=${rel.tag_name} draft=${rel.draft} prerelease=${rel.prerelease} target_commitish=${rel.target_commitish}`,
+            );
             if (rel.tag_name !== TAG) stop(`release ${RELEASE_ID} now has the tag ${rel.tag_name}, not ${TAG}.`);
             if (rel.draft !== true) stop(`release ${TAG} is no longer a draft; its own release build owns its assets.`);
+            if (rel.prerelease !== true) stop(`release ${TAG} is no longer marked pre-release.`);
+
+            // The guard's commit check, repeated: an existing tag's commit,
+            // otherwise the draft's target, must be the commit this run built.
+            const refs = await get(`git/matching-refs/tags/${TAG}`);
+            if (!Array.isArray(refs)) stop(`the tag lookup for ${TAG} did not come back as a list.`);
+            let expected;
+            let source;
+            if (refs.some((r) => isObject(r) && r.ref === `refs/tags/${TAG}`)) {
+              const commit = await get(`commits/refs/tags/${TAG}`);
+              if (!isObject(commit) || typeof commit.sha !== 'string') stop(`the tag ${TAG} did not resolve to a commit.`);
+              expected = commit.sha;
+              source = `existing tag ${TAG}`;
+            } else {
+              expected = rel.target_commitish;
+              source = 'target_commitish';
+            }
+            console.log(`Commit this run built: ${RUN_SHA}`);
+            console.log(`Commit the release points at (${source}): ${expected}`);
+            if (expected !== RUN_SHA) {
+              stop(`this run built ${RUN_SHA} but ${TAG} now points at ${expected} (${source}). Start a new run instead of re-running this one.`);
+            }
             console.log(`Decision: UPLOAD to draft ${TAG} (release ${RELEASE_ID}).`);
           })().catch((err) => {
             console.log(`::error::Refusing to upload: ${err.message}`);
