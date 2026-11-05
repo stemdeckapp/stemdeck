@@ -20,6 +20,10 @@ size it reports:
   SAME average bitrate, and a flag when the GPU file is more than 0.02 SSIM
   worse than libx264 at that bitrate
 
+h264_vaapi is tried on each /dev/dri/renderD* node in number order (or only on
+the node STEMDECK_VAAPI_DEVICE names) until one passes, as the app does; the
+note column says which node it ran on.
+
 It prints a table and, with --json, writes everything to a file to paste into a
 bug report. It never stops on a missing encoder or a failed encode.
 """
@@ -110,15 +114,39 @@ def libx264_args(width, height):
             "-crf", "20", "-pix_fmt", "yuv420p"]
 
 
-def vaapi_device():
-    nodes = sorted(Path("/dev/dri").glob("renderD*")) if os.name == "posix" else []
-    return str(nodes[0]) if nodes else None
+DRI_DIR = Path("/dev/dri")
 
 
-def global_args(encoder):
+def _forced_node():
+    """STEMDECK_VAAPI_DEVICE as the app reads it (app/core/config.py): a node
+    name or /dev/dri path, else None (unset or not a render node)."""
+    raw = os.environ.get("STEMDECK_VAAPI_DEVICE", "").strip()
+    match = re.fullmatch(r"(?:/dev/dri/)?(renderD[0-9]+)", raw)
+    return match.group(1) if match else None
+
+
+def render_nodes():
+    """The render nodes the app tries for h264_vaapi, in its order
+    (app/pipeline/video_encoder.render_nodes): the forced one alone, else
+    every renderD* in number order."""
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        return []
+    forced = _forced_node()
+    if forced:
+        return [str(DRI_DIR / forced)] if (DRI_DIR / forced).exists() else []
+    try:
+        found = [(int(m.group(1)), p) for p in DRI_DIR.iterdir()
+                 if (m := re.fullmatch(r"renderD([0-9]+)", p.name))]
+    except OSError:
+        return []
+    return [str(p) for _n, p in sorted(found)]
+
+
+def global_args(encoder, device=""):
     if encoder == "h264_vaapi":
-        dev = vaapi_device()
-        return ["-vaapi_device", dev] if dev else []
+        if not device:
+            raise ValueError("h264_vaapi needs a render node")
+        return ["-vaapi_device", device]
     return []
 
 
@@ -268,8 +296,8 @@ def quality(ffmpeg, path, width, height, seconds):
             (float(p.group(1)) if p and p.group(1) != "inf" else None))
 
 
-def encode(ffmpeg, encoder, args, width, height, seconds, out):
-    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", *global_args(encoder),
+def encode(ffmpeg, encoder, args, width, height, seconds, out, device=""):
+    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", *global_args(encoder, device),
            "-f", "lavfi", "-i", source(width, height, seconds), "-vf", output_filter(encoder),
            *args, "-r", str(FPS), "-an", "-y", str(out)]
     rc, _o, err, wall = run(cmd, timeout=TIMEOUT_ENCODE)
@@ -281,8 +309,13 @@ def measure(ffmpeg, ffprobe, encoder, size_name, seconds, work):
     width, height = SIZES[size_name]
     row = {"encoder": encoder, "size": size_name, "ok": False}
     try:
-        if encoder == "h264_vaapi" and vaapi_device() is None:
-            row["error"] = "no /dev/dri render device"
+        # h264_vaapi runs on each render node in the app's order until one
+        # passes, as the app's probe does (#995); every other encoder once.
+        devices = render_nodes() if encoder == "h264_vaapi" else [""]
+        if not devices:
+            forced = _forced_node()
+            row["error"] = (f"{forced} not found (STEMDECK_VAAPI_DEVICE)" if forced
+                            else "no /dev/dri render device")
             return row
         out = work / f"{encoder}_{size_name}.mp4"
         if encoder == CPU:
@@ -290,12 +323,23 @@ def measure(ffmpeg, ffprobe, encoder, size_name, seconds, work):
             row["args"] = "app (crf 20" + (", veryfast)" if min(width, height) >= 2160 else ")")
         else:
             ok, wall, err = False, 0.0, ""
-            for variant in range(variant_count(encoder)):
-                ok, wall, err = encode(ffmpeg, encoder, encoder_args(encoder, width, height, FPS, variant),
-                                       width, height, seconds, out)
-                row["variant"] = variant
+            per_node = []
+            for device in devices:
+                for variant in range(variant_count(encoder)):
+                    ok, wall, err = encode(ffmpeg, encoder, encoder_args(encoder, width, height, FPS, variant),
+                                           width, height, seconds, out, device)
+                    row["variant"] = variant
+                    if ok or "Unknown encoder" in err:
+                        break
+                if device:
+                    row["device"] = Path(device).name
+                    row["args"] = f"on {row['device']}"
+                    if not ok:
+                        per_node.append(f"{row['device']}: {err}")
                 if ok or "Unknown encoder" in err:
                     break
+            if not ok and len(per_node) > 1:
+                err = "; ".join(per_node)
         if not ok:
             row["error"] = err
             return row
