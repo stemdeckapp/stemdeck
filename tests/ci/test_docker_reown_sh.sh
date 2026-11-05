@@ -76,6 +76,15 @@ esac
 exit 0
 EOF
 chmod +x "${FAKEBIN}/chown"
+# stat is real, but counts how often it was started, so a test can tell one
+# stat per batch from one per entry.
+REAL_STAT="$(command -v stat)"
+cat > "${FAKEBIN}/stat" <<EOF
+#!/bin/sh
+echo CALL >> "${SANDBOX}/stat.log"
+exec "${REAL_STAT}" "\$@"
+EOF
+chmod +x "${FAKEBIN}/stat"
 reset_logs() { rm -f "${SANDBOX}"/*.log; }
 calls_of() { local n; n="$({ tr '\0' '\n' < "${SANDBOX}/$1.log"; } 2>/dev/null | grep -c '^CALL$')"; echo "${n:-0}"; }
 
@@ -372,6 +381,55 @@ check "missing dir: skipped, exit 0" "$([[ $CODE -eq 0 && "$(calls_of chown)" ==
 reset_logs
 OUT="$(run_reown 'abc' 100 "$T1")"; CODE=$?
 check "non-numeric PUID: nothing changed, exit 0" "$([[ $CODE -eq 0 && "$(calls_of chown)" == 0 && "$OUT" == *"not a number"* ]] && echo 1 || echo 0)" "$OUT"
+
+# Longer than any real id: refused before the zero stripping, which grows with
+# the square of the length (80k zeros took 23 s).
+LONG="$(printf '%080000d' 0)"
+reset_logs
+START=$SECONDS
+OUT="$(run_reown "$LONG" 100 "$T4")"; CODE=$?
+TOOK=$((SECONDS - START))
+check "PUID over 20 characters: refused, exit 0, no chown" \
+  "$([[ $CODE -eq 0 && "$(calls_of chown)" == 0 && "$OUT" == *"longer than 20 characters"* ]] && echo 1 || echo 0)" "$OUT"
+check "PUID over 20 characters: refused at once (took ${TOOK}s)" "$(yes_if [ "$TOOK" -lt 5 ])"
+reset_logs
+OUT="$(run_reown 4242 "000000000000000000000100" "$T4")"
+check "PGID over 20 characters: refused" "$([[ "$OUT" == *"longer than 20 characters"* && "$(calls_of chown)" == 0 ]] && echo 1 || echo 0)" "$OUT"
+reset_logs
+OUT="$(run_reown 00000000000000004242 4243 "$T4")"
+check "PUID of exactly 20 characters: accepted" "$([[ "$OUT" == *"entries to 4242:4243 in "* ]] && echo 1 || echo 0)" "$OUT"
+
+# ---------------------------------------------------------------------------
+# 8b. Every chown failing on a big library stays fast: one stat per batch
+# ---------------------------------------------------------------------------
+
+# A root_squash or read-only share fails every chown on every start, and the
+# app waits for this pass. 3 folders of 1000 files: 3004 entries.
+T7="${SANDBOX}/big"
+for d in a b c; do
+    mkdir -p "$T7/$d"
+    (cd "$T7/$d" && touch f{0001..1000}.wav)
+done
+reset_logs
+START=$SECONDS
+OUT="$(FAKE_CHOWN=fail run_reown 4242 4243 "$T7")"; CODE=$?
+TOOK=$((SECONDS - START))
+STATS="$(calls_of stat)"
+BATCHES="$(calls_of chown)"
+check "big, every chown fails: exit 0, every entry counted failed" \
+  "$([[ $CODE -eq 0 && "$OUT" == *"re-owned 0, failed 3004 of 3004 entries"* ]] && echo 1 || echo 0)" "$OUT"
+check "big, every chown fails: one stat per chown batch, not per entry (${STATS} stats, ${BATCHES} batches)" \
+  "$([ "$STATS" -ge 1 ] && [ "$STATS" -le "$BATCHES" ] && echo 1 || echo 0)"
+check "big, every chown fails: finishes in under 120 s (took ${TOOK}s)" "$(yes_if [ "$TOOK" -lt 120 ])"
+
+# ---------------------------------------------------------------------------
+# 8c. With stdout closed the walk still runs
+# ---------------------------------------------------------------------------
+
+# A plain `exec 4>&1` with fd 1 closed ends a dash script before the walk.
+reset_logs
+PATH="${FAKEBIN}:${PATH}" sh "$REOWN" 4242 4243 "$T4" >&- 2>/dev/null; CODE=$?
+check "stdout closed: exit 0 and the walk ran" "$([ "$CODE" -eq 0 ] && [ "$(calls_of chown)" -gt 0 ] && echo 1 || echo 0)" "exit $CODE, $(calls_of chown) chown calls"
 
 # ---------------------------------------------------------------------------
 # 9. The entrypoint: PUID/PGID unset still means 1001:1001, as before

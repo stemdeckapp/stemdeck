@@ -32,8 +32,10 @@
 # a read-only or root_squash mount names an entry that failed.
 
 # Everything the log shows goes to fd 4, so the walk's own output can be
-# captured on stdout.
-exec 4>&1
+# captured on stdout. A plain exec whose redirection fails ends a dash script,
+# so with stdout closed the walk would never run; `command exec` reports the
+# failure instead, and the log then goes nowhere while the walk still runs.
+command exec 4>&1 || exec 4>/dev/null
 log() { echo "stemdeck: ownership: $*" >&4; }
 
 if [ "$#" -lt 3 ]; then
@@ -57,6 +59,14 @@ case "$gid" in
     exit 0
     ;;
 esac
+
+# No real id is longer than 20 digits (2^64 has 20), and the stripping below
+# takes time that grows with the square of the length, so a longer value is
+# refused before it runs.
+if [ "${#uid}" -gt 20 ] || [ "${#gid}" -gt 20 ]; then
+  log "PUID or PGID is longer than 20 characters, ownership left unchanged"
+  exit 0
+fi
 
 # 099 is 99 to chown and find, but stat prints 99, and the failure check below
 # compares stat's text. Strip leading zeros, keeping a lone 0.
@@ -92,16 +102,26 @@ PATH="${safe_path:-/usr/sbin:/usr/bin:/sbin:/bin}"
 export PATH
 
 # Run by -execdir with a batch of ./name entries from one directory. When chown
-# reports a failure, find out which entries it left wrong (stat without -L
-# reads a link itself, never its target) and print one f per entry, counted
-# with find's own marks, so the count is real without giving up -execdir's
-# batching on the success path. chown's error lines go to find's stderr.
+# reports a failure, find out how many entries it left wrong and print one f
+# for each, counted with find's own marks, so the count is real without giving
+# up -execdir's batching on the success path. chown's error lines go to find's
+# stderr.
+#
+# One stat for the whole batch, not one per entry: on a root_squash or
+# read-only share every chown fails on every start, and a stat per entry made
+# 100k entries take minutes before the app could start. stat without -L reads
+# a link itself, never its target. It prints one uid:gid line per entry it can
+# read, digits and a colon only, so no file name reaches the loop and the split
+# cannot glob; an entry it cannot read prints nothing and stays counted as
+# failed. The f loop is builtins only.
 # Single-quoted on purpose: the batch shell expands these, not this one.
 # shellcheck disable=SC2016
 batch='chown -h -- "$REOWN_OWNER" "$@" && exit 0
-for f in "$@"; do
-  [ "$(stat -c %u:%g -- "$f" 2>/dev/null)" = "$REOWN_OWNER" ] || printf f
+n=$#
+for o in $(stat -c %u:%g -- "$@" 2>/dev/null); do
+  [ "$o" = "$REOWN_OWNER" ] && n=$((n - 1))
 done
+while [ "$n" -gt 0 ]; do printf f; n=$((n - 1)); done
 exit 1'
 REOWN_OWNER="${uid}:${gid}"
 export REOWN_OWNER
