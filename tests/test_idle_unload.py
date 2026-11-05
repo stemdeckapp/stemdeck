@@ -74,9 +74,11 @@ def clock(monkeypatch) -> Clock:
 @pytest.fixture(autouse=True)
 def _reset():
     sep_mod._worker.clear()
+    sep_mod._left_behind.clear()
     bd.reset_model_cache()
     yield
     sep_mod._kill_worker()
+    sep_mod._left_behind.clear()
     bd.reset_model_cache()
 
 
@@ -629,41 +631,144 @@ def test_a_stopped_worker_leaves_no_open_pipe(spawns):
     assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
 
 
-def test_a_worker_that_will_not_die_is_given_up_on(monkeypatch, caplog):
+class Wedged:
+    """A worker that ignores terminate() and kill(), with real pipes."""
+
+    def __init__(self, pid: int = 4242) -> None:
+        import os
+
+        self.pid = pid
+        self.calls: list[str] = []
+        self.exited = False
+        r1, w1 = os.pipe()
+        r2, w2 = os.pipe()
+        self.stdin = os.fdopen(w1, "w")
+        self.stderr = os.fdopen(r2, "r")
+        self._other_ends = (os.fdopen(r1, "r"), os.fdopen(w2, "w"))
+
+    def poll(self):
+        return 0 if self.exited else None
+
+    def terminate(self) -> None:
+        self.calls.append("terminate")
+
+    def kill(self) -> None:
+        self.calls.append("kill")
+
+    def wait(self, timeout=None):
+        import subprocess
+
+        self.calls.append(f"wait {timeout}")
+        raise subprocess.TimeoutExpired("demucs", timeout)
+
+    def communicate(self, *a, **k):
+        raise AssertionError("an unbounded reap")
+
+    def close_all(self) -> None:
+        for f in (self.stdin, self.stderr, *self._other_ends):
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+@pytest.fixture()
+def wedged(monkeypatch):
+    w = Wedged()
+    monkeypatch.setattr(sep_mod, "_KILL_REAP_TIMEOUT_SEC", 0.01)
+    yield w
+    w.close_all()
+
+
+def test_a_worker_that_will_not_die_is_given_up_on(wedged, caplog):
     """A worker wedged in an uninterruptible call must not hold the idle lock,
     and with it the next job and shutdown, forever."""
-    import subprocess
-
-    class Wedged:
-        pid = 4242
-        stdin = stderr = None
-
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def poll(self):
-            return None
-
-        def terminate(self) -> None:
-            self.calls.append("terminate")
-
-        def kill(self) -> None:
-            self.calls.append("kill")
-
-        def wait(self, timeout=None):
-            self.calls.append(f"wait {timeout}")
-            raise subprocess.TimeoutExpired("demucs", timeout)
-
-        def communicate(self, *a, **k):
-            raise AssertionError("an unbounded reap")
-
-    wedged = Wedged()
-    sep_mod._worker["proc"] = wedged
-    monkeypatch.setattr(sep_mod, "_KILL_REAP_TIMEOUT_SEC", 0.01)
+    sep_mod._worker.update(proc=wedged, device="cuda")
     sep_mod._kill_worker()
     assert wedged.calls == ["terminate", "wait 5", "kill", "wait 0.01"]
     assert "did not exit" in caplog.text
     assert "proc" not in sep_mod._worker
+    # Left open: a job thread may still be blocked reading them.
+    assert not wedged.stdin.closed and not wedged.stderr.closed
+    assert sep_mod._left_behind == [(wedged, "cuda")], "still tracked"
+
+
+def test_no_second_gpu_worker_beside_a_left_behind_one(
+    wedged, tmp_path, spawns, monkeypatch, caplog
+):
+    """It may still hold the card's memory: the job goes to the CPU, and says
+    why, rather than failing on memory beside it."""
+    sep_mod._worker.update(proc=wedged, device="cuda")
+    sep_mod._kill_worker()
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+    job = _separate(tmp_path, "gggg")
+    assert spawns == ["cpu"], "no cuda worker was started"
+    assert job.gpu_fallback is True
+    assert "has not exited yet" in caplog.text
+    assert "kill" in wedged.calls[4:], "killed once more"
+
+    # Once it has exited, it is forgotten and the GPU is used again.
+    wedged.exited = True
+    _separate(tmp_path, "hhhh")
+    assert spawns == ["cpu", "cuda"]
+    assert sep_mod._left_behind == []
+    assert wedged.stderr.closed, "its pipes close once it has exited"
+
+
+def test_shutdown_tries_a_left_behind_worker_once_more(wedged, caplog):
+    sep_mod._worker.update(proc=wedged, device="cuda")
+    sep_mod._kill_worker()
+    before = len(wedged.calls)
+    sep_mod.shutdown_worker()
+    assert wedged.calls[before:] == ["kill"]
+    assert "still running at shutdown" in caplog.text
+
+
+def test_a_pipe_closed_under_the_reader_reads_as_the_worker_exiting(tmp_path, monkeypatch):
+    """A shutdown's _kill_worker closes stderr while the job thread reads it.
+    That is EOF, a failed run, not a ValueError out of the pipeline."""
+    import io
+
+    from app.pipeline.errors import SeparationError
+
+    monkeypatch.setattr(
+        sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _HELD_WORKER]
+    )
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    job = Job(id="iiiiiiiiiiii")
+    (tmp_path / "source.wav").write_bytes(b"RIFF")
+    out: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            sep_mod.separate(job, tmp_path / "source.wav", tmp_path)
+        except BaseException as e:
+            out.append(e)
+
+    t = threading.Thread(target=run)
+    t.start()
+    for _ in range(200):
+        if job.progress > 0:
+            break
+        threading.Event().wait(0.05)
+    proc = sep_mod._worker["proc"]
+    real = proc.stderr
+    closed = io.StringIO()
+    closed.close()
+    # The next read after the current one meets a closed file.
+    proc.stderr = closed
+    proc.stdin.write("go" + chr(10))
+    proc.stdin.flush()
+    t.join(10)
+    real.close()
+    assert out and isinstance(out[0], SeparationError), out
+    assert "proc" not in sep_mod._worker
+
+
+def test_the_beat_model_collects_garbage_outside_the_idle_lock():
+    import gc
+
+    assert bd.MODEL._after_unload is gc.collect
 
 
 # --- POST /api/settings refuses what would change the setting by accident -----

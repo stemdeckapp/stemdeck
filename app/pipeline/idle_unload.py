@@ -90,8 +90,8 @@ class IdleResource:
     def unload_if_idle(self, idle_sec: float) -> bool:
         """Unload when loaded, unused, and idle for `idle_sec`. True if it did.
 
-        The lock is held across the unload (up to a few seconds for a worker
-        that will not stop), which is what makes a use that arrives meanwhile
+        The lock is held across the unload (up to 15 s for a worker that will
+        not stop: separate._kill_worker), which is what makes a use that arrives meanwhile
         wait for it rather than race it."""
         with self._lock:
             if self._users or not self._is_loaded():
@@ -155,13 +155,15 @@ async def check() -> list[str]:
         # The idle time counts from when the pipeline goes quiet, not from the
         # end of the separation: lyrics and sections can run for many minutes
         # after it, and an unload the moment they end would hand the next
-        # import a cold start for nothing.
+        # import a cold start for nothing. The idle time restarts at the last
+        # busy check, so an unload can come up to IDLE_UNLOAD_CHECK_SEC (30 s)
+        # earlier than the minutes after the pipeline goes quiet.
         for resource in _resources:
             resource.touch()
         return []
     if minutes <= 0:
         return []
-    # Off the loop: stopping the worker waits up to 5 s for it to exit.
+    # Off the loop: stopping the worker waits up to 15 s for it to exit.
     return await asyncio.to_thread(_unload_idle, minutes * 60)
 
 

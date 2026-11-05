@@ -4598,8 +4598,12 @@ async function wireGeneralSettings(overlay) {
   let deviceDiagnostics = "";
   const qualitySel = overlay.querySelector(".set-separation-quality");
   const idleUnloadInput = overlay.querySelector(".set-idle-unload");
-  // The server's value, for a field left empty: there is no number to send.
+  const idleUnloadDesc = overlay.querySelector(".set-idle-unload-desc");
+  const idleUnloadMsg = overlay.querySelector(".idle-unload-msg");
+  // The server's value, for a field left empty or a save that failed.
   let lastIdleUnload = null;
+  // The server's ceiling; the field's maxlength (4) lets more through.
+  let idleUnloadMax = 1440;
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
@@ -4649,6 +4653,11 @@ async function wireGeneralSettings(overlay) {
     if (idleUnloadInput && Number.isInteger(d.idle_unload_minutes)) {
       lastIdleUnload = d.idle_unload_minutes;
       if (document.activeElement !== idleUnloadInput) idleUnloadInput.value = String(d.idle_unload_minutes);
+    }
+    if (Number.isInteger(d.idle_unload_minutes_max)) {
+      idleUnloadMax = d.idle_unload_minutes_max;
+      // Filled here, not through data-i18n, so the ceiling is the server's.
+      if (idleUnloadDesc) idleUnloadDesc.textContent = i18nT("settings.idleUnload.desc", { max: idleUnloadMax });
     }
     if (transcribeSel && d.transcribe_lyrics) transcribeSel.value = d.transcribe_lyrics;
     // A ROCm build of torch serves an AMD GPU as "cuda", and Auto transcribes
@@ -4827,17 +4836,53 @@ async function wireGeneralSettings(overlay) {
   qualitySel?.addEventListener("change", () => {
     post({ separation_quality: qualitySel.value });
   });
-  idleUnloadInput?.addEventListener("change", async () => {
+  const showIdleUnloadMsg = (key, vars, isError) => {
+    if (!idleUnloadMsg) return;
+    idleUnloadMsg.textContent = key ? i18nT(key, vars) : "";
+    idleUnloadMsg.classList.toggle("error", Boolean(isError));
+  };
+  const commitIdleUnload = async (mins) => {
+    showIdleUnloadMsg(null);
+    // The server clamps (0 to its maximum) and returns what it kept. Written
+    // back here because apply() skips a focused field, as for "Delete after".
+    const data = await post({ idle_unload_minutes: mins });
+    if (!data || !Number.isInteger(data.idle_unload_minutes)) {
+      // Not saved: show the value still in use, and say so, rather than
+      // leaving a number that a reload would quietly take back.
+      if (lastIdleUnload !== null) idleUnloadInput.value = String(lastIdleUnload);
+      showIdleUnloadMsg("settings.idleUnload.saveFailed", {}, true);
+      return;
+    }
+    idleUnloadInput.value = String(data.idle_unload_minutes);
+    if (data.idle_unload_minutes !== mins) showIdleUnloadMsg("settings.idleUnload.clamped", { max: data.idle_unload_minutes });
+  };
+  idleUnloadInput?.addEventListener("input", () => showIdleUnloadMsg(null));
+  idleUnloadInput?.addEventListener("change", () => {
     const mins = parseInt(idleUnloadInput.value, 10);
     if (Number.isNaN(mins)) {
       // Emptied: keep what the server has rather than guessing a number.
       if (lastIdleUnload !== null) idleUnloadInput.value = String(lastIdleUnload);
       return;
     }
-    // The server clamps (0 to its maximum) and returns what it kept. Written
-    // back here because apply() skips a focused field, as for "Delete after".
-    const data = await post({ idle_unload_minutes: mins });
-    if (data && Number.isInteger(data.idle_unload_minutes)) idleUnloadInput.value = String(data.idle_unload_minutes);
+    commitIdleUnload(mins);
+  });
+  // No sibling field handles a paste: maxlength cuts the text before the
+  // digits filter sees it, so "1,440" became "1,44" and then 144. Here the
+  // pasted text is read whole: a number with thousands separators becomes its
+  // digits, the ceiling applies (and says so), and anything else ("-5",
+  // "ten") is refused rather than turned into a different number. A paste
+  // replaces the field: it holds one short number.
+  idleUnloadInput?.addEventListener("paste", (e) => {
+    const text = e.clipboardData?.getData("text") ?? "";
+    e.preventDefault();
+    if (!/^\s*(?:\d+|\d{1,3}(?:[,.'\s]\d{3})+)\s*$/.test(text)) {
+      showIdleUnloadMsg("settings.idleUnload.notNumber", {}, true);
+      return;
+    }
+    // Sent as pasted: the server applies the ceiling and the message says so.
+    const mins = parseInt(text.replace(/\D/g, ""), 10);
+    idleUnloadInput.value = String(Math.min(mins, idleUnloadMax));
+    commitIdleUnload(mins);
   });
   transcribeSel?.addEventListener("change", () => {
     post({ transcribe_lyrics: transcribeSel.value });
@@ -5483,10 +5528,11 @@ function openLibraryEditor() {
             <div class="settings-row">
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.idleUnload.title">Free memory when idle</div>
-                <div class="settings-row-desc" data-i18n="settings.idleUnload.desc">Minutes without a new track before StemDeck unloads its separation models to free memory. The next track loads them again and starts a few seconds later. 0 keeps them loaded.</div>
+                <div class="settings-row-desc set-idle-unload-desc">Minutes with no track being separated or analyzed before StemDeck unloads its separation models to free memory, at most 1440. The next track loads them again and starts a few seconds later. 0 keeps them loaded.</div>
               </div>
               ${unitField('<input type="text" class="settings-num-input set-idle-unload" inputmode="numeric" maxlength="4" aria-label="Free memory when idle" data-i18n-aria-label="settings.idleUnload.title" />', "settings.unit.minutes", "min")}
             </div>
+            <div class="idle-unload-msg" role="status" aria-live="polite"></div>
           </div>
         </div>
         <div class="settings-group">

@@ -50,14 +50,42 @@ def _spawn_worker_cmd(device: str) -> list[str]:
 
 
 # How long a killed worker gets to exit before it is given up on. The idle
-# lock is held across this (idle_unload.py), and the next job and shutdown
-# wait on that lock, so it must end even for a worker wedged in a CUDA call.
+# lock is held across a stop (idle_unload.py), up to 15 s in all: 5 s for
+# terminate() and this for kill(). The next job and shutdown wait on that
+# lock, so it must end even for a worker wedged in a CUDA call.
 _KILL_REAP_TIMEOUT_SEC = 10
+
+# Workers given up on after kill(), with their device. Still counted, so the
+# next job does not start a second GPU worker beside one that may still hold
+# the card's memory, and shutdown tries them once more.
+_left_behind: list[tuple[subprocess.Popen, str]] = []
+
+
+def _reap_left_behind() -> set[str]:
+    """Forget the left-behind workers that have exited, kill the rest again.
+    Returns the devices that still have one alive."""
+    alive: set[str] = set()
+    for entry in list(_left_behind):
+        proc, device = entry
+        if proc.poll() is not None:
+            logger.info("left-behind demucs worker %s (%s) has exited", proc.pid, device)
+            _left_behind.remove(entry)
+            _close_pipes(proc)
+            continue
+        logger.warning(
+            "left-behind demucs worker %s (%s) is still running; killing again", proc.pid, device
+        )
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        alive.add(device)
+    return alive
 
 
 def _kill_worker() -> None:
     proc = _worker.pop("proc", None)
-    _worker.pop("device", None)
+    device = _worker.pop("device", None)
     if proc is None:
         return
     if proc.poll() is None:
@@ -80,6 +108,7 @@ def _kill_worker() -> None:
                 )
                 # Its pipes stay open: a job thread may still be blocked
                 # reading stderr, and closing under it would block here.
+                _left_behind.append((proc, str(device or "")))
                 return
     _close_pipes(proc)
 
@@ -110,8 +139,16 @@ def shutdown_worker() -> None:
     """Stop the worker at server shutdown, even under a running job: the
     runner reads that as an interruption (jobqueue.is_stopping), not a
     failure. Through the idle lock, so an idle unload in progress finishes
-    first and the two never stop the same process at once."""
+    first and the two never stop the same process at once. A worker given up
+    on earlier gets one more kill, and is logged if it still runs."""
     WORKER.unload_now()
+    for proc, device in _left_behind:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            logger.error("demucs worker %s (%s) still running at shutdown", proc.pid, device)
 
 
 def _get_worker(device: str) -> subprocess.Popen:
@@ -169,6 +206,11 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
 
     Returns (returncode, stderr_tail). Raises JobCancelled when the exit was
     caused by POST /cancel. The retry policy lives in separate()."""
+    if device in _reap_left_behind() and device != "cpu":
+        # A worker given up on after kill() may still hold the GPU's memory,
+        # and a second one beside it fails on memory. Said in the tail, so
+        # separate() retries on the CPU and the stage line says why.
+        return 1, [f"a previous separation worker on {device} has not exited yet"]
     spawn_at = time.monotonic()
     proc = _get_worker(device)
     if proc.stdin is None or proc.stderr is None:
@@ -242,7 +284,12 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     wt.start()
     try:
         while True:
-            ch = proc.stderr.read(1)
+            try:
+                ch = proc.stderr.read(1)
+            except ValueError:
+                # The pipe was closed under the read: a shutdown or another
+                # stop ran _kill_worker. The same as the worker exiting.
+                ch = ""
             if not ch:
                 # EOF -- the worker process itself exited (crash, or it
                 # already wrote @@ERROR@@ and is shutting down).
