@@ -637,7 +637,12 @@ pub fn stale_tmp_pid(file_name: &str) -> Option<u32> {
     if base != MARKER_FILE && base != STATE_FILE {
         return None;
     }
-    pid.parse().ok().filter(|p| *p != 0)
+    // Exactly what write_atomic writes: ASCII digits, no sign, no leading
+    // zero. `parse` alone would also take "+7" and "007".
+    if pid.is_empty() || pid.starts_with('0') || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    pid.parse().ok()
 }
 
 /// Removes the temp files of processes that are gone. A live pid's file is
@@ -657,30 +662,67 @@ pub fn sweep_stale_tmp(dir: &Path, own_pid: u32, pid_alive: &dyn Fn(u32) -> bool
     }
 }
 
-/// Reads the state file. A file that is missing is no state. A file that
-/// exists but cannot be read (permissions, an I/O error, not UTF-8) or does
-/// not parse is logged, and the guard starts over: the `bool` is true then,
-/// so the caller writes a fresh file.
-pub fn read_state_file(dir: &Path, log: &mut dyn FnMut(&str)) -> (GuardState, bool) {
-    let text = match fs::read_to_string(dir.join(STATE_FILE)) {
+/// How reading the state file went, which decides what may be written back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateRead {
+    /// Read and parsed, or missing (no state yet): write back on a change.
+    Read,
+    /// Its content is not a state file (does not parse, not UTF-8): it can
+    /// never be read, so it is replaced.
+    Corrupt,
+    /// The file could not be read at all (permissions, an I/O error). It may
+    /// hold a saved fallback that a later launch can read, so it is left as
+    /// it is: this launch decides without it and writes nothing.
+    Unreadable,
+}
+
+impl StateRead {
+    /// The state should be written, given whether the decision changed it.
+    pub fn write_back(self, changed: bool) -> bool {
+        match self {
+            StateRead::Read => changed,
+            StateRead::Corrupt => true,
+            StateRead::Unreadable => false,
+        }
+    }
+}
+
+/// What the result of reading the state file means for this launch.
+pub fn interpret_state_read(
+    result: io::Result<String>,
+    log: &mut dyn FnMut(&str),
+) -> (GuardState, StateRead) {
+    let text = match result {
         Ok(t) => Some(t),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            log(&format!(
+                "DMA-BUF crash guard state is not text ({e}); starting over"
+            ));
+            return (GuardState::default(), StateRead::Corrupt);
+        }
         Err(e) => {
             log(&format!(
-                "DMA-BUF crash guard state could not be read ({e}); starting over"
+                "DMA-BUF crash guard state could not be read ({e}); deciding without \
+                 it this launch and leaving the file as it is"
             ));
-            return (GuardState::default(), true);
+            return (GuardState::default(), StateRead::Unreadable);
         }
     };
     match load_state(text.as_deref()) {
-        Ok(s) => (s, false),
+        Ok(s) => (s, StateRead::Read),
         Err(why) => {
             log(&format!(
                 "DMA-BUF crash guard state unreadable ({why}); starting over"
             ));
-            (GuardState::default(), true)
+            (GuardState::default(), StateRead::Corrupt)
         }
     }
+}
+
+/// Reads the state file; see [`interpret_state_read`].
+pub fn read_state_file(dir: &Path, log: &mut dyn FnMut(&str)) -> (GuardState, StateRead) {
+    interpret_state_read(fs::read_to_string(dir.join(STATE_FILE)), log)
 }
 
 fn save_state_file(dir: &Path, state: &GuardState, log: &mut dyn FnMut(&str)) {
@@ -732,9 +774,9 @@ pub fn startup(
             let _ = fs::remove_file(d.join(MARKER_FILE));
         }
     }
-    let (state, corrupt) = match dir {
+    let (state, read) = match dir {
         Some(d) => read_state_file(d, log),
-        None => (GuardState::default(), false),
+        None => (GuardState::default(), StateRead::Read),
     };
     let fingerprint = fingerprint_from(host.proc_maps, host.nvidia_version);
     let decision = decide(&Inputs {
@@ -763,7 +805,7 @@ pub fn startup(
         for event in &decision.events {
             log(&event.describe());
         }
-        if decision.state != state || corrupt {
+        if read.write_back(decision.state != state) {
             save_state_file(d, &decision.state, log);
         }
     }
@@ -792,9 +834,9 @@ pub fn write_launch_marker(
 /// the launch in the guard's state.
 pub fn record_clean_run(dir: &Path, own_pid: u32, renderer_on: bool, log: &mut dyn FnMut(&str)) {
     clear_marker_if_ours(dir, own_pid);
-    let (state, corrupt) = read_state_file(dir, log);
+    let (state, read) = read_state_file(dir, log);
     let next = after_clean_run(&state, renderer_on);
-    if next == state && !corrupt {
+    if !read.write_back(next != state) {
         return;
     }
     if renderer_on && state.early_exits > 0 {
@@ -1704,20 +1746,131 @@ mod tests {
     }
 
     #[test]
-    fn a_state_file_that_cannot_be_read_is_logged() {
+    fn a_state_file_that_cannot_be_read_is_logged_and_left_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         // A directory where the file should be: reading it fails with an I/O
-        // error, not NotFound, on every platform and without permissions.
+        // error, not NotFound and not bad content, on every platform and
+        // without depending on permissions or root.
         fs::create_dir(dir.join(STATE_FILE)).unwrap();
+        fs::write(dir.join(STATE_FILE).join("kept"), "").unwrap();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+
         let (d, log) = start(dir, 100, &dead);
-        assert_eq!(d.state, GuardState::default());
+        // The launch goes on, deciding without the state.
+        assert!(d.arm_guard);
+        assert_eq!(d.state.early_exits, 1);
         assert!(
             log.iter().any(|l| l.contains("could not be read")),
             "{log:?}"
         );
-        // Saving over it fails too, and that is logged rather than raised.
-        assert!(log.iter().any(|l| l.contains("could not save")), "{log:?}");
+        // Nothing is written over it or deleted.
+        assert!(!log.iter().any(|l| l.contains("could not save")), "{log:?}");
+        assert!(dir.join(STATE_FILE).join("kept").exists());
+
+        // The clean-run write stands back too.
+        reach_window(dir, 100, &d);
+        let mut lines = Vec::new();
+        record_clean_run(dir, 100, true, &mut |m| lines.push(m.to_string()));
+        assert!(
+            !lines.iter().any(|l| l.contains("could not save")),
+            "{lines:?}"
+        );
+        assert!(dir.join(STATE_FILE).join("kept").exists());
+    }
+
+    #[test]
+    fn a_read_error_never_writes_back_and_bad_content_always_does() {
+        let mut quiet = |_: &str| {};
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::Interrupted,
+            io::ErrorKind::Other,
+        ] {
+            let (s, read) = interpret_state_read(Err(io::Error::from(kind)), &mut quiet);
+            assert_eq!(read, StateRead::Unreadable, "{kind:?}");
+            assert_eq!(s, GuardState::default());
+            assert!(!read.write_back(true) && !read.write_back(false));
+        }
+        let (_, missing) =
+            interpret_state_read(Err(io::Error::from(io::ErrorKind::NotFound)), &mut quiet);
+        assert_eq!(missing, StateRead::Read);
+        assert!(missing.write_back(true) && !missing.write_back(false));
+        let (_, not_text) =
+            interpret_state_read(Err(io::Error::from(io::ErrorKind::InvalidData)), &mut quiet);
+        assert_eq!(not_text, StateRead::Corrupt);
+        let (_, bad) = interpret_state_read(Ok("early_exits=x".into()), &mut quiet);
+        assert_eq!(bad, StateRead::Corrupt);
+        assert!(bad.write_back(false));
+    }
+
+    #[test]
+    fn a_saved_fallback_is_not_rewritten_by_a_launch_that_changes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        store_state(dir, STATE_FILE, &saved(3, 1)).unwrap();
+        let before = fs::read(dir.join(STATE_FILE)).unwrap();
+        // The previous launch closed early under the fallback: not counted.
+        write_launch_marker(dir, 4242, Some("boot-a"), false, 1).unwrap();
+        let (d, _) = start(dir, 100, &dead);
+        assert_eq!(d.reason, Reason::SavedFallback);
+        assert_eq!(fs::read(dir.join(STATE_FILE)).unwrap(), before);
+    }
+
+    #[test]
+    fn a_crashed_marker_is_consumed_whatever_the_override() {
+        for (webkit_var, mode) in [
+            (Some("1"), None),
+            (Some(""), Some("on")),
+            (None, Some("off")),
+            (None, Some("on")),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+            let d = startup(
+                Some(dir),
+                &Host {
+                    webkit_var,
+                    mode,
+                    ..host(100)
+                },
+                &dead,
+                &mut |_| {},
+            );
+            assert!(!d.arm_guard, "{webkit_var:?} {mode:?}");
+            assert!(
+                !dir.join(MARKER_FILE).exists(),
+                "{webkit_var:?} {mode:?}: marker left behind"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_marker_is_consumed() {
+        let other_boot = format_marker(&Marker {
+            pid: 4242,
+            started: 1,
+            boot_id: Some("boot-b".into()),
+            renderer_on: true,
+        });
+        let own_pid = format_marker(&Marker {
+            pid: 100,
+            started: 1,
+            boot_id: None,
+            renderer_on: true,
+        });
+        for text in [other_boot.as_str(), own_pid.as_str(), "half a fi"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            fs::write(dir.join(MARKER_FILE), text).unwrap();
+            let (d, _) = start(dir, 100, &dead);
+            assert_eq!(d.state.early_exits, 0, "{text:?}");
+            assert!(
+                !dir.join(MARKER_FILE).exists(),
+                "{text:?}: marker left behind"
+            );
+        }
     }
 
     #[test]
@@ -1763,6 +1916,17 @@ mod tests {
         assert_eq!(stale_tmp_pid(".launch-pending.7.tmp"), Some(7));
         assert_eq!(stale_tmp_pid(".launch-pending.0.tmp"), None);
         assert_eq!(stale_tmp_pid(".launch-pending.x.tmp"), None);
+        for odd in ["+7", "007", "-7", " 7", "7 ", "", "4294967296"] {
+            assert_eq!(
+                stale_tmp_pid(&format!(".launch-pending.{odd}.tmp")),
+                None,
+                "{odd:?}"
+            );
+        }
+        assert_eq!(
+            stale_tmp_pid(".webkit-dmabuf-guard.4294967295.tmp"),
+            Some(u32::MAX)
+        );
         assert_eq!(stale_tmp_pid("launch-pending.7.tmp"), None);
     }
 
