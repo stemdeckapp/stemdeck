@@ -11,6 +11,7 @@ at startup), so the Settings UI can change them without a restart:
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
 - `separation_quality` — demucs shift-averaging: standard | best (2x slower).
+- `idle_unload_minutes` - idle minutes before the separation models unload (0 never).
 - `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
 - `auto_delete_jobs`  — whether finished jobs are deleted after a while (off).
 - `auto_delete_days`  — how long they are kept when that is on.
@@ -39,6 +40,8 @@ from pathlib import Path
 from app.core.config import (
     DATA_DIR,
     DEFAULT_STEM_STORAGE,
+    IDLE_UNLOAD_MINUTES,
+    IDLE_UNLOAD_MINUTES_MAX,
     MAX_DURATION_SEC,
     PLAYLIST_MAX_ITEMS,
     STEM_FORMAT_CHOICES,
@@ -618,6 +621,27 @@ def set_separation_quality(value: str) -> str:
         _ensure()["separation_quality"] = choice
         _save()
         return choice
+
+
+# ── idle_unload_minutes ──
+# Minutes with no separation or analysis running before the separation worker
+# and the beat model are unloaded (#975), 0 for never. Read on every check of the idle timer
+# (app/pipeline/idle_unload.py), so a change applies without a restart.
+# STEMDECK_IDLE_UNLOAD_MINUTES seeds the default; a value saved here wins.
+def get_idle_unload_minutes() -> int:
+    with _LOCK:
+        v = _num(_ensure().get("idle_unload_minutes"))
+        if v is None:
+            return IDLE_UNLOAD_MINUTES
+        return max(0, min(IDLE_UNLOAD_MINUTES_MAX, v))
+
+
+def set_idle_unload_minutes(value: int) -> int:
+    clamped = max(0, min(IDLE_UNLOAD_MINUTES_MAX, int(value)))
+    with _LOCK:
+        _ensure()["idle_unload_minutes"] = clamped
+        _save()
+        return clamped
 
 
 # ── stem_format / stem_mp3_kbps ──

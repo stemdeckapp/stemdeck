@@ -32,15 +32,19 @@ buying us (continuity through drum-free sections) with no dependency at all.
 
 from __future__ import annotations
 
+import gc
 import logging
 import threading
 
 from app.core.config import BEAT_DETECTOR, BEAT_MODEL_CHECKPOINT, BEATGRID_HOP
+from app.pipeline import idle_unload
+from app.pipeline.idle_unload import IdleResource
 
 logger = logging.getLogger("stemdeck.beatdetect")
 
 # Loading the checkpoint costs ~1 s and 81 MB of RAM, so the model is built once
-# and reused. Guarded because pipeline stages can run from a worker thread.
+# and reused until the idle timer drops it (MODEL below). Guarded because
+# pipeline stages can run from a worker thread.
 _model = None
 _model_failed = False
 _lock = threading.Lock()
@@ -93,15 +97,41 @@ def reset_model_cache() -> None:
         _model_failed = False
 
 
+def _drop_model() -> None:
+    """Let go of the loaded model; the next detection loads it again. A cached
+    failure stays cached, for the reason _get_model gives."""
+    global _model
+    with _lock:
+        _model = None
+
+
+# Dropped by the idle timer with the separation worker (#975). Reloading costs
+# 0.3 to 0.4 s. Measured on Windows, 2026-11-05, the server's memory did not go
+# down when the model was dropped (the heap keeps the freed pages and the next
+# load reuses them, flat over ten cycles); what the drop gives back on Linux is
+# not measured.
+MODEL = idle_unload.register(
+    IdleResource(
+        "beat model",
+        lambda: _model is not None,
+        lambda: _drop_model(),
+        # Outside the idle lock, so a detection arriving meanwhile does not
+        # wait on a full collection.
+        after_unload=gc.collect,
+    )
+)
+
+
 def _detect_model(y: object, sr: int) -> tuple[list[float], list[float]] | None:
-    model = _get_model()
-    if model is None:
-        return None
-    try:
-        beats, downbeats = model(y, sr)
-    except Exception:
-        logger.warning("beat model inference failed -- falling back", exc_info=True)
-        return None
+    with MODEL.in_use():
+        model = _get_model()
+        if model is None:
+            return None
+        try:
+            beats, downbeats = model(y, sr)
+        except Exception:
+            logger.warning("beat model inference failed -- falling back", exc_info=True)
+            return None
     beats = [float(t) for t in beats]
     downbeats = [float(t) for t in downbeats]
     if len(beats) < 2:

@@ -400,6 +400,24 @@ TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_R
 MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
 MODEL_DOWNLOAD_BACKOFF = (2, 5)
 TIMEOUT_MODEL_STALL = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_STALL", 120))
+# Minutes with no separation or analysis running before the idle Demucs
+# worker is stopped and the beat model dropped (#975); 0 never unloads. The worker exists to skip a model
+# load per job (#309), so this trades memory for the next job's start: measured
+# on an RTX 3080, 2026-11-05, a 3 min 53 s song: the idle CUDA worker held
+# 1.93 GB of RAM and 1.11 GB of VRAM (CPU worker: 1.46 GB of RAM), and the
+# first separation after an unload took 5.8 s longer (9.9 s against 15.7 s).
+# Ten minutes keeps a run of imports warm and gives the memory back once the
+# user has stopped. The Settings value wins over the environment.
+IDLE_UNLOAD_MINUTES_MAX = 1440
+
+
+def _env_idle_unload_minutes() -> int:
+    return max(0, min(IDLE_UNLOAD_MINUTES_MAX, _env_int("STEMDECK_IDLE_UNLOAD_MINUTES", 10)))
+
+
+IDLE_UNLOAD_MINUTES = _env_idle_unload_minutes()
+# How often the idle timer looks. An unload lands at most this late.
+IDLE_UNLOAD_CHECK_SEC = 30
 # Automatic functional-section analysis. Inference stays on CPU because the
 # persistent Demucs worker deliberately keeps its model resident on the chosen
 # accelerator between jobs; loading a second model beside it would make VRAM

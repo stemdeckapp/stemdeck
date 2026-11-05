@@ -309,12 +309,12 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .stems-location-size { flex-shrink: 0; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.stems-location-msg, .exports-location-msg, .cookies-file-msg, .acoustid-key-msg, .discogs-token-msg {
+.stems-location-msg, .exports-location-msg, .cookies-file-msg, .acoustid-key-msg, .discogs-token-msg, .idle-unload-msg {
   margin-top: 8px; font-size: 13px; line-height: 1.45; color: var(--muted);
 }
-.stems-location-msg:empty, .exports-location-msg:empty, .cookies-file-msg:empty { display: none; }
+.stems-location-msg:empty, .exports-location-msg:empty, .cookies-file-msg:empty, .idle-unload-msg:empty { display: none; }
 .stems-location-msg.error, .exports-location-msg.error, .cookies-file-msg,
-.acoustid-key-msg.error, .discogs-token-msg.error { color: var(--danger); }
+.acoustid-key-msg.error, .discogs-token-msg.error, .idle-unload-msg.error { color: var(--danger); }
 .stems-location-msg.ok { color: var(--accent); }
 
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }

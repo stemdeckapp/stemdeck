@@ -4597,6 +4597,13 @@ async function wireGeneralSettings(overlay) {
   const deviceCopyStatus = overlay.querySelector(".set-device-copy-status");
   let deviceDiagnostics = "";
   const qualitySel = overlay.querySelector(".set-separation-quality");
+  const idleUnloadInput = overlay.querySelector(".set-idle-unload");
+  const idleUnloadDesc = overlay.querySelector(".set-idle-unload-desc");
+  const idleUnloadMsg = overlay.querySelector(".idle-unload-msg");
+  // The server's value, for a field left empty or a save that failed.
+  let lastIdleUnload = null;
+  // The server's ceiling; the field's maxlength (4) lets more through.
+  let idleUnloadMax = IDLE_UNLOAD_MAX_DEFAULT;
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
@@ -4608,7 +4615,7 @@ async function wireGeneralSettings(overlay) {
   const stemFormatSel = overlay.querySelector(".set-stem-format");
   const stemKbpsSel = overlay.querySelector(".set-stem-kbps");
   const stemKbpsRow = overlay.querySelector(".stem-bitrate-row");
-  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !transcribeSel && !cookiesInput && !autoDeleteInput && !stemFormatSel) return;
+  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !idleUnloadInput && !transcribeSel && !cookiesInput && !autoDeleteInput && !stemFormatSel) return;
 
   // The bitrate only means anything for MP3, so its row shows only then.
   const syncStemKbps = () => {
@@ -4642,6 +4649,16 @@ async function wireGeneralSettings(overlay) {
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
     if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
+    // Read the key, not truthiness: 0 (never unload) is a real value.
+    if (idleUnloadInput && Number.isInteger(d.idle_unload_minutes)) {
+      lastIdleUnload = d.idle_unload_minutes;
+      if (document.activeElement !== idleUnloadInput) idleUnloadInput.value = String(d.idle_unload_minutes);
+    }
+    if (Number.isInteger(d.idle_unload_minutes_max)) {
+      idleUnloadMax = d.idle_unload_minutes_max;
+      // Filled here, not through data-i18n, so the ceiling is the server's.
+      if (idleUnloadDesc) idleUnloadDesc.textContent = i18nT("settings.idleUnload.desc", { max: idleUnloadMax });
+    }
     if (transcribeSel && d.transcribe_lyrics) transcribeSel.value = d.transcribe_lyrics;
     // A ROCm build of torch serves an AMD GPU as "cuda", and Auto transcribes
     // on it too (#825). Only there: elsewhere an AMD card never runs it.
@@ -4750,6 +4767,7 @@ async function wireGeneralSettings(overlay) {
   digitsOnly(playlistInput);
   digitsOnly(portInput);
   digitsOnly(autoDeleteDays);
+  digitsOnly(idleUnloadInput);
 
   try {
     const r = await fetch("/api/settings", { cache: "no-store" });
@@ -4817,6 +4835,56 @@ async function wireGeneralSettings(overlay) {
   });
   qualitySel?.addEventListener("change", () => {
     post({ separation_quality: qualitySel.value });
+  });
+  const showIdleUnloadMsg = (key, vars, isError) => {
+    if (!idleUnloadMsg) return;
+    idleUnloadMsg.textContent = key ? i18nT(key, vars) : "";
+    idleUnloadMsg.classList.toggle("error", Boolean(isError));
+  };
+  const commitIdleUnload = async (mins) => {
+    showIdleUnloadMsg(null);
+    // The server clamps (0 to its maximum) and returns what it kept. Written
+    // back here because apply() skips a focused field, as for "Delete after".
+    const data = await post({ idle_unload_minutes: mins });
+    if (!data || !Number.isInteger(data.idle_unload_minutes)) {
+      // Not saved: show the value still in use, and say so, rather than
+      // leaving a number that a reload would quietly take back.
+      // With no value ever loaded there is nothing in use to show: empty the
+      // field rather than leave the number that was not saved.
+      idleUnloadInput.value = lastIdleUnload !== null ? String(lastIdleUnload) : "";
+      showIdleUnloadMsg("settings.idleUnload.saveFailed", {}, true);
+      return;
+    }
+    idleUnloadInput.value = String(data.idle_unload_minutes);
+    if (data.idle_unload_minutes !== mins) showIdleUnloadMsg("settings.idleUnload.clamped", { max: data.idle_unload_minutes });
+  };
+  idleUnloadInput?.addEventListener("input", () => showIdleUnloadMsg(null));
+  idleUnloadInput?.addEventListener("change", () => {
+    const mins = parseInt(idleUnloadInput.value, 10);
+    if (Number.isNaN(mins)) {
+      // Emptied: keep what the server has rather than guessing a number.
+      if (lastIdleUnload !== null) idleUnloadInput.value = String(lastIdleUnload);
+      return;
+    }
+    commitIdleUnload(mins);
+  });
+  // No sibling field handles a paste: maxlength cuts the text before the
+  // digits filter sees it, so "1,440" became "1,44" and then 144. Here the
+  // pasted text is read whole: a number with thousands separators becomes its
+  // digits, the ceiling applies (and says so), and anything else ("-5",
+  // "ten") is refused rather than turned into a different number. A paste
+  // replaces the field: it holds one short number.
+  idleUnloadInput?.addEventListener("paste", (e) => {
+    const text = e.clipboardData?.getData("text") ?? "";
+    e.preventDefault();
+    if (!/^\s*(?:\d+|\d{1,3}(?:[,.'\s]\d{3})+)\s*$/.test(text)) {
+      showIdleUnloadMsg("settings.idleUnload.notNumber", {}, true);
+      return;
+    }
+    // Sent as pasted: the server applies the ceiling and the message says so.
+    const mins = parseInt(text.replace(/\D/g, ""), 10);
+    idleUnloadInput.value = String(Math.min(mins, idleUnloadMax));
+    commitIdleUnload(mins);
   });
   transcribeSel?.addEventListener("change", () => {
     post({ transcribe_lyrics: transcribeSel.value });
@@ -5364,6 +5432,12 @@ function settingsNavHtml() {
 
 // A setting with a number and its unit ("20 min"). The unit sits outside the
 // field so the field keeps the digits-only filter it has always had.
+// The idle-unload ceiling until /api/settings says otherwise (the server's
+// IDLE_UNLOAD_MINUTES_MAX). The description is written translated when the
+// dialog is built, so it is in the user's language before the settings load,
+// and stays so if they never do; a language switch rebuilds the dialog.
+const IDLE_UNLOAD_MAX_DEFAULT = 1440;
+
 const unitField = (input, unitKey, unitText) =>
   `<span class="settings-unit-field">${input}<span class="settings-unit" data-i18n="${unitKey}">${unitText}</span></span>`;
 
@@ -5459,6 +5533,14 @@ function openLibraryEditor() {
                 <option value="best" data-i18n="settings.quality.best">Best (2× slower)</option>
               </select>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.idleUnload.title">Free memory when idle</div>
+                <div class="settings-row-desc set-idle-unload-desc">${esc(i18nT("settings.idleUnload.desc", { max: IDLE_UNLOAD_MAX_DEFAULT }))}</div>
+              </div>
+              ${unitField('<input type="text" class="settings-num-input set-idle-unload" inputmode="numeric" maxlength="4" aria-label="Free memory when idle" data-i18n-aria-label="settings.idleUnload.title" />', "settings.unit.minutes", "min")}
+            </div>
+            <div class="idle-unload-msg" role="status" aria-live="polite"></div>
           </div>
         </div>
         <div class="settings-group">
