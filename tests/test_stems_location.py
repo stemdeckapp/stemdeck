@@ -108,7 +108,10 @@ def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
     assert validate_target(target, current) == target.resolve()
 
 
-@pytest.mark.parametrize("name", ["user-data.json.bak", "user-data.json.tmp"])
+_STORE_COPIES = ["user-data.json.bak", "user-data.json.tmp", "user-data.json.corrupt-1762000000"]
+
+
+@pytest.mark.parametrize("name", _STORE_COPIES)
 def test_accepts_a_folder_with_the_copies_the_user_data_save_keeps(tmp_path, name):
     """The shell saves user-data.json through a .tmp and keeps a .bak beside
     it (#1023), so a folder StemDeck used before can hold either."""
@@ -119,6 +122,116 @@ def test_accepts_a_folder_with_the_copies_the_user_data_save_keeps(tmp_path, nam
     (target / "user-data.json").write_text("{}", encoding="utf-8")
     (target / name).write_text("{}", encoding="utf-8")
     assert validate_target(target, current) == target.resolve()
+
+
+@pytest.mark.parametrize("name", _STORE_COPIES)
+def test_refuses_a_folder_holding_only_a_copy_of_the_user_data_store(tmp_path, name):
+    """A copy with no library beside it (no user-data.json, registry.json or
+    song) is not a folder StemDeck used: a recovery there would restore a
+    library from a file nobody can account for (#1023)."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / name).write_text('{"theirs": 1}', encoding="utf-8")
+    with pytest.raises(StemsLocationError, match="empty folder"):
+        validate_target(target, current)
+
+
+@pytest.mark.parametrize("name", _STORE_COPIES)
+def test_refuses_a_folder_whose_store_copy_differs_from_ours(tmp_path, name):
+    """A different copy in each folder is another library's (#1023)."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / name).write_text('{"mine": 1}', encoding="utf-8")
+    target = tmp_path / "new"
+    _job_dir(target, "abcdefabcdef")
+    (target / "registry.json").write_text("{}", encoding="utf-8")
+    (target / name).write_text('{"theirs": 1}', encoding="utf-8")
+    with pytest.raises(StemsLocationError, match="another StemDeck library"):
+        validate_target(target, current)
+
+
+def test_a_move_takes_the_store_copies_along(tmp_path):
+    """user-data.json and every copy the shell's save keeps (#1023) end up
+    together in the new folder, none left in the old one."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    names = ["user-data.json", *_STORE_COPIES]
+    for name in names:
+        (current / name).write_text(f'{{"{name}": 1}}', encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+
+    validate_target(target, current)
+    move_library(current, target)
+
+    for name in names:
+        assert (target / name).read_text(encoding="utf-8") == f'{{"{name}": 1}}'
+        assert not (current / name).exists(), name
+
+
+def test_a_move_replaces_a_stale_store_copy_at_the_target(tmp_path):
+    """The rule (#1023): once our user-data.json is at the target, our copies
+    replace different ones there. They belong with the file they were made
+    from; the target's would restore the wrong library on a recovery, and
+    ours would be stranded in the old folder."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "user-data.json").write_text('{"mine": 2}', encoding="utf-8")
+    (current / "user-data.json.bak").write_text('{"mine": 1}', encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / "user-data.json.bak").write_text('{"stale": 1}', encoding="utf-8")
+
+    move_library(current, target)
+
+    assert (target / "user-data.json").read_text(encoding="utf-8") == '{"mine": 2}'
+    assert (target / "user-data.json.bak").read_text(encoding="utf-8") == '{"mine": 1}'
+    assert not (current / "user-data.json.bak").exists()
+
+
+def test_a_move_keeps_the_target_copy_when_our_store_did_not_get_there(tmp_path):
+    """Before our user-data.json is at the target (theirs differs), the
+    target's copy is not ours to replace."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "user-data.json").write_text('{"mine": 2}', encoding="utf-8")
+    (current / "user-data.json.bak").write_text('{"mine": 1}', encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / "user-data.json").write_text('{"theirs": 2}', encoding="utf-8")
+    (target / "user-data.json.bak").write_text('{"theirs": 1}', encoding="utf-8")
+
+    move_library(current, target)
+
+    assert (target / "user-data.json.bak").read_text(encoding="utf-8") == '{"theirs": 1}'
+    assert (current / "user-data.json.bak").read_text(encoding="utf-8") == '{"mine": 1}'
+
+
+def test_a_move_skips_an_entry_that_vanished_since_the_listing(tmp_path, monkeypatch):
+    """The shell renames its .tmp away at the end of every save (#1023), so it
+    can be gone between the listing and its turn: skipped, not a failed move."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "user-data.json.tmp").write_text("{}", encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+
+    real_stat = Path.stat
+
+    def vanishing_stat(self, *args, **kwargs):
+        if self.name == "user-data.json.tmp" and self.parent == current.resolve():
+            self.unlink(missing_ok=True)
+            raise FileNotFoundError(2, "gone", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", vanishing_stat)
+    move_library(current, target)
+    monkeypatch.setattr(Path, "stat", real_stat)
+
+    assert (target / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
+    assert not (target / "user-data.json.tmp").exists()
 
 
 @pytest.mark.parametrize(

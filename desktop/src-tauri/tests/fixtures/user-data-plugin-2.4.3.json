@@ -1,0 +1,32 @@
+{
+  "stemdeck.folders": {
+    "folders": [
+      {
+        "id": "f1",
+        "name": "Rock",
+        "tracks": [
+          "abcdefabcdef"
+        ]
+      }
+    ],
+    "version": 2
+  },
+  "stemdeck:mix:abcdefabcdef": {
+    "lanes": [
+      {
+        "gain": 0.75,
+        "mute": false,
+        "stem": "vocals"
+      }
+    ]
+  },
+  "exports_dir": "D:\\Exports\\Café",
+  "stemdeck:selected-stems": [
+    "vocals",
+    "drums"
+  ],
+  "stemdeck.deleted_jobs": [
+    "0123456789ab"
+  ],
+  "empty": null
+}

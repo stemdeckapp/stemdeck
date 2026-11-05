@@ -4,12 +4,29 @@
 // The store is backed by ~/Library/Application Support/app.stemdeck.desktop/user-data.json
 // on macOS — outside WebKit's reach, so WebView resets can never destroy user data.
 
+// While the shell cannot open user-data.json (a virus scanner or a sync client
+// holding it, #1023) every store command fails with this prefix. A read asks
+// again for about four seconds before it falls back, so a moment's lock never
+// shows an empty library. The shell refuses to save a key whose read failed,
+// so a fallback can never be written over the real record.
+const STORE_UNAVAILABLE = "user-data-unavailable";
+const STORE_RETRY_MS = [250, 500, 1000, 2000];
+
 export async function storeGet(key, fallback = null) {
   if (window.__TAURI__?.core?.invoke) {
-    try {
-      const val = await window.__TAURI__.core.invoke("store_get", { key });
-      return val ?? fallback;
-    } catch (e) { console.warn("[store] get failed for", key, e); return fallback; }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const val = await window.__TAURI__.core.invoke("store_get", { key });
+        return val ?? fallback;
+      } catch (e) {
+        if (String(e).startsWith(STORE_UNAVAILABLE) && attempt < STORE_RETRY_MS.length) {
+          await new Promise((resolve) => setTimeout(resolve, STORE_RETRY_MS[attempt]));
+          continue;
+        }
+        console.warn("[store] get failed for", key, e);
+        return fallback;
+      }
+    }
   }
   try {
     const raw = localStorage.getItem(key);

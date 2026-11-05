@@ -47,6 +47,25 @@ To control it yourself, set `STEMDECK_WEBKIT_DMABUF`:
 
 A `WEBKIT_DISABLE_DMABUF_RENDERER` you set yourself always wins over all of this. Each launch writes the choice it made to `logs/setup.log` in the data directory.
 
+## Desktop library list
+
+The desktop app keeps the library list, folders, mixes and takes in `user-data.json` inside the jobs folder. Songs and stems are in the song folders beside it, and nothing below touches them.
+
+A save writes `user-data.json.tmp` first, then keeps the file it replaces as `user-data.json.bak`. You may see these next to `user-data.json`:
+
+- `user-data.json.bak`: the library as it was one save earlier.
+- `user-data.json.tmp`: a save that was interrupted. It is gone after the next save.
+- `user-data.json.corrupt-<number>`: a `user-data.json` that was empty or damaged when the app started, kept so it can be inspected. The two newest are kept.
+
+**The library list came back one change older after a crash:** on start, a `user-data.json` that is missing, empty or not valid JSON is restored from the `.tmp` (when that save was complete) or the `.bak`. `logs/setup.log` in the data directory names the file it restored from. If neither copy can be read, the app starts with an empty library list and `setup.log` says `starting with an empty library list`.
+
+**`user-data-unavailable` in the console or in `setup.log`:** `user-data.json` is there but could not be read, often because a virus scanner or a sync client (OneDrive, Dropbox) is holding it. Nothing is restored from a copy and nothing is saved over it. The app tries again by itself. If it keeps failing, close the app, let the sync finish, and start it again.
+
+**Going back to 0.20.x:** 0.20.x reads and saves `user-data.json` as before, but it does not know the copies above:
+
+- It never updates them, so they go stale while you use it. If you later return to a newer version and `user-data.json` is damaged on a start, the library would be restored from the copy made before you went back. After going back to 0.20.x, delete `user-data.json.bak`, `user-data.json.tmp` and any `user-data.json.corrupt-*` by hand.
+- Moving the stems folder in 0.20.x refuses a target folder that holds any of these copies ("Pick an empty folder, or one StemDeck already uses"). Delete them from the target folder first.
+
 ## Layout on disk
 
 ```

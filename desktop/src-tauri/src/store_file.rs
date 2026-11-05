@@ -4,30 +4,44 @@
 //!
 //! tauri-plugin-store 2.4.3 saved it with `fs::write`, which truncates the
 //! file and then writes it, so a crash or power loss during a save could leave
-//! it empty or cut short and the next start would lose the library list
-//! (#1023). Here a save writes `user-data.json.tmp`, puts it on the disk, moves
-//! the current file to `user-data.json.bak`, and renames the new one into its
-//! place. At every moment one complete copy is on the disk under one of the
-//! three names, and the start-up read takes the first good one.
+//! it empty or cut short. The plugin then opened an empty store without a word
+//! and the next save wrote over the damaged file (#1023).
 //!
-//! No code here is compiled for one platform only: the folder sync after the
-//! rename is a `cfg!(unix)` branch every platform compiles. `fs::rename`
-//! replaces an existing file on Windows, macOS and Linux alike; on Windows a
-//! virus scanner or the search indexer can hold the file for a moment, which
-//! the retry covers.
+//! Here a save writes `user-data.json.tmp`, puts it on the disk, moves the
+//! current file to `user-data.json.bak`, and renames the new one into its
+//! place. At every moment one complete copy is on the disk under one of the
+//! three names. On open, only damage (a missing, empty or invalid file) falls
+//! back to a copy; a damaged file is set aside as
+//! `user-data.json.corrupt-<unix time>` rather than written over. A file that
+//! is there but cannot be read right now (a lock, a sync client) is not
+//! damage: the store stays closed, every command says so, and the next one
+//! tries again.
+//!
+//! No code here is compiled for one platform only: the platform differences
+//! are `cfg!` branches every platform compiles. `fs::rename` replaces an
+//! existing file on Windows, macOS and Linux alike.
 
 use serde_json::{Map, Value};
 use std::{
+    collections::HashSet,
     fs, io,
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, PoisonError},
     thread,
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// The store's contents: one JSON value per key.
 pub type Entries = Map<String, Value>;
+
+/// The start of every error a command returns while the store cannot be
+/// opened, or for a write it refused because of that. The page asks again on
+/// it (static/js/utils.js) rather than taking an empty library for the truth.
+pub const UNAVAILABLE: &str = "user-data-unavailable";
+
+/// How many set-aside damaged files are kept.
+const CORRUPT_KEPT: usize = 2;
 
 /// The file a save writes before it renames it into place.
 pub fn temp_path(path: &Path) -> PathBuf {
@@ -45,6 +59,49 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The damaged files set aside beside `path`, oldest first, with the time in
+/// their name: `<name>.corrupt-<unix time>`, or `-<unix time>-<n>` for a second
+/// one in the same second.
+pub fn corrupt_copies(path: &Path) -> Vec<PathBuf> {
+    let prefix = format!("{}.corrupt-", file_name(path));
+    let Some(dir) = path.parent() else {
+        return Vec::new();
+    };
+    let Ok(listing) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<((u64, u64), PathBuf)> = listing
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stamp = name.strip_prefix(&prefix)?;
+            let mut parts = stamp.splitn(2, '-');
+            let secs = parts.next()?.parse().ok()?;
+            let n = match parts.next() {
+                Some(n) => n.parse().ok()?,
+                None => 0,
+            };
+            Some(((secs, n), entry.path()))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Whether a copy a save keeps could restore the store at `path`: a complete
+/// `.tmp` or `.bak`. A `.tmp` cut short is not one.
+pub fn has_recoverable_copy(path: &Path) -> bool {
+    [temp_path(path), backup_path(path)]
+        .iter()
+        .any(|copy| read_entries(copy).is_ok())
+}
+
 /// Where the entries came from when the store was opened.
 #[derive(Debug, PartialEq)]
 pub enum Opened {
@@ -52,9 +109,11 @@ pub enum Opened {
     Main,
     /// No store file and no copy: a first start, or one after a reset.
     Fresh,
-    /// The store file was missing, empty or unreadable, and a copy was good.
+    /// The store file was missing, empty or not valid JSON, and a copy was
+    /// good.
     Recovered { from: PathBuf, problem: String },
-    /// Neither the store file nor a copy could be read.
+    /// The store file was missing, empty or not valid JSON, and so was every
+    /// copy there was.
     Lost { problem: String },
 }
 
@@ -82,6 +141,7 @@ enum Unreadable {
     Missing,
     Empty,
     Invalid(String),
+    /// There, but not readable now. Not damage: never a reason to fall back.
     Io(io::Error),
 }
 
@@ -110,58 +170,83 @@ fn read_entries(path: &Path) -> Result<Entries, Unreadable> {
     serde_json::from_slice(&bytes).map_err(|e| Unreadable::Invalid(e.to_string()))
 }
 
-/// Read the store at `path`, falling back to the copies when it is missing,
-/// empty or not valid JSON.
+/// Read the store at `path`, falling back to the copies only when the file is
+/// damaged: missing, empty or not valid JSON. Err, with the reason, when the
+/// file or a copy that is needed is there but cannot be read now; opening a
+/// copy then could put older contents over newer ones.
 ///
 /// A good `.tmp` is tried before the `.bak`: a save leaves one behind only
 /// when it stopped after writing the new contents in full and before renaming
 /// them into place, so it is newer than the backup. A `.tmp` cut short is not
 /// valid JSON (the closing brace is the last byte written) and is passed over.
-pub fn read_store(path: &Path) -> (Entries, Opened) {
+pub fn read_store(path: &Path) -> Result<(Entries, Opened), String> {
     let problem = match read_entries(path) {
-        Ok(entries) => return (entries, Opened::Main),
+        Ok(entries) => return Ok((entries, Opened::Main)),
+        Err(Unreadable::Io(e)) => {
+            return Err(format!("{} could not be read ({e})", path.display()));
+        }
         Err(problem) => problem,
     };
-    let mut copies_seen = false;
+    let mut damaged_copy = false;
     for copy in [temp_path(path), backup_path(path)] {
         match read_entries(&copy) {
             Ok(entries) => {
                 let problem = problem.describe();
-                return (
+                return Ok((
                     entries,
                     Opened::Recovered {
                         from: copy,
                         problem,
                     },
-                );
+                ));
             }
             Err(Unreadable::Missing) => {}
-            Err(_) => copies_seen = true,
+            Err(Unreadable::Io(e)) => {
+                return Err(format!(
+                    "{} {}, and {} could not be read ({e})",
+                    path.display(),
+                    problem.describe(),
+                    copy.display()
+                ));
+            }
+            Err(_) => damaged_copy = true,
         }
     }
-    if matches!(problem, Unreadable::Missing) && !copies_seen {
-        return (Entries::new(), Opened::Fresh);
+    if matches!(problem, Unreadable::Missing) && !damaged_copy {
+        return Ok((Entries::new(), Opened::Fresh));
     }
     let problem = problem.describe();
-    (Entries::new(), Opened::Lost { problem })
+    Ok((Entries::new(), Opened::Lost { problem }))
 }
 
-/// How often a file operation is tried before its error is returned. Even
-/// right after this process closed a file, a virus scanner or the search
-/// indexer can hold it for a moment on Windows; most clear well inside the
-/// budget. A save runs on the main thread (see
-/// `no_command_that_can_run_long_holds_the_main_thread`), so the budget is
-/// kept to one second rather than the update's five.
-const ATTEMPTS: u32 = 20;
+/// Errors that clear by themselves: on Windows a virus scanner, the search
+/// indexer or a sync client holding the file (ERROR_ACCESS_DENIED for one
+/// opened without delete sharing, ERROR_SHARING_VIOLATION,
+/// ERROR_LOCK_VIOLATION), elsewhere EBUSY. Windows reports a read-only file
+/// with the same ERROR_ACCESS_DENIED, so that one is tried again too and
+/// fails after the budget. A missing file, a read-only disk or a path through
+/// a file never clear, and fail at once.
+fn is_transient(e: &io::Error) -> bool {
+    if cfg!(windows) {
+        matches!(e.raw_os_error(), Some(5 | 32 | 33))
+    } else {
+        e.kind() == io::ErrorKind::ResourceBusy
+    }
+}
+
+/// How often one file step is tried: 200 ms of pauses per step. A save has at
+/// most four retried steps (write the .tmp, move the file to .bak, rename the
+/// .tmp, put the file back), so its worst case is 0.8 s; it runs on the main
+/// thread (see `no_command_that_can_run_long_holds_the_main_thread`).
+const ATTEMPTS: u32 = 5;
 const PAUSE: Duration = Duration::from_millis(50);
 
-/// Run `op`, trying again on any error except a missing file, which waiting
-/// does not fix.
+/// Run `op`, trying again while its error is transient.
 fn retrying<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     let mut attempt = 1;
     loop {
         match op() {
-            Err(e) if e.kind() != io::ErrorKind::NotFound && attempt < ATTEMPTS => {
+            Err(e) if is_transient(&e) && attempt < ATTEMPTS => {
                 attempt += 1;
                 thread::sleep(PAUSE);
             }
@@ -178,13 +263,25 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
+fn sync_folder(dir: &Path) {
+    // The renames are entries in the folder, and on Linux and macOS they reach
+    // the disk only when the folder does. Windows cannot sync a folder through
+    // std and NTFS journals the rename, so nothing is tried there.
+    if cfg!(unix) {
+        if let Ok(folder) = fs::File::open(dir) {
+            let _ = folder.sync_all();
+        }
+    }
+}
+
 /// Write `bytes` to `path` so that a crash at any point leaves a complete
 /// store on the disk: written to `.tmp` and synced first, then the current
 /// file becomes `.bak` (when `keep_previous`) and `.tmp` is renamed into its
 /// place.
 ///
-/// `keep_previous` is false when the file at `path` is not known to be good,
-/// so a store opened from a copy never moves a broken file over that copy.
+/// `keep_previous` is false when the file at `path` is not a store this
+/// process read or wrote, so a store opened from a copy never moves anything
+/// over that copy, and a reset never keeps the library it clears.
 ///
 /// When the final rename fails, the previous file is put back. If that fails
 /// as well, the `.tmp` stays: it is the newest complete copy and the next
@@ -216,24 +313,44 @@ pub fn write_replacing(path: &Path, bytes: &[u8], keep_previous: bool) -> io::Re
         }
         return Err(e);
     }
-    // The renames are entries in the folder, and on Linux and macOS they reach
-    // the disk only when the folder does. Windows cannot sync a folder through
-    // std and NTFS journals the rename, so nothing is tried there.
-    if cfg!(unix) {
-        if let Ok(folder) = fs::File::open(dir) {
-            let _ = folder.sync_all();
-        }
-    }
+    sync_folder(dir);
     Ok(())
+}
+
+fn unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Move a damaged store file aside as `<name>.corrupt-<unix time>`, so the
+/// next save does not write over what may still be repaired by hand, and keep
+/// only the newest `CORRUPT_KEPT` of them. Returns the new name.
+fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let secs = unix_secs();
+    let mut aside = with_suffix(path, &format!(".corrupt-{secs}"));
+    let mut n = 1;
+    while aside.exists() {
+        aside = with_suffix(path, &format!(".corrupt-{secs}-{n}"));
+        n += 1;
+    }
+    retrying(|| fs::rename(path, &aside))?;
+    let copies = corrupt_copies(path);
+    let surplus = copies.len().saturating_sub(CORRUPT_KEPT);
+    for old in &copies[..surplus] {
+        let _ = fs::remove_file(old);
+    }
+    Ok(aside)
 }
 
 /// The store as it is open in this process.
 pub struct OpenStore {
     path: PathBuf,
     entries: Entries,
-    /// Whether the file at `path` is a good store, so a save may keep it as
-    /// the backup. False after an open that recovered from a copy or started
-    /// empty, until the first save replaces that file.
+    /// Whether the file at `path` is a store this process read or wrote, so a
+    /// save may keep it as the backup. False after an open that recovered from
+    /// the backup or started empty, until the first save replaces that file.
     main_good: bool,
     /// Whether an entry changed since the last save that worked. Every
     /// command saves at once, so this is only true after a failed save, and
@@ -242,18 +359,49 @@ pub struct OpenStore {
 }
 
 impl OpenStore {
-    /// Open the store at `path`, passing any recovery to `report`.
-    pub fn open(path: &Path, report: impl Fn(&str)) -> OpenStore {
-        let (entries, opened) = read_store(path);
+    /// Open the store at `path`, passing what it did about damage to
+    /// `report`. Err when the store cannot be opened now; nothing on the disk
+    /// has changed then, and opening again later is safe.
+    ///
+    /// A damaged file is set aside first. A store recovered from a complete
+    /// `.tmp` is renamed into place at once, so the next save, which writes a
+    /// new `.tmp`, can never truncate the only copy of it.
+    pub fn open(path: &Path, report: impl Fn(&str)) -> Result<OpenStore, String> {
+        let (entries, opened) = read_store(path)?;
+        let damaged_main = opened != Opened::Main && path.exists();
+        if damaged_main {
+            let aside = set_aside(path).map_err(|e| {
+                format!(
+                    "{} is damaged and could not be set aside ({e})",
+                    path.display()
+                )
+            })?;
+            report(&format!(
+                "{} could not be opened; kept it as {}",
+                path.display(),
+                aside.display()
+            ));
+        }
+        let mut main_good = opened == Opened::Main;
+        if let Opened::Recovered { from, .. } = &opened {
+            if *from == temp_path(path) {
+                retrying(|| fs::rename(from, path))
+                    .map_err(|e| format!("{} could not be put in place ({e})", from.display()))?;
+                if let Some(dir) = path.parent() {
+                    sync_folder(dir);
+                }
+                main_good = true;
+            }
+        }
         if let Some(warning) = opened.warning(path) {
             report(&warning);
         }
-        OpenStore {
+        Ok(OpenStore {
             path: path.to_path_buf(),
             entries,
-            main_good: opened == Opened::Main,
+            main_good,
             unsaved: false,
-        }
+        })
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
@@ -262,11 +410,6 @@ impl OpenStore {
 
     pub fn set(&mut self, key: String, value: Value) {
         self.entries.insert(key, value);
-        self.unsaved = true;
-    }
-
-    pub fn clear(&mut self) {
-        self.entries.clear();
         self.unsaved = true;
     }
 
@@ -280,48 +423,166 @@ impl OpenStore {
         Ok(())
     }
 
-    /// Remove the backup, for a reset that must not leave the old library
-    /// behind to be restored later.
-    pub fn remove_backup(&self) -> io::Result<()> {
-        match retrying(|| fs::remove_file(backup_path(&self.path))) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            result => result,
+    /// Clear the store for a reset (Settings, "Reset app data"). The copies go
+    /// first and the empty store is written without keeping the file it
+    /// replaces, so at no point after a crash can the old library sit in a
+    /// copy that a later start would restore. Err only when the empty store
+    /// could not be written; a copy that could not be removed is reported.
+    pub fn reset(&mut self, report: impl Fn(&str)) -> io::Result<()> {
+        let copies = || {
+            let mut all = vec![backup_path(&self.path), temp_path(&self.path)];
+            all.extend(corrupt_copies(&self.path));
+            all
+        };
+        let remove_all = |paths: Vec<PathBuf>| -> Vec<(PathBuf, io::Error)> {
+            paths
+                .into_iter()
+                .filter_map(|p| match retrying(|| fs::remove_file(&p)) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => Some((p, e)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let left = remove_all(copies());
+        self.entries.clear();
+        self.unsaved = true;
+        self.main_good = false;
+        self.save()?;
+        // One more try for what could not be removed before the write.
+        let left = remove_all(left.into_iter().map(|(p, _)| p).collect());
+        for (p, e) in left {
+            report(&format!(
+                "reset: could not remove {} ({e}); it still holds the library from before the reset",
+                p.display()
+            ));
         }
+        Ok(())
     }
 }
 
 /// The user-data store, managed as Tauri state. Opened from disk on first
 /// use, and again whenever its path changes, which is when the jobs folder
-/// moves to a new location (#354).
-#[derive(Default)]
+/// moves to a new location (#354), or after an open that could not read it.
 pub struct UserData {
-    open: Mutex<Option<OpenStore>>,
+    state: Mutex<State>,
+    /// How long after a failed open commands fail at once rather than try the
+    /// disk again. The page asks for dozens of keys while it starts; each
+    /// would otherwise spend the read retries on the main thread.
+    retry_after: Duration,
+}
+
+impl Default for UserData {
+    fn default() -> Self {
+        UserData {
+            state: Mutex::default(),
+            retry_after: Duration::from_secs(1),
+        }
+    }
+}
+
+#[derive(Default)]
+struct State {
+    open: Option<OpenStore>,
+    /// When the last open failed, and the error every command returns until
+    /// `retry_after` has passed.
+    failed: Option<(Instant, String)>,
+    /// Keys the page asked for while the store could not be opened. It holds
+    /// a stand-in for each, so a write of one is refused until a read of it
+    /// works: the stand-in must never be saved over the real record.
+    unread: HashSet<String>,
 }
 
 impl UserData {
+    fn state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Run `f` on the store at `path`, holding it for the whole call so two
     /// saves never share the `.tmp` file. A store open at another path is
     /// closed first without a save: the library has moved, and writing to the
-    /// old folder would leave a stale copy there.
+    /// old folder would leave a stale copy there. Err, starting with
+    /// `UNAVAILABLE`, when the store cannot be opened now.
     pub fn with<T>(
         &self,
         path: &Path,
         report: impl Fn(&str),
         f: impl FnOnce(&mut OpenStore) -> T,
-    ) -> T {
-        let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-        if open.as_ref().is_some_and(|store| store.path != path) {
-            *open = None;
+    ) -> Result<T, String> {
+        let mut state = self.state();
+        if state.open.as_ref().is_some_and(|store| store.path != path) {
+            state.open = None;
+            state.failed = None;
         }
-        let store = open.get_or_insert_with(|| OpenStore::open(path, report));
-        f(store)
+        if state.open.is_none() {
+            if let Some((at, error)) = &state.failed {
+                if at.elapsed() < self.retry_after {
+                    return Err(error.clone());
+                }
+            }
+            match OpenStore::open(path, &report) {
+                Ok(store) => {
+                    state.failed = None;
+                    state.open = Some(store);
+                }
+                Err(e) => {
+                    let error = format!("{UNAVAILABLE}: {e}");
+                    // Once per new error, not once per command.
+                    if state.failed.as_ref().map(|(_, seen)| seen) != Some(&error) {
+                        report(&error);
+                    }
+                    state.failed = Some((Instant::now(), error.clone()));
+                    return Err(error);
+                }
+            }
+        }
+        match state.open.as_mut() {
+            Some(store) => Ok(f(store)),
+            None => Err(format!("{UNAVAILABLE}: not open")),
+        }
+    }
+
+    /// The value of `key`, keeping track of a read that could not be made.
+    pub fn get(
+        &self,
+        path: &Path,
+        report: impl Fn(&str),
+        key: &str,
+    ) -> Result<Option<Value>, String> {
+        let result = self.with(path, report, |store| store.get(key));
+        let mut state = self.state();
+        match &result {
+            Ok(_) => state.unread.remove(key),
+            Err(_) => state.unread.insert(key.to_string()),
+        };
+        result
+    }
+
+    /// Err when one of `keys` was asked for while the store could not be
+    /// opened and has not been read since.
+    pub fn refuse_unread<'a>(
+        &self,
+        mut keys: impl Iterator<Item = &'a String>,
+    ) -> Result<(), String> {
+        let state = self.state();
+        match keys.find(|key| state.unread.contains(*key)) {
+            Some(key) => Err(format!(
+                "{UNAVAILABLE}: {key} not saved: it could not be read when it was asked for, \
+                 so the page does not hold its real value"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// After a reset nothing the page held is left to protect.
+    pub fn forget_unread(&self) {
+        self.state().unread.clear();
     }
 
     /// At exit: save the open store if its last save failed. None when there
     /// was nothing to save.
     pub fn save_unsaved(&self) -> Option<io::Result<()>> {
-        let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-        let store = open.as_mut().filter(|store| store.unsaved)?;
+        let mut state = self.state();
+        let store = state.open.as_mut().filter(|store| store.unsaved)?;
         Some(store.save())
     }
 }
@@ -331,6 +592,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::time::Instant;
 
     /// Test stores live under the repo's git-ignored data/, never a library.
@@ -347,8 +609,13 @@ mod tests {
     /// Opens the store, keeping what it reported.
     fn open(path: &Path) -> (OpenStore, Vec<String>) {
         let reported = RefCell::new(Vec::new());
-        let store = OpenStore::open(path, |line| reported.borrow_mut().push(line.to_string()));
+        let store = OpenStore::open(path, |line| reported.borrow_mut().push(line.to_string()))
+            .expect("opened");
         (store, reported.into_inner())
+    }
+
+    fn mentions(reported: &[String], text: &str) -> bool {
+        reported.iter().any(|line| line.contains(text))
     }
 
     #[test]
@@ -390,15 +657,16 @@ mod tests {
 
         let (mut store, reported) = open(&path);
         assert_eq!(store.get("songs"), Some(json!(["one", "two"])));
-        assert_eq!(reported.len(), 1, "{reported:?}");
-        assert!(reported[0].contains("is not valid JSON"), "{}", reported[0]);
-        assert!(
-            reported[0].contains("user-data.json.bak"),
-            "{}",
-            reported[0]
-        );
+        assert!(mentions(&reported, "is not valid JSON"), "{reported:?}");
+        assert!(mentions(&reported, "user-data.json.bak"), "{reported:?}");
 
-        // The broken file is never moved over the good backup.
+        // The broken file is kept aside, not written over.
+        let aside = corrupt_copies(&path);
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(fs::read(&aside[0]).unwrap(), br#"{"songs":["one","tw"#);
+        assert!(mentions(&reported, ".corrupt-"), "{reported:?}");
+
+        // And never moved over the good backup.
         store.set("songs".into(), json!(["one", "two", "three"]));
         store.save().expect("save");
         assert_eq!(
@@ -420,30 +688,72 @@ mod tests {
 
         let (store, reported) = open(&path);
         assert_eq!(store.get("a"), Some(json!(1)));
-        assert!(reported[0].contains("is empty"), "{}", reported[0]);
+        assert!(mentions(&reported, "is empty"), "{reported:?}");
+    }
+
+    /// A store file that is there but cannot be read now (here a folder in
+    /// its place, which reads as an I/O error on every platform) is not
+    /// damage: no fallback, nothing moved, and a later open works.
+    #[test]
+    fn an_unreadable_store_is_unavailable_not_replaced_by_a_copy() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        fs::create_dir(&path).unwrap();
+        fs::write(backup_path(&path), r#"{"a":"old"}"#).unwrap();
+
+        let reported = RefCell::new(Vec::new());
+        let data = UserData::default();
+        let report = |line: &str| reported.borrow_mut().push(line.to_string());
+        let err = data.get(&path, report, "a").expect_err("unavailable");
+        assert!(err.starts_with(UNAVAILABLE), "{err}");
+        assert_eq!(reported.borrow().len(), 1, "logged");
+        // Within a second the next command fails at once, logged once.
+        let started = Instant::now();
+        let again = data.get(&path, report, "c").expect_err("still unavailable");
+        assert_eq!(again, err);
+        assert!(started.elapsed() < PAUSE, "no disk retries");
+        assert_eq!(reported.borrow().len(), 1, "not logged again");
+        assert!(path.is_dir(), "the file in place is untouched");
+        assert!(corrupt_copies(&path).is_empty(), "nothing set aside");
+        assert_eq!(read_json(&backup_path(&path)), json!({ "a": "old" }));
+
+        // The page holds a stand-in for "a" now: a write of it is refused.
+        let key = "a".to_string();
+        assert!(data.refuse_unread([&key].into_iter()).is_err());
+        let other = "b".to_string();
+        assert!(data.refuse_unread([&other].into_iter()).is_ok());
+
+        // Once the file can be read, the next command after the pause opens it.
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, r#"{"a":"new"}"#).unwrap();
+        thread::sleep(data.retry_after);
+        let got = data.get(&path, |_| {}, "a").expect("opened now");
+        assert_eq!(got, Some(json!("new")));
+        assert!(data.refuse_unread([&key].into_iter()).is_ok(), "read since");
     }
 
     /// A stop between the two renames: no store file, the new contents
-    /// complete in .tmp, the previous ones in .bak.
+    /// complete in .tmp, the previous ones in .bak. The .tmp goes into place
+    /// at once, so a second stop during the next save still leaves it.
     #[test]
-    fn a_missing_store_recovers_from_a_complete_tmp_before_the_backup() {
+    fn a_complete_tmp_is_put_in_place_before_the_next_save() {
         let dir = scratch();
         let path = dir.path().join("user-data.json");
         fs::write(backup_path(&path), r#"{"a":1}"#).unwrap();
         fs::write(temp_path(&path), r#"{"a":2}"#).unwrap();
 
-        let (mut store, reported) = open(&path);
-        assert_eq!(store.get("a"), Some(json!(2)));
-        assert!(reported[0].contains("is missing"), "{}", reported[0]);
-        assert!(
-            reported[0].contains("user-data.json.tmp"),
-            "{}",
-            reported[0]
-        );
-
-        store.save().expect("save");
-        assert_eq!(read_json(&path), json!({ "a": 2 }));
+        let (_store, reported) = open(&path);
+        assert!(mentions(&reported, "is missing"), "{reported:?}");
+        assert!(mentions(&reported, "user-data.json.tmp"), "{reported:?}");
+        assert_eq!(read_json(&path), json!({ "a": 2 }), "in place at once");
         assert!(!temp_path(&path).exists());
+        assert_eq!(read_json(&backup_path(&path)), json!({ "a": 1 }), "kept");
+
+        // A second stop, while the next save writes its .tmp.
+        fs::write(temp_path(&path), r#"{"a":"#).unwrap();
+        let (store, reported) = open(&path);
+        assert!(reported.is_empty(), "{reported:?}");
+        assert_eq!(store.get("a"), Some(json!(2)));
     }
 
     /// A stop while the .tmp was being written: the store file is untouched
@@ -472,6 +782,20 @@ mod tests {
 
         let (store, _) = open(&path);
         assert_eq!(store.get("a"), Some(json!(1)));
+        assert!(!has_recoverable_copy(&dir.path().join("other.json")));
+    }
+
+    #[test]
+    fn only_a_complete_copy_counts_as_recoverable() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        fs::write(temp_path(&path), r#"{"a":"#).unwrap();
+        assert!(!has_recoverable_copy(&path), "a cut-short .tmp");
+        fs::write(temp_path(&path), r#"{"a":1}"#).unwrap();
+        assert!(has_recoverable_copy(&path));
+        fs::remove_file(temp_path(&path)).unwrap();
+        fs::write(backup_path(&path), r#"{"a":1}"#).unwrap();
+        assert!(has_recoverable_copy(&path));
     }
 
     #[test]
@@ -483,16 +807,31 @@ mod tests {
 
         let (mut store, reported) = open(&path);
         assert_eq!(store.entries, Entries::new());
-        assert_eq!(reported.len(), 1, "{reported:?}");
         assert!(
-            reported[0].contains("starting with an empty library list"),
-            "{}",
-            reported[0]
+            mentions(&reported, "starting with an empty library list"),
+            "{reported:?}"
         );
+        assert_eq!(corrupt_copies(&path).len(), 1, "the broken file is kept");
 
         store.set("a".into(), json!(1));
         store.save().expect("save");
         assert_eq!(read_json(&path), json!({ "a": 1 }));
+    }
+
+    #[test]
+    fn only_the_two_newest_damaged_files_are_kept() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        for secs in [100, 200, 300] {
+            fs::write(with_suffix(&path, &format!(".corrupt-{secs}")), "x").unwrap();
+        }
+        fs::write(&path, "{").unwrap();
+        let _ = open(&path);
+        let kept: Vec<String> = corrupt_copies(&path).iter().map(|p| file_name(p)).collect();
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[0], "user-data.json.corrupt-300");
+        assert!(kept[1].starts_with("user-data.json.corrupt-"), "{kept:?}");
+        assert_ne!(kept[1], "user-data.json.corrupt-300");
     }
 
     #[test]
@@ -501,28 +840,68 @@ mod tests {
         let path = dir.path().join("user-data.json");
         fs::write(&path, "[]").unwrap();
         let (_, reported) = open(&path);
-        assert!(reported[0].contains("is not valid JSON"), "{}", reported[0]);
+        assert!(mentions(&reported, "is not valid JSON"), "{reported:?}");
     }
 
     #[test]
     fn a_missing_store_with_no_copies_is_a_fresh_start() {
         let dir = scratch();
-        let (entries, opened) = read_store(&dir.path().join("user-data.json"));
+        let (entries, opened) = read_store(&dir.path().join("user-data.json")).unwrap();
         assert_eq!(opened, Opened::Fresh);
         assert!(entries.is_empty());
     }
 
+    /// A reset leaves no copy of the library it cleared, at any step.
     #[test]
-    fn remove_backup_removes_it_and_is_fine_without_one() {
+    fn a_reset_removes_every_copy_and_keeps_none_of_the_old_library() {
         let dir = scratch();
         let path = dir.path().join("user-data.json");
         let (mut store, _) = open(&path);
+        store.set("songs".into(), json!(["one"]));
         store.save().unwrap();
         store.save().unwrap();
+        fs::write(temp_path(&path), "{").unwrap();
+        fs::write(with_suffix(&path, ".corrupt-100"), "{").unwrap();
         assert!(backup_path(&path).exists());
-        store.remove_backup().expect("removed");
-        assert!(!backup_path(&path).exists());
-        store.remove_backup().expect("nothing to remove");
+
+        let reported = RefCell::new(Vec::new());
+        store
+            .reset(|line| reported.borrow_mut().push(line.to_string()))
+            .expect("reset");
+        assert!(reported.borrow().is_empty(), "{:?}", reported.borrow());
+        assert_eq!(read_json(&path), json!({}));
+        assert!(!backup_path(&path).exists(), "the old library is not kept");
+        assert!(!temp_path(&path).exists());
+        assert!(corrupt_copies(&path).is_empty());
+    }
+
+    #[test]
+    fn transient_errors_are_the_only_ones_tried_again() {
+        let raw = io::Error::from_raw_os_error;
+        if cfg!(windows) {
+            assert!(is_transient(&raw(32)), "sharing violation");
+            assert!(is_transient(&raw(33)), "lock violation");
+            assert!(is_transient(&raw(5)), "access denied");
+            assert!(!is_transient(&raw(2)), "file not found");
+            assert!(!is_transient(&raw(3)), "path not found");
+            assert!(!is_transient(&raw(19)), "write protected");
+        } else {
+            // The same numbers on Linux and macOS.
+            assert!(is_transient(&raw(16)), "EBUSY");
+            assert!(!is_transient(&raw(2)), "ENOENT");
+            assert!(!is_transient(&raw(20)), "ENOTDIR");
+            assert!(!is_transient(&raw(30)), "EROFS");
+            assert!(!is_transient(&raw(13)), "EACCES");
+        }
+        let calls = std::cell::Cell::new(0);
+        let started = Instant::now();
+        let result: io::Result<()> = retrying(|| {
+            calls.set(calls.get() + 1);
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 1, "a missing file is not tried again");
+        assert!(started.elapsed() < PAUSE);
     }
 
     #[test]
@@ -542,8 +921,9 @@ mod tests {
                 s.save()
             },
         )
+        .expect("open")
         .expect("saved");
-        let seen = data.with(&second, |_| {}, |s| s.get("where"));
+        let seen = data.get(&second, |_| {}, "where").expect("open");
         assert_eq!(seen, Some(json!("two")));
         assert_eq!(read_json(&first), json!({ "where": "one" }));
     }
@@ -559,14 +939,16 @@ mod tests {
 
         let data = UserData::default();
         assert!(data.save_unsaved().is_none(), "nothing open");
-        let saved = data.with(
-            &path,
-            |_| {},
-            |s| {
-                s.set("a".into(), json!(1));
-                s.save()
-            },
-        );
+        let saved = data
+            .with(
+                &path,
+                |_| {},
+                |s| {
+                    s.set("a".into(), json!(1));
+                    s.save()
+                },
+            )
+            .expect("open");
         assert!(saved.is_err(), "the folder cannot be made");
 
         fs::remove_file(&blocker).unwrap();
@@ -575,6 +957,65 @@ mod tests {
             .expect("saved at exit");
         assert_eq!(read_json(&path), json!({ "a": 1 }));
         assert!(data.save_unsaved().is_none(), "saved once");
+    }
+
+    /// What `plugin_store_fixture` holds: every kind of value the page keeps.
+    fn plugin_store_entries() -> HashMap<String, Value> {
+        let value = json!({
+            "stemdeck.folders": { "version": 2, "folders": [{ "id": "f1", "name": "Rock", "tracks": ["abcdefabcdef"] }] },
+            "stemdeck.deleted_jobs": ["0123456789ab"],
+            "stemdeck:selected-stems": ["vocals", "drums"],
+            "stemdeck:mix:abcdefabcdef": { "lanes": [{ "stem": "vocals", "gain": 0.75, "mute": false }] },
+            "exports_dir": "D:\\Exports\\Caf\u{e9}",
+            "empty": null,
+        });
+        serde_json::from_value(value).unwrap()
+    }
+
+    const PLUGIN_FIXTURE: &str = "tests/fixtures/user-data-plugin-2.4.3.json";
+
+    /// Writes the fixture exactly as tauri-plugin-store 2.4.3 saves a store:
+    /// its `default_serialize` is `serde_json::to_vec_pretty` of a
+    /// `HashMap<String, JsonValue>`. Run once with
+    /// `cargo test regenerate_plugin_fixture -- --ignored`.
+    #[test]
+    #[ignore]
+    fn regenerate_plugin_fixture() {
+        let bytes = serde_json::to_vec_pretty(&plugin_store_entries()).unwrap();
+        fs::write(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(PLUGIN_FIXTURE),
+            bytes,
+        )
+        .unwrap();
+    }
+
+    /// A store an existing install saved with the plugin opens as it is.
+    #[test]
+    fn a_store_the_plugin_saved_opens_as_it_is() {
+        let fixture = include_bytes!("../tests/fixtures/user-data-plugin-2.4.3.json");
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        fs::write(&path, fixture).unwrap();
+        let (store, reported) = open(&path);
+        assert!(reported.is_empty(), "{reported:?}");
+        let expected: Entries = plugin_store_entries().into_iter().collect();
+        assert_eq!(store.entries, expected);
+    }
+
+    /// What this saves, the plugin's reader (`from_slice` into a HashMap, as
+    /// 0.20 runs it) reads back whole, so a downgrade keeps the library.
+    #[test]
+    fn what_a_save_writes_the_plugin_reads() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        let (mut store, _) = open(&path);
+        for (key, value) in plugin_store_entries() {
+            store.set(key, value);
+        }
+        store.save().unwrap();
+        let read: HashMap<String, Value> = serde_json::from_slice(&fs::read(&path).unwrap())
+            .expect("the plugin's reader accepts it");
+        assert_eq!(read, plugin_store_entries());
     }
 
     /// A store about the size of a 300-song library with every song's mixes:
@@ -675,7 +1116,7 @@ mod tests {
         thread::sleep(delay);
         child.kill().expect("killed");
         child.wait().expect("reaped");
-        read_store(&dir.path().join("user-data.json"))
+        read_store(&dir.path().join("user-data.json")).expect("readable")
     }
 
     /// The crash #1023 is about, for real: a process killed partway through

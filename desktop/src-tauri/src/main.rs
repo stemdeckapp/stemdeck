@@ -750,14 +750,16 @@ fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     fs::create_dir_all(&jobs_dir)
         .map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
     let new_path = jobs_dir.join("user-data.json");
-    // A missing file beside one of the copies a save keeps (#1023) is a save
-    // that stopped partway, which opening the store recovers from. Copying the
-    // pre-#403 file in would hide that copy behind a much older library.
-    let has_copy =
-        store_file::backup_path(&new_path).is_file() || store_file::temp_path(&new_path).is_file();
-    if !new_path.is_file() && !has_copy {
+    if !new_path.is_file() {
         if let Some(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
-            if old_path.is_file() && old_path != new_path {
+            // A missing file beside a complete copy a save keeps (#1023) is a
+            // save that stopped partway, which opening the store recovers
+            // from. Copying the pre-#403 file in would hide that copy behind a
+            // much older library. A .tmp cut short is no such copy.
+            if old_path.is_file()
+                && old_path != new_path
+                && !store_file::has_recoverable_copy(&new_path)
+            {
                 let _ = fs::copy(&old_path, &new_path);
             }
         }
@@ -862,14 +864,16 @@ fn exports_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// Run `f` on the user-data store (user-data.json in the jobs folder),
 /// opening it from disk first when it is not open yet or the jobs folder has
 /// moved. A start that finds the file missing, empty or not valid JSON
-/// recovers from the copy a save keeps (#1023) and says so in the log.
+/// recovers from the copy a save keeps (#1023) and says so in the log. Err,
+/// starting with store_file::UNAVAILABLE, while the file is there but cannot
+/// be read.
 fn with_user_data<T>(
     app: &tauri::AppHandle,
     f: impl FnOnce(&mut store_file::OpenStore) -> T,
 ) -> Result<T, String> {
     let path = documents_store_path(app)?;
     let data = app.state::<store_file::UserData>();
-    Ok(data.with(&path, report_user_data_problem, f))
+    data.with(&path, report_user_data_problem, f)
 }
 
 /// To stderr and setup.log, the shell log a bug report carries, so a
@@ -897,12 +901,18 @@ fn save_user_data(store: &mut store_file::OpenStore) -> Result<(), String> {
 /// Get a value from the persistent user-data store.
 #[tauri::command]
 fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
-    with_user_data(&app, |store| store.get(&key))
+    let path = documents_store_path(&app)?;
+    app.state::<store_file::UserData>()
+        .get(&path, report_user_data_problem, &key)
 }
 
 /// Set a value in the persistent user-data store and immediately flush to disk.
+/// Refused for a key the page asked for while the store could not be opened:
+/// the page holds a stand-in for it, not its value.
 #[tauri::command]
 fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    app.state::<store_file::UserData>()
+        .refuse_unread(std::iter::once(&key))?;
     with_user_data(&app, |store| {
         store.set(key, value);
         save_user_data(store)
@@ -944,12 +954,15 @@ fn set_all_then_save(
 /// (#996). Each save writes the whole store file, which holds every song's
 /// mixes: on a 9 MB store one save took 47 to 83 ms, so a version delete that
 /// cleared its eight records with store_set took 386 to 626 ms. Synchronous
-/// like store_set, so both run in the order the page sent them.
+/// like store_set, so both run in the order the page sent them, and refused
+/// whole like store_set when one of its keys was not read.
 #[tauri::command]
 fn store_set_many(
     app: tauri::AppHandle,
     entries: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    app.state::<store_file::UserData>()
+        .refuse_unread(entries.keys())?;
     with_user_data(&app, |store| set_all_then_save(store, entries))?
 }
 
@@ -957,18 +970,18 @@ fn store_set_many(
 /// "Reset app data"). Complements the backend's own job-data wipe (POST
 /// /api/reset) -- together they fully clear a user's local StemDeck state,
 /// including the per-job mixer-state keys (stemdeck:mix:<job_id>) that have
-/// no fixed enumeration to clear individually. The copy a save keeps goes
-/// too, or a later start that found the store damaged would bring the old
-/// library back from it.
+/// no fixed enumeration to clear individually. The copies a save keeps go
+/// first (store_file::OpenStore::reset), or a later start that found the store
+/// damaged would bring the old library back from one.
 #[tauri::command]
 fn reset_user_data(app: tauri::AppHandle) -> Result<(), String> {
     with_user_data(&app, |store| {
-        store.clear();
-        save_user_data(store)?;
         store
-            .remove_backup()
-            .map_err(|e| format!("could not remove user-data.json.bak: {e}"))
-    })?
+            .reset(report_user_data_problem)
+            .map_err(|e| format!("could not save user-data.json: {e}"))
+    })??;
+    app.state::<store_file::UserData>().forget_unread();
+    Ok(())
 }
 
 /// Called by JS after the one-time localStorage → store migration completes.
@@ -9362,8 +9375,12 @@ mod tests {
         // or write of one small file or folder, or one bounded save of the
         // user-data store (store_set, store_set_many, reset_user_data), which
         // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996), plus
-        // the sync and renames of #1023, and at most one second of retries
-        // while Windows holds the file.
+        // the sync and renames of #1023. While Windows holds the file a save
+        // retries at most four steps for 200 ms each (0.8 s), and the first
+        // command, which opens the store, up to five more (1 s): reading the
+        // file and its two copies, setting a damaged one aside, and putting a
+        // recovered .tmp in place. After a failed open, commands fail at once
+        // for one second instead of trying the disk again.
         const QUICK: &[&str] = &[
             "current_exports_dir",
             "store_get",
