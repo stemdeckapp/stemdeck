@@ -1581,6 +1581,73 @@ function openFolderEditor(folderId) {
 
 let dragId = null;
 let folderDragId = null;
+// A rebuild asked for while a song or a folder is being dragged (#979).
+// render() empties the list, which throws away the dragged row and the folder
+// under the cursor, and the browser then delivers the drop to neither: the
+// song stays where it was. So render() waits, and the drag's end runs it once.
+let renderAfterDrag = false;
+
+function isLibraryDragging() {
+  return dragId != null || folderDragId != null;
+}
+
+/** The drag is over: run the rebuild it held back, if any. */
+function renderHeldBack() {
+  if (isLibraryDragging() || !renderAfterDrag) return;
+  renderAfterDrag = false;
+  render();
+}
+
+/** Take every mark a library drag puts on the page back off. */
+function clearLibraryDragMarks() {
+  for (const el of document.querySelectorAll(".cat-item.dragging:not(.queue-row)")) el.classList.remove("dragging");
+  for (const el of document.querySelectorAll(".folder.folder-dragging")) el.classList.remove("folder-dragging");
+  for (const el of document.querySelectorAll(".folder.drop-target, .folder.drop-before, .folder.drop-after, .folder.drop-into")) {
+    el.classList.remove("drop-target", "drop-before", "drop-after", "drop-into");
+  }
+  document.querySelector(".rail-trash")?.classList.remove("drop-target");
+  document.getElementById("lanes")?.classList.remove("library-drop-target");
+}
+
+// The kind of pointer ("mouse", "touch", "pen") behind the last primary press,
+// and behind the library drag it started.
+let lastPressPointerType = null;
+let dragPointerType = null;
+
+/**
+ * A drag whose dragend never arrived would leave dragId or folderDragId set,
+ * and render() would then wait forever. The dragging pointer sends no pointer
+ * events while an HTML5 drag is under way (the browser sends pointercancel
+ * when it starts), so a move of that pointer with a drag still recorded means
+ * the drag is over: clear it and run the rebuild it held back.
+ *
+ * Only a move, not a press: the rebuild would take the pressed row out of the
+ * page before its click, and the press would be lost. And only the pointer
+ * that drags: a second finger, or a pen or touch while the mouse drags, still
+ * reports moves during a drag, and must not end it.
+ */
+function recoverFromLostDragEnd(e) {
+  if (!isLibraryDragging() || !e.isPrimary) return;
+  if (dragPointerType && e.pointerType !== dragPointerType) return;
+  console.warn("[catalog] a library drag ended without dragend; clearing it");
+  dragId = null;
+  folderDragId = null;
+  dragPointerType = null;
+  clearLibraryDragMarks();
+  renderHeldBack();
+}
+
+/** A library drag starts: remember which kind of pointer pressed for it. */
+function noteDragPointer() {
+  dragPointerType = lastPressPointerType;
+}
+
+function wireLostDragEndRecovery() {
+  document.addEventListener("pointerdown", (e) => {
+    if (e.isPrimary) lastPressPointerType = e.pointerType;
+  }, true);
+  document.addEventListener("pointermove", recoverFromLostDragEnd, true);
+}
 
 function isTrackDragEvent(event) {
   return dragId != null || Boolean(event?.dataTransfer?.types?.includes(TRACK_DRAG_TYPE));
@@ -1594,6 +1661,9 @@ function getDraggedTrackId(event) {
 
 function startDrag(trackId, itemEl, event) {
   dragId = trackId;
+  // Only one library drag at a time: a folder drag recorded now is stale.
+  folderDragId = null;
+  noteDragPointer();
   if (event?.dataTransfer) {
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(TRACK_DRAG_TYPE, trackId);
@@ -1608,11 +1678,15 @@ function endDrag(itemEl) {
   for (const el of document.querySelectorAll(".folder.drop-target")) el.classList.remove("drop-target");
   document.querySelector(".rail-trash")?.classList.remove("drop-target");
   document.getElementById("lanes")?.classList.remove("library-drop-target");
+  renderHeldBack();
 }
 
 function dropOnFolder(folderId, trackId) {
   const id = trackId ?? dragId;
-  if (!id) return;
+  // The song can be gone by the time it is dropped: a cancelled import drops
+  // its row while it is held. Filing its id would leave a folder entry with no
+  // song behind it.
+  if (!id || !tracks[id]) return;
   // Remove from current folder
   for (const f of folders) {
     const idx = f.items.indexOf(id);
@@ -2339,6 +2413,9 @@ function renderFolder(folder) {
     grip.draggable = true;
     grip.addEventListener("dragstart", (e) => {
       folderDragId = folder.id;
+      // Only one library drag at a time: a song drag recorded now is stale.
+      dragId = null;
+      noteDragPointer();
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData(FOLDER_DRAG_TYPE, folder.id);
       e.stopPropagation();
@@ -2350,6 +2427,7 @@ function renderFolder(folder) {
       for (const f of document.querySelectorAll(".folder.drop-before, .folder.drop-after, .folder.drop-into")) {
         f.classList.remove("drop-before", "drop-after", "drop-into");
       }
+      renderHeldBack();
     });
   }
 
@@ -2435,6 +2513,11 @@ function render() {
   const catalog = document.getElementById("catalogPanel");
   const searchInput = document.getElementById("catalogSearch");
   if (!list || !libraryLoaded) return;
+  // Not while a library drag is held: see renderAfterDrag.
+  if (isLibraryDragging()) {
+    renderAfterDrag = true;
+    return;
+  }
 
   list.innerHTML = "";
   if (strip) strip.innerHTML = "";
@@ -6222,6 +6305,7 @@ export function wireCatalogControls({ languageReady }) {
   wireMainPanelDrop();
   wireRailTrashDrop();
   wireRailLibraryDrop();
+  wireLostDragEndRecovery();
   wireLibraryDeleteKeys();
   wireAboutDialog();
   wireSupportersDialog(languageReady);
