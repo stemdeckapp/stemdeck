@@ -441,10 +441,10 @@ async function installRuntimePack(appRoot) {
 // binary they had was built for Intel (#637).
 //
 // macOS reports that case as EBADARCH, "Bad CPU type in executable (os error
-// 86)". It happens when the per-architecture primary source is unreachable and
-// the fallback, which publishes Intel builds only, is used instead. Rosetta
-// normally papers over it, but a bare exec() never triggers Rosetta's
-// install-on-demand prompt, so a Mac without it just fails.
+// 86)". StemDeck no longer downloads an Intel build onto Apple Silicon (#858),
+// and replaces a data-folder pair that cannot run, so what is left is an
+// FFmpeg the user named with STEMDECK_FFMPEG. A bare exec() never triggers
+// Rosetta's install-on-demand prompt, so on a Mac without Rosetta it fails.
 function ffmpegFailureHint(message) {
   // An Apple Silicon Mac without Rosetta, where StemDeck declined to install
   // an Intel-only build (#771). The message already says what to do, and a
@@ -458,13 +458,11 @@ function ffmpegFailureHint(message) {
   const wrongArchitecture = /bad cpu type|os error 86|EBADARCH/i.test(message);
   if (wrongArchitecture) {
     return (
-      "The FFmpeg that was downloaded is built for a different kind of Mac than yours, " +
-      "so it cannot run. This happens when the Apple Silicon download source is " +
-      "unreachable and StemDeck falls back to an Intel-only build. Two ways out: " +
-      'install Rosetta with "softwareupdate --install-rosetta" in Terminal, which lets ' +
-      "Intel builds run, or point StemDeck at a matching build by setting the " +
-      "STEMDECK_FFMPEG_URL environment variable before launching. Deleting the ffmpeg " +
-      "folder in StemDeck's data directory before retrying lets it fetch a fresh copy."
+      "This FFmpeg is built for a different kind of Mac than yours, so it cannot run. " +
+      "Point the STEMDECK_FFMPEG environment variable at a build for your Mac, or " +
+      "remove it so StemDeck downloads one, then open StemDeck again. On Apple Silicon, " +
+      '"brew install ffmpeg" in Terminal installs a native build that StemDeck finds ' +
+      "on its own."
     );
   }
   return (
