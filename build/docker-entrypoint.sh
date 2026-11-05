@@ -7,14 +7,16 @@ set -e
 PUID="${PUID:-1001}"
 PGID="${PGID:-1001}"
 
-# Chown the only paths the app writes to before dropping privileges:
+# Own the only paths the app writes to before dropping privileges:
 #   /app/jobs           registry.json, downloaded audio, and stems
 #   /cache              torch/Demucs model weights (TORCH_HOME, XDG_CACHE_HOME)
 #   /app/settings.json  best-effort settings persistence (created on demand)
 # App code and the venv under /app stay world-readable, so a different UID can
-# still import and run them. Re-chowning is also what fixes a bind mount that
-# Docker created as root on first run.
-chown -R "${PUID}:${PGID}" /app/jobs /cache 2>/dev/null || true
+# still import and run them. Re-owning is also what fixes a bind mount that
+# Docker created as root on first run. docker-reown.sh changes only the entries
+# whose owner or group is wrong, so a library that is already right is read but
+# not rewritten (#994).
+sh "$(dirname -- "$0")/docker-reown.sh" "${PUID}" "${PGID}" /app/jobs /cache || true
 touch /app/settings.json 2>/dev/null && chown "${PUID}:${PGID}" /app/settings.json 2>/dev/null || true
 
 # Serve TLS when a certificate is supplied. Appended to the CMD rather than

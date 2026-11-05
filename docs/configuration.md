@@ -21,6 +21,8 @@
 | `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |
 | `STEMDECK_STEM_FORMAT` | `mp3` | How new songs' stems are stored: `mp3` or `wav`. Songs already in the library keep their format. A choice saved in Settings > Library wins over this. |
 | `STEMDECK_STEM_MP3_KBPS` | `128` | MP3 stem bitrate: `128`, `192` or `256` (constant bitrate). Used only with `mp3`. |
+| `STEMDECK_VIDEO_ENCODER` | (none) | H.264 encoder for video renders: `auto`, `cpu` or one encoder (`h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_vaapi`, `h264_videotoolbox`). Wins over Settings > Export > Video encoder; `cpu` turns the GPU encoders off. |
+| `STEMDECK_VAAPI_DEVICE` | (none) | Linux, `h264_vaapi` only: use this DRM render node (`renderD129` or `/dev/dri/renderD129`) and no other. Unset, every `/dev/dri/renderD*` node is tested in number order and the first that passes its test encode is used, so a hybrid-GPU machine needs this only to prefer one working GPU over another. |
 | `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
 | `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
 | `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |

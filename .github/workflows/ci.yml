@@ -45,6 +45,10 @@ jobs:
       # The retry wrapper the e2e installs depend on (#838). Here because this
       # job runs on every pull request, whatever it changes.
       - run: bash tests/ci/test_retry_sh.sh
+      # The Docker entrypoint's ownership pass (#994). This container runs as
+      # root, which the mixed-owner and symlink cases need, and sh here is
+      # dash, the same shell as the image.
+      - run: bash tests/ci/test_docker_reown_sh.sh
 
   test:
     runs-on: ubuntu-latest
