@@ -6903,6 +6903,14 @@ fn machine_arch_from(
     }
 }
 
+// The two keys machine_arch reads. Named once so the macOS-only test reads
+// exactly these: a misspelt key returns None on every Mac, which would
+// quietly turn the check off.
+#[cfg(target_os = "macos")]
+const SYSCTL_PROC_TRANSLATED: &str = "sysctl.proc_translated";
+#[cfg(target_os = "macos")]
+const SYSCTL_HW_ARM64: &str = "hw.optional.arm64";
+
 // A sysctl integer read as a flag: Some(value != 0), or None when the key does
 // not exist on this Mac (hw.optional.arm64 on Intel, sysctl.proc_translated
 // before macOS 11) or could not be read.
@@ -6931,8 +6939,8 @@ fn sysctl_flag(name: &str) -> Option<bool> {
 fn machine_arch() -> &'static str {
     #[cfg(target_os = "macos")]
     let (translated, hw_arm64) = (
-        sysctl_flag("sysctl.proc_translated"),
-        sysctl_flag("hw.optional.arm64"),
+        sysctl_flag(SYSCTL_PROC_TRANSLATED),
+        sysctl_flag(SYSCTL_HW_ARM64),
     );
     #[cfg(not(target_os = "macos"))]
     let (translated, hw_arm64) = (None, None);
@@ -10541,6 +10549,45 @@ mod tests {
         // What this test binary itself reports, off a Mac, is its own build.
         #[cfg(not(target_os = "macos"))]
         assert_eq!(super::machine_arch(), std::env::consts::ARCH);
+    }
+
+    // The real sysctl calls, on a Mac only. The macOS CI runner
+    // (macos-latest) is Apple Silicon and runs the arm64 test binary
+    // natively, so both keys must exist there with these values. A misspelt
+    // key, or a broken FFI call, reads None and fails here, where the pure
+    // tests above cannot see it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sysctl_keys_exist_and_read_right_on_this_mac() {
+        use super::{sysctl_flag, SYSCTL_HW_ARM64, SYSCTL_PROC_TRANSLATED};
+        // A key every Mac has: the call itself works.
+        assert_eq!(sysctl_flag("hw.ncpu"), Some(true), "sysctlbyname failed");
+        // macOS 11 and later, on both CPUs; 0 for a native process.
+        let translated = sysctl_flag(SYSCTL_PROC_TRANSLATED);
+        assert!(
+            translated.is_some(),
+            "{SYSCTL_PROC_TRANSLATED} is missing on this Mac"
+        );
+        if cfg!(target_arch = "aarch64") {
+            assert_eq!(
+                sysctl_flag(SYSCTL_HW_ARM64),
+                Some(true),
+                "{SYSCTL_HW_ARM64} is missing or 0 on an arm64 Mac"
+            );
+            assert_eq!(
+                translated,
+                Some(false),
+                "a native arm64 test is not translated"
+            );
+            assert_eq!(super::machine_arch(), "aarch64");
+        } else if translated == Some(true) {
+            // An x86_64 test binary under Rosetta: the case #858 is about.
+            assert_eq!(super::machine_arch(), "aarch64");
+        } else {
+            // A real Intel Mac: hw.optional.arm64 is absent or 0.
+            assert_ne!(sysctl_flag(SYSCTL_HW_ARM64), Some(true));
+            assert_eq!(super::machine_arch(), "x86_64");
+        }
     }
 
     // The facts above, carried through to what is downloaded and what
