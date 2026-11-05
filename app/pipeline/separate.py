@@ -15,8 +15,9 @@ from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL, TIMEOUT_MODEL_ST
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device, get_separation_quality
-from app.pipeline import jobqueue
+from app.pipeline import idle_unload, jobqueue
 from app.pipeline.errors import SeparationError, classify_failure
+from app.pipeline.idle_unload import IdleResource
 
 logger = logging.getLogger("stemdeck.pipeline")
 
@@ -31,8 +32,14 @@ _DOWNLOADING_RE = re.compile(r'^Downloading: "(?P<url>[^"]+)" to (?P<dst>.+)$')
 # in runner.py), so there is exactly one worker to track, not a pool. Reused
 # across consecutive successful jobs on the same device; torn down on cancel,
 # a device change, or any job failure -- see demucs_worker.py's docstring for
-# why a failure always kills the worker rather than trying to keep serving.
+# why a failure always kills the worker rather than trying to keep serving --
+# and stopped by the idle timer when no job has used it for a while (#975).
 _worker: dict[str, object] = {}
+
+
+def _worker_alive() -> bool:
+    proc = _worker.get("proc")
+    return proc is not None and proc.poll() is None
 
 
 def _spawn_worker_cmd(device: str) -> list[str]:
@@ -56,6 +63,23 @@ def _kill_worker() -> None:
             # closed only incidentally, whenever the Popen refcount happens to
             # drop. vocal_split.py already pairs the two.
             proc.communicate()
+
+
+# Stopped by the idle timer after the Settings' idle minutes without a
+# separation (#975); the next separate() starts it again through _get_worker().
+# A dead worker counts as unloaded: the next job replaces it either way.
+# Lambdas, so a test that replaces _kill_worker replaces it here too.
+WORKER = idle_unload.register(
+    IdleResource("separation worker", lambda: _worker_alive(), lambda: _kill_worker())
+)
+
+
+def shutdown_worker() -> None:
+    """Stop the worker at server shutdown, even under a running job: the
+    runner reads that as an interruption (jobqueue.is_stopping), not a
+    failure. Through the idle lock, so an idle unload in progress finishes
+    first and the two never stop the same process at once."""
+    WORKER.unload_now()
 
 
 def _get_worker(device: str) -> subprocess.Popen:
@@ -283,7 +307,15 @@ def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) 
     `quality` is the Separation quality to use, "standard" or "best"; None
     reads the setting, per job like the device. Recorded on the job with the
     model (#804), so stems separated later for the same song (fill-stems) use
-    the same settings and add up with the ones it has."""
+    the same settings and add up with the ones it has.
+
+    Holds the worker in use for the whole call, the CPU retry included, so the
+    idle timer never stops it under a job (#975)."""
+    with WORKER.in_use():
+        return _separate(job, source, job_dir, quality)
+
+
+def _separate(job: Job, source: Path, job_dir: Path, quality: str | None) -> Path:
     _set(job, status="separating", progress=0.0, stage="Separating stems...")
     quality = quality or get_separation_quality()
     job.separation_model = DEMUCS_MODEL

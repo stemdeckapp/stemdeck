@@ -137,7 +137,7 @@
     {
       "why": "Settings: navigation, every settings pane, and the config endpoint behind them",
       "paths": ["static/js/settingsNav.js", "static/css/settings.css", "app/api/config.py"],
-      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle"]
+      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "idle-unload-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle"]
     },
     {
       "why": "The artist and work dialog, and the lookups behind it",

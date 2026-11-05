@@ -34,6 +34,7 @@ from app.core.config import (
     DISCOGS_CHECK_TOKEN,
     FFMPEG_BIN,
     HTTPS_PORT,
+    IDLE_UNLOAD_MINUTES_MAX,
     JOBS_DIR,
     LOGS_DIR,
     SSL_CERTFILE,
@@ -73,6 +74,7 @@ from app.core.settings import (
     get_demucs_device,
     get_demucs_device_choice,
     get_export_sample_rate,
+    get_idle_unload_minutes,
     get_jobs_dir,
     get_max_duration_sec,
     get_playlist_max_items,
@@ -93,6 +95,7 @@ from app.core.settings import (
     set_demucs_device,
     set_discogs_token,
     set_export_sample_rate,
+    set_idle_unload_minutes,
     set_jobs_dir,
     set_max_duration_sec,
     set_playlist_max_items,
@@ -234,6 +237,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     qt = jobqueue.start_worker()
     _background_tasks.add(qt)
     qt.add_done_callback(_background_tasks.discard)
+    # Unloads the separation worker and the beat model once they have been
+    # idle for the Settings' minutes (#975). Cancelled first at shutdown.
+    from app.pipeline import idle_unload
+
+    idle_task = asyncio.create_task(idle_unload.run())
+    _background_tasks.add(idle_task)
+    idle_task.add_done_callback(_background_tasks.discard)
     # Jobs that were queued or in flight when the process last died. restore()
     # already put them back to "queued"; this puts them back in the queue.
     #
@@ -323,16 +333,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the worker kill below ends a separation, and this is what makes the
     # runner keep that job to resume rather than fail it.
     jobqueue.request_stop()
+    # No idle unload from here on: the kill below is the last word.
+    idle_task.cancel()
     # Running take renders (ffmpeg processes) stop with the server.
     from app.api.takes import cancel_all_renders
 
     cancel_all_renders()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
-    # its own, unlike the desktop backend itself.
-    from app.pipeline.separate import _kill_worker
+    # its own, unlike the desktop backend itself. Waits for an idle unload
+    # that was already stopping it.
+    from app.pipeline.separate import shutdown_worker
 
-    _kill_worker()
+    await asyncio.to_thread(shutdown_worker)
 
 
 # Phones hitting the self-hosted server URL get the mobile UI; everything
@@ -472,6 +485,10 @@ def _settings_payload() -> dict[str, object]:
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),
         "separation_quality": get_separation_quality(),
+        # Idle minutes before the separation worker and the beat model unload
+        # (#975), 0 for never; the ceiling so the field can say it.
+        "idle_unload_minutes": get_idle_unload_minutes(),
+        "idle_unload_minutes_max": IDLE_UNLOAD_MINUTES_MAX,
         # How new songs' stems are stored (#783). Read when a job finishes;
         # songs already in the library keep their own format.
         "stem_format": get_stem_format(),
@@ -586,6 +603,7 @@ async def update_settings(request: Request) -> dict[str, object]:
         ("playlist_max_items", set_playlist_max_items),
         ("video_max_height", set_video_max_height),
         ("port", set_port),
+        ("idle_unload_minutes", set_idle_unload_minutes),
     ):
         if key in body:
             try:

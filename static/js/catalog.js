@@ -4597,6 +4597,9 @@ async function wireGeneralSettings(overlay) {
   const deviceCopyStatus = overlay.querySelector(".set-device-copy-status");
   let deviceDiagnostics = "";
   const qualitySel = overlay.querySelector(".set-separation-quality");
+  const idleUnloadInput = overlay.querySelector(".set-idle-unload");
+  // The server's value, for a field left empty: there is no number to send.
+  let lastIdleUnload = null;
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
@@ -4608,7 +4611,7 @@ async function wireGeneralSettings(overlay) {
   const stemFormatSel = overlay.querySelector(".set-stem-format");
   const stemKbpsSel = overlay.querySelector(".set-stem-kbps");
   const stemKbpsRow = overlay.querySelector(".stem-bitrate-row");
-  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !transcribeSel && !cookiesInput && !autoDeleteInput && !stemFormatSel) return;
+  if (!durInput && !playlistInput && !heightSel && !sampleRateSel && !portInput && !deviceSel && !qualitySel && !idleUnloadInput && !transcribeSel && !cookiesInput && !autoDeleteInput && !stemFormatSel) return;
 
   // The bitrate only means anything for MP3, so its row shows only then.
   const syncStemKbps = () => {
@@ -4642,6 +4645,11 @@ async function wireGeneralSettings(overlay) {
     if (sampleRateSel && d.export_sample_rate) sampleRateSel.value = String(d.export_sample_rate);
     if (portInput && d.port) portInput.value = String(d.port);
     if (qualitySel && d.separation_quality) qualitySel.value = d.separation_quality;
+    // Read the key, not truthiness: 0 (never unload) is a real value.
+    if (idleUnloadInput && Number.isInteger(d.idle_unload_minutes)) {
+      lastIdleUnload = d.idle_unload_minutes;
+      if (document.activeElement !== idleUnloadInput) idleUnloadInput.value = String(d.idle_unload_minutes);
+    }
     if (transcribeSel && d.transcribe_lyrics) transcribeSel.value = d.transcribe_lyrics;
     // A ROCm build of torch serves an AMD GPU as "cuda", and Auto transcribes
     // on it too (#825). Only there: elsewhere an AMD card never runs it.
@@ -4750,6 +4758,7 @@ async function wireGeneralSettings(overlay) {
   digitsOnly(playlistInput);
   digitsOnly(portInput);
   digitsOnly(autoDeleteDays);
+  digitsOnly(idleUnloadInput);
 
   try {
     const r = await fetch("/api/settings", { cache: "no-store" });
@@ -4817,6 +4826,18 @@ async function wireGeneralSettings(overlay) {
   });
   qualitySel?.addEventListener("change", () => {
     post({ separation_quality: qualitySel.value });
+  });
+  idleUnloadInput?.addEventListener("change", async () => {
+    const mins = parseInt(idleUnloadInput.value, 10);
+    if (Number.isNaN(mins)) {
+      // Emptied: keep what the server has rather than guessing a number.
+      if (lastIdleUnload !== null) idleUnloadInput.value = String(lastIdleUnload);
+      return;
+    }
+    // The server clamps (0 to its maximum) and returns what it kept. Written
+    // back here because apply() skips a focused field, as for "Delete after".
+    const data = await post({ idle_unload_minutes: mins });
+    if (data && Number.isInteger(data.idle_unload_minutes)) idleUnloadInput.value = String(data.idle_unload_minutes);
   });
   transcribeSel?.addEventListener("change", () => {
     post({ transcribe_lyrics: transcribeSel.value });
@@ -5458,6 +5479,13 @@ function openLibraryEditor() {
                 <option value="standard" data-i18n="settings.quality.standard">Standard</option>
                 <option value="best" data-i18n="settings.quality.best">Best (2× slower)</option>
               </select>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.idleUnload.title">Free memory when idle</div>
+                <div class="settings-row-desc" data-i18n="settings.idleUnload.desc">Minutes without a new track before StemDeck unloads its separation models to free memory. The next track loads them again and starts a few seconds later. 0 keeps them loaded.</div>
+              </div>
+              ${unitField('<input type="text" class="settings-num-input set-idle-unload" inputmode="numeric" maxlength="4" aria-label="Free memory when idle" data-i18n-aria-label="settings.idleUnload.title" />', "settings.unit.minutes", "min")}
             </div>
           </div>
         </div>

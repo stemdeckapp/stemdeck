@@ -358,6 +358,7 @@ const SETTINGS = [
     ["settings.device.title", "help.set.device"],
     ["settings.device.copyDetails", "help.set.deviceCopy"],
     ["settings.quality.title", "help.set.quality"],
+    ["settings.idleUnload.title", "help.set.idleUnload"],
     ["settings.maxDuration.title", "help.set.maxDuration"],
     ["settings.playlistLimit.title", "help.set.playlistLimit"],
     ["settings.cookies.title", "help.set.cookies"],
