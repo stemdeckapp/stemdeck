@@ -202,4 +202,25 @@ test.describe("free memory when idle", () => {
     await page.locator("#settingsBtn").click();
     await expect(page.locator(".set-idle-unload-desc")).toContainText("höchstens 1440");
   });
+
+  test("the description follows a language switch while Settings is open", async ({ page }) => {
+    await openSettings(page);
+    await expect(page.locator(".set-idle-unload-desc")).toContainText("at most 1440");
+    await page.locator(".set-language").selectOption("de");
+    await expect(page.locator(".set-idle-unload-desc")).toContainText("höchstens 1440");
+  });
+
+  test("with the settings never loaded, the description is still translated and a failed save empties the field", async ({ page }) => {
+    await seedLibrary(page);
+    await page.addInitScript(() => localStorage.setItem("stemdeck.language", JSON.stringify("de")));
+    await page.route("**/api/settings", (route) => route.abort());
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.locator("#settingsBtn").click();
+    await expect(page.locator(".set-idle-unload-desc")).toContainText("höchstens 1440");
+    await field(page).fill("40");
+    await field(page).blur();
+    await expect(msg(page)).toHaveClass(/error/);
+    // No value was ever loaded, so none is in use to show.
+    await expect(field(page)).toHaveValue("");
+  });
 });

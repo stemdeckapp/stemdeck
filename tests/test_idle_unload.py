@@ -690,7 +690,7 @@ def test_a_worker_that_will_not_die_is_given_up_on(wedged, caplog):
     assert "proc" not in sep_mod._worker
     # Left open: a job thread may still be blocked reading them.
     assert not wedged.stdin.closed and not wedged.stderr.closed
-    assert sep_mod._left_behind == [(wedged, "cuda")], "still tracked"
+    assert [(e.proc, e.device) for e in sep_mod._left_behind] == [(wedged, "cuda")], "still tracked"
 
 
 def test_no_second_gpu_worker_beside_a_left_behind_one(
@@ -713,6 +713,35 @@ def test_no_second_gpu_worker_beside_a_left_behind_one(
     assert spawns == ["cpu", "cuda"]
     assert sep_mod._left_behind == []
     assert wedged.stderr.closed, "its pipes close once it has exited"
+
+
+def test_a_leftover_that_never_exits_stops_blocking_the_gpu_after_three_kills(
+    wedged, tmp_path, spawns, monkeypatch, caplog
+):
+    """One that never exits must not turn GPU separation off for good: after
+    three more kills the next GPU worker starts beside it, and memory, if it
+    runs out, is the ordinary GPU-to-CPU retry's to handle."""
+    sep_mod._worker.update(proc=wedged, device="cuda")
+    sep_mod._kill_worker()
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+    for name in ("j1", "j2", "j3"):
+        assert _separate(tmp_path, name).gpu_fallback is True, "held back"
+    assert spawns == ["cpu"], "no GPU worker for the first three"
+    assert _separate(tmp_path, "j4").gpu_fallback is not True
+    assert spawns[-1] == "cuda", "then the GPU is tried again"
+    assert caplog.text.count("no longer holding") == 1, "said once"
+    _separate(tmp_path, "j5")
+    assert caplog.text.count("no longer holding") == 1
+    assert [e.proc for e in sep_mod._left_behind] == [wedged], "still tracked for shutdown"
+
+
+def test_a_leftover_stops_blocking_after_ten_minutes(wedged, tmp_path, spawns, monkeypatch):
+    sep_mod._worker.update(proc=wedged, device="cuda")
+    sep_mod._kill_worker()
+    sep_mod._left_behind[0].since -= sep_mod._LEFT_BEHIND_MAX_SEC
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cuda")
+    _separate(tmp_path, "k1")
+    assert spawns == ["cuda"]
 
 
 def test_shutdown_tries_a_left_behind_worker_once_more(wedged, caplog):

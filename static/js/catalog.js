@@ -4603,7 +4603,7 @@ async function wireGeneralSettings(overlay) {
   // The server's value, for a field left empty or a save that failed.
   let lastIdleUnload = null;
   // The server's ceiling; the field's maxlength (4) lets more through.
-  let idleUnloadMax = 1440;
+  let idleUnloadMax = IDLE_UNLOAD_MAX_DEFAULT;
   const transcribeSel = overlay.querySelector(".set-transcribe-lyrics");
   const transcribeDesc = overlay.querySelector(".set-transcribe-desc");
   const cookiesInput = overlay.querySelector(".set-cookies-file");
@@ -4849,7 +4849,9 @@ async function wireGeneralSettings(overlay) {
     if (!data || !Number.isInteger(data.idle_unload_minutes)) {
       // Not saved: show the value still in use, and say so, rather than
       // leaving a number that a reload would quietly take back.
-      if (lastIdleUnload !== null) idleUnloadInput.value = String(lastIdleUnload);
+      // With no value ever loaded there is nothing in use to show: empty the
+      // field rather than leave the number that was not saved.
+      idleUnloadInput.value = lastIdleUnload !== null ? String(lastIdleUnload) : "";
       showIdleUnloadMsg("settings.idleUnload.saveFailed", {}, true);
       return;
     }
@@ -5430,6 +5432,12 @@ function settingsNavHtml() {
 
 // A setting with a number and its unit ("20 min"). The unit sits outside the
 // field so the field keeps the digits-only filter it has always had.
+// The idle-unload ceiling until /api/settings says otherwise (the server's
+// IDLE_UNLOAD_MINUTES_MAX). The description is written translated when the
+// dialog is built, so it is in the user's language before the settings load,
+// and stays so if they never do; a language switch rebuilds the dialog.
+const IDLE_UNLOAD_MAX_DEFAULT = 1440;
+
 const unitField = (input, unitKey, unitText) =>
   `<span class="settings-unit-field">${input}<span class="settings-unit" data-i18n="${unitKey}">${unitText}</span></span>`;
 
@@ -5528,7 +5536,7 @@ function openLibraryEditor() {
             <div class="settings-row">
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.idleUnload.title">Free memory when idle</div>
-                <div class="settings-row-desc set-idle-unload-desc">Minutes with no track being separated or analyzed before StemDeck unloads its separation models to free memory, at most 1440. The next track loads them again and starts a few seconds later. 0 keeps them loaded.</div>
+                <div class="settings-row-desc set-idle-unload-desc">${esc(i18nT("settings.idleUnload.desc", { max: IDLE_UNLOAD_MAX_DEFAULT }))}</div>
               </div>
               ${unitField('<input type="text" class="settings-num-input set-idle-unload" inputmode="numeric" maxlength="4" aria-label="Free memory when idle" data-i18n-aria-label="settings.idleUnload.title" />', "settings.unit.minutes", "min")}
             </div>
