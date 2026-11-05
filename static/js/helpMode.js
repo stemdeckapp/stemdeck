@@ -54,6 +54,7 @@ const HELP = [
   // Try again on the box a failed link import shows (#175), before the box's
   // plain Try again, whose class it also has.
   [".import-retry-btn", "help.importRetry"],
+  [".store-retry-btn", "help.storeRetry"],
   ["#error .retry-btn", "help.errorRetry"],
   ["#error .error-close", "help.errorClose"],
   ["#fav-btn", "help.favorite"],
