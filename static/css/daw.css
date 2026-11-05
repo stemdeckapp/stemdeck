@@ -3872,7 +3872,21 @@ input, textarea { font-family: inherit; }
 .donate-way[aria-pressed="true"] { background: var(--panel-3); border-color: var(--accent); }
 .donate-way[aria-pressed="true"] svg { color: var(--accent); }
 .donate-way-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
-.donate-way-via { font-size: 12px; color: var(--muted); }
+.donate-way-via { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+/* A way whose page takes no amount: the tile is a link that opens that page
+   (donate.js). It is never "chosen"; the box-with-arrow mark in its corner says
+   it leaves the app. The mark sits in the row of the way's own icon, above the
+   words, so the words keep the whole width. */
+.donate-way.is-link { position: relative; text-decoration: none; }
+.donate-way.is-link .donate-way-out { position: absolute; top: 14px; right: 14px; margin: 0; }
+.donate-way.is-link:hover { border-color: var(--border-strong); }
+/* No way takes an amount, so no amounts show: the tiles fill the card, as tall
+   as the sharing card beside it, with the words at the bottom. Stacked (one
+   column), the card has no extra height and nothing changes. */
+.donate-give:has(> .donate-presets[hidden]) { display: flex; flex-direction: column; }
+.donate-give:has(> .donate-presets[hidden]) .donate-ways { flex: 1; }
+.donate-give:has(> .donate-presets[hidden]) .donate-way > svg:first-child { margin-bottom: auto; padding-bottom: 10px; box-sizing: content-box; }
+.donate-way.is-link:hover .donate-way-out { color: var(--accent); }
 
 /* Amounts: four equal columns that fill the row. */
 .donate-presets {

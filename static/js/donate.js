@@ -1,21 +1,25 @@
 // The Donate dialog, opened from the Donate button in the left rail
 // (index.html). Laid out like a donate page: a hero on top, the ways to give
-// with their amounts on the left, and sharing StemDeck on the right.
+// (and their amounts, for a way that takes one) on the left, and sharing
+// StemDeck on the right.
 //
 // The links live in donateLinks.js, and its isConfigured() decides what shows:
 // a way's tile only once its link is a real https:// address, and the Donate
 // button only once at least one way is set. Nothing points nowhere.
 //
-// The amount (a preset or a custom whole-dollar amount, 2 or more) is a choice
-// in the dialog. It reaches the link only through an optional template in
-// donateLinks.js that contains {amount}; without one the arrow opens the plain
-// link, because a plain payment page does not take an amount from its address.
+// The amount (a preset or a custom whole-dollar amount, 2 or more) reaches a
+// page only through an optional template in donateLinks.js that contains
+// {amount}. So only a way with such a template is a choice in the dialog, with
+// the presets, the custom amount and the arrow under it. A way without one has
+// a tile that is itself the link to its page, where the donor chooses the
+// amount (and, on Liberapay, how often), and no amount is offered for it here
+// (#1037).
 //
-// The live arrow is a plain a[target="_blank"]: the document-level handler in
-// main.js routes it through the Tauri open_url command on desktop, and a
-// browser opens it in a new tab. Nothing from Stripe or Liberapay is loaded by
-// this page. The QR code is drawn by this app's own server (/api/qr), when the
-// dialog first opens.
+// Every link out (a tile that is a link, the arrow) is a plain
+// a[target="_blank"]: the document-level handler in main.js routes it through
+// the Tauri open_url command on desktop, and a browser opens it in a new tab.
+// Nothing from Stripe or Liberapay is loaded by this page. The QR code is
+// drawn by this app's own server (/api/qr), when the dialog first opens.
 
 import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "./donateLinks.js";
 import { t, onLanguageChange } from "./i18n.js";
@@ -25,6 +29,12 @@ export const AMOUNT_MIN = 2;
 export const AMOUNT_MAX = 10000;
 const WAY_NAMES = { stripe: "Stripe", liberapay: "Liberapay" };
 
+/** The template with this amount in it, or null when it is not a usable one. */
+function fillTemplate(tpl, amount) {
+  if (typeof tpl !== "string" || !tpl.includes("{amount}")) return null;
+  return donateHref(tpl.split("{amount}").join(String(amount)));
+}
+
 /**
  * Where the arrow goes for this way and amount, or null while the way is a
  * placeholder. The plain link decides whether the way is live; a template with
@@ -33,12 +43,54 @@ const WAY_NAMES = { stripe: "Stripe", liberapay: "Liberapay" };
 export function donateUrl(way, amount, links = DONATE_LINKS, templates = DONATE_LINK_TEMPLATES) {
   const plain = donateHref(links?.[way]);
   if (!plain) return null;
-  const tpl = templates?.[way];
-  if (Number.isInteger(amount) && amount >= AMOUNT_MIN && typeof tpl === "string" && tpl.includes("{amount}")) {
-    const filled = donateHref(tpl.split("{amount}").join(String(amount)));
+  if (Number.isInteger(amount) && amount >= AMOUNT_MIN) {
+    const filled = fillTemplate(templates?.[way], amount);
     if (filled) return filled;
   }
   return plain;
+}
+
+/**
+ * Whether this way's page takes the amount picked in the dialog: its link is
+ * set and it has a usable {amount} template. Only such a way is a choice with
+ * presets, a custom amount and the arrow. Any other set way has a tile that is
+ * itself the link, because an amount picked here would never reach its page.
+ */
+export function takesAmount(way, links = DONATE_LINKS, templates = DONATE_LINK_TEMPLATES) {
+  return donateHref(links?.[way]) !== null && fillTemplate(templates?.[way], AMOUNT_MIN) !== null;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** The "leaves the app" mark on a tile that is a link: a box with an arrow out. */
+function outIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of Object.entries({
+    class: "donate-way-out", width: "14", height: "14", viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round",
+    "aria-hidden": "true", focusable: "false",
+  })) svg.setAttribute(k, v);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M14 4h6v6M20 4l-9 9M18 14v4.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10");
+  svg.append(path);
+  return svg;
+}
+
+/**
+ * Turn a way's tile into a plain external link to its page, keeping its
+ * contents and data-way. The document-level a[target="_blank"] handler in
+ * main.js opens it through open_url on desktop; a browser opens a new tab.
+ */
+function toLinkTile(tile, href) {
+  const a = document.createElement("a");
+  a.className = `${tile.className} is-link`;
+  a.dataset.way = tile.dataset.way;
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.append(...tile.childNodes, outIcon());
+  tile.replaceWith(a);
+  return a;
 }
 
 /**
@@ -88,11 +140,21 @@ export function wireDonateDialog() {
 
   // A way whose link is not set has no tile, and with none set there is no
   // Donate button (hidden in index.html until this runs) and nothing to wire.
-  const tiles = [...dialog.querySelectorAll(".donate-way[data-way]")];
-  for (const tile of tiles) tile.hidden = !isConfigured(tile.dataset.way);
+  // A set way whose page takes no amount gets a tile that is the link itself,
+  // so a press goes straight to that page (#1037). A way that takes one stays
+  // a choice, with the amounts and the arrow under it.
+  const tiles = [...dialog.querySelectorAll(".donate-way[data-way]")].map((tile) => {
+    const way = tile.dataset.way;
+    tile.hidden = !isConfigured(way);
+    return tile.hidden || takesAmount(way) ? tile : toLinkTile(tile, donateUrl(way, null));
+  });
   const live = tiles.filter((tile) => !tile.hidden);
   btn.hidden = !live.length;
   if (!live.length) return;
+  const choices = live.filter((tile) => takesAmount(tile.dataset.way));
+  const links = live.filter((tile) => !choices.includes(tile));
+  const presetRow = dialog.querySelector(".donate-presets");
+  const customRow = dialog.querySelector(".donate-custom-row");
   const presets = [...dialog.querySelectorAll(".donate-preset[data-amount]")];
   const custom = document.getElementById("donateCustom");
   const go = document.getElementById("donateGo");
@@ -101,10 +163,22 @@ export function wireDonateDialog() {
   const copyBtn = document.getElementById("donateCopy");
   const shareBtn = document.getElementById("donateShare");
 
-  const state = { way: live[0]?.dataset.way, amount: null, fromPreset: false, hint: null };
+  // The chosen way is always one that takes an amount; with none, there is no
+  // choice to make and no amount is offered at all.
+  const state = { way: choices[0]?.dataset.way ?? null, amount: null, fromPreset: false, hint: null };
+  if (presetRow) presetRow.hidden = !state.way;
+  if (customRow) customRow.hidden = !state.way;
 
   const render = () => {
-    for (const tile of tiles) tile.setAttribute("aria-pressed", String(tile.dataset.way === state.way));
+    for (const tile of choices) tile.setAttribute("aria-pressed", String(tile.dataset.way === state.way));
+    for (const tile of links) {
+      // From the keys, not the spans' text, which a language change may not
+      // have reached yet when this runs.
+      const keyOf = (sel) => tile.querySelector(sel)?.dataset.i18n;
+      const name = t("donate.wayLink", { name: t(keyOf(".donate-way-name")), via: t(keyOf(".donate-way-via")) });
+      tile.setAttribute("aria-label", name);
+      tile.title = name;
+    }
     for (const p of presets) {
       p.setAttribute("aria-pressed", String(state.fromPreset && Number(p.dataset.amount) === state.amount));
     }
@@ -113,9 +187,11 @@ export function wireDonateDialog() {
       if (href) go.href = href;
       else go.removeAttribute("href");
       go.hidden = !href;
-      const label = t("donate.go", { way: WAY_NAMES[state.way] || state.way });
-      go.setAttribute("aria-label", label);
-      go.title = label;
+      if (state.way) {
+        const label = t("donate.go", { way: WAY_NAMES[state.way] || state.way });
+        go.setAttribute("aria-label", label);
+        go.title = label;
+      }
     }
     if (hintEl) {
       hintEl.hidden = !state.hint;
@@ -126,7 +202,7 @@ export function wireDonateDialog() {
     if (qr) qr.alt = t("donate.qrAlt");
   };
 
-  for (const tile of tiles) {
+  for (const tile of choices) {
     tile.addEventListener("click", () => {
       state.way = tile.dataset.way;
       render();

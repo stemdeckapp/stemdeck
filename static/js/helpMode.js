@@ -76,10 +76,14 @@ const HELP = [
   ["#settingsBtn", "settings"],
   ["#aboutBtn", "help.about"],
   // The Donate dialog (donate.js), opened from the rail. The button and each
-  // way's tile show only once its link is set (donateLinks.js).
+  // way's tile show only once its link is set (donateLinks.js). A way whose
+  // page takes no amount has a tile that is a link to it (a); one that takes
+  // an amount from an {amount} template is a choice (button) (#1037).
   ["#donateClose", "help.donateClose"],
-  ['.donate-way[data-way="stripe"]', "help.donateWayStripe"],
-  ['.donate-way[data-way="liberapay"]', "help.donateWayLiberapay"],
+  ['a.donate-way[data-way="stripe"]', "help.donateWayStripeLink"],
+  ['button.donate-way[data-way="stripe"]', "help.donateWayStripe"],
+  ['a.donate-way[data-way="liberapay"]', "help.donateWayLiberapay"],
+  ['button.donate-way[data-way="liberapay"]', "help.donateWayLiberapayPick"],
   [".donate-preset", "help.donatePreset"],
   ["#donateCustom", "help.donateCustom"],
   ["#donateGo", "help.donateGo"],

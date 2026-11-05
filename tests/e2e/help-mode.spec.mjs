@@ -5,7 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-import { JOB_ID, chooseMode, openStudio, seedLibrary, stubAudioTags, stubUpdateCheck } from "./helpers.mjs";
+import { JOB_ID, chooseMode, openStudio, seedLibrary, serveDonateLinks, stubAudioTags, stubUpdateCheck } from "./helpers.mjs";
 
 const tip = (page) => page.locator("#helpTip");
 
@@ -275,6 +275,27 @@ test.describe("help mode leaves no control unexplained", () => {
     await helpOn(page);
     expect(await unexplained(page)).toEqual([]);
   });
+
+  // A way with no amount template has a tile that is a link (#1037); one with
+  // a template is a choice, with the amounts and the arrow under it.
+  for (const [label, templates] of [
+    ["link tiles", null],
+    ["one amount tile and one link tile", { stripe: "https://example.org/stripe-test?amount={amount}", liberapay: "" }],
+  ]) {
+    test(`in the Donate dialog, with ${label}`, async ({ page }) => {
+      await serveDonateLinks(page, { stripe: "https://example.org/stripe-test", liberapay: "https://example.org/liberapay-test" }, templates);
+      await seedLibrary(page);
+      await stubUpdateCheck(page);
+      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#donateDialog")).toHaveAttribute("data-ready", "1");
+      // The Guide first: Donate still opens its dialog in the Guide, and the
+      // open dialog covers the rail.
+      await helpOn(page);
+      await page.locator("#donateBtn").click();
+      await expect(page.locator(".donate-way").first()).toBeVisible();
+      expect(await unexplained(page)).toEqual([]);
+    });
+  }
 
   test("in Karaoke Mode", async ({ page }) => {
     await openStudio(page);
