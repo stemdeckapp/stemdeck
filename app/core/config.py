@@ -522,6 +522,32 @@ def _env_choice(name: str, choices: tuple[str, ...]) -> str:
 # STEMDECK_VIDEO_ENCODER=cpu is the kill switch: it wins over the setting.
 # Any other choice ("auto", an encoder name) also wins; "" leaves the setting.
 VIDEO_ENCODER_OVERRIDE = _env_choice("STEMDECK_VIDEO_ENCODER", VIDEO_ENCODER_CHOICES)
+
+
+def _env_render_node(name: str) -> str:
+    """A DRM render node from the env ("renderD129" or "/dev/dri/renderD129")
+    as its full path; "" when unset. Anything else is ignored with a warning,
+    so a typo never reaches an ffmpeg command."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return ""
+    match = re.fullmatch(r"(?:/dev/dri/)?(renderD\d+)", raw)
+    if match is None:
+        logger.warning(
+            "%s=%r is not a render node such as renderD128 or /dev/dri/renderD128; ignored",
+            name,
+            raw[:64],
+        )
+        return ""
+    return f"/dev/dri/{match.group(1)}"
+
+
+# h264_vaapi tries every /dev/dri/renderD* node in number order and uses the
+# first whose test encode passes (#995: on a hybrid-GPU machine the first node
+# can be the one without a working encoder). STEMDECK_VAAPI_DEVICE pins it to
+# one node instead, with no other node tried; that node missing means no VAAPI.
+VAAPI_DEVICE_OVERRIDE = _env_render_node("STEMDECK_VAAPI_DEVICE")
+
 # A probe is a real 2 s encode of a test picture at the render's size and rate.
 VIDEO_ENCODER_PROBE_SEC = 2
 TIMEOUT_VIDEO_ENCODER_PROBE = _env_int("STEMDECK_TIMEOUT_VIDEO_ENCODER_PROBE", 20)

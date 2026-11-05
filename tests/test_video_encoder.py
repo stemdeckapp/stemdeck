@@ -137,6 +137,9 @@ class FakeFfmpeg:
         self.binary.write_bytes(b"fake ffmpeg 1")
         self.version = "ffmpeg version 9.9-fake"
         self.probe = {}  # encoder -> ok | missing | fail | busy | timeout | short
+        # h264_vaapi, per render node name (renderD128): the same outcomes;
+        # a node not listed fails.
+        self.vaapi = {}
         self.render = {}  # encoder -> ok | fail | hang | stall
         self.render_bytes = 200_000
         self.ffprobe = json.loads(json.dumps(GOOD_PROBE))
@@ -158,6 +161,9 @@ class FakeFfmpeg:
     def encoder(self, cmd) -> str:
         return cmd[cmd.index("-c:v") + 1] if "-c:v" in cmd else ""
 
+    def device(self, cmd) -> str:
+        return cmd[cmd.index("-vaapi_device") + 1] if "-vaapi_device" in cmd else ""
+
     def count(self, kind: str) -> int:
         return sum(1 for c in self.calls if self.kind(c) == kind)
 
@@ -174,7 +180,8 @@ class FakeFfmpeg:
         elif kind == "probe":
             enc = self.encoder(cmd)
             how = self.probe.get(enc, "ok" if enc == "libx264" else "missing")
-            enc = self.encoder(cmd)
+            if enc == "h264_vaapi":
+                how = self.vaapi.get(Path(self.device(cmd)).name, "fail")
             proc = {
                 "ok": lambda: FakeProc(cmd, out="frame=30\nframe=60\nprogress=end\n"),
                 "short": lambda: FakeProc(cmd, out="frame=3\nprogress=end\n"),
@@ -451,8 +458,14 @@ def test_gpu_command_changes_only_the_encode():
     assert gpu[gpu.index("-filter_complex") + 1] == cpu[cpu.index("-filter_complex") + 1]
     assert gpu[gpu.index("-r") :] == cpu[cpu.index("-r") :]
     assert "libx264" not in gpu and gpu[gpu.index("-c:v") + 1] == "h264_nvenc"
-    vaapi = build_video_render_cmd(**kw, encoder="h264_vaapi")
+    vaapi = build_video_render_cmd(**kw, encoder="h264_vaapi", encoder_device="/dev/dri/renderD129")
     assert "format=nv12,hwupload[vout]" in vaapi[vaapi.index("-filter_complex") + 1]
+    # The node goes before the inputs, where it also becomes hwupload's device.
+    assert vaapi[vaapi.index("-vaapi_device") + 1] == "/dev/dri/renderD129"
+    assert vaapi.index("-vaapi_device") < vaapi.index("-i")
+    with pytest.raises(ValueError):
+        # VAAPI without the node its probe passed on (#995): never guessed.
+        build_video_render_cmd(**kw, encoder="h264_vaapi")
     with pytest.raises(ValueError):
         build_video_render_cmd(**kw, encoder="h264_mf")
     with pytest.raises(ValueError):
@@ -607,7 +620,7 @@ def test_auto_without_nvenc_uses_the_cpu(fake):
 
 
 # An explicit pick ignores the OS. VAAPI is left out: its probe needs a
-# /dev/dri render node first.
+# /dev/dri render node first (the VAAPI tests below give it a fake one).
 @pytest.mark.parametrize("encoder", ["h264_qsv", "h264_amf", "h264_videotoolbox"])
 def test_an_encoder_picked_in_settings_is_still_used(fake, encoder):
     fake.probe = dict(ALL_PASS)
@@ -673,6 +686,230 @@ def test_two_failures_disable_an_encoder(fake):
     assert not ve.record_failure("libx264", "exit"), "the CPU encoder is never disabled"
 
 
+# ─── VAAPI render nodes (#995) ───────────────────────────────────────────
+
+
+@pytest.fixture
+def dri(fake, tmp_path, monkeypatch):
+    """A fake /dev/dri on a Linux host, with h264_vaapi picked in Settings.
+    Returns a function that adds render nodes by number and gives the path."""
+    root = tmp_path / "dri"
+    root.mkdir()
+    (root / "card0").write_bytes(b"")
+    (root / "by-path").mkdir()
+    monkeypatch.setattr(ve, "DRI_DIR", root)
+    monkeypatch.setattr(ve, "_host_platform", lambda: "linux")
+    monkeypatch.setattr(ve, "VAAPI_DEVICE_OVERRIDE", "")
+    settings_mod.set_video_encoder("h264_vaapi")
+
+    def add(*numbers: int) -> list[str]:
+        for n in numbers:
+            (root / f"renderD{n}").write_bytes(b"")
+        return [str(root / f"renderD{n}") for n in numbers]
+
+    return add
+
+
+def _nodes_probed(fake) -> list[str]:
+    return [
+        Path(fake.device(c)).name
+        for c in fake.calls
+        if fake.kind(c) == "probe" and fake.encoder(c) == "h264_vaapi"
+    ]
+
+
+def test_render_nodes_in_number_order(fake, dri, tmp_path):
+    dri(1000, 129, 128)
+    (tmp_path / "dri" / "renderD12x").write_bytes(b"")
+    names = [Path(p).name for p in ve.render_nodes()]
+    # Number order, not text order (which puts renderD1000 first); card0,
+    # by-path and a name that is not a node are left out.
+    assert names == ["renderD128", "renderD129", "renderD1000"]
+
+
+def test_first_node_fails_second_passes_and_is_used(fake, dri):
+    # Issue #995: a hybrid-GPU laptop whose first node has no working encoder.
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.encoder == "h264_vaapi" and choice.device == second
+    assert _nodes_probed(fake) == ["renderD128", "renderD129"], "tried in order"
+    # The render gets the node that passed, before its inputs.
+    cmd = build_video_render_cmd(
+        [AudioLane(Path("L/drums.wav"), 0.8, "", "")],
+        Path("T/audio.wav"),
+        1.0,
+        Path("T/camera.mp4"),
+        0.0,
+        10.0,
+        "16:9",
+        "fill",
+        False,
+        44100,
+        encoder=choice.encoder,
+        encoder_variant=choice.variant,
+        encoder_device=choice.device,
+    )
+    assert cmd[cmd.index("-vaapi_device") + 1] == second
+    # Both answers are cached: the next render probes nothing.
+    assert ve.choose(1920, 1080, 30).device == second
+    assert fake.count("probe") == 2
+
+
+async def test_a_render_runs_on_the_node_that_passed(fake, dri, tmp_path, monkeypatch):
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    run, dest = await _render(tmp_path, monkeypatch)
+    assert run.status == "done" and dest.is_file()
+    assert run.encoder == "h264_vaapi" and run.fallback is None and run.device == second
+    render = next(c for c in fake.calls if fake.kind(c) == "render")
+    assert fake.device(render) == second
+
+
+def test_every_node_failing_falls_back_to_the_cpu_and_is_cached(fake, dri, monkeypatch):
+    dri(128, 129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "fail"}
+    now = time.time()
+    clock = [now]
+    monkeypatch.setattr(ve.time, "time", lambda: clock[0])
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.encoder == "libx264" and choice.reason == "failed" and choice.device == ""
+    result = ve.probe("h264_vaapi", 1920, 1080, 30)
+    assert result.detail == (
+        "renderD128: No capable devices found; renderD129: No capable devices found"
+    )
+    assert fake.count("probe") == 2, "each node's failure is cached, nothing probed again"
+    clock[0] = now + 3600
+    ve.choose(1920, 1080, 30)
+    assert fake.count("probe") == 2, "still trusted an hour later"
+    clock[0] = now + ve.VIDEO_ENCODER_FAIL_TTL_SEC + 1
+    ve.choose(1920, 1080, 30)
+    assert fake.count("probe") == 4, "both tried again the next day"
+
+
+def test_a_failed_node_never_hides_a_new_one(fake, dri):
+    dri(128)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    assert ve.choose(1920, 1080, 30).encoder == "libx264"
+    # A second GPU appears (a dock, a driver loaded): tried at once, alone.
+    (second,) = dri(129)
+    assert ve.choose(1920, 1080, 30).device == second
+    assert _nodes_probed(fake) == ["renderD128", "renderD129"]
+
+
+def test_a_busy_first_node_does_not_stop_the_second(fake, dri):
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "busy", "renderD129": "ok"}
+    assert ve.choose(1920, 1080, 30).device == second
+    fake.vaapi = {"renderD128": "busy", "renderD129": "fail"}
+    ve.reset_state()
+    ve._cache_path.unlink()
+    result = ve.probe("h264_vaapi", 1920, 1080, 30)
+    assert not result.ok and result.reason == "busy" and result.transient, (
+        "a busy node is the answer: it may pass in minutes"
+    )
+
+
+def test_only_one_node(fake, dri):
+    (only,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.encoder == "h264_vaapi" and choice.device == only
+    assert _nodes_probed(fake) == ["renderD128"]
+
+
+def test_no_node_never_probes_and_a_node_that_appears_is_tried(fake, dri):
+    fake.vaapi = {"renderD128": "ok"}
+    result = ve.probe("h264_vaapi", 1920, 1080, 30)
+    assert not result.ok and result.reason == "nodevice"
+    assert ve.choose(1920, 1080, 30).encoder == "libx264"
+    assert fake.count("probe") == 0
+    assert [r.reason for r in ve.cached_results()] == ["nodevice"], "Settings shows it"
+    # "No node" is not a day-long failure: the node is used as soon as it exists.
+    (node,) = dri(128)
+    assert ve.choose(1920, 1080, 30).device == node
+
+
+def test_the_cache_holds_one_result_per_node(fake, dri):
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    ve.choose(1920, 1080, 30)
+    saved = json.loads(ve._cache_path.read_text(encoding="utf-8"))
+    rows = {Path(r["device"]).name: r for r in saved["entries"].values()}
+    assert set(rows) == {"renderD128", "renderD129"}
+    assert rows["renderD128"]["ok"] is False and rows["renderD129"]["ok"] is True
+    assert all(f"|{r['device']}|" in k for k, r in saved["entries"].items())
+    # A new process reads both from the file: no probe, the same node.
+    ve._cache.clear()
+    ve._cache_loaded_for = None
+    assert ve.choose(1920, 1080, 30).device == second
+    assert fake.count("probe") == 2
+    # Settings (GET /api/video-encoders) shows what a render would get.
+    (shown,) = ve.cached_results()
+    assert shown.ok and shown.device == second
+    assert shown.view()["device"] == "renderD129", "a name, never a path"
+
+
+def test_a_forced_test_probes_each_node_until_one_passes(fake, dri, monkeypatch):
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "fail", "renderD129": "ok"}
+    monkeypatch.setattr(ve, "candidates", lambda platform=None: ("h264_vaapi",))
+    rows = ve.test_all()
+    vaapi = rows[0]["results"]
+    assert vaapi["1080"]["ok"] and vaapi["1080"]["device"] == "renderD129"
+    assert vaapi["2160"]["ok"] and vaapi["2160"]["device"] == "renderD129"
+    assert _nodes_probed(fake) == ["renderD128", "renderD129"] * 2
+
+
+def test_a_forced_node_is_the_only_one_tried(fake, dri, monkeypatch):
+    _first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    monkeypatch.setattr(ve, "VAAPI_DEVICE_OVERRIDE", "/dev/dri/renderD129")
+    assert ve.render_nodes() == [second]
+    assert ve.choose(1920, 1080, 30).device == second
+    assert _nodes_probed(fake) == ["renderD129"]
+    # A forced node that fails is not replaced by another one.
+    fake.vaapi = {"renderD128": "ok", "renderD129": "fail"}
+    ve.reset_state()
+    ve._cache_path.unlink()
+    assert ve.choose(1920, 1080, 30).encoder == "libx264"
+    assert _nodes_probed(fake) == ["renderD129", "renderD129"]
+    # A forced node that does not exist: no VAAPI, nothing probed.
+    monkeypatch.setattr(ve, "VAAPI_DEVICE_OVERRIDE", "/dev/dri/renderD130")
+    result = ve.probe("h264_vaapi", 1280, 720, 30)
+    assert result.reason == "nodevice"
+    assert result.detail == "renderD130 not found (STEMDECK_VAAPI_DEVICE)"
+    assert fake.count("probe") == 2
+
+
+def test_the_forced_node_env_is_parsed_from_a_pattern(monkeypatch):
+    for raw, parsed in (
+        ("renderD129", "/dev/dri/renderD129"),
+        (" /dev/dri/renderD130 ", "/dev/dri/renderD130"),
+        ("", ""),
+        ("card0", ""),
+        ("/dev/sda", ""),
+        ("/tmp/dri/renderD128", ""),
+        ("renderD128; rm -rf /", ""),
+        ("../renderD128", ""),
+    ):
+        monkeypatch.setenv("STEMDECK_VAAPI_DEVICE", raw)
+        assert config_mod._env_render_node("STEMDECK_VAAPI_DEVICE") == parsed, raw
+    monkeypatch.delenv("STEMDECK_VAAPI_DEVICE")
+    assert config_mod._env_render_node("STEMDECK_VAAPI_DEVICE") == ""
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_no_vaapi_probe_off_linux(fake, dri, monkeypatch, platform):
+    dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    monkeypatch.setattr(ve, "_host_platform", lambda: platform)
+    assert ve.render_nodes() == []
+    assert ve.probe("h264_vaapi", 1920, 1080, 30).reason == "nodevice"
+    assert ve.choose(1920, 1080, 30).encoder == "libx264"
+    assert fake.count("probe") == 0
+
+
 # ─── Validation ──────────────────────────────────────────────────────────
 
 
@@ -727,8 +964,19 @@ def test_validate_catches_decode_errors_and_odd_sizes(fake, tmp_path):
 # ─── The render: GPU attempt and CPU fallback ────────────────────────────
 
 
-def _build(trim, alt, encoder, variant):
-    return ["ffmpeg", "-i", "x", "-c:v", encoder, "-v", str(variant), "-movflags", "+faststart"]
+def _build(trim, alt, encoder, variant, device=""):
+    return [
+        "ffmpeg",
+        *ve.global_args(encoder, device),
+        "-i",
+        "x",
+        "-c:v",
+        encoder,
+        "-v",
+        str(variant),
+        "-movflags",
+        "+faststart",
+    ]
 
 
 async def _render(tmp_path, monkeypatch, retry=None, wait_for=None):

@@ -388,6 +388,7 @@ def build_video_render_cmd(
     fps: int = VIDEO_FPS,
     encoder: str = VIDEO_CPU_ENCODER,
     encoder_variant: int = 0,
+    encoder_device: str = "",
 ) -> list[str]:
     """One ffmpeg command: backing mix + take audio + one camera tile -> MP4.
 
@@ -416,8 +417,10 @@ def build_video_render_cmd(
 
     `encoder` is libx264 (the default, its arguments exactly as they always
     were) or a GPU encoder from app/pipeline/video_encoder.py with the
-    argument set `encoder_variant` its probe passed with. Only the last
-    format filter and the codec arguments change; the graph stays on the CPU."""
+    argument set `encoder_variant` its probe passed with, and for h264_vaapi
+    the render node `encoder_device` it passed on (required: the render runs
+    where the probe passed, #995). Only the last format filter and the codec
+    arguments change; the graph stays on the CPU."""
     width, height = canvas_size(canvas, size)
     if fps not in VIDEO_FPS_CHOICES:
         raise ValueError(f"unsupported frame rate {fps}")
@@ -432,7 +435,7 @@ def build_video_render_cmd(
     cut = f"atrim=start={start_sec:.6f},asetpts=PTS-STARTPTS," if start_sample else ""
     cmd: list[str] = [ffmpeg_executable(), "-nostdin", "-loglevel", "error"]
     if gpu:
-        cmd += video_encoder.global_args(encoder)
+        cmd += video_encoder.global_args(encoder, encoder_device)
     for lane in lanes:
         cmd += ["-i", str(lane.path)]
     take_idx = len(lanes)

@@ -241,6 +241,9 @@ def _isolate_video_encoder(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_ve, "_cache_path", tmp_path / "video_encoders.json")
     monkeypatch.setattr(_ve, "VIDEO_ENCODER_OVERRIDE", "cpu")
+    # Never the machine's own /dev/dri, nor a STEMDECK_VAAPI_DEVICE it sets.
+    monkeypatch.setattr(_ve, "DRI_DIR", tmp_path / "no-dri")
+    monkeypatch.setattr(_ve, "VAAPI_DEVICE_OVERRIDE", "")
     _ve.reset_state()
     yield
     _ve.reset_state()
