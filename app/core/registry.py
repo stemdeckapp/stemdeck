@@ -1078,9 +1078,12 @@ def quarantine_dirs(jobs_dir: Path) -> list[Path]:
 
 # The files reset removes beside the job folders: the registry, its temp and
 # set-aside copies (_write_atomic, quarantine_corrupt, _keep_bad_records), and
-# the desktop shell's store (#403).
+# the desktop shell's store (#403) with the copy and temp file its save keeps
+# (#1023): a backup left behind would bring the old library back on a later
+# start that found the store damaged.
 _OWN_FILE_RE = re.compile(
-    r"(registry\.json(\.(corrupt|bad)-[0-9a-f-]+)?|\.registry\.json\.[\w.-]+\.tmp|user-data\.json)\Z"
+    r"(registry\.json(\.(corrupt|bad)-[0-9a-f-]+)?|\.registry\.json\.[\w.-]+\.tmp"
+    r"|user-data\.json(\.(bak|tmp))?)\Z"
 )
 
 

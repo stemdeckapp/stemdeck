@@ -114,8 +114,15 @@ def validate_target(target: Path, current: Path) -> Path:
         # user-data.json (#403): the library metadata store now lives inside
         # the jobs folder too (see desktop/src-tauri/src/main.rs's
         # documents_store_path), so re-selecting a folder StemDeck already
-        # used must recognize it as "ours", same as registry.json.
-        ours = {"registry.json", "failed", "user-data.json"}
+        # used must recognize it as "ours", same as registry.json. The shell's
+        # save keeps a .bak beside it and writes through a .tmp (#1023).
+        ours = {
+            "registry.json",
+            "failed",
+            "user-data.json",
+            "user-data.json.bak",
+            "user-data.json.tmp",
+        }
         if entries and not all(
             e.name in ours
             or _looks_like_job_dir(e)

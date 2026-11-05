@@ -1,4 +1,4 @@
-// ─── Persistent store (tauri-plugin-store via custom commands) ───
+// ─── Persistent store (user-data.json, through the shell's store_* commands) ───
 //
 // Falls back to localStorage when running outside Tauri (browser dev mode).
 // The store is backed by ~/Library/Application Support/app.stemdeck.desktop/user-data.json

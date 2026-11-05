@@ -82,6 +82,8 @@ def test_reset_removes_stemdecks_entries_and_leaves_foreign_ones(jobs_dir: Path)
     (jobs_dir / "registry.json").write_text("{}", encoding="utf-8")
     (jobs_dir / "registry.json.corrupt-1700000000").write_text("{", encoding="utf-8")
     (jobs_dir / "user-data.json").write_text("{}", encoding="utf-8")
+    (jobs_dir / "user-data.json.bak").write_text("{}", encoding="utf-8")
+    (jobs_dir / "user-data.json.tmp").write_text("{", encoding="utf-8")
     (jobs_dir / "failed" / "abcdefabcde1").mkdir(parents=True)
     (jobs_dir / "failed" / "abcdefabcde1" / "error.txt").write_text("x", encoding="utf-8")
     (jobs_dir / "My Photos").mkdir()
@@ -95,6 +97,10 @@ def test_reset_removes_stemdecks_entries_and_leaves_foreign_ones(jobs_dir: Path)
     assert not (jobs_dir / "registry.json").exists()
     assert not (jobs_dir / "registry.json.corrupt-1700000000").exists()
     assert not (jobs_dir / "user-data.json").exists()
+    # #1023: the shell restores a damaged store from these, so a reset that
+    # left them would bring the old library back.
+    assert not (jobs_dir / "user-data.json.bak").exists()
+    assert not (jobs_dir / "user-data.json.tmp").exists()
     assert not (jobs_dir / "failed").exists()
     assert (jobs_dir / "My Photos" / "beach.jpg").read_bytes() == b"JPEG"
     assert (jobs_dir / "notes.txt").read_text(encoding="utf-8") == "mine"

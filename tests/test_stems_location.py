@@ -108,6 +108,19 @@ def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
     assert validate_target(target, current) == target.resolve()
 
 
+@pytest.mark.parametrize("name", ["user-data.json.bak", "user-data.json.tmp"])
+def test_accepts_a_folder_with_the_copies_the_user_data_save_keeps(tmp_path, name):
+    """The shell saves user-data.json through a .tmp and keeps a .bak beside
+    it (#1023), so a folder StemDeck used before can hold either."""
+    current = tmp_path / "old"
+    current.mkdir()
+    target = tmp_path / "new"
+    _job_dir(target, "abcdefabcdef")
+    (target / "user-data.json").write_text("{}", encoding="utf-8")
+    (target / name).write_text("{}", encoding="utf-8")
+    assert validate_target(target, current) == target.resolve()
+
+
 @pytest.mark.parametrize(
     "name",
     [
