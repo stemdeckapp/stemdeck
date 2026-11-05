@@ -291,6 +291,13 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
         # separate()'s retry policy handles it exactly like a nonzero exit.
         set_proc(job.id, None)
         _kill_worker()
+        # Unless it died because this job was cancelled: set_proc() stops a
+        # worker registered after its job's cancel (#748), and on Linux that
+        # stop lands before this write, which then meets a closed pipe. That
+        # is a cancel, not a failed separation (Windows still buffers the
+        # write, so there the read below saw EOF and said so).
+        if job.cancel_requested:
+            raise JobCancelled() from None
         return 1, ["demucs worker is not accepting input (died before dispatch)"]
 
     # Time from dispatch to the first progress line -- near-zero for a reused

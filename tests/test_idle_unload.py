@@ -348,6 +348,45 @@ def test_a_cancel_during_an_unload_leaves_no_worker(tmp_path, clock, spawns, mon
     assert "proc" not in sep_mod._worker, "no worker is left running"
 
 
+class _ClosedStdin:
+    """A worker already stopped when the request is written: what Linux gives
+    when set_proc() has terminated it first (#748). Windows buffers the write,
+    so without this the branch is reached only on Linux."""
+
+    def __init__(self) -> None:
+        import io
+
+        self.stdin = self
+        self.stderr = io.StringIO("")
+        self.pid = 1
+
+    def write(self, _data: str) -> None:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self) -> None:
+        pass
+
+    def poll(self):
+        return 0
+
+
+@pytest.mark.parametrize("cancelled", [True, False])
+def test_a_worker_gone_before_dispatch_is_a_cancel_only_when_the_job_was_cancelled(
+    tmp_path, monkeypatch, cancelled
+):
+    from app.pipeline.errors import SeparationError
+
+    monkeypatch.setattr(sep_mod, "_get_worker", lambda device: _ClosedStdin())
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    job = Job(id="jjjjjjjjjjjj")
+    job.cancel_requested = cancelled
+    (tmp_path / "source.wav").write_bytes(b"RIFF")
+    expected = JobCancelled if cancelled else SeparationError
+    with pytest.raises(expected):
+        sep_mod.separate(job, tmp_path / "source.wav", tmp_path)
+    assert sep_mod.WORKER._users == 0
+
+
 def test_shutdown_waits_for_an_unload_in_progress(tmp_path, clock, spawns, monkeypatch):
     _separate(tmp_path, "aaaa")
     clock.t += 60 * MIN
