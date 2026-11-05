@@ -87,6 +87,16 @@ OLD_METADATA_KEYS = {
 
 
 @pytest.fixture(autouse=True)
+def _wav_storage(monkeypatch):
+    """The stubbed stages write placeholder bytes, not audio, so the MP3
+    storage step (#783, the default) could only ever take its failure path
+    here. These tests hold the pipeline's contract from before identification;
+    WAV storage is that contract. MP3 storage has its own tests
+    (test_stem_storage.py)."""
+    monkeypatch.setenv("STEMDECK_STEM_FORMAT", "wav")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_registry():
     _jobs.clear()
     jobs_mod._TAG_LOOKUPS.clear()
@@ -136,7 +146,7 @@ def _join_lookups(job_id: str) -> None:
             assert not thread.is_alive(), f"{thread.name} never finished"
 
 
-def _collect(job, stems_root, job_dir):
+def _collect(stems_root, job_dir):
     stems = job_dir / "stems"
     stems.mkdir(parents=True, exist_ok=True)
     for name in FOUND:
@@ -511,8 +521,8 @@ async def test_cancel_while_the_lookups_are_out_frees_the_queue(monkeypatch, job
 
             r = await client.post(f"/api/jobs/{a.id}/cancel")
             assert r.status_code == 200
-            await _until(lambda: a.status == "cancelled")
-            assert not (jobs_dir / a.id).exists()
+            # The folder goes in a thread once the job reads "cancelled".
+            await _until(lambda: a.status == "cancelled" and not (jobs_dir / a.id).exists())
 
             await _until(lambda: b.status == "done")
             state = (await client.get(f"/api/jobs/{a.id}")).json()

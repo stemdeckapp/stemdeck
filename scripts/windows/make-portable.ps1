@@ -237,6 +237,8 @@ Copy-Item -Force (Join-Path $Root "pyproject.toml") (Join-Path $BackendDir "pypr
 Copy-Item -Force (Join-Path $Root "uv.lock") (Join-Path $BackendDir "uv.lock")
 Copy-Item -Force (Join-Path $Root "packaging\windows\README-WINDOWS.txt") (Join-Path $Stage "README-WINDOWS.txt")
 Copy-Item -Force (Join-Path $Root "packaging\windows\THIRD_PARTY_NOTICES.txt") (Join-Path $Stage "THIRD_PARTY_NOTICES.txt")
+# The AGPL asks for a copy of the license with every copy of the program.
+Copy-Item -Force (Join-Path $Root "LICENSE") (Join-Path $Stage "LICENSE.txt")
 
 if (Get-Command "py" -ErrorAction SilentlyContinue) {
   & py -3.12 -m venv $PythonDir
@@ -256,12 +258,25 @@ if ($PackageVersion) {
 & $PythonExe -m pip install "$Root"
 Assert-LastExitCode "installing the StemDeck package"
 
+# The torch line and the torchvision built for it, from the one file the Linux
+# script and the desktop shell's tests also read (#778).
+$TorchVersionsFile = Join-Path $Root "packaging\torch-versions.json"
+$TorchVersions = Get-Content -LiteralPath $TorchVersionsFile -Raw | ConvertFrom-Json
+$CpuTorchVersion = [string]$TorchVersions.cpuTorch
+$CpuTorchvisionVersion = [string]$TorchVersions.torchvisionForTorch.$CpuTorchVersion
+if (-not $CpuTorchvisionVersion) {
+  throw "No torchvision for torch $CpuTorchVersion in $TorchVersionsFile. Add the pair there."
+}
+
 if ($CpuOnly) {
   # Force the slim CPU-only wheel. On Windows the default PyPI torch wheel is
   # already CPU-only, but this also downgrades a build host that resolved a CUDA
   # wheel (e.g. via a cuXXX index in the runner's pip config), so the CPU package
-  # is deterministic regardless of the host.
-  & $PythonExe -m pip install torch==2.6.0+cpu torchaudio==2.6.0+cpu `
+  # is deterministic regardless of the host. torchvision is named for the same
+  # reason: --no-deps touches only what is listed, and on Linux leaving it out
+  # shipped a CUDA torchvision beside CPU torch (#778).
+  & $PythonExe -m pip install "torch==$CpuTorchVersion+cpu" "torchaudio==$CpuTorchVersion+cpu" `
+      "torchvision==$CpuTorchvisionVersion+cpu" `
       --index-url https://download.pytorch.org/whl/cpu `
       --force-reinstall --no-deps
   # Unchecked, a transient network failure here left whatever torch was already
@@ -336,6 +351,17 @@ Assert-LastExitCode "pruning yt-dlp extractors"
 # rather than in a release (#407).
 & $PythonExe -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"
 
+# torchvision must load next to the torch it ships with, on the stripped tree
+# that ships: the import check above never touches it, which is how the Linux
+# CPU package shipped a CUDA torchvision unnoticed (#778). The NVIDIA package
+# keeps PyPI's Windows wheels, which are CPU builds but not the +cpu ones from
+# the PyTorch index, so only the CPU package asserts the tag; both assert the
+# pair matches and that no CUDA library is linked or shipped.
+$GateArgs = @((Join-Path $Root "scripts\check_torch_bundle.py"), "--versions", $TorchVersionsFile)
+if ($CpuOnly) { $GateArgs += "--expect-cpu" }
+& $PythonExe @GateArgs
+Assert-LastExitCode "the torch bundle check"
+
 # Full license texts for everything in the venv, generated from the venv rather
 # than maintained by hand. MIT, BSD and Apache-2.0 all require the copyright
 # notice and the license itself to travel with a binary; a name and the word
@@ -397,7 +423,7 @@ try {
   }
 
   if (-not $SkipTauriBuild) {
-    $env:CI = "true"  # Woodpecker sets CI=woodpecker; Tauri only accepts true/false
+    $env:CI = "true"  # Tauri only accepts true/false; some CI services set other values
     rustup default stable
     Invoke-TauriBuild
   } else {

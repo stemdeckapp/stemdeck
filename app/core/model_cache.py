@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import traceback
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TypeVar
@@ -91,6 +92,11 @@ def load_or_heal(load: Callable[[], T], stale: Callable[[], Iterable[Path]]) -> 
         fresh = [p for p in paths if p not in _healed]
         if not fresh:
             raise
+        # audio-separator reads its indexes with json.load(open(...)) and
+        # never closes the file, so the one that failed is still open in the
+        # traceback's frames, and Windows will not delete an open file.
+        # Clearing the frames' locals closes it; the traceback itself stays.
+        traceback.clear_frames(first.__traceback__)
         removed = [p for p in fresh if _remove(p)]
         _healed.update(fresh)
         if not removed:
@@ -125,10 +131,16 @@ def vocal_split_artifacts(models_dir: Path, model_file: str) -> list[Path]:
     they are the names audio-separator actually writes: a single
     "model_data.json" is not one of them, so listing that instead heals the
     checkpoint and leaves the index that produced the error in place.
+
+    download_checks.json, the list of models audio-separator offers, is read
+    before any of them, and is written in place like the rest: a setup ended
+    mid-fetch (the wizard's Skip, #405) leaves it half written, and json.load
+    fails on it every time after.
     """
     root = models_dir / "audio-separator"
     return [
         root / model_file,
         root / "vr_model_data.json",
         root / "mdx_model_data.json",
+        root / "download_checks.json",
     ]

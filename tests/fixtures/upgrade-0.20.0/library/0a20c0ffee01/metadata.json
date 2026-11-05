@@ -1,0 +1,46 @@
+{
+  "title": "Old Song From 0.20.0",
+  "thumbnail": null,
+  "audio_tags": null,
+  "identity": null,
+  "artist": null,
+  "work": null,
+  "duration_sec": 4.0,
+  "bpm": 120,
+  "key": "A min",
+  "scale": "Natural Minor",
+  "key_confidence": 77,
+  "lufs": null,
+  "peak_db": null,
+  "dynamic_range": null,
+  "tempo_stability": null,
+  "stem_presence": {
+    "vocals": 70,
+    "drums": 70,
+    "bass": 70,
+    "other": 70
+  },
+  "sections": [
+    {
+      "id": "s-verse",
+      "name": "Verse",
+      "start": 0.5,
+      "end": 2.0,
+      "color": "#4a7fff"
+    },
+    {
+      "id": "s-chorus",
+      "name": "Chorus",
+      "start": 2.0,
+      "end": 3.5,
+      "color": "#ff7a4a"
+    }
+  ],
+  "sections_source": "manual",
+  "tags": null,
+  "has_video": false,
+  "video_status": null,
+  "compute_device": null,
+  "gpu_fallback": false,
+  "stage_timings": null
+}

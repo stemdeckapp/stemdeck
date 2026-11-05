@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -130,15 +131,112 @@ def test_zip_skips_an_unreadable_file_rather_than_failing(client, logs_dir, monk
     (logs_dir / "stemdeck.log").write_text("good", encoding="utf-8")
     (logs_dir / "setup.log").write_text("bad", encoding="utf-8")
 
-    real = type(logs_dir).read_bytes
+    real = type(logs_dir).open
 
-    def _boom(self):
+    def _boom(self, *args, **kwargs):
         if self.name == "setup.log":
             raise OSError("permission denied")
-        return real(self)
+        return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(type(logs_dir), "read_bytes", _boom)
+    monkeypatch.setattr(type(logs_dir), "open", _boom)
     assert _names(client.get("/api/logs.zip")) == {"stemdeck.log"}
+
+
+# The zip is labelled "ready to attach to a bug report", so whatever it holds
+# ends up in a public issue. Each spelling below is one a real log carries.
+_FOREIGN_PATHS = (
+    "C:\\Users\\Someone\\AppData\\Local\\StemDeck\\backend\\python.exe",
+    "c:/users/someone/Music/song.flac",
+    "/Users/someone/Library/Application Support/StemDeck",
+    "/home/someone/.cache/torch/hub",
+    "\\\\NAS-SOMEONE\\music\\song.wav",
+    "//NAS-SOMEONE/music/song.wav",
+)
+
+
+def _zip_texts(resp) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+        return {name: z.read(name) for name in z.namelist()}
+
+
+def test_zip_redacts_paths_sources_and_ips_in_every_file(client, logs_dir):
+    # Imported here: the autouse fixture points JOBS_DIR at a temp dir per test.
+    from app.core.config import JOBS_DIR
+
+    home = str(Path.home())
+    lines = [
+        f'{_stamp(1)} E stemdeck  File "{home}\\AppData\\x.py", line 3',
+        f"{_stamp(1)} I stemdeck  home again {home.replace(chr(92), '/')}/x.py",
+        *(f"{_stamp(1)} I stemdeck  path {p}" for p in _FOREIGN_PATHS),
+        f"{_stamp(1)} I stemdeck  job dir {JOBS_DIR / 'abc123def456'}",
+        f"{_stamp(1)} I stemdeck.download download starting: https://youtu.be/dQw4w9WgXcQ",
+        f'{_stamp(1)} I stemdeck  INFO: 192.168.1.14:52341 - "GET /api/jobs HTTP/1.1" 200',
+    ]
+    text = "\r\n".join(lines) + "\r\n"
+    for name in ("stemdeck.log", "stemdeck.log.1", "backend.log", "setup.log"):
+        (logs_dir / name).write_bytes(text.encode("utf-8"))
+
+    files = _zip_texts(client.get("/api/logs.zip"))
+    assert set(files) == {"stemdeck.log", "stemdeck.log.1", "backend.log", "setup.log"}
+    for name, raw in files.items():
+        body = raw.decode("utf-8")
+        for leak in (home, "Someone", "someone", "NAS-SOMEONE", str(JOBS_DIR), "youtu", "192.168"):
+            assert leak.lower() not in body.lower(), (name, leak)
+        assert "<home>" in body and "<jobs>" in body and "<unc>" in body, name
+        # Same lines, same endings, same time stamps: still a log.
+        assert body.count("\r\n") == len(lines), name
+        assert [ln[:19] for ln in body.splitlines()] == [ln[:19] for ln in lines], name
+
+
+def test_zip_keeps_bytes_that_are_not_utf8(client, logs_dir):
+    """backend.log is a raw pipe from the Python process, so it can hold a
+    code page byte or a NUL. Redaction must not turn them into U+FFFD or
+    drop the file."""
+    (logs_dir / "backend.log").write_bytes(b"caf\xe9 \x00 C:\\Users\\Someone\\x.py \xff\xfe end\n")
+    raw = _zip_texts(client.get("/api/logs.zip"))["backend.log"]
+    assert raw == b"caf\xe9 \x00 <home>\\x.py \xff\xfe end\n"
+
+
+def test_zip_keeps_only_the_newest_part_of_an_oversized_log(client, logs_dir, monkeypatch):
+    """backend.log and setup.log only rotate at launch, so one long session
+    can grow them without bound; the bundle is built in memory."""
+    from app import main as main_mod
+
+    monkeypatch.setattr(main_mod, "_LOG_ZIP_FILE_BYTES", 1000)
+    (logs_dir / "backend.log").write_text(
+        "".join(f"line {i:05d} C:\\Users\\Someone\\x\n" for i in range(500)),
+        encoding="utf-8",
+        newline="",
+    )
+    body = _zip_texts(client.get("/api/logs.zip"))["backend.log"].decode("utf-8")
+    assert body.startswith("[... earlier part of this log not included ...]\n")
+    assert body.endswith("line 00499 <home>\\x\n")
+    assert "line 00000" not in body
+    assert len(body) < 1100
+    # Every kept line is whole: the cut drops the partial first line.
+    assert all(ln.startswith(("line ", "[...")) for ln in body.splitlines())
+
+
+def test_zip_never_sweeps_in_or_leaks_a_stray_file(client, logs_dir):
+    """Files the app does not list as logs (a status file, an error dump, a
+    rotation beyond the kept ones) are excluded, so nothing unredacted can
+    reach the bundle through them."""
+    home = str(Path.home())
+    (logs_dir / "stemdeck.log").write_text("ok\n", encoding="utf-8")
+    for stray in ("vocal-split-status.json", "error.txt", "stemdeck.log.4", "backend.log.3"):
+        (logs_dir / stray).write_text(f"{home}\\secret C:\\Users\\Someone\n", encoding="utf-8")
+    files = _zip_texts(client.get("/api/logs.zip"))
+    assert set(files) == {"stemdeck.log"}
+    assert b"Someone" not in b"".join(files.values())
+
+
+def test_zip_readme_names_no_folder(client, logs_dir):
+    """The empty-bundle note used to print the logs folder, which sits in
+    the user's home on desktop."""
+    readme = _zip_texts(client.get("/api/logs.zip"))["README.txt"].decode("utf-8")
+    assert str(logs_dir) not in readme
+    assert str(logs_dir.resolve()) not in readme
+    assert "No log files were found" in readme
 
 
 # --- GET /api/logs/{view} --------------------------------------------------
@@ -228,13 +326,26 @@ def test_tail_redacts_an_ip_address(client, logs_dir):
     assert "<ip>" in body
 
 
+def test_tail_redacts_a_cookie_file_entry(client, logs_dir):
+    """yt-dlp echoes every line of a cookies file it cannot parse to stderr,
+    which desktop captures into backend.log. The line is the file's content:
+    a session cookie, or any other file the setting was pointed at."""
+    (logs_dir / "backend.log").write_text(
+        f"{_stamp(1)} I stemdeck.download [abc] retrying with cookies\n"
+        "WARNING: skipping cookie file entry due to invalid length 1: "
+        "'.youtube.com\\tTRUE\\t/\\tTRUE\\t0\\tSID\\tSECRETVALUE'\n",
+        encoding="utf-8",
+    )
+    body = client.get("/api/logs/backend?minutes=60").text
+    assert "SECRETVALUE" not in body
+    assert "skipping cookie file entry" in body, "the warning itself is worth keeping"
+
+
 def test_tail_redacts_the_users_home_directory(client, logs_dir):
     """The notification centre's opt-in "include recent logs" button hands this
     straight to a public GitHub issue or Discord message with no filtering step
     of its own -- redaction has to happen here, not trust every future caller
     to remember it (#report-full-stack)."""
-    from pathlib import Path
-
     home = str(Path.home())
     (logs_dir / "stemdeck.log").write_text(
         f'{_stamp(1)} E stemdeck  File "{home}\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\threads.py", line 25\n',
@@ -299,7 +410,10 @@ def test_tail_says_so_when_the_window_is_empty(client, logs_dir):
 
 
 def test_tail_says_so_when_the_file_is_missing(client, logs_dir):
-    assert "No log file yet" in client.get("/api/logs/setup").text
+    body = client.get("/api/logs/setup").text
+    assert "No log file yet" in body
+    # The report flow posts this text too, and the folder is in the user's home.
+    assert str(logs_dir.resolve()) not in body
 
 
 def test_tail_rejects_an_unknown_view(client, logs_dir):

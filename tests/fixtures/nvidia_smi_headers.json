@@ -1,0 +1,42 @@
+[
+ {
+  "name": "driver 616.64 on Windows (RTX 3080, captured verbatim)",
+  "header": "Wed Nov  4 10:05:58 2026       \r\n+-----------------------------------------------------------------------------------------+\r\n| NVIDIA-SMI 616.64                 KMD Version: 616.64        CUDA UMD Version: 13.4     |\r\n",
+  "cuda": "13.4"
+ },
+ {
+  "name": "driver 551.86 on Windows",
+  "header": "| NVIDIA-SMI 551.86                 Driver Version: 551.86         CUDA Version: 12.4     |\r\n",
+  "cuda": "12.4"
+ },
+ {
+  "name": "driver 550.54.14 on Linux",
+  "header": "| NVIDIA-SMI 550.54.14              Driver Version: 550.54.14      CUDA Version: 12.4     |\n",
+  "cuda": "12.4"
+ },
+ {
+  "name": "driver 470.82.01 on Linux, the narrow table",
+  "header": "| NVIDIA-SMI 470.82.01    Driver Version: 470.82.01    CUDA Version: 11.4     |\n",
+  "cuda": "11.4"
+ },
+ {
+  "name": "a driver with no CUDA support reports N/A",
+  "header": "| NVIDIA-SMI 470.256.02   Driver Version: 470.256.02   CUDA Version: N/A      |\n",
+  "cuda": null
+ },
+ {
+  "name": "nvidia-smi with no driver to talk to",
+  "header": "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running.\n",
+  "cuda": null
+ },
+ {
+  "name": "a label with no number after it",
+  "header": "| NVIDIA-SMI 616.64   KMD Version: 616.64   CUDA UMD Version: abc   |\n",
+  "cuda": null
+ },
+ {
+  "name": "empty output",
+  "header": "",
+  "cuda": null
+ }
+]

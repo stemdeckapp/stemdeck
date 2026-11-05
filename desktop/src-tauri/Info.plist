@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged by the Tauri bundler into StemDeck.app's own Info.plist: Tauri looks
+  for an Info.plist next to tauri.conf.json (tauri-utils 2.9.0, MacConfig
+  info_plist). macOS shows these texts when StemDeck first asks for the
+  microphone or the camera; without them the request is refused and the user
+  is never asked.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>StemDeck records your voice or instrument while you play along with the stems.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>StemDeck records your camera while you play along with the stems, to make a performance video.</string>
+</dict>
+</plist>

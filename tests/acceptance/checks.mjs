@@ -42,6 +42,9 @@ export const CHECKS = [
   { id: "V2", area: "Fixes since 0.18.1 (#700)", title: "Unsorted has no grip, no New subfolder and no hover highlight", refs: [695] },
   { id: "V3", area: "Fixes since 0.18.1 (#700)", title: "The click track options box is solid with no song loaded", refs: [697] },
   { id: "V4", area: "Fixes since 0.18.1 (#700)", title: "Count-in says it plays with the click off", refs: [696] },
+  // From the QA catalogue (.claude/skills/stemtestplan/catalogue.md), with its ids.
+  { id: "UPG-01", area: "Upgrade from 0.20.0", title: "A new version opens the library the old one used", refs: [] },
+  { id: "UPG-02", area: "Upgrade from 0.20.0", title: "Songs made by 0.20.0 open and play as before", refs: [] },
 ];
 
 export const byId = (id) => CHECKS.find((c) => c.id === id);

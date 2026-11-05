@@ -12,6 +12,11 @@ on:
   release:
     types: [published]
 
+# No job writes to the repository, so the token gets nothing. Checkout of this
+# public repository and the artifact upload work without it, as in the other
+# workflows.
+permissions: {}
+
 env:
   UV_LINK_MODE: copy
   # Version is git-derived (hatch-vcs). CI's clone is shallow/tagless, which
@@ -25,7 +30,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # diffq (a mandatory transitive dependency of audio-separator, #275) has
       # no prebuilt wheel for Python 3.11+ on Linux -- its last release only
       # ever shipped cp310 wheels -- so uv sync must compile it from source.
@@ -37,13 +42,20 @@ jobs:
       - run: uv run ruff check app/ tests/
       - run: uv run ruff format --check app/ tests/
       - run: bash -n run.sh
+      # The retry wrapper the e2e installs depend on (#838). Here because this
+      # job runs on every pull request, whatever it changes.
+      - run: bash tests/ci/test_retry_sh.sh
+      # The Docker entrypoint's ownership pass (#994). This container runs as
+      # root, which the mixed-owner and symlink cases need, and sh here is
+      # dash, the same shell as the image.
+      - run: bash tests/ci/test_docker_reown_sh.sh
 
   test:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # build-essential: see the matching comment in the lint job above.
       - run: apt-get update && apt-get install -y --no-install-recommends ffmpeg build-essential
       - run: uv sync --frozen --all-extras
@@ -54,49 +66,30 @@ jobs:
     container:
       image: node:20-alpine
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: for f in tests/js/*.test.mjs; do node "$f"; done
 
-  # Browser tests for static/js (#339). node --check above is a syntax parse;
-  # this drives the real UI against the real backend, including the Tauri code
-  # path, which is where #335 hid because it was invisible in a browser.
-  # Split three ways, each shard on its own runner (#686). The suite runs
-  # serially inside a shard -- workers: 1 in playwright.config -- because it
-  # shares one backend and one jobs directory, and several specs change server
-  # state. A shard is a separate machine with its own backend, so splitting
-  # here adds parallelism without adding sharing. Files stay whole, since
-  # fullyParallel is off, so tests that rely on order within a file still get
-  # it. Free on a public repository; each shard pays its own setup.
+  # Browser tests for static/js: the steps live in e2e.yml, shared with
+  # e2e-full.yml. Runs the whole suite, and only for a pull request into main,
+  # a push to main or a release. A pull request into any other base (such as
+  # big-release) skips it (#1024): the full run on every push to big-release
+  # and the nightly run (e2e-full.yml) catch a broken spec on the merge commit.
+  # Checks show as "frontend-e2e / frontend-e2e (1)" to "(3)" on those events.
   frontend-e2e:
-    runs-on: ubuntu-latest
-    strategy:
-      # One failing shard must not cancel the others: the report is only
-      # useful whole.
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: "20"
-          cache: npm
-      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: uv sync --frozen --all-extras
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npx playwright test --shard=${{ matrix.shard }}/3
-      - if: failure()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          # Per shard: a second upload under the same name fails the job.
-          name: playwright-report-${{ matrix.shard }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
+    # A new push to a pull request cancels that pull request's older e2e run.
+    # Anything else gets a group of its own (the run id), so a push to main or
+    # a release is never cancelled and never waits behind another run. This
+    # does not help a runner GitHub never assigns: re-run that job, or
+    # gh run cancel <id> then gh run rerun <id> --failed.
+    concurrency:
+      group: e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/e2e.yml
+    with:
+      mode: full
+      base-ref: ${{ github.base_ref }}
 
   # The Linux installer only ever runs on a user's machine, so nothing else
   # would catch a regression in it. Runs on a real Linux image rather than the
@@ -104,7 +97,7 @@ jobs:
   linux-installer:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: bash -n packaging/linux/install.sh
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils
       - run: shellcheck -S warning packaging/linux/install.sh
@@ -115,7 +108,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: uv tool install bandit
       - run: uv tool run bandit -r app/ -ll  # fail on medium+ severity
 
@@ -124,7 +117,7 @@ jobs:
     container:
       image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: uv tool install pip-audit
       - run: uv pip compile pyproject.toml -o /tmp/requirements.txt
       # Ignored CVEs (review when upgrading torch or demucs):
@@ -185,7 +178,26 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Installs Trivy from its GitHub release asset, checked against a pinned
+      # sha256, instead of letting trivy-action call setup-trivy. setup-trivy's
+      # install.sh downloads the binary from get.trivy.dev, so the scan failed
+      # (curl exit 6) as soon as that hostname stopped resolving. Bump the
+      # version and the sha256 together: the sha256 is the Linux-64bit line of
+      # trivy_<version>_checksums.txt in the same release.
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: 0.70.0
+          TRIVY_SHA256: 8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9
+        run: |
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$tarball"
+          echo "$TRIVY_SHA256  $RUNNER_TEMP/$tarball" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/trivy-bin"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/trivy-bin" trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/trivy-bin/trivy" --version
       # Scans the source tree for: known CVEs in deps, leaked secrets,
       # and Dockerfile / compose misconfigurations. Skips .venv (it can
       # be left over from earlier steps in the shared workspace; trivy
@@ -202,6 +214,7 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           skip-dirs: .venv,jobs
+          skip-setup-trivy: true
       # Dedicated Dockerfile + compose static analysis (Trivy's IaC linter).
       - name: trivy config
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -210,3 +223,4 @@ jobs:
           scan-ref: build/
           severity: HIGH,CRITICAL
           exit-code: '1'
+          skip-setup-trivy: true

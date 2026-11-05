@@ -3,18 +3,48 @@ name: macOS Release
 on:
   release:
     types: [published]
+  # Release candidate build (#1027): builds the commit this run is started on
+  # and uploads to an existing draft pre-release with this tag. The guard job
+  # refuses any tag that is not exactly one draft pre-release targeting that
+  # commit, so a published release can never be overwritten from here. The
+  # signing check below still refuses to build without every secret.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing draft pre-release, e.g. v0.21.0-rc.1"
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A manual run shares the group of the release it builds into. Only a
+  # release event cancels what is in progress: publishing a draft cancels a
+  # candidate build still running for it, while a manual run never cancels a
+  # release build. The group comes from the raw input and applies before the
+  # guard, so a manual run typed with a published tag waits behind that
+  # release's build, and its guard then refuses. On a release event inputs.tag
+  # is empty and the group is the same as before.
+  group: ${{ github.workflow }}-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'release' }}
 
 jobs:
+  guard:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/release-candidate-guard.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ inputs.tag }}
+
   build-and-upload:
+    needs: guard
+    # A release event skips the guard; a manual run builds only if it passed.
+    if: ${{ !cancelled() && (github.event_name == 'release' || needs.guard.result == 'success') }}
     # Runner must be darwin/arm64 with Rosetta 2, Xcode CLT, Homebrew, rustup, and zstd.
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 120
+    # Four notarizations (app and DMG, for arm64 and x64) can each be slow.
+    timeout-minutes: 360
     permissions:
       contents: write
     defaults:
@@ -29,9 +59,10 @@ jobs:
       - name: write version files
         env:
           # github.ref_name (evaluated by Actions) instead of $GITHUB_REF_NAME,
-          # which is only injected by runner >= 2.290 — empty on older
-          # self-hosted runners.
-          REF_NAME: ${{ github.ref_name }}
+          # which is only injected by runner >= 2.290, so it is empty on older
+          # self-hosted runners. A manual run takes the tag the guard
+          # validated; if the guard set nothing it is empty and this step stops.
+          REF_NAME: ${{ github.event_name == 'release' && github.ref_name || needs.guard.outputs.tag }}
         run: |
           if [ -z "${REF_NAME:-}" ]; then
             echo "REF_NAME is not set" >&2
@@ -41,15 +72,44 @@ jobs:
           printf '{ "version": "%s" }\n' "$VERSION" > static/version.json
           sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
           sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
-          sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/package.json
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Wrote version $VERSION to all version files"
+
+      # A release must never ship unsigned (#857): stop here if any signing or
+      # notarization secret is missing, before spending an hour on the build.
+      - name: prepare signing credentials
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret $name is empty. Refusing to build an unsigned macOS release."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          identities="$(security find-identity -v -p codesigning)"
+          if ! grep -qF "$APPLE_SIGNING_IDENTITY" <<<"$identities"; then
+            echo "::error::The signing identity is not in this runner's keychain."
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path")
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
       - name: build macOS arm64
         env:
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           command -v zstd
           command -v uv >/dev/null 2>&1 || brew install uv
@@ -64,6 +124,9 @@ jobs:
         env:
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           command -v zstd
           if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
@@ -111,10 +174,107 @@ jobs:
             test -L "$mountpoint/Applications"
             test -f "$mountpoint/README-macOS.txt"
             test -f "$mountpoint/THIRD_PARTY_NOTICES.txt"
+            # Gatekeeper gate (#857): the shipped app must be sealed, notarized
+            # and stapled, and so must the DMG around it.
+            codesign --verify --deep --strict --verbose=2 "$mountpoint/StemDeck.app"
+            assessment="$(spctl -a -vvv -t exec "$mountpoint/StemDeck.app" 2>&1)" || true
+            echo "$assessment"
+            if ! grep -q ': accepted' <<<"$assessment" ||
+              ! grep -q 'source=Notarized Developer ID' <<<"$assessment"; then
+              echo "$arch StemDeck.app is not accepted as a notarized Developer ID app." >&2
+              exit 1
+            fi
+            xcrun stapler validate "$mountpoint/StemDeck.app"
             hdiutil detach "$mountpoint"
             rmdir "$mountpoint"
             trap - EXIT
+            xcrun stapler validate ".build/macos-dist/StemDeck-macOS-$arch.dmg"
           done
+
+      # The guard ran once, at the start of this run, and "Re-run failed jobs"
+      # reuses its result. Check again on every attempt, right before the
+      # upload, that the guarded release is still a draft pre-release with the
+      # guarded tag, pointing at the commit this run built. Without this, a
+      # re-run after publishing would overwrite the published assets, and a
+      # re-run of an older run would overwrite a retargeted draft's newer ones.
+      - name: check the release is still the guarded draft
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_URL: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.guard.outputs.release_id }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          node - <<'NODE'
+          // Throw rather than process.exit(): exiting with a fetch socket still
+          // open aborts Node on Windows. The catch below sets the exit code.
+          const stop = (why) => {
+            throw new Error(why);
+          };
+          const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+          (async () => {
+            const { GH_TOKEN, API_URL, REPO, RELEASE_ID, TAG, RUN_SHA } = process.env;
+            if (!/^[0-9]+$/.test(RELEASE_ID || '') || !TAG || !/^[0-9a-f]{40}$/.test(RUN_SHA || '')) {
+              stop('the guard set no release id or tag, or the run has no commit SHA.');
+            }
+            if (typeof fetch !== 'function') stop('this check needs Node.js 18 or newer on the runner.');
+            const get = async (path) => {
+              const res = await fetch(`${API_URL}/repos/${REPO}/${path}`, {
+                headers: {
+                  Authorization: `Bearer ${GH_TOKEN}`,
+                  Accept: 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                },
+              });
+              if (!res.ok) stop(`${path} could not be read (HTTP ${res.status}).`);
+              return res.json();
+            };
+
+            const rel = await get(`releases/${RELEASE_ID}`);
+            if (
+              !isObject(rel) ||
+              typeof rel.tag_name !== 'string' ||
+              typeof rel.draft !== 'boolean' ||
+              typeof rel.prerelease !== 'boolean' ||
+              typeof rel.target_commitish !== 'string'
+            ) {
+              stop(`release ${RELEASE_ID} did not come back as a release object.`);
+            }
+            console.log(
+              `Release ${RELEASE_ID}: tag=${rel.tag_name} draft=${rel.draft} prerelease=${rel.prerelease} target_commitish=${rel.target_commitish}`,
+            );
+            if (rel.tag_name !== TAG) stop(`release ${RELEASE_ID} now has the tag ${rel.tag_name}, not ${TAG}.`);
+            if (rel.draft !== true) stop(`release ${TAG} is no longer a draft; its own release build owns its assets.`);
+            if (rel.prerelease !== true) stop(`release ${TAG} is no longer marked pre-release.`);
+
+            // The guard's commit check, repeated: an existing tag's commit,
+            // otherwise the draft's target, must be the commit this run built.
+            const refs = await get(`git/matching-refs/tags/${TAG}`);
+            if (!Array.isArray(refs)) stop(`the tag lookup for ${TAG} did not come back as a list.`);
+            let expected;
+            let source;
+            if (refs.some((r) => isObject(r) && r.ref === `refs/tags/${TAG}`)) {
+              const commit = await get(`commits/refs/tags/${TAG}`);
+              if (!isObject(commit) || typeof commit.sha !== 'string') stop(`the tag ${TAG} did not resolve to a commit.`);
+              expected = commit.sha;
+              source = `existing tag ${TAG}`;
+            } else {
+              expected = rel.target_commitish;
+              source = 'target_commitish';
+            }
+            console.log(`Commit this run built: ${RUN_SHA}`);
+            console.log(`Commit the release points at (${source}): ${expected}`);
+            if (expected !== RUN_SHA) {
+              stop(`this run built ${RUN_SHA} but ${TAG} now points at ${expected} (${source}). Start a new run instead of re-running this one.`);
+            }
+            console.log(`Decision: UPLOAD to draft ${TAG} (release ${RELEASE_ID}).`);
+          })().catch((err) => {
+            console.log(`::error::Refusing to upload: ${err.message}`);
+            process.exitCode = 1;
+          });
+          NODE
 
       - name: upload artifacts
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
@@ -124,7 +284,12 @@ jobs:
           # pre-release to the latest release -- which also fires `released`,
           # pushing :latest to GHCR, and makes the in-app updater offer a build
           # that was never verified.
-          prerelease: ${{ github.event.release.prerelease }}
+          prerelease: ${{ github.event.release.prerelease || github.event_name == 'workflow_dispatch' }}
+          # A manual run uploads to the draft named by the guarded tag. Without
+          # draft: true the action publishes the draft after uploading. On a
+          # release event both are empty and the action keeps its defaults.
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && needs.guard.outputs.tag || '' }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
           files: |
             .build/macos-dist/StemDeck-macOS-arm64.dmg
             .build/StemDeck-runtime-macOS-arm64.tar.zst
@@ -132,3 +297,11 @@ jobs:
             .build/macos-dist/StemDeck-macOS-x64.dmg
             .build/StemDeck-runtime-macOS-x64.tar.zst
             .build/macos-dist/SHA256SUMS-macOS-x64.txt
+
+      - name: remove signing credentials
+        if: always()
+        run: |
+          if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+            rm -f "$APPLE_API_KEY_PATH"
+          fi
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8

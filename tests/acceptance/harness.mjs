@@ -9,14 +9,14 @@
 //   server <url>       an already running backend (a dev server), driven in
 //                      Playwright's own Chromium. Nothing is reset or stopped.
 //
-// Isolation of the desktop build is the point of most of this file. A portable
-// package is not isolated by default: ensure_workspace restores settings.json
-// (and with it jobs_dir) from %LOCALAPPDATA%\StemDeck, and the backend mirrors
-// every setting change back there (STEMDECK_SETTINGS_MIRROR). So the build is
-// started with LOCALAPPDATA pointed at a throwaway folder, its own data folder
-// is given a settings.json naming its own jobs folder, and the WebView2
-// profile is put in the throwaway folder too. The user's real
-// %LOCALAPPDATA%\StemDeck and library are never read or written.
+// Isolation of the desktop build is the point of most of this file. Builds
+// before 0.21.0 were not isolated by default: ensure_workspace restored
+// settings.json (and with it jobs_dir) from %LOCALAPPDATA%\StemDeck, and the
+// backend mirrored every setting change back there. So the build is started
+// with LOCALAPPDATA pointed at a throwaway folder, its own data folder is
+// given a settings.json naming its own jobs folder, and the WebView2 profile
+// is put in the throwaway folder too. The user's real %LOCALAPPDATA%\StemDeck
+// and library are never read or written, whichever build is under test.
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -90,8 +90,9 @@ export function resetPackageState() {
     // Documents\StemDeck\jobs: possibly a real library. Refuse.
     throw new Error(`${PACKAGE_DIR} is not a portable package (no portable.txt).`);
   }
-  // The desktop store is copied from Documents\StemDeck\user-data.json into a
-  // new jobs folder once (documents_store_path). That file would be the user's
+  // A portable build before 0.21.0 copied the desktop store from
+  // Documents\StemDeck\user-data.json into a new jobs folder once
+  // (documents_store_path). That file would be the user's
   // real library layout, so refuse rather than import it into the test run.
   const docs = documentsDir();
   if (docs && fs.existsSync(path.join(docs, "StemDeck", "user-data.json"))) {
@@ -116,7 +117,7 @@ export function resetPackageState() {
   fs.mkdirSync(FAKE_LOCALAPPDATA, { recursive: true });
 }
 
-function documentsDir() {
+export function documentsDir() {
   const out = spawnSync("powershell.exe", [
     "-NoProfile", "-Command", "[Environment]::GetFolderPath('MyDocuments')",
   ], { encoding: "utf8" });
@@ -141,15 +142,18 @@ export function freePort() {
  * suite's own AcoustID key), plus the isolation and the debugging port.
  * `offline` adds a proxy nobody listens on, for this app alone (see E6).
  */
-function appEnv(cdpPort, { offline = false } = {}) {
+function appEnv(cdpPort, { offline = false, localAppData = FAKE_LOCALAPPDATA, extraEnv = {} } = {}) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (/^STEMDECK_/i.test(k) || /^WEBVIEW2_/i.test(k)) continue;
     if (offline && /^(https?|all|no)_proxy$/i.test(k)) continue;
     env[k] = v;
   }
-  env.LOCALAPPDATA = FAKE_LOCALAPPDATA;
-  env.WEBVIEW2_USER_DATA_FOLDER = path.join(FAKE_LOCALAPPDATA, "WebView2");
+  // A check's own STEMDECK_ variables (UPG-01 names the data folder), added
+  // after the user's are dropped, so only what the check chose reaches the app.
+  Object.assign(env, extraEnv);
+  env.LOCALAPPDATA = localAppData;
+  env.WEBVIEW2_USER_DATA_FOLDER = path.join(localAppData, "WebView2");
   // The three throttling switches keep timers and animation frames running
   // when the window is covered by another one during an unattended run: the
   // karaoke wipe is drawn per frame, and an occluded WebView2 stops drawing.
@@ -178,8 +182,12 @@ function appEnv(cdpPort, { offline = false } = {}) {
   return env;
 }
 
-/** Start StemDeck.exe and wait for its DevTools endpoint. Records the pid. */
-export async function launchApp({ offline = false, label = "app" } = {}) {
+/**
+ * Start StemDeck.exe and wait for its DevTools endpoint. Records the pid.
+ * `localAppData` replaces the throwaway LOCALAPPDATA (it must be one too), and
+ * `env` adds variables for this launch alone.
+ */
+export async function launchApp({ offline = false, label = "app", localAppData = FAKE_LOCALAPPDATA, env = {} } = {}) {
   const cdpPort = Number(process.env.STEMDECK_ACCEPTANCE_CDP_PORT) || (await freePort());
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const out = fs.openSync(path.join(RESULTS_DIR, `${label}-stdout.log`), "a");
@@ -188,12 +196,12 @@ export async function launchApp({ offline = false, label = "app" } = {}) {
   // backend with %LOCALAPPDATA%\StemDeck as its data folder.
   const child = spawn(EXE, [], {
     cwd: PACKAGE_DIR,
-    env: appEnv(cdpPort, { offline }),
+    env: appEnv(cdpPort, { offline, localAppData, extraEnv: env }),
     stdio: ["ignore", out, out],
     windowsHide: false,
   });
   const startedAt = Date.now();
-  writeState({ ...(readState() || {}), mode: "desktop", pid: child.pid, cdpPort, startedAt, offline });
+  writeState({ ...(readState() || {}), mode: "desktop", pid: child.pid, cdpPort, startedAt, offline, localAppData });
   child.unref();
 
   const endpoint = `http://127.0.0.1:${cdpPort}`;
@@ -275,6 +283,7 @@ export async function stopApp(pid) {
     const line = String(row.l || "").toLowerCase();
     return exe.startsWith(PACKAGE_DIR.toLowerCase())
       || line.includes(FAKE_LOCALAPPDATA.toLowerCase())
+      || (readState()?.localAppData && line.includes(String(readState().localAppData).toLowerCase()))
       || exe.endsWith("msedgewebview2.exe")
       || exe.endsWith("python.exe");
   };

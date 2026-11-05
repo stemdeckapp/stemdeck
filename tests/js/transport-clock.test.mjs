@@ -62,9 +62,11 @@ check(
     /import \{[^}]*\bsetPlayheadTime\b[^}]*\} from "\.\/transport\.js"/.test(mainSrc),
 );
 
+// What the guard skips (textareas, selects, modifier chords) is checked in
+// library-delete-key.test.mjs.
 check(
-  'the keyboard guard excludes textareas',
-  code.includes('HTMLTextAreaElement'),
+  'the keyboard handler returns on the shared guard before any shortcut',
+  /if \(ignoredByShortcuts\(e\)\) return;\s*if \(e\.code === "Space"\)/.test(code),
   'Space in the log viewer used to start playback instead of scrolling',
 );
 

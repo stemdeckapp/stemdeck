@@ -1,0 +1,141 @@
+name: Release Candidate Guard
+
+# Called by the manual (workflow_dispatch) runs of linux-release.yml,
+# windows-release.yml and macos-release.yml before they build anything (#1027).
+#
+# A manual run builds a release candidate and uploads it to an existing draft
+# pre-release. This guard stops the run unless all of these hold, so a typo can
+# never overwrite the installers of a published release:
+#
+#   1. The tag is a strict release tag: v + MAJOR.MINOR.PATCH, optionally
+#      followed by -rc.N, -beta.N or -alpha.N. Nothing else reaches a shell.
+#   2. Exactly one release carries that tag.
+#   3. That release is a draft.
+#   4. That release is marked pre-release.
+#   5. The commit this run builds is the commit the release will be tagged at:
+#      the existing git tag's commit if the tag already exists, otherwise the
+#      draft's target_commitish, which must then be a full 40-character SHA.
+#      A branch target is refused: it is compared with the branch tip when
+#      each platform's guard runs, so two platforms could pass on different
+#      commits, and publishing would tag whatever the tip is by then.
+#
+# The guard runs once per run, and "Re-run failed jobs" reuses its result. So
+# each build job checks again, on every attempt, right before it uploads, that
+# the release with the guarded id is still a draft with the guarded tag.
+#
+# The job checks out no code and only reads from the API. It still needs
+# `contents: write`, because the releases API lists drafts only to callers with
+# push access; a read-only token sees no drafts at all.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag of the draft pre-release to build into, e.g. v0.21.0-rc.1"
+        required: true
+        type: string
+    outputs:
+      tag:
+        description: "The validated tag. Set only when every check passed."
+        value: ${{ jobs.check.outputs.tag }}
+      release_id:
+        description: "The draft's numeric release id. Set only when every check passed."
+        value: ${{ jobs.check.outputs.release_id }}
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      release_id: ${{ steps.check.outputs.release_id }}
+    steps:
+      - name: check the tag names a draft pre-release on this commit
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          refuse() {
+            echo "::error::Refusing to build: $1"
+            echo "Decision: REFUSED. $1"
+            exit 1
+          }
+
+          # 1. Strict tag shape. The raw value is never echoed: it is free text
+          # typed into the run form, and could carry workflow commands.
+          pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|beta|alpha)\.(0|[1-9][0-9]*))?$'
+          if ! [[ "$TAG" =~ $pattern ]]; then
+            refuse "the tag input is not a release tag (expected v1.2.3 or v1.2.3-rc.1, -beta.1, -alpha.1)."
+          fi
+          echo "Tag: $TAG"
+
+          # 2. Exactly one release with that tag. Drafts are not returned by
+          # the get-by-tag endpoint, so list every release and filter.
+          matches="$(gh api --paginate "repos/$REPO/releases?per_page=100" |
+            jq -c --arg tag "$TAG" '.[] | select(.tag_name == $tag)
+              | {id, draft, prerelease, target_commitish}')"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "$count" -eq 0 ]; then
+            refuse "no release has the tag $TAG. Create the draft pre-release first."
+          fi
+          if [ "$count" -gt 1 ]; then
+            refuse "$count releases have the tag $TAG. Delete the extra drafts so exactly one remains."
+          fi
+          id="$(jq -r .id <<<"$matches")"
+          draft="$(jq -r .draft <<<"$matches")"
+          prerelease="$(jq -r .prerelease <<<"$matches")"
+          target="$(jq -r '.target_commitish // ""' <<<"$matches")"
+          echo "Release $id: draft=$draft prerelease=$prerelease target_commitish=$target"
+
+          # 3 and 4. Draft and pre-release.
+          if [ "$draft" != "true" ]; then
+            refuse "release $TAG is published, not a draft. A manual run only builds into a draft."
+          fi
+          if [ "$prerelease" != "true" ]; then
+            refuse "draft $TAG is not marked pre-release. Tick 'Set as a pre-release' on the draft."
+          fi
+
+          # 5. The commit the release will be tagged at must be the commit this
+          # run builds. An existing tag wins over target_commitish, because
+          # publishing a draft whose tag already exists keeps that tag.
+          tag_ref="$(gh api "repos/$REPO/git/matching-refs/tags/$TAG" |
+            jq -r --arg ref "refs/tags/$TAG" '.[] | select(.ref == $ref) | .ref')"
+          if [ -n "$tag_ref" ]; then
+            source="existing tag $TAG"
+            fix="Run the workflow from the commit the tag points at."
+            expected="$(gh api "repos/$REPO/commits/$tag_ref" --jq .sha)" ||
+              refuse "the existing tag $TAG could not be resolved to a commit."
+          else
+            if ! [[ "$target" =~ ^[0-9a-f]{40}$ ]]; then
+              refuse "draft $TAG targets '$target', not a full commit SHA. A branch target moves, so set the draft's target to the full 40-character SHA to build: gh release edit $TAG --target <sha>"
+            fi
+            source="target_commitish $target"
+            fix="Run the workflow from a branch whose tip is that commit, or change the draft's target."
+            expected="$(gh api "repos/$REPO/commits/$target" --jq .sha)" ||
+              refuse "the draft's target $target could not be resolved to a commit."
+          fi
+          echo "Commit this run builds: $RUN_SHA"
+          echo "Commit the release points at ($source): $expected"
+          if [ "$expected" != "$RUN_SHA" ]; then
+            refuse "this run builds $RUN_SHA but $TAG points at $expected ($source). $fix"
+          fi
+
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            refuse "release $TAG has no numeric id."
+          fi
+
+          echo "Decision: BUILD. Installers will upload to draft pre-release $TAG (release $id) from $RUN_SHA."
+          {
+            echo "tag=$TAG"
+            echo "release_id=$id"
+          } >> "$GITHUB_OUTPUT"

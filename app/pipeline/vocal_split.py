@@ -15,19 +15,34 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
-from app.core.config import TIMEOUT_VOCAL_SPLIT
+from app.core.config import TIMEOUT_VOCAL_SPLIT, VOCAL_SPLIT_WATCHDOG_POLL_SEC
 from app.core.models import Job
 from app.core.registry import set_proc
 from app.core.settings import get_demucs_device
+from app.core.stem_files import decoded_wav, stem_path
+from app.core.vocal_split_outcome import CANCELLED, CODES, TIMEOUT, WORKER_FAILED
 from app.pipeline.errors import SeparationError
+from app.pipeline.vocal_split_status import failure_code
 
 logger = logging.getLogger("stemdeck.pipeline")
+
+
+class VocalSplitError(SeparationError):
+    """A split that did not make its two stems, with the reason as one of
+    app.core.vocal_split_outcome.CODES (#832). The message and tail are for
+    the log and vocal_split_error.txt; only the code reaches a client."""
+
+    def __init__(self, message: str, *, code: str, **kwargs) -> None:
+        super().__init__(message, **kwargs)
+        self.code = code if code in CODES else WORKER_FAILED
 
 
 def _spawn_cmd(device: str, vocals_path: Path, out_dir: Path) -> list[str]:
@@ -44,15 +59,58 @@ def _spawn_cmd(device: str, vocals_path: Path, out_dir: Path) -> list[str]:
 def split_vocals(job: Job, stems_dir: Path) -> list[str]:
     """Run the karaoke model on stems/vocals.wav, producing lead_vocals.wav +
     backing_vocals.wav in stems_dir. Returns the two new stem names on
-    success. Raises SeparationError (carrying the stderr tail) on failure.
+    success. Raises VocalSplitError (carrying the stderr tail and the reason
+    code) on failure.
 
     Best-effort by design: the caller (the vocal-split API endpoint) is
     responsible for catching failures and leaving the job's base stems
     untouched -- this function never mutates anything but stems_dir's
     contents, and never touches vocals.wav itself."""
-    vocals_path = stems_dir / "vocals.wav"
+    vocals_path = stem_path(stems_dir, "vocals")
     if not vocals_path.is_file():
-        raise SeparationError("vocals.wav not found -- job has no vocals stem to split")
+        raise VocalSplitError(
+            "vocals.wav not found -- job has no vocals stem to split", code=WORKER_FAILED
+        )
+    # The worker writes into the dot temp folder `.vocal_split.<hex>.tmp` beside
+    # the stems, and the pair moves in only once both are whole: a kill or a
+    # failure never leaves a half-written lead_vocals.wav that reads as a stem.
+    work = stems_dir / f".vocal_split.{uuid.uuid4().hex}.tmp"
+    # audio-separator gets a WAV whatever the song keeps (#783): an MP3 vocals
+    # stem is decoded by ffmpeg first, so the model reads exactly the samples
+    # every other reader does.
+    try:
+        work.mkdir()
+        with decoded_wav(vocals_path) as wav_in:
+            names = _split(job, wav_in, work)
+        return _move_in(work, stems_dir, names)
+    except SeparationError:
+        raise
+    except RuntimeError as exc:
+        raise VocalSplitError("could not read the vocals stem", code=WORKER_FAILED) from exc
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _move_in(work: Path, stems_dir: Path, names: list[str]) -> list[str]:
+    """Move the pair from `work` into the stems. A move that fails takes back
+    the one already made. A kill between the two renames leaves a lead alone,
+    which a song rebuilt from its folder does not count as split
+    (registry._rebuild_from_folder)."""
+    placed: list[Path] = []
+    try:
+        for name in names:
+            final = stems_dir / f"{name}.wav"
+            os.replace(work / f"{name}.wav", final)
+            placed.append(final)
+    except OSError as exc:
+        for final in placed:
+            final.unlink(missing_ok=True)
+        raise VocalSplitError("could not move the split stems in", code=WORKER_FAILED) from exc
+    return names
+
+
+def _split(job: Job, vocals_path: Path, out_dir: Path) -> list[str]:
+    """split_vocals on a WAV vocals file, writing the pair into `out_dir`."""
 
     device = get_demucs_device()
     env = os.environ.copy()
@@ -74,29 +132,37 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
     except ModuleNotFoundError:
         pass
 
-    proc = subprocess.Popen(
-        _spawn_cmd(device, vocals_path, stems_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        # utf-8/replace explicitly. text=True alone decodes with the locale
-        # encoding, which on Windows is cp1252, and a single byte outside it
-        # in a child's output kills the whole job with a UnicodeDecodeError
-        # ("'charmap' codec can't decode byte 0x8f"). This is diagnostic text:
-        # a byte we cannot read is never a reason to fail a separation.
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        env=env,
-    )
+    try:
+        proc = subprocess.Popen(
+            _spawn_cmd(device, vocals_path, out_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            # utf-8/replace explicitly. text=True alone decodes with the locale
+            # encoding, which on Windows is cp1252, and a single byte outside it
+            # in a child's output kills the whole job with a UnicodeDecodeError
+            # ("'charmap' codec can't decode byte 0x8f"). This is diagnostic text:
+            # a byte we cannot read is never a reason to fail a separation.
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+        )
+    except OSError as exc:
+        raise VocalSplitError(
+            f"vocal split could not start: {exc}", code=WORKER_FAILED, device=device
+        ) from exc
     set_proc(job.id, proc)
 
     tail: list[str] = []
     last_output = [time.monotonic()]
     done_evt = threading.Event()
+    stalled = threading.Event()
+    # The code the worker gave with its error line, when it gave one.
+    worker_code: list[str | None] = [None]
 
     def _watchdog() -> None:
-        while not done_evt.wait(timeout=30):
+        while not done_evt.wait(timeout=VOCAL_SPLIT_WATCHDOG_POLL_SEC):
             if proc.poll() is not None:
                 return
             if time.monotonic() - last_output[0] > TIMEOUT_VOCAL_SPLIT:
@@ -105,6 +171,7 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
                     TIMEOUT_VOCAL_SPLIT,
                     job.id,
                 )
+                stalled.set()
                 proc.terminate()
                 return
 
@@ -127,6 +194,12 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
                     msg = json.loads(msg)
                 except json.JSONDecodeError:
                     pass
+                # {"message", "code"} from this worker; a plain string from
+                # one that predates the code.
+                if isinstance(msg, dict):
+                    code = msg.get("code")
+                    worker_code[0] = code if isinstance(code, str) else None
+                    msg = msg.get("message", "")
                 tail.append(str(msg))
                 break
             tail.append(line)
@@ -148,9 +221,25 @@ def split_vocals(job: Job, stems_dir: Path) -> list[str]:
         detail = "\n".join(tail[-15:]) if tail else "(no stderr captured)"
         logger.warning("[%s] vocal split failed: %s", job.id, detail)
         last = tail[-1] if tail else "vocal split failed"
-        raise SeparationError(f"vocal split failed: {last}", tail=tail[-40:], device=device)
+        # A cancel and the watchdog both end the worker from outside, so what
+        # it last wrote says nothing about why it stopped.
+        if job.cancel_requested:
+            code = CANCELLED
+        elif stalled.is_set():
+            code = TIMEOUT
+        elif worker_code[0] is not None:
+            code = worker_code[0]
+        else:
+            # A worker that died without its error line (a crash, the OOM
+            # killer), or one too old to send a code: judged by its words.
+            code = failure_code("unknown", text="\n".join(tail))
+        raise VocalSplitError(
+            f"vocal split failed: {last}", code=code, tail=tail[-40:], device=device
+        )
 
     for name in ("lead_vocals", "backing_vocals"):
-        if not (stems_dir / f"{name}.wav").is_file():
-            raise SeparationError(f"vocal split did not produce {name}.wav", device=device)
+        if not (out_dir / f"{name}.wav").is_file():
+            raise VocalSplitError(
+                f"vocal split did not produce {name}.wav", code=WORKER_FAILED, device=device
+            )
     return ["lead_vocals", "backing_vocals"]

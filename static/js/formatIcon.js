@@ -11,7 +11,7 @@
 // square it shares with the player (player.js) both draw it, and player.js
 // cannot import from catalog.js without a cycle.
 
-// Mirrors _ALLOWED_EXTS in app/api/jobs.py. Anything else is not a format this
+// Mirrors UPLOAD_EXTS in app/core/config.py. Anything else is not a format this
 // app accepts, so it is not drawn: the value reaches markup.
 const FORMATS = new Set(["mp3", "wav", "flac", "mp4", "m4a", "ogg", "opus"]);
 

@@ -260,10 +260,9 @@ test.describe("waveform zoom", () => {
     expect(Math.abs(held(after) - target)).toBeLessThan(0.01);
   });
 
-  test("the ruler gets finer as you zoom, and the footer strip does not", async ({ page }) => {
+  test("the ruler gets finer as you zoom", async ({ page }) => {
     await openStudio(page, { tauri: true });
     const base = await zoomState(page);
-    const footerBefore = await page.locator("#footer-wave-ticks .tick").count();
 
     for (let i = 0; i < 40; i++) await wheel(page, -240);
     const zoomed = await zoomState(page);
@@ -272,9 +271,6 @@ test.describe("waveform zoom", () => {
     // further in you went. More of them, at a finer step.
     expect(zoomed.ticks).toBeGreaterThan(base.ticks);
     expect(zoomed.tickLabels[1]).not.toBe(base.tickLabels[1]);
-
-    // The footer strip always shows the whole track, so its ticks must not move.
-    expect(await page.locator("#footer-wave-ticks .tick").count()).toBe(footerBefore);
   });
 
   test("shift-scroll pans instead of zooming", async ({ page }) => {

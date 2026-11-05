@@ -14,6 +14,7 @@ the child is told to write utf-8, or the mismatch just moves.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +34,21 @@ def test_decoding_is_pinned_not_left_to_the_locale(path: str, what: str):
     assert "text=True" in src, f"{path} no longer spawns a text-mode child; update this test"
     assert 'encoding="utf-8"' in src, f"{what} decodes with the locale encoding, not utf-8"
     assert 'errors="replace"' in src, f"{what} would still raise on an undecodable byte"
+
+
+def test_no_text_mode_child_in_app_decodes_with_the_locale():
+    """The sites above were fixed one by one, and new ones arrived without it."""
+    unpinned = []
+    for path in sorted(Path("app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            kwargs = {k.arg: k.value for k in node.keywords if k.arg}
+            text = kwargs.get("text") or kwargs.get("universal_newlines")
+            pinned = "encoding" in kwargs and "errors" in kwargs
+            if isinstance(text, ast.Constant) and text.value is True and not pinned:
+                unpinned.append(f"{path}:{node.lineno}")
+    assert not unpinned, f"text=True without encoding= and errors=: {unpinned}"
 
 
 @pytest.mark.parametrize("path", ["app/pipeline/separate.py", "app/pipeline/vocal_split.py"])

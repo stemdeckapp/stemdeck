@@ -11,12 +11,16 @@ at startup), so the Settings UI can change them without a restart:
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
 - `separation_quality` — demucs shift-averaging: standard | best (2x slower).
+- `idle_unload_minutes` - idle minutes before the separation models unload (0 never).
 - `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
 - `auto_delete_jobs`  — whether finished jobs are deleted after a while (off).
 - `auto_delete_days`  — how long they are kept when that is on.
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
 - `discogs_token`     - the user's Discogs token, for band profiles.
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
+- `video_encoder`     - H.264 encoder of the take render: auto | cpu | an encoder.
+- `stem_format`       - how new songs' stems are stored: wav | mp3 (#783).
+- `stem_mp3_kbps`     - the MP3 bitrate when stem_format is mp3: 128 | 192 | 256.
 
 Defaults fall back to the config.py constants (which honor their env vars), so
 nothing changes until the user overrides a value.
@@ -35,8 +39,14 @@ from pathlib import Path
 
 from app.core.config import (
     DATA_DIR,
+    DEFAULT_STEM_STORAGE,
+    IDLE_UNLOAD_MINUTES,
+    IDLE_UNLOAD_MINUTES_MAX,
     MAX_DURATION_SEC,
     PLAYLIST_MAX_ITEMS,
+    STEM_FORMAT_CHOICES,
+    STEM_MP3_KBPS_CHOICES,
+    VIDEO_ENCODER_CHOICES,
     VIDEO_MAX_HEIGHT,
     available_torch_devices,
     detect_torch_device,
@@ -76,15 +86,6 @@ def _default_allow_network() -> bool:
     return os.environ.get("STEMDECK_DESKTOP") != "1"
 
 
-def _mirror_path() -> Path | None:
-    """Where the per-user copy lives, or None when the shell did not set one.
-
-    The path comes from the shell (STEMDECK_SETTINGS_MIRROR) so the platform
-    logic stays in one place -- see _mirror_settings."""
-    target = os.environ.get("STEMDECK_SETTINGS_MIRROR", "").strip()
-    return Path(target) if target else None
-
-
 def _read_json_dict(path: Path) -> dict | None:
     """Parse `path` as a JSON object.
 
@@ -102,6 +103,23 @@ def _read_json_dict(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def fsync_dir(directory: Path) -> None:
+    """Make a rename in `directory` durable. POSIX only: Windows cannot open a
+    directory for fsync, and NTFS journals the rename itself."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # some filesystems (network shares) refuse; the rename still happened
+    finally:
+        os.close(fd)
+
+
 def _atomic_write_json(path: Path, data: dict) -> bool:
     """Write `data` to `path` so an interrupted write cannot destroy what was
     there before.
@@ -109,35 +127,55 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     write_text() truncates first and writes second, so a process that dies in
     between leaves a file that exists and does not parse -- which _load then
     could not distinguish from a first run, and the next setting change
-    persisted a one-key file over both this and the mirror (#509). Same
+    persisted a one-key file over it (#509). Same
     same-directory temp + replace the registry already uses; the temp name is
-    unique per call so two concurrent writers cannot interleave on it."""
+    unique per call so two concurrent writers cannot interleave on it.
+
+    The bytes are on the disk before the rename, as in the registry: this file
+    holds jobs_dir, and a power cut that left it torn after a library move would
+    bring the app back to the folder the songs left."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            tmp.replace(path)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(data))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
+        fsync_dir(path.parent)
     except Exception:
         _log.warning("could not persist settings to %s", path, exc_info=True)
         return False
     return True
 
 
-def _quarantine_corrupt(path: Path) -> None:
-    """Move an unusable settings file aside rather than leaving it to be
-    overwritten by the next save.
+def quarantine_corrupt(path: Path, what: str = "settings") -> Path | None:
+    """Move an unusable file aside rather than leaving it to be overwritten by
+    the next save. Returns where it went, or None if it could not be moved.
 
     Renaming keeps the bytes for diagnosis. Deleting or writing over them
-    destroys the only remaining evidence of what the user had configured."""
+    destroys the only remaining evidence of what the user had configured.
+    Shared with the registry (app/core/registry.py), whose file has the same
+    problem; `what` only names the file in the log."""
     try:
-        target = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        stamp = int(time.time())
+        target = path.with_name(f"{path.name}.corrupt-{stamp}")
+        n = 1
+        while target.exists():  # a second quarantine within the same second
+            target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+            n += 1
         path.replace(target)
-        _log.warning("settings at %s were unreadable; moved aside to %s", path, target)
+        _log.warning("%s at %s were unreadable; moved aside to %s", what, path, target)
+        return target
     except OSError:
-        _log.warning("could not move unreadable settings at %s aside", path, exc_info=True)
+        _log.warning("could not move unreadable %s at %s aside", what, path, exc_info=True)
+        return None
+
+
+_quarantine_corrupt = quarantine_corrupt
 
 
 def _load() -> dict:
@@ -145,8 +183,7 @@ def _load() -> dict:
 
     Conflating the two is what lost real user settings: a torn write left an
     unparsable file, this returned {} exactly as it would on a first run, and
-    the next set_*() then persisted a single key over both settings.json and
-    the mirror that existed to protect it."""
+    the next set_*() then persisted a single key over it."""
     if not _SETTINGS_PATH.exists():
         return {}  # no settings file yet — genuine first run; use defaults
 
@@ -154,19 +191,8 @@ def _load() -> dict:
     if data is not None:
         return data
 
-    # The file is there but unusable. Preserve it, then try the per-user copy
-    # the shell keeps outside the install directory.
+    # The file is there but unusable. Preserve it for diagnosis.
     _quarantine_corrupt(_SETTINGS_PATH)
-    mirror = _mirror_path()
-    if mirror is not None:
-        recovered = _read_json_dict(mirror)
-        if recovered:
-            _log.warning("recovered settings from mirror %s", mirror)
-            # Put them back immediately. Without this the recovery only lasts
-            # until the next start, which would read a now-absent primary and
-            # silently fall back to defaults again.
-            _atomic_write_json(_SETTINGS_PATH, recovered)
-            return recovered
     return {}
 
 
@@ -174,15 +200,6 @@ def _ensure() -> dict:
     global _state
     if _state is None:
         _state = _load()
-        # Seed the per-user copy from settings that already exist. Mirroring
-        # only on _save() would protect nobody who configured StemDeck before
-        # this shipped and never opens Settings again -- their next install
-        # would still start empty. Safe against recursion (_state is assigned
-        # first) and against clobbering: an empty dict means a genuine first
-        # run, and overwriting a good copy with it is exactly the data loss
-        # this whole mechanism exists to prevent.
-        if _state:
-            _mirror_settings()
     return _state
 
 
@@ -193,38 +210,7 @@ def _save() -> bool:
     is still reported back, because one caller (set_jobs_dir) is coupled to
     something irreversible enough that silently swallowing a failure there
     would be actively misleading rather than merely inconvenient (#403)."""
-    if not _atomic_write_json(_SETTINGS_PATH, _ensure()):
-        return False
-    _mirror_settings()
-    return True
-
-
-def _mirror_settings() -> None:
-    """Keep a per-user copy of settings.json outside the install directory.
-
-    A Windows portable package keeps its data in `<app>/data` (#399), so
-    settings.json lives *inside the install*. Upgrading by extracting the new
-    zip to a fresh folder therefore started that install with no settings at
-    all: the stems location, port, compute device, quality and language were
-    all silently back to defaults, and a relocated library looked empty.
-
-    The desktop shell already restores from this copy -- `ensure_workspace`
-    seeds a fresh portable install from it before the backend ever reads
-    settings.json. Only the write half was missing, because #399 moved the
-    data directory and nothing took over writing the old location.
-
-    Best-effort by definition: this is a redundant copy, and failing to write
-    it must never fail the setting the user just changed. The path comes from
-    the shell (STEMDECK_SETTINGS_MIRROR) so the platform logic stays in one
-    place and both halves cannot drift apart.
-    """
-    path = _mirror_path()
-    if path is None:
-        return
-    # Same-directory temp + replace: a torn write here would be restored
-    # verbatim into the user's next install. _atomic_write_json also gives the
-    # temp file a unique name, so two writers cannot interleave on it.
-    _atomic_write_json(path, _ensure())
+    return _atomic_write_json(_SETTINGS_PATH, _ensure())
 
 
 def _num(v: object) -> int | None:
@@ -298,6 +284,30 @@ def _default_auto_sections() -> bool:
     wants it from first boot.
     """
     return os.environ.get("STEMDECK_AUTO_SECTIONS", "").strip() == "1"
+
+
+def _default_auto_lyrics() -> bool:
+    """Lyrics found while a song is imported (LRCLIB, then a Whisper
+    transcript of the vocals), off until the user turns Detect lyrics on.
+
+    Unlike Detect structure this is a standing choice, kept until changed.
+    STEMDECK_AUTO_LYRICS=1 turns it on for a deployment that wants it from
+    first boot.
+    """
+    return os.environ.get("STEMDECK_AUTO_LYRICS", "").strip() == "1"
+
+
+def get_auto_lyrics() -> bool:
+    with _LOCK:
+        v = _ensure().get("auto_lyrics")
+        return v if isinstance(v, bool) else _default_auto_lyrics()
+
+
+def set_auto_lyrics(value: bool) -> bool:
+    with _LOCK:
+        _ensure()["auto_lyrics"] = bool(value)
+        _save()
+        return bool(value)
 
 
 def get_auto_sections() -> bool:
@@ -421,20 +431,36 @@ def set_cookies_file(value: str | None) -> str | None:
     Raises ValueError when the path does not point at a readable file, so the
     Settings UI can say so immediately rather than the user discovering it as a
     failed import an hour later.
+
+    Only a file inside the data folder is accepted, and a bare name is looked
+    up there. Anyone who can reach Settings (the LAN, with network access on)
+    could otherwise point yt-dlp at any file on the machine, and yt-dlp echoes
+    each line it cannot parse into the backend log. One error for outside,
+    missing and unreadable, so the answer says nothing about other paths. A
+    path saved before this rule keeps working until it is changed.
     """
     with _LOCK:
         if value is None or not str(value).strip():
             _ensure().pop("cookies_file", None)
             _save()
             return None
-        resolved = Path(str(value)).expanduser().resolve()
-        if not resolved.is_file():
-            raise ValueError("cookies file not found")
+        resolved = None
         try:
-            with resolved.open("rb") as fh:
-                fh.read(1)
-        except OSError as e:
-            raise ValueError("cookies file is not readable") from e
+            # Checked by name before resolve() touches the disk: resolving a
+            # \\host\share path opens it, and Windows sends the user's NTLM
+            # hash to that host. Checked again after, for a symlink out.
+            named = Path(os.path.normpath(DATA_DIR / Path(str(value)).expanduser()))
+            if named.is_relative_to(DATA_DIR):
+                candidate = named.resolve()
+                if candidate.is_relative_to(DATA_DIR.resolve()) and candidate.is_file():
+                    with candidate.open("rb") as fh:
+                        fh.read(1)
+                    resolved = candidate
+        except (OSError, ValueError, RuntimeError):
+            # A NUL byte, a bad Windows name or a symlink loop: the same answer.
+            resolved = None
+        if resolved is None:
+            raise ValueError("cookies file must be a readable file in the data folder")
         _ensure()["cookies_file"] = str(resolved)
         _save()
         return str(resolved)
@@ -597,10 +623,122 @@ def set_separation_quality(value: str) -> str:
         return choice
 
 
+# ── idle_unload_minutes ──
+# Minutes with no separation or analysis running before the separation worker
+# and the beat model are unloaded (#975), 0 for never. Read on every check of the idle timer
+# (app/pipeline/idle_unload.py), so a change applies without a restart.
+# STEMDECK_IDLE_UNLOAD_MINUTES seeds the default; a value saved here wins.
+def get_idle_unload_minutes() -> int:
+    with _LOCK:
+        v = _num(_ensure().get("idle_unload_minutes"))
+        if v is None:
+            return IDLE_UNLOAD_MINUTES
+        return max(0, min(IDLE_UNLOAD_MINUTES_MAX, v))
+
+
+def set_idle_unload_minutes(value: int) -> int:
+    clamped = max(0, min(IDLE_UNLOAD_MINUTES_MAX, int(value)))
+    with _LOCK:
+        _ensure()["idle_unload_minutes"] = clamped
+        _save()
+        return clamped
+
+
+# ── stem_format / stem_mp3_kbps ──
+# How a song's stems are stored once it finishes (#783): "wav" or "mp3" at a
+# CBR bitrate. Read when a job finishes (app/pipeline/stem_storage.py), so a
+# change applies to the next song without a restart; songs already in the
+# library keep whatever they were stored as. STEMDECK_STEM_FORMAT and
+# STEMDECK_STEM_MP3_KBPS seed the defaults for Docker and Unraid; a choice
+# saved in Settings wins over them, as for separation_quality.
+def _default_stem_format() -> str:
+    env = os.environ.get("STEMDECK_STEM_FORMAT", "").strip().lower()
+    return env if env in STEM_FORMAT_CHOICES else DEFAULT_STEM_STORAGE[0]
+
+
+def _default_stem_mp3_kbps() -> int:
+    raw = os.environ.get("STEMDECK_STEM_MP3_KBPS", "").strip().lower().removesuffix("k")
+    try:
+        kbps = int(raw)
+    except ValueError:
+        return DEFAULT_STEM_STORAGE[1]
+    return kbps if kbps in STEM_MP3_KBPS_CHOICES else DEFAULT_STEM_STORAGE[1]
+
+
+def get_stem_format() -> str:
+    with _LOCK:
+        v = _ensure().get("stem_format")
+        return v if isinstance(v, str) and v in STEM_FORMAT_CHOICES else _default_stem_format()
+
+
+def get_stem_mp3_kbps() -> int:
+    with _LOCK:
+        v = _ensure().get("stem_mp3_kbps")
+        ok = isinstance(v, int) and not isinstance(v, bool) and v in STEM_MP3_KBPS_CHOICES
+        return v if ok else _default_stem_mp3_kbps()
+
+
+def check_stem_format(value: object) -> str:
+    """The whitelisted format for ``value``, or ValueError (never echoing it)."""
+    choice = value.strip().lower() if isinstance(value, str) else ""
+    if choice not in STEM_FORMAT_CHOICES:
+        raise ValueError("stem_format must be one of: " + ", ".join(STEM_FORMAT_CHOICES))
+    return STEM_FORMAT_CHOICES[STEM_FORMAT_CHOICES.index(choice)]
+
+
+def check_stem_mp3_kbps(value: object) -> int:
+    """The whitelisted bitrate for ``value``, or ValueError (never echoing it)."""
+    kbps = value if isinstance(value, int) and not isinstance(value, bool) else None
+    if kbps not in STEM_MP3_KBPS_CHOICES:
+        raise ValueError(
+            "stem_mp3_kbps must be one of: " + ", ".join(map(str, STEM_MP3_KBPS_CHOICES))
+        )
+    return kbps
+
+
+def set_stem_storage(fmt: object = None, kbps: object = None) -> tuple[str, int]:
+    """Persist either or both, after both are validated: a request with one
+    bad value changes nothing. Returns what now applies."""
+    choice = check_stem_format(fmt) if fmt is not None else None
+    rate = check_stem_mp3_kbps(kbps) if kbps is not None else None
+    with _LOCK:
+        if choice is not None:
+            _ensure()["stem_format"] = choice
+        if rate is not None:
+            _ensure()["stem_mp3_kbps"] = rate
+        if choice is not None or rate is not None:
+            _save()
+        return get_stem_format(), get_stem_mp3_kbps()
+
+
+# ── video_encoder ──
+# The H.264 encoder of the take render (app/pipeline/video_encoder.py): "auto"
+# (default) uses NVENC on Windows when it passes a real test encode here, else
+# libx264, "cpu" always libx264, an encoder name only that one (libx264 when it fails).
+# Read per render. STEMDECK_VIDEO_ENCODER overrides it (video_encoder.policy).
+def get_video_encoder() -> str:
+    with _LOCK:
+        v = _ensure().get("video_encoder")
+        return v if isinstance(v, str) and v in VIDEO_ENCODER_CHOICES else "auto"
+
+
+def set_video_encoder(value: str) -> str:
+    choice = (value or "").strip().lower()
+    if choice not in VIDEO_ENCODER_CHOICES:
+        raise ValueError("video_encoder must be one of: " + ", ".join(VIDEO_ENCODER_CHOICES))
+    # The stored value is the whitelist's own string, never the request's.
+    choice = VIDEO_ENCODER_CHOICES[VIDEO_ENCODER_CHOICES.index(choice)]
+    with _LOCK:
+        _ensure()["video_encoder"] = choice
+        _save()
+        return choice
+
+
 # ── transcribe_lyrics ──
 # Whether a job with no lyrics found gets them transcribed from its vocals stem
 # with Whisper (app/pipeline/transcribe.py). "auto" (default) does it when the
-# job was separated on an NVIDIA GPU (cuda) only. Anywhere else, Apple's MPS
+# job was separated on a cuda GPU only: NVIDIA, or AMD under a ROCm build of
+# torch, which serves it as cuda too (#825). Anywhere else, Apple's MPS
 # included, Whisper runs on the CPU, about 200 s a song rather than 30 s, so
 # "auto" leaves it off; "on" and "off" force it. Read per job, so
 # a change applies to the next import. STEMDECK_TRANSCRIBE_LYRICS seeds the

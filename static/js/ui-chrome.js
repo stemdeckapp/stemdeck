@@ -110,6 +110,15 @@ function wirePanelToggles() {
       persist(name, next);
     });
   }
+
+  // The sections bar's own Hide (#634). It vanishes with the bar, so focus
+  // moves to the Collapse button that brings the bar back instead of
+  // falling to the page.
+  document.getElementById("sectionsHideBtn")?.addEventListener("click", () => {
+    apply("sections", false);
+    persist("sections", false);
+    toggles.find((btn) => btn.dataset.panel === "sections").focus();
+  });
 }
 
 wirePanelToggles();

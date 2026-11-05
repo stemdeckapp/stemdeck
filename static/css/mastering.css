@@ -1,0 +1,392 @@
+/* The Master: the footer chip, the row in the Export Mix menu, and the
+   drawer between the lanes and the footer (static/js/masterPanel.js).
+   Colours, radii and motion are tokens from variables.css; the small
+   controls reuse the EQ panels' M/S-family buttons (.eq-power, .eq-seg,
+   .eq-btn in eq.css). */
+
+/* ── Footer chip: the icon alone, like the click toggle ── */
+
+.master-chip {
+  position: relative;
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+  color: var(--muted);
+}
+.master-chip:hover { color: var(--fg); }
+.master-chip.on { color: var(--accent); border-color: var(--gold-line); }
+.master-chip-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+.master-chip.on .master-chip-dot {
+  background: var(--accent);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.master-chip[aria-expanded="true"] {
+  background: var(--panel-3);
+  border-color: var(--gold-line);
+}
+.master-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+/* ── Row in the Export Mix menu ── */
+
+.export-master-row {
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.export-master-row.on .chip-item-icon,
+.export-master-row.on .chip-item-title { color: var(--accent); }
+.export-master-caret { color: var(--muted); flex-shrink: 0; }
+
+/* ── The drawer ── */
+
+.master-drawer {
+  flex: 0 0 var(--master-drawer-h);
+  height: var(--master-drawer-h);
+  border-top: 1px solid var(--border-strong);
+  background: var(--eq-panel-bg);
+  box-sizing: border-box;
+  min-height: 0;
+  overflow: hidden;
+}
+.master-drawer[hidden] { display: none; }
+
+.master-drawer-inner {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+}
+
+/* Settings column: under the mixer, as wide as it. */
+.master-side {
+  flex: 0 0 var(--daw-col-w);
+  width: var(--daw-col-w);
+  box-sizing: border-box;
+  padding: 8px 12px 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  position: relative;
+}
+/* Nothing in the column shrinks: it scrolls when the window is short. */
+.master-side > * { flex-shrink: 0; }
+.master-side::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.master-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.master-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+}
+.master-close {
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.master-close:hover { color: var(--fg); border-color: var(--border-strong); }
+.master-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.master-presets { display: flex; }
+.master-presets .eq-seg-btn { flex: 1; padding: 0 4px; }
+.master-preset-desc {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--muted);
+  min-height: 2.7em;
+}
+
+.master-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.master-field,
+.master-listen {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.master-field-name {
+  width: 52px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.master-num {
+  width: 64px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-2);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.master-num:disabled { color: var(--fg-2); opacity: 0.7; }
+.master-num:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.master-unit {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.master-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 14px;
+}
+.master-glue-val { width: 36px; text-align: right; color: var(--fg-2); }
+
+.master-listen { flex-wrap: wrap; }
+.master-listen .eq-seg-btn:disabled { opacity: 0.4; cursor: default; }
+.master-match {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--fg-2);
+  font-size: 10.5px;
+}
+.master-match input { accent-color: var(--accent); margin: 0; }
+
+.master-readout {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--eq-graph-bg);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.master-readout-grid {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr;
+  gap: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.master-hBefore,
+.master-hAfter {
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.master-lLufs,
+.master-lTp { color: var(--muted); font-size: 10px; }
+.master-aLufs,
+.master-aTp { color: var(--accent); }
+.master-lGain { color: var(--muted); font-size: 10px; }
+.master-status {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.master-status[data-state="error"] { color: var(--danger); }
+
+.master-excerpt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.master-excerpt-state {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.master-drawer[data-excerpt="playing"] .master-excerpt-btn {
+  background: var(--gold-soft);
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+.master-note { margin: auto 0 0; padding-top: 2px; }
+
+/* Off: the settings stay readable, the live controls step back. */
+.master-drawer.master-off .master-readout,
+.master-drawer.master-off .master-listen,
+.master-drawer.master-off .master-meters { opacity: 0.55; }
+
+/* ── Master EQ (E2's general panel on the MASTER lane) ── */
+
+.master-eq-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The EQ's controls as one bar over the graph. */
+.master-eq-side.eq-side {
+  flex: 0 0 auto;
+  flex-direction: row;
+  width: auto;
+  box-sizing: border-box;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.master-eq-side .eq-side-head { flex: 0 0 auto; margin: 0; gap: 8px; }
+.master-eq-side .eq-side-controls {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.master-eq-side .eq-side-controls > * { margin: 0; flex: 0 0 auto; width: auto; }
+.master-eq-side .eq-side-controls select { width: 150px; }
+.master-eq-side .eq-out input[type="range"] { width: 90px; }
+.master-eq-title { color: var(--accent); }
+.master-eq-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  container-type: inline-size;
+}
+/* Narrower than in a lane row: the drawer shares the width with the master's
+   own columns. On a narrow window the band list gives way to the graph, which
+   edits the same bands by dragging. */
+.master-eq-body .eq-band-list { width: 300px; }
+@container (max-width: 640px) {
+  .master-eq-body .eq-band-list { display: none; }
+}
+
+/* ── Meters (approximate) ── */
+
+.master-meters {
+  flex: 0 0 104px;
+  width: 104px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.master-meters-head {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.master-bars {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.master-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-height: 0;
+  width: 40px;
+}
+.master-bar-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.master-bar-track {
+  position: relative;
+  flex: 1;
+  width: 10px;
+  min-height: 40px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.master-bar-fill {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 0;
+  background: color-mix(in srgb, var(--accent) 70%, var(--panel-3));
+}
+.master-bar-ceil {
+  position: absolute;
+  left: -1px; right: -1px;
+  height: 1px;
+  background: var(--fg-2);
+  opacity: 0.6;
+}
+.master-bar-in .master-bar-ceil { display: none; }
+.master-bar-val,
+.master-lufs-val {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+/* Momentary loudness under the bars, In and Out, with its unit below. */
+.master-lufs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-items: center;
+  row-gap: 1px;
+}
+.master-lufs-cap {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.master-gr {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--muted);
+  text-align: center;
+}

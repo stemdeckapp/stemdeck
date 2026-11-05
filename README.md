@@ -49,9 +49,9 @@
   <img src="imgs/screenshot/stemdeck.png" alt="The StemDeck studio: a song split into vocals, drums, bass, guitar, piano and other, each on its own lane" width="100%">
 </p>
 
-StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Drop in an audio file or paste a YouTube or SoundCloud link. Separation runs on your own machine, and StemDeck does not upload your audio.
+StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Sing along in Karaoke, or film yourself playing along in Performance. Drop in an audio file or paste a YouTube or SoundCloud link. Separation runs on your own machine, and StemDeck does not upload your audio.
 
-> **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. What you import, and the stems made from it, are saved in your library folder on the machine that runs StemDeck; StemDeck does not upload or share them. See the [Disclaimer](#disclaimer).
+> **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. What you import, the stems made from it, and the takes you record, are saved in your library folder on the machine that runs StemDeck; StemDeck does not upload or share them. See the [Disclaimer](#disclaimer).
 
 
 <a name="download"></a>
@@ -60,25 +60,28 @@ StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano 
 
 Each link downloads the latest release. [Release notes](https://github.com/stemdeckapp/stemdeck/releases/latest) · [Every version](https://github.com/stemdeckapp/stemdeck/releases)
 
-| Platform | NVIDIA or Apple Silicon | Everything else |
+| Platform | NVIDIA, AMD (Linux) or Apple Silicon | Everything else |
 |---|---|---|
 | <img src="imgs/readme/os-windows.svg" width="16" align="top" alt=""> &nbsp;**Windows** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.NVIDIA.zip) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Windows-x64.zip) |
 | <img src="imgs/readme/os-apple.svg" width="16" align="top" alt=""> &nbsp;**macOS** | [Apple Silicon (M1 and later)](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-arm64.dmg) | [Intel Mac](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-macOS-x64.dmg) |
-| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
+| <img src="imgs/readme/os-linux.svg" width="16" align="top" alt=""> &nbsp;**Linux** | [NVIDIA or AMD GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.NVIDIA.tar.gz) | [No NVIDIA or AMD GPU](https://github.com/stemdeckapp/stemdeck/releases/latest/download/StemDeck-Linux-x64.tar.gz) |
 
-<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. On Unraid, search "StemDeck" in Apps.
+<img src="imgs/readme/os-docker.svg" width="16" align="top" alt=""> &nbsp;**Docker / Unraid:** [`ghcr.io/stemdeckapp/stemdeck:latest`](https://github.com/stemdeckapp/stemdeck/pkgs/container/stemdeck). It runs on the CPU as it is; add `--runtime=nvidia` to use an NVIDIA GPU. For an AMD GPU (community-tested), use the `:rocm` tag with `--device /dev/kfd --device /dev/dri`. On Unraid, search "StemDeck" in Apps.
 
 <details>
-<summary><b>What's new in 0.20.0</b></summary>
+<summary><b>What's new in 0.21.0</b></summary>
 
 <br>
 
-- **Guide.** A new button in the left rail turns the studio into its own manual: point at anything to see what it does, and every number in the song facts says what it measures.
-- **The Trash.** A count on its icon, hold a song for a second to bring it back, and pick several at once with Ctrl or Shift.
-- **Deleting a song while it extracts stops it,** and keeps its files until you empty the Trash.
-- **Imports stay in the background:** the song you have open stays open.
-- **We Recommend** welcomes Adrianna Claro, and cards can now link to Spotify and Apple Music.
-- **Portable Windows installs** in a folder they cannot write to now say so clearly.
+- **Four modes:** Practice, Advanced, Karaoke and Performance, all in one Mode menu.
+- **Karaoke.** The lyrics fill the window and light up as the song plays, with the voice off and a queue of songs.
+- **Performance.** Film yourself playing along, review the take, trim it and export an MP4.
+- **Each mode keeps its own stems and its own saved mix** of a song.
+- **Advanced** gains an EQ on every lane, a Master with a loudness target, recording tracks and video tracks.
+- **A redesigned Settings,** with a section list and a search box.
+- **A GPU video encoder** for Performance exports, with an automatic fall-back to the CPU.
+- **Safer by default:** a guard against requests from other websites, auto-delete that skips favorites, songs with takes or versions, and songs still being worked on, and a library that survives one bad record.
+- **Imports:** a Detect lyrics switch, and Try again on an import that failed.
 
 All of it, with credits to the people who reported each problem, is in the [release notes](https://github.com/stemdeckapp/stemdeck/releases/latest).
 
@@ -89,7 +92,7 @@ All of it, with credits to the people who reported each problem, is in the [rele
 
 <br>
 
-**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card sets up GPU support; later launches start in seconds.
+**Windows and Linux.** Unzip, then run `StemDeck.exe` (Windows) or `StemDeck` (Linux). No installer and nothing else to install. Put the folder somewhere you can write to, such as `C:\StemDeck`: a portable StemDeck keeps its runtime, models and settings, and on Windows your songs by default, in a `data` folder beside it, so it cannot run from Program Files. The first launch downloads FFmpeg and the separation model, and on an NVIDIA card (or, on Linux, an AMD card ROCm supports, such as the RX 7000 and RX 9000 series) sets up GPU support; later launches start in seconds.
 
 **macOS.** Open the DMG and drag StemDeck to Applications. StemDeck is not code-signed yet, so clear the quarantine flag once, or macOS will say the app is damaged:
 
@@ -101,13 +104,24 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 
 **Docker and Unraid.** See [Build from source](docs/build-from-source.md#docker) for the `docker run` line, GPU passthrough and the Unraid volume mapping.
 
-**Updates.** The desktop app tells you when a new version is out and installs it for you.
+**Updates.** The desktop app tells you when a new version is out. On Windows and Linux it usually installs the update for you. A version that changes the Python packages StemDeck runs on is a full download instead, and 0.21.0 is one: about 300 MB on Windows and 420 MB on Linux, once. On Windows, unzip it over your current StemDeck folder. The zip has no files inside `data`, so your songs, models and settings there stay as they are. A portable StemDeck no longer opens a library in `Documents\StemDeck\jobs` on its own: if yours is there, choose that folder once in Settings, StemData location. Unzipped into a new folder, StemDeck starts with default settings, without the songs from the old `data` folder, and downloads FFmpeg and the model again. On macOS, download the new DMG.
 
 </details>
 
 <a name="what-you-can-do"></a>
 
 ## <img src="imgs/readme/grid.svg" width="26" align="top" alt=""> What you can do
+
+<a name="modes"></a>
+
+### <img src="imgs/readme/grid.svg" width="22" align="top" alt=""> Modes
+
+Pick one from **Mode** in the left rail. Each mode keeps its own choice of stems and its own saved mix of a song, so a change in one does not follow you into another.
+
+- **Practice:** stems, mixer, speed, key, click and loop, without recording, EQ or the master.
+- **Advanced:** everything, with recording tracks, take folders, an EQ on every lane, the master and video.
+- **Karaoke:** the lyrics fill the window and light up word by word as the song plays. Switch the voice and the backing vocals on or off, and drag songs from the library into a queue.
+- **Performance:** film yourself playing along to the song, then export the video.
 
 ### <img src="imgs/readme/stems.svg" width="22" align="top" alt=""> Split any song
 
@@ -116,6 +130,7 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 - **Files or links:** MP3, WAV, FLAC, OGG, Opus, M4A and MP4, or a YouTube or SoundCloud link.
 - **Search without leaving the app:** YouTube songs and playlists, and SoundCloud, with a preview.
 - **Pick only what you need** before you extract.
+- **Choose the lanes in each mode** with **Stems**: the stems you pick get their own lane, the rest play together in Original. Nothing is separated again.
 - **Whole YouTube playlists** go into an import queue and run one after another.
 
 ### <img src="imgs/readme/sliders.svg" width="22" align="top" alt=""> Practice with it
@@ -127,11 +142,21 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 - **Play with a click** that follows the song, with a count-in, any beats per bar and groupings such as 3+2+2.
 - **Fix the beat grid** when the click drifts: move, add or remove beats and mark the bar lines.
 
+### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Film yourself playing
+
+In Performance mode:
+
+- **Your camera and your input:** pick a camera, or none, and your microphone or audio interface input.
+- **Say what you play** with **I play**, and that part is taken out of the backing track you hear and out of the video.
+- **Review the take** in step with the song, and trim its start and end on the **Take Timeline**.
+- **Export to MP4** at 720p or 1080p, at 24, 30 or 60 fps. StemDeck uses your graphics card when its encoder passes a short test on your computer, and the CPU otherwise. **Settings > Export** has a Video encoder choice and a Test encoders button.
+- **The video stays on your computer.** Uploading and live streaming are not part of this release.
+
 ### <img src="imgs/readme/gauge.svg" width="22" align="top" alt=""> Know the song
 
 - **Key, tempo and loudness,** found for you.
 - **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
-- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, StemDeck can also write them down from the vocals when none are found.
+- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, or an AMD one on Linux, StemDeck can also write them down from the vocals when none are found.
 - **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
 
 ### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share
@@ -142,7 +167,9 @@ The first launch downloads the runtime and the model. Apple Silicon separates on
 
 ### <img src="imgs/readme/eye.svg" width="22" align="top" alt=""> It explains itself
 
-Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
+Click **Guide** in the left rail and point at anything. Every button, lane control and number says what it does, in plain words, and so do the Mode menu and the options in Settings. While Guide is on, clicks explain instead of acting, so nothing happens by accident.
+
+**Settings** has a list of sections on the left and a search box, and most changes save as soon as you make them.
 
 ### <img src="imgs/readme/phone.svg" width="22" align="top" alt=""> On your phone too
 
@@ -247,7 +274,7 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 ## <img src="imgs/readme/flag.svg" width="26" align="top" alt=""> Disclaimer
 
-StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. Audio you import, and the stems made from it, are saved only in the library folder on the machine that runs StemDeck, and StemDeck does not upload, share or redistribute them. To find song details and lyrics it sends the song's name to the services named in its Settings and, only if you add an AcoustID key, an audio fingerprint; it does not send the audio itself.
+StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. Audio you import, the stems made from it, and the takes you record, are saved only in the library folder on the machine that runs StemDeck, and StemDeck does not upload, share or redistribute them. To find song details and lyrics it sends the song's name to the services named in its Settings and, only if you add an AcoustID key, an audio fingerprint; it does not send the audio itself.
 
 YouTube and SoundCloud link support is provided via [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a convenience. Automated downloading may violate YouTube's Terms of Service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, complying with the terms of service of any site you download from, and respecting the copyright of the material you work with.
 
@@ -258,9 +285,11 @@ The author(s) of StemDeck provide this software "as is", without warranty of any
 
 ## <img src="imgs/readme/shield.svg" width="26" align="top" alt=""> License
 
-StemDeck is [Apache-2.0](LICENSE).
+StemDeck is free software under the [GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only). You may use, study, change and share it. If you change it and let other people use your version over a network, the AGPL asks you to offer them its source code too; the About dialog links to the source for that reason.
 
-Every download ships a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `licenses/INDEX.txt` lists each packaged Python dependency with its version and license, and each one's full license text sits beside it. That inventory is generated from the packaged interpreter at build time, so it describes what actually shipped rather than what was expected to.
+Releases up to and including 0.20.0 were published under Apache-2.0, and copies received under those terms keep them.
+
+Every download ships StemDeck's own `LICENSE.txt`, a `THIRD_PARTY_NOTICES.txt` and a `licenses/` folder. `licenses/INDEX.txt` lists each packaged Python dependency with its version and license, and each one's full license text sits beside it. That inventory is generated from the packaged interpreter at build time, so it describes what actually shipped rather than what was expected to.
 
 FFmpeg is a GPL build. StemDeck downloads it and runs it as a separate executable, so it does not change StemDeck's own license, and `THIRD_PARTY_NOTICES.txt` carries the written offer of source for the exact build your platform receives.
 
@@ -281,3 +310,5 @@ Questions, ideas and show-and-tell are all welcome.
 ## <img src="imgs/readme/link.svg" width="26" align="top" alt=""> Contributing
 
 Issues, feature suggestions and pull requests are welcome. See the [open issues](https://github.com/stemdeckapp/stemdeck/issues) for what is planned, and [Build from source](docs/build-from-source.md) to run it yourself.
+
+If you would like to support the time I put into StemDeck, a Donate button shows in the app's left rail as soon as donating is set up. Donating is optional: StemDeck stays free, with every feature, for everyone.

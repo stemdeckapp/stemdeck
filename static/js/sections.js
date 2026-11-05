@@ -67,11 +67,21 @@ export function initSections(trackId, sections, duration) {
   const addBtn = document.getElementById("sectionsAddBtn");
   if (addBtn && !addBtn.dataset.sectionsWired) {
     addBtn.dataset.sectionsWired = "1";
-    addBtn.addEventListener("click", () => _addSection());
+    addBtn.addEventListener("click", () => {
+      // aria-disabled, not disabled, so the tooltip still says why.
+      if (addBtn.getAttribute("aria-disabled") === "true") return;
+      _addSection();
+    });
   }
   _wireClearButton();
 
   _render();
+}
+
+/** The open song's sections in time order, as copies (read only): Streamer
+ * Mode's take timeline draws its markers from them. */
+export function getSections() {
+  return [..._sections].sort((a, b) => a.start - b.start).map((s) => ({ ...s }));
 }
 
 export function destroySections() {
@@ -91,6 +101,7 @@ export function destroySections() {
   if (_container) _container.innerHTML = "";
   _container = null;
   _refreshClearVisibility();
+  refreshSectionsAddState();
 }
 
 // ─── Rendering ────────────────────────────────────────────
@@ -99,6 +110,7 @@ function _render() {
   // Before the container guard: the button lives in the header, not the
   // ribbon, so its state must stay correct even when the ribbon is absent.
   _refreshClearVisibility();
+  refreshSectionsAddState();
   if (!_container) return;
   _container.innerHTML = "";
 
@@ -424,6 +436,18 @@ function _newSectionBounds() {
   // Verify no overlap
   if (_sections.some((s) => start < s.end && end > s.start)) return null;
   return { start, end };
+}
+
+// Add is unavailable exactly when pressing it would do nothing: no place for a
+// section (#775) and no armed loop that would at least explain itself with the
+// "loop overlaps" notice. Recomputed whenever sections, the song, the loop or
+// the language change.
+export function refreshSectionsAddState() {
+  const btn = document.getElementById("sectionsAddBtn");
+  if (!btn) return;
+  const blocked = !_armedLoop() && _newSectionBounds() === null;
+  btn.setAttribute("aria-disabled", String(blocked));
+  btn.title = blocked ? t("sections.addNoRoom") : t("sections.addAria");
 }
 
 function _addSection() {

@@ -38,7 +38,14 @@
 //
 // "tight" only closes up the spacing between clusters, for the windows where
 // even the popover leaves the row overflowing.
-const LEVELS = ["wrap", "click", "tight"];
+//
+// "rows" lets whole clusters wrap onto a second line, for the windows where
+// even the tight row is too wide. Before it, that row scrolled sideways inside
+// the strip with no scrollbar showing: at the desktop app's default 1280x820
+// window, with the library open, the strip had 671px for a 910px row, so
+// Global key was cut mid-label and the click track sat out of sight behind
+// Export Mix. Wrapping costs one control row of height and hides nothing.
+const LEVELS = ["wrap", "click", "tight", "rows"];
 
 // Below this the panel is too narrow to hold the widest control in it with
 // anything beside it, and wrapping stops being a two-row layout.
@@ -143,6 +150,10 @@ function apply() {
   // window grows or the sidebar opens.
   while (level > 0) strip.classList.remove(`collapse-${LEVELS[--level]}`);
   strip.style.removeProperty("--metro-wrap-w");
+  // Part of the "rows" level, on the row rather than the strip because it
+  // moves the strip's sibling; see there.
+  const wasStacked = strip.parentElement.classList.contains("collapse-stack");
+  strip.parentElement.classList.remove("collapse-stack");
 
   // A hidden strip has no width to fit anything into, and measuring one would
   // collapse every level for nothing.
@@ -186,6 +197,26 @@ function apply() {
   if (deficit > 0) {
     strip.classList.add("collapse-tight");
     level = 3;
+    deficit = overrun() + slack(3);
+  }
+
+  // Rows: the clusters wrap, so the row cannot overrun any more and there is
+  // nothing left to measure. A single cluster wider than the whole strip still
+  // scrolls, the one case wrapping cannot answer.
+  if (deficit > 0) {
+    strip.classList.add("collapse-rows");
+    level = 4;
+
+    // Export Mix and the Master pill sit beside the strip and take ~180px off
+    // every line of it. With the library open at the 1024px minimum window
+    // that turned two lines of clusters into four. Moving them onto a line of
+    // their own under the clusters gives the strip the whole width back, but
+    // costs a line itself, so it is kept only when the controls row comes out
+    // shorter for it.
+    const row = strip.parentElement;
+    const beside = row.getBoundingClientRect().height;
+    row.classList.add("collapse-stack");
+    if (row.getBoundingClientRect().height >= beside) row.classList.remove("collapse-stack");
   }
 
   strip.style.removeProperty("justify-content");
@@ -195,7 +226,8 @@ function apply() {
   // stranded at coordinates that no longer describe its trigger. Announced
   // rather than called directly so this stays a measuring module -- it has no
   // business knowing which cluster it just reshaped.
-  if (level !== was) {
+  const stacked = strip.parentElement.classList.contains("collapse-stack");
+  if (level !== was || stacked !== wasStacked) {
     window.dispatchEvent(new CustomEvent("footerfit", { detail: { level: LEVELS[level - 1] ?? null } }));
   }
 }

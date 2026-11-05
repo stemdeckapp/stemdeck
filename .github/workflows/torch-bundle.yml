@@ -1,0 +1,96 @@
+name: Torch Bundle Check
+
+# The Linux desktop packages swap torch, torchaudio and torchvision for CPU
+# wheels after the project install. 0.20.0 swapped only torch and torchaudio,
+# so the CPU package shipped PyPI's default Linux torchvision, the cu124 build,
+# beside CPU torch, and the karaoke split could not load it (#778). Nothing in
+# CI ran that swap. This job runs it in the order make-portable.sh does, plus
+# the gate that now fails the build, so a regression fails here on the PR.
+#
+# Bounded on purpose. CPU torch goes in before the project install, so the
+# resolver keeps it and never downloads CUDA torch and its ~3 GB of nvidia-*
+# wheels. torchvision still comes from PyPI exactly as the project install
+# resolves it, which is the cu124 build: the pair the 0.20.0 package shipped.
+# The job checks that it reproduced that pair and that the gate rejects it
+# before it runs the real swap, so a pass means the swap fixed something.
+#
+# GitHub-hosted and disposable, no secrets, no fork guard needed (see
+# linux-check.yml).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/linux/make-portable.sh"
+      - "scripts/linux/bake-cpu-torch.sh"
+      - "scripts/check_torch_bundle.py"
+      - "packaging/torch-versions.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/torch-bundle.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/linux/make-portable.sh"
+      - "scripts/linux/bake-cpu-torch.sh"
+      - "scripts/check_torch_bundle.py"
+      - "packaging/torch-versions.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/torch-bundle.yml"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-cpu-swap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_LINK_MODE: copy
+      # Shallow, tagless clone: hatch-vcs cannot derive a version (#169).
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+      VERSIONS: packaging/torch-versions.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          version: "0.11.6"
+          enable-cache: "false"
+
+      - name: Create the bundle Python
+        run: |
+          command -v readelf  # the gate reads NEEDED entries with it
+          uv venv --python 3.12 "$RUNNER_TEMP/bundle"
+          echo "PY=$RUNNER_TEMP/bundle/bin/python" >> "$GITHUB_ENV"
+          # make-portable.sh installs these first too; the swap runs pip.
+          uv pip install --python "$RUNNER_TEMP/bundle/bin/python" pip setuptools wheel
+
+      - name: Seed CPU torch so the project install never fetches CUDA torch
+        run: |
+          TORCH="$("$PY" -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["cpuTorch"])' "$VERSIONS")"
+          uv pip install --python "$PY" --no-deps \
+            "torch==${TORCH}+cpu" "torchaudio==${TORCH}+cpu" \
+            --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install StemDeck the way make-portable.sh does
+        run: uv pip install --python "$PY" .
+
+      - name: The unfixed pair is reproduced, and the gate rejects it
+        run: |
+          VISION="$("$PY" -I -c 'import pathlib, re, sysconfig; p = pathlib.Path(sysconfig.get_paths()["purelib"], "torchvision", "version.py"); print(re.search(r"__version__\s*=\s*.([^\x27\x22]+)", p.read_text()).group(1))')"
+          echo "torchvision before the swap: $VISION"
+          case "$VISION" in
+            *+cu*) ;;
+            *) echo "::error::expected PyPI's CUDA torchvision before the swap, got $VISION; this job no longer reproduces #778"; exit 1 ;;
+          esac
+          if "$PY" scripts/check_torch_bundle.py --versions "$VERSIONS" --expect-cpu; then
+            echo "::error::the gate passed a CUDA torchvision beside CPU torch"
+            exit 1
+          fi
+
+      - name: Bake CPU torch and run the gate (the step make-portable.sh runs)
+        run: bash scripts/linux/bake-cpu-torch.sh "$PY"

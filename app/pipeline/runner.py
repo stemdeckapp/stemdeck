@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import (
@@ -19,8 +19,9 @@ from app.core.config import (
 )
 from app.core.models import Job, JobCancelled, _set, settle_cancelled
 from app.core.redact import redact
-from app.core.registry import is_upload
+from app.core.registry import is_upload, keep_added_time, mark_stems_complete, saved_fields
 from app.core.registry import persist as persist_registry
+from app.pipeline import jobqueue
 from app.pipeline.analyze import analyze, refine_key_from_stems
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.cancel import check_cancel as _check_cancel
@@ -40,6 +41,7 @@ from app.pipeline.lyrics_lookup import LyricsLookup
 from app.pipeline.lyrics_retime import retime_after_separation
 from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
+from app.pipeline.stem_storage import store_stems
 from app.pipeline.transcribe import transcribe_lyrics
 
 logger = logging.getLogger("stemdeck.pipeline")
@@ -148,11 +150,10 @@ def _prepare_local_source(job: Job, source: Path, job_dir: Path) -> Path:
 def _lap(job: Job, name: str, start: float) -> float:
     """Record a stage duration in job.stage_timings; returns a new start mark.
     Timings feed the one-line completion summary, metadata.json, and the
-    failure quarantine's error.txt (#293)."""
+    failure quarantine's error.txt (#293). A new dict each time: a registry
+    save reads the old one from another thread, without a lock this takes."""
     now = time.monotonic()
-    if job.stage_timings is None:
-        job.stage_timings = {}
-    job.stage_timings[name] = round(now - start, 1)
+    job.stage_timings = {**(job.stage_timings or {}), name: round(now - start, 1)}
     return now
 
 
@@ -179,7 +180,7 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     _check_cancel(job)
     stems_root = separate(job, source, job_dir)
     mark = _lap(job, "separate", mark)
-    found = collect(job, stems_root, job_dir)
+    found = collect(stems_root, job_dir)
     stems_dir = job_dir / "stems"
     # Deleting the source is the bulk of disk reclaim per job, and it happens
     # before the ffmpeg amix steps below in case scratch space is tight. But
@@ -282,13 +283,21 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     failure raises out of _run_common, past finish(), and nothing is written.
     """
     lookup = IdentifyLookup.start(job, [source])
+    # Lyrics only when Detect lyrics was on for this job (False skips all
+    # three stages below; None, a job from before the setting, looks as it
+    # always did).
+    want_lyrics = job.auto_lyrics is not False
     # The lyrics, on the same terms: LRCLIB beside separation, lyrics.json
     # written only by a pipeline that got to the end. Looked up by the
     # identity once the identification has it, else by the tags.
-    lyrics = LyricsLookup.start(
-        job,
-        job_dir,
-        identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+    lyrics = (
+        LyricsLookup.start(
+            job,
+            job_dir,
+            identity=(lambda: lookup.wait_identity(LYRICS_IDENTITY_WAIT_SEC)) if lookup else None,
+        )
+        if want_lyrics
+        else None
     )
     _run_common(job, source, job_dir)
     if lookup is not None:
@@ -300,6 +309,8 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
         mark = time.monotonic()
         lyrics.finish(job, job_dir, LYRICS_LOOKUP_GRACE_SEC)
         _lap(job, "lyrics_wait", mark)
+    if not want_lyrics:
+        return
     # Lyrics from the vocals stem, only when the lookup found none: last,
     # because it needs both the stem and the lookup's answer. Never raises
     # but for a cancel.
@@ -314,12 +325,42 @@ def _run_with_band_lookup(job: Job, source: Path, job_dir: Path) -> None:
     _lap(job, "retime", mark)
 
 
+def _store_stems(job: Job, job_dir: Path) -> None:
+    """WAV or MP3 storage of the stems (#783). Last, once no stage reads the
+    stems any more: separation and every analysis ran on the WAVs. Never
+    fails the song; store_stems keeps the WAVs on any failure, and the guard
+    is for a future change there, as for the beat grid."""
+    _check_cancel(job)
+    mark = time.monotonic()
+    try:
+        store_stems(job, job_dir)
+    except JobCancelled:
+        raise
+    except Exception:
+        logger.exception("stem storage stage failed for job %s; stems kept as WAV", job.id)
+        _set(job, stem_format="wav", stem_mp3_kbps=None)
+    _lap(job, "store", mark)
+
+
+def _mark_stems_complete(job: Job, job_dir: Path) -> None:
+    """Last: nothing writes into stems/ after it. A failure costs the marker,
+    not the song, whose stems are whole: failing the job would delete them.
+    A song without the marker is rebuilt by the metadata.json it gets once
+    done, as a song made before the marker is."""
+    try:
+        mark_stems_complete(job_dir)
+    except OSError:
+        logger.exception("[%s] could not mark the stems complete", job.id)
+
+
 def _run_blocking(job: Job, url: str, job_dir: Path) -> None:
     _check_cancel(job)
     mark = time.monotonic()
     source = download(job, url, job_dir)
     _lap(job, "download", mark)
     _run_with_band_lookup(job, source, job_dir)
+    _store_stems(job, job_dir)
+    _mark_stems_complete(job, job_dir)
 
 
 def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
@@ -328,6 +369,8 @@ def _run_local_blocking(job: Job, source_path: Path, job_dir: Path) -> None:
     source = _prepare_local_source(job, source_path, job_dir)
     _lap(job, "prepare", mark)
     _run_with_band_lookup(job, source, job_dir)
+    _store_stems(job, job_dir)
+    _mark_stems_complete(job, job_dir)
 
 
 def _write_metadata(job: Job, job_dir: Path) -> None:
@@ -346,6 +389,8 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "lufs": job.lufs,
         "peak_db": job.peak_db,
         "dynamic_range": job.dynamic_range,
+        "loudness_version": job.loudness_version,
+        "loudness_remeasured": job.loudness_remeasured,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
         "sections": job.sections,
@@ -356,6 +401,9 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "compute_device": job.compute_device,
         "gpu_fallback": job.gpu_fallback,
         "stage_timings": job.stage_timings,
+        "stem_format": job.stem_format,
+        "stem_mp3_kbps": job.stem_mp3_kbps,
+        **saved_fields(job),
     }
     try:
         (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
@@ -363,9 +411,10 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         logger.warning("could not write metadata.json for job %s", job.id, exc_info=True)
 
 
-# Files worth keeping in a quarantined failure dir. Everything else (source
-# download, stem WAVs, video) is deleted first -- evidence must stay KB-scale,
-# not GB-scale.
+# Files worth keeping in a quarantined failure dir. Everything else (a link's
+# source download, stem WAVs, video) is deleted first -- evidence must stay
+# KB-scale, not GB-scale. An upload's source.* is kept as well (see
+# _quarantine_failed_job).
 _QUARANTINE_KEEP = frozenset(("error.txt", "metadata.json"))
 
 
@@ -376,7 +425,13 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
     tail, full traceback), strips the heavy audio payloads, and moves the dir
     to jobs/failed/<id> where sweep_failed_jobs expires it after FAILED_TTL.
     Best-effort throughout: any step failing falls back to plain removal so a
-    pathological error can never leak disk."""
+    pathological error can never leak disk.
+
+    Except for an upload's source.*. It goes to the quarantine with the
+    evidence, and if the quarantine itself fails its folder is left where it
+    is. Same reason the runner never deletes it on success: a link can be
+    fetched again, an upload is the one copy StemDeck has, and a failure (out
+    of memory, disk full, a killed worker) says nothing about the file."""
     tail: list[str] = getattr(exc, "tail", None) or []
     cause = classify_failure("\n".join([*tail, repr(exc)]))
     detail = cause
@@ -394,6 +449,18 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
     job.error_detail = detail
 
     try:
+        # Strip heavy payloads: the quarantine keeps diagnostics, not audio.
+        # First, so an upload's folder left behind by a failure below (disk
+        # full writing error.txt) holds no stems for restore() to adopt.
+        keep_source = is_upload(job)
+        for p in list(job_dir.iterdir()):
+            if p.name in _QUARANTINE_KEEP or (keep_source and p.name.startswith("source.")):
+                continue
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+
         # title/source stay unredacted: they never leave this file (the
         # /failure API's allowlist excludes both, see app/api/jobs.py), so
         # this is purely local diagnostic value for the person looking at
@@ -403,7 +470,7 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         # URL or the reporter's home directory.
         redacted_tail = [redact(line) for line in tail]
         lines = [
-            f"time: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+            f"time: {datetime.now(UTC).isoformat(timespec='seconds')}",
             f"job: {job.id}",
             f"title: {job.title or '(unknown)'}",
             f"source: {job.source_url or '(unknown)'}",
@@ -421,15 +488,6 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
             lines += ["", "--- traceback ---", tb]
         (job_dir / "error.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # Strip heavy payloads: the quarantine keeps diagnostics, not audio.
-        for p in list(job_dir.iterdir()):
-            if p.name in _QUARANTINE_KEEP:
-                continue
-            if p.is_dir():
-                shutil.rmtree(p, ignore_errors=True)
-            else:
-                p.unlink(missing_ok=True)
-
         failed_root = jobs_dir / "failed"
         failed_root.mkdir(parents=True, exist_ok=True)
         dest = failed_root / job.id
@@ -438,6 +496,11 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         shutil.move(str(job_dir), str(dest))
         logger.info("[%s] failure evidence kept at %s", job.id, dest)
     except Exception:
+        if is_upload(job):
+            logger.warning(
+                "[%s] quarantine failed; upload left at %s", job.id, job_dir, exc_info=True
+            )
+            return
         logger.warning("[%s] quarantine failed; removing job dir", job.id, exc_info=True)
         _rmtree(job_dir)
 
@@ -452,33 +515,58 @@ async def _run_async(
 ) -> None:
     """Common async wrapper: acquires the pipeline lock, runs blocking_fn in a
     thread, then handles success / cancel / error outcomes uniformly."""
+    # Before the run writes into the folder and moves its time: a link's
+    # folder is made just now, and a song added before the add time was kept
+    # gets it here.
+    await asyncio.to_thread(keep_added_time, job, job_dir)
     try:
         async with _pipeline_lock:
             await asyncio.to_thread(blocking_fn, job, *fn_args, job_dir)
     except Exception as e:
         if not isinstance(e, JobCancelled) and not job.cancel_requested:
+            if jobqueue.is_stopping():
+                # The shutdown killed the demucs worker under this job, which
+                # reads exactly like a crash. Failing it deleted an upload. Its
+                # status stays resumable and the next start queues it again.
+                logger.info("[%s] interrupted by shutdown: %s", job.id, e)
+                return
             logger.exception("pipeline failed for job %s: %s", job.id, e)
-            _set(job, status="error", stage="Error: Processing failed", error=error_msg)
             # A fingerprint may still have the source open (Windows).
             release_source(job.id)
-            _quarantine_failed_job(job, job_dir, jobs_dir, e)
-            persist_registry(jobs_dir)
+            # Off the loop: stripping and moving a multi-GB folder on a NAS
+            # stalled every stream and request. The status changes after it,
+            # so the first "error" a page sees already carries error_detail
+            # and nothing can delete the folder mid-move.
+            await asyncio.to_thread(_quarantine_failed_job, job, job_dir, jobs_dir, e)
+            _set(job, status="error", stage="Error: Processing failed", error=error_msg)
+            # Emptied from the Trash while its folder moved. Before the
+            # persist, which forgets a deletion whose folder is gone.
+            await jobqueue.finish_deferred_delete(job, jobs_dir)
+            await asyncio.to_thread(persist_registry, jobs_dir)
             return
         logger.info(
             "pipeline cancelled%s for job %s",
             " (wrapped)" if not isinstance(e, JobCancelled) else "",
             job.id,
         )
+        if job.stop_requested:
+            # A stopped job keeps its source, in the Library (#772) or the
+            # Trash (#748). Its half-written separation is of no use and can
+            # be large; Extract clears the same folder (reset_for_rerun).
+            # Cleared before the status changes, so nothing that sees
+            # "stopped" can still find it.
+            await asyncio.to_thread(shutil.rmtree, job_dir / DEMUCS_MODEL, ignore_errors=True)
         remove_files = settle_cancelled(job)
-        persist_registry(jobs_dir)
+        await asyncio.to_thread(persist_registry, jobs_dir)
         release_source(job.id)
         # A job stopped from the Trash keeps its files until the Trash is
         # emptied (#748). A plain cancel's folder is retried like delete_job's
         # removal: right after the cancel terminated ffmpeg or the demucs
         # worker, Windows can still hold one of its files, and a single attempt
         # left the folder behind for good.
-        if remove_files and not remove_job_dir(job_dir):
+        if remove_files and not await asyncio.to_thread(remove_job_dir, job_dir):
             logger.warning("[%s] cancelled job's folder could not be removed", job.id)
+        await jobqueue.finish_deferred_delete(job, jobs_dir)
         return
     # A cancel or a trash that arrived after the last stage checked for it lost
     # the race, and the job finished anyway. Left set, the flags would make
@@ -488,7 +576,9 @@ async def _run_async(
     job.stop_requested = False
     _set(job, status="done", progress=1.0, stage="Done")
     _write_metadata(job, job_dir)
-    persist_registry(jobs_dir)
+    await asyncio.to_thread(persist_registry, jobs_dir)
+    # Emptied from the Trash while it finished anyway.
+    await jobqueue.finish_deferred_delete(job, jobs_dir)
     # One-line per-job summary: the timing telemetry that makes performance
     # regressions (and the CPU-vs-GPU question) answerable from logs (#293).
     t = job.stage_timings or {}
@@ -514,7 +604,7 @@ async def run_pipeline(job: Job, url: str, jobs_dir: Path) -> None:
             stage="Error: Processing failed",
             error="Audio processing failed. Please try another video.",
         )
-        persist_registry(jobs_dir)
+        await asyncio.to_thread(persist_registry, jobs_dir)
         return
     await _run_async(
         job,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -17,6 +18,96 @@ def test_health_endpoints_report_ok():
             assert "ffmpeg_configured" in body
             assert "jobs_dir" not in body
             assert "data_dir" not in body
+
+
+def test_health_reports_export_formats(monkeypatch):
+    # How the export menu learns that OGG is unavailable (#824).
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(
+        main_mod,
+        "export_formats",
+        lambda: {"wav": True, "mp3": True, "flac": True, "ogg": False},
+    )
+    with TestClient(app) as client:
+        body = client.get("/api/health").json()
+    assert body["export_formats"] == {"wav": True, "mp3": True, "flac": True, "ogg": False}
+
+
+def test_health_reports_unknown_export_formats_as_null(monkeypatch):
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "export_formats", lambda: None)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["export_formats"] is None
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+def test_health_reports_transpose_export(monkeypatch, value):
+    # How the export menu learns that a transposed mix cannot be exported
+    # (#858): the macOS download's ffmpeg has no rubberband filter.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "transpose_export", lambda: value)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["transpose_export"] is value
+
+
+def test_health_transpose_export_is_a_boolean_or_null():
+    # The real probe: never a path or a filter listing.
+    from app.main import app
+
+    with TestClient(app) as client:
+        value = client.get("/api/health").json()["transpose_export"]
+    assert value is None or isinstance(value, bool)
+
+
+@pytest.mark.parametrize("value", ["4.4.2-0ubuntu0.22.04.1", None])
+def test_health_reports_an_ffmpeg_too_old(monkeypatch, value):
+    # How the page learns that this FFmpeg is older than 5.1.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: value)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["ffmpeg_too_old"] == value
+
+
+def test_startup_logs_an_ffmpeg_too_old(monkeypatch, caplog):
+    # A server with no browser open still says so, with the version, the
+    # binary and what to do.
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: "4.4.2")
+    with caplog.at_level("ERROR", logger="stemdeck"), TestClient(app):
+        pass
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any("4.4.2" in m and "5.1 or newer" in m and "STEMDECK_FFMPEG" in m for m in errors)
+
+
+def test_startup_is_quiet_about_a_new_enough_ffmpeg(monkeypatch, caplog):
+    from app import main as main_mod
+    from app.main import app
+
+    monkeypatch.setattr(main_mod, "ffmpeg_too_old", lambda: None)
+    with caplog.at_level("ERROR", logger="stemdeck"), TestClient(app):
+        pass
+    assert not [r for r in caplog.records if "5.1 or newer" in r.getMessage()]
+
+
+def test_health_export_formats_carry_no_path():
+    # The real probe: booleans keyed by format, never the ffmpeg location.
+    from app.main import app
+
+    with TestClient(app) as client:
+        formats = client.get("/api/health").json()["export_formats"]
+    if formats is not None:
+        assert set(formats) == {"wav", "mp3", "flac", "ogg"}
+        assert all(isinstance(v, bool) for v in formats.values())
 
 
 def test_health_identifies_the_answering_process():

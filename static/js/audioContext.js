@@ -20,31 +20,49 @@
 // a device asking for more resolution than the material has gets capped.
 const MAX_GRAPH_RATE = 48000;
 
+// The output device's rate, once a context has told us. Later contexts go
+// straight to the right constructor, so none is opened only to be closed.
+let _deviceRate = 0;
+
 /**
  * An AudioContext at a sane rate for 44.1 kHz material.
  *
  * The device rate can only be read from a context, and a context's rate is
- * fixed once it exists, so a throwaway one is opened to ask and closed again.
- * If that fails, or the browser declines the rate we ask for, we fall back to
- * the plain constructor: playing at the device's rate is the current behaviour
- * and is never worse than not playing.
+ * fixed once it exists. So the first call opens a plain one, which is the
+ * one returned unless the device runs above the cap; only then is it closed
+ * and a capped one opened. A probe context opened and closed on every call
+ * is what this used to do, and Chromium never frees a context that was
+ * closed before it started: one was kept per song load, for good.
+ *
+ * If the capped constructor fails, or the browser declines the rate we ask
+ * for, the plain constructor is used: playing at the device's rate is the
+ * old behaviour and is never worse than not playing.
  */
 export function createPlaybackContext(AudioCtx) {
   if (!AudioCtx) return null;
-  let deviceRate = 0;
-  try {
-    const probe = new AudioCtx();
-    deviceRate = probe.sampleRate;
+  if (!(_deviceRate > MAX_GRAPH_RATE)) {
+    let ctx;
+    try {
+      ctx = new AudioCtx();
+    } catch {
+      // A browser that will not build one now may on a second try; the
+      // device's own rate is what we would have used anyway.
+      return new AudioCtx();
+    }
+    _deviceRate = ctx.sampleRate;
+    if (!(_deviceRate > MAX_GRAPH_RATE)) return ctx;
     // Nothing is ever routed into it, and close() is a promise we do not need
     // to wait on. Safari rejects close() on a context that never started.
-    Promise.resolve(probe.close()).catch(() => {});
-  } catch {
-    return new AudioCtx();
+    try { Promise.resolve(ctx.close()).catch(() => {}); } catch { /* never started */ }
   }
-  if (!(deviceRate > MAX_GRAPH_RATE)) return new AudioCtx();
   try {
     return new AudioCtx({ sampleRate: MAX_GRAPH_RATE });
   } catch {
     return new AudioCtx();
   }
+}
+
+/** Forget the device rate (tests: each case is a different device). */
+export function resetDeviceRate() {
+  _deviceRate = 0;
 }

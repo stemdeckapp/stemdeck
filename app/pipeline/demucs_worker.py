@@ -9,6 +9,15 @@ keeps this process alive across consecutive successful jobs on the same
 device and only tears it down on cancel or a genuine failure.
 
 Protocol:
+  - Once the model is loaded, before reading any job, the worker writes
+      "@@READY@@"
+    to stderr. Before it, on first use, torch.hub downloads the model (#125):
+    from its 'Downloading: "<url>" to <path>' line to that file's 100% or
+    "@@READY@@", any "NN%" line is download progress, not separation, and the
+    parent holds that phase to a much shorter stall limit. A download that
+    fails after its tries writes "@@ERROR@@<json message>" instead, the
+    message starting with "model download failed:" and naming the file's
+    address and the folder to put it in by hand, and the worker exits(1).
   - Parent writes one JSON line to stdin per job:
       {"source": "<path>", "job_dir": "<path>", "shifts": 1}
   - Normal demucs progress (tqdm, \\r-delimited "NN%" lines) streams to
@@ -38,7 +47,8 @@ import json
 import sys
 from pathlib import Path
 
-from app.core.config import DEMUCS_MODEL
+from app.core.config import DEMUCS_MODEL, MODEL_DOWNLOAD_ATTEMPTS, TIMEOUT_MODEL_DOWNLOAD_READ
+from app.core.model_download import ModelDownloadError, bounded_downloads
 from app.core.process import arm_parent_watchdog
 
 
@@ -92,9 +102,17 @@ def main() -> None:
 
     from demucs.pretrained import get_model
 
-    model = get_model(DEMUCS_MODEL)
+    try:
+        with bounded_downloads(TIMEOUT_MODEL_DOWNLOAD_READ, MODEL_DOWNLOAD_ATTEMPTS):
+            model = get_model(DEMUCS_MODEL)
+    except ModelDownloadError as e:
+        sys.stderr.write(f"@@ERROR@@{json.dumps(str(e))}\n")
+        sys.stderr.flush()
+        sys.exit(1)
     model.eval()
     model.cpu()
+    sys.stderr.write("@@READY@@\n")
+    sys.stderr.flush()
 
     for line in sys.stdin:
         line = line.strip()

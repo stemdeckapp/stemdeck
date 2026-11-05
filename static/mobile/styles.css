@@ -807,53 +807,6 @@ button {
   border-color: rgba(245, 180, 23, 0.4);
   color: var(--accent);
 }
-.collections {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.collection {
-  background: var(--card-2);
-  border: 1px solid var(--line-2);
-  border-radius: 16px;
-  padding: 14px;
-  cursor: pointer;
-}
-.collection-art {
-  position: relative;
-  height: 42px;
-  width: 54px;
-}
-.collection-art > .b {
-  position: absolute;
-  left: 10px;
-  top: 2px;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  opacity: 0.55;
-}
-.collection-art > .f {
-  position: absolute;
-  left: 0;
-  top: 5px;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
-}
-.collection .name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #eaeaec;
-  margin-top: 12px;
-}
-.collection .count {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted-2);
-  margin-top: 2px;
-}
 
 /* ── extract ── */
 .paste {

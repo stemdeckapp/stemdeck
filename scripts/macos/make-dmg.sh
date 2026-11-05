@@ -128,6 +128,24 @@ trap - EXIT
 hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" >/dev/null
 rm -f "$DMG_RW_PATH"
 
+# Sign, notarize and staple the DMG before the checksum: stapling rewrites the
+# file, so a checksum taken earlier would not match the published asset.
+# shellcheck source=scripts/macos/notarize.sh
+source "$REPO_ROOT/scripts/macos/notarize.sh"
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  echo "==> Signing DMG with Developer ID"
+  codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
+  codesign --verify --strict --verbose=2 "$DMG_PATH"
+  if notarize_credentials_set; then
+    notarize_submit "$DMG_PATH"
+    staple_and_validate "$DMG_PATH"
+  else
+    echo "NOTICE: notarization credentials are not set; the DMG is signed but not notarized."
+  fi
+else
+  echo "NOTICE: APPLE_SIGNING_IDENTITY is not set; the DMG is not signed (local use only)."
+fi
+
 CHECKSUMS_PATH="${DIST_DIR}/SHA256SUMS-macOS-${ARCH}.txt"
 {
   shasum -a 256 "$DMG_PATH"

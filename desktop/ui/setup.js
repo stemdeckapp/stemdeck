@@ -11,6 +11,9 @@ function startBackend() {
 const statusEl = document.getElementById("status");
 const detailsEl = document.getElementById("details");
 const retryBtn = document.getElementById("retry");
+const skipModelsBtn = document.getElementById("skip-models");
+const continueBtn = document.getElementById("continue");
+const noticeEl = document.getElementById("notice");
 const steps = [...document.querySelectorAll("[data-step]")];
 
 function setStep(name, state) {
@@ -85,7 +88,7 @@ function startProgressStatus(messages) {
 }
 
 /**
- * Real progress for the pip passes that install CUDA acceleration.
+ * Real progress for the pip passes that install CUDA or ROCm acceleration.
  *
  * Those passes move several GB, and until the backend streamed pip's output
  * there was nothing to show but a timer counting up, which reads exactly like
@@ -129,8 +132,182 @@ async function startPipProgress(stopTimedMessages) {
   };
 }
 
+// The names app/pipeline/warmup.py gives its models, as this screen says them.
+const MODEL_LABELS = {
+  demucs: "stem separation",
+  beat_this: "beat detection",
+  sections: "song sections",
+  vocal_split: "karaoke split",
+  whisper: "lyrics transcription",
+};
+
+function modelsLater(separationMissing) {
+  return (
+    "StemDeck works without them: each one downloads the first time a feature needs it" +
+    (separationMissing ? ", so the first separation downloads the separation model before it starts." : ".")
+  );
+}
+
+/**
+ * What to tell someone whose models did not all arrive (#405), or null when
+ * they did. Until this, a missing model only reached the console, and the
+ * first sign was a feature that quietly did less.
+ */
+function modelWarmupNotice(status, skipped) {
+  if (status?.noSpace) {
+    const gb = (bytes) => (bytes / 1e9).toFixed(1);
+    return (
+      `Not enough free disk space for the AI models: about ${gb(status.noSpace.needed)} GB ` +
+      `needed, ${gb(status.noSpace.free)} GB free, so none was downloaded. StemDeck works ` +
+      "without them: each one downloads the first time a feature needs it and there is " +
+      "room, so the first separation downloads the separation model before it starts."
+    );
+  }
+  // camelCase, because ModelWarmupStatus is #[serde(rename_all =
+  // "camelCase")]. Reading the Rust field names instead gives undefineds,
+  // `missing` is empty every time, and this says nothing.
+  const missing = [
+    ["demucs", status?.demucsReady],
+    ["beat_this", status?.beatThisReady],
+    ["sections", status?.sectionsReady],
+    ["vocal_split", status?.vocalSplitReady],
+    ["whisper", status?.whisperReady],
+  ]
+    .filter(([, ready]) => ready === false)
+    .map(([name]) => name);
+  if (!missing.length) return null;
+  const said = (names) => names.map((name) => MODEL_LABELS[name]).join(", ");
+  const later = modelsLater(missing.includes("demucs"));
+  if (skipped) return `AI model download skipped, so these were not downloaded: ${said(missing)}. ${later}`;
+  const offline = missing.filter((name) => status.offline?.includes(name));
+  const failed = missing.filter((name) => !offline.includes(name));
+  const causes = [];
+  if (offline.length) {
+    causes.push(
+      "StemDeck could not reach the model download servers (no internet connection, or the " +
+        `connection stopped answering), so these AI models were not downloaded: ${said(offline)}.`
+    );
+  }
+  if (failed.length) causes.push(`These AI models could not be downloaded: ${said(failed)}.`);
+  return `${causes.join(" ")} ${later} logs/setup.log in the StemDeck data folder has the details.`;
+}
+
+/** Shows `text` until the Continue button is pressed. */
+function showNotice(text) {
+  noticeEl.textContent = text;
+  noticeEl.classList.remove("hidden");
+  continueBtn.classList.remove("hidden");
+  continueBtn.focus();
+  return new Promise((resolve) => {
+    continueBtn.addEventListener(
+      "click",
+      () => {
+        continueBtn.classList.add("hidden");
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+/**
+ * The model step: downloads the AI models, saying which one it is on, and
+ * offers Skip. Returns what to tell the user afterwards, or null.
+ *
+ * Best-effort, per model: a model that does not download here falls back to
+ * its lazy download on first use, so nothing here fails setup.
+ */
+async function warmupModels() {
+  let current = "Starting the AI model download...";
+  let since = Date.now();
+  const show = () => setStatus(`${current} Elapsed: ${formatElapsed(since)}.`);
+  let skipped = false;
+  show();
+  const timer = window.setInterval(show, 1000);
+  let unlisten = null;
+  try {
+    unlisten = await window.__TAURI__.event.listen("model-warmup-progress", (event) => {
+      if (skipped) return;
+      const { model, number, count } = event.payload ?? {};
+      // Offered from the first model on: only once the warmup has said
+      // something is it sure to be running, and so stoppable.
+      skipModelsBtn.classList.remove("hidden");
+      current = `Getting AI model ${number} of ${count}: ${MODEL_LABELS[model] ?? model}...`;
+      since = Date.now();
+      show();
+    });
+
+    skipModelsBtn.disabled = false;
+    skipModelsBtn.onclick = async () => {
+      skipModelsBtn.disabled = true;
+      skipped = true;
+      current = "Skipping the AI model download...";
+      show();
+      try {
+        await invoke("skip_model_warmup");
+      } catch (err) {
+        skipped = false;
+        skipModelsBtn.disabled = false;
+        current = `The download could not be stopped (${err}), so it goes on...`;
+        show();
+      }
+    };
+
+    try {
+      return modelWarmupNotice(await invoke("warmup_models"), skipped);
+    } catch (err) {
+      // The warmup could not run at all (no Python), or stopped answering.
+      const what = skipped ? "AI model download skipped." : `The AI model download stopped: ${err}.`;
+      return `${what} ${modelsLater(true)}`;
+    }
+  } finally {
+    window.clearInterval(timer);
+    unlisten?.();
+    skipModelsBtn.classList.add("hidden");
+    skipModelsBtn.onclick = null;
+    setStatus("AI model step finished.");
+  }
+}
+
 function isMac() {
   return /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
+}
+
+// ROCm torch exists for Linux only, so only there does setup look for an AMD
+// GPU, and only there may the screen mention one (#825).
+function isLinux() {
+  return /linux/i.test(navigator.userAgentData?.platform ?? navigator.platform ?? "");
+}
+
+/**
+ * Puts the CPU torchvision back where a CUDA one sits beside CPU torch (#778).
+ *
+ * The 0.20.0 Linux packages shipped that pair, and the in-app updater never
+ * replaces the Python runtime, so an updated install keeps it until this runs.
+ * On a healthy install it returns at once without touching the network. It
+ * runs on every launch, including the fast path, and never stops the app from
+ * starting: a failed repair is said once and tried again next launch.
+ */
+async function repairTorchvision() {
+  if (isMac()) return;
+  const stopPipProgress = await startPipProgress(() => {});
+  let result;
+  try {
+    result = await invoke("repair_torchvision");
+  } catch (err) {
+    console.warn("torchvision check failed to run:", err);
+    return;
+  } finally {
+    stopPipProgress();
+  }
+  if (result?.outcome === "failed") {
+    setStatus(
+      "The karaoke split could not be repaired, so it will not work yet. " +
+        "StemDeck will try again next time it starts. Check your internet connection; " +
+        "logs/setup.log in the StemDeck data folder has the details."
+    );
+    await minDelay(6000);
+  }
 }
 
 async function installRuntimePack(appRoot) {
@@ -269,6 +446,15 @@ async function installRuntimePack(appRoot) {
 // normally papers over it, but a bare exec() never triggers Rosetta's
 // install-on-demand prompt, so a Mac without it just fails.
 function ffmpegFailureHint(message) {
+  // An Apple Silicon Mac without Rosetta, where StemDeck declined to install
+  // an Intel-only build (#771). The message already says what to do, and a
+  // network hint under it would be wrong.
+  if (/built for Intel Macs/.test(message)) return null;
+  // The macOS setup error now ends with its own next steps (#824): a network
+  // hint under it would point at the wrong thing when the server was reached.
+  if (/Do one of these, then click Retry/.test(message)) return null;
+  // An FFmpeg older than 5.1 that the user named: the message says what to do.
+  if (/needs FFmpeg \d+\.\d+ or newer/.test(message)) return null;
   const wrongArchitecture = /bad cpu type|os error 86|EBADARCH/i.test(message);
   if (wrongArchitecture) {
     return (
@@ -289,9 +475,26 @@ function ffmpegFailureHint(message) {
   );
 }
 
+// Retry can be on screen while setup goes on (a GPU warning does not stop it),
+// and a second run beside the first would share the model step's buttons.
+let setupRunning = false;
+
 async function runSetup() {
+  if (setupRunning) return;
+  setupRunning = true;
+  try {
+    await setup();
+  } finally {
+    setupRunning = false;
+  }
+}
+
+async function setup() {
   detailsEl.classList.add("hidden");
   retryBtn.classList.add("hidden");
+  noticeEl.classList.add("hidden");
+  continueBtn.classList.add("hidden");
+  skipModelsBtn.classList.add("hidden");
   for (const step of steps) step.classList.remove("active", "done", "error");
 
   try {
@@ -332,7 +535,11 @@ async function runSetup() {
       runtime.torchDevice === "cuda" ||
       runtime.torchDevice === "mps" ||
       (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cpu-only-package") ||
-      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cuda-unsupported-gpu");
+      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "cuda-unsupported-gpu") ||
+      // The same for an AMD GPU no ROCm build has kernels for, known before
+      // anything is downloaded. No /dev/kfd access is not settled: a user who
+      // fixes their groups gets the GPU on the next launch.
+      (runtime.torchDevice === "cpu" && runtime.torchDeviceReason === "rocm-unsupported-gpu");
 
     if (runtime.pythonReady && runtime.ffmpegReady && torchDeviceSettled && !versionMismatch) {
       for (const step of steps) {
@@ -344,6 +551,7 @@ async function runSetup() {
         }
       }
       await runStep("backend", async () => {
+        await repairTorchvision();
         setStatus("Runtime is ready. Starting StemDeck backend...");
         const backend = await startBackend();
         setStatus("Opening StemDeck...");
@@ -414,7 +622,11 @@ async function runSetup() {
 
     await runStep("gpu", async () => {
       const macGPU = isMac();
-      const stopProgress = startProgressStatus(
+      // The CPU download neither looks for a GPU nor installs anything here
+      // (#1011), so it gets none of the checking and installing messages.
+      const cpuPackage = !macGPU && (await invoke("build_target")).gpu === "cpu";
+      const gpuKinds = isLinux() ? "NVIDIA or AMD" : "NVIDIA";
+      const stopProgress = cpuPackage ? null : startProgressStatus(
         macGPU
           ? [
               {
@@ -429,15 +641,15 @@ async function runSetup() {
           : [
               {
                 afterSeconds: 0,
-                text: "Checking NVIDIA GPU and compute support...",
+                text: `Checking ${gpuKinds} GPU and compute support...`,
               },
               {
                 afterSeconds: 20,
-                text: "Installing NVIDIA acceleration if needed... first run can take 5-15 minutes.",
+                text: `Installing ${gpuKinds} acceleration if needed... first run can take 5-15 minutes.`,
               },
               {
                 afterSeconds: 120,
-                text: "Still installing NVIDIA acceleration... CUDA Torch packages are large.",
+                text: `Still installing ${gpuKinds} acceleration... GPU Torch packages are large.`,
               },
               {
                 afterSeconds: 300,
@@ -445,8 +657,9 @@ async function runSetup() {
               },
             ]
       );
-      // macOS never runs a pip pass here, so there is nothing to listen for.
-      const stopPipProgress = macGPU ? null : await startPipProgress(stopProgress);
+      // macOS and the CPU download never run a pip pass here, so there is
+      // nothing to listen for.
+      const stopPipProgress = macGPU || cpuPackage ? null : await startPipProgress(stopProgress);
 
       try {
         const gpu = await invoke("ensure_torch_device");
@@ -456,81 +669,53 @@ async function runSetup() {
               ? `${gpu.gpuName} acceleration enabled`
               : "MPS acceleration unavailable - stem separation will use CPU";
         } else {
-          if (gpu.gpuDetected && !gpu.cudaVerified && gpu.reason === "cuda-unsupported-gpu") {
+          // NVIDIA through CUDA, or AMD through ROCm on Linux.
+          const api = gpu.backend === "rocm" ? "ROCm" : "CUDA";
+          const unsupported = gpu.reason === "cuda-unsupported-gpu" || gpu.reason === "rocm-unsupported-gpu";
+          if (gpu.gpuDetected && !gpu.cudaVerified && unsupported) {
             showError(
-              `GPU detected (${gpu.gpuName}), but none of the CUDA builds StemDeck can install support it - stem separation will use CPU. StemDeck will not try again until the next update.`
+              `GPU detected (${gpu.gpuName}), but none of the ${api} builds StemDeck can install support it - stem separation will use CPU. StemDeck will not try again until the next update.`
+            );
+          } else if (gpu.gpuDetected && !gpu.cudaVerified && gpu.reason === "rocm-no-kfd-access") {
+            showError(
+              `GPU detected (${gpu.gpuName}), but StemDeck cannot open /dev/kfd - stem separation will use CPU.\nAdd your user to the render and video groups (sudo usermod -aG render,video $USER), log out and back in, and restart StemDeck.`
             );
           } else if (gpu.gpuDetected && !gpu.cudaVerified) {
             showError(
-              `GPU detected (${gpu.gpuName}) but CUDA setup failed - stem separation will use CPU.\nCheck logs/setup.log in the StemDeck data folder for details.`
+              `GPU detected (${gpu.gpuName}) but ${api} setup failed - stem separation will use CPU.\nCheck logs/setup.log in the StemDeck data folder for details.`
             );
           }
-          gpuSummary = gpu.gpuDetected
-            ? gpu.cudaVerified
-              ? `${gpu.gpuName} - CUDA ${gpu.cudaVersion} enabled`
-              : `${gpu.gpuName} found - falling back to CPU (CUDA unverified)`
-            : "No NVIDIA GPU - stem separation will use CPU";
+          // The CPU download skips GPU detection, so it cannot say whether
+          // this computer has a GPU (#1011).
+          if (gpu.reason === "cpu-only-package") {
+            gpuSummary = `This is the CPU download of StemDeck - stem separation will use CPU (to use an ${gpuKinds} GPU, get the NVIDIA download)`;
+          } else {
+            gpuSummary = gpu.gpuDetected
+              ? gpu.cudaVerified
+                ? `${gpu.gpuName} - ${api} ${gpu.cudaVersion} enabled`
+                : `${gpu.gpuName} found - falling back to CPU (${api} unverified)`
+              : `No ${gpuKinds} GPU found - stem separation will use CPU`;
+          }
         }
         return gpu;
       } finally {
-        stopProgress();
+        stopProgress?.();
         stopPipProgress?.();
       }
     });
 
+    // After the GPU step, so an NVIDIA install that just got CUDA torch is
+    // judged with it in place, and before warmup, which loads the karaoke
+    // model through torchvision.
+    await repairTorchvision();
+
+    let modelNotice = null;
     await runStep("model", async () => {
-      const stopProgress = startProgressStatus([
-        {
-          afterSeconds: 0,
-          text: "Downloading AI models... this can take a few minutes on first run.",
-        },
-        {
-          afterSeconds: 60,
-          text: "Still downloading AI models... slow networks can delay this.",
-        },
-        {
-          afterSeconds: 300,
-          text: "Still working... large models can take a while on a slow connection.",
-        },
-      ]);
-      try {
-        // Best-effort, per model: any model that doesn't download here just
-        // falls back to its existing lazy-download-on-first-use behavior --
-        // never fails setup over this (warmup_models itself never throws for
-        // an individual model failure; this catch is only for the whole
-        // subprocess failing to run at all, e.g. a missing Python).
-        //
-        // The per-model result was thrown away here, so a user whose beat
-        // model never arrived saw a clean setup and then a permanently worse
-        // beat grid, with nothing anywhere connecting the two (#502). Naming
-        // it at least puts it in the log that gets attached to bug reports.
-        //
-        // Deliberately not setStatus: the next step overwrites the status line
-        // immediately and then navigates away to the backend, so anything
-        // written here is invisible. Telling the user properly belongs in the
-        // main UI, where the affected feature actually lives, and is its own
-        // piece of work.
-        // camelCase, because ModelWarmupStatus is #[serde(rename_all =
-        // "camelCase")]. Reading the Rust field names instead gives four
-        // undefineds, `missing` is empty every time, and this says nothing.
-        const status = await invoke("warmup_models");
-        const missing = [
-          [status?.demucsReady, "stem separation"],
-          [status?.beatThisReady, "beat detection"],
-          [status?.sectionsReady, "song sections"],
-          [status?.vocalSplitReady, "karaoke split"],
-        ]
-          .filter(([ready]) => ready === false)
-          .map(([, label]) => label);
-        if (missing.length) {
-          console.warn("models not downloaded during setup:", missing.join(", "));
-        }
-      } catch (err) {
-        console.warn("model warmup failed (will download lazily on first use):", err);
-      } finally {
-        stopProgress();
-      }
+      modelNotice = await warmupModels();
     });
+    // Before the backend step, which overwrites the status line and then
+    // leaves this page: anything said only in passing here was never seen.
+    if (modelNotice) await showNotice(modelNotice);
 
     await runStep("backend", async () => {
       setStatus(gpuSummary ? `${gpuSummary} - starting backend...` : "Starting StemDeck backend...");

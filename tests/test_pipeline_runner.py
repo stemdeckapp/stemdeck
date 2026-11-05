@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
+import shutil
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -218,6 +224,60 @@ async def test_download_failure_message_is_redacted(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_a_model_download_failure_names_the_file_and_a_redacted_folder(tmp_path: Path):
+    """#125: what the page shows under the sentence is the file's address,
+    whole, and the folder to put it in, with the user's home taken out."""
+    from app.pipeline.errors import SeparationError
+
+    job = Job(id="abcdefabcde5")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+    url = "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th"
+    folder = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+    words = f"model download failed: {url}; put the file in {folder} (no data for 30 s)"
+
+    def boom(*args, **kwargs):
+        raise SeparationError(f"demucs failed: {words}", tail=[words], device="cuda")
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    dash = chr(0x2014)  # the runner's separator between the cause and the words
+    shown = os.path.join("<home>", ".cache", "torch", "hub", "checkpoints")
+    assert job.error_detail == (
+        f"model-download {dash} model download failed: {url};"
+        f" put the file in {shown} (no data for 30 s)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_long_download_reason_never_cuts_off_the_folder(tmp_path: Path):
+    """error_detail keeps 200 characters. A proxy's TLS error is long, and it
+    is the reason, not the folder, that the cut may take."""
+    from app.core.model_download import ModelDownloadError
+    from app.pipeline.errors import SeparationError
+
+    job = Job(id="abcdefabcde4")
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + bytes(64))
+    reason = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: " * 3
+    url = "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th"
+    words = str(ModelDownloadError(url, "/cache/torch/hub/checkpoints", reason))
+
+    def boom(*args, **kwargs):
+        raise SeparationError(f"demucs failed: {words}", tail=[words], device="cpu")
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=boom):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert f"{url}; put the file in /cache/torch/hub/checkpoints (" in job.error_detail
+
+
+@pytest.mark.asyncio
 async def test_pipeline_error_quarantines_evidence(tmp_path: Path):
     """#277: a failed job's dir moves to jobs/failed/<id> with error.txt
     (device, cause, stderr tail) and the heavy audio payloads stripped."""
@@ -305,6 +365,117 @@ async def test_quarantine_redacts_a_source_url_embedded_in_the_exception(tmp_pat
     # the URL they were fetching in the message itself -- must be redacted.
     assert "youtube.com" not in exception_line
     assert "<source-url-redacted>" in exception_line
+
+
+def _failed_separation_job(tmp_path: Path, source_url: str) -> tuple[Job, Path, Path]:
+    """A job whose folder holds a source, partial stems and partial demucs output."""
+    job = Job(id="abcdefabcd42", source_url=source_url)
+    job_dir = tmp_path / job.id
+    (job_dir / "stems").mkdir(parents=True)
+    (job_dir / "stems" / "vocals.wav").write_bytes(b"RIFF" + b"\x00" * 64)
+    (job_dir / "htdemucs").mkdir()
+    source = job_dir / "source.wav"
+    source.write_bytes(b"RIFF" + b"upload" * 32)
+    return job, job_dir, source
+
+
+def _worker_died(*args, **kwargs):
+    # What separate() raises when the demucs worker's stderr hits EOF: a crash,
+    # an out-of-memory kill, or today a clean shutdown killing the worker.
+    from app.pipeline.errors import SeparationError
+
+    raise SeparationError("demucs failed: worker exited", tail=["Killed"], device="cpu")
+
+
+@pytest.mark.asyncio
+async def test_failed_upload_keeps_its_source_in_the_quarantine(tmp_path: Path):
+    """Decision 6: an upload is the one copy StemDeck has, so a failed separation
+    keeps source.* beside error.txt. Stems and demucs output still go."""
+    job, job_dir, source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    original = source.read_bytes()
+
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert not job_dir.exists()
+    quarantined = tmp_path / "failed" / job.id
+    assert (quarantined / "source.wav").read_bytes() == original
+    assert (quarantined / "error.txt").is_file()
+    assert not (quarantined / "stems").exists()
+    assert not (quarantined / "htdemucs").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_link_job_still_drops_its_source(tmp_path: Path):
+    """A link can be fetched again, so its failure evidence stays KB-scale."""
+    job, _job_dir, source = _failed_separation_job(
+        tmp_path, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+
+    with patch("app.pipeline.runner._run_blocking", side_effect=_worker_died):
+        await run_pipeline(job, job.source_url, tmp_path)
+
+    quarantined = tmp_path / "failed" / job.id
+    assert (quarantined / "error.txt").is_file()
+    assert list(quarantined.glob("source.*")) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_url", "folder_kept"),
+    [("local:Hollow Veins", True), ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", False)],
+)
+async def test_a_failed_quarantine_never_deletes_an_upload(
+    tmp_path: Path, source_url: str, folder_kept: bool
+):
+    """When the quarantine itself fails (disk full writing error.txt), its
+    fallback removes the job folder. An upload's folder is left in place
+    instead, its source intact and its stems already stripped, so restore()
+    cannot adopt it as a finished song."""
+    job, job_dir, source = _failed_separation_job(tmp_path, source_url)
+    original = source.read_bytes()
+
+    with (
+        patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died),
+        patch("pathlib.Path.write_text", side_effect=OSError(28, "No space left on device")),
+    ):
+        await run_local_pipeline(job, source, tmp_path)
+
+    assert job.status == "error"
+    assert job_dir.exists() is folder_kept
+    if folder_kept:
+        assert source.read_bytes() == original
+        assert not (job_dir / "stems").exists()
+        assert not (job_dir / "htdemucs").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_job_sweep_expires_a_kept_upload(tmp_path: Path, monkeypatch):
+    """The kept upload is not kept forever: the hourly failed-job sweep removes
+    it FAILED_TTL_SECONDS after the failure (the folder's mtime)."""
+    import time
+    from types import SimpleNamespace
+
+    from app.pipeline import collect
+
+    job, _job_dir, source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    with patch("app.pipeline.runner._run_local_blocking", side_effect=_worker_died):
+        await run_local_pipeline(job, source, tmp_path)
+    quarantined = tmp_path / "failed" / job.id
+    failed_at = time.time()
+
+    monkeypatch.setattr(
+        collect, "time", SimpleNamespace(time=lambda: failed_at + collect.FAILED_TTL_SECONDS - 60)
+    )
+    collect.sweep_failed_jobs(tmp_path)
+    assert (quarantined / "source.wav").is_file()
+
+    monkeypatch.setattr(
+        collect, "time", SimpleNamespace(time=lambda: failed_at + collect.FAILED_TTL_SECONDS + 60)
+    )
+    collect.sweep_failed_jobs(tmp_path)
+    assert not quarantined.exists()
 
 
 @pytest.mark.asyncio
@@ -686,3 +857,177 @@ def test_section_flag_is_captured_at_submit_not_at_the_sections_stage(tmp_path: 
 
     detect.assert_called_once()
     assert job.sections == suggested
+
+
+@pytest.mark.parametrize(
+    ("auto_lyrics", "looks"),
+    [(False, False), (True, True), (None, True)],
+)
+def test_lyrics_stages_run_only_when_detect_lyrics_was_on(tmp_path: Path, auto_lyrics, looks):
+    """Detect lyrics off must stop every lyrics stage, not hide their result:
+    no LRCLIB lookup, no transcript, no retime. A job made before the setting
+    existed (None) looks for lyrics as it always did."""
+    from app.pipeline import runner
+
+    job = Job(id="abcdefabc120", duration_sec=60.0, auto_lyrics=auto_lyrics)
+    job_dir = tmp_path / job.id
+    job_dir.mkdir(parents=True)
+    with (
+        patch.object(runner.IdentifyLookup, "start", return_value=None),
+        patch.object(runner.LyricsLookup, "start") as lookup,
+        patch.object(runner, "_run_common"),
+        patch.object(runner, "transcribe_lyrics") as transcribe,
+        patch.object(runner, "retime_after_separation") as retime,
+    ):
+        runner._run_with_band_lookup(job, job_dir / "source.wav", job_dir)
+    assert lookup.called is looks
+    assert transcribe.called is looks
+    assert retime.called is looks
+
+
+# ─── cleanup after a failed or cancelled job stays off the event loop ───
+
+
+def _slow_rmtree(monkeypatch) -> threading.Event:
+    """Make every rmtree take 0.2 s, the way a multi-GB folder on a NAS does.
+    The event is set while one is in progress."""
+    real_rmtree = shutil.rmtree
+    removing = threading.Event()
+
+    def slow(*args, **kwargs):
+        removing.set()
+        try:
+            time.sleep(0.2)
+            return real_rmtree(*args, **kwargs)
+        finally:
+            removing.clear()
+
+    monkeypatch.setattr(shutil, "rmtree", slow)
+    return removing
+
+
+async def _ticks_while(removing: threading.Event, run) -> int:
+    """How often another coroutine got to run while an rmtree was in progress."""
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            if removing.is_set():
+                ticks += 1
+            await asyncio.sleep(0.005)
+
+    task = asyncio.create_task(ticker())
+    try:
+        await run
+    finally:
+        task.cancel()
+    return ticks
+
+
+async def test_failed_job_quarantine_leaves_the_loop_free(tmp_path: Path, monkeypatch):
+    """Every SSE stream and request stalled while a failed job's folder was
+    stripped and moved. The first "error" a page sees must already carry the
+    error_detail and the evidence, since the page records the failure then."""
+    job, _job_dir, _source = _failed_separation_job(
+        tmp_path, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+    removing = _slow_rmtree(monkeypatch)
+    seen_error: list[tuple[str | None, bool]] = []
+
+    async def watch():
+        while not seen_error:
+            if job.status == "error":
+                seen_error.append(
+                    (job.error_detail, (tmp_path / "failed" / job.id / "error.txt").is_file())
+                )
+            await asyncio.sleep(0.001)
+
+    watcher = asyncio.create_task(watch())
+    with patch("app.pipeline.runner._run_blocking", side_effect=_worker_died):
+        ticks = await _ticks_while(removing, run_pipeline(job, job.source_url, tmp_path))
+    await asyncio.wait_for(watcher, 1)
+
+    assert ticks > 0, "the quarantine blocked the event loop"
+    detail, evidence = seen_error[0]
+    assert detail is not None
+    assert evidence
+
+
+@pytest.mark.parametrize("ending", ["cancelled", "stopped", "emptied from the Trash"])
+async def test_end_of_run_cleanup_leaves_the_loop_free(tmp_path: Path, monkeypatch, ending):
+    """A cancel removes the folder, a stop removes the partial separation, and
+    a job emptied from the Trash while it ran is removed when it settles."""
+    from app.core import registry as _registry
+    from app.pipeline import runner as _runner
+
+    job = Job(
+        id="abcdefabc130",
+        cancel_requested=ending != "emptied from the Trash",
+        stop_requested=ending == "stopped",
+    )
+    monkeypatch.setitem(_jobs, job.id, job)
+    job_dir = tmp_path / job.id
+    (job_dir / _runner.DEMUCS_MODEL).mkdir(parents=True)
+    if ending == "emptied from the Trash":
+        _registry.mark_deleted(job.id)
+
+    def run(_job, _job_dir):
+        if job.cancel_requested:
+            raise JobCancelled()
+
+    removing = _slow_rmtree(monkeypatch)
+    ticks = await _ticks_while(removing, _runner._run_async(job, job_dir, tmp_path, run))
+
+    assert ticks > 0, "the cleanup blocked the event loop"
+    assert not (job_dir / _runner.DEMUCS_MODEL).exists()
+    assert job_dir.exists() is (ending == "stopped")
+
+
+async def test_cancel_before_claim_cleanup_leaves_the_loop_free(tmp_path: Path, monkeypatch):
+    """The queue worker removes a job cancelled between pop and claim (#520)."""
+    from app.pipeline import jobqueue
+
+    job = Job(id="abcdefabc131", status="queued", cancel_requested=True)
+    monkeypatch.setitem(_jobs, job.id, job)
+    jobqueue.enqueue(job.id)
+    (jobqueue.JOBS_DIR / job.id).mkdir(parents=True)
+    removing = _slow_rmtree(monkeypatch)
+
+    async def settle():
+        task = jobqueue.start_worker()
+        try:
+            while job.status != "cancelled" or (jobqueue.JOBS_DIR / job.id).exists():
+                await asyncio.sleep(0.01)
+        finally:
+            jobqueue.request_stop()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    ticks = await _ticks_while(removing, asyncio.wait_for(settle(), 5))
+
+    assert ticks > 0, "the cleanup blocked the event loop"
+
+
+async def test_failed_job_emptied_from_the_trash_during_its_quarantine_is_removed(
+    tmp_path: Path, monkeypatch
+):
+    """The job reads as running while its folder moves, so emptying the Trash
+    then answers 202 and leaves the removal to the runner (#748)."""
+    from app.core import registry as _registry
+    from app.pipeline import runner as _runner
+
+    job, job_dir, _source = _failed_separation_job(tmp_path, "local:Hollow Veins")
+    monkeypatch.setitem(_jobs, job.id, job)
+    real_quarantine = _runner._quarantine_failed_job
+
+    def quarantine_then_empty_the_trash(*args):
+        _registry.mark_deleted(job.id)
+        real_quarantine(*args)
+
+    monkeypatch.setattr(_runner, "_quarantine_failed_job", quarantine_then_empty_the_trash)
+    await _runner._run_async(job, job_dir, tmp_path, _worker_died)
+
+    assert job.status == "error"
+    assert job.id not in _registry.all_jobs(), "the deleted job's record stayed"

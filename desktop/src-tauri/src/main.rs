@@ -1,6 +1,10 @@
+mod backendjob;
 mod certs;
+#[cfg(any(target_os = "linux", test))]
+mod dmabuf;
 mod dragout;
 mod dropin;
+mod mediaperm;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -17,7 +21,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -60,26 +64,31 @@ const APP_EXE_NAME: &str = "StemDeck.exe";
 #[cfg(not(windows))]
 const APP_EXE_NAME: &str = "StemDeck";
 // Windows FFmpeg comes from BtbN's GitHub build (served via GitHub's CDN, far
-// faster worldwide than the old gyan.dev single mirror -- #248). Unlike gyan.dev,
-// which published a per-file `{url}.sha256` companion, BtbN publishes ONE combined
-// `checksums.sha256` listing every asset as `<hash>  <filename>` lines; we fetch it
-// and pick the line for our archive's basename. The `latest` tag is rolling (the
-// `n8.1-latest` asset is rebuilt in place), so the checksum is fetched fresh each
-// run and verified -- the same trust model as the old gyan flow. A compile-time pin
-// is not possible without self-hosting the archive.
+// faster worldwide than the old gyan.dev single mirror -- #248), pinned to one
+// dated month-end autobuild and verified by SHA256 before it is extracted, like
+// the macOS pins below. The rolling `latest` tag is avoided on purpose: its
+// n8.1.3 gcc 16.2 rebuilds abort at random with "stack smashing detected"
+// (3 to 5 runs in 100 of a plain decode), while this gcc 15.2 build crashed 0
+// times in 2400 runs. The hash matches GitHub's asset digest and BtbN's checksums.sha256 for
+// the release, so it is pinned here rather than fetched from the same host.
+//
+// BtbN keeps month-end autobuilds for about two years (daily ones for about
+// two weeks), so this release disappears around 2028-08. Bump the tag, the
+// asset and the hash together before then, and the e2e.yml FFMPEG_RELEASE pin
+// with them. STEMDECK_FFMPEG_URL still overrides the source, unverified.
 const DEFAULT_WINDOWS_FFMPEG_URL: &str =
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip";
-#[cfg(windows)]
-const DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL: &str =
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256";
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-gpl-8.1.zip";
+#[cfg(any(windows, test))]
+const DEFAULT_WINDOWS_FFMPEG_SHA256: &str =
+    "273abb45f3f9f76c303e35ff39f5bb6c23c163ae65f6244a32b7d4a7f6cf0616";
 // macOS FFmpeg is pinned to a specific evermeet build and verified by SHA256
 // before it is extracted or executed (#172). evermeet publishes no .sha256
-// companion (only a GPG signature and a size), so unlike the Windows BtbN
-// path we cannot fetch the hash at runtime -- instead we pin the hash of a
+// companion (only a GPG signature and a size), so we pin the hash of a
 // specific versioned zip, captured at build time from evermeet's TLS endpoint
 // (the download size matched evermeet's signed release info). Bump the version
 // and BOTH hashes together when updating FFmpeg. The rolling getrelease/latest
 // URL is intentionally avoided so the pinned hash stays valid.
+#[cfg(any(target_os = "macos", test))]
 const DEFAULT_MACOS_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip";
 #[cfg(target_os = "macos")]
 const DEFAULT_MACOS_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/ffprobe-8.1.1.zip";
@@ -99,9 +108,9 @@ const DEFAULT_MACOS_FFPROBE_SHA256: &str =
 // (downloaded, sha256'd, and cross-checked against the release notes' own
 // published MD5s and each binary's Mach-O magic bytes) before pinning here.
 // Bump the release tag and all four hashes together when updating.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const SHAKA_FFMPEG_RELEASE: &str = "n8.1.2-1";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const SHAKA_FFMPEG_BASE_URL: &str =
     "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download";
 #[cfg(target_os = "macos")]
@@ -145,6 +154,44 @@ const DEFAULT_LINUX_FFMPEG_SHA256: &str =
 struct BackendHandles {
     child: Child,
     url: String,
+    /// The port in `url`, which a restart asks for again so the page keeps
+    /// its origin.
+    port: u16,
+    /// Windows: the kill-on-close job the backend runs in. Dropping it (the
+    /// backend stopped, or StemDeck gone) ends every process the backend
+    /// started, ffmpeg renders included (#790). Always None elsewhere.
+    _job: Option<backendjob::KillOnCloseJob>,
+}
+
+struct SetupChild {
+    label: String,
+    #[cfg(unix)]
+    pid: u32,
+    /// The job it runs in (run_setup_child): ending the job ends whatever the
+    /// child started as well.
+    #[cfg(windows)]
+    job: Option<Arc<backendjob::KillOnCloseJob>>,
+}
+
+impl SetupChild {
+    fn stop(&self) -> Result<(), String> {
+        // SAFETY: the pid was stored right after spawn and is cleared once the
+        // child has been waited on; SIGTERM is best-effort.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(self.pid as libc::pid_t, libc::SIGTERM)
+        };
+        #[cfg(windows)]
+        match &self.job {
+            Some(job) => job
+                .terminate()
+                .map_err(|e| format!("could not stop the {}: {e}", self.label))?,
+            // spawn_in_job could not make a job and said so; there is no
+            // handle left here to end the child with.
+            None => return Err(format!("could not stop the {}: it has no job", self.label)),
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -152,9 +199,23 @@ struct BackendStateInner {
     handles: Option<BackendHandles>,
     /// True while start_backend is executing; prevents concurrent starts (#145).
     starting: bool,
-    /// PID of an in-progress setup-time subprocess (pip install, or the model
-    /// warmup download, #275); killed by stop_backend on window close (#140).
-    setup_child_pid: Option<u32>,
+    /// The setup-time subprocess in progress (pip install, or the model warmup
+    /// download, #275), stopped by stop_backend on window close (#140) and by
+    /// the wizard's Skip (#405).
+    setup_child: Option<SetupChild>,
+    /// Set by stop_backend as the window closes. The setup commands run off
+    /// the main thread, so one can go on to its next child in the moment
+    /// before StemDeck exits; run_setup_child refuses it, as nothing would be
+    /// left to stop it.
+    closing: bool,
+    /// The setup step running (SetupStep): one at a time, so a second run of
+    /// the wizard, after a reload say, cannot work on python/ or the runtime
+    /// beside the first, or read the first one's busy slot as "no GPU".
+    setup_step: Option<&'static str>,
+    /// While apply_app_update renames the new build into place (UpdateSwap).
+    /// The close waits for it: cut between two renames, the install would
+    /// have no backend/ or no executable.
+    swapping: bool,
     /// Save destinations the user has picked but not yet downloaded to (#338).
     ///
     /// The export is two commands so the UI can tell "choosing a folder" apart
@@ -167,6 +228,12 @@ struct BackendStateInner {
     /// secret. Every live token maps to a path the user chose in a native
     /// dialog, so guessing one only ever yields another approved destination.
     next_save_token: u64,
+    /// The files completed exports were written to, by the token of their
+    /// save, for Streamer Mode's "Show in folder": a caller can reveal only
+    /// the file its own save wrote, never another caller's later one. Set
+    /// only by download_to_path after the whole file is on disk; JS never
+    /// hands Rust a path to reveal.
+    saved_files: HashMap<String, PathBuf>,
 }
 
 /// Cap on unconsumed destinations. A pick whose download never runs (the user
@@ -176,6 +243,15 @@ const MAX_PENDING_SAVES: usize = 16;
 
 struct BackendState {
     inner: Mutex<BackendStateInner>,
+}
+
+/// The URL of the backend this process is running, if any. Read by the media
+/// permission handlers each time a page asks, because a restart can move the
+/// backend to another port.
+fn current_backend_url(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.try_state::<BackendState>()?;
+    let inner = state.inner.lock().ok()?;
+    inner.handles.as_ref().map(|h| h.url.clone())
 }
 
 impl Default for BackendState {
@@ -328,6 +404,10 @@ struct AssetStatus {
 struct GpuSetup {
     gpu_detected: bool,
     gpu_name: Option<String>,
+    /// "cuda" (NVIDIA) or "rocm" (AMD): which torch build serves the GPU. Both
+    /// run as torch's "cuda" device, so torch_device cannot tell them apart.
+    backend: Option<String>,
+    /// The driver's CUDA version, or the ROCm line of the AMD build.
     cuda_version: Option<String>,
     torch_device: String,
     cuda_verified: bool,
@@ -356,6 +436,12 @@ fn main() {
         }
         return;
     }
+
+    // Before Tauri, GTK and WebKit start, and before any other thread
+    // exists: the WebKit renderer switch is read once at WebKit init (#780).
+    #[cfg(target_os = "linux")]
+    dmabuf::apply_at_startup();
+    apply_portable_env();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -404,13 +490,27 @@ fn main() {
                 .cloned()
                 .ok_or("tauri.conf.json describes no main window")?;
             main_window.drag_drop_enabled = dropin::NATIVE_FILE_DROP;
-            let window =
-                tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?.build()?;
+            let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &main_window)?;
+            if let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) {
+                if let Some(dir) = portable_webview_dir(&root, &data_dir) {
+                    builder = builder.data_directory(dir);
+                }
+            }
+            // Arms the launch crash guard and clears it once the page loads.
+            #[cfg(target_os = "linux")]
+            let builder = dmabuf::watch_first_load(builder);
+            let window = builder.build()?;
 
             // Before anything else: a minimum the screen cannot satisfy leaves
             // a window the user cannot resize down to fit, and that is not
             // recoverable from inside the app.
             fit_min_size_to_screen(&window);
+
+            // Microphone and camera for the studio page, which records takes
+            // and performance videos. Granted to the running backend's origin
+            // only; see mediaperm.rs for what each webview needs.
+            let handle = app.handle().clone();
+            mediaperm::install(&window, move || current_backend_url(&handle));
 
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
@@ -434,7 +534,9 @@ fn main() {
             // never be retried. Verified: after a real self-update both
             // backend.old and StemDeck.exe.old were still on disk. Three path
             // checks per launch is nothing; leaking ~30 MB forever is not.
-            sweep_update_leftovers();
+            if let Ok(root) = app_root() {
+                sweep_update_leftovers(&root);
+            }
 
             let version_file = data_dir.join("last_version.txt");
             let migration_flag = data_dir.join("store_migration_done");
@@ -512,15 +614,16 @@ fn main() {
             download_runtime_pack,
             verify_runtime_pack,
             extract_runtime_pack,
-            installed_runtime_id,
             check_app_update,
             download_app_update,
             apply_app_update,
             ensure_external_assets,
             ensure_torch_device,
+            repair_torchvision,
             warmup_models,
+            skip_model_warmup,
             start_backend,
-            local_ip,
+            restart_backend,
             build_target,
             open_url,
             native_file_drop,
@@ -529,25 +632,39 @@ fn main() {
             save_audio_file,
             pick_export_destination,
             download_to_path,
+            reveal_saved,
             pick_stems_folder,
             pick_exports_folder,
             current_exports_dir,
             start_audio_drag,
             store_get,
             store_set,
+            store_set_many,
             reset_user_data,
             mark_store_migration_done,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
         .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                // Every orderly exit (the updater's relaunch included), not
+                // only the window close, so it is never read as an early
+                // exit (#993).
+                #[cfg(target_os = "linux")]
+                dmabuf::clear_on_exit();
+            }
             if let tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::CloseRequested { .. },
+                event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } = event
             {
                 let state = app_handle.state::<BackendState>();
-                stop_backend(&state);
+                if !stop_backend(&state) {
+                    api.prevent_close();
+                    return;
+                }
+                #[cfg(target_os = "linux")]
+                dmabuf::clear_on_exit();
                 app_handle.exit(0);
             }
         });
@@ -567,9 +684,32 @@ fn main() {
 /// ~/Documents/StemDeck/jobs, since the backend's own ensure_runtime_dirs
 /// (app/core/config.py) already mkdirs whichever JOBS_DIR actually wins that
 /// precedence -- this path only needs to exist when it is the one in use.
-fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let documents = app.path().document_dir().map_err(|e| e.to_string())?;
-    Ok(documents.join("StemDeck"))
+///
+/// None for a portable package (see installed_documents_dir), or when the OS
+/// has no Documents folder.
+fn documents_stemdeck_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let documents = || app.path().document_dir().ok().map(|d| d.join("StemDeck"));
+    match app_root() {
+        Ok(root) => installed_documents_dir(&root, documents),
+        Err(_) => documents(),
+    }
+}
+
+/// `documents` for an installed app, None for a portable package.
+///
+/// ~/Documents/StemDeck is where an installed StemDeck keeps its library. A
+/// portable package keeps its own in data/jobs, or in the folder the user picks
+/// in Settings, so it never looks there: a portable run that adopted that
+/// folder opened another install's songs, and its reset or sweep deleted them.
+fn installed_documents_dir(
+    root: &Path,
+    documents: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if is_portable_package(root) {
+        None
+    } else {
+        documents()
+    }
 }
 
 /// The stems/jobs folder as it exists right now: the backend's own
@@ -615,21 +755,13 @@ fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
     let new_path = jobs_dir.join("user-data.json");
     if !new_path.is_file() {
-        if let Ok(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
+        if let Some(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
             if old_path.is_file() && old_path != new_path {
                 let _ = fs::copy(&old_path, &new_path);
             }
         }
     }
     Ok(new_path)
-}
-
-/// True if `path` exists and contains at least one entry. Used to tell an
-/// already-in-use default folder apart from one nothing has ever written to.
-fn directory_has_entries(path: &Path) -> bool {
-    fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
 }
 
 /// The DEFAULT stems folder. Does NOT create it -- see documents_stemdeck_dir
@@ -641,45 +773,18 @@ fn directory_has_entries(path: &Path) -> bool {
 /// is the one that has to move the library when it changes, including
 /// creating whichever path wins (app/core/config.py's ensure_runtime_dirs).
 ///
-/// Two candidates, resolved in this order:
-///
-/// 1. ~/Documents/StemDeck/jobs, if it already has anything in it. Every
-///    install before this default existed used this path, so an existing
-///    user's real library lives there without any explicit `jobs_dir` in
-///    settings.json to record it -- it was simply "the default." Checking
-///    disk content directly (rather than writing a one-time migration flag
-///    into settings.json, which only the backend otherwise writes) keeps this
-///    self-contained: nothing to persist, no other-process race, and it stays
-///    correct on every future launch for as long as that folder holds data.
-/// 2. Otherwise, for the Windows portable package, local_data_dir()/jobs --
-///    i.e. next to data/cache and data/models inside the package itself,
-///    rather than leaving a footprint in Documents. Non-portable installs
-///    (installer builds, macOS, Linux) keep candidate 1 either way: the
-///    original Documents rationale (visible in Finder/Explorer, eligible for
-///    OneDrive/iCloud backup, survives reinstalls) still applies to them.
+/// ~/Documents/StemDeck/jobs for installer builds, macOS and Linux: visible in
+/// Finder/Explorer, eligible for OneDrive/iCloud backup, and it survives
+/// reinstalls. local_data_dir()/jobs for the Windows portable package, next to
+/// data/cache and data/models inside the package itself, and wherever the OS
+/// has no Documents folder.
 fn documents_dir_for_jobs(app: &tauri::AppHandle) -> PathBuf {
-    let legacy_default = match documents_stemdeck_dir(app) {
-        Ok(dir) => dir.join("jobs"),
-        Err(_) => {
-            return local_data_dir()
-                .map(|d| d.join("jobs"))
-                .unwrap_or_else(|_| PathBuf::from("jobs"));
-        }
-    };
-
-    if directory_has_entries(&legacy_default) {
-        return legacy_default;
+    match documents_stemdeck_dir(app) {
+        Some(dir) => dir.join("jobs"),
+        None => local_data_dir()
+            .map(|d| d.join("jobs"))
+            .unwrap_or_else(|_| PathBuf::from("jobs")),
     }
-
-    if let Ok(root) = app_root() {
-        if is_portable_package(&root) {
-            if let Ok(data_dir) = local_data_dir() {
-                return data_dir.join("jobs");
-            }
-        }
-    }
-
-    legacy_default
 }
 
 /// Native folder picker for the stems location. Returns None when the user
@@ -771,6 +876,52 @@ fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Re
     store.save().map_err(|e| e.to_string())
 }
 
+/// What store_set_many needs of the store: set a key in memory, and write the
+/// whole file. A trait so its unit test can count the writes.
+trait KeyValueStore {
+    fn set_value(&self, key: String, value: serde_json::Value);
+    fn save_file(&self) -> Result<(), String>;
+}
+
+impl<R: tauri::Runtime> KeyValueStore for tauri_plugin_store::Store<R> {
+    fn set_value(&self, key: String, value: serde_json::Value) {
+        self.set(key, value);
+    }
+    fn save_file(&self) -> Result<(), String> {
+        self.save().map_err(|e| e.to_string())
+    }
+}
+
+/// Every key in the store, then one write of the file; nothing written when
+/// there are no keys.
+fn set_all_then_save(
+    store: &impl KeyValueStore,
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    for (key, value) in entries {
+        store.set_value(key, value);
+    }
+    store.save_file()
+}
+
+/// Set several keys in the persistent user-data store and flush to disk once
+/// (#996). Each save writes the whole store file, which holds every song's
+/// mixes: on a 9 MB store one save took 47 to 83 ms, so a version delete that
+/// cleared its eight records with store_set took 386 to 626 ms. Synchronous
+/// like store_set, so both run in the order the page sent them.
+#[tauri::command]
+fn store_set_many(
+    app: tauri::AppHandle,
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let path = documents_store_path(&app)?;
+    let store = app.store(path).map_err(|e| e.to_string())?;
+    set_all_then_save(store.as_ref(), entries)
+}
+
 /// Clear the persistent user-data store entirely (Settings -> General ->
 /// "Reset app data"). Complements the backend's own job-data wipe (POST
 /// /api/reset) -- together they fully clear a user's local StemDeck state,
@@ -823,7 +974,12 @@ fn clear_webkit_data() {
 
 /// Returns current runtime state: Python path, FFmpeg path, and persisted torch device.
 #[tauri::command]
-fn probe_runtime() -> Result<RuntimeProbe, String> {
+async fn probe_runtime() -> Result<RuntimeProbe, String> {
+    // It runs the interpreter and the FFmpeg pair.
+    off_main_thread(probe_runtime_blocking).await
+}
+
+fn probe_runtime_blocking() -> Result<RuntimeProbe, String> {
     log_setup_step("probe-runtime");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -844,9 +1000,12 @@ fn probe_runtime() -> Result<RuntimeProbe, String> {
     // Reached once per launch, and only when a binary is actually present, so
     // the cost is two -version calls on a path that otherwise skips setup
     // entirely.
-    let ffmpeg_ready = ffmpeg
-        .as_deref()
-        .is_some_and(|path| verify_ffmpeg_pair(path).is_ok());
+    //
+    // A known-bad managed build (gcc 16, see is_known_bad_ffmpeg_build) also
+    // reads as not ready, so setup reaches ensure_ffmpeg, which replaces it.
+    let ffmpeg_ready = ffmpeg.as_deref().is_some_and(|path| {
+        verify_ffmpeg_pair(path).is_ok() && !managed_ffmpeg_needs_replacing(&data_dir, path)
+    });
     let torch_device = read_config_str(&data_dir, "torchDevice");
     let torch_device_reason = effective_device_reason(
         read_config_str(&data_dir, "torchDeviceReason"),
@@ -925,7 +1084,11 @@ async fn download_runtime_pack(app_handle: tauri::AppHandle) -> Result<RuntimeAr
 
 /// Verifies the SHA256 of a previously downloaded runtime pack archive.
 #[tauri::command]
-fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
+async fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
+    off_main_thread(verify_runtime_pack_blocking).await
+}
+
+fn verify_runtime_pack_blocking() -> Result<RuntimeArchive, String> {
     let root = app_root()?;
     let data_dir = local_data_dir()?;
     let manifest = load_runtime_manifest(&root)?;
@@ -936,7 +1099,14 @@ fn verify_runtime_pack() -> Result<RuntimeArchive, String> {
 
 /// Extracts the verified runtime pack archive and atomically swaps it into place.
 #[tauri::command]
-fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
+async fn extract_runtime_pack(app: tauri::AppHandle) -> Result<RuntimePackStatus, String> {
+    // A close mid-extract is recovered from: runtime.tmp is cleared on the
+    // next try, and ensure_workspace puts runtime.old back.
+    off_main_thread(move || extract_runtime_pack_blocking(&app.state())).await
+}
+
+fn extract_runtime_pack_blocking(state: &BackendState) -> Result<RuntimePackStatus, String> {
+    let _step = SetupStep::take(state, "runtime install")?;
     log_setup_step("extract-runtime-pack");
     ensure_workspace()?;
     let root = app_root()?;
@@ -993,14 +1163,13 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
     fs::rename(&extracted, &runtime).map_err(|e| format!("failed to install runtime: {e}"))?;
 
     // Cleanup is non-fatal; log warnings rather than silently discarding errors.
-    if let Err(e) = fs::remove_dir_all(&tmp) {
-        if let Ok(d) = local_data_dir() {
-            append_to_setup_log(&d, &format!("cleanup warning: {}: {e}", tmp.display()));
-        }
-    }
-    if let Err(e) = fs::remove_dir_all(&old) {
-        if let Ok(d) = local_data_dir() {
-            append_to_setup_log(&d, &format!("cleanup warning: {}: {e}", old.display()));
+    // A folder that is not there is not one: runtime.old never exists on a
+    // first install (#858).
+    for path in [&tmp, &old] {
+        if let Some(warning) = cleanup_warning(path, fs::remove_dir_all(path)) {
+            if let Ok(d) = local_data_dir() {
+                append_to_setup_log(&d, &warning);
+            }
         }
     }
 
@@ -1026,10 +1195,15 @@ fn extract_runtime_pack() -> Result<RuntimePackStatus, String> {
 /// Delete the `.old` siblings and staging dir an in-app update leaves at the
 /// app root (#421). Best-effort and idempotent: whatever is still locked by the
 /// outgoing process this launch is simply picked up on the next one.
-fn sweep_update_leftovers() {
-    let Ok(root) = app_root() else { return };
+///
+/// backend.old is kept while there is no backend/app: then it is the only
+/// copy of the app, left by a swap that stopped between its renames.
+fn sweep_update_leftovers(root: &Path) {
     for name in ["backend.old", "python.old", "_update_app.tmp"] {
         let stale = root.join(name);
+        if name == "backend.old" && !root.join("backend").join("app").is_dir() {
+            continue;
+        }
         if stale.is_dir() {
             let _ = fs::remove_dir_all(&stale);
         }
@@ -1049,7 +1223,7 @@ fn sweep_update_leftovers() {
 /// replace python/ (see `AppUpdatePlan`). `None` is treated as "cannot verify",
 /// which sends the user to the full-package download rather than risking an app
 /// layer whose imports the installed runtime may not satisfy.
-#[tauri::command]
+#[cfg(any(windows, target_os = "linux"))]
 fn installed_runtime_id() -> Option<String> {
     let root = app_root().ok()?;
     let text = fs::read_to_string(root.join("python").join("runtime-version.json")).ok()?;
@@ -1138,9 +1312,12 @@ async fn check_app_update(query: AppUpdateQuery) -> Result<AppUpdateAvailability
 
 /// Fetch a small text file (a checksum, a version marker). Capped so a wrong
 /// URL that points at something huge cannot be read into memory unbounded.
+/// Held to the same release URLs as the archive, since the frontend verifies
+/// that archive against the checksum read here.
 #[cfg(any(windows, target_os = "linux"))]
 async fn fetch_text(url: &str) -> Result<String, String> {
     const MAX_BYTES: usize = 64 * 1024;
+    validate_release_url(url)?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
@@ -1222,6 +1399,7 @@ fn app_sha_path(downloads: &Path) -> PathBuf {
     downloads.join(format!("{UPDATE_APP_ARCHIVE}.sha256"))
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 fn verify_update_sha256(path: &Path, expected: &str, label: &str) -> Result<(), String> {
     let actual = sha256_file(path)?;
     if !actual.eq_ignore_ascii_case(expected.trim()) {
@@ -1328,8 +1506,8 @@ fn not_writable_message(root: &Path) -> String {
 /// while a handle inside it is open, so starting the swap before the process is
 /// gone fails with a permission error, or worse, part-way through. Linux would
 /// tolerate it, but a backend still serving requests from a directory being
-/// swapped out is not something to rely on either.
-#[cfg(any(windows, target_os = "linux"))]
+/// swapped out is not something to rely on either. restart_backend uses it on
+/// every platform, so the new backend never races the old one for the port.
 fn stop_backend_and_wait(state: &BackendState, timeout: Duration) -> Result<(), String> {
     let handles = match state.inner.lock() {
         Ok(mut guard) => guard.handles.take(),
@@ -1360,9 +1538,7 @@ fn stop_backend_and_wait(state: &BackendState, timeout: Duration) -> Result<(), 
             Ok(Some(_)) => return Ok(()),
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    return Err(
-                        "the audio backend did not shut down in time; update cancelled".to_string(),
-                    );
+                    return Err("the audio backend did not shut down in time".to_string());
                 }
                 thread::sleep(Duration::from_millis(100));
             }
@@ -1375,17 +1551,23 @@ fn stop_backend_and_wait(state: &BackendState, timeout: Duration) -> Result<(), 
 ///
 /// Even once the backend process is gone, a virus scanner or the search
 /// indexer can hold a transient handle inside a directory that was just
-/// written or is about to move. These clear in well under a second; without a
-/// retry an unlucky scan turns into a failed update mid-swap.
+/// written or is about to move. Most clear in under a second; the budget is
+/// about 5 s so a slower scan of a freshly extracted backend/ does not turn
+/// into a failed update mid-swap. A missing path is not transient, and the
+/// window's close waits for the swap, so that fails at once.
 #[cfg(any(windows, target_os = "linux"))]
 fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
-    const ATTEMPTS: u32 = 10;
+    const ATTEMPTS: u32 = 34;
     let mut last_err = None;
     for attempt in 0..ATTEMPTS {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
             Err(e) => {
+                let missing = e.kind() == std::io::ErrorKind::NotFound;
                 last_err = Some(e);
+                if missing {
+                    break;
+                }
                 if attempt + 1 < ATTEMPTS {
                     thread::sleep(Duration::from_millis(150));
                 }
@@ -1400,6 +1582,76 @@ fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
     ))
 }
 
+/// Run the update's renames in order. When one fails, the ones already done
+/// are undone, newest first, so a failed swap leaves the previous install in
+/// place instead of an install with no backend/ beside a backend.old.
+#[cfg(any(windows, target_os = "linux"))]
+fn rename_all_or_restore(moves: &[(&Path, &Path, &str)]) -> Result<(), String> {
+    for (done, (from, to, what)) in moves.iter().enumerate() {
+        if let Err(e) = rename_with_retry(from, to, what) {
+            for (from, to, what) in moves[..done].iter().rev() {
+                rename_with_retry(to, from, &format!("roll back \"{what}\""))
+                    .map_err(|undo| format!("{e}; {undo}"))?;
+            }
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+/// Holds `starting` for the whole of an app update, so no backend is started
+/// or restarted from backend/ while the update renames it, and the update does
+/// not begin while one is. Released on every way out of apply_app_update.
+#[cfg(any(windows, target_os = "linux"))]
+struct UpdateClaim<'a>(&'a BackendState);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<'a> UpdateClaim<'a> {
+    fn take(state: &'a BackendState) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if inner.starting {
+            return Err("StemDeck is restarting; try the update again in a moment".to_string());
+        }
+        inner.starting = true;
+        Ok(UpdateClaim(state))
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for UpdateClaim<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.starting = false;
+    }
+}
+
+/// Held while the update's renames run (`swapping`). A close that came first
+/// cancels the swap, and one that comes during it is held off until it ends:
+/// the renames retry for seconds on a scanner's handle, and stopped between
+/// two of them the install has no backend/ or no executable.
+#[cfg(any(windows, target_os = "linux"))]
+struct UpdateSwap<'a>(&'a BackendState);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<'a> UpdateSwap<'a> {
+    fn take(state: &'a BackendState) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if inner.closing {
+            return Err("StemDeck is closing; update cancelled".to_string());
+        }
+        inner.swapping = true;
+        Ok(Self(state))
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for UpdateSwap<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.swapping = false;
+    }
+}
+
 /// Applies a previously downloaded+verified app update in place, then
 /// relaunches. This is the one piece of the updater with no existing analog in
 /// the runtime-pack machinery above: it replaces the *running* exe, not an idle
@@ -1412,9 +1664,14 @@ fn rename_with_retry(from: &Path, to: &Path, what: &str) -> Result<(), String> {
 /// an NVIDIA install keeps its CUDA torch and portable/GPU detection and user
 /// data all survive untouched.
 #[tauri::command]
-fn apply_app_update(
-    state: tauri::State<BackendState>,
-    app_handle: tauri::AppHandle,
+async fn apply_app_update(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // The checksum, the extract and the backend stop take seconds each.
+    off_main_thread(move || apply_app_update_blocking(&app_handle.state(), &app_handle)).await
+}
+
+fn apply_app_update_blocking(
+    state: &BackendState,
+    app_handle: &tauri::AppHandle,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -1423,6 +1680,7 @@ fn apply_app_update(
     }
     #[cfg(any(windows, target_os = "linux"))]
     {
+        let _claim = UpdateClaim::take(state)?;
         let root = app_root()?;
         let data_dir = local_data_dir()?;
         let downloads = data_dir.join("downloads");
@@ -1476,7 +1734,8 @@ fn apply_app_update(
         //
         // The backend must be gone first: it runs from backend/, and Windows
         // will not rename a directory with live handles inside it.
-        stop_backend_and_wait(&state, Duration::from_secs(15))?;
+        stop_backend_and_wait(state, Duration::from_secs(15))
+            .map_err(|e| format!("{e}; update cancelled"))?;
 
         let backend_dir = root.join("backend");
         let backend_old = root.join("backend.old");
@@ -1490,18 +1749,20 @@ fn apply_app_update(
             let _ = fs::remove_file(&exe_old);
         }
 
+        let staged_backend = staging.join("backend");
+        let mut moves = Vec::new();
         if backend_dir.exists() {
-            rename_with_retry(
-                &backend_dir,
-                &backend_old,
+            moves.push((
+                backend_dir.as_path(),
+                backend_old.as_path(),
                 "move the existing backend aside",
-            )?;
+            ));
         }
-        rename_with_retry(
-            &staging.join("backend"),
-            &backend_dir,
+        moves.push((
+            staged_backend.as_path(),
+            backend_dir.as_path(),
             "install the updated backend",
-        )?;
+        ));
 
         // The exe goes last. Windows allows renaming a running process's own
         // on-disk image -- the OS holds the file open by handle, not by path --
@@ -1516,8 +1777,20 @@ fn apply_app_update(
         // process to self-heal it on next launch. Closing it fully needs a
         // separate bootstrap launcher that is never itself replaced; flagging
         // it rather than treating it as solved.
-        rename_with_retry(&exe_path, &exe_old, "move the running app aside")?;
-        rename_with_retry(&new_exe, &exe_path, "install the updated app")?;
+        moves.push((
+            exe_path.as_path(),
+            exe_old.as_path(),
+            "move the running app aside",
+        ));
+        moves.push((
+            new_exe.as_path(),
+            exe_path.as_path(),
+            "install the updated app",
+        ));
+        // Held to the end, so a close cannot fall between the renames and
+        // the relaunch either.
+        let _swap = UpdateSwap::take(state)?;
+        rename_all_or_restore(&moves)?;
 
         let _ = fs::remove_dir_all(&staging);
         let _ = fs::remove_file(&app_archive);
@@ -1535,49 +1808,11 @@ fn apply_app_update(
     }
 }
 
-/// The per-user directory holding the settings copy that survives reinstalling.
-///
-/// A portable package keeps its data in `<app>/data` (#399), which means
-/// settings.json lives *inside the install*. Upgrading by extracting the new
-/// zip to a fresh folder therefore lost every setting the user had changed:
-/// stems location, port, compute device, quality, language. `ensure_workspace`
-/// already restores from here, but nothing wrote it after #399 moved the data
-/// directory — the backend mirrors to it now, via STEMDECK_SETTINGS_MIRROR.
-///
-/// Deliberately the OS-standard data dir, i.e. exactly what `local_data_dir`
-/// returns for a NON-portable install, so the two layouts share one location
-/// and an install that switches between them keeps its settings either way.
-fn shared_settings_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        env::var("LOCALAPPDATA")
-            .ok()
-            .map(|base| PathBuf::from(base).join("StemDeck"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("StemDeck")
-        })
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Ok(xdg) = env::var("XDG_DATA_HOME") {
-            return Some(PathBuf::from(xdg).join("stemdeck"));
-        }
-        env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("stemdeck")
-        })
-    }
-}
-
 /// Creates required data directories and runs any pending data migrations.
+///
+/// A portable package starts from its own data folder only. It never takes the
+/// settings an installed StemDeck keeps in the OS data dir: they name that
+/// install's library, and a portable run must not open, reset or sweep it.
 #[tauri::command]
 fn ensure_workspace() -> Result<(), String> {
     log_setup_step("ensure-workspace");
@@ -1593,17 +1828,14 @@ fn ensure_workspace() -> Result<(), String> {
         if !runtime_path.exists() && old_path.is_dir() {
             let _ = fs::rename(&old_path, &runtime_path);
         }
-    }
-
-    #[cfg(windows)]
-    if is_portable_package(&root) {
-        // Portable data moved from %LocalAppData% to <app>/data in #399. A
-        // freshly extracted package has an empty data directory, so carry the
-        // user's prior choices forward before the backend reads settings.json.
-        if let Some(shared) = shared_settings_dir() {
-            migrate_persisted_files(&shared, &data, &["settings.json"])?;
+        // The same for an FFmpeg swap (swap_in_staged_dir).
+        let ffmpeg_path = data.join("ffmpeg");
+        let ffmpeg_old = data.join("ffmpeg.old");
+        if !ffmpeg_path.exists() && ffmpeg_old.is_dir() {
+            let _ = fs::rename(&ffmpeg_old, &ffmpeg_path);
         }
     }
+
     migrate_legacy_data(&root, &data)?;
     fs::create_dir_all(&data).map_err(|e| format!("failed to create data dir: {e}"))?;
     for dir in ["cache", "downloads", "ffmpeg", "jobs", "logs", "models"] {
@@ -1623,12 +1855,19 @@ fn ensure_workspace() -> Result<(), String> {
 
 /// Downloads FFmpeg/ffprobe if absent and writes their paths to config.json.
 #[tauri::command]
-fn ensure_external_assets() -> Result<AssetStatus, String> {
+async fn ensure_external_assets(app: tauri::AppHandle) -> Result<AssetStatus, String> {
+    // It downloads FFmpeg. A close mid-swap is recovered from by
+    // ensure_workspace, which puts ffmpeg.old back.
+    off_main_thread(move || ensure_external_assets_blocking(&app.state())).await
+}
+
+fn ensure_external_assets_blocking(state: &BackendState) -> Result<AssetStatus, String> {
+    let _step = SetupStep::take(state, "FFmpeg download")?;
     log_setup_step("ensure-external-assets");
     ensure_workspace()?;
     let data_dir = local_data_dir()?;
-    let ffmpeg = ensure_ffmpeg(&data_dir)?;
-    write_setup_config(&data_dir, &ffmpeg)?;
+    let (ffmpeg, source) = ensure_ffmpeg(&data_dir)?;
+    write_setup_config(&data_dir, &ffmpeg, &source, std::env::consts::ARCH)?;
     Ok(AssetStatus {
         ffmpeg_ready: true,
         ffmpeg_path: Some(ffmpeg.display().to_string()),
@@ -1636,14 +1875,88 @@ fn ensure_external_assets() -> Result<AssetStatus, String> {
     })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct ModelWarmupStatus {
     demucs_ready: bool,
     beat_this_ready: bool,
     sections_ready: bool,
     vocal_split_ready: bool,
+    whisper_ready: bool,
+    /// The models that failed because their download host could not be
+    /// reached or stopped answering (WARMUP_OFFLINE).
+    offline: Vec<String>,
+    /// Set when the disk could not hold the models, so none was downloaded.
+    no_space: Option<NoSpace>,
 }
+
+#[derive(Serialize, Debug, PartialEq)]
+struct NoSpace {
+    needed: u64,
+    free: u64,
+}
+
+impl ModelWarmupStatus {
+    /// The status `app/pipeline/warmup.py` reported, from its stdout.
+    fn from_stdout(stdout: &str) -> Self {
+        let mut status = Self::default();
+        for line in stdout.lines() {
+            match line.split(' ').collect::<Vec<_>>().as_slice() {
+                ["WARMUP_OK", "demucs"] => status.demucs_ready = true,
+                ["WARMUP_OK", "beat_this"] => status.beat_this_ready = true,
+                ["WARMUP_OK", "sections"] => status.sections_ready = true,
+                ["WARMUP_OK", "vocal_split"] => status.vocal_split_ready = true,
+                ["WARMUP_OK", "whisper"] => status.whisper_ready = true,
+                ["WARMUP_OFFLINE", model] => status.offline.push(model.to_string()),
+                ["WARMUP_NO_SPACE", needed, free] => {
+                    if let (Ok(needed), Ok(free)) = (needed.parse(), free.parse()) {
+                        status.no_space = Some(NoSpace { needed, free });
+                    }
+                }
+                _ => {}
+            }
+        }
+        status
+    }
+}
+
+/// One `WARMUP_START <model> <n> <count>` line, sent to the setup screen as
+/// it arrives so it can say which model it is on (#405).
+#[derive(Clone, Serialize, Debug, PartialEq)]
+struct WarmupProgress {
+    model: String,
+    number: u32,
+    count: u32,
+}
+
+fn warmup_progress(line: &str) -> Option<WarmupProgress> {
+    let mut parts = line.strip_prefix("WARMUP_START ")?.split(' ');
+    let model = parts.next()?.to_string();
+    let number = parts.next()?.parse().ok()?;
+    let count = parts.next()?.parse().ok()?;
+    Some(WarmupProgress {
+        model,
+        number,
+        count,
+    })
+}
+
+const MODEL_WARMUP_LABEL: &str = "model warmup";
+
+/// How long the model warmup may say nothing on either stream before it is
+/// taken for hung (#405). It is not the download bound: the downloads in it
+/// give up by themselves and say so, and tqdm writes to stderr while bytes
+/// arrive. This catches a warmup stuck past those bounds. The longest silence
+/// any of them allows is audio-separator's 300 s read timeout: the real
+/// warmup behind a proxy that never answers was quiet on both streams for
+/// 300 s there and at most 77 s anywhere else. A minute over that, so a dead
+/// connection still gets its own message, naming the model.
+const WARMUP_STALL_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+
+/// Backstop for a warmup that keeps talking and never finishes. The largest
+/// model is 1.6 GB: about 35 minutes at 0.77 MB/s, the slowest connection a
+/// report has measured (#502).
+const WARMUP_HARD_CAP: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Eagerly downloads/caches the ML models StemDeck uses (Demucs, beat-this,
 /// automatic song sections, and the on-demand lead/backing vocal-split karaoke model, #275) via
@@ -1653,7 +1966,27 @@ struct ModelWarmupStatus {
 /// still proceeds, and that one feature falls back to its existing
 /// lazy-download-on-first-use behavior, same as before this step existed.
 #[tauri::command]
-fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus, String> {
+async fn warmup_models(app: tauri::AppHandle) -> Result<ModelWarmupStatus, String> {
+    off_main_thread(move || run_model_warmup(&app.state(), &app)).await
+}
+
+/// Runs a command's work on a blocking thread. A command that is not async
+/// runs on the main thread, so for as long as it ran the window could not
+/// paint or close and no other command reached the shell (#405): the model
+/// warmup's Skip, or the close during a CUDA torch install.
+async fn off_main_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn run_model_warmup(
+    state: &BackendState,
+    app: &tauri::AppHandle,
+) -> Result<ModelWarmupStatus, String> {
+    let _step = SetupStep::take(state, MODEL_WARMUP_LABEL)?;
     log_setup_step("model-warmup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1679,36 +2012,32 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
     // will load anything (#505).
     apply_ffmpeg_path(&mut command, &data_dir)?;
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start model warmup: {e}"))?;
-
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
-    }
-    let output = child_output_with_timeout(child, Duration::from_secs(30 * 60), "model warmup");
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
-    }
-    let output = output?;
+    // A fixed 30 minutes from spawn used to be the only bound: a dead
+    // connection held the screen that long, and a healthy slow one was killed
+    // at it. Silence is the honest signal, as for pip (#502).
+    let progress = app.clone();
+    let output = run_setup_child(&mut command, state, MODEL_WARMUP_LABEL, |child| {
+        child_output_streaming(
+            child,
+            WARMUP_STALL_TIMEOUT,
+            WARMUP_HARD_CAP,
+            MODEL_WARMUP_LABEL,
+            move |line| {
+                if let Some(step) = warmup_progress(line) {
+                    let _ = progress.emit("model-warmup-progress", step);
+                }
+            },
+        )
+    });
+    let output = output.inspect_err(|e| append_to_setup_log(&data_dir, e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut status = ModelWarmupStatus {
-        demucs_ready: false,
-        beat_this_ready: false,
-        sections_ready: false,
-        vocal_split_ready: false,
-    };
     for line in stdout.lines() {
-        match line {
-            "WARMUP_OK demucs" => status.demucs_ready = true,
-            "WARMUP_OK beat_this" => status.beat_this_ready = true,
-            "WARMUP_OK sections" => status.sections_ready = true,
-            "WARMUP_OK vocal_split" => status.vocal_split_ready = true,
-            _ if line.starts_with("WARMUP_FAILED") => {
-                append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
-            }
-            _ => {}
+        if ["WARMUP_FAILED", "WARMUP_NO_SPACE", "WARMUP_NOTE"]
+            .iter()
+            .any(|kind| line.starts_with(kind))
+        {
+            append_to_setup_log(&data_dir, &format!("model warmup: {line}"));
         }
     }
     if !output.status.success() {
@@ -1721,20 +2050,138 @@ fn warmup_models(state: tauri::State<BackendState>) -> Result<ModelWarmupStatus,
             ),
         );
     }
-    Ok(status)
+    Ok(ModelWarmupStatus::from_stdout(&stdout))
+}
+
+/// Runs a setup child (pip, the model warmup) through `wait`, recorded in
+/// `setup_child` meanwhile so closing the window or Skip can stop it. On
+/// Windows the child runs in a job, which stopping ends and which StemDeck's
+/// exit closes, either way ending it and whatever it started.
+fn run_setup_child(
+    command: &mut Command,
+    state: &BackendState,
+    label: &str,
+    wait: impl FnOnce(Child) -> Result<Output, String>,
+) -> Result<Output, String> {
+    // One at a time: there is one slot to stop a child through, and two
+    // downloads into the same cache would only race each other. The check and
+    // the spawn share the lock so two callers cannot both pass it.
+    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if inner.closing {
+        return Err(format!("{label} not started: StemDeck is closing"));
+    }
+    if let Some(running) = &inner.setup_child {
+        return Err(format!(
+            "{label} not started: the {} is still running",
+            running.label
+        ));
+    }
+    // Held to the end of this function: dropping the last handle to the job
+    // ends the child.
+    let (child, job) =
+        backendjob::spawn_in_job(command).map_err(|e| format!("failed to start {label}: {e}"))?;
+    let _job = job.map(Arc::new);
+    inner.setup_child = Some(SetupChild {
+        label: label.to_string(),
+        #[cfg(unix)]
+        pid: child.id(),
+        #[cfg(windows)]
+        job: _job.clone(),
+    });
+    drop(inner);
+    let output = wait(child);
+    if let Ok(mut inner) = state.inner.lock() {
+        inner.setup_child = None;
+    }
+    output
+}
+
+/// The claim on `setup_step` a setup command holds while it works, released
+/// on drop. Off the main thread nothing else orders two of them.
+struct SetupStep<'a>(&'a BackendState);
+
+impl<'a> SetupStep<'a> {
+    fn take(state: &'a BackendState, step: &'static str) -> Result<Self, String> {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if let Some(running) = inner.setup_step {
+            return Err(format!(
+                "{step} not started: the {running} is still running"
+            ));
+        }
+        inner.setup_step = Some(step);
+        Ok(Self(state))
+    }
+}
+
+impl Drop for SetupStep<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.setup_step = None;
+    }
+}
+
+/// Err once the window has closed. A probe stopped by the close reads as a
+/// failed one, so the GPU step asks this before it acts on a result: moving
+/// or deleting torch while StemDeck exits would leave it half moved.
+fn still_open(state: &BackendState) -> Result<(), String> {
+    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if inner.closing {
+        return Err("stopped: StemDeck is closing".to_string());
+    }
+    Ok(())
+}
+
+/// One of the GPU step's probes (nvidia-smi, a torch import check), run as a
+/// setup child so that closing the window stops it as it stops pip: on
+/// Windows through its job, which also ends what it started; elsewhere with
+/// SIGTERM. A check wedged in the GPU driver otherwise ran on to its timeout
+/// after StemDeck had gone (#502).
+fn setup_probe_output(
+    mut command: Command,
+    state: &BackendState,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    run_setup_child(&mut command, state, label, |child| {
+        child_output_with_timeout(child, timeout, label)
+    })
+}
+
+/// The wizard's Skip on the model step (#405). Stops the model warmup and
+/// nothing else, so a stray call can never cut a pip install short. Each
+/// model then downloads the first time a feature needs it, as it would have
+/// if this step did not exist.
+#[tauri::command]
+fn skip_model_warmup(state: tauri::State<BackendState>) -> Result<(), String> {
+    if stop_setup_child(&state, MODEL_WARMUP_LABEL)? {
+        if let Ok(data_dir) = local_data_dir() {
+            append_to_setup_log(&data_dir, "model warmup: skipped by the user");
+        }
+    }
+    Ok(())
+}
+
+/// Stops the running setup child if it is the one named `label`, saying
+/// whether it did. Nothing to stop is not an error: it finished first.
+fn stop_setup_child(state: &BackendState, label: &str) -> Result<bool, String> {
+    let inner = state.inner.lock().map_err(|e| e.to_string())?;
+    match &inner.setup_child {
+        Some(child) if child.label == label => child.stop().map(|()| true),
+        _ => Ok(false),
+    }
 }
 
 /// Spawns the Python/uvicorn backend, waits for it to become healthy, and returns its URL.
 #[tauri::command]
-fn start_backend(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<BackendState>,
+async fn start_backend(app_handle: tauri::AppHandle) -> Result<BackendStarted, String> {
+    // The health wait alone can take up to 90 seconds.
+    off_main_thread(move || start_backend_blocking(&app_handle, &app_handle.state())).await
+}
+
+fn start_backend_blocking(
+    app_handle: &tauri::AppHandle,
+    state: &BackendState,
 ) -> Result<BackendStarted, String> {
-    // Always bind all interfaces; whether other devices are actually served is
-    // controlled live by the backend's network gate (Settings → "Make StemDeck
-    // available on your network"), which defaults off and always allows
-    // loopback. The WebView itself connects via 127.0.0.1 regardless.
-    let bind_host = "0.0.0.0";
     // Gate concurrent calls: return immediately if already running or starting (#145).
     {
         let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
@@ -1748,165 +2195,246 @@ fn start_backend(
     }
 
     // Spawn and wait for health outside the lock; update state atomically on completion.
-    let spawn_result = (|| {
-        let root = app_root()?;
-        let backend_dir = backend_dir(&root)?;
-        let data_dir = local_data_dir()?;
-        let python = python_path(&root).filter(|p| p.is_file()).ok_or_else(|| {
-            "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
-        })?;
-        patch_pyvenv_cfg(&python);
-        let (port, port_guard) = reserve_port(bind_host, configured_port())?;
-        // The LAN half of the pair. The webview talks plain http to the
-        // loopback listener above, because a self-signed certificate would
-        // raise an interstitial a Tauri window has no way to click through;
-        // phones get this one, because without TLS their origin is insecure
-        // and the browser withholds the AudioWorklet transpose runs on.
-        // Best-effort throughout: no certificate, no free port, or a backend
-        // too old to read the variables all mean LAN transpose is unavailable,
-        // never that StemDeck fails to start.
-        let https = certs::ensure(&data_dir)
+    let spawned = spawn_backend(app_handle, configured_port(), false);
+    store_backend(state, spawned)
+}
+
+/// Stops the backend and starts it again, so a change to "Make StemDeck
+/// available on your network" takes effect: the new backend listens where
+/// settings.json now says (#859). It takes nothing from the page, which can
+/// only save the setting and ask for this. The same port is asked for again,
+/// because the page's origin, and with it everything it keeps in
+/// localStorage, is that port.
+///
+/// Off the main thread: the stop, the port wait and the health wait take
+/// seconds, and the window has to keep painting the dialog meanwhile.
+#[tauri::command]
+async fn restart_backend(app_handle: tauri::AppHandle) -> Result<BackendStarted, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<BackendState>();
+        restart_backend_blocking(&app_handle, &state)
+    })
+    .await
+    .map_err(|e| format!("the restart did not finish: {e}"))?
+}
+
+fn restart_backend_blocking(
+    app_handle: &tauri::AppHandle,
+    state: &BackendState,
+) -> Result<BackendStarted, String> {
+    let port = {
+        let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+        if inner.starting {
+            return Err("Backend startup already in progress".to_string());
+        }
+        inner.starting = true;
+        inner.handles.as_ref().map(|h| h.port)
+    };
+    let spawned = stop_backend_and_wait(state, Duration::from_secs(15)).and_then(|()| {
+        let port = port.unwrap_or_else(configured_port);
+        if !wait_for_port_release(port, Duration::from_secs(5)) {
+            eprintln!("[stemdeck] port {port} is still held after the restart; using a free one");
+        }
+        spawn_backend(app_handle, port, true)
+    });
+    store_backend(state, spawned)
+}
+
+/// Waits until nothing holds `port` on loopback or on every interface, for at
+/// most `timeout`. stop_backend_and_wait returns once the process it started
+/// has exited, but on Windows the interpreter the venv launcher started ends
+/// when the backend's job closes, which is not instant, and holds the port
+/// until then.
+fn wait_for_port_release(port: u16, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if claim_port_on_both(ALL_INTERFACES, port, true).is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Clears the starting flag whether the spawn succeeded or failed, and keeps
+/// the new backend's handles.
+fn store_backend(
+    state: &BackendState,
+    spawned: Result<BackendHandles, String>,
+) -> Result<BackendStarted, String> {
+    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    inner.starting = false;
+    let handles = spawned?;
+    let url = handles.url.clone();
+    inner.handles = Some(handles);
+    Ok(BackendStarted { url })
+}
+
+/// Spawns the backend on `preferred_port` (or a free port when that is
+/// taken) and waits for it to answer /api/health. `after_stop`: see
+/// [`claim_port`].
+fn spawn_backend(
+    app_handle: &tauri::AppHandle,
+    preferred_port: u16,
+    after_stop: bool,
+) -> Result<BackendHandles, String> {
+    // Loopback only while network access is off, so other devices cannot even
+    // connect; every interface once it is on (#859). The backend's network
+    // gate still refuses other devices whenever the setting is off, which
+    // covers the time between saving the choice and the restart that applies
+    // it. The WebView itself connects via 127.0.0.1 regardless.
+    let bind_host = configured_bind_host();
+    let root = app_root()?;
+    let backend_dir = backend_dir(&root)?;
+    let data_dir = local_data_dir()?;
+    let python = python_path(&root).filter(|p| p.is_file()).ok_or_else(|| {
+        "Python runtime not found. Expected python/ or .venv/ under StemDeck.".to_string()
+    })?;
+    patch_pyvenv_cfg(&python);
+    let (port, port_guard) = reserve_port(bind_host, preferred_port, after_stop)?;
+    // The LAN half of the pair, so only while the backend is on the LAN at
+    // all. The webview talks plain http to the loopback listener above,
+    // because a self-signed certificate would raise an interstitial a Tauri
+    // window has no way to click through; phones get this one, because
+    // without TLS their origin is insecure and the browser withholds the
+    // AudioWorklet transpose runs on. Best-effort throughout: no certificate,
+    // no free port, or a backend too old to read the variables all mean LAN
+    // transpose is unavailable, never that StemDeck fails to start.
+    let https = if bind_host == ALL_INTERFACES {
+        certs::ensure(&data_dir)
             .map_err(|e| {
                 eprintln!("stemdeck: no LAN certificate, https disabled: {e}");
                 e
             })
             .ok()
             .and_then(|cert| {
-                reserve_port(bind_host, HTTPS_PORT)
+                reserve_port(bind_host, HTTPS_PORT, after_stop)
                     .map_err(|e| eprintln!("stemdeck: no port for https: {e}"))
                     .ok()
                     .map(|(https_port, guard)| (cert, https_port, guard))
-            });
-        let url = format!("http://127.0.0.1:{port}");
-        let log_path = data_dir.join("logs").join("backend.log");
-        let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
-            // Logging should help diagnose startup; it should not prevent startup.
-            (Stdio::null(), Stdio::null())
-        });
+            })
+    } else {
+        None
+    };
+    let url = format!("http://127.0.0.1:{port}");
+    let log_path = data_dir.join("logs").join("backend.log");
+    let (stdout, stderr) = prepare_backend_stdio(&log_path).unwrap_or_else(|_| {
+        // Logging should help diagnose startup; it should not prevent startup.
+        (Stdio::null(), Stdio::null())
+    });
 
-        // On macOS and Linux, python-build-standalone detects its own prefix by
-        // walking up from bin/ — PYTHONHOME is not needed and actively breaks
-        // startup when mis-computed (it would point at python/bin, whose
-        // lib/python3.X has no stdlib, so even `encodings` fails to import).
-        // Only Windows, whose portable venv keeps the stdlib under base/Lib,
-        // needs PYTHONHOME to locate the bundled stdlib.
-        // Compute before moving python into Command::new.
-        #[cfg(windows)]
-        let pythonhome = python
-            .parent()
-            .and_then(|bin_dir| bin_dir.parent().map(|venv| (venv, bin_dir)))
-            .and_then(|(venv, bin_dir)| bundled_python_home(venv, bin_dir).map(|(home, _)| home));
+    // On macOS and Linux, python-build-standalone detects its own prefix by
+    // walking up from bin/, so PYTHONHOME is not needed and actively breaks
+    // startup when mis-computed (it would point at python/bin, whose
+    // lib/python3.X has no stdlib, so even `encodings` fails to import).
+    // Only Windows, whose portable venv keeps the stdlib under base/Lib,
+    // needs PYTHONHOME to locate the bundled stdlib.
+    // Compute before moving python into Command::new.
+    #[cfg(windows)]
+    let pythonhome = python
+        .parent()
+        .and_then(|bin_dir| bin_dir.parent().map(|venv| (venv, bin_dir)))
+        .and_then(|(venv, bin_dir)| bundled_python_home(venv, bin_dir).map(|(home, _)| home));
 
-        let instance_token = new_instance_token();
-        let mut cmd = Command::new(python);
-        cmd.args([
-            "-m",
-            "uvicorn",
-            "app.main:app",
-            "--host",
-            bind_host,
-            "--port",
-            &port.to_string(),
-            // Bound how long uvicorn waits for open connections on shutdown.
-            // The import queue's SSE stream stays open for as long as the app
-            // window is on screen, and uvicorn drains connections before it
-            // runs the lifespan teardown -- so without this the backend never
-            // finishes draining, we escalate to SIGKILL below, and the teardown
-            // that reaps the demucs worker never runs. Kept under the 3 s
-            // SIGKILL deadline so the clean path wins.
-            "--timeout-graceful-shutdown",
-            "2",
-        ]);
-        #[cfg(windows)]
-        if let Some(ref pythonhome) = pythonhome {
-            cmd.env("PYTHONHOME", pythonhome);
-        }
-
-        // Jobs (stem audio files) live in ~/Documents/StemDeck/jobs/ so the user's
-        // library is visible in Finder, backed up by iCloud, and survives app reinstalls.
-        let jobs_dir = documents_dir_for_jobs(&app_handle);
-
-        cmd.current_dir(&backend_dir)
-            .env("STEMDECK_DATA_DIR", &data_dir)
-            .env("STEMDECK_DEFAULT_JOBS_DIR", &jobs_dir)
-            .env("STEMDECK_DESKTOP", "1")
-            // Where the backend keeps the per-user copy of settings.json that
-            // survives extracting a new package into a fresh folder. Computed
-            // here so the write half and ensure_workspace's restore half can
-            // never point at different places.
-            .envs(
-                shared_settings_dir()
-                    .map(|dir| ("STEMDECK_SETTINGS_MIRROR", dir.join("settings.json"))),
-            )
-            .env("STEMDECK_PARENT_PID", std::process::id().to_string())
-            // How the backend proves it is ours when it answers /api/health.
-            // The environment is the only channel that survives the Windows
-            // venv launcher re-execing into python/base (#457), which is why
-            // this exists rather than a PID comparison. See wait_for_health.
-            .env("STEMDECK_INSTANCE_TOKEN", &instance_token)
-            .env("PYTHONUNBUFFERED", "1")
-            .env("XDG_CACHE_HOME", data_dir.join("cache"))
-            .env("TORCH_HOME", data_dir.join("models").join("torch"))
-            .stdout(stdout)
-            .stderr(stderr);
-
-        // app/core/tls_listener reads these three together; any one missing
-        // means it stays off and the app is exactly what it was before.
-        if let Some((ref cert, https_port, _)) = https {
-            cmd.env("STEMDECK_SSL_CERT", &cert.cert)
-                .env("STEMDECK_SSL_KEY", &cert.key)
-                .env("STEMDECK_HTTPS_PORT", https_port.to_string());
-        }
-
-        apply_ffmpeg_path(&mut cmd, &data_dir)?;
-        // fpcalc for song fingerprinting, fetched in the background once the
-        // FFmpeg it stands in for is settled. Never waited for.
-        #[cfg(unix)]
-        spawn_fpcalc_setup(data_dir.clone());
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("failed to start backend: {e}"))?;
-        // Release the reserved ports immediately after spawn so uvicorn can
-        // bind them. Both, or the companion listener finds its own port held.
-        drop(port_guard);
-        drop(https);
-
-        if let Err(err) = wait_for_health(
-            &mut child,
-            port,
-            &instance_token,
-            Duration::from_secs(90),
-            &log_path,
-        ) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(err);
-        }
-
-        Ok((child, url))
-    })();
-
-    // Atomically update state: clear starting flag whether spawn succeeded or failed.
-    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
-    inner.starting = false;
-    match spawn_result {
-        Ok((child, url)) => {
-            inner.handles = Some(BackendHandles {
-                child,
-                url: url.clone(),
-            });
-            Ok(BackendStarted { url })
-        }
-        Err(e) => Err(e),
+    let instance_token = new_instance_token();
+    let mut cmd = Command::new(python);
+    cmd.args([
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        bind_host,
+        "--port",
+        &port.to_string(),
+        // Bound how long uvicorn waits for open connections on shutdown.
+        // The import queue's SSE stream stays open for as long as the app
+        // window is on screen, and uvicorn drains connections before it
+        // runs the lifespan teardown -- so without this the backend never
+        // finishes draining, we escalate to SIGKILL below, and the teardown
+        // that reaps the demucs worker never runs. Kept under the 3 s
+        // SIGKILL deadline so the clean path wins.
+        "--timeout-graceful-shutdown",
+        "2",
+    ]);
+    #[cfg(windows)]
+    if let Some(ref pythonhome) = pythonhome {
+        cmd.env("PYTHONHOME", pythonhome);
     }
+
+    // The default jobs (stem audio) folder: see documents_dir_for_jobs.
+    let jobs_dir = documents_dir_for_jobs(app_handle);
+
+    cmd.current_dir(&backend_dir)
+        .env("STEMDECK_DATA_DIR", &data_dir)
+        .env("STEMDECK_DEFAULT_JOBS_DIR", &jobs_dir)
+        .env("STEMDECK_DESKTOP", "1")
+        // Reported back by /api/settings as network_listening, so the
+        // switch shows what is listening rather than what was saved.
+        .env("STEMDECK_BIND_HOST", bind_host)
+        .env("STEMDECK_PARENT_PID", std::process::id().to_string())
+        // How the backend proves it is ours when it answers /api/health.
+        // The environment is the only channel that survives the Windows
+        // venv launcher re-execing into python/base (#457), which is why
+        // this exists rather than a PID comparison. See wait_for_health.
+        .env("STEMDECK_INSTANCE_TOKEN", &instance_token)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("XDG_CACHE_HOME", data_dir.join("cache"))
+        .env("TORCH_HOME", data_dir.join("models").join("torch"))
+        .stdout(stdout)
+        .stderr(stderr);
+    // The AMD GPU setup verified, for the backend and every worker it starts.
+    #[cfg(target_os = "linux")]
+    show_rocm_the_chosen_gpu(&mut cmd);
+
+    // app/core/tls_listener reads these three together; any one missing
+    // means it stays off and the app is exactly what it was before. Removed
+    // otherwise, so a copy in the user's own environment cannot start the
+    // LAN listener while network access is off.
+    if let Some((ref cert, https_port, _)) = https {
+        cmd.env("STEMDECK_SSL_CERT", &cert.cert)
+            .env("STEMDECK_SSL_KEY", &cert.key)
+            .env("STEMDECK_HTTPS_PORT", https_port.to_string());
+    } else {
+        cmd.env_remove("STEMDECK_SSL_CERT")
+            .env_remove("STEMDECK_SSL_KEY")
+            .env_remove("STEMDECK_HTTPS_PORT");
+    }
+
+    apply_ffmpeg_path(&mut cmd, &data_dir)?;
+    // fpcalc for song fingerprinting, fetched in the background once the
+    // FFmpeg it stands in for is settled. Never waited for.
+    #[cfg(unix)]
+    spawn_fpcalc_setup(data_dir.clone());
+
+    // On Windows also without a console window, and inside a job that
+    // ends the whole backend tree with StemDeck (see backendjob.rs).
+    let (mut child, job) =
+        backendjob::spawn_in_job(&mut cmd).map_err(|e| format!("failed to start backend: {e}"))?;
+    // Release the reserved ports immediately after spawn so uvicorn can
+    // bind them. Both, or the companion listener finds its own port held.
+    drop(port_guard);
+    drop(https);
+
+    if let Err(err) = wait_for_health(
+        &mut child,
+        port,
+        &instance_token,
+        Duration::from_secs(90),
+        &log_path,
+    ) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(err);
+    }
+
+    Ok(BackendHandles {
+        child,
+        url,
+        port,
+        _job: job,
+    })
 }
 
 /// Reports the running build's OS/arch/GPU variant so the frontend can pick the
@@ -1936,29 +2464,20 @@ fn build_target() -> BuildTarget {
     BuildTarget { os, arch, gpu }
 }
 
-/// Best-effort primary LAN IPv4, shown in Settings so the user knows the address
-/// to open StemDeck from another device. Uses the "connect a UDP socket" trick:
-/// no packets are sent — connect() just makes the OS pick the source IP for the
-/// default route. Returns None when offline / no route.
-#[tauri::command]
-fn local_ip() -> Option<String> {
-    use std::net::UdpSocket;
-    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
-    sock.connect("8.8.8.8:80").ok()?;
-    match sock.local_addr().ok()?.ip() {
-        std::net::IpAddr::V4(v4) if !v4.is_loopback() => Some(v4.to_string()),
-        _ => None,
-    }
-}
-
 /// Detects GPU hardware, installs CUDA torch if needed, and persists the chosen device.
 #[tauri::command]
-fn ensure_torch_device(
-    state: tauri::State<BackendState>,
+async fn ensure_torch_device(app: tauri::AppHandle) -> Result<GpuSetup, String> {
+    // A CUDA torch install moves several GB through pip.
+    off_main_thread(move || set_up_torch_device(&app.state(), &app)).await
+}
+
+fn set_up_torch_device(
+    state: &BackendState,
     // Carried so the pip passes below can report progress to the setup screen.
     // macOS never runs them, hence the explicit discard in that branch.
-    app: tauri::AppHandle,
+    app: &tauri::AppHandle,
 ) -> Result<GpuSetup, String> {
+    let _step = SetupStep::take(state, "GPU step")?;
     log_setup_step("gpu-setup");
     let root = app_root()?;
     let data_dir = local_data_dir()?;
@@ -1973,6 +2492,7 @@ fn ensure_torch_device(
         return Ok(GpuSetup {
             gpu_detected: false,
             gpu_name: None,
+            backend: None,
             cuda_version: None,
             torch_device: "cpu".to_string(),
             cuda_verified: false,
@@ -1988,8 +2508,8 @@ fn ensure_torch_device(
     #[cfg(target_os = "macos")]
     {
         // No pip pass on this platform: MPS ships in the bundled wheel.
-        let _ = &app;
-        let mps_available = verify_mps_torch(&python);
+        let _ = app;
+        let mps_available = verify_mps_torch(&python, state);
         let (device, reason) = if mps_available {
             ("mps", "mps")
         } else {
@@ -2003,6 +2523,7 @@ fn ensure_torch_device(
             } else {
                 None
             },
+            backend: None,
             cuda_version: None,
             torch_device: device.to_string(),
             cuda_verified: false,
@@ -2012,13 +2533,14 @@ fn ensure_torch_device(
 
     #[cfg(not(target_os = "macos"))]
     {
-        let site = torch_site_packages(&python);
+        let site = torch_site_packages(&python, state);
         if site.is_none() {
             append_to_setup_log(
                 &data_dir,
                 "could not locate site-packages; torch swaps overlay",
             );
         }
+        still_open(state)?;
         // A swap that was interrupted (crash, forced quit, a rollback that did
         // not finish) is put back before anything else looks at torch.
         if let Some(site) = site.as_deref().filter(|s| torchswap::has_backup(s)) {
@@ -2033,13 +2555,50 @@ fn ensure_torch_device(
                 ),
             }
         }
-        let setup = match detect_nvidia_gpu(&data_dir) {
-            Some((gpu_name, cuda_version, compute_cap)) => {
+        let detected =
+            detect_nvidia_gpu(&data_dir, state).map(|(name, cuda_version, compute_cap)| {
+                DetectedGpu {
+                    candidates: wheel_candidates(compute_cap.as_deref(), &cuda_version),
+                    name,
+                    backend: "cuda",
+                    version: cuda_version,
+                    unusable: None,
+                }
+            });
+        // Without an NVIDIA GPU, an AMD one a ROCm build of torch can drive.
+        // ROCm torch exists for Linux only. Both builds serve the GPU as
+        // torch's "cuda" device, so everything after detection is the same.
+        #[cfg(target_os = "linux")]
+        let detected = detected.or_else(|| detect_amd_gpu(Path::new("/"), &data_dir));
+        let setup = match detected {
+            // Found, but no build StemDeck installs can use it: say why, and
+            // leave the bundled torch alone.
+            Some(DetectedGpu {
+                name,
+                backend,
+                version,
+                unusable: Some(reason),
+                ..
+            }) => GpuSetup {
+                gpu_detected: true,
+                gpu_name: Some(name),
+                backend: Some(backend.to_string()),
+                cuda_version: Some(version),
+                torch_device: "cpu".to_string(),
+                cuda_verified: false,
+                reason: reason.to_string(),
+            },
+            Some(DetectedGpu {
+                name: gpu_name,
+                backend,
+                version: cuda_version,
+                candidates,
+                unusable: None,
+            }) => {
                 // Try each candidate wheel in turn. A build that installs but
                 // cannot launch a kernel is not a reason to give up on the GPU
                 // if another build might work -- that was the whole failure in
                 // #502, where cu128 was the only thing ever offered.
-                let candidates = wheel_candidates(compute_cap.as_deref(), &cuda_version);
                 let mut cuda_verified = false;
                 // Whether any candidate got far enough to be verified at all.
                 // Without this the reason below says "cuda-verify-failed" for a
@@ -2055,16 +2614,17 @@ fn ensure_torch_device(
                 let mut swapped = false;
                 // A re-run (a new app version) on a CUDA build that already
                 // works has nothing to install.
-                let already = verify_cuda_torch(&python) == CudaVerify::Verified;
+                let already = verify_cuda_torch(&python, state) == CudaVerify::Verified;
                 if already {
                     append_to_setup_log(&data_dir, "CUDA torch already installed and verified");
                     cuda_verified = true;
                 }
                 for tag in candidates.iter().filter(|_| !already) {
+                    still_open(state)?;
                     append_to_setup_log(
                         &data_dir,
                         &format!(
-                            "trying CUDA wheel {tag} (torch {})",
+                            "trying GPU wheel {tag} (torch {})",
                             torch_version_for_tag(tag)
                         ),
                     );
@@ -2094,13 +2654,13 @@ fn ensure_torch_device(
                         }
                     }
                     let index_url = format!("https://download.pytorch.org/whl/{tag}");
-                    if let Err(e) = install_cuda_torch(&python, &index_url, &state, &app) {
+                    if let Err(e) = install_cuda_torch(&python, &index_url, state, app) {
                         append_to_setup_log(&data_dir, &format!("{tag} install failed: {e}"));
                         outcomes.push(None);
                         continue;
                     }
                     cuda_installed = true;
-                    let outcome = verify_cuda_torch(&python);
+                    let outcome = verify_cuda_torch(&python, state);
                     outcomes.push(Some(outcome));
                     if outcome == CudaVerify::Verified {
                         append_to_setup_log(&data_dir, &format!("{tag} verified"));
@@ -2109,6 +2669,8 @@ fn ensure_torch_device(
                     }
                     append_to_setup_log(&data_dir, &format!("{tag} installed but did not verify"));
                 }
+                // Left as it is, a swap is put back on the next launch.
+                still_open(state)?;
                 let reason = if cuda_verified {
                     if swapped {
                         if let Some(site) = &site {
@@ -2132,8 +2694,8 @@ fn ensure_torch_device(
                         &python,
                         site.as_deref(),
                         swapped,
-                        &state,
-                        &app,
+                        state,
+                        app,
                         &data_dir,
                     ) {
                         Ok(()) => stage,
@@ -2153,6 +2715,7 @@ fn ensure_torch_device(
                 GpuSetup {
                     gpu_detected: true,
                     gpu_name: Some(gpu_name),
+                    backend: Some(backend.to_string()),
                     cuda_version: Some(cuda_version),
                     torch_device: if cuda_verified { "cuda" } else { "cpu" }.to_string(),
                     cuda_verified,
@@ -2162,6 +2725,7 @@ fn ensure_torch_device(
             None => GpuSetup {
                 gpu_detected: false,
                 gpu_name: None,
+                backend: None,
                 cuda_version: None,
                 torch_device: "cpu".to_string(),
                 cuda_verified: false,
@@ -2172,6 +2736,7 @@ fn ensure_torch_device(
         // cpu on a cpu-only package) as settled -- a CPU result born from a
         // failure is re-probed on the next launch instead of pinning the
         // install to CPU forever (#247).
+        still_open(state)?;
         persist_torch_device(&data_dir, &setup.torch_device, &setup.reason);
         append_to_setup_log(
             &data_dir,
@@ -2199,6 +2764,97 @@ fn is_cpu_only_package(root: &Path) -> bool {
 /// extract is portable with zero user action. Never present on macOS/Linux.
 fn is_portable_package(root: &Path) -> bool {
     root.join("portable.txt").is_file()
+}
+
+/// Where a portable package keeps its WebView2 profile: in its data dir, like
+/// everything else it writes (#399). `None` keeps the platform default, which
+/// on Windows is %LOCALAPPDATA%\app.stemdeck.desktop\EBWebView.
+fn portable_webview_dir(root: &Path, data_dir: &Path) -> Option<PathBuf> {
+    is_portable_package(root).then(|| data_dir.join("webview"))
+}
+
+/// The environment a portable package runs with, so that what other software
+/// writes to the user profile stays in its data dir too. Empty for anything
+/// else: an installed StemDeck keeps the system's locations.
+///
+/// - TEMP, TMP: the Windows temp folder. WebView2, pip's unpacking and
+///   Python's tempfile all write there; an upload over 1 MB is spooled there
+///   before the backend sees it.
+/// - TMPDIR: first in Python's tempfile search, ahead of the two above.
+/// - PIP_CACHE_DIR: the NVIDIA setup's CUDA torch install, whose wheels pip
+///   would otherwise cache in %LOCALAPPDATA%\pip.
+/// - MPLCONFIGDIR: matplotlib's font cache, otherwise %LOCALAPPDATA%\matplotlib.
+fn portable_env(root: &Path, data_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+    if !is_portable_package(root) {
+        return Vec::new();
+    }
+    let tmp = data_dir.join("tmp");
+    let cache = data_dir.join("cache");
+    vec![
+        ("TEMP", tmp.clone()),
+        ("TMP", tmp.clone()),
+        ("TMPDIR", tmp),
+        ("PIP_CACHE_DIR", cache.join("pip")),
+        ("MPLCONFIGDIR", cache.join("matplotlib")),
+    ]
+}
+
+/// Applies `portable_env` to this process, which every child inherits: the
+/// backend, the model warmup, pip and WebView2.
+///
+/// Edition 2021: set_var is safe to call, but it is only sound while no other
+/// thread reads the environment, so this runs first thing in main.
+fn apply_portable_env() {
+    let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) else {
+        return;
+    };
+    let vars = portable_env(&root, &data_dir);
+    // The temp folder has to exist: Python's tempfile passes over one that
+    // does not, to the next candidate. Without it nothing is redirected, and
+    // setup.log says why.
+    if let Some((_, tmp)) = vars.iter().find(|(name, _)| *name == "TEMP") {
+        if let Err(e) = fs::create_dir_all(tmp) {
+            append_to_setup_log(
+                &data_dir,
+                &format!(
+                    "could not create {}, temp files and tool caches go to the user profile: {e}",
+                    tmp.display()
+                ),
+            );
+            return;
+        }
+    }
+    let _ = USER_ENV.set(
+        vars.iter()
+            .map(|(name, _)| (*name, env::var_os(name)))
+            .collect(),
+    );
+    for (name, value) in vars {
+        env::set_var(name, value);
+    }
+}
+
+/// The values `apply_portable_env` replaced, as the user had them.
+static USER_ENV: OnceLock<Vec<(&'static str, Option<std::ffi::OsString>)>> = OnceLock::new();
+
+/// Gives a program started for the user (Explorer, and the browser it may
+/// start) the user's own temp folder and caches, not the portable package's:
+/// a browser started cold from it would keep them for its whole session.
+fn with_user_env(command: &mut Command) -> &mut Command {
+    restore_env(command, USER_ENV.get().map_or(&[], Vec::as_slice))
+}
+
+fn restore_env<'a>(
+    command: &'a mut Command,
+    saved: &[(&'static str, Option<std::ffi::OsString>)],
+) -> &'a mut Command {
+    for (name, value) in saved {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    command
 }
 
 /// A persisted "cpu-only-package" device decision is only trustworthy while the
@@ -2252,7 +2908,7 @@ fn persist_torch_device(data_dir: &std::path::Path, device: &str, reason: &str) 
 }
 
 #[cfg(target_os = "macos")]
-fn verify_mps_torch(python: &Path) -> bool {
+fn verify_mps_torch(python: &Path, state: &BackendState) -> bool {
     // Bounded for the same reason as verify_cuda_torch: a probe that imports
     // torch and asks the GPU a question can wedge, and an unbounded wait there
     // stops setup with nothing written anywhere (#502). Nothing has been seen
@@ -2266,7 +2922,7 @@ fn verify_mps_torch(python: &Path) -> bool {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "MPS verify")
+    setup_probe_output(command, state, GPU_VERIFY_TIMEOUT, "MPS verify")
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
@@ -2323,17 +2979,19 @@ fn nvidia_smi_exe() -> String {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)> {
+fn detect_nvidia_gpu(
+    data_dir: &Path,
+    state: &BackendState,
+) -> Option<(String, String, Option<String>)> {
     let smi = nvidia_smi_exe();
     append_to_setup_log(data_dir, &format!("GPU detection using: {smi}"));
     let mut cmd = Command::new(&smi);
     cmd.args(["--query-gpu=name", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut cmd);
     // 30s (vs 10s elsewhere): the first nvidia-smi call can be slow on Optimus
     // laptops that have to wake a sleeping dGPU (#247).
-    let name_out = match command_output_with_timeout(cmd, Duration::from_secs(30), "nvidia-smi") {
+    let name_out = match setup_probe_output(cmd, state, Duration::from_secs(30), "nvidia-smi") {
         Ok(out) => out,
         Err(e) => {
             append_to_setup_log(data_dir, &format!("nvidia-smi failed to run: {e}"));
@@ -2359,29 +3017,29 @@ fn detect_nvidia_gpu(data_dir: &Path) -> Option<(String, String, Option<String>)
     // Read CUDA version from the standard nvidia-smi header.
     let mut smi_cmd = Command::new(&smi);
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-    hide_console_window(&mut smi_cmd);
-    let smi_out =
-        command_output_with_timeout(smi_cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    let smi_out = setup_probe_output(smi_cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
-    let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| "12.4".to_string());
+    let cuda_version = parse_cuda_version(&smi_text).unwrap_or_else(|| {
+        append_to_setup_log(data_dir, &no_cuda_header_note(&smi_text));
+        "12.4".to_string()
+    });
 
     // Read the GPU's compute capability (e.g. "12.0" for Blackwell sm_120,
     // "8.9" for Ada). Drives the wheel choice: stock torch 2.6 cu12x wheels
     // have no sm_120 kernels, so Blackwell needs a cu128 / torch 2.7 build.
     // Failure here is non-fatal — we fall back to the CUDA-version heuristic.
-    let compute_cap = detect_compute_cap(&smi);
+    let compute_cap = detect_compute_cap(&smi, state);
 
     Some((gpu_name, cuda_version, compute_cap))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn detect_compute_cap(smi: &str) -> Option<String> {
+fn detect_compute_cap(smi: &str, state: &BackendState) -> Option<String> {
     let mut cmd = Command::new(smi);
     cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut cmd);
-    let out = command_output_with_timeout(cmd, Duration::from_secs(10), "nvidia-smi").ok()?;
+    let out = setup_probe_output(cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     if !out.status.success() {
         return None;
     }
@@ -2399,18 +3057,352 @@ fn detect_compute_cap(smi: &str) -> Option<String> {
     }
 }
 
+/// The driver's CUDA version from the nvidia-smi header: the first
+/// "CUDA Version:" or "CUDA UMD Version:" (driver 616 and later) followed by a
+/// major.minor number. "N/A" is no version. The twin of `_CUDA_HEADER` in
+/// app/core/device_reason.py: keep the two one rule, and both tests on
+/// tests/fixtures/nvidia_smi_headers.json (#1012).
 #[cfg(not(target_os = "macos"))]
 fn parse_cuda_version(smi_output: &str) -> Option<String> {
-    for line in smi_output.lines() {
-        if let Some(pos) = line.find("CUDA Version:") {
-            let rest = &line[pos + "CUDA Version:".len()..];
-            let v = rest.split_whitespace().next()?.trim_matches('|').trim();
-            if !v.is_empty() && v != "N/A" {
-                return Some(v.to_string());
+    let digits = |s: &str| s.len() - s.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    smi_output.match_indices("CUDA ").find_map(|(at, label)| {
+        let rest = &smi_output[at + label.len()..];
+        let rest = rest.strip_prefix("UMD ").unwrap_or(rest);
+        let number = rest.strip_prefix("Version:")?.trim_start();
+        let major = digits(number);
+        let minor = digits(number[major..].strip_prefix('.')?);
+        (major > 0 && minor > 0).then(|| number[..major + 1 + minor].to_string())
+    })
+}
+
+/// A GPU setup can install a torch build for.
+#[cfg(any(not(target_os = "macos"), test))]
+struct DetectedGpu {
+    name: String,
+    /// "cuda" or "rocm". Either build serves the GPU as torch's "cuda" device.
+    backend: &'static str,
+    /// The driver's CUDA version, or the ROCm line the AMD build carries.
+    version: String,
+    /// Wheel tags to try, best first.
+    candidates: Vec<&'static str>,
+    /// Set when the GPU is there but no build can use it: the setup reason.
+    unusable: Option<&'static str>,
+}
+
+/// The ROCm wheel tag offered to AMD GPUs (#825). torch 2.8.0, like cu128, is
+/// the last line with torchaudio's soundfile backend (see
+/// `torch_version_for_tag`), and rocm6.4 is the newest ROCm index that line is
+/// published on. Its kernels include RDNA4; see ROCM_GFX_TARGETS.
+#[cfg(any(not(target_os = "macos"), test))]
+const ROCM_TAG: &str = "rocm6.4";
+
+/// The gfx targets torch 2.8.0+rocm6.4 carries kernels for, as
+/// `torch.cuda.get_arch_list()` reports them on that build. A card outside the
+/// list would download a wheel of several GB only to fail verification with
+/// "invalid device function", so it is never offered one.
+#[cfg(any(target_os = "linux", test))]
+const ROCM_GFX_TARGETS: &[&str] = &[
+    "gfx900", "gfx906", "gfx908", "gfx90a", "gfx942", "gfx1030", "gfx1100", "gfx1101", "gfx1102",
+    "gfx1200", "gfx1201",
+];
+
+/// Where the amdgpu driver lists its KFD topology, relative to the root.
+#[cfg(any(target_os = "linux", test))]
+const KFD_NODES: &str = "sys/class/kfd/kfd/topology/nodes";
+
+/// One GPU node of the amdgpu driver's KFD topology.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KfdGpu {
+    /// Its place among the GPU nodes, in node order. That is the order the
+    /// ROCm runtime enumerates GPUs in, so it is the index ROCR_VISIBLE_DEVICES
+    /// takes.
+    ordinal: usize,
+    gfx: String,
+    /// Compute units times SIMDs per unit: a discrete card has many times an
+    /// integrated one's.
+    simd_count: u32,
+    device_id: u32,
+    render_minor: u32,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl KfdGpu {
+    fn has_rocm_kernels(&self) -> bool {
+        ROCM_GFX_TARGETS.contains(&self.gfx.as_str())
+    }
+}
+
+/// The gfx target name for a KFD `gfx_target_version`: major * 10000 +
+/// minor * 100 + stepping, with minor and stepping written in hex in the name,
+/// so 120001 is gfx1201 and the MI200's 90010 is gfx90a.
+#[cfg(any(target_os = "linux", test))]
+fn gfx_target_name(version: u32) -> String {
+    format!(
+        "gfx{}{:x}{:x}",
+        version / 10000,
+        (version / 100) % 100,
+        version % 100
+    )
+}
+
+/// One KFD node's `properties` file, as a GPU. None for a CPU node, which
+/// reports a gfx_target_version of 0. `ordinal` is filled in by the caller.
+#[cfg(any(target_os = "linux", test))]
+fn parse_kfd_node(properties: &str) -> Option<KfdGpu> {
+    let field = |key: &str| -> Option<u32> {
+        properties.lines().find_map(|line| {
+            let (k, v) = line.split_once(' ')?;
+            if k == key {
+                v.trim().parse().ok()
+            } else {
+                None
             }
+        })
+    };
+    let gfx = field("gfx_target_version").filter(|v| *v != 0)?;
+    Some(KfdGpu {
+        ordinal: 0,
+        gfx: gfx_target_name(gfx),
+        simd_count: field("simd_count").unwrap_or(0),
+        device_id: field("device_id").unwrap_or(0),
+        render_minor: field("drm_render_minor").unwrap_or(0),
+    })
+}
+
+/// Every GPU node under `root`'s KFD topology, in node order. Node directories
+/// are numbers, and read_dir returns them in no particular order, so they are
+/// sorted as numbers: node 10 comes after node 9.
+#[cfg(any(target_os = "linux", test))]
+fn kfd_gpus(root: &Path) -> Vec<KfdGpu> {
+    let Ok(entries) = fs::read_dir(root.join(KFD_NODES)) else {
+        return Vec::new();
+    };
+    let mut nodes: Vec<(u32, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let node = entry.file_name().to_str()?.parse().ok()?;
+            Some((
+                node,
+                fs::read_to_string(entry.path().join("properties")).ok()?,
+            ))
+        })
+        .collect();
+    nodes.sort_by_key(|(node, _)| *node);
+    nodes
+        .iter()
+        .filter_map(|(_, properties)| parse_kfd_node(properties))
+        .enumerate()
+        .map(|(ordinal, gpu)| KfdGpu { ordinal, ..gpu })
+        .collect()
+}
+
+/// The AMD GPU to use: one the ROCm build has kernels for before one it has
+/// none for, then the one with the most SIMDs, then the first. A Ryzen with
+/// its integrated GPU enabled lists that GPU too, often first, and its gfx
+/// target (gfx1036 and the like) has no kernels in the build: taking the first
+/// node used to settle such a machine on CPU with the discrete card unused.
+#[cfg(any(target_os = "linux", test))]
+fn choose_amd_gpu(gpus: &[KfdGpu]) -> Option<&KfdGpu> {
+    gpus.iter().max_by_key(|gpu| {
+        (
+            gpu.has_rocm_kernels(),
+            gpu.simd_count,
+            std::cmp::Reverse(gpu.ordinal),
+        )
+    })
+}
+
+/// The ROCR_VISIBLE_DEVICES value that shows the ROCm runtime only the GPU
+/// `choose_amd_gpu` picks, or None when there is no AMD GPU the build can use.
+/// Without it a second, unsupported GPU stays visible: HIP can number it
+/// device 0, or refuse to start with hipErrorNoBinaryForGpu, "for all current
+/// devices".
+#[cfg(any(target_os = "linux", test))]
+fn rocm_visible_devices(root: &Path) -> Option<String> {
+    let gpus = kfd_gpus(root);
+    choose_amd_gpu(&gpus)
+        .filter(|gpu| gpu.has_rocm_kernels())
+        .map(|gpu| gpu.ordinal.to_string())
+}
+
+/// Shows a torch process only the AMD GPU setup chose. Read off sysfs for
+/// every process rather than saved at setup, so a GPU added or removed later
+/// cannot leave a stale index behind. A choice the user made in the
+/// environment wins. Harmless for CUDA, which never reads it.
+#[cfg(target_os = "linux")]
+fn show_rocm_the_chosen_gpu(command: &mut Command) {
+    if let Some(devices) =
+        rocm_visible_devices_to_set(Path::new("/"), |name| env::var_os(name).is_some())
+    {
+        command.env("ROCR_VISIBLE_DEVICES", devices);
+    }
+}
+
+/// `rocm_visible_devices`, unless the user already chose which GPUs a
+/// process sees through any variable HIP reads (`user_set`), in which case
+/// adding ROCR_VISIBLE_DEVICES on top would renumber the devices under their
+/// choice. HIP reads CUDA_VISIBLE_DEVICES as well as its own.
+#[cfg(any(target_os = "linux", test))]
+fn rocm_visible_devices_to_set(root: &Path, user_set: impl Fn(&str) -> bool) -> Option<String> {
+    let chosen_by_user = [
+        "ROCR_VISIBLE_DEVICES",
+        "HIP_VISIBLE_DEVICES",
+        "CUDA_VISIBLE_DEVICES",
+    ]
+    .into_iter()
+    .any(user_set);
+    if chosen_by_user {
+        None
+    } else {
+        rocm_visible_devices(root)
+    }
+}
+
+/// The marketing name for an AMD PCI device from a pci.ids database, such as
+/// "Radeon RX 9070/9070 XT/9070 GRE" out of
+/// "7550  Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]". The bracketed part is the
+/// product name; without one the whole entry is used.
+#[cfg(any(target_os = "linux", test))]
+fn pci_ids_amd_name(pci_ids: &str, device_id: u32) -> Option<String> {
+    let wanted = format!("{device_id:04x}");
+    let mut in_amd = false;
+    for line in pci_ids.lines() {
+        // Comments sit inside vendor sections, and must not end one.
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
+        if !line.starts_with('\t') {
+            in_amd = line.starts_with("1002 ");
+            continue;
+        }
+        if !in_amd || line.starts_with("\t\t") {
+            continue;
+        }
+        let Some(name) = line.trim_start_matches('\t').strip_prefix(wanted.as_str()) else {
+            continue;
+        };
+        let name = name.trim();
+        let product = match (name.find('['), name.rfind(']')) {
+            (Some(open), Some(close)) if open < close => &name[open + 1..close],
+            _ => name,
+        };
+        return Some(product.to_string());
     }
     None
+}
+
+/// What setup.log and the setup screen call `gpu`: the driver's product name,
+/// else the pci.ids entry, with the gfx target, which decides support.
+#[cfg(any(target_os = "linux", test))]
+fn amd_gpu_name(root: &Path, gpu: &KfdGpu) -> String {
+    let device = root
+        .join("sys/class/drm")
+        .join(format!("renderD{}", gpu.render_minor))
+        .join("device");
+    fs::read_to_string(device.join("product_name"))
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            ["usr/share/hwdata/pci.ids", "usr/share/misc/pci.ids"]
+                .iter()
+                .find_map(|ids| {
+                    pci_ids_amd_name(&fs::read_to_string(root.join(ids)).ok()?, gpu.device_id)
+                })
+        })
+        .map_or_else(
+            || format!("AMD GPU ({})", gpu.gfx),
+            |product| format!("AMD {product} ({})", gpu.gfx),
+        )
+}
+
+/// Finds an AMD GPU through the amdgpu driver's KFD topology under `root`
+/// ("/" outside tests), the interface the ROCm runtime itself uses. Needs no
+/// ROCm install and runs nothing: the torch wheel carries the whole user-space
+/// runtime, so the kernel driver is all the machine has to provide.
+#[cfg(any(target_os = "linux", test))]
+fn detect_amd_gpu(root: &Path, data_dir: &Path) -> Option<DetectedGpu> {
+    let gpus = kfd_gpus(root);
+    for gpu in &gpus {
+        append_to_setup_log(
+            data_dir,
+            &format!(
+                "KFD GPU {}: {}, {} SIMDs, PCI device {:04x}, renderD{}",
+                gpu.ordinal, gpu.gfx, gpu.simd_count, gpu.device_id, gpu.render_minor
+            ),
+        );
+    }
+    let gpu = choose_amd_gpu(&gpus)?;
+    let name = amd_gpu_name(root, gpu);
+    append_to_setup_log(
+        data_dir,
+        &format!(
+            "AMD GPU chosen: {name}, KFD GPU {0}; torch processes get \
+             ROCR_VISIBLE_DEVICES={0} unless ROCR_, HIP_ or CUDA_VISIBLE_DEVICES is set",
+            gpu.ordinal
+        ),
+    );
+    let candidates = if gpu.has_rocm_kernels() {
+        vec![ROCM_TAG]
+    } else {
+        Vec::new()
+    };
+    // The ROCm runtime reaches the GPU through /dev/kfd and the card's render
+    // node, which most distributions give to the render group. Without access
+    // every build would install and then see no device.
+    let can_open = |path: PathBuf| {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .is_ok()
+    };
+    let kfd_ok = can_open(root.join("dev/kfd"))
+        && can_open(root.join(format!("dev/dri/renderD{}", gpu.render_minor)));
+    let unusable = if candidates.is_empty() {
+        append_to_setup_log(
+            data_dir,
+            &format!(
+                "no ROCm build StemDeck installs has kernels for {}; staying on CPU",
+                gpu.gfx
+            ),
+        );
+        // Settled by the setup screen: nothing on offer can change until an
+        // update brings a different build.
+        Some("rocm-unsupported-gpu")
+    } else if !kfd_ok {
+        append_to_setup_log(
+            data_dir,
+            "cannot open /dev/kfd or the GPU's render node; add your user to the render and video groups \
+             (sudo usermod -aG render,video $USER) and log in again",
+        );
+        // Not settled: a user who fixes the groups gets the GPU next launch.
+        Some("rocm-no-kfd-access")
+    } else {
+        None
+    };
+    Some(DetectedGpu {
+        name,
+        backend: "rocm",
+        version: ROCM_TAG.trim_start_matches("rocm").to_string(),
+        candidates,
+        unusable,
+    })
+}
+
+/// The setup.log line for an nvidia-smi header with no CUDA version, which
+/// leaves the wheel choice on its 12.4 default. It quotes the header line, so
+/// a report shows what the driver printed instead (#247).
+#[cfg(not(target_os = "macos"))]
+fn no_cuda_header_note(smi_output: &str) -> String {
+    let header = smi_output
+        .lines()
+        .find(|line| line.contains("NVIDIA-SMI"))
+        .map_or("none", |line| {
+            line.trim_matches(|c: char| c == '|' || c.is_whitespace())
+        });
+    format!("nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: {header}")
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -2444,7 +3436,7 @@ fn cuda_tag(cuda_version: &str) -> &'static str {
 /// setup now walks the whole list, so nothing in the app asks for just the
 /// head of it. Kept because the per-architecture expectations below are
 /// clearer read one tag at a time than as one-element vectors.
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "macos")))]
 fn wheel_tag(compute_cap: Option<&str>, cuda_version: &str) -> &'static str {
     wheel_candidates(compute_cap, cuda_version)[0]
 }
@@ -2501,10 +3493,11 @@ fn wheel_candidates(compute_cap: Option<&str>, cuda_version: &str) -> Vec<&'stat
 /// because 2.7.1 shipped them incomplete (#239). 2.8.0 is also the last line
 /// that still carries torchaudio's soundfile backend, which is what demucs'
 /// `ta.save()` needs -- see `wheel_candidates` for why that rules out cu130.
+/// ROCm takes the same line (#825).
 #[cfg(any(not(target_os = "macos"), test))]
 fn torch_version_for_tag(tag: &str) -> &'static str {
     match tag {
-        "cu128" => "2.8.0",
+        "cu128" | ROCM_TAG => "2.8.0",
         _ => "2.6.0",
     }
 }
@@ -2521,19 +3514,100 @@ fn torch_version_for_tag(tag: &str) -> &'static str {
 /// nothing updates it on our behalf. The lockfile pins 0.21.0 against torch
 /// 2.6.0, which is why only the cu128 line, the one that moves torch to 2.8.0,
 /// ever broke.
-// Not `any(not(macos), test)` like torch_version_for_tag above. That one is
-// reached by a test which itself runs everywhere, and returns literals. This
-// one returns CPU_TORCHVISION_VERSION, a `not(macos)` constant, and both tests
-// that call it are `not(macos)` too -- so compiling it into a macOS test build
-// asked for a constant that is not there, and `cargo test` could not build on
-// macOS at all. The workflow that would have caught it had been cancelled on
-// every recent run rather than failing, so it went unseen (#643).
-#[cfg(not(target_os = "macos"))]
+// `any(not(macos), test)`, and so are the constants it reads. A macOS test
+// build once compiled this while CPU_TORCHVISION_VERSION was `not(macos)` only,
+// and `cargo test` could not build on macOS at all (#643). Gating both the same
+// way lets the tests that pin them to packaging/torch-versions.json run on
+// every host (#778).
+#[cfg(any(not(target_os = "macos"), test))]
 fn torchvision_version_for_tag(tag: &str) -> &'static str {
-    match tag {
-        "cu128" => "0.23.0",
-        _ => CPU_TORCHVISION_VERSION,
+    torchvision_for_torch(torch_version_for_tag(tag)).unwrap_or(CPU_TORCHVISION_VERSION)
+}
+
+/// The torchvision built for each torch line the desktop shell installs. The
+/// same pairs as `torchvisionForTorch` in packaging/torch-versions.json, which
+/// the packaging scripts read; a test fails when the two differ.
+#[cfg(any(not(target_os = "macos"), test))]
+const TORCHVISION_FOR_TORCH: [(&str, &str); 2] = [("2.6.0", "0.21.0"), ("2.8.0", "0.23.0")];
+
+/// The torchvision for a torch public version ("2.6.0", no `+tag`), if known.
+#[cfg(any(not(target_os = "macos"), test))]
+fn torchvision_for_torch(torch: &str) -> Option<&'static str> {
+    TORCHVISION_FOR_TORCH
+        .iter()
+        .find(|(t, _)| *t == torch)
+        .map(|(_, vision)| *vision)
+}
+
+/// The torch, torchaudio and torchvision specs for one CUDA wheel tag. One
+/// place, so the pair a CUDA install asks for is the pair the tests check.
+#[cfg(any(not(target_os = "macos"), test))]
+fn cuda_torch_specs(tag: &str) -> [String; 3] {
+    let torch = torch_version_for_tag(tag);
+    let vision = torchvision_version_for_tag(tag);
+    [
+        format!("torch=={torch}+{tag}"),
+        format!("torchaudio=={torch}+{tag}"),
+        format!("torchvision=={vision}+{tag}"),
+    ]
+}
+
+/// The string out of a `__version__ = '0.21.0+cu124'` line in a package's
+/// version.py. torch and torchvision both write one. Reading it costs a file
+/// read, where asking Python means importing torchvision, the very thing that
+/// fails on a broken install (#778).
+#[cfg(any(not(target_os = "macos"), test))]
+fn version_from_version_py(src: &str) -> Option<&str> {
+    src.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("__version__")?;
+        // `__version__ = ...` or `__version__: str = ...`, not `__version_info__`.
+        if !rest.starts_with([' ', '\t', ':', '=']) {
+            return None;
+        }
+        let value = rest.split_once('=')?.1.trim();
+        let quote = value.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+        let inner = &value[1..];
+        let version = &inner[..inner.find(quote)?];
+        (!version.is_empty()).then_some(version)
+    })
+}
+
+/// The installed version of `package` in `site`, from its version.py.
+#[cfg(any(not(target_os = "macos"), test))]
+fn installed_version(site: &Path, package: &str) -> Option<String> {
+    let src = fs::read_to_string(site.join(package).join("version.py")).ok()?;
+    version_from_version_py(&src).map(str::to_string)
+}
+
+/// The pip spec that repairs a GPU (CUDA or ROCm) torchvision sitting beside
+/// CPU torch, or a missing torchvision beside it (a pip run that stopped
+/// between uninstall and install). `None` when there is nothing to repair.
+///
+/// That pairing is what the 0.20.0 Linux packages shipped: CPU torch, and the
+/// cu124 torchvision PyPI serves by default, whose compiled ops need CUDA
+/// libraries that are not there (#778). The in-app updater never replaces
+/// python/, so those installs keep it until something puts the CPU wheel in.
+///
+/// Decided from the torch beside it, not from the package variant. A CUDA
+/// torch with a CUDA torchvision is a working NVIDIA install and is left
+/// alone; an NVIDIA package that ended up on CPU torch (no GPU, or CUDA did
+/// not verify and the bundled torch went back) has the same broken pair as
+/// the CPU package. A torch line with no known torchvision is left alone
+/// rather than guessed at. Any build but `+cpu` is repaired, so a `+rocm6.4`
+/// torchvision left by an interrupted AMD install is too (#825).
+#[cfg(any(not(target_os = "macos"), test))]
+fn torchvision_repair_spec(torch: &str, torchvision: Option<&str>) -> Option<String> {
+    let (torch_public, torch_tag) = torch.split_once('+')?;
+    if torch_tag != "cpu" {
+        return None;
     }
+    if let Some(torchvision) = torchvision {
+        let (_, vision_tag) = torchvision.split_once('+')?;
+        if vision_tag == "cpu" {
+            return None;
+        }
+    }
+    torchvision_for_torch(torch_public).map(|vision| format!("torchvision=={vision}+cpu"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2709,6 +3783,7 @@ fn python_stdlib_present(venv_root: &Path) -> bool {
 
 /// Maps known pip/OS failure patterns to actionable user messages.
 /// Pure function — caller is responsible for logging the raw stderr before calling.
+#[cfg(not(target_os = "macos"))]
 fn classify_cuda_install_error(stderr: &str) -> String {
     let lower = stderr.to_ascii_lowercase();
 
@@ -2740,13 +3815,14 @@ fn classify_cuda_install_error(stderr: &str) -> String {
     "CUDA install failed — see logs/setup.log for details.".to_string()
 }
 
-/// Version of the CPU-only torch wheels baked into every package. Kept in sync
-/// with scripts/windows/make-portable.ps1 and scripts/linux/make-portable.sh.
-#[cfg(not(target_os = "macos"))]
+/// Version of the CPU-only torch wheels baked into every package: `cpuTorch`
+/// in packaging/torch-versions.json, which the packaging scripts read. A test
+/// fails when the two differ.
+#[cfg(any(not(target_os = "macos"), test))]
 const CPU_TORCH_VERSION: &str = "2.6.0";
 /// Matches CPU_TORCH_VERSION and the version uv.lock resolves. Move the two
 /// together or the ops registration breaks; see torchvision_version_for_tag.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), test))]
 const CPU_TORCHVISION_VERSION: &str = "0.21.0";
 
 /// What a line of pip's output means, for the setup screen.
@@ -2816,14 +3892,17 @@ struct SetupProgress {
     total: Option<u64>,
 }
 
-/// Whether the CUDA torch wheel needs its `nvidia-*` runtime dependencies
-/// installed separately. Linux CUDA wheels do not bundle the CUDA runtime —
-/// they dlopen libcublas/libcudnn/... out of the `nvidia-*` PyPI packages at
-/// import time. Windows wheels ship those DLLs inside torch/lib and declare no
-/// such dependencies, so the leaner --no-deps swap stays correct there (#324).
+/// Whether the GPU torch wheel for `tag` needs its `nvidia-*` runtime
+/// dependencies installed separately. Linux CUDA wheels do not bundle the CUDA
+/// runtime: they dlopen libcublas/libcudnn/... out of the `nvidia-*` PyPI
+/// packages at import time. Windows wheels ship those DLLs inside torch/lib and
+/// declare no such dependencies, so the leaner --no-deps swap stays correct
+/// there (#324). ROCm wheels carry HIP, MIOpen and rocBLAS inside torch/lib
+/// too; their one dependency, pytorch-triton-rocm, serves torch.compile, which
+/// StemDeck never calls (#825).
 #[cfg(not(target_os = "macos"))]
-fn cuda_wheel_needs_runtime_deps() -> bool {
-    cfg!(target_os = "linux")
+fn cuda_wheel_needs_runtime_deps(tag: &str) -> bool {
+    cfg!(target_os = "linux") && tag.starts_with("cu")
 }
 
 /// Builds the per-line callback `run_pip_install` hands to the reader thread.
@@ -2958,7 +4037,7 @@ const PIP_STALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Backstop for a pip that never goes quiet but never finishes either. Nothing
 /// legitimate approaches this: the reporter whose install prompted the change
 /// took about 17 minutes for the whole 3 GB pass on a slow link. The window
-/// close handler kills the child through `setup_child_pid` long before here.
+/// close handler kills the child through `setup_child` long before here.
 #[cfg(not(target_os = "macos"))]
 const PIP_HARD_CAP: Duration = Duration::from_secs(4 * 60 * 60);
 
@@ -3002,26 +4081,16 @@ fn spawn_pip(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to start {label}: {e}"))?;
-
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = Some(child.id());
-    }
-    let output = child_output_streaming(
-        child,
-        stall,
-        PIP_HARD_CAP,
-        label,
-        pip_line_reporter(app.clone(), label.to_string()),
-    );
-    if let Ok(mut inner) = state.inner.lock() {
-        inner.setup_child_pid = None;
-    }
-    output
+    run_setup_child(&mut command, state, label, |child| {
+        child_output_streaming(
+            child,
+            stall,
+            PIP_HARD_CAP,
+            label,
+            pip_line_reporter(app.clone(), label.to_string()),
+        )
+    })
 }
 
 /// Whether pip refused `--progress-bar raw` itself, as opposed to failing at
@@ -3068,7 +4137,7 @@ fn restore_cpu_torch(
 /// itself rather than assumed from the layout, which differs between the
 /// Windows and Linux bundles and the downloaded runtime pack.
 #[cfg(not(target_os = "macos"))]
-fn torch_site_packages(python: &Path) -> Option<PathBuf> {
+fn torch_site_packages(python: &Path, state: &BackendState) -> Option<PathBuf> {
     let mut command = Command::new(python);
     command
         .args([
@@ -3077,10 +4146,14 @@ fn torch_site_packages(python: &Path) -> Option<PathBuf> {
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut command);
-    let out = command_output_with_timeout(command, Duration::from_secs(60), "site-packages probe")
-        .ok()
-        .filter(|out| out.status.success())?;
+    let out = setup_probe_output(
+        command,
+        state,
+        Duration::from_secs(60),
+        "site-packages probe",
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     path.is_dir().then_some(path)
 }
@@ -3088,14 +4161,25 @@ fn torch_site_packages(python: &Path) -> Option<PathBuf> {
 /// Whether `import torch` works. A restore that leaves torch unimportable is
 /// a failed restore, whatever pip said (#731).
 #[cfg(not(target_os = "macos"))]
-fn verify_torch_imports(python: &Path) -> Result<(), String> {
+fn verify_torch_imports(python: &Path, state: &BackendState) -> Result<(), String> {
+    verify_imports(python, "torch", state)
+}
+
+/// Whether `import <module>` works, with the last lines of the error if not.
+#[cfg(not(target_os = "macos"))]
+fn verify_imports(python: &Path, module: &str, state: &BackendState) -> Result<(), String> {
+    let code = format!("import {module}");
     let mut command = Command::new(python);
     command
-        .args(["-c", "import torch"])
+        .args(["-c", code.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
-    let out = command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "torch import check")?;
+    let out = setup_probe_output(
+        command,
+        state,
+        GPU_VERIFY_TIMEOUT,
+        &format!("{module} import check"),
+    )?;
     if out.status.success() {
         return Ok(());
     }
@@ -3123,7 +4207,7 @@ fn put_cpu_torch_back(
 ) -> Result<(), String> {
     if let (true, Some(site)) = (swapped, site) {
         match torchswap::restore(site) {
-            Ok(()) => match verify_torch_imports(python) {
+            Ok(()) => match verify_torch_imports(python, state) {
                 Ok(()) => {
                     append_to_setup_log(data_dir, "put the bundled torch back");
                     return Ok(());
@@ -3140,7 +4224,7 @@ fn put_cpu_torch_back(
         }
     }
     restore_cpu_torch(python, state, app)?;
-    let Err(first) = verify_torch_imports(python) else {
+    let Err(first) = verify_torch_imports(python, state) else {
         return Ok(());
     };
     append_to_setup_log(
@@ -3151,10 +4235,134 @@ fn put_cpu_torch_back(
     torchswap::discard_installed(site)
         .map_err(|e| format!("could not clear the broken torch ({e})"))?;
     restore_cpu_torch(python, state, app)?;
-    verify_torch_imports(python)
+    verify_torch_imports(python, state)
         .map_err(|e| format!("CPU torch does not import after a clean reinstall:\n{e}"))?;
     append_to_setup_log(data_dir, "CPU torch reinstalled into clean directories");
     Ok(())
+}
+
+/// What the torchvision check on launch found (#778).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TorchvisionRepair {
+    /// "ok" (nothing to do), "repaired", or "failed". The setup screen owns
+    /// the wording; the reason for a failure is in setup.log.
+    outcome: &'static str,
+}
+
+/// Puts the CPU torchvision back on an install that has a CUDA torchvision
+/// beside CPU torch, which is what the 0.20.0 Linux packages shipped (#778).
+///
+/// Runs on every launch, because the in-app updater never replaces python/:
+/// an install that updated from 0.20.0 keeps the broken wheel until something
+/// here replaces it. On a healthy install it asks the interpreter where
+/// site-packages is (no imports), reads two version.py files and returns,
+/// with no network. A failed repair (offline, say) is logged and
+/// reported, never raised: the rest of the app works without torchvision, and
+/// the next launch tries again.
+#[tauri::command]
+async fn repair_torchvision(app: tauri::AppHandle) -> Result<TorchvisionRepair, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // macOS ships one torch build and never pairs it with a CUDA wheel.
+        let _ = app;
+        Ok(TorchvisionRepair { outcome: "ok" })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // The repair is a pip download.
+        off_main_thread(move || {
+            let state = app.state();
+            let _step = SetupStep::take(&state, "torchvision repair")?;
+            Ok(TorchvisionRepair {
+                outcome: repair_torchvision_if_needed(&state, &app),
+            })
+        })
+        .await
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn repair_torchvision_if_needed(state: &BackendState, app: &tauri::AppHandle) -> &'static str {
+    let (Ok(root), Ok(data_dir)) = (app_root(), local_data_dir()) else {
+        return "ok";
+    };
+    let Some(python) = python_path(&root).filter(|p| p.is_file()) else {
+        return "ok";
+    };
+    patch_pyvenv_cfg(&python);
+    let Some(site) = torch_site_packages(&python, state) else {
+        return "ok";
+    };
+    // An interrupted CUDA swap is put back by ensure_torch_device first; until
+    // then what is installed is not the bundle's to judge.
+    if torchswap::has_backup(&site) {
+        return "ok";
+    }
+    let Some(torch) = installed_version(&site, "torch") else {
+        return "ok";
+    };
+    let vision = installed_version(&site, "torchvision");
+    // Only an absent version.py means torchvision is gone. One that is there
+    // but unreadable is not worth a download on every launch.
+    if vision.is_none() && site.join("torchvision").join("version.py").exists() {
+        return "ok";
+    }
+    let Some(spec) = torchvision_repair_spec(&torch, vision.as_deref()) else {
+        return "ok";
+    };
+
+    log_setup_step("torchvision-repair");
+    let found = match &vision {
+        Some(vision) => format!("torchvision {vision} is a GPU build"),
+        None => "torchvision is missing".to_string(),
+    };
+    append_to_setup_log(
+        &data_dir,
+        &format!("{found} beside torch {torch}; installing {spec}"),
+    );
+    let label = "torchvision repair";
+    // Puts a line on the setup screen before pip has said anything.
+    let _ = app.emit(
+        "setup-progress",
+        SetupProgress {
+            label: label.to_string(),
+            detail: "Repairing the karaoke split".to_string(),
+            received: None,
+            total: None,
+        },
+    );
+    // --force-reinstall, not --ignore-installed: pip uninstalls the CUDA wheel
+    // through its RECORD, which is what removes torchvision.libs/libcudart and
+    // libnvjpeg. pip downloads before it uninstalls, so offline this fails
+    // with the old wheel still in place.
+    let result = run_pip_install(
+        &python,
+        &[
+            &spec,
+            "--index-url",
+            "https://download.pytorch.org/whl/cpu",
+            "--force-reinstall",
+            "--no-deps",
+        ],
+        state,
+        app,
+        label,
+    )
+    .and_then(|()| verify_imports(&python, "torchvision", state));
+    match result {
+        Ok(()) => {
+            append_to_setup_log(&data_dir, &format!("torchvision repaired: {spec}"));
+            "repaired"
+        }
+        Err(e) => {
+            append_to_setup_log(
+                &data_dir,
+                &format!("torchvision repair failed, will retry next launch: {e}"),
+            );
+            "failed"
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -3182,16 +4390,13 @@ fn install_cuda_torch(
     // cu128 uses 2.8.0: 2.7.1 shipped incomplete sm_120 kernels for Blackwell
     // (RTX 5000 series), causing verify_cuda_torch to fail (#239).
     let tag = cuda_tag_from_url(index_url);
-    let torch_version = torch_version_for_tag(tag);
-    let torch_spec = format!("torch=={torch_version}+{tag}");
-    let torchaudio_spec = format!("torchaudio=={torch_version}+{tag}");
-    let torchvision_spec = format!("torchvision=={}+{tag}", torchvision_version_for_tag(tag));
+    let [torch_spec, torchaudio_spec, torchvision_spec] = cuda_torch_specs(tag);
     for (label, args) in cuda_install_passes(
         &torch_spec,
         &torchaudio_spec,
         &torchvision_spec,
         index_url,
-        cuda_wheel_needs_runtime_deps(),
+        cuda_wheel_needs_runtime_deps(tag),
     ) {
         run_pip_install(python, &args, state, app, label)?;
     }
@@ -3271,11 +4476,13 @@ enum CudaVerify {
 }
 
 /// Whether a failed verification was the "this build has no kernels for your
-/// GPU" error. Matched on CUDA's exact wording, because a looser match would
-/// settle a driver or install problem as permanent.
+/// GPU" error. Matched on CUDA's and HIP's exact wording, because a looser
+/// match would settle a driver or install problem as permanent.
 #[cfg(any(not(target_os = "macos"), test))]
 fn is_no_kernel_image(stderr: &str) -> bool {
     stderr.contains("no kernel image is available for execution on the device")
+        || stderr.contains("hipErrorNoBinaryForGpu")
+        || stderr.contains("HIP error: invalid device function")
 }
 
 /// The reason recorded when CUDA setup does not end on the GPU.
@@ -3300,7 +4507,7 @@ fn cuda_failure_stage(outcomes: &[Option<CudaVerify>]) -> &'static str {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn verify_cuda_torch(python: &Path) -> CudaVerify {
+fn verify_cuda_torch(python: &Path, state: &BackendState) -> CudaVerify {
     // Don't trust torch.cuda.is_available() alone: it returns True even when the
     // installed wheel has no kernels for the device (e.g. sm_120 on a cu124
     // build), which then crashes mid-extraction with "no kernel image is
@@ -3325,7 +4532,9 @@ fn verify_cuda_torch(python: &Path) -> CudaVerify {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
+    // Verified on the GPU the backend will use, not whichever HIP numbers 0.
+    #[cfg(target_os = "linux")]
+    show_rocm_the_chosen_gpu(&mut command);
 
     let log = |msg: &str| {
         if let Ok(data_dir) = local_data_dir() {
@@ -3333,7 +4542,7 @@ fn verify_cuda_torch(python: &Path) -> CudaVerify {
         }
     };
 
-    match command_output_with_timeout(command, GPU_VERIFY_TIMEOUT, "CUDA verify") {
+    match setup_probe_output(command, state, GPU_VERIFY_TIMEOUT, "CUDA verify") {
         Ok(out) if out.status.success() => CudaVerify::Verified,
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -3416,7 +4625,8 @@ fn open_url(url: String) -> Result<(), String> {
         // Use explorer.exe directly to avoid cmd.exe interpreting '&' in query strings.
         let mut cmd = Command::new("explorer.exe");
         cmd.arg(&url);
-        cmd.spawn()
+        with_user_env(&mut cmd)
+            .spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
     #[cfg(target_os = "macos")]
@@ -3436,19 +4646,17 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Only localhost URLs, and only http(s). Guards against a compromised WebView
-/// using the desktop shell as an SSRF proxy (#138).
-/// Hosts an in-app update may be fetched from.
-///
-/// GitHub serves release assets from `github.com` and redirects to
-/// `objects.githubusercontent.com`, so both have to be here.
-const RELEASE_ASSET_HOSTS: [&str; 2] = ["github.com", "objects.githubusercontent.com"];
+/// Where this repository's release assets live. The frontend passes the
+/// releases API's `browser_download_url`, which always has this shape; the
+/// redirect GitHub answers it with is followed by reqwest and never comes back
+/// through this check.
+const RELEASE_ASSET_PREFIX: &str = "/stemdeckapp/stemdeck/releases/download/";
 
 /// Reject an update URL that does not point at our own release assets.
 ///
 /// `download_app_update` takes its URL from the WebView, and the SHA-256 it
 /// checks against comes from the same place -- so the checksum proves the file
-/// arrived intact, not that it came from us. Without a host check, anything
+/// arrived intact, not that it came from us. Without this check, anything
 /// able to run script on that page can hand the shell an archive that
 /// `apply_app_update` then extracts over StemDeck's own executable and
 /// backend/ (#510). The page is served over http by the Python backend, which
@@ -3464,12 +4672,17 @@ fn validate_release_url(url: &str) -> Result<(), String> {
         return Err("update URLs must use https".to_string());
     }
     let host = parsed.host_str().unwrap_or("");
-    if !RELEASE_ASSET_HOSTS.contains(&host) {
-        return Err(format!("refusing to download an update from {host}"));
+    if host != "github.com" || !parsed.path().starts_with(RELEASE_ASSET_PREFIX) {
+        return Err(format!(
+            "refusing to download an update from {host}{}",
+            parsed.path()
+        ));
     }
     Ok(())
 }
 
+/// Only localhost URLs, and only http(s). Guards against a compromised WebView
+/// using the desktop shell as an SSRF proxy (#138).
 fn validate_download_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("only http/https URLs are permitted".to_string());
@@ -3559,7 +4772,89 @@ async fn download_to_path(
 ) -> Result<(), String> {
     validate_download_url(&url)?;
     let dest = take_pending_save(&state, &token)?;
-    stream_url_to_file(&url, &dest).await
+    stream_url_to_file(&url, &dest).await?;
+    record_saved(&state, &token, dest)
+}
+
+/// Remembers the file the save `token` just wrote, for reveal_saved. At most
+/// MAX_PENDING_SAVES are kept (the oldest token goes first).
+fn record_saved(state: &BackendState, token: &str, dest: PathBuf) -> Result<(), String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
+    if guard.saved_files.len() >= MAX_PENDING_SAVES && !guard.saved_files.contains_key(token) {
+        if let Some(oldest) = guard
+            .saved_files
+            .keys()
+            .min_by_key(|k| k.parse::<u64>().unwrap_or(u64::MAX))
+            .cloned()
+        {
+            guard.saved_files.remove(&oldest);
+        }
+    }
+    guard.saved_files.insert(token.to_string(), dest);
+    Ok(())
+}
+
+/// The file the save `token` wrote, if it is still there.
+fn saved_file(state: &BackendState, token: &str) -> Result<PathBuf, String> {
+    let path = state
+        .inner
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?
+        .saved_files
+        .get(token)
+        .cloned()
+        .ok_or_else(|| "nothing was saved by this export".to_string())?;
+    if !path.is_file() {
+        return Err("the saved file is no longer there".to_string());
+    }
+    Ok(path)
+}
+
+/// The program and arguments that show `path` in the system's file manager:
+/// selected in Explorer and Finder, its folder opened on Linux (xdg-open has
+/// no "select"). Arguments, never a shell string, so no part of the path is
+/// ever interpreted.
+fn reveal_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
+    #[cfg(target_os = "windows")]
+    {
+        // Explorer takes "/select," and the path as the next argument.
+        let args = vec![
+            std::ffi::OsString::from("/select,"),
+            path.as_os_str().to_owned(),
+        ];
+        ("explorer", args)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let args = vec![std::ffi::OsString::from("-R"), path.as_os_str().to_owned()];
+        ("open", args)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let dir = path.parent().unwrap_or(path);
+        ("xdg-open", vec![dir.as_os_str().to_owned()])
+    }
+}
+
+/// Shows the file an export saved in the system's file manager (Streamer
+/// Mode's "Show in folder"). Takes the save's token, never a path: only a file
+/// this app wrote for that caller's own save can be revealed. Async, so the
+/// command never holds the main thread; the file manager's process is waited
+/// on in a thread of its own so it never lingers as a zombie.
+#[tauri::command]
+async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> Result<(), String> {
+    let path = saved_file(&state, &token)?;
+    let (program, args) = reveal_command(&path);
+    let mut child = with_user_env(Command::new(program).args(&args))
+        .spawn()
+        .map_err(|e| format!("could not open the file manager: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Streams a URL to `dest`, via a temp file so a failure never leaves a
@@ -3661,21 +4956,33 @@ async fn start_audio_drag(
     .map_err(|e| e.to_string())
 }
 
-fn stop_backend(state: &BackendState) {
-    let (handles, _setup_child_pid) = match state.inner.lock() {
-        Ok(mut guard) => (guard.handles.take(), guard.setup_child_pid.take()),
-        Err(_) => return,
+/// Stops everything for the window's close, and says whether StemDeck may
+/// exit now: not while an update's renames run (UpdateSwap), which then
+/// relaunches and exits by itself, or the close can be asked for again.
+fn stop_backend(state: &BackendState) -> bool {
+    let (handles, setup_child) = match state.inner.lock() {
+        Ok(mut guard) => {
+            if guard.swapping {
+                return false;
+            }
+            guard.closing = true;
+            (guard.handles.take(), guard.setup_child.take())
+        }
+        Err(_) => return true,
     };
 
-    // Kill any in-progress setup-time subprocess (pip install, model warmup)
-    // so it doesn't corrupt the venv/cache if the window is closed mid-setup (#140).
-    #[cfg(unix)]
-    if let Some(pid) = _setup_child_pid {
-        // SAFETY: pid was stored immediately after spawn; we send SIGTERM best-effort.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    // Stop any in-progress setup-time subprocess (pip install, model warmup)
+    // so it doesn't corrupt the venv/cache if the window is closed mid-setup
+    // (#140), on Windows too (#405).
+    if let Some(child) = setup_child {
+        if let Err(e) = child.stop() {
+            eprintln!("[stemdeck] {e}");
+        }
     }
 
-    let Some(mut handles) = handles else { return };
+    let Some(mut handles) = handles else {
+        return true;
+    };
 
     // Drain the backend on a background thread so we don't block the Tauri
     // RunEvent main thread for up to 3 seconds (#144).
@@ -3695,9 +5002,13 @@ fn stop_backend(state: &BackendState) {
                 thread::sleep(Duration::from_millis(100));
             }
         }
+        // Windows has no graceful stop: the kill is hard, and the backend's
+        // own shutdown (which stops video renders) does not run. Dropping
+        // `handles` closes its job, which ends what it started (#790).
         let _ = handles.child.kill();
         let _ = handles.child.wait();
     });
+    true
 }
 
 /// Returns the persistent user data directory for StemDeck.
@@ -3763,6 +5074,17 @@ fn local_data_dir() -> Result<PathBuf, String> {
 fn log_setup_step(step: &str) {
     if let Ok(data_dir) = local_data_dir() {
         append_to_setup_log(&data_dir, &format!("step: {step}"));
+    }
+}
+
+// The setup.log line for a failed cleanup, or None when it worked or there
+// was nothing to remove.
+fn cleanup_warning(path: &Path, result: std::io::Result<()>) -> Option<String> {
+    match result {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Some(format!("cleanup warning: {}: {e}", path.display()))
+        }
+        _ => None,
     }
 }
 
@@ -4135,12 +5457,17 @@ fn download_file(url: &str, target: &Path, timeout: Duration, label: &str) -> Re
     const RETRY_BACKOFF: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(5)];
 
     let mut last_detail = String::new();
+    let mut last_code = None;
     for attempt in 0..MAX_ATTEMPTS {
         let mut command = Command::new("curl");
         command
             .args([
                 "--fail",
                 "--location",
+                // --silent keeps the progress meter out of stderr, which is
+                // all the error below quotes. Without it a failed download
+                // showed the user a screen of transfer statistics (#824).
+                "--silent",
                 "--show-error",
                 "--connect-timeout",
                 CONNECT_TIMEOUT_SECS,
@@ -4158,21 +5485,56 @@ fn download_file(url: &str, target: &Path, timeout: Duration, label: &str) -> Re
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        last_code = output.status.code();
         last_detail = if stderr.is_empty() {
-            format!("curl exited with status {:?}", output.status.code())
+            format!("curl exited with status {last_code:?}")
         } else {
             stderr
         };
-        if !curl_exit_is_retriable(output.status.code()) || attempt + 1 == MAX_ATTEMPTS {
+        if !curl_exit_is_retriable(last_code) || attempt + 1 == MAX_ATTEMPTS {
             break;
         }
         std::thread::sleep(RETRY_BACKOFF[attempt as usize]);
     }
 
-    Err(format!(
-        "Could not reach the download server for {label}. Check your internet \
-         connection and try again. ({last_detail})"
+    Err(describe_download_failure(
+        label,
+        url,
+        last_code,
+        &last_detail,
     ))
+}
+
+// The HTTP status curl's --fail reported, from "The requested URL returned
+// error: 429".
+#[cfg(any(unix, test))]
+fn curl_http_status(detail: &str) -> Option<u16> {
+    let (_, rest) = detail.split_once("returned error: ")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+// Why a download failed, in words that say which side it was on. A server
+// that answered with an HTTP error was reached: telling that user to check
+// their connection or firewall sent them looking in the wrong place, and the
+// URL was never named (#824). curl exit 22 is --fail's HTTP error. A 429 is
+// not retried here (curl_exit_is_retriable), so a busy host is not hammered.
+#[cfg(any(unix, test))]
+fn describe_download_failure(label: &str, url: &str, code: Option<i32>, detail: &str) -> String {
+    match (code, curl_http_status(detail)) {
+        (Some(22), Some(429)) => format!(
+            "The download server for {label} ({url}) is limiting requests right now \
+             (HTTP 429, too many requests). Wait a few minutes, then click Retry."
+        ),
+        (Some(22), Some(status)) => format!(
+            "The download server for {label} ({url}) was reached but refused the \
+             download (HTTP {status})."
+        ),
+        _ => format!(
+            "Could not reach the download server for {label} ({url}). Check your \
+             internet connection and try again. ({detail})"
+        ),
+    }
 }
 
 fn verify_runtime_archive(
@@ -4416,10 +5778,11 @@ fn app_root() -> Result<PathBuf, String> {
     if let Ok(root) = env::var("STEMDECK_ROOT") {
         return Ok(PathBuf::from(root));
     }
-    if let Ok(cwd) = env::current_dir() {
-        if let Some(root) = find_repo_root(&cwd) {
-            return Ok(root);
-        }
+    if let Some(root) = env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd_repo_root(&cwd, cfg!(debug_assertions)))
+    {
+        return Ok(root);
     }
     let exe = env::current_exe().map_err(|e| format!("failed to resolve current exe: {e}"))?;
     let exe_dir = exe
@@ -4438,6 +5801,13 @@ fn app_root() -> Result<PathBuf, String> {
         }
     }
     Ok(exe_dir.to_path_buf())
+}
+
+/// The source checkout around the working directory, for `cargo tauri dev`.
+/// Release builds never look: a portable exe started from a terminal inside
+/// a checkout would otherwise run that checkout instead of its own install.
+fn cwd_repo_root(cwd: &Path, debug_build: bool) -> Option<PathBuf> {
+    debug_build.then(|| find_repo_root(cwd)).flatten()
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -4688,12 +6058,27 @@ fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
 /// and a server on `0.0.0.0` is what makes Windows Firewall interrupt the user.
 /// The backend is the thing that should be answering that prompt, not the shell
 /// that starts it.
-fn claim_port(host: &str, port: u16) -> Result<(u16, Socket), String> {
+///
+/// `after_stop` is for a port the backend this shell just stopped was using.
+/// On Linux and macOS its closed connections sit in TIME_WAIT for up to a
+/// minute, which a plain bind refuses and uvicorn's own bind (SO_REUSEADDR)
+/// does not, so the claim sets SO_REUSEADDR to agree with uvicorn. Never on
+/// Windows: TIME_WAIT does not block a bind there, and SO_REUSEADDR would let
+/// this take a port another program is listening on.
+fn claim_port(host: &str, port: u16, after_stop: bool) -> Result<(u16, Socket), String> {
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .map_err(|e| format!("bad bind address {host}:{port}: {e}"))?;
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))
         .map_err(|e| format!("socket failed: {e}"))?;
+    #[cfg(unix)]
+    if after_stop {
+        socket
+            .set_reuse_address(true)
+            .map_err(|e| format!("SO_REUSEADDR failed: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = after_stop;
     socket
         .bind(&addr.into())
         .map_err(|e| format!("port bind failed: {e}"))?;
@@ -4715,7 +6100,7 @@ fn claim_port(host: &str, port: u16) -> Result<(u16, Socket), String> {
 /// `host` must be the address the backend itself will bind. Probing a
 /// different one proves nothing: see [`reserve_port`].
 fn free_port(host: &str) -> Result<(u16, Socket), String> {
-    claim_port(host, 0)
+    claim_port(host, 0, false)
 }
 
 /// The user's preferred port (Settings -> port), read from the backend's
@@ -4737,21 +6122,66 @@ fn configured_port() -> u16 {
     }
 }
 
+const LOOPBACK: &str = "127.0.0.1";
+const ALL_INTERFACES: &str = "0.0.0.0";
+
+/// Where the backend listens: loopback only until the user turns on "Make
+/// StemDeck available on your network", every interface once they have (#859).
+/// Read from settings.json the way app/core/settings.py reads allow_network: a
+/// stored bool wins, else STEMDECK_ALLOW_NETWORK=1 means on, else the desktop
+/// default, off. A file that is missing or unreadable means loopback. The page
+/// never chooses this; it can only save the setting and ask for a restart.
+fn bind_host_for(settings_json: Option<&str>, env_allow: Option<&str>) -> &'static str {
+    let stored = settings_json
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|json| {
+            json.get("allow_network")
+                .and_then(serde_json::Value::as_bool)
+        });
+    if stored.unwrap_or_else(|| env_allow.map(str::trim) == Some("1")) {
+        ALL_INTERFACES
+    } else {
+        LOOPBACK
+    }
+}
+
+fn configured_bind_host() -> &'static str {
+    let settings = local_data_dir()
+        .ok()
+        .and_then(|dir| fs::read_to_string(dir.join("settings.json")).ok());
+    let env_allow = env::var("STEMDECK_ALLOW_NETWORK").ok();
+    bind_host_for(settings.as_deref(), env_allow.as_deref())
+}
+
 /// Reserve the user's preferred port; fall back to any free port if it's taken,
 /// so a port conflict can never block startup.
 ///
-/// `host` must be the address the backend will bind (`0.0.0.0`), not loopback.
-/// The two are not interchangeable: on Windows, binding `127.0.0.1:8000`
-/// succeeds even while another process holds `0.0.0.0:8000`, because neither
-/// socket sets `SO_EXCLUSIVEADDRUSE`. Probing loopback therefore reported a
-/// taken port as free, the fallback below never ran, and the backend we spawned
-/// died with `10048` while the *other* instance kept answering on that port
-/// (#424).
-fn reserve_port(host: &str, desired: u16) -> Result<(u16, Socket), String> {
-    if let Ok(claimed) = claim_port(host, desired) {
+/// The port counts as free only if nothing holds it on loopback or on every
+/// interface, whichever of the two `host` is. On Windows, binding
+/// `127.0.0.1:8000` succeeds even while another process holds `0.0.0.0:8000`,
+/// and the reverse, because neither socket sets `SO_EXCLUSIVEADDRUSE`. Probing
+/// one address therefore reported a taken port as free, the fallback below
+/// never ran, and the backend we spawned either died with `10048` or shared the
+/// port with the *other* instance, which kept answering on it (#424). The other
+/// address is probed first and let go, because Linux refuses the second bind
+/// while this process holds the first.
+fn reserve_port(host: &str, desired: u16, after_stop: bool) -> Result<(u16, Socket), String> {
+    if let Ok(claimed) = claim_port_on_both(host, desired, after_stop) {
         return Ok(claimed);
     }
     free_port(host)
+}
+
+/// Claim `host:port` once nothing holds `port` on the other of loopback and
+/// every interface either. See [`reserve_port`].
+fn claim_port_on_both(host: &str, port: u16, after_stop: bool) -> Result<(u16, Socket), String> {
+    let other = if host == LOOPBACK {
+        ALL_INTERFACES
+    } else {
+        LOOPBACK
+    };
+    drop(claim_port(other, port, after_stop)?);
+    claim_port(host, port, after_stop)
 }
 
 /// A fresh identity for the backend this launch is about to spawn, handed to
@@ -4949,7 +6379,8 @@ fn parse_health_identity(response: &str) -> Option<HealthIdentity> {
     })
 }
 
-fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
+// The FFmpeg to use, and where it came from (for config.json, #858).
+fn ensure_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
     // Use an already-present binary (flat, bin/, or STEMDECK_FFMPEG override) before
     // downloading, so a manually-placed FFmpeg is honored (#248).
     //
@@ -4964,9 +6395,26 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // An explicit STEMDECK_FFMPEG override is exempt. It names a file the user
     // chose, usually outside the data directory, and replacing that is not ours
     // to do -- say what is wrong with it and stop.
+    //
+    // macOS runs its own copy of these first two steps, in ensure_macos_ffmpeg,
+    // because there a pair that runs can still be the wrong one to keep (#771).
+    #[cfg(not(target_os = "macos"))]
     if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
         match verify_ffmpeg_pair(&existing) {
-            Ok(()) => return Ok(existing),
+            Ok(()) => {
+                // A build that passes every check can still be one that
+                // crashes at random (gcc 16 BtbN builds). Swap the shell's own
+                // copy for the pinned build; the old one stays on failure.
+                #[cfg(windows)]
+                if managed_ffmpeg_needs_replacing(data_dir, &existing) {
+                    replace_stale_ffmpeg_or_keep(data_dir);
+                    if let Err(err) = verify_ffmpeg_pair(&existing) {
+                        return Err(format!("FFmpeg failed its checks after replacement: {err}"));
+                    }
+                }
+                let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
+                return Ok((existing, FfmpegSource::existing(explicit)));
+            }
             Err(err) if env_path_override("STEMDECK_FFMPEG").is_some() => return Err(err),
             Err(err) => eprintln!(
                 "FFmpeg at {} is present but unusable, looking for a replacement: {err}",
@@ -4984,8 +6432,13 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
     // users on an older OS than our downloaded build assumes (#414): if they
     // already have a working system FFmpeg, we no longer force a potentially
     // incompatible download on top of it.
-    if verify_ffmpeg_pair(Path::new("ffmpeg")).is_ok() {
-        return Ok(PathBuf::from("ffmpeg"));
+    //
+    // Only a system FFmpeg with the optional encoders too (libvorbis) wins
+    // over the download here: the Windows and Linux downloads have them, so
+    // taking a plainer system build would cost OGG export for nothing (#824).
+    #[cfg(not(target_os = "macos"))]
+    if matches!(check_ffmpeg_pair(Path::new("ffmpeg")), Ok(true)) {
+        return Ok((PathBuf::from("ffmpeg"), FfmpegSource::System));
     }
 
     #[cfg(windows)]
@@ -4994,16 +6447,15 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
         verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        Ok((
+            portable,
+            FfmpegSource::Download(ffmpeg_download_url(DEFAULT_WINDOWS_FFMPEG_URL)),
+        ))
     }
 
     #[cfg(target_os = "macos")]
     {
-        download_macos_ffmpeg(data_dir)?;
-        let portable =
-            ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
-        verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        ensure_macos_ffmpeg(data_dir)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -5015,8 +6467,148 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<PathBuf, String> {
         let portable =
             ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
         verify_ffmpeg_pair(&portable)?;
-        Ok(portable)
+        Ok((
+            portable,
+            FfmpegSource::Download(ffmpeg_download_url(DEFAULT_LINUX_FFMPEG_URL)),
+        ))
     }
+}
+
+// The URL a Windows or Linux download fetched: STEMDECK_FFMPEG_URL when set,
+// as download_windows_ffmpeg_archive and download_linux_ffmpeg choose it.
+#[cfg(not(target_os = "macos"))]
+fn ffmpeg_download_url(default: &str) -> String {
+    env_path_override("STEMDECK_FFMPEG_URL")
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
+// Where the FFmpeg pair setup settled on came from. config.json records it
+// as ffmpegSource, which used to be the platform's default download URL
+// whatever was actually used, so a bug report could not show a manual or
+// fallback pair (#858).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FfmpegSource {
+    // Downloaded by this setup run, from this ffmpeg URL.
+    Download(String),
+    // The file STEMDECK_FFMPEG names.
+    EnvOverride,
+    // A pair already in the data folder: an earlier download, or one placed
+    // there by hand. StemDeck cannot tell which.
+    DataFolder,
+    // An FFmpeg installed on the system: on PATH, or in a known install folder.
+    System,
+}
+
+impl FfmpegSource {
+    fn existing(explicit: bool) -> Self {
+        if explicit {
+            Self::EnvOverride
+        } else {
+            Self::DataFolder
+        }
+    }
+
+    // The ffmpegSource value. A URL and "system PATH" keep the format they
+    // always had; the rest are new.
+    fn config_value(&self, ffmpeg: &Path) -> String {
+        match self {
+            Self::Download(url) => url.clone(),
+            Self::EnvOverride => "STEMDECK_FFMPEG".to_string(),
+            Self::DataFolder => "data folder".to_string(),
+            // A bare "ffmpeg" was found through PATH; a full path is one of
+            // the known install folders (or PATH resolved on macOS).
+            Self::System => match ffmpeg.parent() {
+                Some(dir) if !dir.as_os_str().is_empty() => "system install".to_string(),
+                _ => "system PATH".to_string(),
+            },
+        }
+    }
+}
+
+// The CPU architecture a binary is built for, read from its first bytes
+// without running it: Mach-O (thin or universal), ELF or PE. "universal" for
+// a Mach-O with both arm64 and x86_64, "unknown" for anything else (a script,
+// a short file, another CPU), never a guess (#858).
+fn binary_arch_label(header: &[u8]) -> &'static str {
+    const ELF_X86_64: u16 = 0x3e;
+    const ELF_AARCH64: u16 = 0xb7;
+    const PE_X86_64: u16 = 0x8664;
+    const PE_ARM64: u16 = 0xaa64;
+    let u16_at = |at: usize, little: bool| -> Option<u16> {
+        let bytes = header.get(at..at + 2)?;
+        let pair = [bytes[0], bytes[1]];
+        Some(if little {
+            u16::from_le_bytes(pair)
+        } else {
+            u16::from_be_bytes(pair)
+        })
+    };
+    if let Some(types) = macho_cpu_types(header) {
+        let arm = types.contains(&MACHO_CPU_TYPE_ARM64);
+        let intel = types.contains(&MACHO_CPU_TYPE_X86_64);
+        return match (arm, intel) {
+            (true, true) => "universal",
+            (true, false) => "arm64",
+            (false, true) => "x86_64",
+            (false, false) => "unknown",
+        };
+    }
+    let machine = if header.starts_with(b"\x7fELF") {
+        // EI_DATA: 1 little-endian, 2 big-endian. e_machine at 18.
+        header
+            .get(5)
+            .and_then(|data| u16_at(18, *data == 1))
+            .map(|m| match m {
+                ELF_X86_64 => "x86_64",
+                ELF_AARCH64 => "arm64",
+                _ => "unknown",
+            })
+    } else if header.starts_with(b"MZ") {
+        // e_lfanew at 0x3c points at "PE\0\0", then the u16 Machine field.
+        header
+            .get(0x3c..0x40)
+            .and_then(|b| usize::try_from(u32::from_le_bytes([b[0], b[1], b[2], b[3]])).ok())
+            .filter(|&pe| header.get(pe..pe + 4) == Some(b"PE\0\0".as_slice()))
+            .and_then(|pe| u16_at(pe + 4, true))
+            .map(|m| match m {
+                PE_X86_64 => "x86_64",
+                PE_ARM64 => "arm64",
+                _ => "unknown",
+            })
+    } else {
+        None
+    };
+    machine.unwrap_or("unknown")
+}
+
+// binary_arch_label for a file, a bare name resolved through PATH first.
+fn binary_arch(path: &Path) -> &'static str {
+    use std::io::Read;
+    let resolved = if path.is_absolute() {
+        Some(path.to_path_buf())
+    } else {
+        path.to_str().and_then(resolve_on_path)
+    };
+    let Some(resolved) = resolved else {
+        return "unknown";
+    };
+    let mut header = Vec::with_capacity(4096);
+    match fs::File::open(resolved).and_then(|file| file.take(4096).read_to_end(&mut header)) {
+        Ok(_) => binary_arch_label(&header),
+        Err(_) => "unknown",
+    }
+}
+
+// What setup.log says when an x86_64 FFmpeg ends up on an arm64 machine: it
+// runs translated (Rosetta 2 on a Mac), slower than a native build. The Intel
+// fallback on a Mac with Rosetta is deliberate (#771), so this is a notice,
+// not an error. `host` is std::env::consts::ARCH.
+fn translated_ffmpeg_notice(host: &str, ffmpeg_arch: &str) -> Option<&'static str> {
+    (host == "aarch64" && ffmpeg_arch == "x86_64").then_some(
+        "notice: FFmpeg is built for x86_64 and this machine is arm64. It runs \
+         translated (through Rosetta 2 on a Mac), so imports and exports are slower.",
+    )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -5269,15 +6861,383 @@ fn spawn_fpcalc_setup(data_dir: PathBuf) {
     });
 }
 
+// The macOS FFmpeg decision is split in two. Everything gated
+// `any(target_os = "macos", test)` below is pure (or reads only files a test
+// creates), so the whole order is unit-tested on every host's `cargo test`,
+// not only on a Mac (#824). The `target_os = "macos"` items are the side
+// effects: running binaries, Rosetta, the network.
+
 // "arm64" on Apple Silicon, "x64" everywhere else -- takes the arch string
 // rather than reading std::env::consts::ARCH itself so both branches are
 // unit-testable on any host, not just the one they happen to be running on.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn macos_arch_suffix(arch: &str) -> &'static str {
     match arch {
         "aarch64" => "arm64",
         _ => "x64",
     }
+}
+
+// What an Apple Silicon Mac can do with a binary, read from its Mach-O header
+// without running it (#771). Native: it has an arm64 slice, or the host is
+// Intel, where verification is the only judge. IntelOnly: x86_64 and no
+// arm64, so it runs only through Rosetta. Unknown: not a Mach-O we can read
+// (a wrapper script, a short file); verification decides, as before.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacBinaryArch {
+    Native,
+    IntelOnly,
+    Unknown,
+}
+
+// On every host, since binary_arch_label reads them for config.json.
+const MACHO_CPU_TYPE_X86_64: u32 = 0x0100_0007;
+const MACHO_CPU_TYPE_ARM64: u32 = 0x0100_000c;
+
+// The CPU types a Mach-O header declares: one for a thin binary, one per
+// slice for a universal one. None when `header` is not a Mach-O.
+fn macho_cpu_types(header: &[u8]) -> Option<Vec<u32>> {
+    let be = |at: usize| -> Option<u32> {
+        let bytes = header.get(at..at + 4)?;
+        Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let le = |at: usize| -> Option<u32> { be(at).map(u32::swap_bytes) };
+    match be(0)? {
+        // Universal: a big-endian list of slices, 20 bytes each (32 for fat64).
+        magic @ (0xcafe_babe | 0xcafe_babf) => {
+            let entry = if magic == 0xcafe_babf { 32 } else { 20 };
+            let count = usize::try_from(be(4)?).ok()?;
+            (0..count).map(|i| be(8 + i * entry)).collect()
+        }
+        // Thin, little-endian (every Mac binary in practice), 64- or 32-bit.
+        0xcffa_edfe | 0xcefa_edfe => Some(vec![le(4)?]),
+        // Thin, big-endian.
+        0xfeed_facf | 0xfeed_face => Some(vec![be(4)?]),
+        _ => None,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn classify_macos_binary(host: &str, header: &[u8]) -> MacBinaryArch {
+    if host != "arm64" {
+        return MacBinaryArch::Native;
+    }
+    match macho_cpu_types(header) {
+        Some(types) if types.contains(&MACHO_CPU_TYPE_ARM64) => MacBinaryArch::Native,
+        Some(types) if types.contains(&MACHO_CPU_TYPE_X86_64) => MacBinaryArch::IntelOnly,
+        _ => MacBinaryArch::Unknown,
+    }
+}
+
+// The pair as a whole: Intel-only if either half is, since StemDeck runs both.
+#[cfg(any(target_os = "macos", test))]
+fn classify_macos_pair(ffmpeg: MacBinaryArch, ffprobe: MacBinaryArch) -> MacBinaryArch {
+    if ffmpeg == MacBinaryArch::IntelOnly || ffprobe == MacBinaryArch::IntelOnly {
+        MacBinaryArch::IntelOnly
+    } else if ffmpeg == MacBinaryArch::Native && ffprobe == MacBinaryArch::Native {
+        MacBinaryArch::Native
+    } else {
+        MacBinaryArch::Unknown
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_binary_arch(host: &str, path: &Path) -> MacBinaryArch {
+    use std::io::Read;
+    let mut header = Vec::with_capacity(4096);
+    let read = fs::File::open(path).and_then(|file| file.take(4096).read_to_end(&mut header));
+    match read {
+        Ok(_) => classify_macos_binary(host, &header),
+        Err(_) => MacBinaryArch::Unknown,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_pair_arch(host: &str, ffmpeg: &Path) -> MacBinaryArch {
+    classify_macos_pair(
+        macos_binary_arch(host, ffmpeg),
+        macos_binary_arch(host, &ffprobe_beside(ffmpeg)),
+    )
+}
+
+// Rosetta's runtime lives here once `softwareupdate --install-rosetta` has
+// run. Checked before downloading an Intel build, so a Mac without it is told
+// so instead of being handed a binary it cannot start (#771).
+#[cfg(target_os = "macos")]
+fn rosetta_installed() -> bool {
+    Path::new("/Library/Apple/usr/libexec/oah/libRosettaRuntime").is_file()
+}
+
+// Whether an Intel-only FFmpeg may be installed on this Mac: always on an
+// Intel Mac, and on Apple Silicon only when Rosetta can run it.
+#[cfg(any(target_os = "macos", test))]
+fn macos_intel_build_allowed(host: &str, rosetta: bool) -> bool {
+    host != "arm64" || rosetta
+}
+
+// Said whenever StemDeck declines to install an Intel-only FFmpeg on an Apple
+// Silicon Mac without Rosetta. setup.js recognises "built for Intel Macs" and
+// adds no hint of its own, since the error around it already says what to do.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_INTEL_REFUSED: &str = "The fallback download is built for Intel Macs, and this Mac \
+     cannot run it without Rosetta, so StemDeck did not install it.";
+
+// Where an FFmpeg already installed on this Mac may be, in the order tried.
+// Apple Silicon: Homebrew's linked ffmpeg, Homebrew's keg-only ffmpeg-full
+// (the Homebrew build with libvorbis; plain `ffmpeg` dropped it), a manual
+// install in /usr/local/bin, MacPorts. Intel: the same from Homebrew's Intel
+// prefix /usr/local, then MacPorts. PATH last on both. Duplicates are dropped.
+//
+// A Mac app opened from Finder gets a PATH of /usr/bin:/bin:/usr/sbin:/sbin,
+// so without the fixed paths an installed FFmpeg was never seen at all: on
+// Apple Silicon for Homebrew (#771), and on Intel for any of them, which is
+// how a Mac with a full FFmpeg in the user's shell PATH was sent to a download
+// that then failed (#824). On Apple Silicon an Intel-only binary in one of
+// these places is skipped without being run (pick_macos_system_ffmpeg).
+#[cfg(any(target_os = "macos", test))]
+fn macos_system_ffmpeg_candidates(host: &str, path_var: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let fixed: &[&str] = if host == "arm64" {
+        &[
+            "/opt/homebrew/bin/ffmpeg",
+            "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    } else {
+        &[
+            "/usr/local/bin/ffmpeg",
+            "/usr/local/opt/ffmpeg-full/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    };
+    let mut candidates: Vec<PathBuf> = fixed.iter().map(PathBuf::from).collect();
+    if let Some(found) = path_var.and_then(|path| resolve_in_paths("ffmpeg", path)) {
+        if !candidates.contains(&found) {
+            candidates.push(found);
+        }
+    }
+    candidates
+}
+
+// The installed pair to use, or None. Intel-only candidates are skipped
+// without being run: on Apple Silicon a system FFmpeg is only worth
+// preferring over a download when it is native. `check` is check_ffmpeg_pair:
+// Ok(true) has the optional encoders too, Ok(false) only the required ones.
+// The first Ok(true) wins at once. Otherwise the first Ok(false) is used, so
+// a Mac with both Homebrew's plain ffmpeg and ffmpeg-full gets OGG export,
+// and a Mac with only the plain one still needs no download (#824).
+#[cfg(any(target_os = "macos", test))]
+fn pick_macos_system_ffmpeg(
+    candidates: &[PathBuf],
+    arch: impl Fn(&Path) -> MacBinaryArch,
+    check: impl Fn(&Path) -> Result<bool, String>,
+) -> Option<PathBuf> {
+    let mut usable = None;
+    for candidate in candidates {
+        if arch(candidate) == MacBinaryArch::IntelOnly {
+            continue;
+        }
+        match check(candidate) {
+            Ok(true) => return Some(candidate.clone()),
+            Ok(false) => {
+                usable.get_or_insert_with(|| candidate.clone());
+            }
+            Err(err) => eprintln!("system FFmpeg at {} not used: {err}", candidate.display()),
+        }
+    }
+    usable
+}
+
+// What to do with the pair already in the data folder (or named by
+// STEMDECK_FFMPEG), given whether it verified and what it is built for.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum ExistingFfmpeg {
+    // Use it and stop.
+    Use,
+    // It runs, but only through Rosetta: keep it unless a native pair is
+    // already installed elsewhere. Never replaced by a download.
+    KeepUnlessNativeFound,
+    // Look for a replacement.
+    Replace,
+    // An explicit STEMDECK_FFMPEG that fails: report it, replace nothing.
+    Fail,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn decide_existing_ffmpeg(verified: bool, arch: MacBinaryArch, explicit: bool) -> ExistingFfmpeg {
+    match (verified, explicit) {
+        (true, true) => ExistingFfmpeg::Use,
+        (true, false) if arch == MacBinaryArch::IntelOnly => ExistingFfmpeg::KeepUnlessNativeFound,
+        (true, false) => ExistingFfmpeg::Use,
+        (false, true) => ExistingFfmpeg::Fail,
+        (false, false) => ExistingFfmpeg::Replace,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum MacFfmpegNext {
+    Use(PathBuf),
+    Download,
+}
+
+// Steps 3 to 5 below, without the side effects: `find_system` is only asked
+// when STEMDECK_FFMPEG_URL is not set, since that names the source to use.
+#[cfg(any(target_os = "macos", test))]
+fn next_macos_ffmpeg(
+    installed_intel: Option<PathBuf>,
+    url_override: bool,
+    find_system: impl FnOnce() -> Option<PathBuf>,
+) -> MacFfmpegNext {
+    if !url_override {
+        if let Some(found) = find_system() {
+            return MacFfmpegNext::Use(found);
+        }
+    }
+    match installed_intel {
+        Some(path) => MacFfmpegNext::Use(path),
+        None => MacFfmpegNext::Download,
+    }
+}
+
+// Where a download may come from, in the order tried.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacDownloadSource {
+    // STEMDECK_FFMPEG_URL: the user chose the source, nothing else is tried.
+    Override,
+    // shaka-project's per-architecture build on GitHub. No libvorbis, which
+    // is optional now, so it passes the check on both architectures (#824).
+    Primary,
+    // evermeet.cx, Intel builds only.
+    Fallback,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl MacDownloadSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Override => "Download from STEMDECK_FFMPEG_URL",
+            Self::Primary => "Download from GitHub (shaka-project build)",
+            Self::Fallback => "Download from evermeet.cx",
+        }
+    }
+}
+
+// The fallback only where its Intel build can run: an Intel Mac, or Apple
+// Silicon with Rosetta. Elsewhere it is not even fetched (#771).
+#[cfg(any(target_os = "macos", test))]
+fn macos_download_sources(url_override: bool, intel_allowed: bool) -> Vec<MacDownloadSource> {
+    if url_override {
+        vec![MacDownloadSource::Override]
+    } else if intel_allowed {
+        vec![MacDownloadSource::Primary, MacDownloadSource::Fallback]
+    } else {
+        vec![MacDownloadSource::Primary]
+    }
+}
+
+// The setup error when no FFmpeg could be found or installed: what happened
+// to each source, then what to do. setup.js recognises "Do one of these" and
+// adds no network hint under it, since this already names the next step.
+#[cfg(any(target_os = "macos", test))]
+fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: bool) -> String {
+    let mut lines = vec![
+        "StemDeck could not set up FFmpeg, which it needs to read and save audio.".to_string(),
+    ];
+    lines.extend(attempts.iter().map(|attempt| format!("- {attempt}")));
+    if fallback_skipped {
+        lines.push(format!("- {MACOS_INTEL_REFUSED}"));
+    }
+    lines.push(String::new());
+    lines.push("Do one of these, then click Retry:".to_string());
+    lines.push(
+        "- Install FFmpeg with Homebrew by running \"brew install ffmpeg\" in Terminal. \
+         StemDeck finds it on its own. For OGG export as well, run \
+         \"brew install ffmpeg-full\" instead."
+            .to_string(),
+    );
+    lines.push(
+        "- Or set the STEMDECK_FFMPEG environment variable to the full path of an ffmpeg \
+         you already have, then open StemDeck again."
+            .to_string(),
+    );
+    if host == "arm64" && fallback_skipped {
+        lines.push(
+            "- Or install Rosetta by running \"softwareupdate --install-rosetta\" in \
+             Terminal, so StemDeck can use the Intel fallback."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+// The macOS order (#771, #824). An explicit setting always wins over anything
+// StemDeck would pick itself:
+//   1. STEMDECK_FFMPEG, a file the user named: used if it verifies, else an error.
+//   2. The pair in the data folder, if it verifies and is native.
+//   3. Unless STEMDECK_FFMPEG_URL is set: a native pair already installed
+//      (macos_system_ffmpeg_candidates) that passes the same verification,
+//      one with libvorbis first.
+//   4. The data-folder pair from step 2 that runs only through Rosetta.
+//      Kept rather than downloaded over.
+//   5. A download (macos_download_sources): STEMDECK_FFMPEG_URL if set, else
+//      the per-architecture primary, else the Intel-only fallback where it
+//      can run.
+// "Verifies" means the required encoders (REQUIRED_FFMPEG_ENCODERS). A pair
+// without libvorbis passes; the backend then reports OGG export unavailable.
+#[cfg(target_os = "macos")]
+fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
+    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
+
+    let mut installed_intel = None;
+    if let Some(existing) = resolve_existing_ffmpeg(data_dir) {
+        let verified = verify_ffmpeg_pair(&existing);
+        let arch = macos_pair_arch(host, &existing);
+        match decide_existing_ffmpeg(verified.is_ok(), arch, explicit) {
+            ExistingFfmpeg::Use => return Ok((existing, FfmpegSource::existing(explicit))),
+            ExistingFfmpeg::KeepUnlessNativeFound => installed_intel = Some(existing),
+            ExistingFfmpeg::Fail => {
+                return verified.map(|()| (existing, FfmpegSource::existing(explicit)))
+            }
+            ExistingFfmpeg::Replace => eprintln!(
+                "FFmpeg at {} is present but unusable, looking for a replacement: {}",
+                existing.display(),
+                verified.err().unwrap_or_default()
+            ),
+        }
+    }
+
+    let url_override = env_path_override("STEMDECK_FFMPEG_URL").is_some();
+    let find_system = || {
+        let candidates = macos_system_ffmpeg_candidates(host, env::var_os("PATH").as_deref());
+        pick_macos_system_ffmpeg(
+            &candidates,
+            |path| macos_pair_arch(host, path),
+            check_ffmpeg_pair,
+        )
+    };
+    let kept = installed_intel.clone();
+    if let MacFfmpegNext::Use(path) = next_macos_ffmpeg(installed_intel, url_override, find_system)
+    {
+        // Step 4 hands back the data-folder pair itself; anything else is an
+        // installed system pair from step 3.
+        let source = if kept.as_ref() == Some(&path) {
+            FfmpegSource::DataFolder
+        } else {
+            FfmpegSource::System
+        };
+        return Ok((path, source));
+    }
+
+    let url = download_macos_ffmpeg(data_dir)?;
+    let portable =
+        ffmpeg_path(data_dir).ok_or_else(|| "failed to resolve FFmpeg path".to_string())?;
+    verify_ffmpeg_pair(&portable)?;
+    Ok((portable, FfmpegSource::Download(url)))
 }
 
 // An override hash from `env_var`, trimmed and lowercased, or None if unset/
@@ -5316,7 +7276,8 @@ fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Res
     Ok(())
 }
 
-/// evermeet.cx (zip-wrapped, universal binary) is used both for the fallback
+/// evermeet.cx (zip-wrapped, x86_64 only: it runs on Apple Silicon only
+/// through Rosetta, #771) is used both for the fallback
 /// path and for a custom STEMDECK_FFMPEG_URL override -- that env var has
 /// always pointed at a zip in this shape, so overrides keep working exactly
 /// as before regardless of what the built-in primary source looks like.
@@ -5353,9 +7314,28 @@ fn download_macos_ffmpeg_zip_source(
     Ok(())
 }
 
+// One of shaka-project's raw per-architecture binaries ("ffmpeg" or "ffprobe",
+// "arm64" or "x64").
+#[cfg(any(target_os = "macos", test))]
+fn shaka_binary_url(binary: &str, arch: &str) -> String {
+    format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/{binary}-osx-{arch}")
+}
+
+// The ffmpeg URL a macOS download source fetched, for config.json's
+// ffmpegSource (#858). `override_url` is STEMDECK_FFMPEG_URL, used only by
+// MacDownloadSource::Override.
+#[cfg(any(target_os = "macos", test))]
+fn macos_source_url(source: MacDownloadSource, host: &str, override_url: &str) -> String {
+    match source {
+        MacDownloadSource::Override => override_url.to_string(),
+        MacDownloadSource::Primary => shaka_binary_url("ffmpeg", host),
+        MacDownloadSource::Fallback => DEFAULT_MACOS_FFMPEG_URL.to_string(),
+    }
+}
+
 /// Primary source: shaka-project's per-architecture builds, published as raw
-/// (non-zip) binaries -- downloaded straight to their final path, no
-/// extraction step.
+/// (non-zip) binaries -- downloaded straight into `ffmpeg_dir` (the staging
+/// folder), no extraction step.
 #[cfg(target_os = "macos")]
 fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
     let arch = macos_arch_suffix(std::env::consts::ARCH);
@@ -5363,8 +7343,8 @@ fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
         "arm64" => (SHAKA_FFMPEG_SHA256_ARM64, SHAKA_FFPROBE_SHA256_ARM64),
         _ => (SHAKA_FFMPEG_SHA256_X64, SHAKA_FFPROBE_SHA256_X64),
     };
-    let ffmpeg_url = format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/ffmpeg-osx-{arch}");
-    let ffprobe_url = format!("{SHAKA_FFMPEG_BASE_URL}/{SHAKA_FFMPEG_RELEASE}/ffprobe-osx-{arch}");
+    let ffmpeg_url = shaka_binary_url("ffmpeg", arch);
+    let ffprobe_url = shaka_binary_url("ffprobe", arch);
     let ffmpeg_target = ffmpeg_dir.join("ffmpeg");
     let ffprobe_target = ffmpeg_dir.join("ffprobe");
 
@@ -5388,8 +7368,9 @@ fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Ok is the ffmpeg URL that was installed.
 #[cfg(target_os = "macos")]
-fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
+fn download_macos_ffmpeg(data_dir: &Path) -> Result<String, String> {
     let downloads = data_dir.join("downloads");
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
@@ -5397,60 +7378,165 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&ffmpeg_dir)
         .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
 
-    // An explicit override always wins and skips the primary/fallback dance
-    // entirely -- the user has already chosen a source. Goes through the
-    // zip-wrapped path, the shape this override has always expected.
-    if let Some(ffmpeg_override) = env_path_override("STEMDECK_FFMPEG_URL") {
-        let ffmpeg_url = ffmpeg_override.display().to_string();
-        let ffprobe_url = env_path_override("STEMDECK_FFPROBE_URL")
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
-        let ffmpeg_expected = override_sha256("STEMDECK_FFMPEG_SHA256");
-        let ffprobe_expected = override_sha256("STEMDECK_FFPROBE_SHA256");
-        return download_macos_ffmpeg_zip_source(
-            &ffmpeg_url,
-            &ffprobe_url,
-            ffmpeg_expected.as_deref(),
-            ffprobe_expected.as_deref(),
-            &downloads,
-            &ffmpeg_dir,
-        );
-    }
+    // Every source lands in staged/ first and replaces the installed pair only
+    // once it has passed the checks below. Downloading straight over
+    // data/ffmpeg destroyed a pair the user had put there even when what
+    // replaced it was no better, and a locked file there failed the download
+    // itself (#771). Inside data/ffmpeg rather than downloads/, which
+    // prune_downloads empties.
+    let staged = ffmpeg_dir.join("staged");
+    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let result = download_macos_ffmpeg_sources(host, &downloads, &staged).and_then(|url| {
+        install_staged_ffmpeg(&staged, &ffmpeg_dir)?;
+        Ok(url)
+    });
+    let _ = fs::remove_dir_all(&staged);
+    result
+}
 
+// Whether a downloaded pair is refused before it is ever run: Intel-only on
+// an Apple Silicon Mac that has no Rosetta to run it (#771).
+#[cfg(any(target_os = "macos", test))]
+fn refuse_intel_build(host: &str, arch: MacBinaryArch, rosetta: bool) -> bool {
+    arch == MacBinaryArch::IntelOnly && !macos_intel_build_allowed(host, rosetta)
+}
+
+// The architecture check, then the same verification every other FFmpeg gets.
+#[cfg(target_os = "macos")]
+fn check_staged_ffmpeg(host: &str, staged: &Path, refusal: &str) -> Result<(), String> {
+    let ffmpeg = staged.join("ffmpeg");
+    if refuse_intel_build(host, macos_pair_arch(host, &ffmpeg), rosetta_installed()) {
+        return Err(refusal.to_string());
+    }
+    verify_ffmpeg_pair(&ffmpeg)
+}
+
+// Move a checked pair from staged/ into data/ffmpeg.
+#[cfg(any(target_os = "macos", test))]
+fn install_staged_ffmpeg(staged: &Path, ffmpeg_dir: &Path) -> Result<(), String> {
+    for name in ["ffmpeg", "ffprobe"] {
+        let target = ffmpeg_dir.join(name);
+        fs::rename(staged.join(name), &target).map_err(|e| {
+            format!(
+                "StemDeck could not replace {}: {e}. If you locked this file, unlock it, \
+                 or delete the ffmpeg folder in StemDeck's data folder, then click Retry.",
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+// Fetch one source into staged/: nothing is installed from here.
+#[cfg(target_os = "macos")]
+fn fetch_macos_source(
+    source: MacDownloadSource,
+    downloads: &Path,
+    staged: &Path,
+) -> Result<(), String> {
+    match source {
+        // An explicit override always wins and skips the primary/fallback
+        // dance entirely -- the user has already chosen a source. Goes
+        // through the zip-wrapped path, the shape this override has always
+        // expected.
+        MacDownloadSource::Override => {
+            let ffmpeg_url = env_path_override("STEMDECK_FFMPEG_URL")
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            let ffprobe_url = env_path_override("STEMDECK_FFPROBE_URL")
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| DEFAULT_MACOS_FFPROBE_URL.to_string());
+            let ffmpeg_expected = override_sha256("STEMDECK_FFMPEG_SHA256");
+            let ffprobe_expected = override_sha256("STEMDECK_FFPROBE_SHA256");
+            download_macos_ffmpeg_zip_source(
+                &ffmpeg_url,
+                &ffprobe_url,
+                ffmpeg_expected.as_deref(),
+                ffprobe_expected.as_deref(),
+                downloads,
+                staged,
+            )
+        }
+        MacDownloadSource::Primary => download_macos_ffmpeg_primary(staged),
+        MacDownloadSource::Fallback => download_macos_ffmpeg_zip_source(
+            DEFAULT_MACOS_FFMPEG_URL,
+            DEFAULT_MACOS_FFPROBE_URL,
+            Some(DEFAULT_MACOS_FFMPEG_SHA256),
+            Some(DEFAULT_MACOS_FFPROBE_SHA256),
+            downloads,
+            staged,
+        ),
+    }
+}
+
+// Ok is the ffmpeg URL of the source that was accepted.
+#[cfg(target_os = "macos")]
+fn download_macos_ffmpeg_sources(
+    host: &str,
+    downloads: &Path,
+    staged: &Path,
+) -> Result<String, String> {
     // Primary: shaka-project's per-architecture builds on GitHub Releases
     // (GitHub's global CDN) -- the same class of fix that already solved this
     // for Windows (#248, off gyan.dev's single mirror). evermeet.cx is the
     // fallback: a single host with no CDN behind it, reported unreachable
-    // from multiple regions (#388). A checksum match only proves the bytes are
-    // what we expect, not that the binary actually launches on this machine's
-    // macOS version or has every encoder StemDeck needs -- verify both before
-    // accepting it over the fallback (#414).
+    // from multiple regions (#388) and rate limited with HTTP 429 (#824). A
+    // checksum match only proves the bytes are what we expect, not that the
+    // binary actually launches on this machine's macOS version or has every
+    // encoder StemDeck needs -- verify both before accepting it (#414).
     //
     // Both halves, not just ffmpeg. The primary publishes them as two separate
     // downloads, so "ffmpeg arrived and runs" says nothing about ffprobe, and
     // accepting the pair on half the evidence is how a working ffmpeg came to
     // sit beside an ffprobe that could not run at all (#637).
-    let primary_result = download_macos_ffmpeg_primary(&ffmpeg_dir)
-        .and_then(|()| verify_ffmpeg_pair(&ffmpeg_dir.join("ffmpeg")));
-    if let Err(primary_err) = primary_result {
-        eprintln!("primary FFmpeg source failed, trying the evermeet.cx fallback: {primary_err}");
-        return download_macos_ffmpeg_zip_source(
-            DEFAULT_MACOS_FFMPEG_URL,
-            DEFAULT_MACOS_FFPROBE_URL,
-            Some(DEFAULT_MACOS_FFMPEG_SHA256),
-            Some(DEFAULT_MACOS_FFPROBE_SHA256),
-            &downloads,
-            &ffmpeg_dir,
-        )
-        .map_err(|fallback_err| {
-            format!(
-                "Could not download FFmpeg from either source.\n\
-                 Primary: {primary_err}\n\
-                 Fallback: {fallback_err}"
-            )
+    //
+    // As pinned (n8.1.2-1) this primary has no libvorbis on either
+    // architecture (shaka-project's build-scripts/90-ffmpeg.sh configures no
+    // --enable-libvorbis). That failed the check while libvorbis was
+    // required, so every Mac fell back to evermeet (#771, #824). It is
+    // optional now, so the primary passes and the fallback is only reached
+    // when the primary cannot be fetched or will not run.
+    //
+    // Each failure is reported as either "could not fetch" (describe_download_failure)
+    // or "fetched but rejected", so the user knows which side it was on. No
+    // retries beyond download_file's own, which never retries an HTTP error.
+    let url_override = env_path_override("STEMDECK_FFMPEG_URL").is_some();
+    let intel_allowed = macos_intel_build_allowed(host, rosetta_installed());
+    let refusal = if url_override {
+        "The FFmpeg that STEMDECK_FFMPEG_URL points at is built for Intel Macs, and this \
+         Mac cannot run it without Rosetta, so StemDeck did not install it. Point \
+         STEMDECK_FFMPEG_URL at a build for Apple Silicon, or install Rosetta by running \
+         \"softwareupdate --install-rosetta\" in Terminal, then click Retry."
+    } else {
+        MACOS_INTEL_REFUSED
+    };
+    let mut attempts = Vec::new();
+    for source in macos_download_sources(url_override, intel_allowed) {
+        // A clean staging folder per source, so a half from one source can
+        // never be installed beside a half from another.
+        let _ = fs::remove_dir_all(staged);
+        fs::create_dir_all(staged)
+            .map_err(|e| format!("failed to create {}: {e}", staged.display()))?;
+        let result = fetch_macos_source(source, downloads, staged).and_then(|()| {
+            check_staged_ffmpeg(host, staged, refusal)
+                .map_err(|e| format!("It downloaded, but StemDeck could not use it: {e}"))
         });
+        match result {
+            Ok(()) => {
+                let override_url = env::var("STEMDECK_FFMPEG_URL").unwrap_or_default();
+                return Ok(macos_source_url(source, host, &override_url));
+            }
+            Err(err) => {
+                eprintln!("FFmpeg source failed ({}): {err}", source.label());
+                attempts.push(format!("{}: {err}", source.label()));
+            }
+        }
     }
-    Ok(())
+    Err(macos_ffmpeg_setup_error(
+        host,
+        &attempts,
+        !url_override && !intel_allowed,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -5511,20 +7597,17 @@ fn make_executable(path: &Path) -> Result<(), String> {
     }
 }
 
-// Parse a combined `checksums.sha256` file (lines of `<hash>  <filename>`) and
-// return the lowercased hash for `filename`, or None if it is not listed.
-#[cfg(any(windows, test))]
-fn sha256_from_checksums(contents: &str, filename: &str) -> Option<String> {
-    contents.lines().find_map(|line| {
-        let mut parts = line.split_whitespace();
-        let hash = parts.next()?;
-        let name = parts.next()?;
-        (name == filename).then(|| hash.to_ascii_lowercase())
-    })
-}
-
 #[cfg(windows)]
 fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
+    let archive_path = download_windows_ffmpeg_archive(data_dir)?;
+    extract_ffmpeg_binaries(&archive_path, &data_dir.join("ffmpeg"))
+}
+
+// Downloads the Windows FFmpeg archive into data/downloads and checks it
+// against the compiled-in SHA-256 when the default URL is used. Returns the
+// archive path; nothing is extracted yet.
+#[cfg(windows)]
+fn download_windows_ffmpeg_archive(data_dir: &Path) -> Result<PathBuf, String> {
     let url = env_path_override("STEMDECK_FFMPEG_URL")
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| DEFAULT_WINDOWS_FFMPEG_URL.to_string());
@@ -5534,30 +7617,15 @@ fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&downloads)
         .map_err(|e| format!("failed to create {}: {e}", downloads.display()))?;
 
-    // Fetch BtbN's combined checksums.sha256 and pick the line for our archive (#135, #248).
-    // Only verified for the default URL; custom overrides skip the check.
-    let expected_sha256 = if is_default_url {
-        let archive_name = url
-            .rsplit('/')
-            .next()
-            .ok_or_else(|| "could not derive FFmpeg archive name from URL".to_string())?;
-        let sha256_tmp = downloads.join("ffmpeg-windows.checksums.sha256");
-        download_file_blocking(DEFAULT_WINDOWS_FFMPEG_CHECKSUMS_URL, &sha256_tmp)?;
-        let raw = fs::read_to_string(&sha256_tmp)
-            .map_err(|e| format!("failed to read FFmpeg checksums: {e}"))?;
-        let _ = fs::remove_file(&sha256_tmp);
-        Some(sha256_from_checksums(&raw, archive_name).ok_or_else(|| {
-            format!("FFmpeg checksums file did not list an entry for {archive_name}")
-        })?)
-    } else {
-        None
-    };
+    // The default URL is checked against the compile-time pin (#135, #248);
+    // a custom STEMDECK_FFMPEG_URL override skips the check.
+    let expected_sha256 = is_default_url.then_some(DEFAULT_WINDOWS_FFMPEG_SHA256);
 
     download_file_blocking(&url, &archive_path)?;
 
     if let Some(expected) = expected_sha256 {
         let actual = sha256_file(&archive_path)?;
-        if !actual.eq_ignore_ascii_case(&expected) {
+        if !actual.eq_ignore_ascii_case(expected) {
             let _ = fs::remove_file(&archive_path);
             return Err(format!(
                 "FFmpeg archive checksum mismatch (expected {expected}, got {actual}). \
@@ -5566,7 +7634,7 @@ fn download_windows_ffmpeg(data_dir: &Path) -> Result<(), String> {
         }
     }
 
-    extract_ffmpeg_binaries(&archive_path, data_dir)
+    Ok(archive_path)
 }
 
 #[cfg(windows)]
@@ -5624,13 +7692,12 @@ fn download_file_blocking(url: &str, target: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), String> {
+fn extract_ffmpeg_binaries(archive_path: &Path, ffmpeg_dir: &Path) -> Result<(), String> {
     let file = fs::File::open(archive_path)
         .map_err(|e| format!("failed to open {}: {e}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|e| format!("failed to read FFmpeg zip {}: {e}", archive_path.display()))?;
-    let ffmpeg_dir = data_dir.join("ffmpeg");
-    fs::create_dir_all(&ffmpeg_dir)
+    fs::create_dir_all(ffmpeg_dir)
         .map_err(|e| format!("failed to create {}: {e}", ffmpeg_dir.display()))?;
 
     let mut copied_ffmpeg = false;
@@ -5675,23 +7742,50 @@ fn extract_ffmpeg_binaries(archive_path: &Path, data_dir: &Path) -> Result<(), S
     Ok(())
 }
 
-// Encoders StemDeck's export pipeline actually calls for by name: pcm_s16le
-// (WAV stems), flac (FLAC stems), libmp3lame (MP3 stems/zips), libvorbis (OGG
-// stems), aac (the audio track on MP4 video exports) -- see app/api/stems.py's
-// per-format ffmpeg args. A minimal or distro-stripped FFmpeg build can pass a
-// bare `-version` check yet be missing one of these, which would otherwise
-// only surface later as an export failure deep in the pipeline (#414).
-const REQUIRED_FFMPEG_ENCODERS: &[&str] = &["pcm_s16le", "flac", "libmp3lame", "libvorbis", "aac"];
+// Encoders StemDeck cannot work without: pcm_s16le (WAV stems and exports),
+// flac (FLAC exports), libmp3lame (MP3 stem storage and exports), aac (the
+// audio track on MP4 video exports) -- see app/api/stems.py's per-format
+// ffmpeg args. A minimal or distro-stripped FFmpeg build can pass a bare
+// `-version` check yet be missing one of these, which would otherwise only
+// surface later as an export failure deep in the pipeline (#414).
+const REQUIRED_FFMPEG_ENCODERS: &[&str] = &["pcm_s16le", "flac", "libmp3lame", "aac"];
 
-fn missing_required_encoders(listing: &str) -> Vec<&'static str> {
-    REQUIRED_FFMPEG_ENCODERS
+// Encoders StemDeck uses when they are there and does without when they are
+// not: libvorbis, for OGG export only. The per-architecture macOS download and
+// Homebrew's plain `ffmpeg` have no libvorbis, and requiring it failed first
+// launch on every fresh Mac (#824). Without it the backend reports OGG export
+// as unavailable (app/pipeline/audio_encoders.py). A pair that has these is
+// still preferred where there is a choice (pick_macos_system_ffmpeg).
+const OPTIONAL_FFMPEG_ENCODERS: &[&str] = &["libvorbis"];
+
+fn missing_encoders(listing: &str, wanted: &[&'static str]) -> Vec<&'static str> {
+    wanted
         .iter()
         .copied()
         .filter(|codec| !listing.contains(codec))
         .collect()
 }
 
-fn verify_ffmpeg_encoders(path: &Path) -> Result<(), String> {
+fn missing_required_encoders(listing: &str) -> Vec<&'static str> {
+    missing_encoders(listing, REQUIRED_FFMPEG_ENCODERS)
+}
+
+// Ok(true) when every optional encoder is there too, Ok(false) when only the
+// required ones are, Err when a required one is missing.
+fn check_encoder_listing(path: &Path, listing: &str) -> Result<bool, String> {
+    let missing = missing_required_encoders(listing);
+    if missing.is_empty() {
+        Ok(missing_encoders(listing, OPTIONAL_FFMPEG_ENCODERS).is_empty())
+    } else {
+        Err(format!(
+            "FFmpeg at {} is missing required encoder(s): {}",
+            path.display(),
+            missing.join(", ")
+        ))
+    }
+}
+
+fn verify_ffmpeg_encoders(path: &Path) -> Result<bool, String> {
     let mut command = Command::new(path);
     command
         .args(["-hide_banner", "-encoders"])
@@ -5702,27 +7796,19 @@ fn verify_ffmpeg_encoders(path: &Path) -> Result<(), String> {
         command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg encoder check")
             .map_err(|e| format!("failed to list FFmpeg encoders at {}: {e}", path.display()))?;
     let listing = String::from_utf8_lossy(&output.stdout);
-    let missing = missing_required_encoders(&listing);
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "FFmpeg at {} is missing required encoder(s): {}",
-            path.display(),
-            missing.join(", ")
-        ))
-    }
+    check_encoder_listing(path, &listing)
 }
 
 // A binary is only "compatible with StemDeck's requirements" (#414) if it
 // both runs on this machine and has every encoder the export pipeline needs
 // -- checking just one half would let either a broken-on-this-OS build or a
-// minimal/stripped one through.
-fn verify_ffmpeg(path: &Path) -> Result<(), String> {
+// minimal/stripped one through. Ok(true) when it has the optional encoders
+// as well.
+fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
     let mut command = Command::new(path);
     command
         .arg("-version")
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
@@ -5735,7 +7821,44 @@ fn verify_ffmpeg(path: &Path) -> Result<(), String> {
             stderr.trim()
         ));
     }
+    let build = parse_ffmpeg_build(&String::from_utf8_lossy(&output.stdout));
+    if ffmpeg_too_old(&build) {
+        return Err(format!(
+            "FFmpeg at {} is version {}, and StemDeck needs FFmpeg {}.{} or newer. Do one of \
+             these, then start StemDeck again: point STEMDECK_FFMPEG at FFmpeg {}.{} or newer, \
+             or remove STEMDECK_FFMPEG and STEMDECK_FFMPEG_URL so StemDeck downloads its own.",
+            path.display(),
+            build.version.as_deref().unwrap_or_default(),
+            MIN_FFMPEG_VERSION.0,
+            MIN_FFMPEG_VERSION.1,
+            MIN_FFMPEG_VERSION.0,
+            MIN_FFMPEG_VERSION.1,
+        ));
+    }
     verify_ffmpeg_encoders(path)
+}
+
+// The oldest FFmpeg StemDeck runs on (MIN_FFMPEG_VERSION in
+// app/pipeline/audio_encoders.py): every export ends in alimiter's latency
+// option, which FFmpeg 5.1 added, and Ubuntu 22.04's apt ffmpeg is 4.4. An
+// older one fails verification, so a system or leftover copy is passed over
+// for the download, and one named by STEMDECK_FFMPEG stops setup with the
+// message above. A version that names no release (a git build) is not old.
+const MIN_FFMPEG_VERSION: (u32, u32) = (5, 1);
+
+fn ffmpeg_too_old(build: &FfmpegBuild) -> bool {
+    let Some(version) = build.version.as_deref() else {
+        return false;
+    };
+    let mut numbers = version
+        .strip_prefix('n')
+        .unwrap_or(version)
+        .split(|c: char| !c.is_ascii_digit())
+        .map(|part| part.parse::<u32>().ok());
+    match (numbers.next().flatten(), numbers.next().flatten()) {
+        (Some(major), Some(minor)) => (major, minor) < MIN_FFMPEG_VERSION,
+        _ => false,
+    }
 }
 
 // ffprobe gets the same run check ffmpeg does.
@@ -5771,12 +7894,317 @@ fn verify_ffprobe(path: &Path) -> Result<(), String> {
 // Both halves, which is the only useful question: StemDeck needs ffmpeg *and*
 // ffprobe, and nothing downloads or ships one without the other.
 fn verify_ffmpeg_pair(ffmpeg: &Path) -> Result<(), String> {
-    verify_ffmpeg(ffmpeg)?;
-    verify_ffprobe(&ffprobe_beside(ffmpeg))
+    check_ffmpeg_pair(ffmpeg).map(|_| ())
 }
 
-fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
+// verify_ffmpeg_pair, also saying whether the pair has the optional encoders
+// (true) or only the required ones (false).
+fn check_ffmpeg_pair(ffmpeg: &Path) -> Result<bool, String> {
+    let full = verify_ffmpeg(ffmpeg)?;
+    verify_ffprobe(&ffprobe_beside(ffmpeg))?;
+    if !full {
+        eprintln!(
+            "FFmpeg at {} has no {}: OGG export will be unavailable",
+            ffmpeg.display(),
+            OPTIONAL_FFMPEG_ENCODERS.join(", ")
+        );
+    }
+    Ok(full)
+}
+
+// What `ffmpeg -version` says about how a build was made.
+#[derive(Debug, PartialEq, Eq)]
+struct FfmpegBuild {
+    version: Option<String>,
+    gcc_major: Option<u32>,
+}
+
+// Reads the "ffmpeg version X" and "built with gcc N.M.P" lines. Either can
+// be missing (a clang or MSVC build has no gcc line), which reads as None.
+fn parse_ffmpeg_build(version_text: &str) -> FfmpegBuild {
+    let mut build = FfmpegBuild {
+        version: None,
+        gcc_major: None,
+    };
+    for line in version_text.lines().map(str::trim) {
+        if build.version.is_none() {
+            if let Some(rest) = line.strip_prefix("ffmpeg version ") {
+                build.version = rest.split_whitespace().next().map(str::to_string);
+            }
+        }
+        if build.gcc_major.is_none() {
+            if let Some(rest) = line.strip_prefix("built with gcc ") {
+                build.gcc_major = rest
+                    .split(|c: char| c == '.' || c.is_whitespace())
+                    .next()
+                    .and_then(|major| major.parse().ok());
+            }
+        }
+    }
+    build
+}
+
+// BtbN builds compiled with gcc 16 (2026-09-30 and 2026-10-27, n8.1.3) abort
+// at random with "stack smashing detected"; gcc 15.2 builds ran clean in
+// 1000+ runs. A build with no gcc line is not called bad.
+const FIRST_BAD_FFMPEG_GCC_MAJOR: u32 = 16;
+
+fn is_known_bad_ffmpeg_build(build: &FfmpegBuild) -> bool {
+    build
+        .gcc_major
+        .is_some_and(|major| major >= FIRST_BAD_FFMPEG_GCC_MAJOR)
+}
+
+// How many times a stale managed FFmpeg is replaced with one pin before the
+// shell stops trying (network failures). A pinned build that downloads but
+// then fails its own checks gives up at once.
+const MAX_FFMPEG_REPLACE_ATTEMPTS: u64 = 3;
+
+// Kept in config.json under "ffmpegReplace", so a failed replacement is not
+// retried on every launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FfmpegReplaceRecord {
+    pin: String,
+    attempts: u64,
+    gave_up: bool,
+}
+
+// Whether the FFmpeg the shell found is one it manages and may replace: on
+// Windows only, the flat data/ffmpeg/ffmpeg.exe the shell downloads, and only
+// when the user named neither a binary (STEMDECK_FFMPEG) nor a source
+// (STEMDECK_FFMPEG_URL). A system FFmpeg on PATH, a bin/ layout the user
+// dropped in (#248) and an override are never touched.
+fn is_managed_ffmpeg(
+    data_dir: &Path,
+    existing: &Path,
+    windows: bool,
+    ffmpeg_override: bool,
+    url_override: bool,
+) -> bool {
+    windows
+        && !ffmpeg_override
+        && !url_override
+        && existing == data_dir.join("ffmpeg").join("ffmpeg.exe")
+}
+
+// The decision itself, with every input passed in.
+fn should_replace_ffmpeg(
+    managed: bool,
+    build: &FfmpegBuild,
+    record: Option<&FfmpegReplaceRecord>,
+    pin: &str,
+) -> bool {
+    if !managed || !is_known_bad_ffmpeg_build(build) {
+        return false;
+    }
+    match record {
+        Some(record) if record.pin == pin => {
+            !record.gave_up && record.attempts < MAX_FFMPEG_REPLACE_ATTEMPTS
+        }
+        // No record, or one for an older pin: a new pin earns a fresh try.
+        _ => true,
+    }
+}
+
+// The record after one more failed attempt.
+#[cfg(any(windows, test))]
+fn next_replace_record(
+    previous: Option<&FfmpegReplaceRecord>,
+    pin: &str,
+    build_rejected: bool,
+) -> FfmpegReplaceRecord {
+    let attempts = match previous {
+        Some(record) if record.pin == pin => record.attempts + 1,
+        _ => 1,
+    };
+    FfmpegReplaceRecord {
+        pin: pin.to_string(),
+        attempts,
+        gave_up: build_rejected || attempts >= MAX_FFMPEG_REPLACE_ATTEMPTS,
+    }
+}
+
+fn read_ffmpeg_replace_record(data_dir: &Path) -> Option<FfmpegReplaceRecord> {
+    let text = fs::read_to_string(data_dir.join("config.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let record = value.get("ffmpegReplace")?;
+    Some(FfmpegReplaceRecord {
+        pin: record.get("pin")?.as_str()?.to_string(),
+        attempts: record.get("attempts")?.as_u64()?,
+        gave_up: record.get("gaveUp")?.as_bool()?,
+    })
+}
+
+// stdout of `ffmpeg -version`, or None when it does not run.
+fn ffmpeg_version_text(path: &Path) -> Option<String> {
+    let mut command = Command::new(path);
+    command
+        .arg("-version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console_window(&mut command);
+    let output =
+        command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg version").ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// True when `existing` is the shell's own Windows FFmpeg, it is a known-bad
+// build, and replacing it has not already been tried and given up on. Never
+// runs anything on other platforms or for a user-supplied FFmpeg.
+fn managed_ffmpeg_needs_replacing(data_dir: &Path, existing: &Path) -> bool {
+    let managed = is_managed_ffmpeg(
+        data_dir,
+        existing,
+        cfg!(windows),
+        env_path_override("STEMDECK_FFMPEG").is_some(),
+        env_path_override("STEMDECK_FFMPEG_URL").is_some(),
+    );
+    if !managed {
+        return false;
+    }
+    let Some(text) = ffmpeg_version_text(existing) else {
+        return false;
+    };
+    let build = parse_ffmpeg_build(&text);
+    let replace = should_replace_ffmpeg(
+        true,
+        &build,
+        read_ffmpeg_replace_record(data_dir).as_ref(),
+        DEFAULT_WINDOWS_FFMPEG_URL,
+    );
+    if replace {
+        eprintln!(
+            "FFmpeg {} at {} was built with gcc {}, a known-bad build",
+            build.version.as_deref().unwrap_or("(unknown version)"),
+            existing.display(),
+            build.gcc_major.unwrap_or_default()
+        );
+    }
+    replace
+}
+
+// Moves `live` aside to `old`, moves `staged` into its place, then removes
+// `old`. When the second move fails the first is undone, so `live` is never
+// left missing. ensure_workspace restores `old` if the process dies between
+// the two moves.
+#[cfg(any(windows, test))]
+fn swap_in_staged_dir(live: &Path, staged: &Path, old: &Path) -> Result<(), String> {
+    if old.exists() {
+        fs::remove_dir_all(old).map_err(|e| format!("failed to remove {}: {e}", old.display()))?;
+    }
+    fs::rename(live, old).map_err(|e| {
+        format!(
+            "failed to move {} aside to {}: {e}",
+            live.display(),
+            old.display()
+        )
+    })?;
+    if let Err(e) = fs::rename(staged, live) {
+        let _ = fs::rename(old, live);
+        return Err(format!(
+            "failed to move {} into {}: {e}",
+            staged.display(),
+            live.display()
+        ));
+    }
+    if let Err(e) = fs::remove_dir_all(old) {
+        eprintln!("could not remove {}: {e}", old.display());
+    }
+    Ok(())
+}
+
+// Why a replacement failed: a network or file problem that may pass, or a
+// pinned build that downloaded and failed its own checks (never retried).
+#[cfg(windows)]
+enum ReplaceFailure {
+    Transient(String),
+    BuildRejected(String),
+}
+
+// Downloads the pinned build the same verified way a fresh install does,
+// extracts it beside the live one, checks it, and only then swaps it in.
+#[cfg(windows)]
+fn replace_managed_ffmpeg(data_dir: &Path) -> Result<(), ReplaceFailure> {
+    let archive = download_windows_ffmpeg_archive(data_dir).map_err(ReplaceFailure::Transient)?;
+    let live = data_dir.join("ffmpeg");
+    let staged = data_dir.join("ffmpeg.new");
+    let old = data_dir.join("ffmpeg.old");
+    if staged.exists() {
+        fs::remove_dir_all(&staged).map_err(|e| {
+            ReplaceFailure::Transient(format!("failed to remove {}: {e}", staged.display()))
+        })?;
+    }
+    let checked = extract_ffmpeg_binaries(&archive, &staged).and_then(|()| {
+        let staged_ffmpeg = staged.join("ffmpeg.exe");
+        verify_ffmpeg_pair(&staged_ffmpeg)?;
+        let build = ffmpeg_version_text(&staged_ffmpeg)
+            .map(|text| parse_ffmpeg_build(&text))
+            .ok_or_else(|| "the pinned FFmpeg did not report its version".to_string())?;
+        if is_known_bad_ffmpeg_build(&build) {
+            return Err(format!(
+                "the pinned FFmpeg is itself a known-bad build: {build:?}"
+            ));
+        }
+        Ok(())
+    });
+    if let Err(e) = checked {
+        let _ = fs::remove_dir_all(&staged);
+        return Err(ReplaceFailure::BuildRejected(e));
+    }
+    swap_in_staged_dir(&live, &staged, &old).map_err(|e| {
+        let _ = fs::remove_dir_all(&staged);
+        ReplaceFailure::Transient(e)
+    })
+}
+
+// Replaces a known-bad managed FFmpeg, keeping the old one on any failure and
+// recording the failure so the next launch does not repeat it without end.
+#[cfg(windows)]
+fn replace_stale_ffmpeg_or_keep(data_dir: &Path) {
+    let pin = DEFAULT_WINDOWS_FFMPEG_URL;
+    let (message, rejected) = match replace_managed_ffmpeg(data_dir) {
+        Ok(()) => {
+            eprintln!("Replaced a known-bad FFmpeg build with the pinned one");
+            let _ = update_setup_config(data_dir, [("ffmpegReplace", serde_json::Value::Null)]);
+            return;
+        }
+        Err(ReplaceFailure::Transient(e)) => (e, false),
+        Err(ReplaceFailure::BuildRejected(e)) => (e, true),
+    };
+    let previous = read_ffmpeg_replace_record(data_dir);
+    let record = next_replace_record(previous.as_ref(), pin, rejected);
+    eprintln!(
+        "Keeping the current FFmpeg, replacing it failed (attempt {}): {message}",
+        record.attempts
+    );
+    let _ = update_setup_config(
+        data_dir,
+        [(
+            "ffmpegReplace",
+            serde_json::json!({
+                "pin": record.pin,
+                "attempts": record.attempts,
+                "gaveUp": record.gave_up,
+            }),
+        )],
+    );
+}
+
+fn write_setup_config(
+    data_dir: &Path,
+    ffmpeg: &Path,
+    source: &FfmpegSource,
+    host: &str,
+) -> Result<(), String> {
     let ffprobe = ffprobe_beside(ffmpeg);
+    let arch = binary_arch(ffmpeg);
+    if let Some(notice) = translated_ffmpeg_notice(host, arch) {
+        eprintln!("{notice}");
+        append_to_setup_log(data_dir, notice);
+    }
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -5801,18 +8229,14 @@ fn write_setup_config(data_dir: &Path, ffmpeg: &Path) -> Result<(), String> {
                 "ffprobePath",
                 serde_json::json!(ffprobe.display().to_string()),
             ),
+            // What was actually used (#858): the URL a download came from,
+            // or where an existing pair was found. It used to be the default
+            // download URL whatever happened.
             (
                 "ffmpegSource",
-                serde_json::json!(env::var("STEMDECK_FFMPEG_URL").unwrap_or_else(|_| {
-                    if cfg!(windows) {
-                        DEFAULT_WINDOWS_FFMPEG_URL.to_string()
-                    } else if cfg!(target_os = "macos") {
-                        DEFAULT_MACOS_FFMPEG_URL.to_string()
-                    } else {
-                        "system PATH".to_string()
-                    }
-                })),
+                serde_json::json!(source.config_value(ffmpeg)),
             ),
+            ("ffmpegArch", serde_json::json!(arch)),
             ("updatedAt", serde_json::json!(updated_at)),
         ],
     )
@@ -5883,7 +8307,7 @@ fn update_setup_config<const N: usize>(
 /// not block: emitting a Tauri event or appending a line to a log is fine,
 /// anything slower would stall the very pipe this exists to drain.
 ///
-/// stderr is still read to EOF rather than streamed. It carries the failure
+/// stderr is collected whole rather than streamed. It carries the failure
 /// text used to classify an error, which is only wanted once, at the end.
 fn child_output_streaming<F>(
     mut child: Child,
@@ -5895,11 +8319,13 @@ fn child_output_streaming<F>(
 where
     F: FnMut(&str) + Send + 'static,
 {
-    // Every line stamps this, and the wait loop reads it. Only stdout counts as
-    // activity: pip writes its progress there, and stderr is read to EOF in one
-    // go rather than line by line, so it has nothing per-line to stamp with.
+    // Output on either stream stamps this, and the wait loop reads it. pip
+    // writes its progress to stdout; the model warmup's downloads write theirs
+    // (tqdm) to stderr, and its stdout is quiet for as long as one model takes,
+    // which on a slow connection is far longer than the stall budget (#405).
     let last_line = Arc::new(Mutex::new(Instant::now()));
     let stamp = Arc::clone(&last_line);
+    let stderr_stamp = Arc::clone(&last_line);
     let stdout_reader = child.stdout.take().map(|pipe| {
         thread::spawn(move || {
             let mut collected = Vec::new();
@@ -5917,9 +8343,22 @@ where
     });
     let stderr_reader = child.stderr.take().map(|mut pipe| {
         thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
+            let mut collected = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if let Ok(mut at) = stderr_stamp.lock() {
+                            *at = Instant::now();
+                        }
+                        collected.extend_from_slice(&chunk[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            collected
         })
     });
     let deadline = Deadline::Stall {
@@ -6073,7 +8512,6 @@ fn hide_console_window(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -6193,14 +8631,24 @@ mod tests {
         // against a SHA-256 from the same caller, so the checksum proves the
         // bytes arrived intact, not that they came from us. apply_app_update
         // then extracts the result over StemDeck's own executable (#510).
+        // The three assets the updater reads, as the releases API lists them.
         for ok in [
-            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.16.1/x.zip",
-            "https://objects.githubusercontent.com/github-production-release-asset/1/2",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Windows-x64-app.zip",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Windows-x64-app.zip.sha256",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/v0.20.0/StemDeck-Linux-x64-runtime-version.json",
         ] {
             assert!(super::validate_release_url(ok).is_ok(), "should allow {ok}");
         }
 
         for bad in [
+            // Another repository's release, signed with its own checksum.
+            "https://github.com/someone/stemdeck/releases/download/v1/x.zip",
+            "https://github.com/stemdeckapp/stemdeck-fork/releases/download/v1/x.zip",
+            "https://github.com/stemdeckapp/stemdeck/releases/download/../../../someone/x/releases/download/v1/x.zip",
+            // Ours, but not a release asset.
+            "https://github.com/stemdeckapp/stemdeck/archive/refs/heads/main.zip",
+            // An asset host URL names no repository at all.
+            "https://objects.githubusercontent.com/github-production-release-asset/1/2",
             "https://evil.example/x.zip",
             // Lookalikes: the check must be on the host, not a substring of it.
             "https://github.com.evil.example/x.zip",
@@ -6216,6 +8664,116 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn update_checksum_and_runtime_id_fetches_are_held_to_the_same_urls() {
+        // check_app_update reads the .sha256 and runtime-version.json from
+        // WebView-supplied URLs too, and that checksum is what the download is
+        // then held to. A refused URL never reaches the network.
+        let err = tauri::async_runtime::block_on(super::fetch_text(
+            "https://github.com/someone/stemdeck/releases/download/v1/x.sha256",
+        ))
+        .unwrap_err();
+        assert!(
+            err.starts_with("refusing to download an update from"),
+            "expected the URL check, got: {err}"
+        );
+    }
+
+    fn backend_with_app(root: &Path, name: &str) {
+        fs::create_dir_all(root.join(name).join("app")).unwrap();
+    }
+
+    #[test]
+    fn the_launch_sweep_keeps_backend_old_when_it_is_the_only_backend() {
+        // A swap that died between its two renames leaves backend.old as the
+        // only copy of the app; deleting it would need a full reinstall.
+        let root = make_tmp();
+        backend_with_app(root.path(), "backend.old");
+        super::sweep_update_leftovers(root.path());
+        assert!(root.path().join("backend.old").join("app").is_dir());
+
+        // With a working backend/ in place it is a leftover again.
+        backend_with_app(root.path(), "backend");
+        super::sweep_update_leftovers(root.path());
+        assert!(!root.path().join("backend.old").exists());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn a_failed_backend_install_puts_the_previous_backend_back() {
+        let root = make_tmp();
+        let backend = root.path().join("backend");
+        let backend_old = root.path().join("backend.old");
+        backend_with_app(root.path(), "backend");
+        // No staged backend: the second rename fails, as it does when a
+        // scanner holds a handle for longer than the retry budget.
+        let staged = root.path().join("_update_app.tmp").join("backend");
+
+        let result = super::rename_all_or_restore(&[
+            (&backend, &backend_old, "move the existing backend aside"),
+            (&staged, &backend, "install the updated backend"),
+        ]);
+
+        assert!(result.unwrap_err().contains("install the updated backend"));
+        assert!(backend.join("app").is_dir(), "the previous backend is back");
+        assert!(!backend_old.exists());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn a_failed_exe_install_puts_the_previous_backend_and_exe_back() {
+        // A new backend/ beside the old exe is a broken app, so a failure at
+        // the last step undoes the backend swap as well.
+        let root = make_tmp();
+        let staging = root.path().join("_update_app.tmp");
+        let (backend, backend_old) = (root.path().join("backend"), root.path().join("backend.old"));
+        let (staged, exe, exe_old) = (
+            staging.join("backend"),
+            root.path().join("app.exe"),
+            root.path().join("app.exe.old"),
+        );
+        backend_with_app(root.path(), "backend");
+        fs::write(backend.join("app").join("old"), "").unwrap();
+        fs::create_dir_all(staged.join("app")).unwrap();
+        fs::write(&exe, "old").unwrap();
+        let new_exe = staging.join("app.exe");
+
+        let result = super::rename_all_or_restore(&[
+            (&backend, &backend_old, "move the existing backend aside"),
+            (&staged, &backend, "install the updated backend"),
+            (&exe, &exe_old, "move the running app aside"),
+            (&new_exe, &exe, "install the updated app"),
+        ]);
+
+        assert!(result.unwrap_err().contains("install the updated app"));
+        assert!(
+            backend.join("app").join("old").is_file(),
+            "the previous backend is back"
+        );
+        assert!(
+            staged.join("app").is_dir(),
+            "the new backend is back in staging"
+        );
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+        assert!(!backend_old.exists() && !exe_old.exists());
+    }
+
+    #[test]
+    fn only_debug_builds_take_the_app_root_from_the_working_directory() {
+        // A release exe started from a terminal inside a source checkout must
+        // still run its own install, not the checkout.
+        let checkout = make_tmp();
+        fs::write(checkout.path().join("pyproject.toml"), "").unwrap();
+        fs::create_dir(checkout.path().join("app")).unwrap();
+
+        assert_eq!(
+            super::cwd_repo_root(checkout.path(), true).as_deref(),
+            Some(checkout.path())
+        );
+        assert_eq!(super::cwd_repo_root(checkout.path(), false), None);
     }
 
     #[test]
@@ -6357,6 +8915,568 @@ mod tests {
             "gave up after {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn what_a_setup_child_starts_does_not_outlive_it() {
+        // On Windows nothing ended pip or the model warmup when StemDeck
+        // closed, so either kept writing into python/ or the model cache. They
+        // run in a job that closes with StemDeck. Here the setup child starts
+        // its own child, which writes `started` at once and would write `late`
+        // two seconds on; once the setup child is done with, the job has to
+        // have ended that one too.
+        use std::os::windows::process::CommandExt;
+        let dir = make_tmp();
+        let mut command = Command::new("cmd");
+        command
+            .args(["/d", "/c"])
+            .raw_arg(
+                "start /b cmd /d /c \"type nul > started & ping -n 3 127.0.0.1 >nul & type nul > late\"",
+            )
+            .current_dir(dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let state = super::BackendState::default();
+
+        let output = super::run_setup_child(&mut command, &state, "setup child", |mut child| {
+            let recorded = state
+                .inner
+                .lock()
+                .unwrap()
+                .setup_child
+                .as_ref()
+                .map(|c| (c.label.clone(), c.job.is_some()));
+            assert_eq!(
+                recorded,
+                Some(("setup child".to_string(), true)),
+                "the close handler can find it"
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !dir.path().join("started").exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let status = child.wait().map_err(|e| e.to_string())?;
+            Ok(std::process::Output {
+                status,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        })
+        .expect("ran");
+
+        assert!(output.status.success());
+        assert!(state.inner.lock().unwrap().setup_child.is_none());
+        assert!(
+            dir.path().join("started").exists(),
+            "the setup child's own child never ran"
+        );
+        std::thread::sleep(Duration::from_secs(5));
+        assert!(
+            !dir.path().join("late").exists(),
+            "a process the setup child started outlived it"
+        );
+    }
+
+    /// A setup child that starts a child of its own, which writes `started` in
+    /// `dir` at once and would write `late` about 3 seconds on, and then runs
+    /// for about 20 seconds itself. `started` coming from the grandchild means
+    /// it exists by the time a test sees the file.
+    fn long_setup_child(dir: &Path) -> Command {
+        #[cfg(windows)]
+        let command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = Command::new("cmd");
+            command.args(["/d", "/c"]).raw_arg(
+                "start /b cmd /d /c \"type nul > started & ping -n 4 127.0.0.1 >nul & type nul > late\" & ping -n 21 127.0.0.1 >nul",
+            );
+            command
+        };
+        #[cfg(unix)]
+        let command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "touch started; (sleep 3; touch late) & sleep 20"]);
+            command
+        };
+        let mut command = command;
+        command
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    /// Runs `long_setup_child` as a setup child labelled `label` on a thread
+    /// of its own, returning once it has started. The handle yields how long
+    /// it ran.
+    fn start_long_setup_child(
+        state: &std::sync::Arc<super::BackendState>,
+        dir: &Path,
+        label: &'static str,
+    ) -> std::thread::JoinHandle<Duration> {
+        let mut command = long_setup_child(dir);
+        let state = std::sync::Arc::clone(state);
+        let runner = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            super::run_setup_child(&mut command, &state, label, |mut child| {
+                let status = child.wait().map_err(|e| e.to_string())?;
+                Ok(std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })
+            })
+            .expect("ran");
+            started.elapsed()
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !dir.join("started").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            dir.join("started").exists(),
+            "the setup child never started"
+        );
+        runner
+    }
+
+    #[test]
+    fn closing_the_window_mid_setup_ends_the_setup_child() {
+        // #405: on Windows, closing the window during the model download left
+        // the warmup running (stop_backend only signalled it on unix). It has
+        // to end at once, and so does what it started.
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), "model warmup");
+
+        super::stop_backend(&state);
+
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the setup child ran on for {ran:?}"
+        );
+        #[cfg(windows)]
+        {
+            std::thread::sleep(Duration::from_secs(5));
+            assert!(
+                !dir.path().join("late").exists(),
+                "a process the setup child started outlived the close"
+            );
+        }
+    }
+
+    #[test]
+    fn skip_stops_the_model_warmup_and_nothing_else() {
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), super::MODEL_WARMUP_LABEL);
+        assert!(super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("stopped"));
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the warmup ran on for {ran:?}"
+        );
+
+        // A pip install is never cut short by Skip: it runs to its end.
+        let dir = make_tmp();
+        let runner = start_long_setup_child(&state, dir.path(), "CUDA torch install");
+        assert!(!super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("no error"));
+        let ran = runner.join().expect("joined");
+        assert!(
+            ran > Duration::from_secs(15),
+            "the pip install was stopped at {ran:?}"
+        );
+
+        // Nothing running is not an error: the warmup finished first.
+        assert!(!super::stop_setup_child(&state, super::MODEL_WARMUP_LABEL).expect("no error"));
+    }
+
+    #[test]
+    fn a_second_setup_child_is_refused_while_one_runs() {
+        // Two at once would share the one slot that stops a child (the second
+        // to start overwrites it, the first to end clears it), and download
+        // into the same cache side by side.
+        let dir = make_tmp();
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let runner = start_long_setup_child(&state, dir.path(), "CUDA torch install");
+
+        let second = make_tmp();
+        let refused = super::run_setup_child(
+            &mut long_setup_child(second.path()),
+            &state,
+            super::MODEL_WARMUP_LABEL,
+            |_child| unreachable!("the second child must not be started"),
+        );
+
+        let err = refused.expect_err("a second setup child was started");
+        assert!(err.contains("CUDA torch install is still running"), "{err}");
+        super::stop_backend(&state);
+        runner.join().expect("joined");
+    }
+
+    #[test]
+    fn no_setup_child_starts_once_the_window_is_closing() {
+        // The GPU step runs pip passes and probes one after another, off the
+        // main thread. Closing the window stops the one running; the next one
+        // must not start in the moment before StemDeck exits, or on Linux and
+        // macOS it would install into python/ with nothing left to stop it.
+        let state = super::BackendState::default();
+        super::stop_backend(&state);
+
+        let dir = make_tmp();
+        let refused = super::run_setup_child(
+            &mut long_setup_child(dir.path()),
+            &state,
+            "CUDA torch install",
+            |_child| unreachable!("a setup child was started after the close"),
+        );
+
+        let err = refused.expect_err("a setup child was started after the close");
+        assert!(err.contains("closing"), "{err}");
+        assert!(!dir.path().join("started").exists());
+        // And the GPU step stops before it moves or deletes torch.
+        assert!(super::still_open(&state).is_err());
+    }
+
+    #[test]
+    fn a_second_setup_step_is_refused_while_one_runs() {
+        // Off the main thread nothing ordered two setup runs. A reload during
+        // a CUDA install started the GPU step again beside it, whose nvidia-smi
+        // was refused the one setup slot and read as "no GPU".
+        let state = super::BackendState::default();
+        let gpu = super::SetupStep::take(&state, "GPU step").expect("first step");
+        let refused = super::SetupStep::take(&state, "runtime install").err();
+        assert_eq!(
+            refused.as_deref(),
+            Some("runtime install not started: the GPU step is still running")
+        );
+        drop(gpu);
+        assert!(super::SetupStep::take(&state, "runtime install").is_ok());
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn the_close_waits_for_an_update_swap_and_cancels_one_not_begun() {
+        // Stopped between two renames, the install has no backend/ or no
+        // executable, and nothing is left to put it right.
+        let state = super::BackendState::default();
+        let swap = super::UpdateSwap::take(&state).expect("swap");
+        assert!(!super::stop_backend(&state), "closed mid-swap");
+        assert!(
+            super::still_open(&state).is_ok(),
+            "the held-off close stopped setup"
+        );
+        drop(swap);
+
+        assert!(super::stop_backend(&state));
+        let err = super::UpdateSwap::take(&state).err();
+        assert_eq!(
+            err.as_deref(),
+            Some("StemDeck is closing; update cancelled")
+        );
+    }
+
+    /// A stand-in interpreter that ignores its arguments and runs for about 20
+    /// seconds, as a torch import check wedged in a GPU driver does.
+    #[cfg(not(target_os = "macos"))]
+    fn wedged_python(dir: &Path) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let path = dir.join("python.cmd");
+            fs::write(&path, "@ping -n 21 127.0.0.1 >nul\r\n").expect("wrote");
+            path
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join("python");
+            // exec: one process, like python, so the stop reaches the one
+            // holding the stderr pipe. Without -c it ends at once, for the
+            // first run below.
+            fs::write(
+                &path,
+                "#!/bin/sh\n[ \"$1\" = -c ] || exit 0\nexec sleep 20\n",
+            )
+            .expect("wrote");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+            // A process another test forks while the file is open for writing
+            // keeps the write handle until it execs, and until then running
+            // the file fails with ETXTBSY. Run it once, retrying only that.
+            let mut attempts = 0;
+            loop {
+                match Command::new(&path).status() {
+                    Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
+                        attempts += 1;
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    ran => {
+                        assert!(ran.expect("the stand-in ran").success());
+                        break;
+                    }
+                }
+            }
+            path
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn closing_the_window_ends_a_gpu_step_probe() {
+        // The GPU step's own probes (nvidia-smi, the torch import checks) ran
+        // outside setup_child, so closing the window left a python.exe running
+        // until its timeout: up to two minutes for a check wedged in the GPU
+        // driver (#502).
+        let dir = make_tmp();
+        let python = wedged_python(dir.path());
+        let state = std::sync::Arc::new(super::BackendState::default());
+        let probe = {
+            let state = std::sync::Arc::clone(&state);
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let result = super::verify_imports(&python, "torch", &state);
+                (result, started.elapsed())
+            })
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while state.inner.lock().unwrap().setup_child.is_none()
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        super::stop_backend(&state);
+
+        let (result, ran) = probe.join().expect("joined");
+        assert!(
+            ran < Duration::from_secs(10),
+            "the probe ran on for {ran:?}"
+        );
+        assert!(result.is_err(), "a stopped probe reported success");
+    }
+
+    /// A store that counts its saves, for store_set_many (#996).
+    #[derive(Default)]
+    struct CountingStore {
+        values: std::cell::RefCell<serde_json::Map<String, serde_json::Value>>,
+        saves: std::cell::Cell<usize>,
+        fail_save: bool,
+    }
+
+    impl super::KeyValueStore for CountingStore {
+        fn set_value(&self, key: String, value: serde_json::Value) {
+            self.values.borrow_mut().insert(key, value);
+        }
+        fn save_file(&self) -> Result<(), String> {
+            self.saves.set(self.saves.get() + 1);
+            if self.fail_save {
+                Err("disk full".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn entries(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_value(value).expect("an object")
+    }
+
+    /// #996: one store_set per key wrote the whole store file once per key.
+    /// store_set_many puts every key in the store and writes the file once.
+    #[test]
+    fn store_set_many_sets_every_key_and_saves_once() {
+        let store = CountingStore::default();
+        let given = serde_json::json!({ "a": null, "b": { "voice": "split" }, "c": 3 });
+        super::set_all_then_save(&store, entries(given.clone())).expect("saved");
+        assert_eq!(store.saves.get(), 1, "one save for three keys");
+        assert_eq!(
+            serde_json::Value::Object(store.values.borrow().clone()),
+            given
+        );
+    }
+
+    #[test]
+    fn store_set_many_with_no_keys_writes_nothing() {
+        let store = CountingStore::default();
+        super::set_all_then_save(&store, entries(serde_json::json!({}))).expect("nothing to do");
+        assert_eq!(store.saves.get(), 0);
+    }
+
+    #[test]
+    fn store_set_many_reports_a_failed_save() {
+        let store = CountingStore {
+            fail_save: true,
+            ..Default::default()
+        };
+        let result = super::set_all_then_save(&store, entries(serde_json::json!({ "a": 1 })));
+        assert_eq!(result, Err("disk full".to_string()));
+    }
+
+    /// Every Tauri command that is not `async` runs on the main thread:
+    /// tauri-macros 2.6.0 picks `body_blocking` for it, and the IPC handler
+    /// calls that inline on the event loop. While one runs, the window cannot
+    /// paint, take a close, or reach any other command (#405). So only
+    /// commands that cannot run long may stay synchronous.
+    #[test]
+    fn no_command_that_can_run_long_holds_the_main_thread() {
+        // Each is a lock, a constant, a spawn that is never waited on, a read
+        // or write of one small file or folder, or one bounded save of the
+        // user-data store (store_set, store_set_many, reset_user_data), which
+        // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996).
+        const QUICK: &[&str] = &[
+            "current_exports_dir",
+            "store_get",
+            "store_set",
+            "store_set_many",
+            "reset_user_data",
+            "mark_store_migration_done",
+            "runtime_pack_status",
+            "ensure_workspace",
+            "skip_model_warmup",
+            "build_target",
+            "native_file_drop",
+            "open_url",
+        ];
+        // Every command is in main.rs: generate_handler! lists them all, and
+        // no other module has one.
+        let source = include_str!("main.rs");
+        let mut commands = 0;
+        let mut lines = source.lines().map(str::trim);
+        let mut blocking = Vec::new();
+        while let Some(line) = lines.next() {
+            if !line.starts_with("#[tauri::command") {
+                continue;
+            }
+            commands += 1;
+            // The signature, past any doc comment or other attribute.
+            let signature = lines
+                .by_ref()
+                .find(|l| !l.starts_with("//") && !l.starts_with("#["))
+                .expect("a command attribute is followed by its function");
+            let (before, rest) = signature
+                .split_once("fn ")
+                .expect("a command attribute is followed by its function");
+            if !before.split_whitespace().any(|word| word == "async") {
+                let name = rest.split(['(', '<']).next().unwrap_or(rest);
+                blocking.push(name.to_string());
+            }
+        }
+        assert!(commands > 30, "found only {commands} commands");
+        let long: Vec<_> = blocking
+            .iter()
+            .filter(|name| !QUICK.contains(&name.as_str()))
+            .collect();
+        assert!(
+            long.is_empty(),
+            "these commands run on the main thread: {long:?}"
+        );
+        for name in QUICK {
+            assert!(
+                blocking.iter().any(|b| b == name),
+                "{name} is no longer a blocking command; take it off the list"
+            );
+        }
+    }
+
+    #[test]
+    fn output_on_stderr_alone_keeps_a_streamed_child_alive() {
+        // #405: the model warmup's downloads report progress on stderr (tqdm),
+        // and its stdout is silent for as long as one model takes. Under a
+        // stall budget that counted stdout only, a healthy slow download was
+        // killed. Eight seconds of stderr ticks against a three second budget.
+        #[cfg(windows)]
+        let mut command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = Command::new("cmd");
+            command
+                .args(["/d", "/c"])
+                .raw_arg("for /l %i in (1,1,8) do @(echo tick 1>&2 & ping -n 2 127.0.0.1 >nul)");
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "for i in 1 2 3 4 5 6 7 8; do echo tick >&2; sleep 1; done",
+            ]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn().expect("spawn");
+
+        let output = super::child_output_streaming(
+            child,
+            Duration::from_secs(3),
+            Duration::from_secs(120),
+            "stderr only",
+            |_line| {},
+        )
+        .expect("a child that keeps writing to stderr must be left to finish");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter(|line| line.trim() == "tick")
+                .count(),
+            8,
+            "every stderr line must still be collected"
+        );
+    }
+
+    #[test]
+    fn the_warmup_stall_budget_outlasts_one_download_try() {
+        // audio-separator waits up to 300 s for a read before it gives up by
+        // itself, the longest silence of any download in the warmup. The stall
+        // budget must outlast that, or it would end the whole warmup where the
+        // model's own failure, and the models after it, were still to come.
+        assert!(super::WARMUP_STALL_TIMEOUT >= Duration::from_secs(300 + 30));
+        assert!(super::WARMUP_STALL_TIMEOUT <= Duration::from_secs(15 * 60));
+        assert!(super::WARMUP_HARD_CAP >= Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn warmup_progress_reads_the_start_lines() {
+        assert_eq!(
+            super::warmup_progress("WARMUP_START beat_this 2 5"),
+            Some(super::WarmupProgress {
+                model: "beat_this".to_string(),
+                number: 2,
+                count: 5,
+            })
+        );
+        assert_eq!(super::warmup_progress("WARMUP_OK beat_this"), None);
+        assert_eq!(super::warmup_progress("WARMUP_START beat_this"), None);
+    }
+
+    #[test]
+    fn the_warmup_status_says_what_arrived_and_why_not() {
+        let status = super::ModelWarmupStatus::from_stdout(
+            "WARMUP_START demucs 1 5\nWARMUP_OK demucs\n\
+             WARMUP_START beat_this 2 5\n\
+             WARMUP_FAILED beat_this model download failed: x (DNS lookup failed)\n\
+             WARMUP_OFFLINE beat_this\nWARMUP_START whisper 5 5\nWARMUP_OK whisper\n",
+        );
+        assert!(status.demucs_ready && status.whisper_ready);
+        assert!(!status.beat_this_ready && !status.sections_ready);
+        assert_eq!(status.offline, vec!["beat_this".to_string()]);
+        assert_eq!(status.no_space, None);
+
+        let full = super::ModelWarmupStatus::from_stdout("WARMUP_NO_SPACE 200000000 1000\n");
+        assert_eq!(
+            full.no_space,
+            Some(super::NoSpace {
+                needed: 200_000_000,
+                free: 1000
+            })
+        );
+        assert!(!full.demucs_ready && full.offline.is_empty());
     }
 
     #[test]
@@ -6560,6 +9680,22 @@ mod tests {
             "RuntimeError: CUDA kernel launch timed out"
         ));
         assert!(!super::is_no_kernel_image(""));
+    }
+
+    #[test]
+    fn hips_own_wording_counts_as_no_kernel_image() {
+        // A ROCm build with no code object for the card's gfx target (#825).
+        assert!(super::is_no_kernel_image(
+            "RuntimeError: HIP error: invalid device function\nHIP kernel errors might be asynchronously reported"
+        ));
+        assert!(super::is_no_kernel_image(
+            "hipErrorNoBinaryForGpu: Unable to find code object for all current devices!"
+        ));
+        // A runtime that cannot reach the card (no /dev/kfd access) can go
+        // differently next launch, so it must not be settled.
+        assert!(!super::is_no_kernel_image(
+            "RuntimeError: No HIP GPUs are available"
+        ));
     }
 
     /// A card cu128 does support still starts there, with the 2.6 builds
@@ -7278,12 +10414,680 @@ mod tests {
         assert!(f.exists());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn macos_arch_suffix_maps_aarch64_to_arm64_and_everything_else_to_x64() {
         assert_eq!(super::macos_arch_suffix("aarch64"), "arm64");
         assert_eq!(super::macos_arch_suffix("x86_64"), "x64");
         assert_eq!(super::macos_arch_suffix("something-unexpected"), "x64");
+    }
+
+    // A thin little-endian 64-bit Mach-O header with the given CPU type.
+    fn thin_macho(cpu: u32) -> Vec<u8> {
+        let mut header = vec![0xcf, 0xfa, 0xed, 0xfe];
+        header.extend_from_slice(&cpu.to_le_bytes());
+        header.extend_from_slice(&[0; 24]);
+        header
+    }
+
+    // A universal (fat32) header listing the given CPU types.
+    fn fat_macho(cpus: &[u32]) -> Vec<u8> {
+        let mut header = vec![0xca, 0xfe, 0xba, 0xbe];
+        header.extend_from_slice(&u32::try_from(cpus.len()).unwrap().to_be_bytes());
+        for cpu in cpus {
+            header.extend_from_slice(&cpu.to_be_bytes());
+            header.extend_from_slice(&[0; 16]);
+        }
+        header
+    }
+
+    #[test]
+    fn classify_macos_binary_reads_thin_and_universal_headers() {
+        use super::{MacBinaryArch, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        let classify = super::classify_macos_binary;
+        assert_eq!(classify("arm64", &thin_macho(ARM)), MacBinaryArch::Native);
+        assert_eq!(
+            classify("arm64", &thin_macho(X86)),
+            MacBinaryArch::IntelOnly
+        );
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86, ARM])),
+            MacBinaryArch::Native
+        );
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86])),
+            MacBinaryArch::IntelOnly
+        );
+        // Not a Mach-O, or cut short: verification decides, as before.
+        assert_eq!(
+            classify("arm64", b"#!/bin/sh\nexec ffmpeg"),
+            MacBinaryArch::Unknown
+        );
+        assert_eq!(classify("arm64", &[0xcf, 0xfa]), MacBinaryArch::Unknown);
+        assert_eq!(
+            classify("arm64", &fat_macho(&[X86, ARM])[..20]),
+            MacBinaryArch::Unknown
+        );
+        // An Intel Mac is never second-guessed here.
+        assert_eq!(classify("x64", &thin_macho(X86)), MacBinaryArch::Native);
+        assert_eq!(classify("x64", &thin_macho(ARM)), MacBinaryArch::Native);
+    }
+
+    #[test]
+    fn macos_pair_arch_reads_both_files_from_disk() {
+        use super::{MacBinaryArch, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        let dir = make_tmp();
+        let ffmpeg = dir.path().join("ffmpeg");
+        // ffprobe_beside names ffprobe.exe when the test runs on Windows.
+        let ffprobe = super::ffprobe_beside(&ffmpeg);
+        fs::write(&ffmpeg, thin_macho(ARM)).unwrap();
+        fs::write(&ffprobe, thin_macho(ARM)).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::Native
+        );
+        // An Intel ffprobe beside a native ffmpeg makes the pair Intel-only (#637).
+        fs::write(&ffprobe, thin_macho(X86)).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::IntelOnly
+        );
+        fs::remove_file(&ffprobe).unwrap();
+        assert_eq!(
+            super::macos_pair_arch("arm64", &ffmpeg),
+            MacBinaryArch::Unknown
+        );
+    }
+
+    #[test]
+    fn intel_build_is_refused_on_apple_silicon_without_rosetta_only() {
+        use super::MacBinaryArch::{IntelOnly, Native, Unknown};
+        assert!(super::refuse_intel_build("arm64", IntelOnly, false));
+        assert!(!super::refuse_intel_build("arm64", IntelOnly, true));
+        assert!(!super::refuse_intel_build("arm64", Native, false));
+        assert!(!super::refuse_intel_build("arm64", Unknown, false));
+        assert!(!super::refuse_intel_build("x64", IntelOnly, false));
+        assert!(!super::macos_intel_build_allowed("arm64", false));
+        assert!(super::macos_intel_build_allowed("arm64", true));
+        assert!(super::macos_intel_build_allowed("x64", false));
+    }
+
+    #[test]
+    fn intel_refusal_is_recognised_by_the_setup_screen() {
+        // setup.js matches this phrase to skip its network hint.
+        assert!(super::MACOS_INTEL_REFUSED.contains("built for Intel Macs"));
+        assert!(super::MACOS_INTEL_REFUSED.is_ascii());
+    }
+
+    #[test]
+    fn existing_ffmpeg_decision_keeps_explicit_and_native_and_holds_intel() {
+        use super::ExistingFfmpeg::{Fail, KeepUnlessNativeFound, Replace, Use};
+        use super::MacBinaryArch::{IntelOnly, Native, Unknown};
+        let decide = super::decide_existing_ffmpeg;
+        assert_eq!(decide(true, Native, false), Use);
+        assert_eq!(decide(true, Unknown, false), Use);
+        assert_eq!(decide(true, IntelOnly, false), KeepUnlessNativeFound);
+        // An explicit STEMDECK_FFMPEG wins whatever it is built for.
+        assert_eq!(decide(true, IntelOnly, true), Use);
+        assert_eq!(decide(false, Native, true), Fail);
+        // Verification failure falls through to the next source.
+        assert_eq!(decide(false, Native, false), Replace);
+        assert_eq!(decide(false, IntelOnly, false), Replace);
+    }
+
+    #[test]
+    fn system_ffmpeg_candidates_follow_the_architecture_then_path_without_duplicates() {
+        let dir = make_tmp();
+        fs::write(dir.path().join("ffmpeg"), b"").unwrap();
+        let path_var = env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("arm64", Some(&path_var)),
+            vec![
+                PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+                PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"),
+                PathBuf::from("/usr/local/bin/ffmpeg"),
+                PathBuf::from("/opt/local/bin/ffmpeg"),
+                dir.path().join("ffmpeg"),
+            ]
+        );
+        // Intel Homebrew lives in /usr/local, which a Finder-launched app's
+        // PATH does not contain (#824).
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("x64", Some(&path_var)),
+            vec![
+                PathBuf::from("/usr/local/bin/ffmpeg"),
+                PathBuf::from("/usr/local/opt/ffmpeg-full/bin/ffmpeg"),
+                PathBuf::from("/opt/local/bin/ffmpeg"),
+                dir.path().join("ffmpeg"),
+            ]
+        );
+        assert_eq!(
+            super::macos_system_ffmpeg_candidates("arm64", None).len(),
+            4
+        );
+        assert_eq!(super::macos_system_ffmpeg_candidates("x64", None).len(), 3);
+    }
+
+    #[test]
+    fn pick_system_ffmpeg_skips_intel_and_failed_verification() {
+        use super::MacBinaryArch::{IntelOnly, Native};
+        let candidates = vec![
+            PathBuf::from("/intel/ffmpeg"),
+            PathBuf::from("/no-lame/ffmpeg"),
+            PathBuf::from("/good/ffmpeg"),
+            PathBuf::from("/also-good/ffmpeg"),
+        ];
+        let ran = std::cell::RefCell::new(Vec::new());
+        let picked = super::pick_macos_system_ffmpeg(
+            &candidates,
+            |path| {
+                if path.starts_with("/intel") {
+                    IntelOnly
+                } else {
+                    Native
+                }
+            },
+            |path| {
+                ran.borrow_mut().push(path.to_path_buf());
+                if path.starts_with("/no-lame") {
+                    Err("missing required encoder(s): libmp3lame".to_string())
+                } else {
+                    Ok(true)
+                }
+            },
+        );
+        assert_eq!(picked, Some(PathBuf::from("/good/ffmpeg")));
+        // The Intel one is never run; the search stops at the first full one.
+        assert_eq!(
+            ran.into_inner(),
+            vec![
+                PathBuf::from("/no-lame/ffmpeg"),
+                PathBuf::from("/good/ffmpeg")
+            ]
+        );
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates[..2], |_| Native, |_| Err(String::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn pick_system_ffmpeg_prefers_libvorbis_but_takes_a_plain_one_over_none() {
+        use super::MacBinaryArch::Native;
+        // Homebrew's plain ffmpeg first, ffmpeg-full second: the full one wins.
+        let candidates = vec![
+            PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+            PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"),
+        ];
+        let full_only = |path: &Path| Ok(path.to_string_lossy().contains("ffmpeg-full"));
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, full_only),
+            Some(PathBuf::from("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"))
+        );
+        // Only plain builds: the first one is used, with no download (#824).
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, |_| Ok(false)),
+            Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        // A plain one that passes beats a full one that does not.
+        let plain_ok = |path: &Path| {
+            if path.to_string_lossy().contains("ffmpeg-full") {
+                Err("failed verification".to_string())
+            } else {
+                Ok(false)
+            }
+        };
+        assert_eq!(
+            super::pick_macos_system_ffmpeg(&candidates, |_| Native, plain_ok),
+            Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+    }
+
+    // The whole macOS order (ensure_macos_ffmpeg) without its side effects:
+    // `data` is the data-folder pair (its check result and arch), `system`
+    // the installed candidates, `rosetta` whether the fallback can run.
+    // Returns what setup would do: "use <path>", "fail", or the downloads it
+    // would try.
+    struct MacCase {
+        host: &'static str,
+        explicit: bool,
+        url_override: bool,
+        rosetta: bool,
+        data: Option<(Result<bool, String>, super::MacBinaryArch)>,
+        system: Vec<(&'static str, super::MacBinaryArch, Result<bool, String>)>,
+    }
+
+    fn mac_plan(case: MacCase) -> String {
+        use super::{ExistingFfmpeg, MacFfmpegNext};
+        let mut installed_intel = None;
+        if let Some((check, arch)) = &case.data {
+            match super::decide_existing_ffmpeg(check.is_ok(), *arch, case.explicit) {
+                ExistingFfmpeg::Use => return "use /data/ffmpeg".to_string(),
+                ExistingFfmpeg::KeepUnlessNativeFound => {
+                    installed_intel = Some(PathBuf::from("/data/ffmpeg"));
+                }
+                ExistingFfmpeg::Fail => return "fail".to_string(),
+                ExistingFfmpeg::Replace => {}
+            }
+        }
+        let paths: Vec<PathBuf> = case
+            .system
+            .iter()
+            .map(|(p, _, _)| PathBuf::from(p))
+            .collect();
+        let find = || {
+            super::pick_macos_system_ffmpeg(
+                &paths,
+                |path| {
+                    case.system
+                        .iter()
+                        .find(|(p, _, _)| Path::new(p) == path)
+                        .map(|(_, arch, _)| *arch)
+                        .unwrap()
+                },
+                |path| {
+                    case.system
+                        .iter()
+                        .find(|(p, _, _)| Path::new(p) == path)
+                        .map(|(_, _, check)| check.clone())
+                        .unwrap()
+                },
+            )
+        };
+        match super::next_macos_ffmpeg(installed_intel, case.url_override, find) {
+            MacFfmpegNext::Use(path) => format!("use {}", path.display()),
+            MacFfmpegNext::Download => {
+                let allowed = super::macos_intel_build_allowed(case.host, case.rosetta);
+                format!(
+                    "download {:?}",
+                    super::macos_download_sources(case.url_override, allowed)
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn macos_order_covers_both_architectures_with_and_without_libvorbis() {
+        use super::MacBinaryArch::{IntelOnly, Native};
+        let base = |host| MacCase {
+            host,
+            explicit: false,
+            url_override: false,
+            rosetta: false,
+            data: None,
+            system: Vec::new(),
+        };
+        let no_vorbis = || -> Result<bool, String> { Ok(false) };
+        let missing_lame = || -> Result<bool, String> { Err("missing libmp3lame".into()) };
+
+        for host in ["arm64", "x64"] {
+            // Fresh Mac, nothing installed: the primary alone (arm64 without
+            // Rosetta) or primary then fallback (Intel).
+            let want = if host == "arm64" {
+                "download [Primary]"
+            } else {
+                "download [Primary, Fallback]"
+            };
+            assert_eq!(mac_plan(base(host)), want, "{host}");
+
+            // A data-folder pair without libvorbis passes and is used.
+            let case = MacCase {
+                data: Some((no_vorbis(), Native)),
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "use /data/ffmpeg", "{host}");
+
+            // One missing a required encoder is replaced by an installed pair.
+            let case = MacCase {
+                data: Some((missing_lame(), Native)),
+                system: vec![("/opt/homebrew/bin/ffmpeg", Native, no_vorbis())],
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "use /opt/homebrew/bin/ffmpeg", "{host}");
+
+            // STEMDECK_FFMPEG that fails is reported, nothing replaced.
+            let case = MacCase {
+                explicit: true,
+                data: Some((missing_lame(), Native)),
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "fail", "{host}");
+
+            // STEMDECK_FFMPEG_URL: only that source, installed pairs ignored.
+            let case = MacCase {
+                url_override: true,
+                system: vec![("/usr/local/bin/ffmpeg", Native, Ok(true))],
+                ..base(host)
+            };
+            assert_eq!(mac_plan(case), "download [Override]", "{host}");
+        }
+
+        // Apple Silicon with Rosetta: the fallback is allowed again.
+        let case = MacCase {
+            rosetta: true,
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "download [Primary, Fallback]");
+
+        // Apple Silicon: an Intel-only data pair is kept unless a native
+        // installed one is found, and an Intel-only installed one is skipped.
+        let case = MacCase {
+            rosetta: true,
+            data: Some((Ok(true), IntelOnly)),
+            system: vec![("/usr/local/bin/ffmpeg", IntelOnly, Ok(true))],
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "use /data/ffmpeg");
+        let case = MacCase {
+            data: Some((Ok(true), IntelOnly)),
+            system: vec![("/opt/homebrew/bin/ffmpeg", Native, no_vorbis())],
+            ..base("arm64")
+        };
+        assert_eq!(mac_plan(case), "use /opt/homebrew/bin/ffmpeg");
+    }
+
+    // The second reporter on #824: an Intel Mac (OpenCore Legacy Patcher)
+    // with a full FFmpeg in /usr/local/bin, told "Primary: FFmpeg at
+    // .../StemDeck/ffmpeg/ffmpeg is missing required encoder(s): libvorbis"
+    // and then "Could not reach the download server" for the fallback.
+    #[test]
+    fn intel_mac_with_an_installed_ffmpeg_needs_no_download() {
+        use super::MacBinaryArch::Native;
+        // The shaka x64 primary it had downloaded lists no libvorbis. That no
+        // longer fails the check, so the pair already there is used.
+        let shaka_listing = " A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)
+ A....D aac                  AAC (Advanced Audio Coding)
+ A..X.D vorbis               Vorbis
+";
+        let ffmpeg = Path::new("/Users/jp/Library/Application Support/StemDeck/ffmpeg/ffmpeg");
+        assert_eq!(
+            super::check_encoder_listing(ffmpeg, shaka_listing),
+            Ok(false)
+        );
+
+        // A fresh data folder: /usr/local/bin is now looked at, even though a
+        // Finder-launched app's PATH does not contain it.
+        let candidates = super::macos_system_ffmpeg_candidates("x64", None);
+        assert_eq!(candidates[0], PathBuf::from("/usr/local/bin/ffmpeg"));
+        let case = MacCase {
+            host: "x64",
+            explicit: false,
+            url_override: false,
+            rosetta: false,
+            data: None,
+            system: vec![("/usr/local/bin/ffmpeg", Native, Ok(true))],
+        };
+        assert_eq!(mac_plan(case), "use /usr/local/bin/ffmpeg");
+    }
+
+    #[test]
+    fn macos_setup_error_says_what_happened_and_what_to_do() {
+        let attempts = vec![
+            "Download from GitHub (shaka-project build): Could not reach the download server"
+                .to_string(),
+        ];
+        let arm = super::macos_ffmpeg_setup_error("arm64", &attempts, true);
+        assert!(arm.contains("Could not reach the download server"), "{arm}");
+        assert!(arm.contains("built for Intel Macs"), "{arm}");
+        assert!(arm.contains("brew install ffmpeg\""), "{arm}");
+        assert!(arm.contains("brew install ffmpeg-full"), "{arm}");
+        assert!(arm.contains("STEMDECK_FFMPEG "), "{arm}");
+        assert!(arm.contains("softwareupdate --install-rosetta"), "{arm}");
+        // setup.js matches this to leave out its network hint.
+        assert!(arm.contains("Do one of these, then click Retry"), "{arm}");
+        assert!(arm.is_ascii());
+
+        let intel = super::macos_ffmpeg_setup_error("x64", &attempts, false);
+        assert!(!intel.contains("Rosetta"), "{intel}");
+        assert!(!intel.contains("built for Intel Macs"), "{intel}");
+        assert!(intel.contains("brew install ffmpeg\""), "{intel}");
+        assert!(intel.is_ascii());
+    }
+
+    #[test]
+    fn download_failures_say_whether_the_server_was_reached() {
+        let url = "https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip";
+        assert_eq!(
+            super::curl_http_status("curl: (22) The requested URL returned error: 429"),
+            Some(429)
+        );
+        assert_eq!(super::curl_http_status("curl: (7) Failed to connect"), None);
+
+        let limited = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(22),
+            "curl: (22) The requested URL returned error: 429",
+        );
+        assert!(limited.contains("HTTP 429"), "{limited}");
+        assert!(limited.contains(url), "{limited}");
+        assert!(!limited.contains("Could not reach"), "{limited}");
+
+        let refused = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(22),
+            "curl: (22) The requested URL returned error: 404",
+        );
+        assert!(refused.contains("HTTP 404"), "{refused}");
+        assert!(refused.contains("was reached"), "{refused}");
+
+        let unreachable = super::describe_download_failure(
+            "FFmpeg",
+            url,
+            Some(6),
+            "curl: (6) Could not resolve host: evermeet.cx",
+        );
+        assert!(unreachable.starts_with("Could not reach"), "{unreachable}");
+        assert!(unreachable.contains(url), "{unreachable}");
+    }
+
+    #[test]
+    fn macos_download_sources_follow_the_override_and_rosetta() {
+        use super::MacDownloadSource::{Fallback, Override, Primary};
+        assert_eq!(super::macos_download_sources(true, true), vec![Override]);
+        assert_eq!(super::macos_download_sources(true, false), vec![Override]);
+        assert_eq!(
+            super::macos_download_sources(false, true),
+            vec![Primary, Fallback]
+        );
+        assert_eq!(super::macos_download_sources(false, false), vec![Primary]);
+        for source in [Override, Primary, Fallback] {
+            assert!(source.label().starts_with("Download from"));
+        }
+    }
+
+    #[test]
+    fn macos_source_url_names_the_build_that_was_accepted() {
+        use super::MacDownloadSource::{Fallback, Override, Primary};
+        let url = super::macos_source_url;
+        assert_eq!(
+            url(Primary, "arm64", ""),
+            "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-osx-arm64"
+        );
+        assert!(url(Primary, "x64", "").ends_with("/ffmpeg-osx-x64"));
+        assert_eq!(url(Fallback, "arm64", ""), super::DEFAULT_MACOS_FFMPEG_URL);
+        assert_eq!(
+            url(Override, "arm64", "https://example.test/ffmpeg.zip"),
+            "https://example.test/ffmpeg.zip"
+        );
+    }
+
+    #[test]
+    fn ffmpeg_source_config_value_says_where_the_pair_came_from() {
+        use super::FfmpegSource;
+        let flat = PathBuf::from("/data/ffmpeg/ffmpeg");
+        let url = "https://example.test/ffmpeg-osx-arm64".to_string();
+        assert_eq!(FfmpegSource::Download(url.clone()).config_value(&flat), url);
+        assert_eq!(
+            FfmpegSource::existing(true).config_value(Path::new("/opt/mine/ffmpeg")),
+            "STEMDECK_FFMPEG"
+        );
+        assert_eq!(
+            FfmpegSource::existing(false).config_value(&flat),
+            "data folder"
+        );
+        // A bare name came through PATH, the old value; a full path is an install.
+        assert_eq!(
+            FfmpegSource::System.config_value(Path::new("ffmpeg")),
+            "system PATH"
+        );
+        assert_eq!(
+            FfmpegSource::System.config_value(Path::new("/opt/homebrew/bin/ffmpeg")),
+            "system install"
+        );
+    }
+
+    #[test]
+    fn binary_arch_label_reads_macho_elf_and_pe_without_guessing() {
+        use super::{binary_arch_label, MACHO_CPU_TYPE_ARM64 as ARM, MACHO_CPU_TYPE_X86_64 as X86};
+        assert_eq!(binary_arch_label(&thin_macho(ARM)), "arm64");
+        assert_eq!(binary_arch_label(&thin_macho(X86)), "x86_64");
+        assert_eq!(binary_arch_label(&fat_macho(&[X86, ARM])), "universal");
+        assert_eq!(binary_arch_label(&fat_macho(&[0x0000_0012])), "unknown");
+
+        let elf = |little: bool, machine: u16| {
+            let mut h = vec![0u8; 64];
+            h[..4].copy_from_slice(b"\x7fELF");
+            h[5] = if little { 1 } else { 2 };
+            let bytes = if little {
+                machine.to_le_bytes()
+            } else {
+                machine.to_be_bytes()
+            };
+            h[18..20].copy_from_slice(&bytes);
+            h
+        };
+        assert_eq!(binary_arch_label(&elf(true, 0x3e)), "x86_64");
+        assert_eq!(binary_arch_label(&elf(true, 0xb7)), "arm64");
+        assert_eq!(binary_arch_label(&elf(false, 0xb7)), "arm64");
+        assert_eq!(binary_arch_label(&elf(true, 0x28)), "unknown");
+
+        let pe = |machine: u16| {
+            let mut h = vec![0u8; 0x100];
+            h[..2].copy_from_slice(b"MZ");
+            h[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+            h[0x80..0x84].copy_from_slice(b"PE\0\0");
+            h[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+            h
+        };
+        assert_eq!(binary_arch_label(&pe(0x8664)), "x86_64");
+        assert_eq!(binary_arch_label(&pe(0xaa64)), "arm64");
+        // An e_lfanew past the end, a script, an empty file: unknown, not a guess.
+        let mut short_pe = pe(0x8664);
+        short_pe.truncate(0x82);
+        assert_eq!(binary_arch_label(&short_pe), "unknown");
+        assert_eq!(binary_arch_label(b"#!/bin/sh\nexec ffmpeg"), "unknown");
+        assert_eq!(binary_arch_label(&[]), "unknown");
+    }
+
+    #[test]
+    fn translated_ffmpeg_notice_only_for_intel_on_arm() {
+        let notice = super::translated_ffmpeg_notice;
+        assert!(notice("aarch64", "x86_64").is_some_and(|n| n.contains("Rosetta")));
+        assert!(notice("aarch64", "arm64").is_none());
+        assert!(notice("aarch64", "universal").is_none());
+        assert!(notice("aarch64", "unknown").is_none());
+        assert!(notice("x86_64", "x86_64").is_none());
+        assert!(notice("aarch64", "x86_64").is_some_and(|n| n.is_ascii()));
+    }
+
+    #[test]
+    fn write_setup_config_records_the_real_source_and_arch() {
+        use super::MACHO_CPU_TYPE_X86_64 as X86;
+        // The evermeet fallback installed on an Apple Silicon Mac.
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg_dir = dir.path().join("ffmpeg");
+        fs::create_dir_all(&ffmpeg_dir).unwrap();
+        let ffmpeg = ffmpeg_dir.join("ffmpeg");
+        fs::write(&ffmpeg, thin_macho(X86)).unwrap();
+        let source = super::FfmpegSource::Download(super::DEFAULT_MACOS_FFMPEG_URL.to_string());
+        super::write_setup_config(dir.path(), &ffmpeg, &source, "aarch64").unwrap();
+
+        let text = fs::read_to_string(dir.path().join("config.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(config["ffmpegSource"], super::DEFAULT_MACOS_FFMPEG_URL);
+        assert_eq!(config["ffmpegArch"], "x86_64");
+        let log = fs::read_to_string(dir.path().join("logs").join("setup.log")).unwrap();
+        assert!(log.contains("built for x86_64"), "{log}");
+
+        // A pair placed by hand, native: recorded as such, and no notice.
+        let other = tempfile::tempdir().unwrap();
+        let arm = other.path().join("ffmpeg");
+        fs::write(&arm, thin_macho(super::MACHO_CPU_TYPE_ARM64)).unwrap();
+        super::write_setup_config(
+            other.path(),
+            &arm,
+            &super::FfmpegSource::DataFolder,
+            "aarch64",
+        )
+        .unwrap();
+        let text = fs::read_to_string(other.path().join("config.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(config["ffmpegSource"], "data folder");
+        assert_eq!(config["ffmpegArch"], "arm64");
+        assert!(!other.path().join("logs").join("setup.log").exists());
+    }
+
+    #[test]
+    fn cleanup_warning_is_silent_for_a_folder_that_was_never_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("runtime.old");
+        let result = fs::remove_dir_all(&missing);
+        assert!(result.is_err());
+        assert_eq!(super::cleanup_warning(&missing, result), None);
+        assert_eq!(super::cleanup_warning(&missing, Ok(())), None);
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let warning = super::cleanup_warning(&missing, Err(denied)).unwrap();
+        assert!(warning.starts_with("cleanup warning: "), "{warning}");
+        assert!(warning.contains("runtime.old"), "{warning}");
+    }
+
+    #[test]
+    fn next_macos_ffmpeg_prefers_native_system_and_lets_the_url_override_win() {
+        use super::MacFfmpegNext::{Download, Use};
+        let intel = || Some(PathBuf::from("/data/ffmpeg/ffmpeg"));
+        let brew = || Some(PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+        let none = || None;
+        // A native system pair beats an installed Intel one and a download.
+        assert_eq!(
+            super::next_macos_ffmpeg(intel(), false, brew),
+            Use(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        assert_eq!(
+            super::next_macos_ffmpeg(None, false, brew),
+            Use(PathBuf::from("/opt/homebrew/bin/ffmpeg"))
+        );
+        // No native one: the Intel pair that already runs is kept, not downloaded over.
+        assert_eq!(
+            super::next_macos_ffmpeg(intel(), false, none),
+            Use(PathBuf::from("/data/ffmpeg/ffmpeg"))
+        );
+        assert_eq!(super::next_macos_ffmpeg(None, false, none), Download);
+        // STEMDECK_FFMPEG_URL wins over a system pair, which is not even looked for.
+        let never = || -> Option<PathBuf> { panic!("system lookup with an explicit URL") };
+        assert_eq!(super::next_macos_ffmpeg(None, true, never), Download);
+    }
+
+    #[test]
+    fn install_staged_ffmpeg_moves_the_pair_and_reports_a_failed_move() {
+        let dir = make_tmp();
+        let staged = dir.path().join("ffmpeg").join("staged");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("ffmpeg"), b"new ffmpeg").unwrap();
+        fs::write(staged.join("ffprobe"), b"new ffprobe").unwrap();
+        let ffmpeg_dir = dir.path().join("ffmpeg");
+        fs::write(ffmpeg_dir.join("ffmpeg"), b"old").unwrap();
+        super::install_staged_ffmpeg(&staged, &ffmpeg_dir).unwrap();
+        assert_eq!(fs::read(ffmpeg_dir.join("ffmpeg")).unwrap(), b"new ffmpeg");
+        assert_eq!(
+            fs::read(ffmpeg_dir.join("ffprobe")).unwrap(),
+            b"new ffprobe"
+        );
+        // Nothing staged: an error that says what to do, not a panic.
+        let err = super::install_staged_ffmpeg(&staged, &ffmpeg_dir).unwrap_err();
+        assert!(err.contains("click Retry"), "{err}");
     }
 
     #[cfg(target_os = "macos")]
@@ -7301,31 +11105,265 @@ mod tests {
         env::remove_var(key);
     }
 
+    // The Windows FFmpeg pin must name one dated release, never the rolling
+    // `latest` tag (its gcc 16.2 rebuilds crash at random), and carry a real
+    // SHA256 so the download is verified before it is extracted.
     #[test]
-    fn sha256_from_checksums_picks_matching_line() {
-        let contents = "\
-c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694  ffmpeg-master-latest-win64-gpl.zip
-3D26DD6B1AF970297D141531D2C651491C4F6043B95D8C68E2FEC3C141255FF7  ffmpeg-n8.1-latest-win64-gpl-8.1.zip
-b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-latest-win64-gpl-7.1.zip
-";
-        // Matching line -> lowercased hash.
-        assert_eq!(
-            super::sha256_from_checksums(contents, "ffmpeg-n8.1-latest-win64-gpl-8.1.zip")
-                .as_deref(),
-            Some("3d26dd6b1af970297d141531d2c651491c4f6043b95d8c68e2fec3c141255ff7")
+    fn windows_ffmpeg_is_pinned_to_a_dated_build_with_a_sha256() {
+        let url = super::DEFAULT_WINDOWS_FFMPEG_URL;
+        assert!(
+            url.starts_with("https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-"),
+            "{url}"
         );
-        // A different asset is not matched.
-        assert_eq!(
-            super::sha256_from_checksums(contents, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
-            Some("c64a5bf0ce386059ca8898b975de96d9ca0abd2c4763929c9cb1d2f2c93a6694")
+        assert!(!url.contains("/download/latest/"), "{url}");
+        assert!(!url.contains("-latest-"), "{url}");
+        let sha = super::DEFAULT_WINDOWS_FFMPEG_SHA256;
+        assert_eq!(sha.len(), 64, "{sha}");
+        assert!(
+            sha.chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "{sha}"
         );
-        // Absent filename -> None.
-        assert!(super::sha256_from_checksums(contents, "not-in-list.zip").is_none());
-        // Extra whitespace between hash and name is tolerated.
+    }
+
+    const FFMPEG_VERSION_GCC_15: &str = "ffmpeg version n8.1.2-50-g1a748fe2cd-20260831 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with gcc 15.2.0 (crosstool-NG 1.28.0.23_185f348)\n\
+configuration: --prefix=/ffbuild/prefix --enable-gpl\n\
+libavutil      60.  8.100 / 60.  8.100\n";
+    const FFMPEG_VERSION_GCC_16: &str = "ffmpeg version n8.1.3-24-g92611900bb-20261027 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)\n\
+configuration: --prefix=/ffbuild/prefix --enable-gpl\n";
+    const FFMPEG_VERSION_CLANG: &str =
+        "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers\n\
+built with Apple clang version 17.0.0 (clang-1700.0.13.3)\n\
+configuration: --cc=clang\n";
+
+    #[test]
+    fn parse_ffmpeg_build_reads_version_and_gcc_major() {
+        let clean = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_15);
         assert_eq!(
-            super::sha256_from_checksums("abc123   only-one.zip\n", "only-one.zip").as_deref(),
-            Some("abc123")
+            clean.version.as_deref(),
+            Some("n8.1.2-50-g1a748fe2cd-20260831")
         );
+        assert_eq!(clean.gcc_major, Some(15));
+        assert!(!super::is_known_bad_ffmpeg_build(&clean));
+
+        let bad = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_16);
+        assert_eq!(
+            bad.version.as_deref(),
+            Some("n8.1.3-24-g92611900bb-20261027")
+        );
+        assert_eq!(bad.gcc_major, Some(16));
+        assert!(super::is_known_bad_ffmpeg_build(&bad));
+
+        let clang = super::parse_ffmpeg_build(FFMPEG_VERSION_CLANG);
+        assert_eq!(clang.version.as_deref(), Some("8.1.1"));
+        assert_eq!(clang.gcc_major, None);
+        assert!(!super::is_known_bad_ffmpeg_build(&clang));
+
+        let empty = super::parse_ffmpeg_build("");
+        assert_eq!(empty.version, None);
+        assert_eq!(empty.gcc_major, None);
+        assert!(!super::is_known_bad_ffmpeg_build(&empty));
+    }
+
+    #[test]
+    fn ffmpeg_older_than_5_1_is_too_old() {
+        let too_old = |line: &str| super::ffmpeg_too_old(&super::parse_ffmpeg_build(line));
+        // Ubuntu 22.04's apt ffmpeg, Debian 11's, a plain 5.0, a git-tag build.
+        assert!(too_old(
+            "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers"
+        ));
+        assert!(too_old(
+            "ffmpeg version 4.3.8-0+deb11u1 Copyright (c) 2000-2024"
+        ));
+        assert!(too_old("ffmpeg version 5.0.3 Copyright (c) 2000-2022"));
+        assert!(too_old("ffmpeg version n4.4 Copyright (c) 2000-2021"));
+        // Debian 12 (the Docker image), every pinned download, Homebrew.
+        assert!(!too_old(
+            "ffmpeg version 5.1.6-0+deb12u1 Copyright (c) 2000-2024"
+        ));
+        assert!(!too_old(FFMPEG_VERSION_GCC_15));
+        assert!(!too_old(FFMPEG_VERSION_CLANG));
+        assert!(!too_old(
+            "ffmpeg version 8.1.1-tessus  https://evermeet.cx/ffmpeg/"
+        ));
+        assert!(!too_old(
+            "ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/"
+        ));
+        assert!(!too_old("ffmpeg version 6.0 Copyright (c) 2000-2023"));
+        assert!(!too_old("ffmpeg version 10.0 Copyright (c) 2000-2030"));
+        // No release named, or no version line at all: not called old.
+        assert!(!too_old(
+            "ffmpeg version N-117000-g1234abcd-20241001 Copyright"
+        ));
+        assert!(!too_old(""));
+    }
+
+    // Run by hand against real binaries:
+    // STEMDECK_TEST_FFMPEG_BAD=<gcc 16 ffmpeg> STEMDECK_TEST_FFMPEG_CLEAN=<gcc 15 ffmpeg>
+    // cargo test known_bad_ffmpeg_real_binaries -- --ignored
+    #[test]
+    #[ignore]
+    fn known_bad_ffmpeg_real_binaries() {
+        let bad = env::var("STEMDECK_TEST_FFMPEG_BAD").expect("STEMDECK_TEST_FFMPEG_BAD");
+        let clean = env::var("STEMDECK_TEST_FFMPEG_CLEAN").expect("STEMDECK_TEST_FFMPEG_CLEAN");
+        let read = |path: &str| {
+            super::parse_ffmpeg_build(
+                &super::ffmpeg_version_text(Path::new(path)).expect("ffmpeg -version ran"),
+            )
+        };
+        let bad = read(&bad);
+        let clean = read(&clean);
+        println!("bad: {bad:?}\nclean: {clean:?}");
+        assert!(super::is_known_bad_ffmpeg_build(&bad), "{bad:?}");
+        assert!(!super::is_known_bad_ffmpeg_build(&clean), "{clean:?}");
+    }
+
+    #[test]
+    fn only_the_shells_own_windows_ffmpeg_is_managed() {
+        let data = Path::new("data");
+        let flat = data.join("ffmpeg").join("ffmpeg.exe");
+        assert!(super::is_managed_ffmpeg(data, &flat, true, false, false));
+        // Not Windows: never.
+        assert!(!super::is_managed_ffmpeg(data, &flat, false, false, false));
+        // The user named a binary or a source.
+        assert!(!super::is_managed_ffmpeg(data, &flat, true, true, false));
+        assert!(!super::is_managed_ffmpeg(data, &flat, true, false, true));
+        // A bin/ layout the user dropped in, or a system FFmpeg on PATH.
+        let bin = data.join("ffmpeg").join("bin").join("ffmpeg.exe");
+        assert!(!super::is_managed_ffmpeg(data, &bin, true, false, false));
+        assert!(!super::is_managed_ffmpeg(
+            data,
+            Path::new("ffmpeg"),
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn should_replace_ffmpeg_only_a_managed_bad_build_and_not_forever() {
+        use super::{FfmpegReplaceRecord, MAX_FFMPEG_REPLACE_ATTEMPTS};
+        let pin = "https://example.invalid/pin.zip";
+        let bad = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_16);
+        let clean = super::parse_ffmpeg_build(FFMPEG_VERSION_GCC_15);
+        let clang = super::parse_ffmpeg_build(FFMPEG_VERSION_CLANG);
+
+        assert!(super::should_replace_ffmpeg(true, &bad, None, pin));
+        assert!(!super::should_replace_ffmpeg(false, &bad, None, pin));
+        assert!(!super::should_replace_ffmpeg(true, &clean, None, pin));
+        assert!(!super::should_replace_ffmpeg(true, &clang, None, pin));
+
+        let tried_once = FfmpegReplaceRecord {
+            pin: pin.to_string(),
+            attempts: 1,
+            gave_up: false,
+        };
+        assert!(super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&tried_once),
+            pin
+        ));
+        let used_up = FfmpegReplaceRecord {
+            attempts: MAX_FFMPEG_REPLACE_ATTEMPTS,
+            ..tried_once.clone()
+        };
+        assert!(!super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&used_up),
+            pin
+        ));
+        let gave_up = FfmpegReplaceRecord {
+            gave_up: true,
+            ..tried_once.clone()
+        };
+        assert!(!super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&gave_up),
+            pin
+        ));
+        // A new pin is a new build: try again.
+        assert!(super::should_replace_ffmpeg(
+            true,
+            &bad,
+            Some(&gave_up),
+            "https://example.invalid/newer.zip"
+        ));
+    }
+
+    #[test]
+    fn next_replace_record_counts_and_gives_up_on_a_rejected_build() {
+        use super::MAX_FFMPEG_REPLACE_ATTEMPTS;
+        let pin = "pin";
+        let first = super::next_replace_record(None, pin, false);
+        assert_eq!((first.attempts, first.gave_up), (1, false));
+        let mut record = first;
+        for _ in 1..MAX_FFMPEG_REPLACE_ATTEMPTS {
+            record = super::next_replace_record(Some(&record), pin, false);
+        }
+        assert_eq!(record.attempts, MAX_FFMPEG_REPLACE_ATTEMPTS);
+        assert!(record.gave_up);
+        // The pinned build itself failing its checks: give up at once.
+        let rejected = super::next_replace_record(None, pin, true);
+        assert_eq!((rejected.attempts, rejected.gave_up), (1, true));
+        // A record for an older pin starts over.
+        let fresh = super::next_replace_record(Some(&record), "newer", false);
+        assert_eq!((fresh.attempts, fresh.gave_up), (1, false));
+    }
+
+    #[test]
+    fn read_ffmpeg_replace_record_round_trips_and_null_clears() {
+        let dir = make_tmp();
+        assert!(super::read_ffmpeg_replace_record(dir.path()).is_none());
+        super::update_setup_config(
+            dir.path(),
+            [(
+                "ffmpegReplace",
+                serde_json::json!({"pin": "p", "attempts": 2, "gaveUp": false}),
+            )],
+        )
+        .unwrap();
+        let record = super::read_ffmpeg_replace_record(dir.path()).unwrap();
+        assert_eq!(
+            record,
+            super::FfmpegReplaceRecord {
+                pin: "p".to_string(),
+                attempts: 2,
+                gave_up: false
+            }
+        );
+        super::update_setup_config(dir.path(), [("ffmpegReplace", serde_json::Value::Null)])
+            .unwrap();
+        assert!(super::read_ffmpeg_replace_record(dir.path()).is_none());
+    }
+
+    #[test]
+    fn swap_in_staged_dir_replaces_live_and_keeps_it_on_failure() {
+        let dir = make_tmp();
+        let live = dir.path().join("ffmpeg");
+        let staged = dir.path().join("ffmpeg.new");
+        let old = dir.path().join("ffmpeg.old");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("ffmpeg.exe"), "old").unwrap();
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("ffmpeg.exe"), "new").unwrap();
+        // A leftover from an earlier interrupted swap is cleared first.
+        fs::create_dir_all(&old).unwrap();
+
+        super::swap_in_staged_dir(&live, &staged, &old).unwrap();
+        assert_eq!(fs::read_to_string(live.join("ffmpeg.exe")).unwrap(), "new");
+        assert!(!staged.exists());
+        assert!(!old.exists());
+
+        // No staged dir: the second move fails and live is put back.
+        let err = super::swap_in_staged_dir(&live, &staged, &old).unwrap_err();
+        assert!(err.contains("failed to move"), "{err}");
+        assert_eq!(fs::read_to_string(live.join("ffmpeg.exe")).unwrap(), "new");
+        assert!(!old.exists());
     }
 
     #[test]
@@ -7374,13 +11412,41 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
 ";
         assert_eq!(
             super::missing_required_encoders(stripped),
-            vec!["libmp3lame", "libvorbis", "aac"]
+            vec!["libmp3lame", "aac"]
         );
 
         assert_eq!(
             super::missing_required_encoders(""),
             super::REQUIRED_FFMPEG_ENCODERS
         );
+    }
+
+    #[test]
+    fn libvorbis_is_optional_and_reported_separately() {
+        let path = Path::new("/x/ffmpeg");
+        let with_vorbis = "\
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3)
+ A....D libvorbis            libvorbis
+ A....D aac                  AAC (Advanced Audio Coding)
+";
+        assert_eq!(super::check_encoder_listing(path, with_vorbis), Ok(true));
+        // Homebrew's plain ffmpeg 9.0.2: no libvorbis, only the experimental
+        // native "vorbis" encoder, which StemDeck does not use.
+        let homebrew = "\
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A..X.D vorbis               Vorbis
+";
+        assert_eq!(super::check_encoder_listing(path, homebrew), Ok(false));
+        assert!(!super::REQUIRED_FFMPEG_ENCODERS.contains(&"libvorbis"));
+        assert_eq!(super::OPTIONAL_FFMPEG_ENCODERS, ["libvorbis"]);
+        let err = super::check_encoder_listing(path, " A....D flac  FLAC\n").unwrap_err();
+        assert!(err.contains("libmp3lame"), "{err}");
+        assert!(!err.contains("libvorbis"), "{err}");
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -7397,6 +11463,73 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // Missing / unparseable compute capability also falls back.
         assert_eq!(super::wheel_tag(None, "12.1"), "cu124");
         assert_eq!(super::wheel_tag(Some("N/A"), "12.4"), "cu124");
+    }
+
+    /// The header forms nvidia-smi prints, and output that holds no version,
+    /// shared with tests/test_device_reason.py so the shell and the backend
+    /// read every one of them the same way (#1012).
+    #[cfg(not(target_os = "macos"))]
+    fn nvidia_smi_headers() -> Vec<(String, String, Option<String>)> {
+        let samples: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/nvidia_smi_headers.json"
+        ))
+        .expect("tests/fixtures/nvidia_smi_headers.json is valid JSON");
+        samples
+            .iter()
+            .map(|s| {
+                (
+                    s["name"].as_str().unwrap().to_string(),
+                    s["header"].as_str().unwrap().to_string(),
+                    s["cuda"].as_str().map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn every_header_form_gives_its_cuda_version() {
+        let samples = nvidia_smi_headers();
+        assert!(samples
+            .iter()
+            .any(|(_, h, _)| h.contains("CUDA UMD Version: 13.4")));
+        for (name, header, cuda) in samples {
+            assert_eq!(super::parse_cuda_version(&header), cuda, "{name}");
+        }
+    }
+
+    /// Driver 616.64 used to read as no version, so setup assumed CUDA 12.4
+    /// and an RTX 3080 under a CUDA 13 driver never started at cu128 (#1012).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_616_header_starts_an_rtx_3080_at_cu128() {
+        let (_, header, _) = nvidia_smi_headers()
+            .into_iter()
+            .find(|(_, h, _)| h.contains("NVIDIA-SMI 616.64"))
+            .unwrap();
+        let cuda = super::parse_cuda_version(&header).unwrap();
+        assert_eq!(
+            super::wheel_candidates(Some("8.6"), &cuda),
+            vec!["cu128", "cu124", "cu118"]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_header_with_no_cuda_version_is_logged_with_the_line_it_had() {
+        // A driver with no CUDA support prints N/A, so setup takes the 12.4
+        // default and the log quotes what the driver printed (#247).
+        let header = "+-----------------------------------------+\n\
+            | NVIDIA-SMI 470.256.02   Driver Version: 470.256.02   CUDA Version: N/A      |\n";
+        assert_eq!(
+            super::no_cuda_header_note(header),
+            "nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: \
+             NVIDIA-SMI 470.256.02   Driver Version: 470.256.02   CUDA Version: N/A"
+        );
+        assert_eq!(
+            super::no_cuda_header_note(""),
+            "nvidia-smi header had no CUDA version; assuming CUDA 12.4. Header: none"
+        );
     }
 
     // --- CUDA runtime dependency pass (#324) ---
@@ -7442,6 +11575,180 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
                 );
             }
         }
+    }
+
+    // --- one source of truth for the torch pair, and the #778 repair ---
+    //
+    // No cfg on these: the functions they reach are `any(not(macos), test)`,
+    // so they run on every host, macOS included.
+
+    fn torch_versions_file() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../../packaging/torch-versions.json"))
+            .expect("packaging/torch-versions.json is valid JSON")
+    }
+
+    #[test]
+    fn torch_constants_match_the_versions_file_the_packaging_scripts_read() {
+        // make-portable.sh and make-portable.ps1 read this file; the shell
+        // reads these constants. Drift between them is #778 all over again.
+        let file = torch_versions_file();
+        assert_eq!(file["cpuTorch"], super::CPU_TORCH_VERSION);
+        let pairs = file["torchvisionForTorch"]
+            .as_object()
+            .expect("torchvisionForTorch");
+        assert_eq!(
+            pairs[super::CPU_TORCH_VERSION],
+            super::CPU_TORCHVISION_VERSION
+        );
+        assert_eq!(pairs.len(), super::TORCHVISION_FOR_TORCH.len());
+        for (torch, vision) in super::TORCHVISION_FOR_TORCH {
+            assert_eq!(pairs[torch], vision, "torch {torch}");
+        }
+    }
+
+    #[test]
+    fn uv_lock_resolves_the_cpu_torch_pair() {
+        // The CPU swap replaces what the project install resolved. If uv.lock
+        // moves torch and the versions file does not, the swap downgrades it.
+        let lock = include_str!("../../../uv.lock");
+        for (name, version) in [
+            ("torch", super::CPU_TORCH_VERSION),
+            ("torchvision", super::CPU_TORCHVISION_VERSION),
+        ] {
+            let entry = format!("name = \"{name}\"\nversion = \"{version}\"\n");
+            assert!(
+                lock.replace('\r', "").contains(&entry),
+                "uv.lock does not resolve {name} {version}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_cuda_install_asks_for_a_matching_torchvision() {
+        // The pair install_cuda_torch asks for, for every tag setup can pick
+        // on any driver and GPU, must be a pair in the versions file (#615).
+        let file = torch_versions_file();
+        let pairs = &file["torchvisionForTorch"];
+        let mut tags = std::collections::BTreeSet::new();
+        for cap in [None, Some("5.2"), Some("6.1"), Some("8.6"), Some("12.0")] {
+            for driver in ["11.8", "12.0", "12.4", "12.8", "13.0"] {
+                tags.extend(super::wheel_candidates(cap, driver));
+            }
+        }
+        assert!(tags.contains("cu128") && tags.contains("cu124"));
+        for tag in tags {
+            let [torch, audio, vision] = super::cuda_torch_specs(tag);
+            let torch_version = super::torch_version_for_tag(tag);
+            let expected = pairs[torch_version]
+                .as_str()
+                .unwrap_or_else(|| panic!("{tag}: torch {torch_version} has no torchvision"));
+            assert_eq!(torch, format!("torch=={torch_version}+{tag}"));
+            assert_eq!(audio, format!("torchaudio=={torch_version}+{tag}"));
+            assert_eq!(vision, format!("torchvision=={expected}+{tag}"), "{tag}");
+        }
+        // Blackwell's line, spelled out.
+        assert_eq!(
+            super::cuda_torch_specs("cu128")[2],
+            "torchvision==0.23.0+cu128"
+        );
+    }
+
+    #[test]
+    fn version_py_is_read_without_python() {
+        let torch = "from typing import Optional\n\n\
+                     __all__ = ['__version__', 'debug', 'cuda', 'git_version', 'hip']\n\
+                     __version__ = '2.6.0+cpu'\ndebug = False\ncuda: Optional[str] = None\n";
+        assert_eq!(super::version_from_version_py(torch), Some("2.6.0+cpu"));
+        let vision = "__version__ = '0.21.0+cu124'\ngit_version = 'abc'\n";
+        assert_eq!(super::version_from_version_py(vision), Some("0.21.0+cu124"));
+        assert_eq!(
+            super::version_from_version_py("__version__: str = \"0.23.0+cu128\"\n"),
+            Some("0.23.0+cu128")
+        );
+        assert_eq!(
+            super::version_from_version_py("__version_info__ = '1'\n"),
+            None
+        );
+        assert_eq!(super::version_from_version_py("__version__ = ''\n"), None);
+        assert_eq!(super::version_from_version_py(""), None);
+    }
+
+    #[test]
+    fn only_a_gpu_torchvision_beside_cpu_torch_is_repaired() {
+        use super::torchvision_repair_spec as spec;
+        // The 0.20.0 Linux packages, CPU and NVIDIA alike (#778).
+        assert_eq!(
+            spec("2.6.0+cpu", Some("0.21.0+cu124")).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // Healthy: a fixed package, or the reporter's hand repair.
+        assert_eq!(spec("2.6.0+cpu", Some("0.21.0+cpu")), None);
+        // An NVIDIA install after the CUDA install: a working pair.
+        assert_eq!(spec("2.6.0+cu124", Some("0.21.0+cu124")), None);
+        assert_eq!(spec("2.8.0+cu128", Some("0.23.0+cu128")), None);
+        // No local tag at all, as some PyPI builds report: nothing to judge.
+        assert_eq!(spec("2.6.0", Some("0.21.0")), None);
+        assert_eq!(spec("2.6.0+cpu", Some("0.21.0")), None);
+        // A torch line with no known torchvision is not guessed at.
+        assert_eq!(spec("2.7.1+cpu", Some("0.22.1+cu126")), None);
+        // A ROCm install that stopped part way, or went back to CPU torch:
+        // its torchvision is as unusable beside CPU torch as a CUDA one (#825).
+        assert_eq!(
+            spec("2.6.0+cpu", Some("0.23.0+rocm6.4")).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // A working AMD install.
+        assert_eq!(spec("2.8.0+rocm6.4", Some("0.23.0+rocm6.4")), None);
+    }
+
+    /// A pip run stopped after it uninstalled torchvision and before it put
+    /// the new one in: every package ships torchvision, so it is put back.
+    #[test]
+    fn a_missing_torchvision_beside_cpu_torch_is_repaired() {
+        use super::torchvision_repair_spec as spec;
+        assert_eq!(
+            spec("2.6.0+cpu", None).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // A CUDA torch is the CUDA install's to manage, not this repair's.
+        assert_eq!(spec("2.6.0+cu124", None), None);
+        assert_eq!(spec("2.7.1+cpu", None), None);
+    }
+
+    #[test]
+    fn the_repair_decision_reads_the_installed_tree() {
+        let site = tempfile::tempdir().unwrap();
+        let write = |pkg: &str, version: &str| {
+            fs::create_dir_all(site.path().join(pkg)).unwrap();
+            fs::write(
+                site.path().join(pkg).join("version.py"),
+                format!("__version__ = '{version}'\n"),
+            )
+            .unwrap();
+        };
+        assert_eq!(super::installed_version(site.path(), "torch"), None);
+        write("torch", "2.6.0+cpu");
+        write("torchvision", "0.21.0+cu124");
+        let torch = super::installed_version(site.path(), "torch").unwrap();
+        let vision = super::installed_version(site.path(), "torchvision");
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, vision.as_deref()).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
+        // After the repair, the next launch has nothing to do.
+        write("torchvision", "0.21.0+cpu");
+        let vision = super::installed_version(site.path(), "torchvision");
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, vision.as_deref()),
+            None
+        );
+        // Uninstalled and never reinstalled.
+        fs::remove_dir_all(site.path().join("torchvision")).unwrap();
+        let vision = super::installed_version(site.path(), "torchvision");
+        assert_eq!(
+            super::torchvision_repair_spec(&torch, vision.as_deref()).as_deref(),
+            Some("torchvision==0.21.0+cpu")
+        );
     }
 
     #[test]
@@ -7518,9 +11825,275 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     #[test]
     fn cuda_runtime_deps_needed_on_linux_only() {
         assert_eq!(
-            super::cuda_wheel_needs_runtime_deps(),
+            super::cuda_wheel_needs_runtime_deps("cu124"),
             cfg!(target_os = "linux")
         );
+        // ROCm wheels carry their runtime inside torch/lib; the dependency
+        // pass would only add pytorch-triton-rocm, which nothing here uses.
+        assert!(!super::cuda_wheel_needs_runtime_deps(super::ROCM_TAG));
+    }
+
+    // --- AMD GPUs through ROCm (#825) ---
+
+    #[test]
+    fn kfd_gfx_target_versions_name_their_targets() {
+        // Minor and stepping are hex digits in the name, decimal pairs in the
+        // number: the MI200's 90010 is gfx90a, not gfx9010.
+        assert_eq!(super::gfx_target_name(120001), "gfx1201");
+        assert_eq!(super::gfx_target_name(110000), "gfx1100");
+        assert_eq!(super::gfx_target_name(100300), "gfx1030");
+        assert_eq!(super::gfx_target_name(100306), "gfx1036");
+        assert_eq!(super::gfx_target_name(90010), "gfx90a");
+    }
+
+    /// A CPU node, as KFD writes one.
+    const KFD_CPU: &str =
+        "cpu_cores_count 16\nsimd_count 0\ngfx_target_version 0\nvendor_id 0\ndevice_id 0\n";
+
+    /// A GPU node, trimmed to the fields detection reads.
+    fn kfd_gpu(gfx: u32, simds: u32, device: u32, minor: u32) -> String {
+        format!(
+            "cpu_cores_count 0\nsimd_count {simds}\ngfx_target_version {gfx}\n\
+             vendor_id 4098\ndevice_id {device}\ndrm_render_minor {minor}\n"
+        )
+    }
+
+    #[test]
+    fn a_kfd_gpu_node_is_read_and_a_cpu_node_skipped() {
+        assert_eq!(super::parse_kfd_node(KFD_CPU), None);
+        let gpu = super::parse_kfd_node(&kfd_gpu(120001, 128, 0x7550, 128)).unwrap();
+        assert_eq!(gpu.gfx, "gfx1201");
+        assert_eq!(gpu.simd_count, 128);
+        assert_eq!(gpu.device_id, 0x7550);
+        assert_eq!(gpu.render_minor, 128);
+    }
+
+    #[test]
+    fn pci_ids_give_the_product_name_of_amd_devices_only() {
+        // The comment sits mid-section, as real pci.ids has them: it must not
+        // end the AMD section.
+        let ids = "1002  Advanced Micro Devices, Inc. [AMD/ATI]\n\
+                   # Used in the Steam Deck OLED\n\
+                   \t7550  Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]\n\
+                   \t\t1002 7550  Subsystem that must not match\n\
+                   \t73bf  Navi 21\n\
+                   10de  NVIDIA Corporation\n\
+                   \t7551  Not an AMD device\n";
+        assert_eq!(
+            super::pci_ids_amd_name(ids, 0x7550).as_deref(),
+            Some("Radeon RX 9070/9070 XT/9070 GRE")
+        );
+        // No brackets: the whole entry is the name.
+        assert_eq!(
+            super::pci_ids_amd_name(ids, 0x73bf).as_deref(),
+            Some("Navi 21")
+        );
+        assert_eq!(super::pci_ids_amd_name(ids, 0x7551), None);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn rocm_takes_the_torch_line_with_rdna4_kernels() {
+        assert_eq!(super::torch_version_for_tag(super::ROCM_TAG), "2.8.0");
+        assert_eq!(
+            super::cuda_torch_specs(super::ROCM_TAG),
+            [
+                "torch==2.8.0+rocm6.4".to_string(),
+                "torchaudio==2.8.0+rocm6.4".to_string(),
+                "torchvision==0.23.0+rocm6.4".to_string(),
+            ]
+        );
+        // install_cuda_torch reads the tag back off the index URL.
+        let url = format!("https://download.pytorch.org/whl/{}", super::ROCM_TAG);
+        assert_eq!(super::cuda_tag_from_url(&url), super::ROCM_TAG);
+    }
+
+    /// A fake filesystem root: KFD nodes, and /dev/kfd with the render nodes
+    /// 128 and 129 when `kfd` is set.
+    fn fake_amd_root(nodes: &[&str], kfd: bool) -> TempDir {
+        let root = make_tmp();
+        for (n, properties) in nodes.iter().enumerate() {
+            let dir = root.path().join(super::KFD_NODES).join(n.to_string());
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("properties"), properties).unwrap();
+        }
+        if kfd {
+            fs::create_dir_all(root.path().join("dev/dri")).unwrap();
+            for node in ["dev/kfd", "dev/dri/renderD128", "dev/dri/renderD129"] {
+                fs::write(root.path().join(node), "").unwrap();
+            }
+        }
+        root
+    }
+
+    /// The card ROCm supports wins even when an unsupported one is larger.
+    #[test]
+    fn a_supported_gpu_beats_a_larger_unsupported_one() {
+        let root = fake_amd_root(
+            &[
+                &kfd_gpu(100301, 80, 0x73df, 129),
+                KFD_CPU,
+                &kfd_gpu(110002, 64, 0x7480, 128),
+            ],
+            true,
+        );
+        let data = make_tmp();
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert_eq!(gpu.name, "AMD GPU (gfx1102)");
+        // The CPU node between them is not counted: GPU 1 of 0 and 1.
+        assert_eq!(
+            super::rocm_visible_devices(root.path()).as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn a_gpu_choice_the_user_made_in_the_environment_wins() {
+        let root = fake_amd_root(&[KFD_CPU, &kfd_gpu(110000, 192, 0x744c, 128)], true);
+        assert_eq!(
+            super::rocm_visible_devices_to_set(root.path(), |_| false).as_deref(),
+            Some("0")
+        );
+        for var in [
+            "ROCR_VISIBLE_DEVICES",
+            "HIP_VISIBLE_DEVICES",
+            "CUDA_VISIBLE_DEVICES",
+        ] {
+            assert_eq!(
+                super::rocm_visible_devices_to_set(root.path(), |name| name == var),
+                None,
+                "{var}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_access_to_the_render_node_is_no_access() {
+        let root = fake_amd_root(&[KFD_CPU, &kfd_gpu(110000, 192, 0x744c, 130)], true);
+        let data = make_tmp();
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert_eq!(gpu.unusable, Some("rocm-no-kfd-access"));
+    }
+
+    #[test]
+    fn one_supported_amd_gpu_is_offered_rocm() {
+        let root = fake_amd_root(&[KFD_CPU, &kfd_gpu(120001, 128, 0x7550, 128)], true);
+        let drm = root.path().join("sys/class/drm/renderD128/device");
+        fs::create_dir_all(&drm).unwrap();
+        fs::write(drm.join("product_name"), "Radeon RX 9070 XT\n").unwrap();
+        let data = make_tmp();
+
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert_eq!(gpu.name, "AMD Radeon RX 9070 XT (gfx1201)");
+        assert_eq!(gpu.backend, "rocm");
+        assert_eq!(gpu.version, "6.4");
+        assert_eq!(gpu.candidates, vec![super::ROCM_TAG]);
+        assert_eq!(gpu.unusable, None);
+        assert_eq!(
+            super::rocm_visible_devices(root.path()).as_deref(),
+            Some("0")
+        );
+    }
+
+    /// The case that settled on CPU before: a Ryzen's integrated GPU, which no
+    /// build has kernels for, listed ahead of the discrete card.
+    #[test]
+    fn the_discrete_card_wins_over_an_integrated_gpu_listed_first() {
+        let root = fake_amd_root(
+            &[
+                KFD_CPU,
+                &kfd_gpu(100306, 4, 0x164e, 129),
+                &kfd_gpu(110000, 192, 0x744c, 128),
+            ],
+            true,
+        );
+        let data = make_tmp();
+
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert_eq!(gpu.name, "AMD GPU (gfx1100)");
+        assert_eq!(gpu.unusable, None);
+        // The ROCm runtime is shown only the discrete card, GPU 1 of 0 and 1.
+        assert_eq!(
+            super::rocm_visible_devices(root.path()).as_deref(),
+            Some("1")
+        );
+        // Every node is in setup.log, so a report shows what was there.
+        let log = fs::read_to_string(data.path().join("logs").join("setup.log")).unwrap();
+        assert!(log.contains("KFD GPU 0: gfx1036"), "{log}");
+        assert!(log.contains("KFD GPU 1: gfx1100"), "{log}");
+    }
+
+    #[test]
+    fn of_two_supported_gpus_the_larger_is_chosen_then_the_first() {
+        let gpu = |ordinal: usize, simd_count: u32| super::KfdGpu {
+            ordinal,
+            gfx: "gfx1100".to_string(),
+            simd_count,
+            device_id: 0,
+            render_minor: 128,
+        };
+        let gpus = [gpu(0, 96), gpu(1, 192)];
+        assert_eq!(super::choose_amd_gpu(&gpus).map(|g| g.ordinal), Some(1));
+        let gpus = [gpu(0, 192), gpu(1, 192)];
+        assert_eq!(super::choose_amd_gpu(&gpus).map(|g| g.ordinal), Some(0));
+        assert_eq!(super::choose_amd_gpu(&[]), None);
+    }
+
+    #[test]
+    fn kfd_nodes_are_taken_in_number_order() {
+        // read_dir order is arbitrary, and "10" sorts before "2" as text.
+        let root = make_tmp();
+        for (node, gfx) in [(2, 110000), (10, 120001), (0, 0)] {
+            let dir = root.path().join(super::KFD_NODES).join(node.to_string());
+            fs::create_dir_all(&dir).unwrap();
+            let properties = if gfx == 0 {
+                KFD_CPU.to_string()
+            } else {
+                kfd_gpu(gfx, 64, 0, 128)
+            };
+            fs::write(dir.join("properties"), properties).unwrap();
+        }
+        let gfx: Vec<String> = super::kfd_gpus(root.path())
+            .into_iter()
+            .map(|g| g.gfx)
+            .collect();
+        assert_eq!(gfx, ["gfx1100", "gfx1201"]);
+    }
+
+    #[test]
+    fn an_amd_gpu_without_rocm_kernels_is_settled_on_cpu() {
+        // An RX 6600 (gfx1032): no kernels in the official builds, so it would
+        // download several GB only to fail verification.
+        let root = fake_amd_root(&[KFD_CPU, &kfd_gpu(100302, 56, 0x73ff, 128)], true);
+        let data = make_tmp();
+
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert!(gpu.candidates.is_empty());
+        assert_eq!(gpu.unusable, Some("rocm-unsupported-gpu"));
+        // Nothing to restrict the runtime to.
+        assert_eq!(super::rocm_visible_devices(root.path()), None);
+    }
+
+    #[test]
+    fn no_access_to_dev_kfd_is_said_and_not_settled() {
+        let root = fake_amd_root(&[KFD_CPU, &kfd_gpu(110000, 192, 0x744c, 128)], false);
+        let data = make_tmp();
+
+        let gpu = super::detect_amd_gpu(root.path(), data.path()).expect("found");
+        assert_eq!(gpu.unusable, Some("rocm-no-kfd-access"));
+        let log = fs::read_to_string(data.path().join("logs").join("setup.log")).unwrap();
+        assert!(log.contains("cannot open /dev/kfd"), "{log}");
+    }
+
+    #[test]
+    fn no_kfd_topology_is_no_amd_gpu() {
+        let root = make_tmp();
+        let data = make_tmp();
+        assert!(super::detect_amd_gpu(root.path(), data.path()).is_none());
+        // A CPU node only: an amdgpu driver with no GPU bound to it.
+        let root = fake_amd_root(&[KFD_CPU], true);
+        assert!(super::detect_amd_gpu(root.path(), data.path()).is_none());
+        assert_eq!(super::rocm_visible_devices(root.path()), None);
     }
 
     // --- cpu-only marker precedence + self-heal (#247) ---
@@ -7551,24 +12124,151 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     }
 
     #[test]
-    fn directory_has_entries_true_for_a_populated_dir() {
-        let dir = make_tmp();
-        fs::write(dir.path().join("registry.json"), "{}").unwrap();
-        assert!(super::directory_has_entries(dir.path()));
+    fn a_portable_package_keeps_its_webview_profile_in_data() {
+        // #399: the WebView2 profile went to %LOCALAPPDATA% even when every
+        // other file stayed in the portable folder.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        assert_eq!(
+            super::portable_webview_dir(root.path(), &data),
+            Some(data.join("webview"))
+        );
     }
 
     #[test]
-    fn directory_has_entries_false_for_an_empty_dir() {
-        let dir = make_tmp();
-        assert!(!super::directory_has_entries(dir.path()));
+    fn an_installed_app_keeps_the_default_webview_profile() {
+        // Installers, macOS and Linux keep the profile where it always was,
+        // with whatever the user has stored in it.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        assert_eq!(super::portable_webview_dir(root.path(), &data), None);
     }
 
     #[test]
-    fn directory_has_entries_false_for_a_missing_dir() {
-        let dir = make_tmp();
-        assert!(!super::directory_has_entries(
-            &dir.path().join("does-not-exist")
-        ));
+    fn a_portable_package_sends_temp_and_tool_caches_into_data() {
+        // B25b: a portable run wrote its temp files, and the NVIDIA setup its
+        // pip cache, into the user profile.
+        let root = make_tmp();
+        let data = root.path().join("data");
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        let vars = super::portable_env(root.path(), &data);
+        let names: Vec<&str> = vars.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            ["TEMP", "TMP", "TMPDIR", "PIP_CACHE_DIR", "MPLCONFIGDIR"]
+        );
+        for (name, path) in &vars {
+            assert!(
+                path.starts_with(&data),
+                "{name} leaves the package: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_program_started_for_the_user_gets_the_users_temp_back() {
+        // Explorer, and a browser it may start, must not keep the portable
+        // package's temp folder: TMPDIR was unset, so it is removed.
+        use std::ffi::{OsStr, OsString};
+        let saved = [
+            (
+                "TEMP",
+                Some(OsString::from(r"C:\Users\u\AppData\Local\Temp")),
+            ),
+            ("TMPDIR", None),
+        ];
+        let mut command = Command::new("explorer.exe");
+        super::restore_env(&mut command, &saved);
+        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
+        assert!(envs.contains(&(
+            OsStr::new("TEMP"),
+            Some(OsStr::new(r"C:\Users\u\AppData\Local\Temp"))
+        )));
+        assert!(envs.contains(&(OsStr::new("TMPDIR"), None)));
+    }
+
+    #[test]
+    fn an_installed_app_keeps_the_system_temp_and_caches() {
+        let root = make_tmp();
+        let data = root.path().join("data");
+        assert!(super::portable_env(root.path(), &data).is_empty());
+    }
+
+    #[test]
+    fn a_new_portable_folder_never_takes_an_installed_apps_settings() {
+        // The settings an installed StemDeck keeps in %LOCALAPPDATA%\StemDeck
+        // name that install's library. A portable run that started from them
+        // opened that library, and a reset or a sweep there deleted its songs.
+        // ensure_workspace reads LOCALAPPDATA and STEMDECK_ROOT, so it runs in
+        // a child test process with its own environment. Only Windows ships a
+        // portable package, so only there can this catch a regression.
+        let tmp = make_tmp();
+        let root = tmp.path().join("StemDeck");
+        let data = root.join("data");
+        let installed = tmp.path().join("LocalAppData");
+        fs::create_dir_all(installed.join("StemDeck")).unwrap();
+        fs::write(
+            installed.join("StemDeck").join("settings.json"),
+            br#"{"jobs_dir":"D:\\StemDeck\\jobs"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("portable.txt"), "").unwrap();
+
+        let status = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "tests::ensure_workspace_in_child", "--ignored"])
+            .env("STEMDECK_WORKSPACE_CHILD", "1")
+            .env("STEMDECK_ROOT", &root)
+            .env("STEMDECK_DATA_DIR", &data)
+            .env("LOCALAPPDATA", &installed)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+
+        assert!(status.success(), "ensure_workspace failed in the child");
+        assert!(data.join("config.json").is_file(), "the workspace was made");
+        assert!(
+            !data.join("settings.json").exists(),
+            "a portable folder copied the installed app's settings"
+        );
+    }
+
+    #[test]
+    fn a_portable_package_never_looks_in_documents() {
+        let root = make_tmp();
+        fs::write(root.path().join("portable.txt"), "").unwrap();
+        let found = super::installed_documents_dir(root.path(), || {
+            panic!("a portable package looked in Documents")
+        });
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn an_installed_app_keeps_its_library_in_documents() {
+        let root = make_tmp();
+        let documents = PathBuf::from("Documents").join("StemDeck");
+        assert_eq!(
+            super::installed_documents_dir(root.path(), || Some(documents.clone())),
+            Some(documents)
+        );
+    }
+
+    #[test]
+    #[ignore = "run by a_new_portable_folder_never_takes_an_installed_apps_settings"]
+    fn ensure_workspace_in_child() {
+        // Anything but the environment the parent test sets up is someone's
+        // `cargo test -- --ignored` in their real environment, where
+        // ensure_workspace would migrate into their real data folder.
+        let Some(root) = env::var_os("STEMDECK_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let isolated = env::var_os("STEMDECK_WORKSPACE_CHILD").is_some()
+            && super::is_portable_package(&root)
+            && env::var_os("STEMDECK_DATA_DIR").map(PathBuf::from) == Some(root.join("data"));
+        if isolated {
+            super::ensure_workspace().unwrap();
+        }
     }
 
     #[test]
@@ -7699,6 +12399,74 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
     }
 
     #[test]
+    fn reveal_needs_a_file_this_app_saved() {
+        let state = super::BackendState::default();
+        assert!(super::saved_file(&state, "1").is_err(), "nothing saved yet");
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Song - Artist (Streamer).mp4");
+        std::fs::write(&file, b"x").unwrap();
+        super::record_saved(&state, "1", file.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "1").unwrap(), file);
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            super::saved_file(&state, "1").is_err(),
+            "a file that has gone is not revealed"
+        );
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_shows_only_the_callers_own_save() {
+        let state = super::BackendState::default();
+        let dir = std::env::temp_dir().join(format!("stemdeck-reveal2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join("Streamer take.mp4");
+        let later = dir.join("A mix export.wav");
+        std::fs::write(&mine, b"x").unwrap();
+        std::fs::write(&later, b"y").unwrap();
+        super::record_saved(&state, "7", mine.clone()).unwrap();
+        // Another export saved afterwards does not change what token 7 reveals.
+        super::record_saved(&state, "8", later.clone()).unwrap();
+        assert_eq!(super::saved_file(&state, "7").unwrap(), mine);
+        assert_eq!(super::saved_file(&state, "8").unwrap(), later);
+        assert!(
+            super::saved_file(&state, "9").is_err(),
+            "an unknown token reveals nothing"
+        );
+        // Bounded: the oldest tokens go first.
+        for i in 10..(10 + super::MAX_PENDING_SAVES) {
+            super::record_saved(&state, &i.to_string(), later.clone()).unwrap();
+        }
+        assert!(state.inner.lock().unwrap().saved_files.len() <= super::MAX_PENDING_SAVES);
+        assert!(
+            super::saved_file(&state, "7").is_err(),
+            "the oldest save was dropped"
+        );
+        let _ = std::fs::remove_file(&mine);
+        let _ = std::fs::remove_file(&later);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn reveal_passes_the_path_as_one_argument() {
+        let path = PathBuf::from("/tmp/a b; echo pwned & \"quoted\".mp4");
+        let (program, args) = super::reveal_command(&path);
+        assert!(!program.is_empty());
+        // The path is never split or interpreted: it is one argument, or its
+        // folder is (Linux).
+        let joined: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            joined.iter().any(|a| a == path.to_string_lossy().as_ref())
+                || joined.iter().any(|a| a == "/tmp"),
+            "{joined:?}"
+        );
+    }
+
+    #[test]
     fn only_localhost_urls_are_downloadable() {
         assert!(super::validate_download_url("http://127.0.0.1:8000/api/x.wav").is_ok());
         assert!(super::validate_download_url("http://localhost:8000/api/x.wav").is_ok());
@@ -7720,12 +12488,39 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         let held = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
         let taken = held.local_addr().unwrap().port();
 
-        let (got, _guard) = super::reserve_port("0.0.0.0", taken).unwrap();
+        let (got, _guard) = super::reserve_port("0.0.0.0", taken, false).unwrap();
 
         assert_ne!(
             got, taken,
             "handed back a port another socket already holds"
         );
+    }
+
+    #[test]
+    fn a_loopback_backend_is_not_given_a_port_held_on_every_interface() {
+        // #859 binds loopback while network access is off. On Windows a
+        // 127.0.0.1 bind succeeds while another process listens on 0.0.0.0 at
+        // the same port, so a loopback-only probe would hand a second
+        // StemDeck the first one's port (#424 again, from the other side).
+        let held = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let taken = held.local_addr().unwrap().port();
+
+        let (got, _guard) = super::reserve_port("127.0.0.1", taken, false).unwrap();
+
+        assert_ne!(got, taken, "loopback reservation ignored a wildcard holder");
+    }
+
+    #[test]
+    fn an_every_interface_backend_is_not_given_a_port_held_on_loopback() {
+        // The reverse: a StemDeck with network access on must not take the
+        // port of one listening on loopback only. Windows lets the wildcard
+        // bind succeed, and the loopback socket would keep answering 127.0.0.1.
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let taken = held.local_addr().unwrap().port();
+
+        let (got, _guard) = super::reserve_port("0.0.0.0", taken, false).unwrap();
+
+        assert_ne!(got, taken, "wildcard reservation ignored a loopback holder");
     }
 
     #[test]
@@ -7759,19 +12554,116 @@ b6052160df96b31c9b1e33854a4dcda3d4b57641b880270f31736fb9f445d384  ffmpeg-n7.1-la
         // parallel, so the window is narrowed rather than closed. Walking the
         // range absorbs a lost race. A reserve_port that genuinely ignored a
         // free port would have to lose all two hundred.
-        let mut attempts = 0_u32;
-        let granted = (21_000..21_200).find_map(|wanted| {
-            drop(super::claim_port("0.0.0.0", wanted).ok()?);
-            attempts += 1;
-            let (got, guard) = super::reserve_port("0.0.0.0", wanted).ok()?;
+        //
+        // Free means free on both addresses, which is what reserve_port asks,
+        // and it has to grant it to a backend bound to either one.
+        for host in [super::LOOPBACK, super::ALL_INTERFACES] {
+            let mut attempts = 0_u32;
+            let granted = (21_000..21_200).find_map(|wanted| {
+                drop(super::claim_port(super::LOOPBACK, wanted, false).ok()?);
+                drop(super::claim_port(super::ALL_INTERFACES, wanted, false).ok()?);
+                attempts += 1;
+                let (got, guard) = super::reserve_port(host, wanted, false).ok()?;
+                (got == wanted).then_some(guard)
+            });
+
+            assert!(attempts > 0, "no free port in 21000..21200 to test with");
+            assert!(
+                granted.is_some(),
+                "reserve_port({host}) fell back on all {attempts} ports it had just been shown were free"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restart_gets_back_the_port_its_backend_just_closed() {
+        // #859 restarts the backend whenever the network switch changes, and
+        // the page's origin, with everything it keeps in localStorage, is the
+        // port. The stopped backend closed its connections first, which leaves
+        // them in TIME_WAIT, and on Linux and macOS a plain bind refuses such
+        // a port for up to a minute, so the restart moved to a free port.
+        //
+        // A fixed range for the reason given in a_free_port_is_granted_as_asked.
+        // TcpListener sets SO_REUSEADDR on unix, as uvicorn does.
+        let granted = (21_400..21_600).find_map(|wanted| {
+            let listener = std::net::TcpListener::bind((super::LOOPBACK, wanted)).ok()?;
+            let mut client = std::net::TcpStream::connect((super::LOOPBACK, wanted)).ok()?;
+            let (served, _) = listener.accept().ok()?;
+            // The backend closes first, as uvicorn does when it shuts down;
+            // reading the end of stream means its close has arrived.
+            drop(served);
+            std::io::Read::read(&mut client, &mut [0_u8; 1]).ok()?;
+            drop(client);
+            drop(listener);
+            let (got, guard) = super::reserve_port(super::LOOPBACK, wanted, true).ok()?;
             (got == wanted).then_some(guard)
         });
 
-        assert!(attempts > 0, "no free port in 21000..21200 to test with");
         assert!(
             granted.is_some(),
-            "reserve_port fell back on all {attempts} ports it had just been shown were free"
+            "every port the stopped backend had closed went to another port on restart"
         );
+    }
+
+    #[test]
+    fn only_a_claim_after_a_stop_reuses_the_address_and_never_on_windows() {
+        // SO_REUSEADDR on Windows lets a bind take a port another program
+        // listens on, so it must never be set there.
+        let (_, fresh) = super::claim_port(super::LOOPBACK, 0, false).unwrap();
+        assert!(!fresh.reuse_address().unwrap());
+        let (_, after_stop) = super::claim_port(super::LOOPBACK, 0, true).unwrap();
+        assert_eq!(after_stop.reuse_address().unwrap(), cfg!(unix));
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn an_update_and_a_restart_never_overlap() {
+        // The update renames backend/, which a backend being started or
+        // restarted runs from. Each refuses while the other holds `starting`.
+        let state = super::BackendState::default();
+        state.inner.lock().unwrap().starting = true;
+        assert!(
+            super::UpdateClaim::take(&state).is_err(),
+            "update ran during a restart"
+        );
+
+        state.inner.lock().unwrap().starting = false;
+        let claim = super::UpdateClaim::take(&state).unwrap();
+        assert!(
+            state.inner.lock().unwrap().starting,
+            "a restart could begin mid-update"
+        );
+        drop(claim);
+        assert!(
+            !state.inner.lock().unwrap().starting,
+            "a failed update left the backend unstartable"
+        );
+    }
+
+    #[test]
+    fn the_backend_listens_beyond_loopback_only_once_network_access_is_on() {
+        use super::{bind_host_for, ALL_INTERFACES as ALL, LOOPBACK as LO};
+        // (settings.json, STEMDECK_ALLOW_NETWORK, where the backend binds),
+        // with the same precedence as get_allow_network in app/core/settings.py.
+        let cases = [
+            // First launch: no settings yet, the desktop default is off.
+            (None, None, LO),
+            (Some(r#"{"allow_network": true}"#), None, ALL),
+            (Some(r#"{"allow_network": false}"#), None, LO),
+            (Some(r#"{"port": 8000}"#), None, LO),
+            // Unreadable or not a bool: fail closed.
+            (Some("{not json"), None, LO),
+            (Some(r#"{"allow_network": "yes"}"#), None, LO),
+            (Some("[]"), None, LO),
+            // The variable pre-enables it, but a stored choice wins.
+            (Some(r#"{"port": 8000}"#), Some("1"), ALL),
+            (None, Some(" 1 "), ALL),
+            (Some(r#"{"allow_network": false}"#), Some("1"), LO),
+            (None, Some("0"), LO),
+        ];
+        for (settings, env, want) in cases {
+            assert_eq!(bind_host_for(settings, env), want, "{settings:?}, {env:?}");
+        }
     }
 
     #[test]

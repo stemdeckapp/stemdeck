@@ -1,0 +1,201 @@
+#!/bin/sh
+# Give the folders the app writes to the owner the container runs as, changing
+# only the entries that are wrong (#994).
+#
+# Usage: docker-reown.sh UID GID DIR...
+#
+# The entrypoint used to run `chown -R` over the whole library on every start.
+# That rewrote every file even when all of them were already right: slow on a
+# large Unraid share or NAS, and it bumped every file's change time, so backup
+# and sync tools saw the whole library as changed. This walks each tree once,
+# reading only, and chowns just the entries whose owner or group differs. A
+# tree that is already right is left exactly as it was, and the repairs the
+# recursive chown was there for still happen: a bind mount Docker created as
+# root on first run, and files a root process left inside the library.
+#
+# It never leaves the trees it is given, and it runs as root, so this matters:
+#   - find -P does not follow a symlink.
+#   - chown runs through -execdir, so find changes into each directory itself
+#     and chown is handed ./name, never an absolute path. With an absolute path
+#     chown would resolve every parent again, and another writer on the share
+#     could swap a parent directory for a symlink (to /etc, say) between find
+#     listing an entry and chown acting on it.
+#   - chown -h changes a link itself, never what it points at.
+#   - A DIR that is itself a symlink, or not a directory, is skipped.
+#
+# It writes no file of its own, so it runs the same on a read-only root
+# filesystem with no tmpfs on /tmp (docker run --read-only).
+#
+# Best effort, like the chown it replaces: it always exits 0, so a read-only
+# mount cannot stop the app from starting. It prints one line per DIR saying
+# what it did and how long it took, after the first five lines of any error, so
+# a read-only or root_squash mount names an entry that failed.
+
+# Everything the log shows goes to fd 4, so the walk's own output can be
+# captured on stdout. A plain exec whose redirection fails ends a dash script,
+# so with stdout closed the walk would never run; `command exec` reports the
+# failure instead, and the log then goes nowhere while the walk still runs.
+command exec 4>&1 || exec 4>/dev/null
+log() { echo "stemdeck: ownership: $*" >&4; }
+
+if [ "$#" -lt 3 ]; then
+  log "usage: docker-reown.sh UID GID DIR..."
+  exit 0
+fi
+
+uid="$1"
+gid="$2"
+shift 2
+
+case "$uid" in
+  '' | *[!0-9]*)
+    log "PUID '${uid}' is not a number, ownership left unchanged"
+    exit 0
+    ;;
+esac
+case "$gid" in
+  '' | *[!0-9]*)
+    log "PGID '${gid}' is not a number, ownership left unchanged"
+    exit 0
+    ;;
+esac
+
+# No real id is longer than 20 digits (2^64 has 20), and the stripping below
+# takes time that grows with the square of the length, so a longer value is
+# refused before it runs.
+if [ "${#uid}" -gt 20 ] || [ "${#gid}" -gt 20 ]; then
+  log "PUID or PGID is longer than 20 characters, ownership left unchanged"
+  exit 0
+fi
+
+# 099 is 99 to chown and find, but stat prints 99, and the failure check below
+# compares stat's text. Strip leading zeros, keeping a lone 0.
+strip_zeros() {
+  v="$1"
+  while :; do
+    case "$v" in
+      0?*) v="${v#0}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$v"
+}
+uid="$(strip_zeros "$uid")"
+gid="$(strip_zeros "$gid")"
+
+# find refuses -execdir while PATH holds a relative or empty entry, because the
+# command would then be looked up in each directory it visits. Keep only the
+# absolute entries, in their order; with none left, use the system default.
+# set -f: the split must not expand a * or ? in an entry into other paths.
+safe_path=""
+old_ifs="$IFS"
+IFS=:
+set -f
+for p in $PATH; do
+  case "$p" in
+    /*) safe_path="${safe_path:+${safe_path}:}${p}" ;;
+  esac
+done
+set +f
+IFS="$old_ifs"
+PATH="${safe_path:-/usr/sbin:/usr/bin:/sbin:/bin}"
+export PATH
+
+# Run by -execdir with a batch of ./name entries from one directory. When chown
+# reports a failure, find out how many entries it left wrong and print one f
+# for each, counted with find's own marks, so the count is real without giving
+# up -execdir's batching on the success path. chown's error lines go to find's
+# stderr.
+#
+# One stat for the whole batch, not one per entry: on a root_squash or
+# read-only share every chown fails on every start, and a stat per entry made
+# 100k entries take minutes before the app could start. stat without -L reads
+# a link itself, never its target. It prints one uid:gid line per entry it can
+# read, digits and a colon only, so no file name reaches the loop and the split
+# cannot glob; an entry it cannot read prints nothing and stays counted as
+# failed. The f loop is builtins only.
+# Single-quoted on purpose: the batch shell expands these, not this one.
+# shellcheck disable=SC2016
+batch='chown -h -- "$REOWN_OWNER" "$@" && exit 0
+n=$#
+for o in $(stat -c %u:%g -- "$@" 2>/dev/null); do
+  [ "$o" = "$REOWN_OWNER" ] && n=$((n - 1))
+done
+while [ "$n" -gt 0 ]; do printf f; n=$((n - 1)); done
+exit 1'
+REOWN_OWNER="${uid}:${gid}"
+export REOWN_OWNER
+
+# Reads find's and chown's stderr. Shows the first five lines in the log and
+# says how many more there were; prints e when there was any. sed does the
+# counting, so a library where every entry fails costs one pass, not one shell
+# loop per line.
+cap_errors() {
+  sed -n -e '1,5s/^/stemdeck: ownership:   /p' -e '$=' | {
+    count=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        'stemdeck: ownership:   '*) printf '%s\n' "$line" >&4 ;;
+        *[!0-9]* | '') ;;
+        *) count="$line" ;;
+      esac
+    done
+    if [ "$count" -gt 5 ]; then
+      log "  ($((count - 5)) more error lines not shown)"
+    fi
+    if [ "$count" -gt 0 ]; then printf e; fi
+  }
+}
+
+count_of() {  # count_of <char> <marks>
+  n="$(printf '%s' "$2" | tr -cd "$1" | wc -c)"
+  echo $((n))
+}
+
+# Milliseconds since the epoch. GNU date prints %N; one that cannot falls back
+# to whole seconds rather than breaking the arithmetic.
+now_ms() {
+  t="$(date +%s%N 2>/dev/null)"
+  case "$t" in
+    '' | *[!0-9]*) t="$(date +%s)000000000" ;;
+  esac
+  echo $((t / 1000000))
+}
+
+for dir in "$@"; do
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    log "${dir} is not a directory, skipped"
+    continue
+  fi
+
+  start="$(now_ms)"
+  # One character per event, all on the captured stdout: x for an entry that
+  # was wrong and handed to chown, c for one already right, f for one chown
+  # left wrong, e when anything was written to stderr. Counting characters,
+  # not lines, keeps a file name with a newline in it from skewing the count.
+  # find's stderr goes through cap_errors; its stdout goes to fd 3, the
+  # capture.
+  marks="$( { find -P "$dir" \( ! -user "$uid" -o ! -group "$gid" \) \
+    -execdir sh -c "$batch" reown {} + -printf x -o -printf c \
+    2>&1 1>&3 3>&- 4>&- | cap_errors 3>&-; } 3>&1)"
+  took=$(($(now_ms) - start))
+
+  wrong="$(count_of x "$marks")"
+  right="$(count_of c "$marks")"
+  failed="$(count_of f "$marks")"
+  errors="$(count_of e "$marks")"
+  total=$((wrong + right))
+  changed=$((wrong - failed))
+
+  if [ "$total" -eq 0 ]; then
+    log "${dir} could not be checked, ownership left unchanged"
+  elif [ "$failed" -gt 0 ] || [ "$errors" -gt 0 ]; then
+    log "${dir}: re-owned ${changed}, failed ${failed} of ${total} entries to ${uid}:${gid} in ${took} ms, errors above"
+  elif [ "$wrong" -eq 0 ]; then
+    log "${dir} already owned by ${uid}:${gid}, nothing changed (${total} entries checked in ${took} ms)"
+  else
+    log "${dir}: re-owned ${changed} of ${total} entries to ${uid}:${gid} in ${took} ms"
+  fi
+done
+
+exit 0

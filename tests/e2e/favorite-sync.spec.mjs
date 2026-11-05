@@ -15,9 +15,23 @@ test.describe("studio", () => {
 
   test("a heart pressed in the studio is saved on the server", async ({ page }) => {
     const { favoriteWrites } = await openStudio(page);
-    await row(page, SIBLING_JOB_ID).hover();
-    await row(page, SIBLING_JOB_ID).locator(".cat-fav").click();
-    await expect.poll(() => favoriteWrites).toContainEqual({ id: SIBLING_JOB_ID, favorite: true });
+    await page.locator("#fav-btn").click();
+    await expect.poll(() => favoriteWrites).toContainEqual({ id: JOB_ID, favorite: true });
+  });
+
+  test("a heart the server refuses before the restart after a move says so", async ({ page }) => {
+    // What the backend answers between a stems folder move and the restart
+    // (tests/test_stems_location.py). This suite's backend is not the desktop
+    // app, so it cannot move, and the answer is given here.
+    await openStudio(page);
+    await page.route("**/api/jobs/*/favorite", (route) =>
+      route.fulfill({ status: 409, json: { detail: "server words", code: "restart_required" } }));
+    await page.locator("#fav-btn").click();
+    const box = page.locator("#error");
+    await expect(box).toContainText(
+      "Restart StemDeck to finish moving your stems folder. Until then, changes are not saved.",
+    );
+    await expect(box).not.toContainText("server words");
   });
 
   test("a favourite set on the phone shows in the studio", async ({ page }) => {

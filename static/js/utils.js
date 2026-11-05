@@ -27,17 +27,49 @@ export async function storeSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("[store] localStorage set failed", e); }
 }
 
+/** Write several keys at once: `entries` is { key: value }, null clearing a
+ * record as storeSet does. On the desktop it is one store_set_many, which
+ * saves the store file once (#996): every store_set saves the whole file,
+ * which holds every song's mixes. In a browser each key is written, and one
+ * that cannot be does not stop the others. Never throws; failures are logged. */
+export async function storeSetMany(entries) {
+  const keys = Object.keys(entries || {});
+  if (!keys.length) return;
+  if (window.__TAURI__?.core?.invoke) {
+    try {
+      await window.__TAURI__.core.invoke("store_set_many", { entries });
+    } catch (e) { console.warn("[store] set failed for", keys.join(", "), e); }
+    return;
+  }
+  for (const key of keys) {
+    try { localStorage.setItem(key, JSON.stringify(entries[key])); } catch (e) { console.warn("[store] localStorage set failed for", key, e); }
+  }
+}
+
 // Debounced variant — coalesces rapid writes (e.g. mixer slider moves) into
 // a single store write ~300ms after the last call. Each call snapshots the
 // value so no mutation races occur.
 const _storePending = new Map();
 export function storeSetDebounced(key, value, delayMs = 300) {
-  if (_storePending.has(key)) clearTimeout(_storePending.get(key));
+  const prev = _storePending.get(key);
+  if (prev) clearTimeout(prev.timer);
   const snapshot = structuredClone(value);
-  _storePending.set(key, setTimeout(() => {
+  const timer = setTimeout(() => {
     _storePending.delete(key);
     storeSet(key, snapshot);
-  }, delayMs));
+  }, delayMs);
+  _storePending.set(key, { timer, snapshot });
+}
+
+/** Write a debounced value now, if one is waiting for `key`: before something
+ * that reads or replaces that record (a mode switch), so a late write cannot
+ * land after it. Resolves when it is written (at once when nothing waits). */
+export function storeFlushPending(key) {
+  const pending = _storePending.get(key);
+  if (!pending) return Promise.resolve();
+  clearTimeout(pending.timer);
+  _storePending.delete(key);
+  return storeSet(key, pending.snapshot);
 }
 
 // Keys that hold critical user data and must be migrated from localStorage

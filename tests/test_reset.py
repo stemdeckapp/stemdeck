@@ -29,20 +29,30 @@ def client():
 # ─── registry.reset_all() ──────────────────────────────────────────────────
 
 
-def test_reset_all_clears_registry_and_deletes_job_dirs(tmp_path):
+@pytest.fixture
+def jobs_dir(tmp_path):
+    """A jobs folder of its own: tmp_path also holds conftest's jobs root, which
+    reset now leaves alone as not StemDeck's."""
+    d = tmp_path / "jobs"
+    d.mkdir()
+    return d
+
+
+def test_reset_all_clears_registry_and_deletes_job_dirs(jobs_dir):
     job = Job(id="abcdefabcdef", status="done", title="Old song")
     _jobs[job.id] = job
-    job_dir = tmp_path / job.id
+    job_dir = jobs_dir / job.id
     (job_dir / "stems").mkdir(parents=True)
     (job_dir / "stems" / "vocals.wav").write_bytes(b"RIFF")
-    (tmp_path / "registry.json").write_text(json.dumps({"version": 1, "jobs": [job.to_record()]}))
-    (tmp_path / "failed").mkdir()
-    (tmp_path / "failed" / "somejob").mkdir()
+    (jobs_dir / "registry.json").write_text(json.dumps({"version": 1, "jobs": [job.to_record()]}))
+    (jobs_dir / "failed").mkdir()
+    (jobs_dir / "failed" / "abcdefabcde1").mkdir()
+    (jobs_dir / "failed" / "abcdefabcde1" / "error.txt").write_text("evidence")
 
-    reset_registry(tmp_path)
+    reset_registry(jobs_dir)
 
     assert _jobs == {}
-    assert list(tmp_path.iterdir()) == []  # every entry under jobs_dir is gone
+    assert list(jobs_dir.iterdir()) == []  # every entry under jobs_dir is gone
 
 
 def test_reset_all_clears_active_procs(tmp_path):
@@ -61,23 +71,23 @@ def test_reset_all_on_missing_dir_is_a_noop(tmp_path):
 # ─── POST /api/reset ────────────────────────────────────────────────────────
 
 
-def test_reset_endpoint_works_without_desktop_mode(client, monkeypatch, tmp_path):
+def test_reset_endpoint_works_without_desktop_mode(client, monkeypatch, jobs_dir):
     """Available in server mode too -- gated by the same network_gate
     middleware every other settings-mutating endpoint already relies on, not
     a desktop-only restriction."""
     monkeypatch.delenv("STEMDECK_DESKTOP", raising=False)
-    monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
+    monkeypatch.setattr("app.main.JOBS_DIR", jobs_dir)
     job = Job(id="abcdefabcded", status="done")
     _jobs[job.id] = job
-    (tmp_path / job.id).mkdir()
+    (jobs_dir / job.id).mkdir()
 
     r = client.post("/api/reset")
 
     assert r.status_code == 200
     # "undeleted" reports what reset could not remove; 0 on a clean reset (#521).
-    assert r.json() == {"ok": True, "undeleted": 0}
+    assert r.json() == {"ok": True, "undeleted": 0, "skipped": 0}
     assert _jobs == {}
-    assert not (tmp_path / job.id).exists()
+    assert not (jobs_dir / job.id).exists()
 
 
 def test_reset_endpoint_rejects_active_job(client, monkeypatch, tmp_path):
@@ -91,19 +101,19 @@ def test_reset_endpoint_rejects_active_job(client, monkeypatch, tmp_path):
     assert job.id in _jobs  # nothing was touched
 
 
-def test_reset_endpoint_succeeds(client, monkeypatch, tmp_path):
-    monkeypatch.setattr("app.main.JOBS_DIR", tmp_path)
+def test_reset_endpoint_succeeds(client, monkeypatch, jobs_dir):
+    monkeypatch.setattr("app.main.JOBS_DIR", jobs_dir)
     job = Job(id="abcdefabcdea", status="done")
     _jobs[job.id] = job
-    (tmp_path / job.id).mkdir()
+    (jobs_dir / job.id).mkdir()
 
     r = client.post("/api/reset")
 
     assert r.status_code == 200
     # "undeleted" reports what reset could not remove; 0 on a clean reset (#521).
-    assert r.json() == {"ok": True, "undeleted": 0}
+    assert r.json() == {"ok": True, "undeleted": 0, "skipped": 0}
     assert _jobs == {}
-    assert not (tmp_path / job.id).exists()
+    assert not (jobs_dir / job.id).exists()
 
 
 def test_reset_endpoint_allows_only_terminal_jobs(client, monkeypatch, tmp_path):

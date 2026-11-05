@@ -55,9 +55,11 @@ fn is_torch_dist_info(name: &str) -> bool {
 /// their RECORD. Only names that exist are returned.
 pub fn owned_entries(site: &Path) -> io::Result<BTreeSet<String>> {
     let mut owned = BTreeSet::new();
+    let mut listed = BTreeSet::new();
     for entry in fs::read_dir(site)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
+        listed.insert(name.clone());
         if !is_torch_dist_info(&name) {
             continue;
         }
@@ -83,7 +85,10 @@ pub fn owned_entries(site: &Path) -> io::Result<BTreeSet<String>> {
             }
         }
     }
-    owned.retain(|name| name != BACKUP_DIR && site.join(name).exists());
+    // Matched against the listing, not checked with exists(): a damaged
+    // RECORD can name "C:", which Windows joins to that drive's current
+    // directory, or "..." and ". ", which it trims to site itself.
+    owned.retain(|name| name != BACKUP_DIR && listed.contains(name));
     Ok(owned)
 }
 
@@ -113,6 +118,12 @@ pub fn snapshot(site: &Path) -> io::Result<usize> {
             io::ErrorKind::NotFound,
             "no torch packages found to back up",
         ));
+    }
+    // A backup with no manifest is a commit that could not finish deleting
+    // it. Nothing in it is to be restored, and a stale entry left in it would
+    // block the move below.
+    if backup.exists() {
+        fs::remove_dir_all(&backup)?;
     }
     fs::create_dir_all(&backup)?;
     // The manifest goes first and reaches the disk before anything moves, so
@@ -151,16 +162,16 @@ pub fn restore(site: &Path) -> io::Result<()> {
         .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !n.contains(['/', '\\']))
         .map(str::to_string)
         .collect();
+    // From the listing for the same reason as in owned_entries.
+    let saved: BTreeSet<String> = fs::read_dir(&backup)?
+        .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+        .collect::<io::Result<_>>()?;
     // Moved names come back, replacing whatever is there now. A name the
     // manifest lists but the backup lacks was never moved, so it is still the
     // original and stays.
-    for name in &names {
-        let saved = backup.join(name);
-        if !saved.exists() {
-            continue;
-        }
+    for name in names.intersection(&saved) {
         remove_entry(&site.join(name))?;
-        fs::rename(&saved, site.join(name))?;
+        fs::rename(backup.join(name), site.join(name))?;
     }
     // Then anything torch-owned that the original did not have: the CUDA
     // build's own dist-info, its extra top-level packages.
@@ -175,6 +186,10 @@ pub fn restore(site: &Path) -> io::Result<()> {
 /// The swap worked: the backup is no longer needed.
 pub fn commit(site: &Path) -> io::Result<()> {
     let backup = backup_root(site);
+    // The manifest goes first, so a delete that stops part way (a file held
+    // open) leaves no half-emptied backup for the next launch to restore over
+    // the working install.
+    remove_entry(&backup.join(MANIFEST))?;
     if backup.exists() {
         fs::remove_dir_all(backup)?;
     }
@@ -378,6 +393,86 @@ mod tests {
         commit(&site).unwrap();
         assert!(!has_backup(&site));
         assert!(site.join("torch").join("lib").join("c10_cuda.dll").exists());
+    }
+
+    /// A file in the backup held open, as an antivirus scan can, stops the
+    /// commit part way. What is left must not count as a backup, or the next
+    /// launch restores half a CPU torch over the verified CUDA one. The open
+    /// file sits in functorch, which NTFS lists before manifest.txt.
+    #[cfg(windows)]
+    #[test]
+    fn a_commit_that_stops_part_way_leaves_no_backup_to_restore() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let site = fake_site(tmp.path(), "2.6.0+cpu", None);
+        snapshot(&site).unwrap();
+        install_cuda(&site);
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(backup_root(&site).join("functorch").join("__init__.py"))
+            .unwrap();
+
+        assert!(commit(&site).is_err());
+        assert!(!has_backup(&site));
+        restore(&site).unwrap();
+        assert!(site.join("torch").join("lib").join("c10_cuda.dll").exists());
+
+        // The leftover is cleared by the next snapshot, not moved into.
+        drop(held);
+        discard_installed(&site).unwrap();
+        let site = fake_site(tmp.path(), "2.6.0+cpu", None);
+        snapshot(&site).unwrap();
+        restore(&site).unwrap();
+        assert_eq!(
+            fs::read_to_string(site.join("functorch").join("__init__.py")).unwrap(),
+            "2.6.0+cpu"
+        );
+        assert!(!backup_root(&site).exists());
+    }
+
+    /// A damaged RECORD naming a drive must not make the drive's current
+    /// directory look like a torch entry, which discard_installed would
+    /// delete. Only reads, so the unfixed code is safe to run against it.
+    #[test]
+    fn a_record_line_naming_no_entry_in_site_is_not_owned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = fake_site(tmp.path(), "2.6.0+cpu", None);
+        let record = site.join("torch-2.6.0+cpu.dist-info").join("RECORD");
+        let mut lines = fs::read_to_string(&record).unwrap();
+        // Windows trims trailing dots and spaces, so the last three are site.
+        lines.push_str("C:\\x,,\nC:,,\n...\\x,,\n. /x,,\n.. \\x,,\n");
+        fs::write(&record, lines).unwrap();
+        let owned = owned_entries(&site).unwrap();
+        let expected: BTreeSet<String> = ["functorch", "torch", "torch-2.6.0+cpu.dist-info"]
+            .map(String::from)
+            .into();
+        assert_eq!(owned, expected);
+    }
+
+    /// The same for a damaged manifest, which an older build could write
+    /// from such a RECORD. "..." joins to the backup dir and to site itself;
+    /// acting on it would delete site-packages. This test's site is a temp
+    /// dir, so the unfixed code is safe to run against it.
+    #[test]
+    fn a_manifest_line_that_names_no_entry_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let site = fake_site(tmp.path(), "2.6.0+cpu", None);
+        snapshot(&site).unwrap();
+        install_cuda(&site);
+        let manifest = backup_root(&site).join(MANIFEST);
+        let mut lines = fs::read_to_string(&manifest).unwrap();
+        lines.push_str("...\n. \n");
+        fs::write(&manifest, lines).unwrap();
+
+        restore(&site).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(site.join("torch").join("lib").join("c10.dll")).unwrap(),
+            "c10 2.6.0+cpu"
+        );
+        assert!(site.join("numpy").join("__init__.py").exists());
+        assert!(!has_backup(&site));
     }
 
     /// A crash part way through the snapshot: some entries moved, some not.
