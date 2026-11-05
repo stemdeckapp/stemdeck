@@ -86,6 +86,10 @@ export function _detectDefault() {
 }
 
 export async function initI18n() {
+  // The browser's language until the stored choice is read: on the desktop
+  // that read waits for the store to open, and the message for a store that
+  // cannot be opened (#1023) is shown in it.
+  _lang = _detectDefault();
   const stored = await storeGet("stemdeck.language", null);
   _lang = stored && SUPPORTED_CODES.has(stored) ? stored : _detectDefault();
   document.documentElement.lang = _lang === "zh-Hans" ? "zh-Hans" : _lang;

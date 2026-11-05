@@ -19,7 +19,7 @@ import { setSectionsLoopBridge, refreshSectionsAddState } from "./sections.js";
 import { wireStemListControls, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics, wireCatalogControls } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
-import { runStoreMigrationIfNeeded } from "./utils.js";
+import { runStoreMigrationIfNeeded, onStoreUnavailable } from "./utils.js";
 import { ignoredByShortcuts } from "./libraryDeleteKey.js";
 import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
 import { initFooterFit, refitFooter } from "./footerFit.js";
@@ -474,6 +474,17 @@ function wireAllButton() {
 // top-level call below, to minimize the flash of English before the DOM
 // gets its real language (unavoidable without server-side rendering, since
 // static/index.html always ships pre-rendered in English).
+// Registered before anything reads the store. When the desktop store cannot
+// be opened, or is found out of reach later, the page stops (utils.js) and
+// says so here, with Try again loading it afresh, which opens the store again
+// and lifts the shell's block on writes (#1023). Not waiting for i18nReady:
+// it waits on the store itself; t() is already in the browser's language.
+onStoreUnavailable(() => {
+  showError(t("store.unavailable"), null, {
+    retry: false,
+    action: { label: t("job.tryAgain"), run: () => window.location.reload(), className: "store-retry-btn" },
+  });
+});
 const i18nReady = initI18n().then(() => applyTranslations(document));
 
 syncStemNamesFromAPI().then(() => buildStripStems());

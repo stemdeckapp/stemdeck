@@ -1084,7 +1084,7 @@ def quarantine_dirs(jobs_dir: Path) -> list[Path]:
 # that found the store damaged.
 _OWN_FILE_RE = re.compile(
     r"(registry\.json(\.(corrupt|bad)-[0-9a-f-]+)?|\.registry\.json\.[\w.-]+\.tmp"
-    r"|user-data\.json(\.(bak|tmp|corrupt-[0-9]+(-[0-9]+)?))?)\Z"
+    r"|user-data\.json(\.(bak|tmp|corrupt-[0-9]+))?)\Z"
 )
 
 

@@ -4,28 +4,72 @@
 // The store is backed by ~/Library/Application Support/app.stemdeck.desktop/user-data.json
 // on macOS — outside WebKit's reach, so WebView resets can never destroy user data.
 
-// While the shell cannot open user-data.json (a virus scanner or a sync client
-// holding it, #1023) every store command fails with this prefix. A read asks
-// again for about four seconds before it falls back, so a moment's lock never
-// shows an empty library. The shell refuses to save a key whose read failed,
-// so a fallback can never be written over the real record.
+// The desktop store is opened once, before the first read or write (#1023):
+// store_ready waits up to ten seconds for a user-data.json that a virus
+// scanner or a sync client is holding. When it cannot be opened, or a later
+// command finds it out of reach, every store command fails with this prefix,
+// and the page stops instead of going on with stand-ins for what it could not
+// read: onStoreUnavailable reports it once, and the read or write never
+// settles. The shell refuses every write until the page loads again, so a
+// stand-in is never saved over the real record.
 const STORE_UNAVAILABLE = "user-data-unavailable";
-const STORE_RETRY_MS = [250, 500, 1000, 2000];
+const NEVER = new Promise(() => {});
+let storeReadyPromise = null;
+let unavailableError = null;
+let unavailableHandler = null;
+
+export function isStoreUnavailable(err) {
+  return String(err?.message ?? err).startsWith(STORE_UNAVAILABLE);
+}
+
+/** Whether the store has been found out of reach since the page loaded. */
+export function storeIsUnavailable() {
+  return unavailableError !== null;
+}
+
+/** What the page does when the store cannot be reached (main.js shows the
+ * error box with Try again). One reported before this is registered is handed
+ * over on registration. */
+export function onStoreUnavailable(handler) {
+  unavailableHandler = handler;
+  if (unavailableError !== null) handler(unavailableError);
+}
+
+function reportUnavailable(err) {
+  if (unavailableError !== null) return;
+  unavailableError = err;
+  console.warn("[store] the library list cannot be reached:", err);
+  if (unavailableHandler) unavailableHandler(err);
+}
+
+/** Resolves once the desktop store is open; never, when it cannot be. */
+export function storeReady() {
+  if (!window.__TAURI__?.core?.invoke) return Promise.resolve();
+  if (!storeReadyPromise) {
+    storeReadyPromise = window.__TAURI__.core.invoke("store_ready").then(
+      () => undefined,
+      (err) => {
+        reportUnavailable(err);
+        return NEVER;
+      },
+    );
+  }
+  return storeReadyPromise;
+}
 
 export async function storeGet(key, fallback = null) {
   if (window.__TAURI__?.core?.invoke) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const val = await window.__TAURI__.core.invoke("store_get", { key });
-        return val ?? fallback;
-      } catch (e) {
-        if (String(e).startsWith(STORE_UNAVAILABLE) && attempt < STORE_RETRY_MS.length) {
-          await new Promise((resolve) => setTimeout(resolve, STORE_RETRY_MS[attempt]));
-          continue;
-        }
-        console.warn("[store] get failed for", key, e);
-        return fallback;
+    await storeReady();
+    try {
+      const val = await window.__TAURI__.core.invoke("store_get", { key });
+      return val ?? fallback;
+    } catch (e) {
+      if (isStoreUnavailable(e)) {
+        reportUnavailable(e);
+        return NEVER;
       }
+      console.warn("[store] get failed for", key, e);
+      return fallback;
     }
   }
   try {
@@ -34,33 +78,58 @@ export async function storeGet(key, fallback = null) {
   } catch (e) { console.warn("[store] localStorage get failed for", key, e); return fallback; }
 }
 
+/** Resolves true once written, false when the write failed (logged, or
+ * reported through onStoreUnavailable). Never throws. */
 export async function storeSet(key, value) {
   if (window.__TAURI__?.core?.invoke) {
+    await storeReady();
     try {
       await window.__TAURI__.core.invoke("store_set", { key, value });
-    } catch (e) { console.warn("[store] set failed for", key, e); }
-    return;
+      return true;
+    } catch (e) {
+      if (isStoreUnavailable(e)) reportUnavailable(e);
+      else console.warn("[store] set failed for", key, e);
+      return false;
+    }
   }
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("[store] localStorage set failed", e); }
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    console.warn("[store] localStorage set failed", e);
+    return false;
+  }
 }
 
 /** Write several keys at once: `entries` is { key: value }, null clearing a
  * record as storeSet does. On the desktop it is one store_set_many, which
  * saves the store file once (#996): every store_set saves the whole file,
- * which holds every song's mixes. In a browser each key is written, and one
- * that cannot be does not stop the others. Never throws; failures are logged. */
+ * which holds every song's mixes, and all of the keys are saved or none is.
+ * In a browser each key is written, and one that cannot be does not stop the
+ * others. Resolves true when every key was written. Never throws; failures
+ * are logged. */
 export async function storeSetMany(entries) {
   const keys = Object.keys(entries || {});
-  if (!keys.length) return;
+  if (!keys.length) return true;
   if (window.__TAURI__?.core?.invoke) {
+    await storeReady();
     try {
       await window.__TAURI__.core.invoke("store_set_many", { entries });
-    } catch (e) { console.warn("[store] set failed for", keys.join(", "), e); }
-    return;
+      return true;
+    } catch (e) {
+      if (isStoreUnavailable(e)) reportUnavailable(e);
+      else console.warn("[store] set failed for", keys.join(", "), e);
+      return false;
+    }
   }
+  let all = true;
   for (const key of keys) {
-    try { localStorage.setItem(key, JSON.stringify(entries[key])); } catch (e) { console.warn("[store] localStorage set failed for", key, e); }
+    try { localStorage.setItem(key, JSON.stringify(entries[key])); } catch (e) {
+      console.warn("[store] localStorage set failed for", key, e);
+      all = false;
+    }
   }
+  return all;
 }
 
 // Debounced variant — coalesces rapid writes (e.g. mixer slider moves) into
@@ -102,6 +171,7 @@ const _MIGRATE_KEYS = [
 // the migration flag so future upgrades can safely clear WebKit.
 export async function runStoreMigrationIfNeeded() {
   if (!window.__TAURI__?.core?.invoke) return;
+  await storeReady();
   try {
     // Check if any critical key is absent from the store but present in localStorage.
     const needs = await Promise.all(

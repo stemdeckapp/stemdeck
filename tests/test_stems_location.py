@@ -108,7 +108,7 @@ def test_accepts_a_folder_with_the_desktop_shells_user_data_store(tmp_path):
     assert validate_target(target, current) == target.resolve()
 
 
-_STORE_COPIES = ["user-data.json.bak", "user-data.json.tmp", "user-data.json.corrupt-1762000000"]
+_STORE_COPIES = ["user-data.json.bak", "user-data.json.tmp", "user-data.json.corrupt-1"]
 
 
 @pytest.mark.parametrize("name", _STORE_COPIES)
@@ -207,6 +207,50 @@ def test_a_move_keeps_the_target_copy_when_our_store_did_not_get_there(tmp_path)
 
     assert (target / "user-data.json.bak").read_text(encoding="utf-8") == '{"theirs": 1}'
     assert (current / "user-data.json.bak").read_text(encoding="utf-8") == '{"mine": 1}'
+
+
+def test_a_source_with_only_store_copies_never_replaces_the_target_copies(tmp_path):
+    """A source holding a .bak but no user-data.json (a save that stopped
+    partway) does not put its copy over a different one at the target: our
+    user-data.json never got there, so the target's copy is not a leftover of
+    ours (#1023)."""
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "user-data.json.bak").write_text('{"mine": 1}', encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+    (target / "user-data.json").write_text('{"theirs": 2}', encoding="utf-8")
+    (target / "user-data.json.bak").write_text('{"theirs": 1}', encoding="utf-8")
+
+    move_library(current, target)
+
+    assert (target / "user-data.json.bak").read_text(encoding="utf-8") == '{"theirs": 1}'
+    assert (current / "user-data.json.bak").read_text(encoding="utf-8") == '{"mine": 1}'
+
+
+def test_a_move_skips_an_entry_that_vanishes_before_its_rename(tmp_path, monkeypatch):
+    """The .tmp can also go between the size check and the move itself."""
+    from app.core import stems_location
+
+    current = tmp_path / "old"
+    _job_dir(current, "aaaaaaaaaaaa")
+    (current / "user-data.json.tmp").write_text("{}", encoding="utf-8")
+    target = tmp_path / "new"
+    target.mkdir()
+
+    real_renamed = stems_location._renamed
+
+    def vanishing_renamed(entry, destination):
+        if entry.name == "user-data.json.tmp":
+            entry.unlink()
+            return False  # as a rename refused across drives: the copy follows
+        return real_renamed(entry, destination)
+
+    monkeypatch.setattr(stems_location, "_renamed", vanishing_renamed)
+    move_library(current, target)
+
+    assert (target / "aaaaaaaaaaaa" / "stems" / "vocals.wav").is_file()
+    assert not (target / "user-data.json.tmp").exists()
 
 
 def test_a_move_skips_an_entry_that_vanished_since_the_listing(tmp_path, monkeypatch):

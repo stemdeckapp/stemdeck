@@ -40,7 +40,8 @@ check('storeSetMany is exported', typeof storeSetMany === 'function');
 
 // Desktop: one call, every key in it.
 const calls = [];
-window.__TAURI__ = { core: { invoke: async (cmd, args) => { calls.push({ cmd, args }); return null; } } };
+// store_ready opens the store once before the first write (#1023); not a write.
+window.__TAURI__ = { core: { invoke: async (cmd, args) => { if (cmd !== 'store_ready') calls.push({ cmd, args }); return null; } } };
 await storeSetMany({ 'a:practice': null, 'a:daw': { voice: 'split' }, 'b:practice': 1 });
 check('desktop: one invoke for three keys', calls.length === 1, JSON.stringify(calls));
 check('desktop: the call is store_set_many', calls[0]?.cmd === 'store_set_many', calls[0]?.cmd);

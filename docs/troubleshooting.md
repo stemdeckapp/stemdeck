@@ -59,7 +59,9 @@ A save writes `user-data.json.tmp` first, then keeps the file it replaces as `us
 
 **The library list came back one change older after a crash:** on start, a `user-data.json` that is missing, empty or not valid JSON is restored from the `.tmp` (when that save was complete) or the `.bak`. `logs/setup.log` in the data directory names the file it restored from. If neither copy can be read, the app starts with an empty library list and `setup.log` says `starting with an empty library list`.
 
-**`user-data-unavailable` in the console or in `setup.log`:** `user-data.json` is there but could not be read, often because a virus scanner or a sync client (OneDrive, Dropbox) is holding it. Nothing is restored from a copy and nothing is saved over it. The app tries again by itself. If it keeps failing, close the app, let the sync finish, and start it again.
+**"StemDeck cannot open your library list right now", with Try again:** `user-data.json` is there but could not be read for ten seconds, often because a virus scanner or a sync client (OneDrive, Dropbox) is holding it, or the jobs folder is on a drive that is not connected. StemDeck stops before showing or changing anything: nothing is restored from a copy and nothing is saved over the file. `setup.log` has the reason, after `user-data-unavailable`. Let the sync finish or connect the drive, then press Try again.
+
+**The library list came from an older folder on a first start:** a jobs folder with no `user-data.json` and none of the copies above takes the library list from `Documents/StemDeck/user-data.json`, where older versions kept it. That happens only when the folder holds no store file of any kind.
 
 **Going back to 0.20.x:** 0.20.x reads and saves `user-data.json` as before, but it does not know the copies above:
 

@@ -3,3 +3,6 @@
 # them out with CRLF, so the browser test harness (tests/e2e/serve.sh) is only
 # runnable on Linux. Pin them to LF regardless of the developer's setting.
 *.sh text eol=lf
+
+# Bytes captured from tauri-plugin-store 2.4.3 (#1023): kept exactly as written.
+desktop/src-tauri/tests/fixtures/*.json -text

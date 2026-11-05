@@ -637,6 +637,7 @@ fn main() {
             pick_exports_folder,
             current_exports_dir,
             start_audio_drag,
+            store_ready,
             store_get,
             store_set,
             store_set_many,
@@ -742,29 +743,25 @@ fn current_jobs_dir(app: &tauri::AppHandle) -> PathBuf {
 /// which relocation never touched -- a stems move would "forget" favorites,
 /// folder layout, and per-job mixer state even though the audio moved fine.
 ///
-/// One-time migration: if the new location has nothing yet, copy (not move)
-/// any pre-#403 file found at the old parent-folder path. Copy rather than
-/// delete so a problem here can never lose the only copy of that data.
+/// The one-time copy of a pre-#403 file from the old parent-folder path
+/// happens when the store opens, and only on a first run, when no store file
+/// of any kind is in the jobs folder (store_file::OpenStore::open). Copy
+/// rather than move, so a problem there can never lose the only copy.
 fn documents_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let jobs_dir = current_jobs_dir(app);
     fs::create_dir_all(&jobs_dir)
         .map_err(|e| format!("failed to create {}: {e}", jobs_dir.display()))?;
-    let new_path = jobs_dir.join("user-data.json");
-    if !new_path.is_file() {
-        if let Some(old_path) = documents_stemdeck_dir(app).map(|d| d.join("user-data.json")) {
-            // A missing file beside a complete copy a save keeps (#1023) is a
-            // save that stopped partway, which opening the store recovers
-            // from. Copying the pre-#403 file in would hide that copy behind a
-            // much older library. A .tmp cut short is no such copy.
-            if old_path.is_file()
-                && old_path != new_path
-                && !store_file::has_recoverable_copy(&new_path)
-            {
-                let _ = fs::copy(&old_path, &new_path);
-            }
-        }
+    Ok(jobs_dir.join("user-data.json"))
+}
+
+/// Where the user-data store is, for store_file::UserData: its path, or why
+/// the jobs folder cannot be reached, and the pre-#403 file a first run
+/// copies in.
+fn user_data_place(app: &tauri::AppHandle) -> store_file::Place {
+    store_file::Place {
+        path: documents_store_path(app),
+        legacy: documents_stemdeck_dir(app).map(|d| d.join("user-data.json")),
     }
-    Ok(new_path)
 }
 
 /// The DEFAULT stems folder. Does NOT create it -- see documents_stemdeck_dir
@@ -829,11 +826,18 @@ async fn pick_exports_folder(app: tauri::AppHandle) -> Result<Option<String>, St
     };
 
     let chosen = picked.to_string();
-    let value = serde_json::Value::String(chosen.clone());
-    with_user_data(&app, |store| {
-        store.set(EXPORTS_DIR_KEY.to_string(), value);
-        save_user_data(store)
-    })??;
+    let mut entries = serde_json::Map::new();
+    entries.insert(
+        EXPORTS_DIR_KEY.to_string(),
+        serde_json::Value::String(chosen.clone()),
+    );
+    let data = app.state::<store_file::UserData>();
+    set_values(
+        &data,
+        user_data_place(&app),
+        report_user_data_problem,
+        entries,
+    )?;
     Ok(Some(chosen))
 }
 
@@ -846,7 +850,8 @@ fn current_exports_dir(app: tauri::AppHandle) -> Result<String, String> {
 /// Read a string out of the persistent store, or None if it is absent or is
 /// not a string. Never fails the caller: a missing store means "not chosen".
 fn stored_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
-    let value = with_user_data(app, |store| store.get(key)).ok()??;
+    let data = app.state::<store_file::UserData>();
+    let value = get_value(&data, user_data_place(app), report_user_data_problem, key).ok()??;
     value.as_str().map(|s| s.to_string())
 }
 
@@ -859,21 +864,6 @@ fn exports_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         dragout::resolve_exports_dir(stored_string(app, EXPORTS_DIR_KEY).as_deref(), &fallback);
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     Ok(dir)
-}
-
-/// Run `f` on the user-data store (user-data.json in the jobs folder),
-/// opening it from disk first when it is not open yet or the jobs folder has
-/// moved. A start that finds the file missing, empty or not valid JSON
-/// recovers from the copy a save keeps (#1023) and says so in the log. Err,
-/// starting with store_file::UNAVAILABLE, while the file is there but cannot
-/// be read.
-fn with_user_data<T>(
-    app: &tauri::AppHandle,
-    f: impl FnOnce(&mut store_file::OpenStore) -> T,
-) -> Result<T, String> {
-    let path = documents_store_path(app)?;
-    let data = app.state::<store_file::UserData>();
-    data.with(&path, report_user_data_problem, f)
 }
 
 /// To stderr and setup.log, the shell log a bug report carries, so a
@@ -898,25 +888,99 @@ fn save_user_data(store: &mut store_file::OpenStore) -> Result<(), String> {
         .map_err(|e| format!("could not save user-data.json: {e}"))
 }
 
+/// How long store_ready keeps trying to open the store, and how long it
+/// waits between tries: long enough for a virus scan or a sync client to let
+/// go of the file, short enough that a page that cannot start says so.
+const STORE_READY_WAIT: Duration = Duration::from_secs(10);
+const STORE_READY_PAUSE: Duration = Duration::from_millis(500);
+
+/// Called by the page once, before it reads anything from the store
+/// (static/js/utils.js). Opens the store, trying again for up to
+/// STORE_READY_WAIT while it cannot be reached, and lifts the block on writes
+/// that an earlier failure set (store_file::UserData). Err, starting with
+/// store_file::UNAVAILABLE, when it still cannot: the page then stops and
+/// offers to load again instead of going on with stand-ins. Async, and the
+/// waiting runs off the main thread.
+#[tauri::command]
+async fn store_ready(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = app.state::<store_file::UserData>();
+        let last = std::cell::RefCell::new(String::new());
+        // Each failed try is logged once, not once per half second.
+        let report = |line: &str| {
+            if *last.borrow() != line {
+                report_user_data_problem(line);
+                *last.borrow_mut() = line.to_string();
+            }
+        };
+        wait_until_ready(
+            || data.ready(user_data_place(&app), report),
+            STORE_READY_WAIT,
+            STORE_READY_PAUSE,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Run `attempt` until it works, pausing `pause` between tries, for at most
+/// `budget`; then its last error.
+fn wait_until_ready(
+    mut attempt: impl FnMut() -> Result<(), String>,
+    budget: Duration,
+    pause: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(_) if Instant::now() + pause < deadline => thread::sleep(pause),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// store_get's body, apart from the AppHandle so it can be tested.
+fn get_value(
+    data: &store_file::UserData,
+    place: store_file::Place,
+    report: impl Fn(&str),
+    key: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    data.read(place, report, |store| store.get(key))
+}
+
+/// store_set and store_set_many's body: every key in one save, or none.
+/// Refused whole, starting with store_file::UNAVAILABLE, while the store
+/// cannot be reached or has not been loaded again since it could not.
+fn set_values(
+    data: &store_file::UserData,
+    place: store_file::Place,
+    report: impl Fn(&str),
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    data.write(place, report, |store| set_all_then_save(store, entries))?
+}
+
 /// Get a value from the persistent user-data store.
 #[tauri::command]
 fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
-    let path = documents_store_path(&app)?;
-    app.state::<store_file::UserData>()
-        .get(&path, report_user_data_problem, &key)
+    let data = app.state::<store_file::UserData>();
+    get_value(&data, user_data_place(&app), report_user_data_problem, &key)
 }
 
 /// Set a value in the persistent user-data store and immediately flush to disk.
-/// Refused for a key the page asked for while the store could not be opened:
-/// the page holds a stand-in for it, not its value.
 #[tauri::command]
 fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
-    app.state::<store_file::UserData>()
-        .refuse_unread(std::iter::once(&key))?;
-    with_user_data(&app, |store| {
-        store.set(key, value);
-        save_user_data(store)
-    })?
+    let mut entries = serde_json::Map::new();
+    entries.insert(key, value);
+    let data = app.state::<store_file::UserData>();
+    set_values(
+        &data,
+        user_data_place(&app),
+        report_user_data_problem,
+        entries,
+    )
 }
 
 /// What store_set_many needs of the store: set a key in memory, and write the
@@ -954,16 +1018,20 @@ fn set_all_then_save(
 /// (#996). Each save writes the whole store file, which holds every song's
 /// mixes: on a 9 MB store one save took 47 to 83 ms, so a version delete that
 /// cleared its eight records with store_set took 386 to 626 ms. Synchronous
-/// like store_set, so both run in the order the page sent them, and refused
-/// whole like store_set when one of its keys was not read.
+/// like store_set, so both run in the order the page sent them. All its keys
+/// are saved or none is (set_values).
 #[tauri::command]
 fn store_set_many(
     app: tauri::AppHandle,
     entries: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
-    app.state::<store_file::UserData>()
-        .refuse_unread(entries.keys())?;
-    with_user_data(&app, |store| set_all_then_save(store, entries))?
+    let data = app.state::<store_file::UserData>();
+    set_values(
+        &data,
+        user_data_place(&app),
+        report_user_data_problem,
+        entries,
+    )
 }
 
 /// Clear the persistent user-data store entirely (Settings -> General ->
@@ -975,13 +1043,8 @@ fn store_set_many(
 /// damaged would bring the old library back from one.
 #[tauri::command]
 fn reset_user_data(app: tauri::AppHandle) -> Result<(), String> {
-    with_user_data(&app, |store| {
-        store
-            .reset(report_user_data_problem)
-            .map_err(|e| format!("could not save user-data.json: {e}"))
-    })??;
-    app.state::<store_file::UserData>().forget_unread();
-    Ok(())
+    app.state::<store_file::UserData>()
+        .reset(user_data_place(&app), report_user_data_problem)
 }
 
 /// Called by JS after the one-time localStorage → store migration completes.
@@ -9354,6 +9417,82 @@ mod tests {
         assert_eq!(store.saves.get(), 0);
     }
 
+    /// Test stores live under the repo's git-ignored data/, never a library.
+    fn store_scratch() -> tempfile::TempDir {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/store-tests");
+        fs::create_dir_all(&root).expect("data/store-tests");
+        tempfile::tempdir_in(root).expect("scratch folder")
+    }
+
+    fn store_place(path: Result<PathBuf, String>) -> super::store_file::Place {
+        super::store_file::Place { path, legacy: None }
+    }
+
+    /// store_get and store_set as the page reaches them, through an
+    /// unreachable jobs folder (#1023): both fail with the unavailable prefix
+    /// the page acts on, nothing is written, and writes stay refused until
+    /// store_ready works.
+    #[test]
+    fn store_commands_report_an_unreachable_store_and_refuse_writes_until_ready() {
+        use super::store_file::{UserData, UNAVAILABLE};
+        let dir = store_scratch();
+        let path = dir.path().join("user-data.json");
+        let data = UserData::default();
+        let unreachable = || store_place(Err("failed to create E:\\jobs: not ready".into()));
+
+        let got = super::get_value(&data, unreachable(), |_| {}, "stemdeck.folders");
+        assert!(got.expect_err("unavailable").starts_with(UNAVAILABLE));
+
+        let set = super::set_values(
+            &data,
+            store_place(Ok(path.clone())),
+            |_| {},
+            entries(serde_json::json!({ "stemdeck.folders": [] })),
+        );
+        assert!(set.expect_err("refused").starts_with(UNAVAILABLE));
+        assert!(!path.exists(), "the stand-in was not written");
+
+        data.ready(store_place(Ok(path.clone())), |_| {})
+            .expect("ready");
+        super::set_values(
+            &data,
+            store_place(Ok(path.clone())),
+            |_| {},
+            entries(serde_json::json!({ "a": 1, "b": 2 })),
+        )
+        .expect("saved");
+        let read = super::get_value(&data, store_place(Ok(path)), |_| {}, "b");
+        assert_eq!(read, Ok(Some(serde_json::json!(2))));
+    }
+
+    #[test]
+    fn store_ready_tries_again_until_the_store_opens_or_the_wait_ends() {
+        let tries = std::cell::Cell::new(0);
+        let result = super::wait_until_ready(
+            || {
+                tries.set(tries.get() + 1);
+                if tries.get() < 3 {
+                    Err("user-data-unavailable: locked".into())
+                } else {
+                    Ok(())
+                }
+            },
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(tries.get(), 3);
+
+        let started = std::time::Instant::now();
+        let result = super::wait_until_ready(
+            || Err("user-data-unavailable: locked".into()),
+            Duration::from_millis(60),
+            Duration::from_millis(10),
+        );
+        assert_eq!(result, Err("user-data-unavailable: locked".to_string()));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
     #[test]
     fn store_set_many_reports_a_failed_save() {
         let mut store = CountingStore {
@@ -9375,12 +9514,12 @@ mod tests {
         // or write of one small file or folder, or one bounded save of the
         // user-data store (store_set, store_set_many, reset_user_data), which
         // rewrites the whole file: 47 to 83 ms for a 9 MB store (#996), plus
-        // the sync and renames of #1023. While Windows holds the file a save
-        // retries at most four steps for 200 ms each (0.8 s), and the first
-        // command, which opens the store, up to five more (1 s): reading the
-        // file and its two copies, setting a damaged one aside, and putting a
-        // recovered .tmp in place. After a failed open, commands fail at once
-        // for one second instead of trying the disk again.
+        // the sync and renames of #1023. While Windows holds files, each
+        // retried step waits at most 200 ms: a save has at most four (0.8 s),
+        // a reset six (1.2 s, OpenStore::reset), and a command that has to
+        // open the store first adds up to five more (1 s). The page opens it
+        // with store_ready, which is async, so that waiting is normally done
+        // before any of these runs.
         const QUICK: &[&str] = &[
             "current_exports_dir",
             "store_get",

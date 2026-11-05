@@ -1,32 +1,70 @@
 {
-  "stemdeck.folders": {
-    "folders": [
-      {
-        "id": "f1",
-        "name": "Rock",
-        "tracks": [
-          "abcdefabcdef"
-        ]
-      }
-    ],
-    "version": 2
-  },
-  "stemdeck:mix:abcdefabcdef": {
-    "lanes": [
-      {
-        "gain": 0.75,
-        "mute": false,
-        "stem": "vocals"
-      }
-    ]
-  },
-  "exports_dir": "D:\\Exports\\Café",
   "stemdeck:selected-stems": [
     "vocals",
     "drums"
   ],
+  "empty": null,
+  "stemdeck.folders": {
+    "folders": [
+      {
+        "collapsed": false,
+        "color": "#d8a84a",
+        "id": "f-unsorted",
+        "items": [
+          "abcdefabcdef"
+        ],
+        "name": "Unsorted",
+        "parentId": null
+      },
+      {
+        "collapsed": true,
+        "color": "#4f9de8",
+        "id": "f-1762000000000",
+        "items": [],
+        "name": "Café sets",
+        "parentId": "f-unsorted"
+      },
+      {
+        "collapsed": true,
+        "id": "trash",
+        "items": [
+          "0123456789ab"
+        ],
+        "name": "Trash"
+      }
+    ],
+    "tracks": {
+      "0123456789ab": {
+        "createdAt": 1761000000000,
+        "favorite": false,
+        "id": "0123456789ab",
+        "source": "local:take.wav",
+        "title": "Binned"
+      },
+      "abcdefabcdef": {
+        "createdAt": 1762000000000,
+        "favorite": true,
+        "id": "abcdefabcdef",
+        "source": "dQw4w9WgXcQ",
+        "title": "A song"
+      }
+    },
+    "v": 2
+  },
+  "stemdeck.language": "pt-PT",
+  "stemdeck:mix:abcdefabcdef": {
+    "__global": {
+      "pitch": -2,
+      "speed": 1
+    },
+    "vocals": {
+      "gain": 0.75,
+      "mute": false,
+      "solo": false
+    }
+  },
+  "exports_dir": "D:\\Exports\\Café",
   "stemdeck.deleted_jobs": [
-    "0123456789ab"
-  ],
-  "empty": null
+    "fedcbafedcba"
+  ]
 }

@@ -12,10 +12,10 @@
 //! place. At every moment one complete copy is on the disk under one of the
 //! three names. On open, only damage (a missing, empty or invalid file) falls
 //! back to a copy; a damaged file is set aside as
-//! `user-data.json.corrupt-<unix time>` rather than written over. A file that
-//! is there but cannot be read right now (a lock, a sync client) is not
-//! damage: the store stays closed, every command says so, and the next one
-//! tries again.
+//! `user-data.json.corrupt-<n>` rather than written over. A file that is
+//! there but cannot be read right now (a lock, a sync client) is not damage:
+//! the store stays closed, every command says so, and writes stay refused
+//! until the page loads it again (`UserData`).
 //!
 //! No code here is compiled for one platform only: the platform differences
 //! are `cfg!` branches every platform compiles. `fs::rename` replaces an
@@ -23,21 +23,21 @@
 
 use serde_json::{Map, Value};
 use std::{
-    collections::HashSet,
     fs, io,
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, PoisonError},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 /// The store's contents: one JSON value per key.
 pub type Entries = Map<String, Value>;
 
 /// The start of every error a command returns while the store cannot be
-/// opened, or for a write it refused because of that. The page asks again on
-/// it (static/js/utils.js) rather than taking an empty library for the truth.
+/// opened, or for a write it refused because of that. The page stops and
+/// offers to load again on it (static/js/utils.js) rather than going on with
+/// stand-ins for what it could not read.
 pub const UNAVAILABLE: &str = "user-data-unavailable";
 
 /// How many set-aside damaged files are kept.
@@ -65,41 +65,42 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The damaged files set aside beside `path`, oldest first, with the time in
-/// their name: `<name>.corrupt-<unix time>`, or `-<unix time>-<n>` for a second
-/// one in the same second.
-pub fn corrupt_copies(path: &Path) -> Vec<PathBuf> {
+/// The damaged files set aside beside `path`, `<name>.corrupt-<n>`, in the
+/// order they were set aside (`n` counts up). Err when the folder cannot be
+/// listed; a missing folder holds none.
+pub fn corrupt_copies(path: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
     let prefix = format!("{}.corrupt-", file_name(path));
     let Some(dir) = path.parent() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let Ok(listing) = fs::read_dir(dir) else {
-        return Vec::new();
+    let listing = match fs::read_dir(dir) {
+        Ok(listing) => listing,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
     };
-    let mut found: Vec<((u64, u64), PathBuf)> = listing
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let stamp = name.strip_prefix(&prefix)?;
-            let mut parts = stamp.splitn(2, '-');
-            let secs = parts.next()?.parse().ok()?;
-            let n = match parts.next() {
-                Some(n) => n.parse().ok()?,
-                None => 0,
-            };
-            Some(((secs, n), entry.path()))
-        })
-        .collect();
+    let mut found = Vec::new();
+    for entry in listing {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(n) = name.strip_prefix(&prefix).and_then(|n| n.parse().ok()) {
+            found.push((n, entry.path()));
+        }
+    }
     found.sort();
-    found.into_iter().map(|(_, path)| path).collect()
+    Ok(found)
 }
 
-/// Whether a copy a save keeps could restore the store at `path`: a complete
-/// `.tmp` or `.bak`. A `.tmp` cut short is not one.
-pub fn has_recoverable_copy(path: &Path) -> bool {
-    [temp_path(path), backup_path(path)]
-        .iter()
-        .any(|copy| read_entries(copy).is_ok())
+/// Whether nothing of a store is at `path`: not the file, not a copy, not a
+/// set-aside damaged one. Only then is it a first run, the one time the
+/// pre-#403 file may be copied in. Anything that cannot be checked (a locked
+/// file, a folder that cannot be listed) counts as there.
+pub fn no_store_files(path: &Path) -> bool {
+    let absent =
+        |p: &Path| matches!(fs::symlink_metadata(p), Err(e) if e.kind() == io::ErrorKind::NotFound);
+    absent(path)
+        && absent(&temp_path(path))
+        && absent(&backup_path(path))
+        && corrupt_copies(path).is_ok_and(|found| found.is_empty())
 }
 
 /// Where the entries came from when the store was opened.
@@ -317,28 +318,18 @@ pub fn write_replacing(path: &Path, bytes: &[u8], keep_previous: bool) -> io::Re
     Ok(())
 }
 
-fn unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Move a damaged store file aside as `<name>.corrupt-<unix time>`, so the
-/// next save does not write over what may still be repaired by hand, and keep
-/// only the newest `CORRUPT_KEPT` of them. Returns the new name.
+/// Move a damaged store file aside as `<name>.corrupt-<n>`, `n` one above the
+/// highest already there, so the next save does not write over what may
+/// still be repaired by hand. Only the newest `CORRUPT_KEPT` are kept, by
+/// that number, so the one just set aside is never the one removed, whatever
+/// the clock says. Returns the new name.
 fn set_aside(path: &Path) -> io::Result<PathBuf> {
-    let secs = unix_secs();
-    let mut aside = with_suffix(path, &format!(".corrupt-{secs}"));
-    let mut n = 1;
-    while aside.exists() {
-        aside = with_suffix(path, &format!(".corrupt-{secs}-{n}"));
-        n += 1;
-    }
+    let existing = corrupt_copies(path)?;
+    let next = existing.last().map_or(1, |(n, _)| n + 1);
+    let aside = with_suffix(path, &format!(".corrupt-{next}"));
     retrying(|| fs::rename(path, &aside))?;
-    let copies = corrupt_copies(path);
-    let surplus = copies.len().saturating_sub(CORRUPT_KEPT);
-    for old in &copies[..surplus] {
+    let surplus = (existing.len() + 1).saturating_sub(CORRUPT_KEPT);
+    for (_, old) in existing.iter().take(surplus) {
         let _ = fs::remove_file(old);
     }
     Ok(aside)
@@ -363,10 +354,28 @@ impl OpenStore {
     /// `report`. Err when the store cannot be opened now; nothing on the disk
     /// has changed then, and opening again later is safe.
     ///
+    /// On a first run (`no_store_files`) the pre-#403 file at `legacy` is
+    /// copied in first, and only then: never into a folder that holds any
+    /// store file, so never over a store that is damaged, locked or open.
+    ///
     /// A damaged file is set aside first. A store recovered from a complete
     /// `.tmp` is renamed into place at once, so the next save, which writes a
     /// new `.tmp`, can never truncate the only copy of it.
-    pub fn open(path: &Path, report: impl Fn(&str)) -> Result<OpenStore, String> {
+    pub fn open(
+        path: &Path,
+        legacy: Option<&Path>,
+        report: impl Fn(&str),
+    ) -> Result<OpenStore, String> {
+        if let Some(legacy) = legacy {
+            if legacy != path && legacy.is_file() && no_store_files(path) {
+                fs::copy(legacy, path)
+                    .map_err(|e| format!("{} could not be copied in ({e})", legacy.display()))?;
+                report(&format!(
+                    "copied the library list from {} (first run)",
+                    legacy.display()
+                ));
+            }
+        }
         let (entries, opened) = read_store(path)?;
         let damaged_main = opened != Opened::Main && path.exists();
         if damaged_main {
@@ -428,68 +437,59 @@ impl OpenStore {
     /// replaces, so at no point after a crash can the old library sit in a
     /// copy that a later start would restore. Err only when the empty store
     /// could not be written; a copy that could not be removed is reported.
+    ///
+    /// Worst case on the main thread while Windows holds files: four removals
+    /// (.bak, .tmp, two set-aside files) and a save of two steps (write the
+    /// .tmp, rename it; nothing is kept), 200 ms each, so 1.2 s.
     pub fn reset(&mut self, report: impl Fn(&str)) -> io::Result<()> {
-        let copies = || {
-            let mut all = vec![backup_path(&self.path), temp_path(&self.path)];
-            all.extend(corrupt_copies(&self.path));
-            all
-        };
-        let remove_all = |paths: Vec<PathBuf>| -> Vec<(PathBuf, io::Error)> {
-            paths
-                .into_iter()
-                .filter_map(|p| match retrying(|| fs::remove_file(&p)) {
-                    Err(e) if e.kind() != io::ErrorKind::NotFound => Some((p, e)),
-                    _ => None,
-                })
-                .collect()
-        };
-        let left = remove_all(copies());
+        let mut copies = vec![backup_path(&self.path), temp_path(&self.path)];
+        match corrupt_copies(&self.path) {
+            Ok(found) => copies.extend(found.into_iter().map(|(_, p)| p)),
+            Err(e) => report(&format!("reset: could not list the set-aside files ({e})")),
+        }
+        for copy in copies {
+            match retrying(|| fs::remove_file(&copy)) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => report(&format!(
+                    "reset: could not remove {} ({e}); it still holds the library from before the reset",
+                    copy.display()
+                )),
+                _ => {}
+            }
+        }
         self.entries.clear();
         self.unsaved = true;
         self.main_good = false;
-        self.save()?;
-        // One more try for what could not be removed before the write.
-        let left = remove_all(left.into_iter().map(|(p, _)| p).collect());
-        for (p, e) in left {
-            report(&format!(
-                "reset: could not remove {} ({e}); it still holds the library from before the reset",
-                p.display()
-            ));
-        }
-        Ok(())
+        self.save()
     }
 }
 
 /// The user-data store, managed as Tauri state. Opened from disk on first
 /// use, and again whenever its path changes, which is when the jobs folder
 /// moves to a new location (#354), or after an open that could not read it.
+///
+/// The page loads its state from the store once, after `ready` (the
+/// `store_ready` command). From the first time the store cannot be reached
+/// until `ready` works again, every write is refused: the page may be holding
+/// stand-ins for what it could not read, and those must never be saved over
+/// the real records. `ready` is what the page calls when it loads again.
+#[derive(Default)]
 pub struct UserData {
     state: Mutex<State>,
-    /// How long after a failed open commands fail at once rather than try the
-    /// disk again. The page asks for dozens of keys while it starts; each
-    /// would otherwise spend the read retries on the main thread.
-    retry_after: Duration,
-}
-
-impl Default for UserData {
-    fn default() -> Self {
-        UserData {
-            state: Mutex::default(),
-            retry_after: Duration::from_secs(1),
-        }
-    }
 }
 
 #[derive(Default)]
 struct State {
     open: Option<OpenStore>,
-    /// When the last open failed, and the error every command returns until
-    /// `retry_after` has passed.
-    failed: Option<(Instant, String)>,
-    /// Keys the page asked for while the store could not be opened. It holds
-    /// a stand-in for each, so a write of one is refused until a read of it
-    /// works: the stand-in must never be saved over the real record.
-    unread: HashSet<String>,
+    /// Set when the store could not be reached; cleared by `ready`.
+    blocked: bool,
+}
+
+/// Where the store is: its path (Err when the jobs folder cannot be reached,
+/// such as a drive that is not mounted) and the pre-#403 file a first run
+/// copies in.
+pub struct Place {
+    pub path: Result<PathBuf, String>,
+    pub legacy: Option<PathBuf>,
 }
 
 impl UserData {
@@ -497,40 +497,43 @@ impl UserData {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Run `f` on the store at `path`, holding it for the whole call so two
+    /// Run `f` on the store at `place`, holding it for the whole call so two
     /// saves never share the `.tmp` file. A store open at another path is
     /// closed first without a save: the library has moved, and writing to the
     /// old folder would leave a stale copy there. Err, starting with
-    /// `UNAVAILABLE`, when the store cannot be opened now.
-    pub fn with<T>(
+    /// `UNAVAILABLE`, when the store cannot be reached now, which blocks every
+    /// write until `ready`. With `write`, also Err while blocked.
+    fn run<T>(
         &self,
-        path: &Path,
+        place: Place,
         report: impl Fn(&str),
+        write: bool,
         f: impl FnOnce(&mut OpenStore) -> T,
     ) -> Result<T, String> {
         let mut state = self.state();
+        if write && state.blocked {
+            return Err(format!(
+                "{UNAVAILABLE}: not saved: the library list could not be read earlier, \
+                 so it has to be loaded again first"
+            ));
+        }
+        let path = match place.path {
+            Ok(path) => path,
+            Err(e) => {
+                state.blocked = true;
+                return Err(format!("{UNAVAILABLE}: {e}"));
+            }
+        };
         if state.open.as_ref().is_some_and(|store| store.path != path) {
             state.open = None;
-            state.failed = None;
         }
         if state.open.is_none() {
-            if let Some((at, error)) = &state.failed {
-                if at.elapsed() < self.retry_after {
-                    return Err(error.clone());
-                }
-            }
-            match OpenStore::open(path, &report) {
-                Ok(store) => {
-                    state.failed = None;
-                    state.open = Some(store);
-                }
+            match OpenStore::open(&path, place.legacy.as_deref(), &report) {
+                Ok(store) => state.open = Some(store),
                 Err(e) => {
+                    state.blocked = true;
                     let error = format!("{UNAVAILABLE}: {e}");
-                    // Once per new error, not once per command.
-                    if state.failed.as_ref().map(|(_, seen)| seen) != Some(&error) {
-                        report(&error);
-                    }
-                    state.failed = Some((Instant::now(), error.clone()));
+                    report(&error);
                     return Err(error);
                 }
             }
@@ -541,41 +544,40 @@ impl UserData {
         }
     }
 
-    /// The value of `key`, keeping track of a read that could not be made.
-    pub fn get(
+    /// Read from the store.
+    pub fn read<T>(
         &self,
-        path: &Path,
+        place: Place,
         report: impl Fn(&str),
-        key: &str,
-    ) -> Result<Option<Value>, String> {
-        let result = self.with(path, report, |store| store.get(key));
-        let mut state = self.state();
-        match &result {
-            Ok(_) => state.unread.remove(key),
-            Err(_) => state.unread.insert(key.to_string()),
-        };
-        result
+        f: impl FnOnce(&OpenStore) -> T,
+    ) -> Result<T, String> {
+        self.run(place, report, false, |store| f(store))
     }
 
-    /// Err when one of `keys` was asked for while the store could not be
-    /// opened and has not been read since.
-    pub fn refuse_unread<'a>(
+    /// Change the store; refused while blocked.
+    pub fn write<T>(
         &self,
-        mut keys: impl Iterator<Item = &'a String>,
-    ) -> Result<(), String> {
-        let state = self.state();
-        match keys.find(|key| state.unread.contains(*key)) {
-            Some(key) => Err(format!(
-                "{UNAVAILABLE}: {key} not saved: it could not be read when it was asked for, \
-                 so the page does not hold its real value"
-            )),
-            None => Ok(()),
-        }
+        place: Place,
+        report: impl Fn(&str),
+        f: impl FnOnce(&mut OpenStore) -> T,
+    ) -> Result<T, String> {
+        self.run(place, report, true, f)
     }
 
-    /// After a reset nothing the page held is left to protect.
-    pub fn forget_unread(&self) {
-        self.state().unread.clear();
+    /// Open the store for a page that is loading, and lift the block on
+    /// writes once it is open.
+    pub fn ready(&self, place: Place, report: impl Fn(&str)) -> Result<(), String> {
+        self.run(place, report, false, |_| ())?;
+        self.state().blocked = false;
+        Ok(())
+    }
+
+    /// Clear the store (Settings, "Reset app data"). Not refused while
+    /// blocked: nothing the page holds is written, and the page loads again
+    /// right after.
+    pub fn reset(&self, place: Place, report: impl Fn(&str) + Copy) -> Result<(), String> {
+        self.run(place, report, false, |store| store.reset(report))?
+            .map_err(|e| format!("could not save user-data.json: {e}"))
     }
 
     /// At exit: save the open store if its last save failed. None when there
@@ -609,9 +611,27 @@ mod tests {
     /// Opens the store, keeping what it reported.
     fn open(path: &Path) -> (OpenStore, Vec<String>) {
         let reported = RefCell::new(Vec::new());
-        let store = OpenStore::open(path, |line| reported.borrow_mut().push(line.to_string()))
-            .expect("opened");
+        let store = OpenStore::open(path, None, |line| {
+            reported.borrow_mut().push(line.to_string())
+        })
+        .expect("opened");
         (store, reported.into_inner())
+    }
+
+    /// The set-aside damaged files, oldest first.
+    fn aside(path: &Path) -> Vec<PathBuf> {
+        corrupt_copies(path)
+            .expect("listed")
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect()
+    }
+
+    fn place(path: &Path) -> Place {
+        Place {
+            path: Ok(path.to_path_buf()),
+            legacy: None,
+        }
     }
 
     fn mentions(reported: &[String], text: &str) -> bool {
@@ -661,9 +681,9 @@ mod tests {
         assert!(mentions(&reported, "user-data.json.bak"), "{reported:?}");
 
         // The broken file is kept aside, not written over.
-        let aside = corrupt_copies(&path);
-        assert_eq!(aside.len(), 1, "{aside:?}");
-        assert_eq!(fs::read(&aside[0]).unwrap(), br#"{"songs":["one","tw"#);
+        let set_aside = aside(&path);
+        assert_eq!(set_aside.len(), 1, "{set_aside:?}");
+        assert_eq!(fs::read(&set_aside[0]).unwrap(), br#"{"songs":["one","tw"#);
         assert!(mentions(&reported, ".corrupt-"), "{reported:?}");
 
         // And never moved over the good backup.
@@ -693,43 +713,135 @@ mod tests {
 
     /// A store file that is there but cannot be read now (here a folder in
     /// its place, which reads as an I/O error on every platform) is not
-    /// damage: no fallback, nothing moved, and a later open works.
+    /// damage: no fallback, nothing moved. Every write is refused from then on
+    /// until `ready` works, even once the file can be read: the page may hold
+    /// stand-ins for what it could not read.
     #[test]
-    fn an_unreadable_store_is_unavailable_not_replaced_by_a_copy() {
+    fn an_unreadable_store_blocks_writes_until_ready() {
         let dir = scratch();
         let path = dir.path().join("user-data.json");
         fs::create_dir(&path).unwrap();
         fs::write(backup_path(&path), r#"{"a":"old"}"#).unwrap();
 
         let reported = RefCell::new(Vec::new());
-        let data = UserData::default();
         let report = |line: &str| reported.borrow_mut().push(line.to_string());
-        let err = data.get(&path, report, "a").expect_err("unavailable");
+        let data = UserData::default();
+        let err = data.ready(place(&path), report).expect_err("unavailable");
         assert!(err.starts_with(UNAVAILABLE), "{err}");
-        assert_eq!(reported.borrow().len(), 1, "logged");
-        // Within a second the next command fails at once, logged once.
-        let started = Instant::now();
-        let again = data.get(&path, report, "c").expect_err("still unavailable");
-        assert_eq!(again, err);
-        assert!(started.elapsed() < PAUSE, "no disk retries");
-        assert_eq!(reported.borrow().len(), 1, "not logged again");
+        assert!(mentions(&reported.borrow(), UNAVAILABLE), "logged");
         assert!(path.is_dir(), "the file in place is untouched");
-        assert!(corrupt_copies(&path).is_empty(), "nothing set aside");
+        assert!(aside(&path).is_empty(), "nothing set aside");
         assert_eq!(read_json(&backup_path(&path)), json!({ "a": "old" }));
 
-        // The page holds a stand-in for "a" now: a write of it is refused.
-        let key = "a".to_string();
-        assert!(data.refuse_unread([&key].into_iter()).is_err());
-        let other = "b".to_string();
-        assert!(data.refuse_unread([&other].into_iter()).is_ok());
-
-        // Once the file can be read, the next command after the pause opens it.
+        // Readable again, but the page has not loaded again: refused.
         fs::remove_dir(&path).unwrap();
         fs::write(&path, r#"{"a":"new"}"#).unwrap();
-        thread::sleep(data.retry_after);
-        let got = data.get(&path, |_| {}, "a").expect("opened now");
+        let refused = data.write(place(&path), report, |s| {
+            s.set("a".into(), json!("stand-in"));
+            s.save()
+        });
+        assert!(refused.expect_err("blocked").starts_with(UNAVAILABLE));
+        assert_eq!(read_json(&path), json!({ "a": "new" }), "nothing written");
+
+        // A read works, and does not lift the block.
+        let got = data
+            .read(place(&path), report, |s| s.get("a"))
+            .expect("read");
         assert_eq!(got, Some(json!("new")));
-        assert!(data.refuse_unread([&key].into_iter()).is_ok(), "read since");
+        assert!(data.write(place(&path), report, |_| ()).is_err());
+
+        // The page loads again: writes work.
+        data.ready(place(&path), report).expect("ready");
+        data.write(place(&path), report, |s| {
+            s.set("a".into(), json!("newer"));
+            s.save()
+        })
+        .expect("open")
+        .expect("saved");
+        assert_eq!(read_json(&path), json!({ "a": "newer" }));
+    }
+
+    /// A jobs folder that cannot be reached (an unmounted drive) is
+    /// unavailable too, and blocks writes the same way.
+    #[test]
+    fn an_unreachable_folder_is_unavailable_and_blocks_writes() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        let data = UserData::default();
+        let gone = Place {
+            path: Err("failed to create E:\\StemDeck: the device is not ready".into()),
+            legacy: None,
+        };
+        let err = data
+            .read(gone, |_| {}, |s| s.get("a"))
+            .expect_err("unavailable");
+        assert!(err.starts_with(UNAVAILABLE), "{err}");
+        assert!(data.write(place(&path), |_| {}, |_| ()).is_err(), "blocked");
+        data.ready(place(&path), |_| {}).expect("ready");
+        assert!(data.write(place(&path), |_| {}, |_| ()).is_ok());
+    }
+
+    /// The pre-#403 file is copied in on a first run only.
+    #[test]
+    fn the_legacy_file_is_copied_in_only_when_no_store_file_exists() {
+        let dir = scratch();
+        let legacy = dir.path().join("legacy.json");
+        fs::write(&legacy, r#"{"from":"legacy"}"#).unwrap();
+        let open_with_legacy =
+            |path: &Path| OpenStore::open(path, Some(&legacy), |_| {}).expect("opened");
+
+        // First run: copied.
+        let first = dir.path().join("first").join("user-data.json");
+        fs::create_dir_all(first.parent().unwrap()).unwrap();
+        assert_eq!(open_with_legacy(&first).get("from"), Some(json!("legacy")));
+
+        // A complete .tmp, a cut-short .tmp, a .bak or a set-aside file:
+        // not a first run, never copied.
+        for (name, contents) in [
+            ("user-data.json.tmp", "{\"a\":1}"),
+            ("user-data.json.tmp", "{\"a\":"),
+            ("user-data.json.bak", "{\"a\":1}"),
+            ("user-data.json.corrupt-1", "{"),
+        ] {
+            let folder = dir.path().join(format!("{name}-{}", contents.len()));
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join(name), contents).unwrap();
+            let path = folder.join("user-data.json");
+            let store = open_with_legacy(&path);
+            assert_eq!(store.get("from"), None, "{name} {contents}");
+        }
+
+        // All three damaged (the Lost state): never copied into the empty
+        // store, which opens with the damaged file set aside.
+        let lost = dir.path().join("lost").join("user-data.json");
+        fs::create_dir_all(lost.parent().unwrap()).unwrap();
+        fs::write(&lost, "{").unwrap();
+        fs::write(temp_path(&lost), "{").unwrap();
+        fs::write(backup_path(&lost), "").unwrap();
+        let store = open_with_legacy(&lost);
+        assert_eq!(store.get("from"), None);
+        assert!(
+            !lost.exists(),
+            "the damaged file is set aside, not replaced"
+        );
+        assert!(!no_store_files(&lost));
+    }
+
+    /// The first-run check looks at whether a store file is there, never
+    /// whether it reads: a .tmp that is locked (here one that cannot be read
+    /// as a file at all) still stops the legacy copy. So does a folder that
+    /// cannot be listed for set-aside files.
+    #[test]
+    fn a_store_file_that_cannot_be_read_still_blocks_the_legacy_copy() {
+        let dir = scratch();
+        let path = dir.path().join("user-data.json");
+        fs::create_dir(temp_path(&path)).unwrap();
+        assert!(read_entries(&temp_path(&path)).is_err(), "unreadable");
+        assert!(!no_store_files(&path));
+
+        let blocker = dir.path().join("not-a-folder");
+        fs::write(&blocker, "x").unwrap();
+        assert!(!no_store_files(&blocker.join("user-data.json")));
     }
 
     /// A stop between the two renames: no store file, the new contents
@@ -782,20 +894,6 @@ mod tests {
 
         let (store, _) = open(&path);
         assert_eq!(store.get("a"), Some(json!(1)));
-        assert!(!has_recoverable_copy(&dir.path().join("other.json")));
-    }
-
-    #[test]
-    fn only_a_complete_copy_counts_as_recoverable() {
-        let dir = scratch();
-        let path = dir.path().join("user-data.json");
-        fs::write(temp_path(&path), r#"{"a":"#).unwrap();
-        assert!(!has_recoverable_copy(&path), "a cut-short .tmp");
-        fs::write(temp_path(&path), r#"{"a":1}"#).unwrap();
-        assert!(has_recoverable_copy(&path));
-        fs::remove_file(temp_path(&path)).unwrap();
-        fs::write(backup_path(&path), r#"{"a":1}"#).unwrap();
-        assert!(has_recoverable_copy(&path));
     }
 
     #[test]
@@ -811,27 +909,30 @@ mod tests {
             mentions(&reported, "starting with an empty library list"),
             "{reported:?}"
         );
-        assert_eq!(corrupt_copies(&path).len(), 1, "the broken file is kept");
+        assert_eq!(aside(&path).len(), 1, "the broken file is kept");
 
         store.set("a".into(), json!(1));
         store.save().expect("save");
         assert_eq!(read_json(&path), json!({ "a": 1 }));
     }
 
+    /// Numbered one above the highest already there, and pruned by that
+    /// number, so the file just set aside is always kept.
     #[test]
     fn only_the_two_newest_damaged_files_are_kept() {
         let dir = scratch();
         let path = dir.path().join("user-data.json");
-        for secs in [100, 200, 300] {
-            fs::write(with_suffix(&path, &format!(".corrupt-{secs}")), "x").unwrap();
+        for n in [3, 100, 7] {
+            fs::write(with_suffix(&path, &format!(".corrupt-{n}")), "x").unwrap();
         }
         fs::write(&path, "{").unwrap();
         let _ = open(&path);
-        let kept: Vec<String> = corrupt_copies(&path).iter().map(|p| file_name(p)).collect();
-        assert_eq!(kept.len(), 2, "{kept:?}");
-        assert_eq!(kept[0], "user-data.json.corrupt-300");
-        assert!(kept[1].starts_with("user-data.json.corrupt-"), "{kept:?}");
-        assert_ne!(kept[1], "user-data.json.corrupt-300");
+        let kept: Vec<String> = aside(&path).iter().map(|p| file_name(p)).collect();
+        assert_eq!(
+            kept,
+            ["user-data.json.corrupt-100", "user-data.json.corrupt-101"]
+        );
+        assert_eq!(fs::read(with_suffix(&path, ".corrupt-101")).unwrap(), b"{");
     }
 
     #[test]
@@ -872,7 +973,7 @@ mod tests {
         assert_eq!(read_json(&path), json!({}));
         assert!(!backup_path(&path).exists(), "the old library is not kept");
         assert!(!temp_path(&path).exists());
-        assert!(corrupt_copies(&path).is_empty());
+        assert!(aside(&path).is_empty());
     }
 
     #[test]
@@ -913,8 +1014,8 @@ mod tests {
         fs::write(&second, r#"{"where":"two"}"#).unwrap();
 
         let data = UserData::default();
-        data.with(
-            &first,
+        data.write(
+            place(&first),
             |_| {},
             |s| {
                 s.set("where".into(), json!("one"));
@@ -923,7 +1024,9 @@ mod tests {
         )
         .expect("open")
         .expect("saved");
-        let seen = data.get(&second, |_| {}, "where").expect("open");
+        let seen = data
+            .read(place(&second), |_| {}, |s| s.get("where"))
+            .expect("open");
         assert_eq!(seen, Some(json!("two")));
         assert_eq!(read_json(&first), json!({ "where": "one" }));
     }
@@ -940,8 +1043,8 @@ mod tests {
         let data = UserData::default();
         assert!(data.save_unsaved().is_none(), "nothing open");
         let saved = data
-            .with(
-                &path,
+            .write(
+                place(&path),
                 |_| {},
                 |s| {
                     s.set("a".into(), json!(1));
@@ -959,35 +1062,20 @@ mod tests {
         assert!(data.save_unsaved().is_none(), "saved once");
     }
 
-    /// What `plugin_store_fixture` holds: every kind of value the page keeps.
+    /// What the fixture below holds: the keys and kinds of value the page
+    /// keeps, `stemdeck.folders` in its real `{ v, folders, tracks }` shape.
     fn plugin_store_entries() -> HashMap<String, Value> {
-        let value = json!({
-            "stemdeck.folders": { "version": 2, "folders": [{ "id": "f1", "name": "Rock", "tracks": ["abcdefabcdef"] }] },
-            "stemdeck.deleted_jobs": ["0123456789ab"],
-            "stemdeck:selected-stems": ["vocals", "drums"],
-            "stemdeck:mix:abcdefabcdef": { "lanes": [{ "stem": "vocals", "gain": 0.75, "mute": false }] },
-            "exports_dir": "D:\\Exports\\Caf\u{e9}",
-            "empty": null,
-        });
-        serde_json::from_value(value).unwrap()
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/user-data-plugin-2.4.3.input.json"
+        ))
+        .unwrap()
     }
 
-    const PLUGIN_FIXTURE: &str = "tests/fixtures/user-data-plugin-2.4.3.json";
-
-    /// Writes the fixture exactly as tauri-plugin-store 2.4.3 saves a store:
-    /// its `default_serialize` is `serde_json::to_vec_pretty` of a
-    /// `HashMap<String, JsonValue>`. Run once with
-    /// `cargo test regenerate_plugin_fixture -- --ignored`.
-    #[test]
-    #[ignore]
-    fn regenerate_plugin_fixture() {
-        let bytes = serde_json::to_vec_pretty(&plugin_store_entries()).unwrap();
-        fs::write(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join(PLUGIN_FIXTURE),
-            bytes,
-        )
-        .unwrap();
-    }
+    // tests/fixtures/user-data-plugin-2.4.3.json holds the bytes the real
+    // tauri-plugin-store 2.4.3 wrote for those entries: captured once by
+    // calling its `Store::save` on a mock Tauri app (tauri's `test` feature),
+    // in a scratch worktree of the shell before this change. Not regenerated
+    // here, which no longer depends on the plugin.
 
     /// A store an existing install saved with the plugin opens as it is.
     #[test]

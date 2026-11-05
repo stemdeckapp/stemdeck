@@ -15,7 +15,7 @@ import {
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
   startQueueStream, stopQueuedJob,
 } from "./queue.js";
-import { fmtTime, isReimportableSource, storeGet, storeSet } from "./utils.js";
+import { fmtTime, isReimportableSource, storeGet, storeSet, storeIsUnavailable } from "./utils.js";
 import { addedAt, compareOldestFirst } from "./shared/jobs.js";
 import { showTrackNote, takeStemsFromJob } from "./capture/takeLanes.js";
 import { inLibraryList, libraryDeleteTrackId } from "./libraryDeleteKey.js";
@@ -290,13 +290,8 @@ async function markJobsDeleted(ids) {
   // (#521). The backend keeps its own deletion record now, so this is a second
   // line of defence rather than the only one, but it still has to be written
   // before the tracks are dropped from the local index.
-  try {
-    await storeSet(DELETED_JOBS_KEY, [..._deletedJobIds]);
-    return true;
-  } catch (e) {
-    console.warn("[catalog] failed to persist deleted jobs", e);
-    return false;
-  }
+  // storeSet never throws; false is a write that failed (#1023).
+  return storeSet(DELETED_JOBS_KEY, [..._deletedJobIds]);
 }
 
 function normalizeFolderColor(color) {
@@ -3099,8 +3094,14 @@ function wireCatalogRailViews() {
       const toDelete = [...(trash?.items || [])];
       const binned = Object.fromEntries(toDelete.map((id) => [id, tracks[id]]));
       // Awaited: the tombstone has to be on disk before the tracks leave the
-      // local index, or a reload re-imports them (#521).
-      await markJobsDeleted(toDelete);
+      // local index, or a reload re-imports them (#521). Not on disk, nothing
+      // is purged or deleted, and the songs stay in the Trash (#1023). A store
+      // out of reach has said so already, with its own Try again.
+      if (!(await markJobsDeleted(toDelete))) {
+        for (const id of toDelete) _deletedJobIds.delete(id);
+        if (!storeIsUnavailable()) showError(i18nT("library.trashNotEmptied"), null, { retry: false });
+        return;
+      }
       purgeTrash();
       saveState();
       render();

@@ -1,0 +1,20 @@
+{
+  "stemdeck.folders": {
+    "v": 2,
+    "folders": [
+      { "id": "f-unsorted", "name": "Unsorted", "collapsed": false, "items": ["abcdefabcdef"], "color": "#d8a84a", "parentId": null },
+      { "id": "f-1762000000000", "name": "Café sets", "collapsed": true, "items": [], "color": "#4f9de8", "parentId": "f-unsorted" },
+      { "id": "trash", "name": "Trash", "collapsed": true, "items": ["0123456789ab"] }
+    ],
+    "tracks": {
+      "abcdefabcdef": { "id": "abcdefabcdef", "title": "A song", "source": "dQw4w9WgXcQ", "createdAt": 1762000000000, "favorite": true },
+      "0123456789ab": { "id": "0123456789ab", "title": "Binned", "source": "local:take.wav", "createdAt": 1761000000000, "favorite": false }
+    }
+  },
+  "stemdeck.deleted_jobs": ["fedcbafedcba"],
+  "stemdeck:selected-stems": ["vocals", "drums"],
+  "stemdeck:mix:abcdefabcdef": { "vocals": { "gain": 0.75, "mute": false, "solo": false }, "__global": { "pitch": -2, "speed": 1 } },
+  "stemdeck.language": "pt-PT",
+  "exports_dir": "D:\\Exports\\Café",
+  "empty": null
+}

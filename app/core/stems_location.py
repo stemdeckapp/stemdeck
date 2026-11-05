@@ -151,8 +151,8 @@ _LIBRARY_RECORDS = ("registry.json", "user-data.json")
 
 # The copies the desktop shell's save keeps beside user-data.json (#1023): the
 # previous file (.bak), a save that stopped partway (.tmp), and damaged files it
-# set aside (.corrupt-<unix time>, -<n> for a second in the same second).
-_STORE_COPY_RE = re.compile(r"user-data\.json\.(bak|tmp|corrupt-[0-9]+(-[0-9]+)?)\Z")
+# set aside (.corrupt-<n>, numbered up).
+_STORE_COPY_RE = re.compile(r"user-data\.json\.(bak|tmp|corrupt-[0-9]+)\Z")
 
 
 def _is_store_copy(name: str) -> bool:
@@ -255,8 +255,13 @@ def move_library(current: Path, target: Path) -> MoveResult:
         if _partial_copy(leftover.name, current):
             _remove(leftover)
 
+    # Whether this run put our user-data.json at the target (moved, copied, or
+    # found already copied whole). Sorted, it comes before its copies, which
+    # replace different ones at the target only then (_replaces_stale_copy).
+    store_placed = False
     for entry in sorted(current.iterdir()):
         destination = target / entry.name
+        is_store = entry.name == "user-data.json"
         try:
             size = directory_size(entry) if entry.is_dir() else entry.stat().st_size
         except FileNotFoundError:
@@ -268,8 +273,9 @@ def move_library(current: Path, target: Path) -> MoveResult:
                 if _holds_all_of(destination, entry):
                     # An earlier attempt finished this one.
                     copied.append(entry.name)
+                    store_placed = store_placed or is_store
                     continue
-                if _replaces_stale_copy(entry, destination, current):
+                if store_placed and _replaces_stale_copy(entry, destination):
                     _remove(destination)
                     if _renamed(entry, destination):
                         moved += 1
@@ -283,8 +289,18 @@ def move_library(current: Path, target: Path) -> MoveResult:
             elif _renamed(entry, destination):
                 moved += 1
                 moved_bytes += size
+                store_placed = store_placed or is_store
                 continue
             _copy_verified(entry, destination)
+        except FileNotFoundError:
+            if os.path.lexists(entry):
+                raise StemsLocationError(
+                    f"Could not move {entry.name}: a file in it is missing. "
+                    f"Anything already moved is in the new folder."
+                ) from None
+            # Gone between the size check and the move, as the shell's .tmp can
+            # be (#1023): nothing left to bring.
+            continue
         except OSError as e:
             # strerror only: str(e) of some OSErrors (shutil.SpecialFileError)
             # carries the full path.
@@ -295,24 +311,22 @@ def move_library(current: Path, target: Path) -> MoveResult:
         copied.append(entry.name)
         moved += 1
         moved_bytes += size
+        store_placed = store_placed or is_store
 
     return MoveResult(str(current), str(target), moved, moved_bytes, tuple(copied))
 
 
-def _replaces_stale_copy(entry: Path, destination: Path, current: Path) -> bool:
-    """Whether the source's copy of user-data.json (#1023) replaces a different
-    one at the target. It does once our user-data.json is at the target: the
-    copies belong with the file they were made from, and the target's one is
-    then a leftover that nothing reads but a recovery, which would restore the
-    wrong library from it. Ours is never left behind in the old folder. Before
-    that, or with a link on either side, the target's copy stays as it is."""
+def _replaces_stale_copy(entry: Path, destination: Path) -> bool:
+    """Whether the source's copy of user-data.json (#1023) may replace a
+    different one at the target. move_library asks only once this run has put
+    our user-data.json at the target: the copies belong with the file they
+    were made from, and the target's one is then a leftover that nothing reads
+    but a recovery, which would restore the wrong library from it. A source
+    without a user-data.json of its own (a store that stopped partway through a
+    save) never replaces anything, and neither does a link on either side."""
     if not _is_store_copy(entry.name) or _is_link(entry) or _is_link(destination):
         return False
-    if not destination.is_file():
-        return False
-    ours = current / "user-data.json"
-    theirs = destination.with_name("user-data.json")
-    return not os.path.lexists(ours) or _holds_all_of(theirs, ours)
+    return destination.is_file()
 
 
 def remove_moved(current: Path, names: tuple[str, ...]) -> None:
