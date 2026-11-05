@@ -148,6 +148,8 @@ RUN groupadd --system --gid 1001 app \
     && chown -R app:app /app /cache /jobs
 
 COPY build/docker-entrypoint.sh /entrypoint.sh
+# Next to the entrypoint, which finds it by its own directory (#994).
+COPY build/docker-reown.sh /docker-reown.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
