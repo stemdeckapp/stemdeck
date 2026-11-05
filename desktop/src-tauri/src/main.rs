@@ -646,10 +646,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build StemDeck desktop app")
         .run(|app_handle, event| {
-            // Every orderly exit (the updater's relaunch included), not only
-            // the window close, so it is never read as an early exit (#993).
-            #[cfg(target_os = "linux")]
             if matches!(event, tauri::RunEvent::Exit) {
+                // Every orderly exit (the updater's relaunch included), not
+                // only the window close, so it is never read as an early
+                // exit (#993).
+                #[cfg(target_os = "linux")]
                 dmabuf::clear_on_exit();
             }
             if let tauri::RunEvent::WindowEvent {

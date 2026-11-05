@@ -622,6 +622,195 @@ pub fn clear_marker_if_ours(dir: &Path, own_pid: u32) -> bool {
     ours && fs::remove_file(&path).is_ok()
 }
 
+/// The crash guard's counts and saved fallback.
+pub const STATE_FILE: &str = "webkit-dmabuf-guard";
+/// The fallback as test builds before #993 saved it, after one early exit.
+/// Never read: one early exit is not enough, so it is dropped.
+pub const LEGACY_FALLBACK_FILE: &str = "webkit-dmabuf-off";
+
+/// The pid in the name of a temp file `write_atomic` leaves when its process
+/// dies between create and rename: `.launch-pending.<pid>.tmp` or
+/// `.webkit-dmabuf-guard.<pid>.tmp`. `None` for every other name.
+pub fn stale_tmp_pid(file_name: &str) -> Option<u32> {
+    let inner = file_name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let (base, pid) = inner.rsplit_once('.')?;
+    if base != MARKER_FILE && base != STATE_FILE {
+        return None;
+    }
+    pid.parse().ok().filter(|p| *p != 0)
+}
+
+/// Removes the temp files of processes that are gone. A live pid's file is
+/// left: that process may be between create and rename right now.
+pub fn sweep_stale_tmp(dir: &Path, own_pid: u32, pid_alive: &dyn Fn(u32) -> bool) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(stale_tmp_pid) else {
+            continue;
+        };
+        if pid != own_pid && !pid_alive(pid) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Reads the state file. A file that is missing is no state. A file that
+/// exists but cannot be read (permissions, an I/O error, not UTF-8) or does
+/// not parse is logged, and the guard starts over: the `bool` is true then,
+/// so the caller writes a fresh file.
+pub fn read_state_file(dir: &Path, log: &mut dyn FnMut(&str)) -> (GuardState, bool) {
+    let text = match fs::read_to_string(dir.join(STATE_FILE)) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            log(&format!(
+                "DMA-BUF crash guard state could not be read ({e}); starting over"
+            ));
+            return (GuardState::default(), true);
+        }
+    };
+    match load_state(text.as_deref()) {
+        Ok(s) => (s, false),
+        Err(why) => {
+            log(&format!(
+                "DMA-BUF crash guard state unreadable ({why}); starting over"
+            ));
+            (GuardState::default(), true)
+        }
+    }
+}
+
+fn save_state_file(dir: &Path, state: &GuardState, log: &mut dyn FnMut(&str)) {
+    if let Err(e) = store_state(dir, STATE_FILE, state) {
+        log(&format!(
+            "could not save the DMA-BUF crash guard state: {e}"
+        ));
+    }
+}
+
+/// What the shell reads from the process and the system for one launch.
+pub struct Host<'a> {
+    pub webkit_var: Option<&'a str>,
+    pub mode: Option<&'a str>,
+    pub wayland_display: Option<&'a str>,
+    pub session_type: Option<&'a str>,
+    /// `/proc/driver/nvidia/version`, present only while the NVIDIA kernel
+    /// driver is loaded; nouveau never creates it.
+    pub nvidia_version: Option<&'a str>,
+    /// `/proc/self/maps`.
+    pub proc_maps: Option<&'a str>,
+    pub boot_id: Option<&'a str>,
+    pub own_pid: u32,
+    /// Unix seconds.
+    pub now: u64,
+}
+
+/// Everything a launch does with the guard's files, before GTK starts:
+/// read and consume the previous launch's marker, read the state, decide,
+/// log and save. The caller applies the decision to the environment.
+/// `dir` is the data dir, `None` when it could not be found.
+pub fn startup(
+    dir: Option<&Path>,
+    host: &Host,
+    pid_alive: &dyn Fn(u32) -> bool,
+    log: &mut dyn FnMut(&str),
+) -> Decision {
+    if let Some(d) = dir {
+        sweep_stale_tmp(d, host.own_pid, pid_alive);
+    }
+    let marker = dir.and_then(|d| fs::read_to_string(d.join(MARKER_FILE)).ok());
+    let previous = classify_previous(marker.as_deref(), host.boot_id, host.own_pid, pid_alive);
+    if let Some(d) = dir {
+        // Consumed here, read once: a launch that never reaches the window
+        // (no display, an early setup error) writes no marker of its own,
+        // and the next launch must not count the same early exit again.
+        // Another instance's live marker is left for it to clear.
+        if marker.is_some() && previous != PreviousLaunch::StillRunning {
+            let _ = fs::remove_file(d.join(MARKER_FILE));
+        }
+    }
+    let (state, corrupt) = match dir {
+        Some(d) => read_state_file(d, log),
+        None => (GuardState::default(), false),
+    };
+    let fingerprint = fingerprint_from(host.proc_maps, host.nvidia_version);
+    let decision = decide(&Inputs {
+        webkit_var: host.webkit_var,
+        mode: host.mode,
+        wayland_display: host.wayland_display,
+        session_type: host.session_type,
+        nvidia_driver: host.nvidia_version.is_some(),
+        state: &state,
+        previous,
+        fingerprint: fingerprint.as_deref(),
+        now: host.now,
+    });
+    if let Some(raw) = &decision.invalid_mode {
+        log(&format!(
+            "STEMDECK_WEBKIT_DMABUF={raw} is not auto, on or off; using auto"
+        ));
+    }
+    if let Some(d) = dir {
+        if fs::remove_file(d.join(LEGACY_FALLBACK_FILE)).is_ok() {
+            log(
+                "dropped a DMA-BUF fallback saved after a single early exit; \
+                 the crash guard now needs two in a row",
+            );
+        }
+        for event in &decision.events {
+            log(&event.describe());
+        }
+        if decision.state != state || corrupt {
+            save_state_file(d, &decision.state, log);
+        }
+    }
+    log(&format!("webkit dmabuf: {}", decision.reason.describe()));
+    decision
+}
+
+/// The marker for this launch, written just before the window is built.
+pub fn write_launch_marker(
+    dir: &Path,
+    own_pid: u32,
+    boot_id: Option<&str>,
+    renderer_on: bool,
+    now: u64,
+) -> io::Result<()> {
+    let marker = Marker {
+        pid: own_pid,
+        started: now,
+        boot_id: boot_id.map(str::to_string),
+        renderer_on,
+    };
+    write_atomic(dir, MARKER_FILE, &format_marker(&marker))
+}
+
+/// The window loaded and stayed up: clear this launch's marker, then credit
+/// the launch in the guard's state.
+pub fn record_clean_run(dir: &Path, own_pid: u32, renderer_on: bool, log: &mut dyn FnMut(&str)) {
+    clear_marker_if_ours(dir, own_pid);
+    let (state, corrupt) = read_state_file(dir, log);
+    let next = after_clean_run(&state, renderer_on);
+    if next == state && !corrupt {
+        return;
+    }
+    if renderer_on && state.early_exits > 0 {
+        log("launch loaded cleanly with the DMA-BUF renderer on; early-exit count reset");
+    }
+    if let Some(fb) = &next.fallback {
+        log(&format!(
+            "launch loaded cleanly under the saved DMA-BUF fallback ({} of {} \
+             before the renderer is tried again)",
+            fb.clean_runs,
+            retry_after(next.failed_retries)
+        ));
+    }
+    save_state_file(dir, &next, log);
+}
+
 #[cfg(target_os = "linux")]
 pub use shell::{apply_at_startup, clear_on_exit, watch_first_load};
 
@@ -644,11 +833,6 @@ mod shell {
     const WEBKIT_VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
     /// StemDeck's override: `auto` (default), `on` or `off`.
     const MODE_VAR: &str = "STEMDECK_WEBKIT_DMABUF";
-    /// The crash guard's counts and saved fallback.
-    const STATE_FILE: &str = "webkit-dmabuf-guard";
-    /// The fallback as test builds before #993 saved it, after one early
-    /// exit. Never read: one early exit is not enough, so it is dropped.
-    const LEGACY_FALLBACK_FILE: &str = "webkit-dmabuf-off";
 
     struct Armed {
         dir: PathBuf,
@@ -683,132 +867,46 @@ mod shell {
             .filter(|s| !s.is_empty())
     }
 
-    /// Reads the state file; an unreadable one is logged and starts over.
-    fn read_state(dir: &Path) -> (GuardState, bool) {
-        let text = fs::read_to_string(dir.join(STATE_FILE)).ok();
-        match load_state(text.as_deref()) {
-            Ok(s) => (s, false),
-            Err(why) => {
-                log(
-                    Some(dir),
-                    &format!("DMA-BUF crash guard state unreadable ({why}); starting over"),
-                );
-                (GuardState::default(), true)
-            }
-        }
-    }
-
-    fn save_state(dir: &Path, state: &GuardState) {
-        if let Err(e) = store_state(dir, STATE_FILE, state) {
-            log(
-                Some(dir),
-                &format!("could not save the DMA-BUF crash guard state: {e}"),
-            );
-        }
+    fn pid_alive(pid: u32) -> bool {
+        Path::new(&format!("/proc/{pid}")).exists()
     }
 
     /// Decide and apply, before GTK, WebKit or any other thread exists.
     pub fn apply_at_startup() {
         let data_dir = crate::local_data_dir().ok();
         let dir = data_dir.as_deref();
-        let marker = dir.and_then(|d| fs::read_to_string(d.join(MARKER_FILE)).ok());
-        let own_pid = std::process::id();
-        let previous = classify_previous(marker.as_deref(), boot_id().as_deref(), own_pid, |p| {
-            Path::new(&format!("/proc/{p}")).exists()
-        });
-        let (state, corrupt) = dir.map_or((GuardState::default(), false), read_state);
         let nvidia_version = fs::read_to_string("/proc/driver/nvidia/version").ok();
         // The WebKitGTK library is linked in, so it is mapped before main.
         let maps = fs::read_to_string("/proc/self/maps").ok();
-        let fingerprint = fingerprint_from(maps.as_deref(), nvidia_version.as_deref());
+        let boot = boot_id();
         let webkit_var = var(WEBKIT_VAR);
         let mode = var(MODE_VAR);
         let wayland_display = var("WAYLAND_DISPLAY");
         let session_type = var("XDG_SESSION_TYPE");
-        let decision = decide(&Inputs {
+        let host = Host {
             webkit_var: webkit_var.as_deref(),
             mode: mode.as_deref(),
             wayland_display: wayland_display.as_deref(),
             session_type: session_type.as_deref(),
-            // Present only while the NVIDIA kernel driver is loaded; nouveau
-            // never creates it. A file check: no subprocess, no GPU init.
-            nvidia_driver: nvidia_version.is_some(),
-            state: &state,
-            previous,
-            fingerprint: fingerprint.as_deref(),
+            nvidia_version: nvidia_version.as_deref(),
+            proc_maps: maps.as_deref(),
+            boot_id: boot.as_deref(),
+            own_pid: std::process::id(),
             now: now(),
-        });
-
-        if let Some(raw) = &decision.invalid_mode {
-            log(
-                dir,
-                &format!("{MODE_VAR}={raw} is not auto, on or off; using auto"),
-            );
-        }
+        };
+        let decision = startup(dir, &host, &pid_alive, &mut |m| log(dir, m));
         if decision.disable_dmabuf {
             // Edition 2021: set_var is safe to call, but it is only sound
             // while no other thread reads the environment. This runs first
             // thing in main, before Tauri, GTK or WebKit start a thread.
             env::set_var(WEBKIT_VAR, "1");
         }
-        if let Some(d) = dir {
-            if fs::remove_file(d.join(LEGACY_FALLBACK_FILE)).is_ok() {
-                log(
-                    dir,
-                    "dropped a DMA-BUF fallback saved after a single early exit; \
-                     the crash guard now needs two in a row",
-                );
-            }
-            for event in &decision.events {
-                log(dir, &event.describe());
-            }
-            if decision.state != state || corrupt {
-                save_state(d, &decision.state);
-            }
-            if decision.arm_guard {
-                let _ = ARMED.set(Armed {
-                    dir: d.to_path_buf(),
-                    renderer_on: !decision.disable_dmabuf,
-                });
-            } else if previous != PreviousLaunch::StillRunning {
-                // A leftover from an earlier launch would otherwise be read
-                // as an early exit the next time the guard runs.
-                let _ = fs::remove_file(d.join(MARKER_FILE));
-            }
+        if let (Some(d), true) = (dir, decision.arm_guard) {
+            let _ = ARMED.set(Armed {
+                dir: d.to_path_buf(),
+                renderer_on: !decision.disable_dmabuf,
+            });
         }
-        log(
-            dir,
-            &format!("webkit dmabuf: {}", decision.reason.describe()),
-        );
-    }
-
-    /// The window loaded and stayed up: clear the marker, then credit the
-    /// launch in the guard's state.
-    fn record_clean_run(armed: &Armed, own_pid: u32) {
-        clear_marker_if_ours(&armed.dir, own_pid);
-        let (state, corrupt) = read_state(&armed.dir);
-        let next = after_clean_run(&state, armed.renderer_on);
-        if next == state && !corrupt {
-            return;
-        }
-        if armed.renderer_on && state.early_exits > 0 {
-            log(
-                Some(&armed.dir),
-                "launch loaded cleanly with the DMA-BUF renderer on; early-exit count reset",
-            );
-        }
-        if let Some(fb) = &next.fallback {
-            log(
-                Some(&armed.dir),
-                &format!(
-                    "launch loaded cleanly under the saved DMA-BUF fallback ({} of {} \
-                     before the renderer is tried again)",
-                    fb.clean_runs,
-                    retry_after(next.failed_retries)
-                ),
-            );
-        }
-        save_state(&armed.dir, &next);
     }
 
     /// Writes the launch marker and clears it once the first page has loaded.
@@ -821,13 +919,14 @@ mod shell {
             return builder;
         };
         let own_pid = std::process::id();
-        let marker = Marker {
-            pid: own_pid,
-            started: now(),
-            boot_id: boot_id(),
-            renderer_on: armed.renderer_on,
-        };
-        if let Err(e) = write_atomic(&armed.dir, MARKER_FILE, &format_marker(&marker)) {
+        let boot = boot_id();
+        if let Err(e) = write_launch_marker(
+            &armed.dir,
+            own_pid,
+            boot.as_deref(),
+            armed.renderer_on,
+            now(),
+        ) {
             // Never a reason not to start: the guard is just off this time.
             log(Some(&armed.dir), &format!("launch marker not written: {e}"));
             return builder;
@@ -839,7 +938,9 @@ mod shell {
             {
                 std::thread::spawn(move || {
                     std::thread::sleep(READY_GRACE);
-                    record_clean_run(armed, own_pid);
+                    record_clean_run(&armed.dir, own_pid, armed.renderer_on, &mut |m| {
+                        log(Some(&armed.dir), m)
+                    });
                 });
             }
         })
@@ -1456,5 +1557,232 @@ mod tests {
             classify_previous(None, None, 5, |_| false),
             PreviousLaunch::Clean
         );
+    }
+
+    // Through the file layer: `startup`, `write_launch_marker`,
+    // `record_clean_run` and `clear_marker_if_ours`, in a temp data dir, in
+    // the order the shell calls them across launches.
+
+    fn host(own_pid: u32) -> Host<'static> {
+        Host {
+            webkit_var: None,
+            mode: None,
+            wayland_display: None,
+            session_type: None,
+            nvidia_version: None,
+            proc_maps: None,
+            boot_id: Some("boot-a"),
+            own_pid,
+            now: 1_700_000_000,
+        }
+    }
+
+    fn dead(_: u32) -> bool {
+        false
+    }
+
+    /// One launch's startup, with its log lines.
+    fn start(dir: &Path, own_pid: u32, alive: &dyn Fn(u32) -> bool) -> (Decision, Vec<String>) {
+        let mut lines = Vec::new();
+        let d = startup(Some(dir), &host(own_pid), alive, &mut |m| {
+            lines.push(m.to_string())
+        });
+        (d, lines)
+    }
+
+    /// What the shell does once the window is about to be built.
+    fn reach_window(dir: &Path, own_pid: u32, d: &Decision) {
+        assert!(d.arm_guard);
+        write_launch_marker(dir, own_pid, Some("boot-a"), !d.disable_dmabuf, 1).unwrap();
+    }
+
+    fn state_on_disk(dir: &Path) -> GuardState {
+        load_state(fs::read_to_string(dir.join(STATE_FILE)).ok().as_deref()).unwrap()
+    }
+
+    #[test]
+    fn one_early_exit_counts_once_when_the_next_launch_never_reaches_the_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+
+        // Launch 2 counts the early exit, then fails before its window (no
+        // display, an early setup error) and writes no marker of its own.
+        let (second, _) = start(dir, 100, &dead);
+        assert_eq!(second.state.early_exits, 1);
+        assert!(!dir.join(MARKER_FILE).exists(), "the marker is consumed");
+
+        // Launch 3 must not read the same early exit a second time.
+        let (third, _) = start(dir, 101, &dead);
+        assert_eq!(third.state.early_exits, 1);
+        assert_eq!(third.state.fallback, None);
+        assert!(!third.disable_dmabuf);
+        assert_eq!(state_on_disk(dir).early_exits, 1);
+    }
+
+    #[test]
+    fn two_real_early_exits_save_the_fallback_and_clean_runs_count_under_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+
+        let (second, _) = start(dir, 100, &dead);
+        reach_window(dir, 100, &second);
+        // Launch 2 dies early too, with the renderer on.
+        let (third, log) = start(dir, 101, &dead);
+        assert!(third.disable_dmabuf);
+        assert_eq!(third.reason, Reason::EarlyExitsInARow);
+        assert!(log.iter().any(|l| l.contains("is now off")), "{log:?}");
+        assert!(state_on_disk(dir).fallback.is_some());
+
+        // Launch 3 loads and stays up under the fallback.
+        reach_window(dir, 101, &third);
+        let mut lines = Vec::new();
+        record_clean_run(dir, 101, false, &mut |m| lines.push(m.to_string()));
+        assert!(!dir.join(MARKER_FILE).exists());
+        let fb = state_on_disk(dir).fallback.unwrap();
+        assert_eq!(fb.clean_runs, 1);
+        assert!(lines.iter().any(|l| l.contains("1 of 10")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_clean_run_clears_the_marker_and_the_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+        let (d, _) = start(dir, 100, &dead);
+        assert_eq!(state_on_disk(dir).early_exits, 1);
+        reach_window(dir, 100, &d);
+
+        let mut lines = Vec::new();
+        record_clean_run(dir, 100, true, &mut |m| lines.push(m.to_string()));
+        assert!(!dir.join(MARKER_FILE).exists());
+        assert!(!dir.join(STATE_FILE).exists(), "nothing left to keep");
+        assert!(lines.iter().any(|l| l.contains("count reset")), "{lines:?}");
+
+        // A clean run with nothing to change writes and logs nothing.
+        let mut quiet = Vec::new();
+        record_clean_run(dir, 100, true, &mut |m| quiet.push(m.to_string()));
+        assert!(quiet.is_empty());
+        assert_eq!(fs::read_dir(dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_clean_run_leaves_another_instances_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 200, Some("boot-a"), true, 1).unwrap();
+        record_clean_run(dir, 100, true, &mut |_| {});
+        assert_eq!(
+            parse_marker(&fs::read_to_string(dir.join(MARKER_FILE)).unwrap()).map(|m| m.pid),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn an_orderly_early_quit_is_not_counted_and_resets_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+        let (d, _) = start(dir, 100, &dead);
+        reach_window(dir, 100, &d);
+        // Quit before the 5 seconds were up: the marker goes, the count stays.
+        assert!(clear_marker_if_ours(dir, 100));
+        let (next, _) = start(dir, 101, &dead);
+        assert_eq!(next.state.early_exits, 1);
+        assert_eq!(next.state.fallback, None);
+    }
+
+    #[test]
+    fn a_live_instances_marker_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write_launch_marker(dir, 4242, Some("boot-a"), true, 1).unwrap();
+        let (d, _) = start(dir, 100, &|p| p == 4242);
+        assert_eq!(d.state.early_exits, 0);
+        assert!(dir.join(MARKER_FILE).exists());
+    }
+
+    #[test]
+    fn a_state_file_that_cannot_be_read_is_logged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // A directory where the file should be: reading it fails with an I/O
+        // error, not NotFound, on every platform and without permissions.
+        fs::create_dir(dir.join(STATE_FILE)).unwrap();
+        let (d, log) = start(dir, 100, &dead);
+        assert_eq!(d.state, GuardState::default());
+        assert!(
+            log.iter().any(|l| l.contains("could not be read")),
+            "{log:?}"
+        );
+        // Saving over it fails too, and that is logged rather than raised.
+        assert!(log.iter().any(|l| l.contains("could not save")), "{log:?}");
+    }
+
+    #[test]
+    fn a_corrupt_state_file_is_logged_and_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join(STATE_FILE), "early_exits=lots\n").unwrap();
+        let (d, log) = start(dir, 100, &dead);
+        assert_eq!(d.state, GuardState::default());
+        assert!(log.iter().any(|l| l.contains("unreadable")), "{log:?}");
+        assert!(!dir.join(STATE_FILE).exists(), "replaced by no state");
+    }
+
+    #[test]
+    fn stale_temp_files_are_swept_at_startup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        for name in [
+            ".launch-pending.4242.tmp",
+            ".webkit-dmabuf-guard.4243.tmp",
+            ".launch-pending.4244.tmp",
+            ".webkit-dmabuf-guard.100.tmp",
+            ".other.4242.tmp",
+            "notes.txt",
+        ] {
+            fs::write(dir.join(name), "").unwrap();
+        }
+        start(dir, 100, &|p| p == 4244);
+        let mut left: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec![
+                ".launch-pending.4244.tmp",
+                ".other.4242.tmp",
+                ".webkit-dmabuf-guard.100.tmp",
+                "notes.txt",
+            ]
+        );
+        assert_eq!(stale_tmp_pid(".launch-pending.7.tmp"), Some(7));
+        assert_eq!(stale_tmp_pid(".launch-pending.0.tmp"), None);
+        assert_eq!(stale_tmp_pid(".launch-pending.x.tmp"), None);
+        assert_eq!(stale_tmp_pid("launch-pending.7.tmp"), None);
+    }
+
+    #[test]
+    fn a_legacy_fallback_file_is_dropped_and_logged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join(LEGACY_FALLBACK_FILE), "since=1\n").unwrap();
+        let (d, log) = start(dir, 100, &dead);
+        assert!(!d.disable_dmabuf);
+        assert!(!dir.join(LEGACY_FALLBACK_FILE).exists());
+        assert!(log.iter().any(|l| l.contains("two in a row")), "{log:?}");
+    }
+
+    #[test]
+    fn no_data_dir_still_decides_and_logs() {
+        let mut lines = Vec::new();
+        let d = startup(None, &host(100), &dead, &mut |m| lines.push(m.to_string()));
+        assert!(d.arm_guard);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("webkit dmabuf: "));
     }
 }
