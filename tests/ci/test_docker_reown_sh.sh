@@ -37,13 +37,16 @@ skip() {
 }
 check(){ if [[ "$2" == "1" ]]; then ok "$1"; else bad "$1" "${3:-}"; fi }
 
-SANDBOX="$(mktemp -d)"
+# The physical path, so it matches what the fake chown sees with pwd -P.
+SANDBOX="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 
 # Fake commands: each records its arguments, one per line, after a CALL line.
+# The fake chown also records the directory it ran in, and with
+# FAKE_CHOWN_FAIL=1 it fails on every entry the way a read-only mount does.
 FAKEBIN="${SANDBOX}/bin"
 mkdir -p "$FAKEBIN"
-for cmd in chown gosu setpriv touch; do
+for cmd in gosu setpriv touch; do
     cat > "${FAKEBIN}/${cmd}" <<EOF
 #!/bin/sh
 { echo CALL; for a in "\$@"; do printf '%s\n' "\$a"; done; } >> "${SANDBOX}/${cmd}.log"
@@ -51,11 +54,38 @@ exit 0
 EOF
     chmod +x "${FAKEBIN}/${cmd}"
 done
+cat > "${FAKEBIN}/chown" <<EOF
+#!/bin/sh
+{ echo CALL; echo "CWD \$(pwd -P)"; for a in "\$@"; do printf '%s\n' "\$a"; done; } >> "${SANDBOX}/chown.log"
+if [ "\${FAKE_CHOWN_FAIL:-}" = 1 ]; then
+    for a in "\$@"; do
+        case "\$a" in -*|*:*) ;; *) echo "chown: changing ownership of '\$a': Read-only file system" >&2 ;; esac
+    done
+    exit 1
+fi
+exit 0
+EOF
+chmod +x "${FAKEBIN}/chown"
 reset_logs() { rm -f "${SANDBOX}"/*.log; }
-calls_of() { grep -c '^CALL$' "${SANDBOX}/$1.log" 2>/dev/null || echo 0; }
-# The paths chown was asked to change: every argument that is not an option,
-# the -- separator or the uid:gid pair.
-chowned() { grep -v -e '^CALL$' -e '^-' -e '^[0-9]*:[0-9]*$' "${SANDBOX}/chown.log" 2>/dev/null | sort; }
+calls_of() { local n; n="$(grep -c '^CALL$' "${SANDBOX}/$1.log" 2>/dev/null)"; echo "${n:-0}"; }
+# The path arguments chown was given, as given: every argument that is not the
+# CALL or CWD line, an option, the -- separator or the uid:gid pair.
+chown_args() { grep -v -e '^CALL$' -e '^CWD ' -e '^-' -e '^[0-9]*:[0-9]*$' "${SANDBOX}/chown.log" 2>/dev/null; }
+# The same, resolved against the directory chown ran in: what it changed.
+chowned() {
+    awk '/^CALL$/ {next} /^CWD / {cwd = substr($0, 5); next}
+         /^-/ || /^[0-9]*:[0-9]*$/ {next}
+         /^\.\// {print cwd "/" substr($0, 3); next}
+         {print}' "${SANDBOX}/chown.log" 2>/dev/null | sort
+}
+# 1 when every path argument is ./name: one component, relative to the
+# directory find changed into. An absolute path would make chown resolve every
+# parent again, which a second writer on the share can swap for a symlink.
+all_relative() {
+    local bad_args
+    bad_args="$(chown_args | grep -v -E '^\./[^/]+$')"
+    [[ -n "$(chown_args)" && -z "$bad_args" ]] && echo 1 || echo 0
+}
 
 run_reown() { PATH="${FAKEBIN}:${PATH}" sh "$REOWN" "$@" 2>&1; }
 
@@ -123,7 +153,46 @@ else
     check "mixed: chown told not to follow links (-h)" "$(grep -qx -- '-h' "${SANDBOX}/chown.log" && echo 1 || echo 0)"
     check "mixed: chown given the target owner" "$(grep -qx -- "${U2}:${G2}" "${SANDBOX}/chown.log" && echo 1 || echo 0)"
     check "mixed: logs the count" "$([[ "$OUT" == *"re-owned 3 of 10 entries to ${U2}:${G2} in "*" ms"* ]] && echo 1 || echo 0)" "$OUT"
+    check "mixed: chown given ./name, never an absolute path" "$(all_relative)" "$(chown_args | tr '\n' ' ')"
 fi
+
+# ---------------------------------------------------------------------------
+# 2b. chown acts from inside each directory, and its failures are counted
+# ---------------------------------------------------------------------------
+
+T4="${SANDBOX}/wrong"
+make_tree "$T4"
+ALL4="$(find "$T4" | sort)"
+# An owner nothing has, so every entry counts as wrong. Runs as any user.
+reset_logs
+OUT="$(run_reown 4242 4243 "$T4")"
+check "execdir: chown given ./name, never an absolute path" "$(all_relative)" "$(chown_args | tr '\n' ' ')"
+check "execdir: every entry re-owned, resolved from its own directory" \
+  "$([[ "$(chowned)" == "$ALL4" ]] && echo 1 || echo 0)" "got: $(chowned | tr '\n' ' ')"
+check "execdir: logs the count" "$([[ "$OUT" == *"re-owned 10 of 10 entries to 4242:4243 in "*" ms"* && "$OUT" != *failed* ]] && echo 1 || echo 0)" "$OUT"
+
+# A chown that fails on every entry, as on a read-only or root_squash mount.
+reset_logs
+OUT="$(FAKE_CHOWN_FAIL=1 run_reown 4242 4243 "$T4")"; CODE=$?
+check "chown fails: exit 0" "$([[ $CODE -eq 0 ]] && echo 1 || echo 0)" "got $CODE"
+check "chown fails: logs re-owned 0, failed 10" "$([[ "$OUT" == *"re-owned 0, failed 10 of 10 entries"* ]] && echo 1 || echo 0)" "$OUT"
+check "chown fails: names a failing entry" "$([[ "$OUT" == *"Read-only file system"* ]] && echo 1 || echo 0)" "$OUT"
+check "chown fails: at most 5 error lines, the rest summed up" \
+  "$([[ "$(grep -c 'Read-only file system' <<< "$OUT")" -eq 5 && "$OUT" == *"(5 more error lines not shown)"* ]] && echo 1 || echo 0)" "$OUT"
+
+# A uid that passes the number check but that find refuses.
+reset_logs
+OUT="$(run_reown 99999999999999999999 100 "$T4")"; CODE=$?
+check "uid find refuses: exit 0, no chown" "$([[ $CODE -eq 0 && "$(calls_of chown)" == "0" ]] && echo 1 || echo 0)" "$OUT"
+check "uid find refuses: logs that it could not check" \
+  "$([[ "$OUT" == *"could not be checked, ownership left unchanged"* && "$OUT" != *"already owned"* ]] && echo 1 || echo 0)" "$OUT"
+check "uid find refuses: shows find's error" "$([[ "$OUT" == *"stemdeck: ownership:   "*"find"* ]] && echo 1 || echo 0)" "$OUT"
+
+# A relative or empty PATH entry would make find refuse -execdir.
+reset_logs
+OUT="$(PATH="${FAKEBIN}::.:${PATH}" sh "$REOWN" 4242 4243 "$T4" 2>&1)"
+check "relative PATH entries: dropped, the walk still runs" \
+  "$([[ "$OUT" == *"re-owned 10 of 10 entries"* && "$(all_relative)" == 1 ]] && echo 1 || echo 0)" "$OUT"
 
 # ---------------------------------------------------------------------------
 # 3. A symlink pointing out of the library is not followed
@@ -149,6 +218,7 @@ else
     check "symlink: nothing reached through the link" "$(grep -q -- "escape/" <<< "$GOT" && echo 0 || echo 1)" "$GOT"
     check "symlink: every library entry re-owned" "$([[ "$(wc -l <<< "$GOT")" -eq 11 ]] && echo 1 || echo 0)" "$(wc -l <<< "$GOT") paths"
     check "symlink: chown told not to follow links (-h)" "$(grep -qx -- '-h' "${SANDBOX}/chown.log" && echo 1 || echo 0)"
+    check "symlink: chown given ./name, never an absolute path" "$(all_relative)" "$(chown_args | tr '\n' ' ')"
 
     # A library path that is itself a symlink is skipped, not walked.
     reset_logs
