@@ -21,6 +21,12 @@ a JSON file in the data dir, so a render does not pay for a probe each time.
 A pass lasts a week, a failure a day, and a timeout or a busy device only ten
 minutes; a new ffmpeg (another path, size, mtime or version) starts afresh.
 
+h264_vaapi is probed per DRM render node (render_nodes: every
+/dev/dri/renderD* in number order, or the one STEMDECK_VAAPI_DEVICE names),
+and each node's result is cached on its own, so a node that fails never hides
+one that works (#995: a hybrid-GPU laptop's first node can be the GPU without
+a working encoder). The first node that passes is the one the render uses.
+
 Filters (scale, overlay, fps) stay on the CPU: only the final encode moves.
 Nothing here takes a string from a request: encoder names come from the
 whitelist in config.py, and every subprocess gets list arguments.
@@ -40,13 +46,14 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from app.core.config import (
     DATA_DIR,
     TIMEOUT_VIDEO_ENCODER_PROBE,
     TIMEOUT_VIDEO_VALIDATE_MIN,
+    VAAPI_DEVICE_OVERRIDE,
     VIDEO_CPU_ENCODER,
     VIDEO_ENCODER_FAIL_TTL_SEC,
     VIDEO_ENCODER_MAX_FAILURES,
@@ -66,6 +73,7 @@ from app.core.config import (
 logger = logging.getLogger("stemdeck.video_encoder")
 
 CPU = VIDEO_CPU_ENCODER
+VAAPI = "h264_vaapi"
 
 # Tried in this order; libx264 is always last and needs no probe. h264_mf is
 # never used (refused 4K on the test machine, no constant-quality mode).
@@ -262,17 +270,47 @@ def encoder_args(encoder: str, width: int, height: int, fps: int, variant: int =
     raise ValueError(f"not a GPU encoder: {encoder}")
 
 
-def vaapi_device() -> str | None:
-    """The first DRM render node, or None (WSL and most containers have none)."""
-    nodes = sorted(Path("/dev/dri").glob("renderD*")) if os.name == "posix" else []
-    return str(nodes[0]) if nodes else None
+# Where the DRM render nodes are (a module attribute so a test can point it at
+# a fake tree).
+DRI_DIR = Path("/dev/dri")
+_RENDER_NODE_RE = re.compile(r"renderD([0-9]+)")
 
 
-def global_args(encoder: str) -> list[str]:
-    """Options that go before the inputs (VAAPI's device)."""
-    if encoder == "h264_vaapi":
-        device = vaapi_device()
-        return ["-vaapi_device", device] if device else []
+def _host_platform() -> str:
+    return sys.platform
+
+
+def render_nodes() -> list[str]:
+    """The DRM render nodes h264_vaapi may run on, in the order they are
+    tried: the one STEMDECK_VAAPI_DEVICE names when it is set (and exists),
+    else every renderD* in number order (renderD128, renderD129, ...).
+    Empty on Windows and macOS, which have no VAAPI, and wherever there is
+    no node (WSL, most containers)."""
+    plat = _host_platform()
+    if plat.startswith("win") or plat == "darwin":
+        return []
+    if VAAPI_DEVICE_OVERRIDE:
+        forced = DRI_DIR / Path(VAAPI_DEVICE_OVERRIDE).name
+        return [str(forced)] if forced.exists() else []
+    try:
+        found = [
+            (int(m.group(1)), path)
+            for path in DRI_DIR.iterdir()
+            if (m := _RENDER_NODE_RE.fullmatch(path.name))
+        ]
+    except OSError:
+        return []
+    return [str(path) for _number, path in sorted(found)]
+
+
+def global_args(encoder: str, device: str = "") -> list[str]:
+    """Options that go before the inputs: VAAPI's render node. -vaapi_device
+    opens it and also makes it the filter graph's device, so output_filter's
+    hwupload puts the frames on the same node the encoder runs on."""
+    if encoder == VAAPI:
+        if not device:
+            raise ValueError("h264_vaapi needs the render node its probe passed on")
+        return ["-vaapi_device", device]
     return []
 
 
@@ -361,6 +399,9 @@ class ProbeResult:
     detail: str = ""  # ffmpeg's error line, cleaned (no addresses, no paths)
     speed: float | None = None  # x realtime of the test encode
     variant: int = 0
+    # h264_vaapi only: the render node this result is about (a full path),
+    # "" for every other encoder and for "no node passed".
+    device: str = ""
     checked_at: float = 0.0
     transient: bool = False
 
@@ -377,6 +418,8 @@ class ProbeResult:
         d = asdict(self)
         d.pop("transient", None)
         d.pop("checked_at", None)
+        # The node's name (renderD129), never a path.
+        d["device"] = Path(self.device).name if self.device else ""
         return d
 
 
@@ -455,16 +498,19 @@ def blames_encoder(encoder: str, code: str, stderr: str) -> bool:
     return own.search(stderr) is not None
 
 
-def probe_cmd(encoder: str, width: int, height: int, fps: int, variant: int = 0) -> list[str]:
+def probe_cmd(
+    encoder: str, width: int, height: int, fps: int, variant: int = 0, device: str = ""
+) -> list[str]:
     """A real encode of a moving test picture at the render's geometry, thrown
-    away (-f null), with -progress so the frames that came out are counted."""
+    away (-f null), with -progress so the frames that came out are counted.
+    `device` is h264_vaapi's render node, exactly as the render passes it."""
     return [
         ffmpeg_executable(),
         "-nostdin",
         "-hide_banner",
         "-v",
         "error",
-        *global_args(encoder),
+        *global_args(encoder, device),
         "-f",
         "lavfi",
         "-i",
@@ -499,13 +545,13 @@ def _run_probe_once(
     fps: int,
     variant: int,
     cancelled: Callable[[], bool] = _never,
+    device: str = "",
 ) -> ProbeResult:
     now = time.time()
     base = {"encoder": encoder, "width": width, "height": height, "fps": fps}
     base["variant"] = variant
-    if encoder == "h264_vaapi" and vaapi_device() is None:
-        return ProbeResult(**base, ok=False, reason="nodevice", checked_at=now)
-    cmd = probe_cmd(encoder, width, height, fps, variant)
+    base["device"] = device
+    cmd = probe_cmd(encoder, width, height, fps, variant, device)
     start = time.monotonic()
     try:
         proc = subprocess.Popen(  # noqa: S603 -- list args from the whitelist, trusted ffmpeg
@@ -575,17 +621,22 @@ def _run_probe_once(
 
 
 def run_probe(
-    encoder: str, width: int, height: int, fps: int, cancelled: Callable[[], bool] = _never
+    encoder: str,
+    width: int,
+    height: int,
+    fps: int,
+    cancelled: Callable[[], bool] = _never,
+    device: str = "",
 ) -> ProbeResult:
-    """Probe every argument variant of `encoder` in order; the first that
-    passes wins. The last failure is the answer when none does."""
-    result = _run_probe_once(encoder, width, height, fps, 0, cancelled)
+    """Probe every argument variant of `encoder` (on render node `device`
+    for h264_vaapi) in order; the first that passes wins. The last failure
+    is the answer when none does."""
+    result = _run_probe_once(encoder, width, height, fps, 0, cancelled, device)
     for variant in range(1, variant_count(encoder)):
-        # A missing encoder, no device, a timeout, a cancel: another variant
-        # cannot help.
-        if result.ok or result.reason in ("missing", "nodevice", "timeout", "error", "cancelled"):
+        # A missing encoder, a timeout, a cancel: another variant cannot help.
+        if result.ok or result.reason in ("missing", "timeout", "error", "cancelled"):
             break
-        result = _run_probe_once(encoder, width, height, fps, variant, cancelled)
+        result = _run_probe_once(encoder, width, height, fps, variant, cancelled, device)
     return result
 
 
@@ -598,20 +649,24 @@ _cache_lock = threading.RLock()
 _probe_lock = threading.Lock()
 
 
-def _args_sig(encoder: str, width: int, height: int, fps: int) -> str:
+def _args_sig(encoder: str, width: int, height: int, fps: int, device: str = "") -> str:
     """A fingerprint of what a probe of this encoder runs, so a release that
     changes the arguments never trusts a pass of the old ones."""
     parts = [
-        global_args(encoder),
+        # h264_vaapi with no node is the "no node" entry: nothing runs.
+        global_args(encoder, device) if device or encoder != VAAPI else [],
         output_filter(encoder),
         [encoder_args(encoder, width, height, fps, v) for v in range(variant_count(encoder))],
     ]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:10]
 
 
-def _key(ident: str, encoder: str, width: int, height: int, fps: int) -> str:
-    sig = _args_sig(encoder, width, height, fps)
-    return f"{ident}|{encoder}|{width}x{height}@{fps}|{sig}"
+def _key(ident: str, encoder: str, width: int, height: int, fps: int, device: str = "") -> str:
+    """The cache key. h264_vaapi has one per render node (`device`), and one
+    with no node for "this machine has none"."""
+    sig = _args_sig(encoder, width, height, fps, device)
+    node = f"|{device}" if device else ""
+    return f"{ident}|{encoder}|{width}x{height}@{fps}{node}|{sig}"
 
 
 def _load_cache(ident: str) -> None:
@@ -677,6 +732,10 @@ def probe(
     """The cached probe result for this encoder and geometry, probing when
     there is none, it expired, or `force`. Never raises.
 
+    h264_vaapi is probed node by node (render_nodes), each node cached on
+    its own; the answer is the first node that passes, with that node in
+    `device`, or a failure naming every node when none does.
+
     `cancelled` (a render's cancel flag) is looked at while waiting for the
     probe lock and during the test encode; a cancelled probe answers
     "cancelled" and is never cached."""
@@ -694,7 +753,70 @@ def probe(
             checked_at=time.time(),
             transient=True,
         )
-    key = _key(ident, encoder, width, height, fps)
+    if encoder != VAAPI:
+        return _probe_device(ident, encoder, width, height, fps, "", force, cancelled)
+    nodes = render_nodes()
+    if not nodes:
+        return _no_node(ident, width, height, fps)
+    failures: list[ProbeResult] = []
+    for node in nodes:
+        result = _probe_device(ident, encoder, width, height, fps, node, force, cancelled)
+        if result.ok or result.reason == "cancelled":
+            return result
+        failures.append(result)
+        if result.reason == "missing":
+            # This ffmpeg has no h264_vaapi: the same on every node.
+            break
+    return _none_passed(failures)
+
+
+def _no_node(ident: str, width: int, height: int, fps: int) -> ProbeResult:
+    """h264_vaapi on a machine with no render node to try (or without the
+    one STEMDECK_VAAPI_DEVICE names). Kept in the cache only so Settings
+    shows it: render_nodes is looked at again before every probe, so a node
+    that appears later is tried at once."""
+    forced = Path(VAAPI_DEVICE_OVERRIDE).name if VAAPI_DEVICE_OVERRIDE else ""
+    result = ProbeResult(
+        VAAPI,
+        width,
+        height,
+        fps,
+        ok=False,
+        reason="nodevice",
+        detail=f"{forced} not found (STEMDECK_VAAPI_DEVICE)" if forced else "",
+        checked_at=time.time(),
+    )
+    key = _key(ident, VAAPI, width, height, fps)
+    hit = _valid_hit(ident, key)
+    if hit is None or hit.reason != result.reason or hit.detail != result.detail:
+        with _cache_lock:
+            _cache[key] = result
+        _save_cache(ident)
+    return result
+
+
+def _none_passed(failures: list[ProbeResult]) -> ProbeResult:
+    """One answer for h264_vaapi when no node passed: a busy or timed-out
+    node's (it may pass in a few minutes), else the last node's, with each
+    node's own error in `detail`."""
+    transient = [r for r in failures if r.transient]
+    pick = transient[0] if transient else failures[-1]
+    detail = "; ".join(f"{Path(r.device).name}: {r.detail or r.reason}" for r in failures)
+    return replace(pick, detail=detail[:160], device="")
+
+
+def _probe_device(
+    ident: str,
+    encoder: str,
+    width: int,
+    height: int,
+    fps: int,
+    device: str,
+    force: bool,
+    cancelled: Callable[[], bool],
+) -> ProbeResult:
+    """probe() for one encoder on one device ("" for all but h264_vaapi)."""
+    key = _key(ident, encoder, width, height, fps, device)
 
     def gave_up() -> ProbeResult:
         return ProbeResult(
@@ -704,6 +826,7 @@ def probe(
             fps,
             ok=False,
             reason="cancelled",
+            device=device,
             checked_at=time.time(),
             transient=True,
         )
@@ -711,24 +834,25 @@ def probe(
     if not force:
         # A cached answer needs no probe lock, which another probe (Settings'
         # Test encoders) can hold for minutes (#791).
-        hit = _valid_hit(ident, key)
+        hit = _valid_hit(ident, key, device)
         if hit is not None:
             return hit
     while not _probe_lock.acquire(timeout=_CANCEL_POLL_SEC):
         if cancelled():
             return gave_up()
     try:
-        hit = _valid_hit(ident, key)
+        hit = _valid_hit(ident, key, device)
         if hit is not None and not force:
             return hit
         if cancelled():
             return gave_up()
-        result = run_probe(encoder, width, height, fps, cancelled)
+        result = run_probe(encoder, width, height, fps, cancelled, device)
         if result.reason == "cancelled":
             return result
         logger.info(
-            "video encoder probe %s %dx%d@%d: %s%s",
+            "video encoder probe %s%s %dx%d@%d: %s%s",
             encoder,
+            f" on {device}" if device else "",
             width,
             height,
             fps,
@@ -748,12 +872,15 @@ def probe(
         _probe_lock.release()
 
 
-def _valid_hit(ident: str, key: str) -> ProbeResult | None:
-    """The cached result for `key` while it is still trusted, else None."""
+def _valid_hit(ident: str, key: str, device: str = "") -> ProbeResult | None:
+    """The cached result for `key` while it is still trusted, else None.
+    `device` is the render node the key was built for: a row naming any
+    other (an edited or damaged video_encoders.json) is not trusted, so only
+    a node render_nodes() listed can reach -vaapi_device."""
     _load_cache(ident)
     with _cache_lock:
         hit = _cache.get(key)
-    if hit is not None and hit.expires_at() > time.time():
+    if hit is not None and hit.device == device and hit.expires_at() > time.time():
         return hit
     return None
 
@@ -767,7 +894,36 @@ def cached_results() -> list[ProbeResult]:
     _load_cache(ident)
     with _cache_lock:
         now = time.time()
-        return [r for k, r in _cache.items() if k.startswith(f"{ident}|") and r.expires_at() > now]
+        live = [r for k, r in _cache.items() if k.startswith(f"{ident}|") and r.expires_at() > now]
+    out = [r for r in live if r.encoder != VAAPI]
+    # h264_vaapi: one answer per geometry, the one a render would get.
+    nodes = render_nodes()
+    for width, height, fps in sorted(
+        {(r.width, r.height, r.fps) for r in live if r.encoder == VAAPI}
+    ):
+        result = _vaapi_cached(ident, width, height, fps, nodes)
+        if result is not None:
+            out.append(result)
+    return out
+
+
+def _vaapi_cached(
+    ident: str, width: int, height: int, fps: int, nodes: list[str]
+) -> ProbeResult | None:
+    """What probe() would answer for h264_vaapi from the cache alone: the
+    first node in order that passed, the combined failure when every node
+    has failed, None while a node before any pass is still untested."""
+    if not nodes:
+        return _valid_hit(ident, _key(ident, VAAPI, width, height, fps))
+    failures = []
+    for node in nodes:
+        hit = _valid_hit(ident, _key(ident, VAAPI, width, height, fps, node), node)
+        if hit is None:
+            return None
+        if hit.ok:
+            return hit
+        failures.append(hit)
+    return _none_passed(failures)
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +999,8 @@ class Choice:
     # Why not a GPU encoder, for the log: "policy", "none" (nothing passed),
     # or the last probe's reason.
     reason: str = ""
+    # h264_vaapi: the render node that passed, for the render's -vaapi_device.
+    device: str = ""
 
 
 def choose(width: int, height: int, fps: int, cancelled: Callable[[], bool] = _never) -> Choice:
@@ -861,7 +1019,7 @@ def choose(width: int, height: int, fps: int, cancelled: Callable[[], bool] = _n
             continue
         result = probe(encoder, width, height, fps, cancelled=cancelled)
         if result.ok:
-            return Choice(encoder, result.variant)
+            return Choice(encoder, result.variant, device=result.device)
         if result.reason == "cancelled":
             return Choice(CPU, reason="cancelled")
         reason = result.reason or "failed"

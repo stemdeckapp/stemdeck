@@ -54,6 +54,31 @@ def test_matrix_runs_the_apps_cpu_arguments(w, h, _fps):
     assert matrix.libx264_args(w, h) == take_render.libx264_args(w, h)
 
 
+@pytest.mark.parametrize("forced", ["", "renderD129", "/dev/dri/renderD130", "card0"])
+def test_matrix_tries_the_apps_vaapi_nodes_in_its_order(tmp_path, monkeypatch, forced):
+    # Issue #995: the app tries every render node in number order; the matrix
+    # must test the same nodes, or a hybrid-GPU report says nothing.
+    from types import SimpleNamespace
+
+    from app.core import config
+
+    root = tmp_path / "dri"
+    root.mkdir()
+    for name in ("renderD1000", "renderD129", "renderD128", "card0"):
+        (root / name).write_bytes(b"")
+    monkeypatch.setattr(ve, "DRI_DIR", root)
+    monkeypatch.setattr(matrix, "DRI_DIR", root)
+    monkeypatch.setattr(ve, "_host_platform", lambda: "linux")
+    monkeypatch.setattr(matrix, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setenv("STEMDECK_VAAPI_DEVICE", forced)
+    monkeypatch.setattr(
+        ve, "VAAPI_DEVICE_OVERRIDE", config._env_render_node("STEMDECK_VAAPI_DEVICE")
+    )
+    assert matrix.render_nodes() == ve.render_nodes()
+    for node in ve.render_nodes():
+        assert matrix.global_args("h264_vaapi", node) == ve.global_args("h264_vaapi", node)
+
+
 def test_matrix_candidates_are_the_apps():
     assert matrix.CANDIDATES == ve.CANDIDATES
     assert matrix.GPU_MAX_BITS_PER_PIXEL == ve.VIDEO_GPU_MAX_BITS_PER_PIXEL

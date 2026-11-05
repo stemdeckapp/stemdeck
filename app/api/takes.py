@@ -1294,9 +1294,10 @@ async def get_take_filmstrip_image(job_id: str, take_id: str) -> FileResponse:
 @dataclass
 class _GpuPlan:
     """What a GPU attempt needs: the command for (trim_db, alt_aac, encoder,
-    variant), and the geometry the encoder is probed and checked at."""
+    variant, device), and the geometry the encoder is probed and checked at.
+    `device` is h264_vaapi's render node, "" for every other encoder."""
 
-    build: Any  # Callable[[float, bool, str, int], list[str]]
+    build: Any  # Callable[[float, bool, str, int, str], list[str]]
     width: int
     height: int
     fps: int
@@ -1314,6 +1315,7 @@ class _RenderRun:
     # else None. `gpu` is None for a render that never tries the GPU.
     encoder: str | None = None
     variant: int = 0
+    device: str = ""  # h264_vaapi's render node (video_encoder.Choice)
     fallback: str | None = None
     gpu: _GpuPlan | None = None
 
@@ -1628,10 +1630,12 @@ async def _render_task(
                 if cancelled():
                     raise RenderCancelled()
                 run.encoder, run.variant = choice.encoder, choice.variant
+                run.device = choice.device
                 logger.info(
-                    "[%s] video render encoder %s%s",
+                    "[%s] video render encoder %s%s%s",
                     job.id,
                     choice.encoder,
+                    f" on {choice.device}" if choice.device else "",
                     f" ({choice.reason})" if choice.reason else "",
                 )
 
@@ -1672,7 +1676,7 @@ async def _render_task(
 
                     try:
                         await run_cmd(
-                            gpu.build(trim, alt, encoder, run.variant),
+                            gpu.build(trim, alt, encoder, run.variant, run.device),
                             check=check,
                             stall=TIMEOUT_VIDEO_GPU_STALL,
                         )
@@ -1794,6 +1798,7 @@ async def _prepare_render(
         alt_aac: bool = False,
         encoder: str = VIDEO_CPU_ENCODER,
         variant: int = 0,
+        device: str = "",
     ) -> list[str]:
         return build_video_render_cmd(
             lanes,
@@ -1816,6 +1821,7 @@ async def _prepare_render(
             fps=body.fps,
             encoder=encoder,
             encoder_variant=variant,
+            encoder_device=device,
         )
 
     cmd = make_cmd()
