@@ -6,7 +6,7 @@
 //
 // Run:  node tests/js/donate.test.mjs
 
-import { donateUrl, readAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
+import { donateUrl, readAmount, takesAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
 import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "../../static/js/donateLinks.js";
 
 let pass = 0,
@@ -60,6 +60,19 @@ check("a template without {amount} is ignored", donateUrl("stripe", 15, links, {
 check("a template that is not https is ignored", donateUrl("stripe", 15, links, { stripe: "http://example.org/?a={amount}" }) === "https://example.org/stripe");
 check("an amount below the minimum never reaches a template", donateUrl("stripe", 1, links, tpl) === "https://example.org/stripe");
 check("an unknown way has no link", donateUrl("paypal", 5, links, tpl) === null);
+
+// ── Which ways take the amount picked here (#1037) ──
+// Only these show presets, a custom amount and the arrow; any other set way
+// has a tile that opens its page directly.
+check("no template: the way takes no amount", !takesAmount("stripe", links, {}));
+check("an empty template: no amount", !takesAmount("stripe", links, { stripe: "" }));
+check("an https template with {amount}: the way takes it", takesAmount("stripe", links, tpl));
+check("a template without {amount}: no amount", !takesAmount("stripe", links, { stripe: "https://example.org/other" }));
+check("a template that is not https: no amount", !takesAmount("stripe", links, { stripe: "http://example.org/?a={amount}" }));
+check("a template on a way whose link is not set: no amount", !takesAmount("liberapay", links, tpl));
+check("an unknown way: no amount", !takesAmount("paypal", links, tpl));
+check("what takesAmount says matches where the arrow goes", ["stripe", "liberapay"].every((way) =>
+  takesAmount(way, both, tpl) === (donateUrl(way, 15, both, tpl) !== donateUrl(way, null, both, tpl))));
 
 // ── The custom amount field ──
 check("the minimum is 2", AMOUNT_MIN === 2);

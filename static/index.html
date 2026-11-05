@@ -1250,10 +1250,12 @@
     </div>
 
     <!-- Donate dialog (donate.js), opened from the rail. Laid out like a donate
-         page: a hero, the ways to give with amounts on the left, sharing on the
-         right. Plain links only: nothing loads from Stripe or Liberapay until
-         the arrow is clicked, and then it opens in the system browser. A way
-         whose link is still a placeholder (donateLinks.js) has no tile. The QR
+         page: a hero, the ways to give on the left, sharing on the right. Plain
+         links only: nothing loads from Stripe or Liberapay until a link is
+         clicked, and then it opens in the system browser. A way whose link is
+         still a placeholder (donateLinks.js) has no tile. A way whose page
+         takes no amount has its tile turned into a link to that page, and the
+         amounts and the arrow below show only for a way that takes one. The QR
          code comes from this server (/api/qr). -->
     <div class="about-backdrop hidden" id="donateDialog" role="dialog" aria-modal="true" aria-labelledby="donateTitle" aria-describedby="donateIntro">
       <div class="about-card donate-card">

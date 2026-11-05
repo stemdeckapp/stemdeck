@@ -271,6 +271,26 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
     }));
 }
 
+/**
+ * Serve the real donateLinks.js with these links (and, if given, templates) in
+ * place of the ones it holds, so a test decides which Donate ways are set
+ * whatever the shipped file says. Only the two frozen objects are replaced.
+ */
+export async function serveDonateLinks(page, links, templates = null) {
+  await page.route("**/js/donateLinks.js", async (route) => {
+    const res = await route.fetch();
+    const source = await res.text();
+    const swap = (text, name, value) => {
+      const out = text.replace(new RegExp(`(export const ${name} = Object\\.freeze\\()\\{[^}]*\\}`), (_, head) => head + JSON.stringify(value));
+      if (out === text) throw new Error(`donateLinks.js has no ${name} block to fill`);
+      return out;
+    };
+    let body = swap(source, "DONATE_LINKS", links);
+    if (templates) body = swap(body, "DONATE_LINK_TEMPLATES", templates);
+    await route.fulfill({ response: res, body });
+  });
+}
+
 /** Open the fixture track in the studio and wait until the transport is live. */
 /**
  * Keep favourites off the shared e2e backend (#734).
