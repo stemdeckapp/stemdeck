@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     env, fs,
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
@@ -994,7 +994,7 @@ fn probe_runtime_blocking() -> Result<RuntimeProbe, String> {
     let (ffmpeg, ffmpeg_ready) = match backend_ffmpeg_decision(&data_dir).choice {
         BackendFfmpeg::Env(ffmpeg, _) => (Some(ffmpeg), true),
         BackendFfmpeg::RecordedOverEnv(ffmpeg, ffprobe) => {
-            let ready = check_ffmpeg_pair_with(&ffmpeg, &ffprobe).is_ok();
+            let ready = check_pair_cached(&ffmpeg, &ffprobe).is_ok();
             (Some(ffmpeg), ready)
         }
         BackendFfmpeg::Recorded(..) | BackendFfmpeg::Inherit => {
@@ -5863,9 +5863,13 @@ fn backend_dir(root: &Path) -> Result<PathBuf, String> {
 }
 
 /// Returns Some(PathBuf) if the env var is set and non-empty, None otherwise.
+///
+/// Read as an OS string, not as UTF-8. A path is an OS string, and on Linux
+/// and macOS a folder name need not be valid UTF-8: env::var reported such a
+/// value as unset, so STEMDECK_FFMPEG pointing into one was dropped without a
+/// word (#1042).
 fn env_path_override(var: &str) -> Option<PathBuf> {
-    env::var(var)
-        .ok()
+    env::var_os(var)
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
 }
@@ -6173,13 +6177,110 @@ fn decide_backend_ffmpeg(
     }
 }
 
+// A path from STEMDECK_FFMPEG or STEMDECK_FFPROBE as the backend must be
+// given it. The backend runs in the backend folder, not the folder the shell
+// was started from, so a relative path would name a different file there
+// than the one verified here: it is made absolute against the shell's own
+// folder, which is the one the user meant. A bare name ("ffmpeg") is a PATH
+// lookup, so it is resolved on `path_var` the way verified_ffmpeg_pair
+// resolves a recorded one, and left as it is when PATH has no such file
+// (verification then says so).
+fn absolute_env_tool(path: PathBuf, path_var: Option<&std::ffi::OsStr>) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    let bare = matches!(
+        path.components().collect::<Vec<_>>().as_slice(),
+        [std::path::Component::Normal(_)]
+    );
+    if bare {
+        let name = path.to_string_lossy();
+        // resolve_in_paths adds ".exe" on Windows, so ask for the name
+        // without it.
+        let stem = if cfg!(windows) {
+            name.strip_suffix(".exe").unwrap_or(&name)
+        } else {
+            &name
+        };
+        return path_var
+            .and_then(|paths| resolve_in_paths(stem, paths))
+            .unwrap_or(path);
+    }
+    // std::path::absolute, not canonicalize: no \\?\ prefix on Windows, and
+    // no symlink resolution, so the path stays the one the user wrote.
+    std::path::absolute(&path).unwrap_or(path)
+}
+
+// The time a file was last written, or None when it cannot be read: part of
+// what a cached verification is keyed on.
+fn modified_at(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+// Both halves of a pair, with when each was last written.
+type PairStamp = (PathBuf, Option<SystemTime>, PathBuf, Option<SystemTime>);
+
+// Verification results for this process's lifetime. probe_runtime, both
+// child spawns and the fpcalc check each ask about the same pair, and every
+// unanswered ask runs up to three subprocesses with 15 s timeouts: a binary
+// that hangs would stall each of them for 45 s. A pair is checked again
+// only when either file changes. The lock is held only to read or record a
+// result, never while the check runs; two callers racing on the first check
+// may both run it, which costs time and changes no answer.
+struct PairCheckCache(Mutex<Vec<(PairStamp, Result<(), String>)>>);
+
+impl PairCheckCache {
+    const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    fn check(
+        &self,
+        ffmpeg: &Path,
+        ffprobe: &Path,
+        stamp: impl Fn(&Path) -> Option<SystemTime>,
+        run: impl FnOnce(&Path, &Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let key = (
+            ffmpeg.to_path_buf(),
+            stamp(ffmpeg),
+            ffprobe.to_path_buf(),
+            stamp(ffprobe),
+        );
+        if let Ok(entries) = self.0.lock() {
+            if let Some((_, result)) = entries.iter().find(|(stamp, _)| *stamp == key) {
+                return result.clone();
+            }
+        }
+        let result = run(ffmpeg, ffprobe);
+        if let Ok(mut entries) = self.0.lock() {
+            // A result for the same two files at older times is stale.
+            entries.retain(|((f, _, p, _), _)| !(f == &key.0 && p == &key.2));
+            entries.push((key, result.clone()));
+        }
+        result
+    }
+}
+
+static PAIR_CHECKS: PairCheckCache = PairCheckCache::new();
+
+// check_ffmpeg_pair_reason through PAIR_CHECKS.
+fn check_pair_cached(ffmpeg: &Path, ffprobe: &Path) -> Result<(), String> {
+    PAIR_CHECKS.check(ffmpeg, ffprobe, modified_at, |ffmpeg, ffprobe| {
+        check_ffmpeg_pair_reason(ffmpeg, ffprobe).map(|_| ())
+    })
+}
+
 // decide_backend_ffmpeg on this process's environment and config.json. Runs
-// both halves of the environment's pair when STEMDECK_FFMPEG is set.
+// both halves of the environment's pair when STEMDECK_FFMPEG is set, once
+// per process unless a file changes (PAIR_CHECKS).
 fn backend_ffmpeg_decision(data_dir: &Path) -> BackendFfmpegDecision {
+    let path_var = env::var_os("PATH");
+    let absolute = |var| env_path_override(var).map(|p| absolute_env_tool(p, path_var.as_deref()));
     let env = read_env_ffmpeg(
-        env_path_override("STEMDECK_FFMPEG"),
-        env_path_override("STEMDECK_FFPROBE"),
-        |ffmpeg, ffprobe| check_ffmpeg_pair_with(ffmpeg, ffprobe).map(|_| ()),
+        absolute("STEMDECK_FFMPEG"),
+        absolute("STEMDECK_FFPROBE"),
+        check_pair_cached,
     );
     decide_backend_ffmpeg(env, verified_ffmpeg_pair(data_dir))
 }
@@ -6188,16 +6289,24 @@ fn backend_ffmpeg_decision(data_dir: &Path) -> BackendFfmpegDecision {
 // warmup, then the backend) logs the same reason once.
 static LAST_FFMPEG_NOTE: Mutex<Option<String>> = Mutex::new(None);
 
-fn log_ffmpeg_note(data_dir: &Path, note: &str) {
-    let Ok(mut last) = LAST_FFMPEG_NOTE.lock() else {
-        return;
+// True, and remembered in `last`, when `note` is not the one logged last.
+fn note_is_new(last: &Mutex<Option<String>>, note: &str) -> bool {
+    let Ok(mut last) = last.lock() else {
+        // A panic elsewhere poisoned it: log rather than lose the line.
+        return true;
     };
     if last.as_deref() == Some(note) {
-        return;
+        return false;
     }
-    eprintln!("{note}");
-    append_to_setup_log(data_dir, note);
     *last = Some(note.to_string());
+    true
+}
+
+fn log_ffmpeg_note(data_dir: &Path, note: &str) {
+    if note_is_new(&LAST_FFMPEG_NOTE, note) {
+        eprintln!("{note}");
+        append_to_setup_log(data_dir, note);
+    }
 }
 
 /// Point `cmd` at the FFmpeg StemDeck actually verified.
@@ -6226,7 +6335,25 @@ fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
     if let Some(note) = &decision.note {
         log_ffmpeg_note(data_dir, note);
     }
-    let chosen = decision.choice.pair();
+    let existing = env::var_os("PATH").unwrap_or_default();
+    apply_ffmpeg_choice(
+        cmd,
+        &decision.choice,
+        || ffmpeg_dir_if_present(data_dir),
+        &existing,
+    )
+}
+
+// apply_ffmpeg_path once the choice is made. `fallback_dir` is the data
+// folder's FFmpeg directory, asked for only when the choice has none;
+// `existing` is the PATH the child would otherwise inherit.
+fn apply_ffmpeg_choice(
+    cmd: &mut Command,
+    choice: &BackendFfmpeg,
+    fallback_dir: impl FnOnce() -> Option<PathBuf>,
+    existing: &std::ffi::OsStr,
+) -> Result<(), String> {
+    let chosen = choice.pair();
     if let Some((ffmpeg, ffprobe)) = chosen {
         cmd.env("STEMDECK_FFMPEG", ffmpeg);
         cmd.env("STEMDECK_FFPROBE", ffprobe);
@@ -6234,19 +6361,18 @@ fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
 
     // The chosen binary's own directory, falling back to the data directory
     // when there is none yet. Either way this is only PATH: what the backend
-    // uses is settled above. A bare name from STEMDECK_FFMPEG has no
-    // directory to add.
+    // uses is settled above. A bare name from STEMDECK_FFMPEG that PATH did
+    // not resolve has no directory to add.
     let Some(ffmpeg_dir) = chosen
         .and_then(|(ffmpeg, _)| ffmpeg.parent())
         .filter(|dir| !dir.as_os_str().is_empty())
         .map(Path::to_path_buf)
-        .or_else(|| ffmpeg_dir_if_present(data_dir))
+        .or_else(fallback_dir)
     else {
         return Ok(());
     };
-    let existing = env::var_os("PATH").unwrap_or_default();
     let mut paths = vec![ffmpeg_dir];
-    paths.extend(env::split_paths(&existing));
+    paths.extend(env::split_paths(existing));
     let joined = env::join_paths(paths).map_err(|e| e.to_string())?;
     cmd.env("PATH", joined);
     Ok(())
@@ -8107,12 +8233,44 @@ fn verify_ffmpeg_encoders(path: &Path) -> Result<bool, String> {
     check_encoder_listing(path, &listing)
 }
 
+// Why verify_ffmpeg refused a binary. Only the too-old case carries advice,
+// and advice that fits setup ("point STEMDECK_FFMPEG at a newer one") is
+// wrong in a note that says STEMDECK_FFMPEG was set aside (#1042).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FfmpegCheckFailure {
+    TooOld(String),
+    Other(String),
+}
+
+impl FfmpegCheckFailure {
+    // What was wrong, and nothing about what to do.
+    fn reason(self) -> String {
+        match self {
+            Self::TooOld(reason) | Self::Other(reason) => reason,
+        }
+    }
+
+    // The message setup shows, word for word as before #1042.
+    fn with_advice(self) -> String {
+        match self {
+            Self::TooOld(reason) => format!(
+                "{reason} Do one of these, then start StemDeck again: point STEMDECK_FFMPEG at \
+                 FFmpeg {}.{} or newer, or remove STEMDECK_FFMPEG and STEMDECK_FFMPEG_URL so \
+                 StemDeck downloads its own.",
+                MIN_FFMPEG_VERSION.0, MIN_FFMPEG_VERSION.1,
+            ),
+            Self::Other(reason) => reason,
+        }
+    }
+}
+
 // A binary is only "compatible with StemDeck's requirements" (#414) if it
 // both runs on this machine and has every encoder the export pipeline needs
 // -- checking just one half would let either a broken-on-this-OS build or a
 // minimal/stripped one through. Ok(true) when it has the optional encoders
 // as well.
-fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
+fn verify_ffmpeg(path: &Path) -> Result<bool, FfmpegCheckFailure> {
+    use FfmpegCheckFailure::Other;
     let mut command = Command::new(path);
     command
         .arg("-version")
@@ -8120,30 +8278,26 @@ fn verify_ffmpeg(path: &Path) -> Result<bool, String> {
         .stderr(Stdio::piped());
     hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
-        .map_err(|e| format!("failed to run FFmpeg at {}: {e}", path.display()))?;
+        .map_err(|e| Other(format!("failed to run FFmpeg at {}: {e}", path.display())))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
+        return Err(Other(format!(
             "FFmpeg at {} failed verification: {}",
             path.display(),
             stderr.trim()
-        ));
+        )));
     }
     let build = parse_ffmpeg_build(&String::from_utf8_lossy(&output.stdout));
     if ffmpeg_too_old(&build) {
-        return Err(format!(
-            "FFmpeg at {} is version {}, and StemDeck needs FFmpeg {}.{} or newer. Do one of \
-             these, then start StemDeck again: point STEMDECK_FFMPEG at FFmpeg {}.{} or newer, \
-             or remove STEMDECK_FFMPEG and STEMDECK_FFMPEG_URL so StemDeck downloads its own.",
+        return Err(FfmpegCheckFailure::TooOld(format!(
+            "FFmpeg at {} is version {}, and StemDeck needs FFmpeg {}.{} or newer.",
             path.display(),
             build.version.as_deref().unwrap_or_default(),
             MIN_FFMPEG_VERSION.0,
             MIN_FFMPEG_VERSION.1,
-            MIN_FFMPEG_VERSION.0,
-            MIN_FFMPEG_VERSION.1,
-        ));
+        )));
     }
-    verify_ffmpeg_encoders(path)
+    verify_ffmpeg_encoders(path).map_err(Other)
 }
 
 // The oldest FFmpeg StemDeck runs on (MIN_FFMPEG_VERSION in
@@ -8208,15 +8362,28 @@ fn verify_ffmpeg_pair(ffmpeg: &Path) -> Result<(), String> {
 // verify_ffmpeg_pair, also saying whether the pair has the optional encoders
 // (true) or only the required ones (false).
 fn check_ffmpeg_pair(ffmpeg: &Path) -> Result<bool, String> {
-    check_ffmpeg_pair_with(ffmpeg, &ffprobe_beside(ffmpeg))
+    check_pair_with(
+        ffmpeg,
+        &ffprobe_beside(ffmpeg),
+        FfmpegCheckFailure::with_advice,
+    )
 }
 
 // check_ffmpeg_pair for an ffprobe named on its own (STEMDECK_FFPROBE), not
-// necessarily beside ffmpeg.
-fn check_ffmpeg_pair_with(ffmpeg: &Path, ffprobe: &Path) -> Result<bool, String> {
-    let full = verify_ffmpeg(ffmpeg)?;
+// necessarily beside ffmpeg, saying only what is wrong: its error goes into
+// a note that already says what StemDeck did instead (#1042).
+fn check_ffmpeg_pair_reason(ffmpeg: &Path, ffprobe: &Path) -> Result<bool, String> {
+    check_pair_with(ffmpeg, ffprobe, FfmpegCheckFailure::reason)
+}
+
+fn check_pair_with(
+    ffmpeg: &Path,
+    ffprobe: &Path,
+    describe: fn(FfmpegCheckFailure) -> String,
+) -> Result<bool, String> {
+    let full = verify_ffmpeg(ffmpeg).map_err(describe)?;
     verify_ffprobe(ffprobe)?;
-    if !full {
+    if !full && first_report(&NO_OGG_REPORTED, ffmpeg) {
         eprintln!(
             "FFmpeg at {} has no {}: OGG export will be unavailable",
             ffmpeg.display(),
@@ -8224,6 +8391,17 @@ fn check_ffmpeg_pair_with(ffmpeg: &Path, ffprobe: &Path) -> Result<bool, String>
         );
     }
     Ok(full)
+}
+
+// The FFmpegs already reported as having no OGG encoder. Each pair is
+// checked several times per launch, and once is enough to say it.
+static NO_OGG_REPORTED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+// True the first time `path` is seen in `reported`.
+fn first_report(reported: &Mutex<BTreeSet<PathBuf>>, path: &Path) -> bool {
+    reported
+        .lock()
+        .map_or(true, |mut seen| seen.insert(path.to_path_buf()))
 }
 
 // What `ffmpeg -version` says about how a build was made.
@@ -10892,6 +11070,221 @@ mod tests {
             fs::read_to_string(dir.path().join("config.json")).unwrap(),
             config
         );
+    }
+
+    /// A failing STEMDECK_FFMPEG with no recorded pair is Inherit, whatever
+    /// the failure, and the note says the variable reaches the backend as set.
+    #[test]
+    fn backend_ffmpeg_failed_env_without_a_recorded_pair_is_inherit() {
+        use super::{decide_backend_ffmpeg, BackendFfmpeg};
+        let (ffmpeg, ffprobe) = pair("/opt/old/bin");
+        for err in ["FFmpeg at x is version 4.4.2", "failed to run ffprobe at y"] {
+            let decision =
+                decide_backend_ffmpeg(env_pair(&ffmpeg, &ffprobe, Err(err.to_string())), None);
+            assert_eq!(decision.choice, BackendFfmpeg::Inherit);
+            assert_eq!(decision.choice.pair(), None);
+            let note = decision.note.expect("a failed variable is logged");
+            assert!(note.contains(err), "{note}");
+            assert!(note.contains("reaches the backend as set"), "{note}");
+        }
+    }
+
+    /// The setup message for a too-old FFmpeg ends in advice to point
+    /// STEMDECK_FFMPEG elsewhere. The note for a variable set aside carries
+    /// the reason alone, since the advice contradicts what was done.
+    #[test]
+    fn ffmpeg_check_failure_reason_has_no_advice() {
+        use super::{decide_backend_ffmpeg, FfmpegCheckFailure};
+        let reason =
+            "FFmpeg at /x/ffmpeg is version 4.4.2, and StemDeck needs FFmpeg 5.1 or newer.";
+        let old = FfmpegCheckFailure::TooOld(reason.to_string());
+        let advice = old.clone().with_advice();
+        assert!(advice.starts_with(reason), "{advice}");
+        assert!(advice.contains("start StemDeck again"), "{advice}");
+        assert_eq!(old.clone().reason(), reason);
+        let other = FfmpegCheckFailure::Other("bad CPU type".to_string());
+        assert_eq!(other.clone().with_advice(), other.reason());
+
+        let (ffmpeg, ffprobe) = pair("/x");
+        let note = decide_backend_ffmpeg(
+            env_pair(&ffmpeg, &ffprobe, Err(old.reason())),
+            Some(pair("/data/ffmpeg")),
+        )
+        .note
+        .unwrap();
+        assert!(note.contains("version 4.4.2"), "{note}");
+        assert!(!note.contains("start StemDeck again"), "{note}");
+        assert!(!note.contains("point STEMDECK_FFMPEG"), "{note}");
+    }
+
+    /// The backend runs in another folder, so a relative STEMDECK_FFMPEG is
+    /// made absolute against this process's folder before it is checked or
+    /// passed on. A bare name is looked up on PATH; one PATH lacks stays
+    /// bare; an absolute path is left alone.
+    #[test]
+    fn env_tool_paths_are_made_absolute_before_use() {
+        use super::absolute_env_tool;
+        let relative = Path::new(".").join("bin").join("ffmpeg");
+        let made = absolute_env_tool(relative, None);
+        assert!(made.is_absolute(), "{}", made.display());
+        assert!(made.starts_with(std::env::current_dir().unwrap()));
+        assert!(made.ends_with(Path::new("bin").join("ffmpeg")));
+
+        let dir = make_tmp();
+        let exe = dir.path().join(if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        });
+        fs::write(&exe, b"x").unwrap();
+        let path_var = std::env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            absolute_env_tool(PathBuf::from("ffmpeg"), Some(&path_var)),
+            exe
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                absolute_env_tool(PathBuf::from("ffmpeg.exe"), Some(&path_var)),
+                exe
+            );
+        }
+        assert_eq!(
+            absolute_env_tool(PathBuf::from("no-such-ffmpeg"), Some(&path_var)),
+            PathBuf::from("no-such-ffmpeg")
+        );
+        assert_eq!(absolute_env_tool(exe.clone(), None), exe);
+    }
+
+    /// One check per pair per process, success or failure, until either
+    /// file is written again.
+    #[test]
+    fn pair_checks_are_cached_until_a_file_changes() {
+        use super::{modified_at, PairCheckCache};
+        use std::cell::Cell;
+        let dir = make_tmp();
+        let ffmpeg = dir.path().join("ffmpeg");
+        let ffprobe = dir.path().join("ffprobe");
+        fs::write(&ffmpeg, b"x").unwrap();
+        fs::write(&ffprobe, b"x").unwrap();
+        let cache = PairCheckCache::new();
+        let runs = Cell::new(0);
+        let fail = |_: &Path, _: &Path| {
+            runs.set(runs.get() + 1);
+            Err("hung".to_string())
+        };
+        assert_eq!(
+            cache.check(&ffmpeg, &ffprobe, modified_at, fail),
+            Err("hung".to_string())
+        );
+        assert_eq!(
+            cache.check(&ffmpeg, &ffprobe, modified_at, fail),
+            Err("hung".to_string())
+        );
+        assert_eq!(runs.get(), 1, "a failure is not run again");
+
+        // A new ffprobe: checked again, and the stale answer is replaced.
+        let later = modified_at(&ffprobe).unwrap() + Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&ffprobe)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let pass = |_: &Path, _: &Path| {
+            runs.set(runs.get() + 1);
+            Ok(())
+        };
+        assert_eq!(cache.check(&ffmpeg, &ffprobe, modified_at, pass), Ok(()));
+        assert_eq!(cache.check(&ffmpeg, &ffprobe, modified_at, pass), Ok(()));
+        assert_eq!(runs.get(), 2);
+        assert_eq!(cache.0.lock().unwrap().len(), 1);
+
+        // Another pair is its own entry.
+        let other = dir.path().join("other-ffprobe");
+        assert_eq!(cache.check(&ffmpeg, &other, modified_at, pass), Ok(()));
+        assert_eq!(runs.get(), 3);
+    }
+
+    /// The same note twice in a row is logged once; a different one is new.
+    #[test]
+    fn ffmpeg_note_is_logged_once_per_change() {
+        use super::note_is_new;
+        let last = std::sync::Mutex::new(None);
+        assert!(note_is_new(&last, "a"));
+        assert!(!note_is_new(&last, "a"));
+        assert!(note_is_new(&last, "b"));
+        assert!(note_is_new(&last, "a"));
+    }
+
+    /// The no-OGG line is said once per FFmpeg.
+    #[test]
+    fn no_ogg_is_reported_once_per_ffmpeg() {
+        use super::first_report;
+        let seen = std::sync::Mutex::new(std::collections::BTreeSet::new());
+        assert!(first_report(&seen, Path::new("/a/ffmpeg")));
+        assert!(!first_report(&seen, Path::new("/a/ffmpeg")));
+        assert!(first_report(&seen, Path::new("/b/ffmpeg")));
+    }
+
+    fn child_env(cmd: &std::process::Command, key: &str) -> Option<std::ffi::OsString> {
+        cmd.get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new(key))
+            .and_then(|(_, v)| v.map(|v| v.to_os_string()))
+    }
+
+    /// apply_ffmpeg_path's wiring: the chosen pair in both variables and its
+    /// folder first on PATH; a bare name adds no empty PATH entry and takes
+    /// the data folder's instead; Inherit sets no variable.
+    #[test]
+    fn apply_ffmpeg_choice_sets_the_pair_and_path() {
+        use super::{apply_ffmpeg_choice, BackendFfmpeg};
+        let inherited = std::env::join_paths([Path::new("/usr/bin")]).unwrap();
+        let data_ffmpeg = PathBuf::from("/data/ffmpeg");
+
+        let (ffmpeg, ffprobe) = pair("/opt/homebrew/bin");
+        let mut cmd = std::process::Command::new("x");
+        apply_ffmpeg_choice(
+            &mut cmd,
+            &BackendFfmpeg::Env(ffmpeg.clone(), ffprobe.clone()),
+            || panic!("the chosen pair has a folder"),
+            &inherited,
+        )
+        .unwrap();
+        assert_eq!(
+            child_env(&cmd, "STEMDECK_FFMPEG"),
+            Some(ffmpeg.clone().into())
+        );
+        assert_eq!(child_env(&cmd, "STEMDECK_FFPROBE"), Some(ffprobe.into()));
+        let path = child_env(&cmd, "PATH").unwrap();
+        let entries: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            entries,
+            vec![
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/bin")
+            ]
+        );
+
+        let mut cmd = std::process::Command::new("x");
+        apply_ffmpeg_choice(
+            &mut cmd,
+            &BackendFfmpeg::Env("ffmpeg".into(), "ffprobe".into()),
+            || Some(data_ffmpeg.clone()),
+            &inherited,
+        )
+        .unwrap();
+        assert_eq!(child_env(&cmd, "STEMDECK_FFMPEG"), Some("ffmpeg".into()));
+        let path = child_env(&cmd, "PATH").unwrap();
+        let entries: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            entries,
+            vec![data_ffmpeg.clone(), PathBuf::from("/usr/bin")]
+        );
+        assert!(entries.iter().all(|e| !e.as_os_str().is_empty()));
+
+        let mut cmd = std::process::Command::new("x");
+        apply_ffmpeg_choice(&mut cmd, &BackendFfmpeg::Inherit, || None, &inherited).unwrap();
+        assert_eq!(cmd.get_envs().count(), 0);
     }
 
     /// Every chosen pair is handed to the child; Inherit hands nothing.
