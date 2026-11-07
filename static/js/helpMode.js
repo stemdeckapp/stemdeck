@@ -81,8 +81,8 @@ const HELP = [
   // an amount from an {amount} template is a choice (button) (#1037).
   ["#donateClose", "help.donateClose"],
   ['a.donate-way[data-way="stripe"]', "help.donateWayStripeLink"],
-  ['button.donate-way[data-way="stripe"]', "help.donateWayStripe"],
-  ['a.donate-way[data-way="liberapay"]', "help.donateWayLiberapay"],
+  ['button.donate-way[data-way="stripe"]', "help.donateWayStripePick"],
+  ['a.donate-way[data-way="liberapay"]', "help.donateWayLiberapayLink"],
   ['button.donate-way[data-way="liberapay"]', "help.donateWayLiberapayPick"],
   [".donate-preset", "help.donatePreset"],
   ["#donateCustom", "help.donateCustom"],
