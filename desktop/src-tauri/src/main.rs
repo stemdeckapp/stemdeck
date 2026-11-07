@@ -102,9 +102,9 @@ const DEFAULT_MACOS_FFPROBE_SHA256: &str =
 // source via GitHub Actions and served from GitHub Releases -- GitHub's
 // global CDN behind it, the same class of fix that already solved this for
 // Windows (#248, moved off gyan.dev's single mirror). evermeet.cx above is
-// now the fallback only: a single host with no CDN, reported unreachable
-// from multiple regions (#388). Binaries are raw (not zip-wrapped) and
-// published per-architecture. All four hashes were independently verified
+// now the fallback only, and on Intel Macs only (#858): a single host with
+// no CDN, reported unreachable from multiple regions (#388). Binaries are
+// raw (not zip-wrapped) and published per-architecture. All four hashes were independently verified
 // (downloaded, sha256'd, and cross-checked against the release notes' own
 // published MD5s and each binary's Mach-O magic bytes) before pinning here.
 // Bump the release tag and all four hashes together when updating.
@@ -1867,7 +1867,7 @@ fn ensure_external_assets_blocking(state: &BackendState) -> Result<AssetStatus, 
     ensure_workspace()?;
     let data_dir = local_data_dir()?;
     let (ffmpeg, source) = ensure_ffmpeg(&data_dir)?;
-    write_setup_config(&data_dir, &ffmpeg, &source, std::env::consts::ARCH)?;
+    write_setup_config(&data_dir, &ffmpeg, &source, machine_arch())?;
     Ok(AssetStatus {
         ffmpeg_ready: true,
         ffmpeg_path: Some(ffmpeg.display().to_string()),
@@ -6601,9 +6601,10 @@ fn binary_arch(path: &Path) -> &'static str {
 }
 
 // What setup.log says when an x86_64 FFmpeg ends up on an arm64 machine: it
-// runs translated (Rosetta 2 on a Mac), slower than a native build. The Intel
-// fallback on a Mac with Rosetta is deliberate (#771), so this is a notice,
-// not an error. `host` is std::env::consts::ARCH.
+// runs translated (Rosetta 2 on a Mac), slower than a native build. StemDeck
+// no longer downloads one onto Apple Silicon (#858), but one the user chose,
+// or one kept from an older install, still runs, so this is a notice, not an
+// error. `host` is machine_arch().
 fn translated_ffmpeg_notice(host: &str, ffmpeg_arch: &str) -> Option<&'static str> {
     (host == "aarch64" && ffmpeg_arch == "x86_64").then_some(
         "notice: FFmpeg is built for x86_64 and this machine is arm64. It runs \
@@ -6867,15 +6868,104 @@ fn spawn_fpcalc_setup(data_dir: PathBuf) {
 // not only on a Mac (#824). The `target_os = "macos"` items are the side
 // effects: running binaries, Rosetta, the network.
 
-// "arm64" on Apple Silicon, "x64" everywhere else -- takes the arch string
-// rather than reading std::env::consts::ARCH itself so both branches are
-// unit-testable on any host, not just the one they happen to be running on.
+// The machine's CPU, in std::env::consts::ARCH's spelling ("aarch64",
+// "x86_64"), which is what FFmpeg is chosen for (#858).
+//
+// On a Mac it is the hardware, not the shell. The macOS release ships one app
+// per architecture, and the Intel one runs on Apple Silicon through Rosetta,
+// where std::env::consts::ARCH says x86_64 although the machine is arm64.
+// FFmpeg is a separate process, so an arm64 build runs natively whichever
+// shell starts it, and an Intel one runs translated: 1.4x to 6.4x slower in
+// the reporter's measurements on #858.
+//
+// `process_arch` is std::env::consts::ARCH. An arm64 process runs only on
+// arm64 hardware, so it decides alone. Otherwise the kernel is asked:
+// `translated` is sysctl.proc_translated (1 under Rosetta) and `hw_arm64` is
+// hw.optional.arm64 (1 on Apple Silicon, translated or not; absent on Intel).
+// None is a key the kernel does not have, or a read that failed. Either one
+// saying arm64 is enough.
+//
+// Elsewhere it is the shell's own architecture, as before: the Windows and
+// Linux downloads follow the shell, and these sysctl keys do not exist there.
+fn machine_arch_from(
+    os: &str,
+    process_arch: &'static str,
+    translated: Option<bool>,
+    hw_arm64: Option<bool>,
+) -> &'static str {
+    if os != "macos" {
+        return process_arch;
+    }
+    if process_arch == "aarch64" || translated == Some(true) || hw_arm64 == Some(true) {
+        "aarch64"
+    } else {
+        "x86_64"
+    }
+}
+
+// The two keys machine_arch reads. Named once so the macOS-only test reads
+// exactly these: a misspelt key returns None on every Mac, which would
+// quietly turn the check off.
+#[cfg(target_os = "macos")]
+const SYSCTL_PROC_TRANSLATED: &str = "sysctl.proc_translated";
+#[cfg(target_os = "macos")]
+const SYSCTL_HW_ARM64: &str = "hw.optional.arm64";
+
+// A sysctl integer read as a flag: Some(value != 0), or None when the key does
+// not exist on this Mac (hw.optional.arm64 on Intel, sysctl.proc_translated
+// before macOS 11) or could not be read.
+#[cfg(target_os = "macos")]
+fn sysctl_flag(name: &str) -> Option<bool> {
+    let name = std::ffi::CString::new(name).ok()?;
+    let mut value: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    // SAFETY: `name` is NUL-terminated and outlives the call; `value` is a
+    // c_int and `size` is its size, so the kernel writes at most that many
+    // bytes into it; no new value is set (null, 0).
+    let status = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!(value).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (status == 0).then_some(value != 0)
+}
+
+// machine_arch_from for this machine. Also feeds setup.log's translated-FFmpeg
+// notice, so the notice is not lost when the shell itself runs through Rosetta.
+fn machine_arch() -> &'static str {
+    #[cfg(target_os = "macos")]
+    let (translated, hw_arm64) = (
+        sysctl_flag(SYSCTL_PROC_TRANSLATED),
+        sysctl_flag(SYSCTL_HW_ARM64),
+    );
+    #[cfg(not(target_os = "macos"))]
+    let (translated, hw_arm64) = (None, None);
+    machine_arch_from(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        translated,
+        hw_arm64,
+    )
+}
+
+// The spelling the macOS FFmpeg code uses, "arm64" or "x64" (the suffix of
+// shaka-project's asset names), from a machine_arch_from value.
 #[cfg(any(target_os = "macos", test))]
-fn macos_arch_suffix(arch: &str) -> &'static str {
-    match arch {
+fn macos_arch_suffix(machine: &str) -> &'static str {
+    match machine {
         "aarch64" => "arm64",
         _ => "x64",
     }
+}
+
+// This Mac's CPU, for every FFmpeg decision below.
+#[cfg(target_os = "macos")]
+fn macos_host() -> &'static str {
+    macos_arch_suffix(machine_arch())
 }
 
 // What an Apple Silicon Mac can do with a binary, read from its Mach-O header
@@ -6962,26 +7052,28 @@ fn macos_pair_arch(host: &str, ffmpeg: &Path) -> MacBinaryArch {
 }
 
 // Rosetta's runtime lives here once `softwareupdate --install-rosetta` has
-// run. Checked before downloading an Intel build, so a Mac without it is told
-// so instead of being handed a binary it cannot start (#771).
+// run. Checked before installing an Intel build from STEMDECK_FFMPEG_URL, so
+// a Mac without it is told so instead of being handed a binary it cannot
+// start (#771).
 #[cfg(target_os = "macos")]
 fn rosetta_installed() -> bool {
     Path::new("/Library/Apple/usr/libexec/oah/libRosettaRuntime").is_file()
 }
 
-// Whether an Intel-only FFmpeg may be installed on this Mac: always on an
-// Intel Mac, and on Apple Silicon only when Rosetta can run it.
+// Said when a built-in download turns out Intel-only on Apple Silicon. The
+// sources are chosen so that it cannot happen (macos_download_sources), so
+// this guards the pinned constants, not a path a user is expected to meet.
+// setup.js recognises "built for Intel Macs" and adds no hint of its own.
 #[cfg(any(target_os = "macos", test))]
-fn macos_intel_build_allowed(host: &str, rosetta: bool) -> bool {
-    host != "arm64" || rosetta
-}
+const MACOS_INTEL_REFUSED: &str = "The download is built for Intel Macs, and this Mac has an \
+     Apple Silicon processor, so StemDeck did not install it.";
 
-// Said whenever StemDeck declines to install an Intel-only FFmpeg on an Apple
-// Silicon Mac without Rosetta. setup.js recognises "built for Intel Macs" and
-// adds no hint of its own, since the error around it already says what to do.
+// The setup error's line for Apple Silicon when the arm64 download failed:
+// why the Intel-only source was not tried (#858).
 #[cfg(any(target_os = "macos", test))]
-const MACOS_INTEL_REFUSED: &str = "The fallback download is built for Intel Macs, and this Mac \
-     cannot run it without Rosetta, so StemDeck did not install it.";
+const MACOS_NO_ARM64_FALLBACK: &str = "evermeet.cx, the other download source, publishes FFmpeg \
+     built for Intel Macs only. On this Mac it would run only through Rosetta, several times \
+     slower, so StemDeck does not install it.";
 
 // Where an FFmpeg already installed on this Mac may be, in the order tried.
 // Apple Silicon: Homebrew's linked ffmpeg, Homebrew's keg-only ffmpeg-full
@@ -7111,7 +7203,7 @@ enum MacDownloadSource {
     // shaka-project's per-architecture build on GitHub. No libvorbis, which
     // is optional now, so it passes the check on both architectures (#824).
     Primary,
-    // evermeet.cx, Intel builds only.
+    // evermeet.cx, Intel builds only, so Intel Macs only (#858).
     Fallback,
 }
 
@@ -7126,30 +7218,36 @@ impl MacDownloadSource {
     }
 }
 
-// The fallback only where its Intel build can run: an Intel Mac, or Apple
-// Silicon with Rosetta. Elsewhere it is not even fetched (#771).
+// The fallback only on an Intel Mac, the only kind its builds are made for.
+// On Apple Silicon it used to be tried whenever Rosetta was installed, which
+// put an Intel FFmpeg under Rosetta on every Mac whose arm64 download failed
+// (#771, #858). No other source this shell trusts publishes arm64 builds, so
+// Apple Silicon has the primary alone, and its failure says what to install.
+// `host` is macos_host().
 #[cfg(any(target_os = "macos", test))]
-fn macos_download_sources(url_override: bool, intel_allowed: bool) -> Vec<MacDownloadSource> {
+fn macos_download_sources(url_override: bool, host: &str) -> Vec<MacDownloadSource> {
     if url_override {
         vec![MacDownloadSource::Override]
-    } else if intel_allowed {
-        vec![MacDownloadSource::Primary, MacDownloadSource::Fallback]
-    } else {
+    } else if host == "arm64" {
         vec![MacDownloadSource::Primary]
+    } else {
+        vec![MacDownloadSource::Primary, MacDownloadSource::Fallback]
     }
 }
 
 // The setup error when no FFmpeg could be found or installed: what happened
 // to each source, then what to do. setup.js recognises "Do one of these" and
 // adds no network hint under it, since this already names the next step.
+// `fallback_skipped` is Apple Silicon without STEMDECK_FFMPEG_URL, where the
+// Intel-only fallback was left out on purpose.
 #[cfg(any(target_os = "macos", test))]
-fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: bool) -> String {
+fn macos_ffmpeg_setup_error(attempts: &[String], fallback_skipped: bool) -> String {
     let mut lines = vec![
         "StemDeck could not set up FFmpeg, which it needs to read and save audio.".to_string(),
     ];
     lines.extend(attempts.iter().map(|attempt| format!("- {attempt}")));
     if fallback_skipped {
-        lines.push(format!("- {MACOS_INTEL_REFUSED}"));
+        lines.push(format!("- {MACOS_NO_ARM64_FALLBACK}"));
     }
     lines.push(String::new());
     lines.push("Do one of these, then click Retry:".to_string());
@@ -7164,13 +7262,6 @@ fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: b
          you already have, then open StemDeck again."
             .to_string(),
     );
-    if host == "arm64" && fallback_skipped {
-        lines.push(
-            "- Or install Rosetta by running \"softwareupdate --install-rosetta\" in \
-             Terminal, so StemDeck can use the Intel fallback."
-                .to_string(),
-        );
-    }
     lines.join("\n")
 }
 
@@ -7184,13 +7275,14 @@ fn macos_ffmpeg_setup_error(host: &str, attempts: &[String], fallback_skipped: b
 //   4. The data-folder pair from step 2 that runs only through Rosetta.
 //      Kept rather than downloaded over.
 //   5. A download (macos_download_sources): STEMDECK_FFMPEG_URL if set, else
-//      the per-architecture primary, else the Intel-only fallback where it
-//      can run.
+//      the per-architecture primary, else, on an Intel Mac only, the
+//      Intel-only fallback.
 // "Verifies" means the required encoders (REQUIRED_FFMPEG_ENCODERS). A pair
 // without libvorbis passes; the backend then reports OGG export unavailable.
+// "Native" is judged against the machine's CPU (macos_host), not the shell's.
 #[cfg(target_os = "macos")]
 fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
-    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let host = macos_host();
     let explicit = env_path_override("STEMDECK_FFMPEG").is_some();
 
     let mut installed_intel = None;
@@ -7276,8 +7368,8 @@ fn verify_pinned_sha256(path: &Path, expected: Option<&str>, label: &str) -> Res
     Ok(())
 }
 
-/// evermeet.cx (zip-wrapped, x86_64 only: it runs on Apple Silicon only
-/// through Rosetta, #771) is used both for the fallback
+/// evermeet.cx (zip-wrapped, x86_64 only, so tried on Intel Macs only, #858)
+/// is used both for the fallback
 /// path and for a custom STEMDECK_FFMPEG_URL override -- that env var has
 /// always pointed at a zip in this shape, so overrides keep working exactly
 /// as before regardless of what the built-in primary source looks like.
@@ -7335,10 +7427,10 @@ fn macos_source_url(source: MacDownloadSource, host: &str, override_url: &str) -
 
 /// Primary source: shaka-project's per-architecture builds, published as raw
 /// (non-zip) binaries -- downloaded straight into `ffmpeg_dir` (the staging
-/// folder), no extraction step.
+/// folder), no extraction step. `arch` is macos_host(): the machine's CPU, so
+/// an Intel shell under Rosetta still gets the arm64 build (#858).
 #[cfg(target_os = "macos")]
-fn download_macos_ffmpeg_primary(ffmpeg_dir: &Path) -> Result<(), String> {
-    let arch = macos_arch_suffix(std::env::consts::ARCH);
+fn download_macos_ffmpeg_primary(arch: &str, ffmpeg_dir: &Path) -> Result<(), String> {
     let (ffmpeg_sha, ffprobe_sha) = match arch {
         "arm64" => (SHAKA_FFMPEG_SHA256_ARM64, SHAKA_FFPROBE_SHA256_ARM64),
         _ => (SHAKA_FFMPEG_SHA256_X64, SHAKA_FFPROBE_SHA256_X64),
@@ -7385,7 +7477,7 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<String, String> {
     // itself (#771). Inside data/ffmpeg rather than downloads/, which
     // prune_downloads empties.
     let staged = ffmpeg_dir.join("staged");
-    let host = macos_arch_suffix(std::env::consts::ARCH);
+    let host = macos_host();
     let result = download_macos_ffmpeg_sources(host, &downloads, &staged).and_then(|url| {
         install_staged_ffmpeg(&staged, &ffmpeg_dir)?;
         Ok(url)
@@ -7394,18 +7486,26 @@ fn download_macos_ffmpeg(data_dir: &Path) -> Result<String, String> {
     result
 }
 
-// Whether a downloaded pair is refused before it is ever run: Intel-only on
-// an Apple Silicon Mac that has no Rosetta to run it (#771).
+// Whether a downloaded pair is refused before it is ever run. Only Intel-only
+// pairs on Apple Silicon are. A built-in source never puts one there (#858);
+// one from STEMDECK_FFMPEG_URL, which the user chose, is installed when
+// Rosetta can run it and refused when it cannot (#771).
 #[cfg(any(target_os = "macos", test))]
-fn refuse_intel_build(host: &str, arch: MacBinaryArch, rosetta: bool) -> bool {
-    arch == MacBinaryArch::IntelOnly && !macos_intel_build_allowed(host, rosetta)
+fn refuse_intel_build(host: &str, arch: MacBinaryArch, url_override: bool, rosetta: bool) -> bool {
+    arch == MacBinaryArch::IntelOnly && host == "arm64" && !(url_override && rosetta)
 }
 
 // The architecture check, then the same verification every other FFmpeg gets.
 #[cfg(target_os = "macos")]
-fn check_staged_ffmpeg(host: &str, staged: &Path, refusal: &str) -> Result<(), String> {
+fn check_staged_ffmpeg(
+    host: &str,
+    staged: &Path,
+    url_override: bool,
+    refusal: &str,
+) -> Result<(), String> {
     let ffmpeg = staged.join("ffmpeg");
-    if refuse_intel_build(host, macos_pair_arch(host, &ffmpeg), rosetta_installed()) {
+    let arch = macos_pair_arch(host, &ffmpeg);
+    if refuse_intel_build(host, arch, url_override, rosetta_installed()) {
         return Err(refusal.to_string());
     }
     verify_ffmpeg_pair(&ffmpeg)
@@ -7431,6 +7531,7 @@ fn install_staged_ffmpeg(staged: &Path, ffmpeg_dir: &Path) -> Result<(), String>
 #[cfg(target_os = "macos")]
 fn fetch_macos_source(
     source: MacDownloadSource,
+    host: &str,
     downloads: &Path,
     staged: &Path,
 ) -> Result<(), String> {
@@ -7457,7 +7558,7 @@ fn fetch_macos_source(
                 staged,
             )
         }
-        MacDownloadSource::Primary => download_macos_ffmpeg_primary(staged),
+        MacDownloadSource::Primary => download_macos_ffmpeg_primary(host, staged),
         MacDownloadSource::Fallback => download_macos_ffmpeg_zip_source(
             DEFAULT_MACOS_FFMPEG_URL,
             DEFAULT_MACOS_FFPROBE_URL,
@@ -7495,13 +7596,13 @@ fn download_macos_ffmpeg_sources(
     // --enable-libvorbis). That failed the check while libvorbis was
     // required, so every Mac fell back to evermeet (#771, #824). It is
     // optional now, so the primary passes and the fallback is only reached
-    // when the primary cannot be fetched or will not run.
+    // when the primary cannot be fetched or will not run, and only on an
+    // Intel Mac (#858).
     //
     // Each failure is reported as either "could not fetch" (describe_download_failure)
     // or "fetched but rejected", so the user knows which side it was on. No
     // retries beyond download_file's own, which never retries an HTTP error.
     let url_override = env_path_override("STEMDECK_FFMPEG_URL").is_some();
-    let intel_allowed = macos_intel_build_allowed(host, rosetta_installed());
     let refusal = if url_override {
         "The FFmpeg that STEMDECK_FFMPEG_URL points at is built for Intel Macs, and this \
          Mac cannot run it without Rosetta, so StemDeck did not install it. Point \
@@ -7511,14 +7612,14 @@ fn download_macos_ffmpeg_sources(
         MACOS_INTEL_REFUSED
     };
     let mut attempts = Vec::new();
-    for source in macos_download_sources(url_override, intel_allowed) {
+    for source in macos_download_sources(url_override, host) {
         // A clean staging folder per source, so a half from one source can
         // never be installed beside a half from another.
         let _ = fs::remove_dir_all(staged);
         fs::create_dir_all(staged)
             .map_err(|e| format!("failed to create {}: {e}", staged.display()))?;
-        let result = fetch_macos_source(source, downloads, staged).and_then(|()| {
-            check_staged_ffmpeg(host, staged, refusal)
+        let result = fetch_macos_source(source, host, downloads, staged).and_then(|()| {
+            check_staged_ffmpeg(host, staged, url_override, refusal)
                 .map_err(|e| format!("It downloaded, but StemDeck could not use it: {e}"))
         });
         match result {
@@ -7533,9 +7634,8 @@ fn download_macos_ffmpeg_sources(
         }
     }
     Err(macos_ffmpeg_setup_error(
-        host,
         &attempts,
-        !url_override && !intel_allowed,
+        !url_override && host == "arm64",
     ))
 }
 
@@ -10421,6 +10521,103 @@ mod tests {
         assert_eq!(super::macos_arch_suffix("something-unexpected"), "x64");
     }
 
+    // The machine FFmpeg is chosen for (#858), from injected facts: the
+    // shell's own architecture, sysctl.proc_translated, hw.optional.arm64.
+    #[test]
+    fn machine_arch_is_the_hardware_on_a_mac_and_the_shell_elsewhere() {
+        let arch = super::machine_arch_from;
+        // Apple Silicon, arm64 shell: native, whatever the sysctls say.
+        assert_eq!(arch("macos", "aarch64", Some(false), Some(true)), "aarch64");
+        assert_eq!(arch("macos", "aarch64", None, None), "aarch64");
+        // Apple Silicon, Intel shell under Rosetta: the process says x86_64,
+        // the kernel says arm64, and the kernel wins. Either key is enough.
+        assert_eq!(arch("macos", "x86_64", Some(true), Some(true)), "aarch64");
+        assert_eq!(arch("macos", "x86_64", Some(true), None), "aarch64");
+        assert_eq!(arch("macos", "x86_64", None, Some(true)), "aarch64");
+        // Intel Mac: hw.optional.arm64 does not exist, nothing is translated.
+        assert_eq!(arch("macos", "x86_64", Some(false), None), "x86_64");
+        assert_eq!(arch("macos", "x86_64", None, None), "x86_64");
+        assert_eq!(arch("macos", "x86_64", Some(false), Some(false)), "x86_64");
+        // Linux and Windows: the shell's architecture, unchanged.
+        assert_eq!(arch("linux", "x86_64", None, None), "x86_64");
+        assert_eq!(arch("linux", "aarch64", None, None), "aarch64");
+        assert_eq!(arch("windows", "x86_64", None, None), "x86_64");
+        assert_eq!(arch("windows", "aarch64", None, None), "aarch64");
+        // Facts that only a Mac has are ignored anywhere else.
+        assert_eq!(arch("linux", "x86_64", Some(true), Some(true)), "x86_64");
+        assert_eq!(arch("windows", "x86_64", Some(true), Some(true)), "x86_64");
+        // What this test binary itself reports, off a Mac, is its own build.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(super::machine_arch(), std::env::consts::ARCH);
+    }
+
+    // The real sysctl calls, on a Mac only. The macOS CI runner
+    // (macos-latest) is Apple Silicon and runs the arm64 test binary
+    // natively, so both keys must exist there with these values. A misspelt
+    // key, or a broken FFI call, reads None and fails here, where the pure
+    // tests above cannot see it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sysctl_keys_exist_and_read_right_on_this_mac() {
+        use super::{sysctl_flag, SYSCTL_HW_ARM64, SYSCTL_PROC_TRANSLATED};
+        // A key every Mac has: the call itself works.
+        assert_eq!(sysctl_flag("hw.ncpu"), Some(true), "sysctlbyname failed");
+        // macOS 11 and later, on both CPUs; 0 for a native process.
+        let translated = sysctl_flag(SYSCTL_PROC_TRANSLATED);
+        assert!(
+            translated.is_some(),
+            "{SYSCTL_PROC_TRANSLATED} is missing on this Mac"
+        );
+        if cfg!(target_arch = "aarch64") {
+            assert_eq!(
+                sysctl_flag(SYSCTL_HW_ARM64),
+                Some(true),
+                "{SYSCTL_HW_ARM64} is missing or 0 on an arm64 Mac"
+            );
+            assert_eq!(
+                translated,
+                Some(false),
+                "a native arm64 test is not translated"
+            );
+            assert_eq!(super::machine_arch(), "aarch64");
+        } else if translated == Some(true) {
+            // An x86_64 test binary under Rosetta: the case #858 is about.
+            assert_eq!(super::machine_arch(), "aarch64");
+        } else {
+            // A real Intel Mac: hw.optional.arm64 is absent or 0.
+            assert_ne!(sysctl_flag(SYSCTL_HW_ARM64), Some(true));
+            assert_eq!(super::machine_arch(), "x86_64");
+        }
+    }
+
+    // The facts above, carried through to what is downloaded and what
+    // setup.log says: an Intel shell on Apple Silicon gets the arm64 build.
+    #[test]
+    fn an_intel_shell_on_apple_silicon_downloads_the_arm64_build() {
+        use super::MacDownloadSource::{Fallback, Primary};
+        let machine = super::machine_arch_from("macos", "x86_64", Some(true), Some(true));
+        let host = super::macos_arch_suffix(machine);
+        assert_eq!(host, "arm64");
+        assert_eq!(super::macos_download_sources(false, host), vec![Primary]);
+        assert!(super::macos_source_url(Primary, host, "").ends_with("/ffmpeg-osx-arm64"));
+        // The notice for an Intel FFmpeg on that Mac is still written.
+        assert!(super::translated_ffmpeg_notice(machine, "x86_64").is_some());
+
+        // An Intel Mac keeps the x64 build and the evermeet fallback.
+        let intel = super::macos_arch_suffix(super::machine_arch_from(
+            "macos",
+            "x86_64",
+            Some(false),
+            None,
+        ));
+        assert_eq!(intel, "x64");
+        assert_eq!(
+            super::macos_download_sources(false, intel),
+            vec![Primary, Fallback]
+        );
+        assert!(super::macos_source_url(Primary, intel, "").ends_with("/ffmpeg-osx-x64"));
+    }
+
     // A thin little-endian 64-bit Mach-O header with the given CPU type.
     fn thin_macho(cpu: u32) -> Vec<u8> {
         let mut header = vec![0xcf, 0xfa, 0xed, 0xfe];
@@ -10499,16 +10696,21 @@ mod tests {
     }
 
     #[test]
-    fn intel_build_is_refused_on_apple_silicon_without_rosetta_only() {
+    fn intel_build_is_refused_on_apple_silicon_unless_the_user_chose_it() {
         use super::MacBinaryArch::{IntelOnly, Native, Unknown};
-        assert!(super::refuse_intel_build("arm64", IntelOnly, false));
-        assert!(!super::refuse_intel_build("arm64", IntelOnly, true));
-        assert!(!super::refuse_intel_build("arm64", Native, false));
-        assert!(!super::refuse_intel_build("arm64", Unknown, false));
-        assert!(!super::refuse_intel_build("x64", IntelOnly, false));
-        assert!(!super::macos_intel_build_allowed("arm64", false));
-        assert!(super::macos_intel_build_allowed("arm64", true));
-        assert!(super::macos_intel_build_allowed("x64", false));
+        let refuse = super::refuse_intel_build;
+        // A built-in download: never Intel on Apple Silicon, Rosetta or not.
+        assert!(refuse("arm64", IntelOnly, false, false));
+        assert!(refuse("arm64", IntelOnly, false, true));
+        // STEMDECK_FFMPEG_URL: the user's choice, installed if Rosetta runs it.
+        assert!(refuse("arm64", IntelOnly, true, false));
+        assert!(!refuse("arm64", IntelOnly, true, true));
+        // Native or unreadable pairs, and anything on an Intel Mac, pass on.
+        for (url_override, rosetta) in [(false, false), (true, true)] {
+            assert!(!refuse("arm64", Native, url_override, rosetta));
+            assert!(!refuse("arm64", Unknown, url_override, rosetta));
+            assert!(!refuse("x64", IntelOnly, url_override, rosetta));
+        }
     }
 
     #[test]
@@ -10644,14 +10846,13 @@ mod tests {
 
     // The whole macOS order (ensure_macos_ffmpeg) without its side effects:
     // `data` is the data-folder pair (its check result and arch), `system`
-    // the installed candidates, `rosetta` whether the fallback can run.
+    // the installed candidates.
     // Returns what setup would do: "use <path>", "fail", or the downloads it
     // would try.
     struct MacCase {
         host: &'static str,
         explicit: bool,
         url_override: bool,
-        rosetta: bool,
         data: Option<(Result<bool, String>, super::MacBinaryArch)>,
         system: Vec<(&'static str, super::MacBinaryArch, Result<bool, String>)>,
     }
@@ -10695,13 +10896,10 @@ mod tests {
         };
         match super::next_macos_ffmpeg(installed_intel, case.url_override, find) {
             MacFfmpegNext::Use(path) => format!("use {}", path.display()),
-            MacFfmpegNext::Download => {
-                let allowed = super::macos_intel_build_allowed(case.host, case.rosetta);
-                format!(
-                    "download {:?}",
-                    super::macos_download_sources(case.url_override, allowed)
-                )
-            }
+            MacFfmpegNext::Download => format!(
+                "download {:?}",
+                super::macos_download_sources(case.url_override, case.host)
+            ),
         }
     }
 
@@ -10712,7 +10910,6 @@ mod tests {
             host,
             explicit: false,
             url_override: false,
-            rosetta: false,
             data: None,
             system: Vec::new(),
         };
@@ -10720,8 +10917,9 @@ mod tests {
         let missing_lame = || -> Result<bool, String> { Err("missing libmp3lame".into()) };
 
         for host in ["arm64", "x64"] {
-            // Fresh Mac, nothing installed: the primary alone (arm64 without
-            // Rosetta) or primary then fallback (Intel).
+            // Fresh Mac, nothing installed: the arm64 primary alone (Apple
+            // Silicon, with or without Rosetta, #858) or primary then the
+            // Intel-only fallback (Intel Mac).
             let want = if host == "arm64" {
                 "download [Primary]"
             } else {
@@ -10761,17 +10959,9 @@ mod tests {
             assert_eq!(mac_plan(case), "download [Override]", "{host}");
         }
 
-        // Apple Silicon with Rosetta: the fallback is allowed again.
-        let case = MacCase {
-            rosetta: true,
-            ..base("arm64")
-        };
-        assert_eq!(mac_plan(case), "download [Primary, Fallback]");
-
         // Apple Silicon: an Intel-only data pair is kept unless a native
         // installed one is found, and an Intel-only installed one is skipped.
         let case = MacCase {
-            rosetta: true,
             data: Some((Ok(true), IntelOnly)),
             system: vec![("/usr/local/bin/ffmpeg", IntelOnly, Ok(true))],
             ..base("arm64")
@@ -10814,7 +11004,6 @@ mod tests {
             host: "x64",
             explicit: false,
             url_override: false,
-            rosetta: false,
             data: None,
             system: vec![("/usr/local/bin/ffmpeg", Native, Ok(true))],
         };
@@ -10827,18 +11016,20 @@ mod tests {
             "Download from GitHub (shaka-project build): Could not reach the download server"
                 .to_string(),
         ];
-        let arm = super::macos_ffmpeg_setup_error("arm64", &attempts, true);
+        let arm = super::macos_ffmpeg_setup_error(&attempts, true);
         assert!(arm.contains("Could not reach the download server"), "{arm}");
-        assert!(arm.contains("built for Intel Macs"), "{arm}");
+        // Why the Intel-only source was not tried, and no Rosetta route.
+        assert!(arm.contains("built for Intel Macs only"), "{arm}");
+        assert!(arm.contains("through Rosetta"), "{arm}");
+        assert!(!arm.contains("install-rosetta"), "{arm}");
         assert!(arm.contains("brew install ffmpeg\""), "{arm}");
         assert!(arm.contains("brew install ffmpeg-full"), "{arm}");
         assert!(arm.contains("STEMDECK_FFMPEG "), "{arm}");
-        assert!(arm.contains("softwareupdate --install-rosetta"), "{arm}");
         // setup.js matches this to leave out its network hint.
         assert!(arm.contains("Do one of these, then click Retry"), "{arm}");
         assert!(arm.is_ascii());
 
-        let intel = super::macos_ffmpeg_setup_error("x64", &attempts, false);
+        let intel = super::macos_ffmpeg_setup_error(&attempts, false);
         assert!(!intel.contains("Rosetta"), "{intel}");
         assert!(!intel.contains("built for Intel Macs"), "{intel}");
         assert!(intel.contains("brew install ffmpeg\""), "{intel}");
@@ -10884,15 +11075,16 @@ mod tests {
     }
 
     #[test]
-    fn macos_download_sources_follow_the_override_and_rosetta() {
+    fn macos_download_sources_follow_the_override_and_the_machine() {
         use super::MacDownloadSource::{Fallback, Override, Primary};
-        assert_eq!(super::macos_download_sources(true, true), vec![Override]);
-        assert_eq!(super::macos_download_sources(true, false), vec![Override]);
+        assert_eq!(super::macos_download_sources(true, "arm64"), vec![Override]);
+        assert_eq!(super::macos_download_sources(true, "x64"), vec![Override]);
         assert_eq!(
-            super::macos_download_sources(false, true),
+            super::macos_download_sources(false, "x64"),
             vec![Primary, Fallback]
         );
-        assert_eq!(super::macos_download_sources(false, false), vec![Primary]);
+        // Apple Silicon never reaches the Intel-only fallback (#858).
+        assert_eq!(super::macos_download_sources(false, "arm64"), vec![Primary]);
         for source in [Override, Primary, Fallback] {
             assert!(source.label().starts_with("Download from"));
         }
@@ -10996,7 +11188,7 @@ mod tests {
     #[test]
     fn write_setup_config_records_the_real_source_and_arch() {
         use super::MACHO_CPU_TYPE_X86_64 as X86;
-        // The evermeet fallback installed on an Apple Silicon Mac.
+        // An evermeet build kept from an older install on an Apple Silicon Mac.
         let dir = tempfile::tempdir().unwrap();
         let ffmpeg_dir = dir.path().join("ffmpeg");
         fs::create_dir_all(&ffmpeg_dir).unwrap();
