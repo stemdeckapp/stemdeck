@@ -121,6 +121,32 @@ test.describe("update check", () => {
     expect(await cardShown(page)).toBe(false);
   });
 
+  // A build ahead of the public release, such as a release candidate, used to
+  // be offered the older release as an "update": the card only tested whether
+  // the two versions differed. Both spellings of the running version reach
+  // the app, the tag form and the PEP 440 package form.
+  for (const version of ["0.21.0rc1", "0.21.0-rc.1", "0.20.1"]) {
+    test(`a build newer than the latest release (${version}) is not offered it`, async ({ page }) => {
+      await stubVersion(page, version);
+      await stubGithub(page, { body: release({ tag_name: "v0.20.0" }) });
+      await open(page);
+
+      await page.waitForTimeout(1200);
+      expect(await cardShown(page)).toBe(false);
+    });
+  }
+
+  for (const version of ["0.19.3", "0.20.0rc2"]) {
+    test(`a build older than the latest release (${version}) is offered it`, async ({ page }) => {
+      await stubVersion(page, version);
+      await stubGithub(page, { body: release({ tag_name: "v0.20.0" }) });
+      await open(page);
+
+      await expect.poll(() => cardShown(page)).toBe(true);
+      await expect(page.locator("#notifReleaseDesc")).toHaveText("v0.20.0");
+    });
+  }
+
   // The bug itself, which needs both endpoints stubbed to express.
   //
   // A release published with neither box ticked is absent from

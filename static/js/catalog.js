@@ -24,6 +24,7 @@ import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailur
 // variable names for track objects and table rows in several scopes.
 import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
+import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
 import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
@@ -3254,26 +3255,6 @@ function normalizeVersion(value) {
   return String(value || "").trim().replace(/^v/i, "") || FALLBACK_VERSION;
 }
 
-// Fold a version into one canonical form so the GitHub release tag
-// ("0.7.0-alpha.9") and the backend's PEP440 package version ("0.7.0a9", from
-// hatch-vcs via /api/health) compare equal. Without this the update banner
-// shows on every release because the two strings never match literally.
-// A build no release should be offered to: a source checkout's git-derived
-// version (0.7.0a5.dev3+g1a2b3c4) or a test build's (0.18.2.dev0).
-function isDevVersion(value) {
-  return /\.?dev\d*|\+/i.test(normalizeVersion(value));
-}
-
-function canonicalVersion(value) {
-  return normalizeVersion(value)
-    .toLowerCase()
-    .replace(/[-_]/g, "")            // 0.7.0-alpha.9 -> 0.7.0alpha.9
-    .replace(/alpha/g, "a")
-    .replace(/beta/g, "b")
-    .replace(/preview|pre/g, "rc")
-    .replace(/(a|b|rc)\.?(\d)/g, "$1$2"); // alpha.9/a.9 -> a9
-}
-
 function setDisplayedVersion(version) {
   const about = document.getElementById("aboutVersion");
   currentVersion = normalizeVersion(version);
@@ -3700,9 +3681,11 @@ async function checkForUpdate() {
     const data = await res.json();
     if (!data || data.draft || data.prerelease || !data.tag_name) return;
     const latest = normalizeVersion(data.tag_name);
-    // Compare canonically so a PEP440 current version (0.7.0a9) matches the
-    // release tag form (0.7.0-alpha.9) and we don't nag an already-current app.
-    if (!latest || canonicalVersion(latest) === canonicalVersion(currentVersion)) return;
+    // Offered only when strictly newer, read as PEP 440 so the tag form
+    // (0.7.0-alpha.9) and the package form (0.7.0a9) are one version. Equal
+    // is already current; a release older than the running build (a release
+    // candidate ahead of the public release) would be a downgrade.
+    if (!isNewerRelease(latest, currentVersion)) return;
     // Dev/source builds report a git-derived version (e.g. 0.7.0a5.dev3+g…) that
     // is *ahead* of the last release — don't nag them with an "update" banner.
     // A test build is 0.18.2.dev0: "dev" runs straight into its number, which

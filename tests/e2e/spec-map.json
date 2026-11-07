@@ -240,7 +240,7 @@
     },
     {
       "why": "Notifications, failure reports and release cards",
-      "paths": ["static/js/notifications.js"],
+      "paths": ["static/js/notifications.js", "static/js/releaseVersion.js"],
       "specs": ["report-failure", "release-full-download", "update-check", "error-banner"]
     },
     {
