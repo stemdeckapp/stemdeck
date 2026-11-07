@@ -8,7 +8,8 @@ is used only when all of this holds:
    "cpu" is the kill switch).
 2. The setting picks it, or Auto tries it on this OS (AUTO: only NVENC on
    Windows, the one encoder measured in real renders), it has not failed
-   VIDEO_ENCODER_MAX_FAILURES renders in this process, and a real test encode
+   VIDEO_ENCODER_MAX_FAILURES renders in this process (h264_vaapi: on every
+   render node, see below), and a real test encode
    (probe) at the render's own size and rate passed. `ffmpeg -encoders` is not
    trusted: a build lists NVENC on a machine with no NVIDIA card, and 4K can
    fail where 1080p works.
@@ -26,6 +27,15 @@ h264_vaapi is probed per DRM render node (render_nodes: every
 and each node's result is cached on its own, so a node that fails never hides
 one that works (#995: a hybrid-GPU laptop's first node can be the GPU without
 a working encoder). The first node that passes is the one the render uses.
+A node's cache key also carries the vendor and device ids of the GPU behind
+it (gpu_id, from sysfs), so a node number that now points at another GPU
+never reuses the old GPU's pass (#1033).
+
+h264_vaapi's real render failures are counted per node: a failure drops that
+node's cached passes, and VIDEO_ENCODER_MAX_FAILURES of them set the node
+aside, so the next render moves on to the next node. The encoder is turned
+off only when every node has been set aside. Every other encoder counts its
+failures for the whole encoder, as before (#1033).
 
 Filters (scale, overlay, fps) stay on the CPU: only the final encode moves.
 Nothing here takes a string from a request: encoder names come from the
@@ -301,6 +311,40 @@ def render_nodes() -> list[str]:
     except OSError:
         return []
     return [str(path) for _number, path in sorted(found)]
+
+
+# Where the kernel describes each DRM node (a module attribute so a test can
+# point it at a fake tree).
+SYS_DRM_DIR = Path("/sys/class/drm")
+_PCI_ID_RE = re.compile(r"0x([0-9a-fA-F]{4})")
+
+
+def _read_pci_id(path: Path) -> str:
+    """A sysfs id file ("0x8086") as four lowercase hex digits, "" when it is
+    missing, unreadable or not an id."""
+    try:
+        raw = path.read_text(encoding="ascii", errors="replace")[:32].strip()
+    except OSError:
+        return ""
+    m = _PCI_ID_RE.fullmatch(raw)
+    return m.group(1).lower() if m else ""
+
+
+def gpu_id(device: str) -> str:
+    """The GPU behind render node `device` as "vendor:device" PCI ids
+    ("8086:46a6"), read from /sys/class/drm/renderD<N>/device/. Node numbers
+    can change after a driver or boot order change on a hybrid-GPU machine;
+    these ids do not. "" when nothing is known (no node, not Linux, no
+    sysfs, a GPU that is not PCI): the cache key still works, it is then
+    keyed on the node alone. Never shown outside the cache key."""
+    if not device:
+        return ""
+    plat = _host_platform()
+    if plat.startswith("win") or plat == "darwin":
+        return ""
+    base = SYS_DRM_DIR / Path(device).name / "device"
+    ids = [_read_pci_id(base / "vendor"), _read_pci_id(base / "device")]
+    return ":".join(ids) if any(ids) else ""
 
 
 def global_args(encoder: str, device: str = "") -> list[str]:
@@ -662,10 +706,13 @@ def _args_sig(encoder: str, width: int, height: int, fps: int, device: str = "")
 
 
 def _key(ident: str, encoder: str, width: int, height: int, fps: int, device: str = "") -> str:
-    """The cache key. h264_vaapi has one per render node (`device`), and one
-    with no node for "this machine has none"."""
+    """The cache key. h264_vaapi has one per render node (`device`) and the
+    GPU behind it (`node#vendor:device`, gpu_id; `node#` when the ids are
+    unknown), and one with no node for "this machine has none". A key of the
+    format before the ids (`|node|`) never matches, so such a row is probed
+    again once (#1033)."""
     sig = _args_sig(encoder, width, height, fps, device)
-    node = f"|{device}" if device else ""
+    node = f"|{device}#{gpu_id(device)}" if device else ""
     return f"{ident}|{encoder}|{width}x{height}@{fps}{node}|{sig}"
 
 
@@ -732,9 +779,10 @@ def probe(
     """The cached probe result for this encoder and geometry, probing when
     there is none, it expired, or `force`. Never raises.
 
-    h264_vaapi is probed node by node (render_nodes), each node cached on
-    its own; the answer is the first node that passes, with that node in
-    `device`, or a failure naming every node when none does.
+    h264_vaapi is probed node by node (_vaapi_nodes: render_nodes without
+    the nodes real renders set aside), each node cached on its own; the
+    answer is the first node that passes, with that node in `device`, or a
+    failure naming every node when none does.
 
     `cancelled` (a render's cancel flag) is looked at while waiting for the
     probe lock and during the test encode; a cancelled probe answers
@@ -755,7 +803,7 @@ def probe(
         )
     if encoder != VAAPI:
         return _probe_device(ident, encoder, width, height, fps, "", force, cancelled)
-    nodes = render_nodes()
+    nodes = _vaapi_nodes()
     if not nodes:
         return _no_node(ident, width, height, fps)
     failures: list[ProbeResult] = []
@@ -897,7 +945,7 @@ def cached_results() -> list[ProbeResult]:
         live = [r for k, r in _cache.items() if k.startswith(f"{ident}|") and r.expires_at() > now]
     out = [r for r in live if r.encoder != VAAPI]
     # h264_vaapi: one answer per geometry, the one a render would get.
-    nodes = render_nodes()
+    nodes = _vaapi_nodes()
     for width, height, fps in sorted(
         {(r.width, r.height, r.fps) for r in live if r.encoder == VAAPI}
     ):
@@ -929,29 +977,91 @@ def _vaapi_cached(
 # ---------------------------------------------------------------------------
 # Failures in real renders
 
-_failures: dict[str, int] = {}
+# Keyed (encoder, render node): the node is "" for every encoder but
+# h264_vaapi, so those count per encoder exactly as before #1033.
+_failures: dict[tuple[str, str], int] = {}
 _disabled: set[str] = set()
+# h264_vaapi render nodes set aside after VIDEO_ENCODER_MAX_FAILURES real
+# render failures, until the next start.
+_set_aside: set[str] = set()
 _fail_lock = threading.Lock()
 
 
-def record_failure(encoder: str, reason: str) -> bool:
+def _counted_device(encoder: str, device: str) -> str:
+    """The node a failure is counted against: h264_vaapi's own, else none."""
+    return device if encoder == VAAPI else ""
+
+
+def _vaapi_nodes() -> list[str]:
+    """The render nodes h264_vaapi tries, in order: render_nodes without
+    the ones real renders set aside. When every node is set aside the
+    encoder is disabled and no render gets here, so the list is all of them
+    again: the Settings test still reports what each node does."""
+    nodes = render_nodes()
+    with _fail_lock:
+        usable = [n for n in nodes if n not in _set_aside]
+    return usable or nodes
+
+
+def _drop_passes(encoder: str, device: str) -> None:
+    """Forget every cached pass of `encoder` on `device` (all geometries), in
+    memory and in the file: a real render there just failed, so the 2 s test
+    encode that passed is no longer trusted and runs again next time."""
+    with _cache_lock:
+        ident = _cache_loaded_for
+        gone = [
+            k for k, r in _cache.items() if r.ok and r.encoder == encoder and r.device == device
+        ]
+        for k in gone:
+            del _cache[k]
+    if gone and ident:
+        _save_cache(ident)
+
+
+def record_failure(encoder: str, reason: str, device: str = "") -> bool:
     """Count a GPU render that had to be made again on the CPU. Returns True
-    when this one disabled the encoder for the rest of the process."""
+    when this one disabled the encoder for the rest of the process.
+
+    h264_vaapi counts per render node (`device`, the node the render ran
+    on): each failure drops that node's cached passes, and the node that
+    reaches VIDEO_ENCODER_MAX_FAILURES is set aside so the next render
+    tries the next node. The encoder is disabled only once every node is
+    set aside. Every other encoder ignores `device` and counts as a whole."""
     if encoder not in VIDEO_GPU_ENCODERS:
         return False
+    node = _counted_device(encoder, device)
+    if node:
+        _drop_passes(encoder, node)
+    nodes = render_nodes() if node else []
     with _fail_lock:
-        _failures[encoder] = _failures.get(encoder, 0) + 1
-        count = _failures[encoder]
-        newly = count >= VIDEO_ENCODER_MAX_FAILURES and encoder not in _disabled
+        key = (encoder, node)
+        _failures[key] = _failures.get(key, 0) + 1
+        count = _failures[key]
+        aside = False
+        if node:
+            aside = count >= VIDEO_ENCODER_MAX_FAILURES and node not in _set_aside
+            if aside:
+                _set_aside.add(node)
+            # Off only when no listed node is left to try.
+            done = bool(nodes) and all(n in _set_aside for n in nodes)
+        else:
+            done = count >= VIDEO_ENCODER_MAX_FAILURES
+        newly = done and encoder not in _disabled
         if newly:
             _disabled.add(encoder)
+    name = Path(node).name if node else ""
     logger.warning(
-        "GPU encoder %s failed a render (%s), %d of %d%s",
+        "GPU encoder %s%s failed a render (%s), %d of %d%s",
         encoder,
+        f" on {name}" if name else "",
         reason,
         count,
         VIDEO_ENCODER_MAX_FAILURES,
-        "; not used again until StemDeck restarts" if newly else "",
+        "; not used again until StemDeck restarts"
+        if newly
+        else (
+            f"; {name} set aside until StemDeck restarts, the next node is tried" if aside else ""
+        ),
     )
     return newly
 
@@ -961,9 +1071,11 @@ def disabled() -> list[str]:
         return sorted(_disabled)
 
 
-def failure_count(encoder: str) -> int:
+def failure_count(encoder: str, device: str = "") -> int:
+    """Real render failures counted against `encoder` (on `device`, for
+    h264_vaapi's per-node count)."""
     with _fail_lock:
-        return _failures.get(encoder, 0)
+        return _failures.get((encoder, _counted_device(encoder, device)), 0)
 
 
 def reset_state() -> None:
@@ -972,6 +1084,7 @@ def reset_state() -> None:
     with _fail_lock:
         _failures.clear()
         _disabled.clear()
+        _set_aside.clear()
     with _cache_lock:
         _cache.clear()
         _cache_loaded_for = None

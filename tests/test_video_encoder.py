@@ -838,7 +838,8 @@ def test_the_cache_holds_one_result_per_node(fake, dri):
     rows = {Path(r["device"]).name: r for r in saved["entries"].values()}
     assert set(rows) == {"renderD128", "renderD129"}
     assert rows["renderD128"]["ok"] is False and rows["renderD129"]["ok"] is True
-    assert all(f"|{r['device']}|" in k for k, r in saved["entries"].items())
+    # The node and the GPU ids behind it (none in this fake tree: "#").
+    assert all(f"|{r['device']}#|" in k for k, r in saved["entries"].items())
     # A new process reads both from the file: no probe, the same node.
     ve._cache.clear()
     ve._cache_loaded_for = None
@@ -1512,3 +1513,181 @@ def test_a_missing_vaapi_encoder_is_probed_once(fake, dri):
     result = ve.probe("h264_vaapi", 1920, 1080, 30)
     assert not result.ok and result.reason == "missing"
     assert _nodes_probed(fake) == ["renderD128"]
+
+
+# ─── VAAPI: real render failures per node, GPU ids in the key (#1033) ─────
+
+VAAPI = "h264_vaapi"
+MAX = ve.VIDEO_ENCODER_MAX_FAILURES
+
+
+@pytest.fixture
+def sysfs(tmp_path, monkeypatch):
+    """A fake /sys/class/drm. Returns a function that writes the vendor and
+    device id files of a render node (None leaves a file out)."""
+    root = tmp_path / "sys"
+    root.mkdir()
+    monkeypatch.setattr(ve, "SYS_DRM_DIR", root)
+
+    def ids(number: int, vendor: str | None, device: str | None) -> None:
+        base = root / f"renderD{number}" / "device"
+        base.mkdir(parents=True, exist_ok=True)
+        for name, value in (("vendor", vendor), ("device", device)):
+            path = base / name
+            path.unlink(missing_ok=True)
+            if value is not None:
+                path.write_text(f"{value}\n", encoding="ascii")
+
+    return ids
+
+
+def _cached_passes(node: str) -> list[str]:
+    saved = json.loads(ve._cache_path.read_text(encoding="utf-8"))
+    return [k for k, r in saved["entries"].items() if r["ok"] and r["device"] == node]
+
+
+def test_real_failures_set_a_node_aside_and_the_next_node_is_used(fake, dri):
+    first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    assert ve.choose(1920, 1080, 30).device == first
+    assert _cached_passes(first)
+    for n in range(1, MAX):
+        assert not ve.record_failure(VAAPI, "invalid-size", first)
+        assert ve.failure_count(VAAPI, first) == n
+        # The pass is dropped: the next render tests the node again.
+        assert _cached_passes(first) == [] and ve.probe(VAAPI, 1920, 1080, 30).device == first
+    probes = fake.count("probe")
+    assert not ve.record_failure(VAAPI, "invalid-size", first), "a node is left"
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.encoder == VAAPI and choice.device == second
+    assert _nodes_probed(fake)[probes:] == ["renderD129"], "the set-aside node is not tried"
+    assert ve.disabled() == []
+    (shown,) = ve.cached_results()
+    assert shown.device == second, "Settings shows the node a render gets"
+
+
+def test_every_node_failing_real_renders_disables_vaapi(fake, dri):
+    first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    for _ in range(MAX):
+        assert not ve.record_failure(VAAPI, "stall", first)
+    for n in range(MAX):
+        newly = ve.record_failure(VAAPI, "stall", second)
+        assert newly == (n == MAX - 1)
+    assert ve.disabled() == [VAAPI]
+    choice = ve.choose(1920, 1080, 30)
+    assert choice.encoder == "libx264" and choice.reason == "disabled"
+
+
+def test_one_nodes_failures_do_not_count_against_another(fake, dri):
+    first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    ve.choose(1920, 1080, 30)
+    ve.probe(VAAPI, 3840, 2160, 30, force=True)
+    for _ in range(MAX - 1):
+        ve.record_failure(VAAPI, "exit", first)
+        ve.record_failure(VAAPI, "exit", second)
+    assert ve.failure_count(VAAPI, first) == ve.failure_count(VAAPI, second) == MAX - 1
+    assert ve.failure_count(VAAPI) == 0, "nothing counted against the encoder as a whole"
+    assert ve.disabled() == [] and ve.choose(1920, 1080, 30).device == first
+
+
+async def test_a_render_that_fails_on_a_node_moves_the_next_one_on(
+    fake, dri, tmp_path, monkeypatch
+):
+    # Through app/api/takes.py: the node the render ran on is the one counted.
+    first, second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    fake.ffprobe["streams"][0].update(width=1280, height=720)
+    for _ in range(MAX):
+        run, _dest = await _render(tmp_path, monkeypatch)
+        assert run.status == "done" and run.fallback == "invalid-size"
+    assert ve.failure_count(VAAPI, first) == MAX and ve.failure_count(VAAPI, second) == 0
+    fake.ffprobe["streams"][0].update(width=1920, height=1080)
+    run, dest = await _render(tmp_path, monkeypatch)
+    assert run.status == "done" and dest.is_file()
+    assert run.encoder == VAAPI and run.fallback is None and run.device == second
+    assert ve.disabled() == []
+
+
+def test_encoders_without_a_node_count_as_before(fake):
+    fake.probe = {"h264_nvenc": "ok"}
+    assert ve.choose(1920, 1080, 30).encoder == "h264_nvenc"
+    probes = fake.count("probe")
+    # A device passed by mistake changes nothing: one count per encoder.
+    assert not ve.record_failure("h264_nvenc", "exit", "/dev/dri/renderD128")
+    assert ve.failure_count("h264_nvenc") == 1
+    assert ve.failure_count("h264_nvenc", "/dev/dri/renderD128") == 1
+    assert ve.choose(1920, 1080, 30).encoder == "h264_nvenc"
+    assert fake.count("probe") == probes, "its cached pass is kept, as before"
+    assert ve.record_failure("h264_nvenc", "exit")
+    assert ve.disabled() == ["h264_nvenc"]
+
+
+def test_a_renumbered_node_on_another_gpu_is_probed_again(fake, dri, sysfs):
+    (node,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    sysfs(128, "0x8086", "0x46A6")
+    assert ve.gpu_id(node) == "8086:46a6"
+    assert ve.choose(1920, 1080, 30).device == node
+    assert fake.count("probe") == 1
+    # The same GPU: the pass holds, also in a new process (the file).
+    ve._cache.clear()
+    ve._cache_loaded_for = None
+    assert ve.choose(1920, 1080, 30).device == node
+    assert fake.count("probe") == 1
+    # After a reboot renderD128 is the NVIDIA card: its own test encode.
+    sysfs(128, "0x10de", "0x2520")
+    assert ve.choose(1920, 1080, 30).device == node
+    assert fake.count("probe") == 2
+
+
+def test_missing_or_odd_sysfs_files_still_give_a_working_key(fake, dri, sysfs):
+    (node,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    assert ve.gpu_id(node) == "", "no sysfs entry at all"
+    sysfs(128, "0x8086", None)
+    assert ve.gpu_id(node) == "8086:"
+    sysfs(128, "not an id", "0x12345")
+    assert ve.gpu_id(node) == ""
+    assert ve.choose(1920, 1080, 30).device == node
+    assert ve.choose(1920, 1080, 30).device == node
+    assert fake.count("probe") == 1
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_no_gpu_id_off_linux(dri, sysfs, monkeypatch, platform):
+    (node,) = dri(128)
+    sysfs(128, "0x8086", "0x46a6")
+    monkeypatch.setattr(ve, "_host_platform", lambda: platform)
+    assert ve.gpu_id(node) == ""
+
+
+def test_an_old_format_cache_row_is_probed_again(fake, dri, sysfs):
+    (node,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    sysfs(128, "0x8086", "0x46a6")
+    ident, _version = ve.ffmpeg_identity()
+    sig = ve._args_sig(VAAPI, 1920, 1080, 30, node)
+    old_key = f"{ident}|{VAAPI}|1920x1080@30|{node}|{sig}"  # before #1033
+    row = ve.ProbeResult(VAAPI, 1920, 1080, 30, ok=True, device=node, checked_at=time.time())
+    ve._cache_path.write_text(
+        json.dumps({"v": 1, "ffmpeg": ident, "entries": {old_key: ve.asdict(row)}}),
+        encoding="utf-8",
+    )
+    assert ve.choose(1920, 1080, 30).device == node
+    assert fake.count("probe") == 1, "the old row is not trusted"
+    saved = json.loads(ve._cache_path.read_text(encoding="utf-8"))
+    assert ve._key(ident, VAAPI, 1920, 1080, 30, node) in saved["entries"]
+    assert ve.choose(1920, 1080, 30).device == node and fake.count("probe") == 1
+
+
+def test_the_gpu_ids_never_reach_the_settings_view(fake, dri, sysfs):
+    dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    sysfs(128, "0x8086", "0x46a6")
+    ve.choose(1920, 1080, 30)
+    (shown,) = ve.cached_results()
+    view = shown.view()
+    assert view["device"] == "renderD128"
+    assert "8086" not in json.dumps(view) and "46a6" not in json.dumps(view)

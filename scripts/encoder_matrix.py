@@ -22,7 +22,8 @@ size it reports:
 
 h264_vaapi is tried on each /dev/dri/renderD* node in number order (or only on
 the node STEMDECK_VAAPI_DEVICE names) until one passes, as the app does; the
-note column says which node it ran on.
+note column says which node it ran on and, on Linux, the PCI vendor:device ids
+of the GPU behind that node.
 
 It prints a table and, with --json, writes everything to a file to paste into a
 bug report. It never stops on a missing encoder or a failed encode.
@@ -140,6 +141,27 @@ def render_nodes():
     except OSError:
         return []
     return [str(p) for _n, p in sorted(found)]
+
+
+SYS_DRM_DIR = Path("/sys/class/drm")
+
+
+def gpu_id(device):
+    """The GPU behind a render node as "vendor:device" PCI ids, from sysfs
+    (app/pipeline/video_encoder.gpu_id, which keys the app's probe cache on
+    it): shows which GPU each node is on a hybrid machine. "" when unknown."""
+    if not device or sys.platform.startswith("win") or sys.platform == "darwin":
+        return ""
+    ids = []
+    for name in ("vendor", "device"):
+        try:
+            raw = (SYS_DRM_DIR / Path(device).name / "device" / name).read_text(
+                encoding="ascii", errors="replace")[:32].strip()
+        except OSError:
+            raw = ""
+        m = re.fullmatch(r"0x([0-9a-fA-F]{4})", raw)
+        ids.append(m.group(1).lower() if m else "")
+    return ":".join(ids) if any(ids) else ""
 
 
 def global_args(encoder, device=""):
@@ -333,7 +355,8 @@ def measure(ffmpeg, ffprobe, encoder, size_name, seconds, work):
                         break
                 if device:
                     row["device"] = Path(device).name
-                    row["args"] = f"on {row['device']}"
+                    gpu = gpu_id(device)
+                    row["args"] = f"on {row['device']}" + (f" ({gpu})" if gpu else "")
                     if not ok:
                         per_node.append(f"{row['device']}: {err}")
                 if ok or "Unknown encoder" in err:
