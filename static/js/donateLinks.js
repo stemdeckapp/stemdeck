@@ -33,7 +33,7 @@
 
 export const DONATE_LINKS = Object.freeze({
   stripe: "",
-  liberapay: "",
+  liberapay: "https://liberapay.com/StemDeck/donate",
 });
 
 export const DONATE_LINK_TEMPLATES = Object.freeze({
