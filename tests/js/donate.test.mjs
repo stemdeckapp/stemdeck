@@ -99,6 +99,10 @@ for (const [way, value] of Object.entries(DONATE_LINKS)) {
 for (const [way, value] of Object.entries(DONATE_LINK_TEMPLATES)) {
   check(`${way} template is empty or an https address with {amount}`, value === "" || (value.includes("{amount}") && donateHref(value.replace("{amount}", "5")) !== null), value);
 }
+// The shipped links: Liberapay is live, Stripe and both templates stay empty until the maintainer sets them.
+check("shipped Liberapay link", DONATE_LINKS.liberapay === "https://liberapay.com/StemDeck/donate", DONATE_LINKS.liberapay);
+check("shipped Stripe link is still empty", DONATE_LINKS.stripe === "");
+check("shipped templates are empty", DONATE_LINK_TEMPLATES.stripe === "" && DONATE_LINK_TEMPLATES.liberapay === "");
 check("the links cannot be changed at runtime", Object.isFrozen(DONATE_LINKS) && Object.isFrozen(DONATE_LINK_TEMPLATES));
 
 console.warn = warn;
