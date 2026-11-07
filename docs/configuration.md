@@ -128,6 +128,29 @@ These are for development and testing. Release builds only recognize the variabl
 | `STEMDECK_DATA_DIR` | all | release | Override the user data directory (default: platform-standard location) |
 | `STEMDECK_ROOT` | all | release | Override the app root directory (default: derived from executable path) |
 | `STEMDECK_PYTHON` | all | **debug builds only** | Override the Python executable path |
+| `STEMDECK_FFMPEG` | all | release | Use this ffmpeg instead of the one setup chose. See [Choosing the FFmpeg](#choosing-the-ffmpeg-the-desktop-app-uses) |
+| `STEMDECK_FFPROBE` | all | release | The ffprobe to use with `STEMDECK_FFMPEG` (default: the ffprobe beside it). Ignored without `STEMDECK_FFMPEG` once setup has recorded a pair |
 | `STEMDECK_FFMPEG_URL` | Windows, macOS | release | Override the FFmpeg download URL |
 | `STEMDECK_FFPROBE_URL` | macOS | release | Override the ffprobe download URL |
 | `STEMDECK_WEBKIT_DMABUF` | Linux | release | WebKitGTK's DMA-BUF renderer: `auto` (default), `on` or `off`. See [Troubleshooting](troubleshooting.md#linux-desktop-app) |
+
+### Choosing the FFmpeg the desktop app uses
+
+Setup finds an FFmpeg once and records it in `config.json` in the data folder
+(`ffmpegPath`, `ffprobePath`). Every launch after that uses the recorded pair.
+
+To use a different one, set `STEMDECK_FFMPEG` to the full path of an `ffmpeg`
+in the environment StemDeck starts from, and `STEMDECK_FFPROBE` too if its
+`ffprobe` is not in the same folder. On every launch StemDeck checks that pair
+the same way setup does: FFmpeg 5.1 or newer, the encoders exports need, and an
+ffprobe that runs. A pair that passes is used instead of the recorded one,
+without changing `config.json`, so removing the variable brings the recorded
+pair back. A pair that fails is ignored and the recorded pair is used, and
+`logs/setup.log` in the data folder says which variable was ignored and why.
+Before setup has recorded a pair, a pair that fails stops setup with the
+reason instead. An FFmpeg without libvorbis passes; OGG export is then unavailable.
+
+On macOS, an app opened from the Finder does not see variables set in a shell
+profile. Set it for the session with
+`launchctl setenv STEMDECK_FFMPEG /opt/homebrew/bin/ffmpeg` and open StemDeck
+again, or start StemDeck from Terminal with the variable set.

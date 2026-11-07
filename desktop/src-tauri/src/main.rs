@@ -987,25 +987,20 @@ fn probe_runtime_blocking() -> Result<RuntimeProbe, String> {
     if let Some(path) = python.as_deref() {
         patch_pyvenv_cfg(path);
     }
-    let ffmpeg = resolve_existing_ffmpeg(&data_dir);
-    // Whether the pair runs, not whether a file is there.
-    //
-    // is_file() on ffmpeg alone is what let #637 survive its own fix. A
-    // wrong-architecture pair is a pair that exists, so this reported ready,
-    // setup.js short-circuited straight to the studio, and ensure_ffmpeg --
-    // which does verify, fall through and recover -- was never reached. The
-    // failure then surfaced inside a job as "Could not read file duration:
-    // [Errno 86]", which is where the reporter met it.
-    //
-    // Reached once per launch, and only when a binary is actually present, so
-    // the cost is two -version calls on a path that otherwise skips setup
-    // entirely.
-    //
-    // A known-bad managed build (gcc 16, see is_known_bad_ffmpeg_build) also
-    // reads as not ready, so setup reaches ensure_ffmpeg, which replaces it.
-    let ffmpeg_ready = ffmpeg.as_deref().is_some_and(|path| {
-        verify_ffmpeg_pair(path).is_ok() && !managed_ffmpeg_needs_replacing(&data_dir, path)
-    });
+    // A STEMDECK_FFMPEG that verifies is ready as named, STEMDECK_FFPROBE
+    // included. One that fails, with a recorded pair to fall back to, is
+    // ready when that pair still runs: the backend gets it instead
+    // (decide_backend_ffmpeg, #1042). Otherwise, as before.
+    let (ffmpeg, ffmpeg_ready) = match backend_ffmpeg_decision(&data_dir).choice {
+        BackendFfmpeg::Env(ffmpeg, _) => (Some(ffmpeg), true),
+        BackendFfmpeg::RecordedOverEnv(ffmpeg, ffprobe) => {
+            let ready = check_ffmpeg_pair_with(&ffmpeg, &ffprobe).is_ok();
+            (Some(ffmpeg), ready)
+        }
+        BackendFfmpeg::Recorded(..) | BackendFfmpeg::Inherit => {
+            existing_ffmpeg_readiness(&data_dir)
+        }
+    };
     let torch_device = read_config_str(&data_dir, "torchDevice");
     let torch_device_reason = effective_device_reason(
         read_config_str(&data_dir, "torchDeviceReason"),
@@ -1023,6 +1018,30 @@ fn probe_runtime_blocking() -> Result<RuntimeProbe, String> {
         torch_device,
         torch_device_reason,
     })
+}
+
+// The FFmpeg resolve_existing_ffmpeg finds, and whether setup can skip it.
+fn existing_ffmpeg_readiness(data_dir: &Path) -> (Option<PathBuf>, bool) {
+    let ffmpeg = resolve_existing_ffmpeg(data_dir);
+    // Whether the pair runs, not whether a file is there.
+    //
+    // is_file() on ffmpeg alone is what let #637 survive its own fix. A
+    // wrong-architecture pair is a pair that exists, so this reported ready,
+    // setup.js short-circuited straight to the studio, and ensure_ffmpeg --
+    // which does verify, fall through and recover -- was never reached. The
+    // failure then surfaced inside a job as "Could not read file duration:
+    // [Errno 86]", which is where the reporter met it.
+    //
+    // Reached once per launch, and only when a binary is actually present, so
+    // the cost is two -version calls on a path that otherwise skips setup
+    // entirely.
+    //
+    // A known-bad managed build (gcc 16, see is_known_bad_ffmpeg_build) also
+    // reads as not ready, so setup reaches ensure_ffmpeg, which replaces it.
+    let ffmpeg_ready = ffmpeg.as_deref().is_some_and(|path| {
+        verify_ffmpeg_pair(path).is_ok() && !managed_ffmpeg_needs_replacing(data_dir, path)
+    });
+    (ffmpeg, ffmpeg_ready)
 }
 
 /// Read a single string field from data/config.json, returning None on any error.
@@ -6008,6 +6027,179 @@ fn verified_ffmpeg_pair(data_dir: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((ffmpeg, ffprobe))
 }
 
+// What the shell's own environment says about FFmpeg (#1042).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EnvFfmpeg {
+    // Neither STEMDECK_FFMPEG nor STEMDECK_FFPROBE is set.
+    Unset,
+    // STEMDECK_FFPROBE without STEMDECK_FFMPEG. Half a pair.
+    ProbeOnly(PathBuf),
+    // STEMDECK_FFMPEG, with STEMDECK_FFPROBE or else the ffprobe beside it,
+    // and whether that pair passed the same checks setup runs.
+    Pair {
+        ffmpeg: PathBuf,
+        ffprobe: PathBuf,
+        check: Result<(), String>,
+    },
+}
+
+// The two variables as read, with `check` run on the pair they name. `check`
+// is only called when STEMDECK_FFMPEG is set.
+fn read_env_ffmpeg(
+    ffmpeg: Option<PathBuf>,
+    ffprobe: Option<PathBuf>,
+    check: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> EnvFfmpeg {
+    match (ffmpeg, ffprobe) {
+        (None, None) => EnvFfmpeg::Unset,
+        (None, Some(ffprobe)) => EnvFfmpeg::ProbeOnly(ffprobe),
+        (Some(ffmpeg), ffprobe) => {
+            let ffprobe = ffprobe.unwrap_or_else(|| ffprobe_beside(&ffmpeg));
+            let check = check(&ffmpeg, &ffprobe);
+            EnvFfmpeg::Pair {
+                ffmpeg,
+                ffprobe,
+                check,
+            }
+        }
+    }
+}
+
+// The FFmpeg pair a child process is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BackendFfmpeg {
+    // The pair STEMDECK_FFMPEG names, which verified.
+    Env(PathBuf, PathBuf),
+    // The pair setup recorded in config.json, with no STEMDECK_FFMPEG to
+    // outrank it.
+    Recorded(PathBuf, PathBuf),
+    // The recorded pair, because the one STEMDECK_FFMPEG names failed.
+    RecordedOverEnv(PathBuf, PathBuf),
+    // Nothing to set: the child inherits the environment as it is.
+    Inherit,
+}
+
+impl BackendFfmpeg {
+    fn pair(&self) -> Option<(&Path, &Path)> {
+        match self {
+            Self::Env(ffmpeg, ffprobe)
+            | Self::Recorded(ffmpeg, ffprobe)
+            | Self::RecordedOverEnv(ffmpeg, ffprobe) => Some((ffmpeg, ffprobe)),
+            Self::Inherit => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendFfmpegDecision {
+    choice: BackendFfmpeg,
+    // A line for setup.log whenever a variable the user set is not used as
+    // set. None when it is, or when none is set.
+    note: Option<String>,
+}
+
+// Which FFmpeg pair the backend runs (#1042):
+//   1. STEMDECK_FFMPEG (with STEMDECK_FFPROBE, or the ffprobe beside it),
+//      when that pair verifies.
+//   2. The pair setup recorded in config.json, when it is still on disk.
+//   3. Nothing set: the child inherits the environment, and the backend
+//      looks in the data folder, then PATH (app/core/config.py).
+// A variable that is set and not used is never dropped silently: `note`
+// says which and why. `recorded` is verified_ffmpeg_pair's answer.
+fn decide_backend_ffmpeg(
+    env: EnvFfmpeg,
+    recorded: Option<(PathBuf, PathBuf)>,
+) -> BackendFfmpegDecision {
+    let show = |(ffmpeg, ffprobe): &(PathBuf, PathBuf)| {
+        format!("{} and {}", ffmpeg.display(), ffprobe.display())
+    };
+    match env {
+        EnvFfmpeg::Pair {
+            ffmpeg,
+            ffprobe,
+            check: Ok(()),
+        } => BackendFfmpegDecision {
+            choice: BackendFfmpeg::Env(ffmpeg, ffprobe),
+            note: None,
+        },
+        EnvFfmpeg::Pair {
+            ffmpeg,
+            ffprobe,
+            check: Err(err),
+        } => {
+            let named = show(&(ffmpeg, ffprobe));
+            match recorded {
+                Some(pair) => BackendFfmpegDecision {
+                    note: Some(format!(
+                        "STEMDECK_FFMPEG ignored: the pair it names ({named}) failed \
+                         verification: {err}. Using the pair in config.json: {}",
+                        show(&pair)
+                    )),
+                    choice: BackendFfmpeg::RecordedOverEnv(pair.0, pair.1),
+                },
+                None => BackendFfmpegDecision {
+                    note: Some(format!(
+                        "STEMDECK_FFMPEG names a pair that failed verification ({named}): \
+                         {err}. config.json records no verified pair to use instead, so \
+                         the variable reaches the backend as set"
+                    )),
+                    choice: BackendFfmpeg::Inherit,
+                },
+            }
+        }
+        EnvFfmpeg::ProbeOnly(ffprobe) => match recorded {
+            Some(pair) => BackendFfmpegDecision {
+                note: Some(format!(
+                    "STEMDECK_FFPROBE ignored ({}): it is used only together with \
+                     STEMDECK_FFMPEG, which is not set. Using the pair in config.json: {}",
+                    ffprobe.display(),
+                    show(&pair)
+                )),
+                choice: BackendFfmpeg::Recorded(pair.0, pair.1),
+            },
+            // As before #1042: the backend reads it, beside its own ffmpeg.
+            None => BackendFfmpegDecision {
+                choice: BackendFfmpeg::Inherit,
+                note: None,
+            },
+        },
+        EnvFfmpeg::Unset => BackendFfmpegDecision {
+            choice: match recorded {
+                Some((ffmpeg, ffprobe)) => BackendFfmpeg::Recorded(ffmpeg, ffprobe),
+                None => BackendFfmpeg::Inherit,
+            },
+            note: None,
+        },
+    }
+}
+
+// decide_backend_ffmpeg on this process's environment and config.json. Runs
+// both halves of the environment's pair when STEMDECK_FFMPEG is set.
+fn backend_ffmpeg_decision(data_dir: &Path) -> BackendFfmpegDecision {
+    let env = read_env_ffmpeg(
+        env_path_override("STEMDECK_FFMPEG"),
+        env_path_override("STEMDECK_FFPROBE"),
+        |ffmpeg, ffprobe| check_ffmpeg_pair_with(ffmpeg, ffprobe).map(|_| ()),
+    );
+    decide_backend_ffmpeg(env, verified_ffmpeg_pair(data_dir))
+}
+
+// The last note written, so a launch that spawns more than one child (model
+// warmup, then the backend) logs the same reason once.
+static LAST_FFMPEG_NOTE: Mutex<Option<String>> = Mutex::new(None);
+
+fn log_ffmpeg_note(data_dir: &Path, note: &str) {
+    let Ok(mut last) = LAST_FFMPEG_NOTE.lock() else {
+        return;
+    };
+    if last.as_deref() == Some(note) {
+        return;
+    }
+    eprintln!("{note}");
+    append_to_setup_log(data_dir, note);
+    *last = Some(note.to_string());
+}
+
 /// Point `cmd` at the FFmpeg StemDeck actually verified.
 ///
 /// Every child process that may shell out to `ffmpeg`/`ffprobe` needs this, not
@@ -6025,19 +6217,29 @@ fn verified_ffmpeg_pair(data_dir: &Path) -> Option<(PathBuf, PathBuf)> {
 /// execs -- by absolute path, where there is no PATH search to fall past it.
 /// That is how #637 outlived the verification added to fix it. Naming both
 /// halves outright is what makes setup's answer the one that counts.
+///
+/// Setup's answer counts unless the user named a pair of their own: a
+/// STEMDECK_FFMPEG that verifies wins over config.json, and one that does not
+/// is logged and passed over (decide_backend_ffmpeg, #1042).
 fn apply_ffmpeg_path(cmd: &mut Command, data_dir: &Path) -> Result<(), String> {
-    let verified = verified_ffmpeg_pair(data_dir);
-    if let Some((ffmpeg, ffprobe)) = &verified {
+    let decision = backend_ffmpeg_decision(data_dir);
+    if let Some(note) = &decision.note {
+        log_ffmpeg_note(data_dir, note);
+    }
+    let chosen = decision.choice.pair();
+    if let Some((ffmpeg, ffprobe)) = chosen {
         cmd.env("STEMDECK_FFMPEG", ffmpeg);
         cmd.env("STEMDECK_FFPROBE", ffprobe);
     }
 
-    // The verified binary's own directory, falling back to the data directory
-    // when setup has not recorded one yet. Either way this is only PATH: what
-    // the backend uses is settled above.
-    let Some(ffmpeg_dir) = verified
-        .as_ref()
-        .and_then(|(ffmpeg, _)| ffmpeg.parent().map(Path::to_path_buf))
+    // The chosen binary's own directory, falling back to the data directory
+    // when there is none yet. Either way this is only PATH: what the backend
+    // uses is settled above. A bare name from STEMDECK_FFMPEG has no
+    // directory to add.
+    let Some(ffmpeg_dir) = chosen
+        .and_then(|(ffmpeg, _)| ffmpeg.parent())
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(Path::to_path_buf)
         .or_else(|| ffmpeg_dir_if_present(data_dir))
     else {
         return Ok(());
@@ -6810,7 +7012,13 @@ fn ensure_fpcalc(data_dir: &Path) -> Result<(), String> {
     if verify_fpcalc(Path::new("fpcalc")).is_ok() {
         return Ok(());
     }
-    if verified_ffmpeg_pair(data_dir).is_some_and(|(ffmpeg, _)| ffmpeg_has_chromaprint(&ffmpeg)) {
+    // The FFmpeg the backend will run, which a STEMDECK_FFMPEG can make a
+    // different one from config.json's (#1042).
+    if backend_ffmpeg_decision(data_dir)
+        .choice
+        .pair()
+        .is_some_and(|(ffmpeg, _)| ffmpeg_has_chromaprint(ffmpeg))
+    {
         return Ok(());
     }
     let (asset, sha256) = fpcalc_asset(env::consts::OS, env::consts::ARCH).ok_or_else(|| {
@@ -8000,8 +8208,14 @@ fn verify_ffmpeg_pair(ffmpeg: &Path) -> Result<(), String> {
 // verify_ffmpeg_pair, also saying whether the pair has the optional encoders
 // (true) or only the required ones (false).
 fn check_ffmpeg_pair(ffmpeg: &Path) -> Result<bool, String> {
+    check_ffmpeg_pair_with(ffmpeg, &ffprobe_beside(ffmpeg))
+}
+
+// check_ffmpeg_pair for an ffprobe named on its own (STEMDECK_FFPROBE), not
+// necessarily beside ffmpeg.
+fn check_ffmpeg_pair_with(ffmpeg: &Path, ffprobe: &Path) -> Result<bool, String> {
     let full = verify_ffmpeg(ffmpeg)?;
-    verify_ffprobe(&ffprobe_beside(ffmpeg))?;
+    verify_ffprobe(ffprobe)?;
     if !full {
         eprintln!(
             "FFmpeg at {} has no {}: OGG export will be unavailable",
@@ -10473,6 +10687,227 @@ mod tests {
         record(true, true);
         fs::remove_file(&ffprobe).unwrap();
         assert!(super::verified_ffmpeg_pair(dir.path()).is_none());
+    }
+
+    fn pair(dir: &str) -> (PathBuf, PathBuf) {
+        let dir = PathBuf::from(dir);
+        (
+            dir.join(if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            }),
+            dir.join(super::ffprobe_file_name()),
+        )
+    }
+
+    fn env_pair(ffmpeg: &Path, ffprobe: &Path, check: Result<(), String>) -> super::EnvFfmpeg {
+        super::EnvFfmpeg::Pair {
+            ffmpeg: ffmpeg.to_path_buf(),
+            ffprobe: ffprobe.to_path_buf(),
+            check,
+        }
+    }
+
+    /// #1042: a STEMDECK_FFMPEG that verifies wins over config.json, and says
+    /// nothing, since it is used as set.
+    #[test]
+    fn backend_ffmpeg_env_pair_that_verifies_wins_over_the_recorded_one() {
+        use super::{decide_backend_ffmpeg, BackendFfmpeg};
+        let (ffmpeg, ffprobe) = pair("/opt/homebrew/bin");
+        let decision = decide_backend_ffmpeg(
+            env_pair(&ffmpeg, &ffprobe, Ok(())),
+            Some(pair("/data/ffmpeg")),
+        );
+        assert_eq!(decision.choice, BackendFfmpeg::Env(ffmpeg, ffprobe));
+        assert_eq!(decision.note, None);
+    }
+
+    /// One that fails verification falls back to the recorded pair, and the
+    /// note names the variable, the pair, the reason and what is used.
+    #[test]
+    fn backend_ffmpeg_env_pair_that_fails_falls_back_and_says_why() {
+        use super::{decide_backend_ffmpeg, BackendFfmpeg};
+        let (ffmpeg, ffprobe) = pair("/opt/old/bin");
+        let recorded = pair("/data/ffmpeg");
+        let decision = decide_backend_ffmpeg(
+            env_pair(
+                &ffmpeg,
+                &ffprobe,
+                Err("FFmpeg is version 4.4.2".to_string()),
+            ),
+            Some(recorded.clone()),
+        );
+        assert_eq!(
+            decision.choice,
+            BackendFfmpeg::RecordedOverEnv(recorded.0.clone(), recorded.1.clone())
+        );
+        let note = decision.note.expect("an ignored variable is logged");
+        assert!(note.starts_with("STEMDECK_FFMPEG ignored"), "{note}");
+        assert!(note.contains(&ffmpeg.display().to_string()), "{note}");
+        assert!(note.contains("version 4.4.2"), "{note}");
+        assert!(note.contains(&recorded.0.display().to_string()), "{note}");
+        assert!(!note.contains('\n'), "one line: {note}");
+    }
+
+    /// Unset, the recorded pair is the default, and with none recorded the
+    /// child inherits its environment, as before.
+    #[test]
+    fn backend_ffmpeg_env_unset_keeps_the_recorded_pair() {
+        use super::{decide_backend_ffmpeg, BackendFfmpeg, EnvFfmpeg};
+        let recorded = pair("/data/ffmpeg");
+        let decision = decide_backend_ffmpeg(EnvFfmpeg::Unset, Some(recorded.clone()));
+        assert_eq!(
+            decision.choice,
+            BackendFfmpeg::Recorded(recorded.0, recorded.1)
+        );
+        assert_eq!(decision.note, None);
+
+        let decision = decide_backend_ffmpeg(EnvFfmpeg::Unset, None);
+        assert_eq!(decision.choice, BackendFfmpeg::Inherit);
+        assert_eq!(decision.note, None);
+    }
+
+    /// STEMDECK_FFMPEG alone pairs with the ffprobe beside it, and that is
+    /// the ffprobe checked and handed on. STEMDECK_FFPROBE, when set, is used
+    /// instead. STEMDECK_FFPROBE alone is half a pair: with a recorded pair it
+    /// is ignored, said out loud; with none it reaches the backend as before.
+    #[test]
+    fn backend_ffmpeg_only_ffmpeg_set_pairs_with_the_ffprobe_beside_it() {
+        use super::{decide_backend_ffmpeg, read_env_ffmpeg, BackendFfmpeg, EnvFfmpeg};
+        let (ffmpeg, beside) = pair("/opt/homebrew/bin");
+        let mut checked = None;
+        let env = read_env_ffmpeg(Some(ffmpeg.clone()), None, |f, p| {
+            checked = Some((f.to_path_buf(), p.to_path_buf()));
+            Ok(())
+        });
+        assert_eq!(checked, Some((ffmpeg.clone(), beside.clone())));
+        assert_eq!(
+            decide_backend_ffmpeg(env, Some(pair("/data/ffmpeg"))).choice,
+            BackendFfmpeg::Env(ffmpeg.clone(), beside)
+        );
+
+        let (_, elsewhere) = pair("/somewhere/else");
+        let env = read_env_ffmpeg(Some(ffmpeg.clone()), Some(elsewhere.clone()), |_, p| {
+            assert_eq!(p, elsewhere.as_path());
+            Ok(())
+        });
+        assert_eq!(
+            decide_backend_ffmpeg(env, None).choice,
+            BackendFfmpeg::Env(ffmpeg, elsewhere.clone())
+        );
+
+        // Nothing is run when STEMDECK_FFMPEG is not set.
+        let never = |_: &Path, _: &Path| -> Result<(), String> { panic!("no pair to check") };
+        assert_eq!(read_env_ffmpeg(None, None, never), EnvFfmpeg::Unset);
+        let probe_only = read_env_ffmpeg(None, Some(elsewhere.clone()), never);
+        assert_eq!(probe_only, EnvFfmpeg::ProbeOnly(elsewhere.clone()));
+
+        let recorded = pair("/data/ffmpeg");
+        let decision = decide_backend_ffmpeg(probe_only.clone(), Some(recorded.clone()));
+        assert_eq!(
+            decision.choice,
+            BackendFfmpeg::Recorded(recorded.0, recorded.1)
+        );
+        let note = decision.note.expect("an ignored variable is logged");
+        assert!(note.starts_with("STEMDECK_FFPROBE ignored"), "{note}");
+        let decision = decide_backend_ffmpeg(probe_only, None);
+        assert_eq!(decision.choice, BackendFfmpeg::Inherit);
+        assert_eq!(decision.note, None);
+    }
+
+    /// A recorded pair deleted from disk is no pair (verified_ffmpeg_pair),
+    /// so a STEMDECK_FFMPEG that verifies is used, and one that fails has
+    /// nothing to fall back to: it reaches the backend as set, logged.
+    #[test]
+    fn backend_ffmpeg_recorded_pair_missing_on_disk() {
+        use super::{decide_backend_ffmpeg, verified_ffmpeg_pair, BackendFfmpeg};
+        let dir = make_tmp();
+        let (gone_ffmpeg, gone_ffprobe) = pair(&dir.path().join("gone").display().to_string());
+        fs::write(
+            dir.path().join("config.json"),
+            serde_json::json!({
+                "ffmpegReady": true,
+                "ffprobeReady": true,
+                "ffmpegPath": gone_ffmpeg.display().to_string(),
+                "ffprobePath": gone_ffprobe.display().to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let recorded = verified_ffmpeg_pair(dir.path());
+        assert_eq!(recorded, None);
+
+        let (ffmpeg, ffprobe) = pair("/opt/homebrew/bin");
+        let decision = decide_backend_ffmpeg(env_pair(&ffmpeg, &ffprobe, Ok(())), recorded.clone());
+        assert_eq!(
+            decision.choice,
+            BackendFfmpeg::Env(ffmpeg.clone(), ffprobe.clone())
+        );
+
+        let decision = decide_backend_ffmpeg(
+            env_pair(&ffmpeg, &ffprobe, Err("bad CPU type".to_string())),
+            recorded,
+        );
+        assert_eq!(decision.choice, BackendFfmpeg::Inherit);
+        let note = decision.note.expect("a failed variable is logged");
+        assert!(note.contains("STEMDECK_FFMPEG"), "{note}");
+        assert!(note.contains("bad CPU type"), "{note}");
+    }
+
+    /// A pair the user placed in data/ffmpeg/bin (#248) and setup recorded is
+    /// the default, and a STEMDECK_FFMPEG that verifies is used beside it
+    /// without touching it: the decision reads, it never removes or rewrites.
+    #[test]
+    fn backend_ffmpeg_user_placed_pair_is_kept_and_only_outranked() {
+        use super::{decide_backend_ffmpeg, verified_ffmpeg_pair, BackendFfmpeg, EnvFfmpeg};
+        let dir = make_tmp();
+        let bin = dir.path().join("ffmpeg").join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let (placed_ffmpeg, placed_ffprobe) = pair(&bin.display().to_string());
+        fs::write(&placed_ffmpeg, b"x").unwrap();
+        fs::write(&placed_ffprobe, b"x").unwrap();
+        let config = serde_json::json!({
+            "ffmpegReady": true,
+            "ffprobeReady": true,
+            "ffmpegPath": placed_ffmpeg.display().to_string(),
+            "ffprobePath": placed_ffprobe.display().to_string(),
+            "ffmpegSource": "data folder",
+        })
+        .to_string();
+        fs::write(dir.path().join("config.json"), &config).unwrap();
+        let recorded = verified_ffmpeg_pair(dir.path());
+
+        assert_eq!(
+            decide_backend_ffmpeg(EnvFfmpeg::Unset, recorded.clone()).choice,
+            BackendFfmpeg::Recorded(placed_ffmpeg.clone(), placed_ffprobe.clone())
+        );
+        let (ffmpeg, ffprobe) = pair("/opt/homebrew/bin");
+        assert_eq!(
+            decide_backend_ffmpeg(env_pair(&ffmpeg, &ffprobe, Ok(())), recorded).choice,
+            BackendFfmpeg::Env(ffmpeg, ffprobe)
+        );
+        assert!(placed_ffmpeg.is_file() && placed_ffprobe.is_file());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("config.json")).unwrap(),
+            config
+        );
+    }
+
+    /// Every chosen pair is handed to the child; Inherit hands nothing.
+    #[test]
+    fn backend_ffmpeg_pair_is_set_for_every_choice_but_inherit() {
+        use super::BackendFfmpeg;
+        let (ffmpeg, ffprobe) = pair("/x");
+        let both = Some((ffmpeg.as_path(), ffprobe.as_path()));
+        for choice in [
+            BackendFfmpeg::Env(ffmpeg.clone(), ffprobe.clone()),
+            BackendFfmpeg::Recorded(ffmpeg.clone(), ffprobe.clone()),
+            BackendFfmpeg::RecordedOverEnv(ffmpeg.clone(), ffprobe.clone()),
+        ] {
+            assert_eq!(choice.pair(), both);
+        }
+        assert_eq!(BackendFfmpeg::Inherit.pair(), None);
     }
 
     /// ensure_ffmpeg returns a bare "ffmpeg" when it settles on a system
