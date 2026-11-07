@@ -42,6 +42,55 @@ test.describe("the logo links to the site", () => {
     expect(result.path).toBe("/");
   });
 
+  test("a middle-click and a Ctrl-click go to the shell too, and nothing navigates (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    const result = await page.evaluate(async () => {
+      const seen = [];
+      const original = window.__TAURI__.core.invoke;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        seen.push({ cmd, url: args?.url });
+        return original(cmd, args);
+      };
+      const a = document.querySelector(".daw-brand a");
+      const events = [
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 }),
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }),
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true, shiftKey: true }),
+      ];
+      const prevented = [];
+      for (const ev of events) {
+        a.dispatchEvent(ev);
+        prevented.push(ev.defaultPrevented);
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      window.__TAURI__.core.invoke = original;
+      return { seen, prevented, path: location.pathname };
+    });
+
+    // Middle button, Ctrl and Cmd+Shift are taken; the right button (context menu) is not.
+    expect(result.prevented).toEqual([true, false, true, true]);
+    expect(result.seen.filter((c) => c.cmd === "open_url")).toEqual([
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+    ]);
+    expect(result.path).toBe("/");
+  });
+
+  test("in a plain browser the press is left to the browser", async ({ page }) => {
+    await openStudio(page);
+
+    const prevented = await page.evaluate(() => {
+      const a = document.querySelector(".daw-brand a");
+      const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      a.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(prevented).toBe(false);
+  });
+
   test("its tooltip is translated like every other label", async ({ page }) => {
     // An icon with no text is only labelled by its title and aria-label, so a
     // hardcoded English string here would be the one part of the bar that does

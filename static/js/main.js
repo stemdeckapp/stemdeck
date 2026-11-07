@@ -23,6 +23,7 @@ import { runStoreMigrationIfNeeded } from "./utils.js";
 import { ignoredByShortcuts } from "./libraryDeleteKey.js";
 import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
 import { initFooterFit, refitFooter } from "./footerFit.js";
+import { externalLinkAction } from "./externalLinks.js";
 import { initArtistInfo } from "./artistInfo.js";
 import { initLyrics } from "./lyrics.js";
 import { initHelpMode } from "./helpMode.js";
@@ -1316,34 +1317,19 @@ if (canDragOut) {
 
 // ─── External links ───
 
-document.addEventListener("click", (e) => {
-  const dl = e.target.closest("a.lane-dl");
-  if (dl?.href) {
-    const invoke = window.__TAURI__?.core?.invoke;
-    // A download attribute is meaningless to the OS handler, so open_url used to
-    // hand the stem to a browser or media player instead of saving it. Save it
-    // like every other export, which also honours the song-prefixed name (#336).
-    // Placeholder rows for absent stems keep href="#" and carry no name.
-    if (invoke && dl.download && !dl.getAttribute("href").endsWith("#")) {
-      e.preventDefault();
-      invoke("save_audio_file", { url: dl.href, filename: dl.download });
-      return;
-    }
-    if (invoke) {
-      e.preventDefault();
-      invoke("open_url", { url: dl.href });
-    }
-    return;
-  }
-  const anchor = e.target.closest('a[target="_blank"]');
-  if (anchor?.href) {
-    const openUrl = window.__TAURI__?.core?.invoke;
-    if (openUrl) {
-      e.preventDefault();
-      openUrl("open_url", { url: anchor.href });
-    }
-  }
-});
+// click covers the primary button, with or without Ctrl, Cmd or Shift. A
+// middle-click fires auxclick instead, which the webview would otherwise
+// answer with its own window (#1041). The decision is in externalLinks.js.
+function routeExternalLink(e) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  const act = externalLinkAction({ type: e.type, button: e.button, target: e.target, hasShell: Boolean(invoke) });
+  if (!act) return;
+  e.preventDefault();
+  if (act.action === "save") invoke("save_audio_file", { url: act.url, filename: act.filename });
+  else if (act.action === "open") invoke("open_url", { url: act.url });
+}
+document.addEventListener("click", routeExternalLink);
+document.addEventListener("auxclick", routeExternalLink);
 
 // ─── Global error logging ───
 
