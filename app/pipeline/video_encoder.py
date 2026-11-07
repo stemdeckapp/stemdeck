@@ -690,6 +690,8 @@ def run_probe(
 _cache: dict[str, ProbeResult] = {}
 _cache_loaded_for: str | None = None
 _cache_lock = threading.RLock()
+# Serialises _save_cache (snapshot to os.replace). Taken before _cache_lock.
+_save_lock = threading.Lock()
 _probe_lock = threading.Lock()
 
 
@@ -736,8 +738,14 @@ def _load_cache(ident: str) -> None:
             return
         if data.get("ffmpeg") != ident:
             return
+        entries = data.get("entries")
+        if not isinstance(entries, dict):
+            # A damaged or edited file: probe afresh, never raise (probe()).
+            return
         now = time.time()
-        for key, row in (data.get("entries") or {}).items():
+        for key, row in entries.items():
+            if not isinstance(key, str) or not isinstance(row, dict):
+                continue
             try:
                 result = ProbeResult(**row)
             except TypeError:
@@ -749,23 +757,29 @@ def _load_cache(ident: str) -> None:
 
 
 def _save_cache(ident: str) -> None:
-    with _cache_lock:
-        data = {
-            "v": _CACHE_VERSION,
-            "ffmpeg": ident,
-            "entries": {k: asdict(r) for k, r in _cache.items() if k.startswith(f"{ident}|")},
-        }
-    try:
-        _cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _cache_path.with_name(f"{_cache_path.name}.{uuid.uuid4().hex}.tmp")
+    """Write the in-memory cache to the file. The snapshot and the replace
+    happen under _save_lock, so two saves land in the order they took their
+    snapshots: a probe's older snapshot can never overwrite a newer one, such
+    as the save that dropped a failed node's pass (#1033). Lock order is
+    _save_lock, then _cache_lock; nothing calls this holding _cache_lock."""
+    with _save_lock:
+        with _cache_lock:
+            data = {
+                "v": _CACHE_VERSION,
+                "ffmpeg": ident,
+                "entries": {k: asdict(r) for k, r in _cache.items() if k.startswith(f"{ident}|")},
+            }
         try:
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            os.replace(tmp, _cache_path)
-        finally:
-            tmp.unlink(missing_ok=True)
-    except OSError:
-        # The in-memory copy still applies for this run.
-        logger.warning("video encoder cache not written", exc_info=True)
+            _cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = _cache_path.with_name(f"{_cache_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(json.dumps(data), encoding="utf-8")
+                os.replace(tmp, _cache_path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        except OSError:
+            # The in-memory copy still applies for this run.
+            logger.warning("video encoder cache not written", exc_info=True)
 
 
 def probe(

@@ -1691,3 +1691,96 @@ def test_the_gpu_ids_never_reach_the_settings_view(fake, dri, sysfs):
     view = shown.view()
     assert view["device"] == "renderD128"
     assert "8086" not in json.dumps(view) and "46a6" not in json.dumps(view)
+
+
+def test_a_failure_drops_only_that_nodes_pass(fake, dri):
+    (second,) = dri(129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    assert ve.probe(VAAPI, 1920, 1080, 30).device == second
+    (first,) = dri(128)
+    assert ve.probe(VAAPI, 1920, 1080, 30).device == first
+    assert _cached_passes(first) and _cached_passes(second), "both nodes passed"
+    ve.record_failure(VAAPI, "exit", first)
+    assert _cached_passes(first) == []
+    assert _cached_passes(second), "the other node's pass is kept, in the file"
+    in_memory = [r for r in ve._cache.values() if r.ok and r.device == second]
+    assert in_memory, "and in memory"
+
+
+def test_the_key_of_an_encoder_without_a_node_is_unchanged(fake):
+    # The format before #1033: NVENC, QSV, AMF and VideoToolbox passes in an
+    # existing video_encoders.json still match after the upgrade.
+    ident, _version = ve.ffmpeg_identity()
+    for enc in ("h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox"):
+        sig = ve._args_sig(enc, 1920, 1080, 30)
+        assert ve._key(ident, enc, 1920, 1080, 30) == f"{ident}|{enc}|1920x1080@30|{sig}"
+    no_node = ve._args_sig(VAAPI, 1920, 1080, 30)
+    assert ve._key(ident, VAAPI, 1920, 1080, 30) == f"{ident}|{VAAPI}|1920x1080@30|{no_node}"
+
+
+def test_a_failure_on_a_node_that_is_gone_never_disables_vaapi(fake, dri):
+    # The node the render ran on has disappeared and none is listed: there
+    # is nothing to set aside the encoder for; a node that comes back is used.
+    for _ in range(MAX + 1):
+        assert not ve.record_failure(VAAPI, "exit", "/dev/dri/renderD128")
+    assert ve.disabled() == []
+    fake.vaapi = {"renderD129": "ok"}
+    (node,) = dri(129)
+    assert ve.choose(1920, 1080, 30).device == node
+
+
+def test_reset_state_forgets_the_set_aside_nodes(fake, dri):
+    first, _second = dri(128, 129)
+    fake.vaapi = {"renderD128": "ok", "renderD129": "ok"}
+    for _ in range(MAX):
+        ve.record_failure(VAAPI, "exit", first)
+    assert ve.choose(1920, 1080, 30).device != first
+    ve.reset_state()
+    assert ve._set_aside == set()
+    assert ve.choose(1920, 1080, 30).device == first
+
+
+def test_an_older_save_never_overwrites_a_newer_one(fake, dri, monkeypatch):
+    # A probe's save snapshots the cache with the node's pass and is slow to
+    # replace the file; a render failure drops the pass and saves meanwhile.
+    # The file must end without the pass (#1033).
+    (node,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    ve.choose(1920, 1080, 30)
+    assert _cached_passes(node)
+    ident = ve._cache_loaded_for
+    real_replace = ve.os.replace
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def slow_first_replace(src, dst):
+        calls.append(src)
+        if len(calls) == 1:
+            entered.set()
+            release.wait(5)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(ve.os, "replace", slow_first_replace)
+    stale = threading.Thread(target=ve._save_cache, args=(ident,))
+    stale.start()
+    assert entered.wait(5)
+    drop = threading.Thread(target=ve.record_failure, args=(VAAPI, "exit", node))
+    drop.start()
+    drop.join(0.3)
+    release.set()
+    stale.join(5)
+    drop.join(5)
+    assert not stale.is_alive() and not drop.is_alive()
+    assert _cached_passes(node) == [], "the pass a real render failed on stays dropped"
+
+
+@pytest.mark.parametrize("entries", [[], ["x"], "text", 5, {"k": [1, 2]}, {"k": "row"}])
+def test_a_damaged_cache_file_never_raises(fake, dri, entries):
+    (node,) = dri(128)
+    fake.vaapi = {"renderD128": "ok"}
+    ident, _version = ve.ffmpeg_identity()
+    ve._cache_path.write_text(
+        json.dumps({"v": 1, "ffmpeg": ident, "entries": entries}), encoding="utf-8"
+    )
+    assert ve.probe(VAAPI, 1920, 1080, 30).device == node
+    assert fake.count("probe") == 1
