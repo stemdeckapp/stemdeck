@@ -3802,13 +3802,12 @@ input, textarea { font-family: inherit; }
 .donate-card > * { flex-shrink: 0; }
 .donate-card .about-close { z-index: 2; }
 
-/* Hero: words on the left, a drawing of stem lanes on the right, over a
-   faint tile of hearts (the Donate button's heart). */
+/* Hero: the words on the left, over a faint tile of hearts (the Donate
+   button's heart) that runs evenly across the whole box. */
 .donate-hero {
   position: relative; overflow: hidden; isolation: isolate;
-  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  align-items: center; gap: 20px; min-height: 236px;
-  padding: 32px 36px 32px 40px;
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  align-items: center; padding: 32px 36px 32px 40px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
 }
 .donate-hero::before {
@@ -3818,12 +3817,8 @@ input, textarea { font-family: inherit; }
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='40' viewBox='0 0 44 40'%3E%3Cpath d='M22 31 13.4 22.6a5 5 0 0 1 7.1-7.1L22 17l1.5-1.5a5 5 0 0 1 7.1 7.1Z' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") 0 0 / 44px 40px repeat;
   opacity: 0.7;
 }
-.donate-hero::after {
-  /* The hearts fade out towards the drawing, so it stands on plain panel. */
-  content: ""; position: absolute; inset: 0; z-index: -1;
-  background: linear-gradient(90deg, transparent 0 35%, var(--panel) 75%);
-}
-.donate-hero-text { min-width: 0; }
+/* As wide as the words were beside the drawing, so the title breaks the same way. */
+.donate-hero-text { min-width: 0; max-width: 440px; }
 .donate-mark { display: inline-flex; color: var(--accent); margin-bottom: 14px; }
 .donate-card .donate-hero h2 {
   margin: 0 0 12px; font-family: var(--font-sans); font-size: 34px; line-height: 1.12;
@@ -3832,18 +3827,6 @@ input, textarea { font-family: inherit; }
 .donate-sub {
   margin: 0; max-width: 40ch; font-size: 13.5px; line-height: 1.6; color: var(--muted);
 }
-.donate-art { min-width: 0; display: flex; justify-content: flex-end; }
-.donate-art-svg { width: 100%; max-width: 360px; height: auto; display: block; }
-.donate-art-lane { fill: var(--bg-2); stroke: var(--border-strong); stroke-width: 1; }
-.donate-art-wave { fill: none; stroke-width: 2.2; stroke-linecap: round; }
-.donate-art-wave.is-ahead { opacity: 0.38; }
-.donate-art-vocals { stroke: var(--vocals); }
-.donate-art-drums { stroke: var(--drums); }
-.donate-art-bass { stroke: var(--bass); }
-.donate-art-guitar { stroke: var(--guitar); }
-.donate-art-piano { stroke: var(--piano); }
-.donate-art-head { stroke: var(--accent); stroke-width: 1.5; }
-.donate-art-head-cap { fill: var(--accent); }
 
 /* The two cards below the hero. */
 .donate-grid {
@@ -3887,6 +3870,38 @@ input, textarea { font-family: inherit; }
 .donate-give:has(> .donate-presets[hidden]) .donate-ways { flex: 1; }
 .donate-give:has(> .donate-presets[hidden]) .donate-way > svg:first-child { margin-bottom: auto; padding-bottom: 10px; box-sizing: content-box; }
 .donate-way.is-link:hover .donate-way-out { color: var(--accent); }
+/* A QR code in a link tile (donate.js, DONATE_QR): a white card with a soft
+   ring so it scans on either theme, with a small caption. The three cards in
+   the row (two tiles, Share) have the same structure and the same fixed
+   heights above the code: icon, title (room for two lines), then the code, so
+   the codes and captions line up exactly. The words after the code ("via ...")
+   sit at the bottom of the tile. The code's size is set in the markup, so
+   nothing moves when it loads. A click on it is a click on the tile's link. */
+.donate-way-scan { display: flex; flex-direction: column; align-items: center; gap: 8px; align-self: center; }
+.donate-way-scan[hidden] { display: none; }
+.donate-way-qr, .donate-qr {
+  display: block; box-sizing: border-box; width: 128px; height: 128px; padding: 10px;
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--border-strong), var(--shadow-panel);
+}
+.donate-way-scan-caption { font-size: 11px; line-height: 1.3; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+/* In the markup the code comes after the words (so the Guide titles the tile
+   from its name, see donate.js); it is drawn between the title and "via". */
+.donate-way.has-qr > svg:first-child { order: -3; width: 22px; height: 22px; margin: 0 0 8px; padding: 0; box-sizing: border-box; }
+.donate-way.has-qr .donate-way-name { order: -2; margin: 0 0 16px; line-height: 20px; }
+.donate-way.has-qr .donate-way-scan { order: -1; }
+.donate-way.has-qr .donate-way-via { margin-top: auto; padding-top: 16px; }
+.donate-give:has(> .donate-presets[hidden]) .donate-way.has-qr > svg:first-child { margin-bottom: 8px; padding-bottom: 0; }
+.donate-ways:has(.has-qr) .donate-way.is-link:not(.has-qr) > svg:first-child { margin-bottom: auto; }
+.donate-way.is-link { transition: background var(--t-fast) var(--easing), border-color var(--t-fast) var(--easing), transform var(--t-fast) var(--easing); }
+.donate-way.is-link:hover { border-color: var(--accent); transform: translateY(-2px); }
+.donate-way.is-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.donate-way.is-link:hover .donate-way-out { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .donate-way.is-link:hover { transform: none; } }
+@media (min-width: 761px) {
+  /* Room for a two-line title, so a long name never pushes the code down. */
+  .donate-way.has-qr .donate-way-name, .donate-share-title { min-height: 40px; }
+}
 
 /* Amounts: four equal columns that fill the row. */
 .donate-presets {
@@ -3928,25 +3943,27 @@ input, textarea { font-family: inherit; }
 }
 .donate-hint { margin: 8px 2px 0; font-size: 11.5px; line-height: 1.4; color: var(--accent); }
 
-/* Share: QR on the left, four square buttons on the right. */
+/* Share: the same structure as a link tile with a code: icon, title, QR card
+   and caption, then the address and the buttons at the bottom. The icon row
+   starts where a tile's does (the tile's own border and padding, 15px), and the
+   2px gaps a tile's flex column puts between its rows are in the margins. */
 .donate-share { display: flex; flex-direction: column; }
-.donate-share-icon { color: var(--fg-2); }
-.donate-share-title { margin: 6px 0 10px; font-size: 14px; font-weight: 600; color: var(--fg); }
-.donate-share-body {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start;
-}
-.donate-qr {
-  display: block; width: 132px; height: 132px; border-radius: var(--radius);
-  background: var(--fg);
-}
+.donate-share-icon { color: var(--fg-2); width: 22px; height: 22px; margin: 15px 0 10px 15px; flex: none; }
+.donate-share-title { margin: 0 0 18px 15px; font-size: 14px; font-weight: 600; line-height: 20px; color: var(--fg); }
+.donate-share-body { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.donate-share-scan { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .donate-addr {
-  grid-column: 1 / -1; margin: 0; min-width: 0;
-  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin: 0; max-width: 100%; text-align: center; user-select: text;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.4; color: var(--muted);
+  overflow-wrap: anywhere;
 }
-.donate-share-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* Without a system share the last button takes the whole second row. */
-.donate-share-btns.is-three > :last-child { grid-column: 1 / -1; }
+/* One row: Share (where there is one) and Star share the width, and the two
+   follow buttons are icon-only squares at the end, so the row stays one line
+   tall. With no Share, Star simply takes the room. */
+.donate-share-btns { align-self: stretch; margin-top: auto; display: flex; gap: 8px; }
+.donate-share-btns > .donate-sq { flex: 1 1 0; }
+.donate-share-btns > .donate-social { flex: 0 0 48px; }
+.donate-share-btns > [hidden] { display: none; }
 .donate-sq {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   min-width: 0; height: 62px; padding: 6px 4px; cursor: pointer;
@@ -3955,26 +3972,24 @@ input, textarea { font-family: inherit; }
   transition: background var(--t-fast) var(--easing), border-color var(--t-fast) var(--easing), color var(--t-fast) var(--easing);
 }
 .donate-sq:hover { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.donate-sq.is-done { border-color: var(--accent); color: var(--accent); }
 .donate-sq-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* One column below 760 px; the drawing goes under the words, smaller. */
 @media (max-width: 760px) {
   .donate-card { padding: 12px; }
-  .donate-hero { grid-template-columns: 1fr; gap: 16px; min-height: 0; padding: 24px 20px 20px; }
-  .donate-hero::after { background: linear-gradient(180deg, transparent 0 40%, var(--panel) 85%); }
+  .donate-hero { padding: 24px 20px 20px; }
   .donate-card .donate-hero h2 { font-size: 26px; margin-right: 24px; }
-  .donate-art { justify-content: flex-start; }
-  .donate-art-svg { max-width: 260px; }
   .donate-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 420px) {
   .donate-ways { gap: 8px; }
   .donate-way { padding: 12px 11px; }
   .donate-way-name { font-size: 13px; }
-  .donate-share-body { grid-template-columns: 112px minmax(0, 1fr); }
-  .donate-qr { width: 112px; height: 112px; }
-  .donate-sq { height: 52px; }
+  .donate-way-qr, .donate-qr { width: 104px; height: 104px; padding: 8px; }
+  .donate-way-scan-caption { font-size: 10.5px; }
+  .donate-sq { height: 52px; padding: 6px 2px; }
+  .donate-share-btns { gap: 6px; }
+  .donate-share-btns > .donate-social { flex-basis: 38px; }
 }
 
 /* ── Release notes dialog ── */

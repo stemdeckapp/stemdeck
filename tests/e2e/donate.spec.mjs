@@ -2,7 +2,7 @@
 //
 // Donate sits in the left rail, below We Recommend and above Settings. The
 // dialog is laid out like a donate page: a hero, then the ways to give on the
-// left and sharing StemDeck (QR, copy, share, star, releases) on the right.
+// left and sharing StemDeck (QR, share, star, follow links) on the right.
 //
 // The links live in donateLinks.js. A way whose link is not set (the empty
 // placeholder, or anything that is not an https:// address) has no control at
@@ -34,8 +34,8 @@ const AMOUNTS = { stripe: `${STRIPE}?amount={amount}`, liberapay: `${LIBERAPAY}?
 const STRIPE_AMOUNT = { stripe: `${STRIPE}?amount={amount}`, liberapay: "" };
 const LANGUAGES = ["en", "pl", "ja", "zh-Hans", "de", "fr", "es", "pt", "pt-PT", "id", "ko"];
 
-async function openApp(page, { tauri = false, language = null, links = BOTH, templates = null } = {}) {
-  await serveDonateLinks(page, links, templates);
+async function openApp(page, { tauri = false, language = null, links = BOTH, templates = null, qr = null, social = null } = {}) {
+  await serveDonateLinks(page, links, templates, qr, social);
   if (language) await page.addInitScript((l) => localStorage.setItem("stemdeck.language", JSON.stringify(l)), language);
   await seedLibrary(page);
   if (tauri) await stubTauri(page);
@@ -43,7 +43,7 @@ async function openApp(page, { tauri = false, language = null, links = BOTH, tem
   // Any request to a payment platform or to GitHub fails the test that made it.
   const outside = [];
   page.on("request", (r) => {
-    if (/^https:\/\/([^/]*\.)?(stripe\.com|liberapay\.com|example\.org)\/|^https:\/\/github\.com\//.test(r.url())) outside.push(r.url());
+    if (/^https:\/\/([^/]*\.)?(stripe\.com|liberapay\.com|example\.org|instagram\.com|x\.com)\/|^https:\/\/github\.com\//.test(r.url())) outside.push(r.url());
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#donateDialog")).toHaveAttribute("data-ready", "1");
@@ -143,6 +143,185 @@ test("no link set: there is no Donate control anywhere, not even before the scri
   await expect(tile(page, "stripe")).toHaveJSProperty("hidden", true);
   await expect(tile(page, "liberapay")).toHaveJSProperty("hidden", true);
   await expect(go(page)).not.toHaveAttribute("href", /./);
+  expect(outside).toEqual([]);
+});
+
+const WAY_LINKS = { stripe: STRIPE, liberapay: LIBERAPAY };
+const WAY_NAMES = { stripe: "One-time donation via Stripe, opens in your web browser", liberapay: "Recurring donation via Liberapay, opens in your web browser" };
+
+test("both link tiles show a QR code of their own link, and each is still one link", async ({ page }) => {
+  const { outside } = await openApp(page, { links: BOTH });
+  const requested = [];
+  page.on("request", (r) => { if (r.url().includes("/api/qr")) requested.push(new URL(r.url()).searchParams.get("url")); });
+  // Nothing is drawn before the dialog opens.
+  for (const way of ["stripe", "liberapay"]) {
+    await expect(tile(page, way).locator("img.donate-way-qr")).toHaveCount(1);
+    expect(await tile(page, way).locator("img").getAttribute("src")).toBeNull();
+  }
+  expect(requested).toEqual([]);
+  await page.locator("#donateBtn").click();
+  for (const [way, link] of Object.entries(WAY_LINKS)) {
+    const qr = tile(page, way).locator("img.donate-way-qr");
+    await expect(qr).toHaveAttribute("src", `/api/qr?url=${encodeURIComponent(link)}`);
+    await expect(qr).toHaveAttribute("alt", "");
+    await expect.poll(() => qr.evaluate((i) => i.complete && i.naturalWidth > 0)).toBe(true);
+    expect(requested).toContain(link);
+    // One single link: the tile is the anchor, the code sits inside it.
+    await expect(tile(page, way)).toHaveJSProperty("tagName", "A");
+    await expect(tile(page, way)).toHaveAttribute("href", link);
+    await expect(tile(page, way).locator("a")).toHaveCount(0);
+    await expectLinkTile(page, way, link, WAY_NAMES[way]);
+  }
+  // A matched pair: the same height.
+  const [s1, s2] = [await tile(page, "stripe").boundingBox(), await tile(page, "liberapay").boundingBox()];
+  expect(Math.abs(s1.height - s2.height)).toBeLessThan(1);
+  expect(outside).toEqual([]);
+});
+
+for (const withShare of [false, true]) {
+test(`the share card is laid out like the donation tiles, ${withShare ? "with" : "without"} a system share menu: QR card, caption, address, then one row of buttons`, async ({ page }) => {
+  if (withShare) await page.addInitScript(() => { navigator.share = async () => {}; });
+  const { outside } = await openApp(page, { links: BOTH });
+  for (const width of [1280, 927, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.locator("#donateBtn").click();
+    const qr = page.locator("#donateQr");
+    await expect.poll(() => qr.evaluate((i) => i.complete && i.naturalWidth > 0)).toBe(true);
+    const caption = page.locator(".donate-share-scan .donate-way-scan-caption");
+    await expect(caption).toHaveText("Scan with your phone");
+    const addr = page.locator(".donate-addr");
+    await expect(addr).toHaveText("github.com/stemdeckapp/stemdeck");
+    const card = await page.locator(".donate-share").boundingBox();
+    const box = {
+      qr: await qr.boundingBox(), caption: await caption.boundingBox(), addr: await addr.boundingBox(),
+      btns: await page.locator(".donate-share-btns .donate-sq:not(.donate-social):visible").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON())),
+    };
+    // Centred, in order, and inside the card.
+    expect(Math.abs(box.qr.x + box.qr.width / 2 - (card.x + card.width / 2))).toBeLessThan(2);
+    expect(box.caption.y).toBeGreaterThanOrEqual(box.qr.y + box.qr.height - 1);
+    expect(box.addr.y).toBeGreaterThanOrEqual(box.caption.y + box.caption.height - 1);
+    expect(box.btns).toHaveLength(withShare ? 2 : 1);
+    await expect(page.locator("#donateShare")).toBeVisible({ visible: withShare });
+    for (const b of box.btns) {
+      expect(Math.abs(b.y - box.btns[0].y)).toBeLessThan(1);
+      expect(Math.abs(b.width - box.btns[0].width)).toBeLessThan(1.5);
+      expect(b.y).toBeGreaterThanOrEqual(box.addr.y + box.addr.height - 1);
+      expect(b.right).toBeLessThanOrEqual(card.x + card.width + 0.5);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    // The same QR card as the donation tiles.
+    const look = (sel) => page.locator(sel).first().evaluate((e) => { const c = getComputedStyle(e); return [c.borderRadius, c.boxShadow, c.backgroundColor, c.padding, c.width]; });
+    if (width > 760) expect(await look("#donateQr")).toEqual(await look(".donate-way-qr"));
+    // In the row layout the three QR cards and their captions line up exactly.
+    if (width > 760) {
+      const qrs = await page.locator("#donateDialog img:is(.donate-way-qr, .donate-qr)").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()));
+      const caps = await page.locator("#donateDialog .donate-way-scan-caption").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()));
+      expect(qrs).toHaveLength(3);
+      expect(caps).toHaveLength(3);
+      for (const q of qrs) {
+        expect(Math.abs(q.top - qrs[0].top)).toBeLessThan(0.6);
+        expect(Math.abs(q.bottom - qrs[0].bottom)).toBeLessThan(0.6);
+        expect(Math.abs(q.width - qrs[0].width)).toBeLessThan(0.6);
+      }
+      for (const c of caps) expect(Math.abs(c.top - caps[0].top)).toBeLessThan(0.6);
+    }
+    await page.locator("#donateClose").click();
+  }
+  expect(outside).toEqual([]);
+});
+}
+
+const INSTAGRAM = "https://www.instagram.com/stemdeck/";
+const X_URL = "https://x.com/StemDeckApp";
+
+test("the Share card has Instagram and X follow links that open in the browser, and nothing loads from them before a click", async ({ page }) => {
+  const { outside } = await openApp(page, { tauri: true });
+  await page.locator("#donateBtn").click();
+  for (const [id, href, name] of [["#donateInstagram", INSTAGRAM, "StemDeck on Instagram"], ["#donateX", X_URL, "StemDeck on X"]]) {
+    const a = page.locator(id);
+    await expect(a).toBeVisible();
+    await expect(a).toHaveAttribute("href", href);
+    await expect(a).toHaveAttribute("target", "_blank");
+    await expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(a).toHaveAccessibleName(name);
+    await expect(a.locator("svg")).toHaveAttribute("aria-hidden", "true");
+  }
+  expect(outside).toEqual([]);
+  await page.locator("#donateInstagram").click();
+  await page.locator("#donateX").click();
+  expect(await opened(page)).toEqual([INSTAGRAM, X_URL]);
+});
+
+test("a follow link that is not set has no button, the other stays", async ({ page }) => {
+  await openApp(page, { social: { instagram: "", x: "http://example.org/not-https" } });
+  await page.locator("#donateBtn").click();
+  await expect(page.locator("#donateInstagram")).toBeHidden();
+  await expect(page.locator("#donateX")).toBeHidden();
+  await expect(page.locator("#donateInstagram")).not.toHaveAttribute("href", /./);
+});
+
+test("the Guide titles the icon-only follow links from their names and says they open in the browser", async ({ page }) => {
+  await openApp(page, { tauri: true });
+  await page.locator("#helpModeBtn").click();
+  await page.locator("#donateBtn").click();
+  const tip = page.locator("#helpTip");
+  await page.locator("#donateInstagram").hover();
+  await expect(tip.locator("b")).toHaveText("StemDeck on Instagram");
+  await expect(tip).toContainText("in your web browser");
+  await page.locator("#donateX").hover();
+  await expect(tip.locator("b")).toHaveText("StemDeck on X");
+  await page.locator("#donateX").click();
+  expect(await opened(page)).toEqual([]);
+});
+
+test("the hero has the heart pattern evenly across its whole width and no drawing", async ({ page }) => {
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openApp(page, { links: BOTH });
+    await page.locator("#donateBtn").click();
+    const hero = page.locator(".donate-hero");
+    await expect(page.locator(".donate-art, .donate-art-svg")).toHaveCount(0);
+    const found = await hero.evaluate((el) => {
+      const before = getComputedStyle(el, "::before");
+      const after = getComputedStyle(el, "::after");
+      const box = el.getBoundingClientRect();
+      return {
+        before: { content: before.content, width: parseFloat(before.width), mask: before.maskImage || before.webkitMaskImage, repeat: before.maskRepeat || before.webkitMaskRepeat },
+        afterContent: after.content, afterBg: after.backgroundImage, width: box.width, boxHeight: box.height,
+      };
+    });
+    // The pattern spans the box, repeats, and nothing fades it (no gradient layer on top).
+    expect(Math.abs(found.before.width - (found.width - 2))).toBeLessThan(2);
+    expect(found.before.mask).toContain("data:image/svg+xml");
+    expect(found.before.repeat).toBe("repeat");
+    expect(["none", "normal"]).toContain(found.afterContent);
+    expect(found.afterBg).not.toContain("gradient");
+    // Text-driven height: no min-height holds it open.
+    if (width === 1280) expect(found.boxHeight).toBeLessThan(270);
+    await page.goto("about:blank");
+  }
+});
+
+for (const failing of ["stripe", "liberapay"]) {
+  test(`a ${failing} QR code that fails to load hides only its own code and caption`, async ({ page }) => {
+    await page.route("**/api/qr?*", (route) => (route.request().url().includes(encodeURIComponent(WAY_LINKS[failing])) ? route.abort() : route.continue()));
+    await openApp(page, { links: BOTH });
+    await page.locator("#donateBtn").click();
+    const other = failing === "stripe" ? "liberapay" : "stripe";
+    await expect(tile(page, failing).locator(".donate-way-scan")).toBeHidden();
+    await expect(tile(page, failing)).toHaveAttribute("href", WAY_LINKS[failing]);
+    await expect(tile(page, other).locator(".donate-way-scan")).toBeVisible();
+    await expect(tile(page, other).locator("img.donate-way-qr")).toHaveAttribute("src", `/api/qr?url=${encodeURIComponent(WAY_LINKS[other])}`);
+  });
+}
+
+test("a way whose DONATE_QR is false shows no QR code, and the other tile keeps its own", async ({ page }) => {
+  const { outside } = await openApp(page, { links: BOTH, qr: { stripe: true, liberapay: false } });
+  await page.locator("#donateBtn").click();
+  await expect(tile(page, "liberapay").locator("img")).toHaveCount(0);
+  await expect(tile(page, "liberapay").locator(".donate-way-scan")).toHaveCount(0);
+  await expect(tile(page, "stripe").locator("img.donate-way-qr")).toHaveAttribute("src", /\/api\/qr\?url=/);
+  await expectLinkTile(page, "liberapay", LIBERAPAY, WAY_NAMES.liberapay);
   expect(outside).toEqual([]);
 });
 
@@ -345,12 +524,12 @@ test("a link that is not https counts as not set", async ({ page }) => {
   await expect(page.locator("#donateBtn")).toBeHidden();
 });
 
-test("share: the QR code comes from this server, copy puts the address on the clipboard, star and releases open GitHub", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("share: the QR code comes from this server, there is no Copy button, star opens GitHub", async ({ page }) => {
   await openApp(page, { tauri: true });
   const qrRequests = [];
   page.on("request", (r) => {
-    if (r.url().includes("/api/qr")) qrRequests.push(r.url());
+    // The Stripe tile draws its own code too; this one is about the repo's.
+    if (r.url().includes("/api/qr") && r.url().includes(encodeURIComponent(REPO))) qrRequests.push(r.url());
   });
   await page.locator("#donateBtn").click();
   const qr = page.locator("#donateQr");
@@ -360,19 +539,16 @@ test("share: the QR code comes from this server, copy puts the address on the cl
   await expect(qr).toHaveAttribute("alt", "QR code for the StemDeck page on GitHub");
   await expect(dialog(page).locator(".donate-addr")).toHaveText("github.com/stemdeckapp/stemdeck");
 
-  const copy = page.locator("#donateCopy");
-  await copy.click();
-  await expect(copy).toHaveText("Copied");
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(REPO);
-  await expect(copy).toHaveText("Copy", { timeout: 4000 });
+  // The address stays plain selectable text for anyone who wants to copy it by hand.
+  await expect(page.locator("#donateCopy")).toHaveCount(0);
+  expect(await dialog(page).locator(".donate-addr").evaluate((e) => getComputedStyle(e).userSelect)).not.toBe("none");
 
   // Share shows only where the system has a share menu.
   const canShare = await page.evaluate(() => typeof navigator.share === "function");
   await expect(page.locator("#donateShare")).toBeVisible({ visible: canShare });
 
   await page.locator("#donateStar").click();
-  await page.locator("#donateReleases").click();
-  expect(await opened(page)).toEqual([REPO, `${REPO}/releases`]);
+  expect(await opened(page)).toEqual([REPO]);
 });
 
 test("share uses the system share menu when there is one", async ({ page }) => {
@@ -407,9 +583,7 @@ test("the Guide explains the button and every control in the dialog, with amount
     [preset(page, 10), "$10", "Picks this amount in US dollars"],
     [custom(page), "Custom amount in US dollars, from $2", "Type your own amount"],
     [page.locator("#donateQr"), "QR code for the StemDeck page on GitHub", "Scan this with a phone camera"],
-    [page.locator("#donateCopy"), "Copy", "Copies the address"],
     [page.locator("#donateStar"), "Star", "give it a star"],
-    [page.locator("#donateReleases"), "Releases", "follow new versions"],
     [page.locator("#donateClose"), null, "Closes the donate window"],
   ];
   for (const [el, title, text] of cases) {

@@ -88,10 +88,11 @@ const HELP = [
   ["#donateCustom", "help.donateCustom"],
   ["#donateGo", "help.donateGo"],
   ["#donateQr", "help.donateQr", null, "donate.qrAlt"],
-  ["#donateCopy", "help.donateCopy"],
   ["#donateShare", "help.donateShare"],
   ["#donateStar", "help.donateStar"],
-  ["#donateReleases", "help.donateReleases"],
+  // Icon-only follow links: the Guide titles them from donate.followOn.
+  ["#donateInstagram", "help.donateInstagram", (el) => el.dataset.name, "donate.followOn"],
+  ["#donateX", "help.donateX", (el) => el.dataset.name, "donate.followOn"],
   ["#donateBtn", "help.donate"],
   // The dialog the desktop network switch opens to restart StemDeck (#859).
   [".net-restart-go", "help.netRestartGo"],

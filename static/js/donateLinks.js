@@ -31,18 +31,41 @@
 // Do not fill any of these with a guess: a made-up account name may belong to
 // someone else.
 //
+// DONATE_QR (optional): a way set to true shows a small QR code inside its
+// link tile, which opens the same page from a phone. Both ways show one now.
+// It applies only to a way whose tile is a plain link (no template), and the
+// code is drawn by this app's own server (/api/qr), only once the Donate dialog
+// opens. Set a way to false and its tile is just the words and the mark.
+//
+// SOCIAL_LINKS: the project's own pages, shown as two small follow buttons in
+// the Share card. The same rules as the links above: only a full https://
+// address counts, an empty or other value hides that button, and nothing is
+// loaded from Instagram or X until a person clicks. A click opens the person's
+// own browser through the a[target="_blank"] handler in main.js, never inside
+// the app.
+//
 // Privacy: the page only ever holds these as plain links. Nothing is loaded
 // from Stripe or Liberapay until a person clicks a link, and then it opens
 // in their own browser.
 
 export const DONATE_LINKS = Object.freeze({
-  stripe: "",
+  stripe: "https://donate.stripe.com/4gM4gB3L5d325xebEG8g000",
   liberapay: "https://liberapay.com/StemDeck/donate",
 });
 
 export const DONATE_LINK_TEMPLATES = Object.freeze({
   stripe: "",
   liberapay: "",
+});
+
+export const DONATE_QR = Object.freeze({
+  stripe: true,
+  liberapay: true,
+});
+
+export const SOCIAL_LINKS = Object.freeze({
+  instagram: "https://www.instagram.com/stemdeck/",
+  x: "https://x.com/StemDeckApp",
 });
 
 /** The address a link opens, or null while it is a placeholder. Only https. */
@@ -61,4 +84,9 @@ export function donateHref(value) {
 /** Whether this way's link is set, so its Donate controls show. */
 export function isConfigured(way, links = DONATE_LINKS) {
   return donateHref(links[way]) !== null;
+}
+
+/** The address a follow button opens, or null while it is not set. Only https. */
+export function socialHref(way, links = SOCIAL_LINKS) {
+  return donateHref(links?.[way]);
 }

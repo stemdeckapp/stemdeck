@@ -19,9 +19,10 @@
 // a[target="_blank"]: the document-level handler in main.js routes it through
 // the Tauri open_url command on desktop, and a browser opens it in a new tab.
 // Nothing from Stripe or Liberapay is loaded by this page. The QR code is
-// drawn by this app's own server (/api/qr), when the dialog first opens.
+// drawn by this app's own server (/api/qr), when the dialog first opens, and so
+// is the small QR inside a link tile whose way is on in DONATE_QR.
 
-import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "./donateLinks.js";
+import { DONATE_LINKS, DONATE_LINK_TEMPLATES, DONATE_QR, SOCIAL_LINKS, donateHref, isConfigured, socialHref } from "./donateLinks.js";
 import { t, onLanguageChange } from "./i18n.js";
 
 export const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
@@ -60,6 +61,12 @@ export function takesAmount(way, links = DONATE_LINKS, templates = DONATE_LINK_T
   return donateHref(links?.[way]) !== null && fillTemplate(templates?.[way], AMOUNT_MIN) !== null;
 }
 
+/** The address of this app's own QR drawing for a link, or null when the link is not usable. */
+export function donateQrSrc(href) {
+  const link = donateHref(href);
+  return link ? `/api/qr?url=${encodeURIComponent(link)}` : null;
+}
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** The "leaves the app" mark on a tile that is a link: a box with an arrow out. */
@@ -89,6 +96,32 @@ function toLinkTile(tile, href) {
   a.target = "_blank";
   a.rel = "noopener noreferrer";
   a.append(...tile.childNodes, outIcon());
+  if (DONATE_QR[tile.dataset.way] === true) {
+    // The code and its caption are drawn between the icon and the words. The code is
+    // decorative (the tile's own name says where it goes); the caption is the
+    // tile's description. Its address is set when the dialog first opens, so
+    // nothing is fetched before then.
+    const img = document.createElement("img");
+    img.className = "donate-way-qr";
+    img.alt = "";
+    img.width = img.height = 128;
+    img.dataset.qr = donateQrSrc(href) ?? "";
+    const caption = document.createElement("span");
+    caption.className = "donate-way-scan-caption";
+    caption.id = `donateScan-${tile.dataset.way}`;
+    caption.dataset.i18n = "donate.qrCaption";
+    caption.textContent = t("donate.qrCaption");
+    const box = document.createElement("span");
+    box.className = "donate-way-scan";
+    box.append(img, caption);
+    // A code that cannot load takes its caption with it.
+    img.addEventListener("error", () => { box.hidden = true; });
+    a.classList.add("has-qr");
+    a.setAttribute("aria-describedby", caption.id);
+    // After the words in the markup, so the Guide, which titles a control from
+    // its first line of text, says "One-time donation"; the CSS puts it above them.
+    a.querySelector(".donate-way-via").after(box);
+  }
   tile.replaceWith(a);
   return a;
 }
@@ -121,16 +154,6 @@ function focusables(root) {
   );
 }
 
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch (err) {
-    console.warn("[donate] clipboard write failed:", err);
-    return false;
-  }
-}
-
 export function wireDonateDialog() {
   const btn = document.getElementById("donateBtn");
   const dialog = document.getElementById("donateDialog");
@@ -160,8 +183,17 @@ export function wireDonateDialog() {
   const go = document.getElementById("donateGo");
   const hintEl = document.getElementById("donateHint");
   const qr = document.getElementById("donateQr");
-  const copyBtn = document.getElementById("donateCopy");
   const shareBtn = document.getElementById("donateShare");
+  // The follow buttons (Instagram, X): each shows only once its link is set in
+  // SOCIAL_LINKS. Icon only, so the name comes from donate.followOn. Nothing
+  // is loaded from either site; a click opens the browser like any link out.
+  const socials = [...dialog.querySelectorAll("a.donate-social[data-social]")];
+  for (const a of socials) {
+    const href = socialHref(a.dataset.social, SOCIAL_LINKS);
+    a.hidden = !href;
+    if (href) a.href = href;
+    else a.removeAttribute("href");
+  }
 
   // The chosen way is always one that takes an amount; with none, there is no
   // choice to make and no amount is offered at all.
@@ -200,6 +232,12 @@ export function wireDonateDialog() {
         : "";
     }
     if (qr) qr.alt = t("donate.qrAlt");
+    for (const a of socials) {
+      const name = t("donate.followOn", { name: a.dataset.name });
+      a.setAttribute("aria-label", name);
+      a.title = name;
+    }
+    for (const cap of dialog.querySelectorAll(".donate-way-scan-caption")) cap.textContent = t("donate.qrCaption");
   };
 
   for (const tile of choices) {
@@ -236,22 +274,8 @@ export function wireDonateDialog() {
     }
   });
 
-  let copyTimer = null;
-  copyBtn?.addEventListener("click", async () => {
-    const ok = await copyText(REPO_URL);
-    const label = copyBtn.querySelector(".donate-sq-label");
-    copyBtn.classList.toggle("is-done", ok);
-    if (label) label.textContent = t(ok ? "donate.copied" : "donate.copyFailed");
-    clearTimeout(copyTimer);
-    copyTimer = setTimeout(() => {
-      copyBtn.classList.remove("is-done");
-      if (label) label.textContent = t("donate.copy");
-    }, 1600);
-  });
-
   // System share where the platform has it; otherwise the button stays hidden.
   const canShare = typeof navigator.share === "function";
-  shareBtn?.parentElement?.classList.toggle("is-three", !canShare);
   if (shareBtn && canShare) {
     shareBtn.hidden = false;
     shareBtn.addEventListener("click", async () => {
@@ -269,7 +293,10 @@ export function wireDonateDialog() {
   let opener = null;
   const open = () => {
     opener = document.activeElement instanceof HTMLElement ? document.activeElement : btn;
-    if (qr && !qr.getAttribute("src")) qr.src = `/api/qr?url=${encodeURIComponent(REPO_URL)}`;
+    if (qr && !qr.getAttribute("src")) qr.src = donateQrSrc(REPO_URL);
+    for (const img of dialog.querySelectorAll("img.donate-way-qr[data-qr]")) {
+      if (img.dataset.qr && !img.getAttribute("src")) img.src = img.dataset.qr;
+    }
     dialog.classList.remove("hidden");
     close?.focus();
   };

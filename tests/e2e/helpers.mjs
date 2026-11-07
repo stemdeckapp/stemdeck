@@ -276,7 +276,7 @@ export async function stubUpdateCheck(page, { available = false } = {}) {
  * place of the ones it holds, so a test decides which Donate ways are set
  * whatever the shipped file says. Only the two frozen objects are replaced.
  */
-export async function serveDonateLinks(page, links, templates = null) {
+export async function serveDonateLinks(page, links, templates = null, qr = null, social = null) {
   await page.route("**/js/donateLinks.js", async (route) => {
     const res = await route.fetch();
     const source = await res.text();
@@ -287,6 +287,8 @@ export async function serveDonateLinks(page, links, templates = null) {
     };
     let body = swap(source, "DONATE_LINKS", links);
     if (templates) body = swap(body, "DONATE_LINK_TEMPLATES", templates);
+    if (qr) body = swap(body, "DONATE_QR", qr);
+    if (social) body = swap(body, "SOCIAL_LINKS", social);
     await route.fulfill({ response: res, body });
   });
 }

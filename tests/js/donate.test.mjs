@@ -6,8 +6,8 @@
 //
 // Run:  node tests/js/donate.test.mjs
 
-import { donateUrl, readAmount, takesAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
-import { DONATE_LINKS, DONATE_LINK_TEMPLATES, donateHref, isConfigured } from "../../static/js/donateLinks.js";
+import { donateUrl, donateQrSrc, readAmount, takesAmount, AMOUNT_MIN, AMOUNT_MAX } from "../../static/js/donate.js";
+import { DONATE_LINKS, DONATE_LINK_TEMPLATES, DONATE_QR, SOCIAL_LINKS, socialHref, donateHref, isConfigured } from "../../static/js/donateLinks.js";
 
 let pass = 0,
   fail = 0;
@@ -99,10 +99,23 @@ for (const [way, value] of Object.entries(DONATE_LINKS)) {
 for (const [way, value] of Object.entries(DONATE_LINK_TEMPLATES)) {
   check(`${way} template is empty or an https address with {amount}`, value === "" || (value.includes("{amount}") && donateHref(value.replace("{amount}", "5")) !== null), value);
 }
-// The shipped links: Liberapay is live, Stripe and both templates stay empty until the maintainer sets them.
+// The shipped links: both ways are live and both templates stay empty: a Stripe Payment Link and a Liberapay page take no amount from their address.
 check("shipped Liberapay link", DONATE_LINKS.liberapay === "https://liberapay.com/StemDeck/donate", DONATE_LINKS.liberapay);
-check("shipped Stripe link is still empty", DONATE_LINKS.stripe === "");
+check("shipped Stripe link", DONATE_LINKS.stripe === "https://donate.stripe.com/4gM4gB3L5d325xebEG8g000", DONATE_LINKS.stripe);
 check("shipped templates are empty", DONATE_LINK_TEMPLATES.stripe === "" && DONATE_LINK_TEMPLATES.liberapay === "");
+// ── The QR code in a link tile ──
+check("QR address: the link, encoded", donateQrSrc("https://example.org/give?a=1&b=2") === "/api/qr?url=https%3A%2F%2Fexample.org%2Fgive%3Fa%3D1%26b%3D2", String(donateQrSrc("https://example.org/give?a=1&b=2")));
+check("QR address: the shipped Stripe link", donateQrSrc(DONATE_LINKS.stripe) === "/api/qr?url=https%3A%2F%2Fdonate.stripe.com%2F4gM4gB3L5d325xebEG8g000");
+check("QR address: none for a link that is not usable", donateQrSrc("") === null && donateQrSrc("http://example.org") === null && donateQrSrc(undefined) === null);
+check("shipped QR: both ways on", DONATE_QR.stripe === true && DONATE_QR.liberapay === true);
+check("QR address: the shipped Liberapay link", donateQrSrc(DONATE_LINKS.liberapay) === "/api/qr?url=https%3A%2F%2Fliberapay.com%2FStemDeck%2Fdonate");
+check("the QR switches cannot be changed at runtime", Object.isFrozen(DONATE_QR));
+// ── The follow links in the Share card ──
+check("shipped Instagram link", SOCIAL_LINKS.instagram === "https://www.instagram.com/stemdeck/", SOCIAL_LINKS.instagram);
+check("shipped X link", SOCIAL_LINKS.x === "https://x.com/StemDeckApp", SOCIAL_LINKS.x);
+check("both follow links are live", socialHref("instagram") === SOCIAL_LINKS.instagram && socialHref("x") === SOCIAL_LINKS.x);
+check("a follow link that is empty, not https or unknown is not live", socialHref("x", { x: "" }) === null && socialHref("x", { x: "http://x.com/a" }) === null && socialHref("x", { x: "x.com/a" }) === null && socialHref("tiktok") === null);
+check("the follow links cannot be changed at runtime", Object.isFrozen(SOCIAL_LINKS));
 check("the links cannot be changed at runtime", Object.isFrozen(DONATE_LINKS) && Object.isFrozen(DONATE_LINK_TEMPLATES));
 
 console.warn = warn;
