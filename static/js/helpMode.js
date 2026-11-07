@@ -633,7 +633,10 @@ function onKey(e) {
   }
 }
 
-const PRESS_EVENTS = ["pointerdown", "mousedown", "click", "dblclick", "dragstart", "contextmenu"];
+// auxclick is the middle button's click: a cancelled mousedown does not stop the
+// browser from firing it, and main.js turns it into open_url, so the Guide has
+// to take it as well (#1041).
+const PRESS_EVENTS = ["pointerdown", "mousedown", "click", "auxclick", "dblclick", "dragstart", "contextmenu"];
 
 export function setHelpMode(next) {
   if (next === on) return;

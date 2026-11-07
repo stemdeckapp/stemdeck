@@ -79,6 +79,58 @@ test.describe("the logo links to the site", () => {
     expect(result.path).toBe("/");
   });
 
+  test("with the Guide on, a middle-click on a link opens nothing and saves nothing (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await page.locator("#helpModeBtn").click();
+
+    const result = await page.evaluate(async () => {
+      const press = (el) => {
+        const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      const prevented = [press(document.querySelector(".daw-brand a"))];
+      const dl = document.querySelector('a.lane-dl:not([href="#"])');
+      if (dl) prevented.push(press(dl));
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        prevented,
+        opened: window.__e2e.callsFor("open_url").length,
+        saved: window.__e2e.callsFor("save_audio_file").length,
+        path: location.pathname,
+      };
+    });
+
+    expect(result.prevented.every(Boolean)).toBe(true);
+    expect(result.opened).toBe(0);
+    expect(result.saved).toBe(0);
+    expect(result.path).toBe("/");
+  });
+
+  test("a middle-click on a stem download link saves it through the shell, no navigation (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    const result = await page.evaluate(async () => {
+      const dl = document.querySelector('a.lane-dl:not([href="#"])');
+      const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      dl.dispatchEvent(ev);
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        prevented: ev.defaultPrevented,
+        href: dl.href,
+        name: dl.download,
+        saved: window.__e2e.callsFor("save_audio_file").map((c) => c.args),
+        opened: window.__e2e.callsFor("open_url").length,
+        path: location.pathname,
+      };
+    });
+
+    expect(result.prevented).toBe(true);
+    expect(result.saved).toEqual([{ url: result.href, filename: result.name }]);
+    expect(result.opened).toBe(0);
+    expect(result.path).toBe("/");
+  });
+
   test("in a plain browser the press is left to the browser", async ({ page }) => {
     await openStudio(page);
 

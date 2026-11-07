@@ -19,7 +19,13 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 const U = 'https://stemdeck.app/';
 check('left click opens through the shell', same(act({ type: 'click', button: 0, target: el({ ext: ext(U) }) }), { action: 'open', url: U }));
-check('click ignores modifier keys: the decision depends only on type and button', same(act({ type: 'click', button: 0, ctrlKey: true, metaKey: true, shiftKey: true, target: el({ ext: ext(U) }) }), { action: 'open', url: U }));
+// Modifier keys are intentionally absent from the pure helper: Ctrl, Cmd and
+// Shift left-clicks arrive as click with button 0 and take the plain path. (On
+// macOS, Ctrl+click is a context menu, not a click, so it never reaches here.)
+// The honest check is that an extra modifier field changes nothing.
+check('modifier fields on the event do not change the decision', same(
+  act({ type: 'click', button: 0, ctrlKey: true, metaKey: true, shiftKey: true, target: el({ ext: ext(U) }) }),
+  act({ type: 'click', button: 0, target: el({ ext: ext(U) }) })));
 check('middle auxclick opens through the shell', same(act({ type: 'auxclick', button: 1, target: el({ ext: ext(U) }) }), { action: 'open', url: U }));
 check('right auxclick is left alone', act({ type: 'auxclick', button: 2, target: el({ ext: ext(U) }) }) === null);
 check('auxclick button 0 is left alone', act({ type: 'auxclick', button: 0, target: el({ ext: ext(U) }) }) === null);

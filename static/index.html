@@ -28,7 +28,7 @@
              library does and the divider is the rail's own. -->
         <div class="daw-brand">
           <!-- An anchor rather than a click handler: the document-level
-               a[target="_blank"] listener in main.js already sends these to the
+               a[target="_blank"] listeners in main.js (click plus auxclick) already send these to the
                system browser through Tauri's open_url on the desktop, and leaves
                them to the browser everywhere else. A handler here would have to
                repeat that, and would get the desktop case wrong by opening the
