@@ -1,0 +1,221 @@
+name: Release Tag Draft
+
+# Called by windows-release.yml and macos-release.yml when a version tag is
+# pushed (#1039). It decides whether the run may build, and makes sure exactly
+# one draft release exists for the tag, so the installers have a place to go
+# that nobody is notified about until the maintainer publishes it by hand.
+#
+# The run stops unless all of these hold:
+#
+#   1. The pushed ref is a strict release tag: v + MAJOR.MINOR.PATCH,
+#      optionally followed by -rc.N, -beta.N or -alpha.N. The trigger filter
+#      already narrows it; this is the same regex as release-candidate-guard.yml.
+#   2. The tag resolves to the commit this run builds (github.sha).
+#   3. That commit is an ancestor of (or equal to) main or big-release, read
+#      from a fresh fetch of both branches. Any fetch or git error refuses.
+#   4. No release with the tag is published. A published release owns its
+#      assets; this run never uploads into it.
+#   5. After this job, exactly one release has the tag, and it is a draft.
+#      If none exists, one draft is created (pre-release when the tag has a
+#      suffix). If two exist, the run stops and names them.
+#
+# Both platform workflows call this job for the same tag at about the same
+# time. The job-level concurrency group is repository-wide and named after the
+# tag, so the two calls run one after the other: the first may create the
+# draft, the second then lists and finds it. The job also lists again after
+# creating, and stops if it then sees more than one release with the tag.
+#
+# It checks out no code. It needs `contents: write` to list drafts (a
+# read-only token sees none) and to create the draft.
+
+on:
+  workflow_call:
+    outputs:
+      tag:
+        description: "The validated tag. Set only when every check passed."
+        value: ${{ jobs.ensure.outputs.tag }}
+      release_id:
+        description: "The draft's numeric release id. Set only when every check passed."
+        value: ${{ jobs.ensure.outputs.release_id }}
+      prerelease:
+        description: "The draft's pre-release flag, 'true' or 'false'. The upload writes it back unchanged."
+        value: ${{ jobs.ensure.outputs.prerelease }}
+
+permissions: {}
+
+jobs:
+  ensure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      # Shared by the Windows and macOS calls for one tag. Never cancelled:
+      # the second call waits for the first.
+      group: release-tag-draft-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
+      release_id: ${{ steps.draft.outputs.release_id }}
+      prerelease: ${{ steps.draft.outputs.prerelease }}
+    steps:
+      - name: check the tag is a release tag on main or big-release
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          refuse() {
+            echo "::error::Refusing to build: $1"
+            echo "Decision: REFUSED. $1"
+            exit 1
+          }
+
+          # 1. Strict tag shape, checked before the value is printed or used.
+          pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|beta|alpha)\.(0|[1-9][0-9]*))?$'
+          if [ "$EVENT" != "push" ]; then
+            refuse "this job only runs for a tag push."
+          fi
+          if ! [[ "$TAG" =~ $pattern ]] || [ "$REF" != "refs/tags/$TAG" ]; then
+            refuse "the pushed ref is not a release tag (expected v1.2.3 or v1.2.3-rc.1, -beta.1, -alpha.1)."
+          fi
+          if ! [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            refuse "the run has no full commit SHA."
+          fi
+          echo "Tag: $TAG"
+          echo "Commit this run builds: $RUN_SHA"
+
+          # 2 and 3. Fetch the tag and both branches (commits only, full
+          # history, no file contents) and ask git. The token goes through
+          # GIT_CONFIG_* so it never appears on a command line.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.$SERVER_URL/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git init -q "$RUNNER_TEMP/ancestry"
+          cd "$RUNNER_TEMP/ancestry"
+          git fetch --quiet --no-tags --filter=tree:0 "$SERVER_URL/$REPO.git" \
+            "+refs/tags/$TAG:refs/tags/$TAG" \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/big-release:refs/remotes/origin/big-release" ||
+            refuse "could not fetch the tag, main and big-release to check where the tag is."
+
+          tag_commit="$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}")" ||
+            refuse "the tag $TAG does not resolve to a commit."
+          echo "Commit the tag points at: $tag_commit"
+          if [ "$tag_commit" != "$RUN_SHA" ]; then
+            refuse "the tag $TAG points at $tag_commit, but this run builds $RUN_SHA."
+          fi
+
+          on_branch=""
+          for branch in main big-release; do
+            # Exit 0 is yes, 1 is no; anything else is an error and refuses.
+            rc=0
+            git merge-base --is-ancestor "$RUN_SHA" "refs/remotes/origin/$branch" || rc=$?
+            case "$rc" in
+              0) echo "$RUN_SHA is on $branch."; on_branch="$branch"; break ;;
+              1) echo "$RUN_SHA is not on $branch." ;;
+              *) refuse "git could not check whether $RUN_SHA is on $branch (exit $rc)." ;;
+            esac
+          done
+          if [ -z "$on_branch" ]; then
+            refuse "the tagged commit $RUN_SHA is on neither main nor big-release."
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: ensure exactly one draft release for the tag
+        id: draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          refuse() {
+            echo "::error::Refusing to build: $1"
+            echo "Decision: REFUSED. $1"
+            exit 1
+          }
+
+          if [ -z "$TAG" ]; then
+            refuse "the tag check set no tag."
+          fi
+
+          # Drafts are not returned by the get-by-tag endpoint, so list every
+          # release and filter. A failed listing stops the step (set -e).
+          list() {
+            gh api --paginate "repos/$REPO/releases?per_page=100" |
+              jq -c --arg tag "$TAG" '.[] | select(.tag_name == $tag)
+                | {id, draft, prerelease}'
+          }
+          count_of() { printf '%s' "$1" | grep -c . || true; }
+
+          suffix_pattern='-(rc|beta|alpha)\.[0-9]+$'
+          if [[ "$TAG" =~ $suffix_pattern ]]; then
+            wanted_prerelease=true
+          else
+            wanted_prerelease=false
+          fi
+
+          matches="$(list)"
+          count="$(count_of "$matches")"
+          echo "Releases with the tag $TAG before this step: $count"
+
+          if [ "$count" -eq 0 ]; then
+            echo "Creating a draft for $TAG (pre-release: $wanted_prerelease) at $RUN_SHA."
+            gh api -X POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$RUN_SHA" \
+              -f name="$TAG" \
+              -f body="Draft created by the $TAG tag build. Write the release notes here before publishing." \
+              -F draft=true \
+              -F prerelease="$wanted_prerelease" \
+              --jq '"Created draft release \(.id)."'
+            matches="$(list)"
+            count="$(count_of "$matches")"
+            echo "Releases with the tag $TAG after creating: $count"
+          fi
+
+          if [ "$count" -ne 1 ]; then
+            ids="$(printf '%s' "$matches" | jq -r '.id' | paste -sd ' ' -)"
+            refuse "$count releases have the tag $TAG (ids: $ids). Delete the extra ones so exactly one draft remains, then start a new run."
+          fi
+
+          id="$(jq -r .id <<<"$matches")"
+          draft="$(jq -r .draft <<<"$matches")"
+          prerelease="$(jq -r .prerelease <<<"$matches")"
+          echo "Release $id: draft=$draft prerelease=$prerelease"
+
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            refuse "release $TAG has no numeric id."
+          fi
+          if [ "$draft" != "true" ]; then
+            refuse "release $TAG is already published. A tag build only uploads into a draft, never into a published release."
+          fi
+          # A suffixed tag must stay a pre-release, so it can never become the
+          # latest release. A final tag keeps whatever flag its draft has: the
+          # maintainer may tick pre-release on it before publishing.
+          if [ "$wanted_prerelease" = "true" ] && [ "$prerelease" != "true" ]; then
+            refuse "draft $TAG is not marked pre-release, but its tag has a pre-release suffix. Tick 'Set as a pre-release' on the draft and start a new run."
+          fi
+          if [ "$prerelease" != "true" ] && [ "$prerelease" != "false" ]; then
+            refuse "release $TAG has no pre-release flag."
+          fi
+
+          echo "Decision: BUILD. Installers will upload to draft $TAG (release $id, pre-release: $prerelease) from $RUN_SHA."
+          {
+            echo "tag=$TAG"
+            echo "release_id=$id"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
