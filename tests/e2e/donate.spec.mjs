@@ -482,18 +482,21 @@ test("at phone width the cards stack and nothing scrolls sideways", async ({ pag
 });
 
 // Every language, at 950 px and at phone width: no tile text spills out of its
-// tile or runs under the cue that it opens in the browser.
+// tile or runs under the cue that it opens in the browser. The language is
+// switched with the dialog open, as Settings does, so the link tile's name
+// has to follow the switch too.
 for (const [label, templates] of [["link tiles", null], ["one amount tile and one link tile", STRIPE_AMOUNT]]) {
   test(`${label} fit in every language, at 950 px and at phone width`, async ({ page }) => {
-    // Eleven reloads in one test, each well under the usual 45 s.
-    test.setTimeout(120_000);
     await openApp(page, { templates });
+    await page.locator("#donateBtn").click();
     const problems = [];
     for (const lang of LANGUAGES) {
-      await page.evaluate((l) => localStorage.setItem("stemdeck.language", JSON.stringify(l)), lang);
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(dialog(page)).toHaveAttribute("data-ready", "1");
-      await page.locator("#donateBtn").click();
+      const want = await page.evaluate(async (l) => {
+        const i18n = await import("/js/i18n.js");
+        await i18n.setLanguage(l);
+        return i18n.t("donate.wayLink", { name: i18n.t("donate.recurring"), via: i18n.t("donate.viaLiberapay") });
+      }, lang);
+      await expect(tile(page, "liberapay")).toHaveAccessibleName(want);
       for (const width of [950, 360]) {
         await page.setViewportSize({ width, height: 900 });
         await expect(tile(page, "liberapay")).toBeVisible();
