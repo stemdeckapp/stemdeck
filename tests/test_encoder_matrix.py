@@ -79,6 +79,31 @@ def test_matrix_tries_the_apps_vaapi_nodes_in_its_order(tmp_path, monkeypatch, f
         assert matrix.global_args("h264_vaapi", node) == ve.global_args("h264_vaapi", node)
 
 
+def test_matrix_names_the_same_gpu_behind_each_node_as_the_app(tmp_path, monkeypatch):
+    # Issue #1033: the app keys its probe cache on these ids; the matrix
+    # prints them, so a hybrid-GPU report says which GPU each node is.
+    from types import SimpleNamespace
+
+    root = tmp_path / "sys"
+    for name, vendor, device in (
+        ("renderD128", "0x8086\n", "0x46A6\n"),
+        ("renderD129", "0x10de\n", None),
+        ("renderD130", "junk", "0x1234567"),
+    ):
+        base = root / name / "device"
+        base.mkdir(parents=True)
+        (base / "vendor").write_text(vendor, encoding="ascii")
+        if device is not None:
+            (base / "device").write_text(device, encoding="ascii")
+    monkeypatch.setattr(ve, "SYS_DRM_DIR", root)
+    monkeypatch.setattr(matrix, "SYS_DRM_DIR", root)
+    monkeypatch.setattr(ve, "_host_platform", lambda: "linux")
+    monkeypatch.setattr(matrix, "sys", SimpleNamespace(platform="linux"))
+    for n, want in ((128, "8086:46a6"), (129, "10de:"), (130, ""), (131, "")):
+        node = f"/dev/dri/renderD{n}"
+        assert matrix.gpu_id(node) == ve.gpu_id(node) == want, node
+
+
 def test_matrix_candidates_are_the_apps():
     assert matrix.CANDIDATES == ve.CANDIDATES
     assert matrix.GPU_MAX_BITS_PER_PIXEL == ve.VIDEO_GPU_MAX_BITS_PER_PIXEL

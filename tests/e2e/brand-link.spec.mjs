@@ -42,6 +42,107 @@ test.describe("the logo links to the site", () => {
     expect(result.path).toBe("/");
   });
 
+  test("a middle-click and a Ctrl-click go to the shell too, and nothing navigates (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    const result = await page.evaluate(async () => {
+      const seen = [];
+      const original = window.__TAURI__.core.invoke;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        seen.push({ cmd, url: args?.url });
+        return original(cmd, args);
+      };
+      const a = document.querySelector(".daw-brand a");
+      const events = [
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 }),
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }),
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true, shiftKey: true }),
+      ];
+      const prevented = [];
+      for (const ev of events) {
+        a.dispatchEvent(ev);
+        prevented.push(ev.defaultPrevented);
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      window.__TAURI__.core.invoke = original;
+      return { seen, prevented, path: location.pathname };
+    });
+
+    // Middle button, Ctrl and Cmd+Shift are taken; the right button (context menu) is not.
+    expect(result.prevented).toEqual([true, false, true, true]);
+    expect(result.seen.filter((c) => c.cmd === "open_url")).toEqual([
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+      { cmd: "open_url", url: "https://stemdeck.app/" },
+    ]);
+    expect(result.path).toBe("/");
+  });
+
+  test("with the Guide on, a middle-click on a link opens nothing and saves nothing (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+    await page.locator("#helpModeBtn").click();
+
+    const result = await page.evaluate(async () => {
+      const press = (el) => {
+        const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      const prevented = [press(document.querySelector(".daw-brand a"))];
+      const dl = document.querySelector('a.lane-dl:not([href="#"])');
+      if (dl) prevented.push(press(dl));
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        prevented,
+        opened: window.__e2e.callsFor("open_url").length,
+        saved: window.__e2e.callsFor("save_audio_file").length,
+        path: location.pathname,
+      };
+    });
+
+    expect(result.prevented.every(Boolean)).toBe(true);
+    expect(result.opened).toBe(0);
+    expect(result.saved).toBe(0);
+    expect(result.path).toBe("/");
+  });
+
+  test("a middle-click on a stem download link saves it through the shell, no navigation (#1041)", async ({ page }) => {
+    await openStudio(page, { tauri: true });
+
+    const result = await page.evaluate(async () => {
+      const dl = document.querySelector('a.lane-dl:not([href="#"])');
+      const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      dl.dispatchEvent(ev);
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        prevented: ev.defaultPrevented,
+        href: dl.href,
+        name: dl.download,
+        saved: window.__e2e.callsFor("save_audio_file").map((c) => c.args),
+        opened: window.__e2e.callsFor("open_url").length,
+        path: location.pathname,
+      };
+    });
+
+    expect(result.prevented).toBe(true);
+    expect(result.saved).toEqual([{ url: result.href, filename: result.name }]);
+    expect(result.opened).toBe(0);
+    expect(result.path).toBe("/");
+  });
+
+  test("in a plain browser the press is left to the browser", async ({ page }) => {
+    await openStudio(page);
+
+    const prevented = await page.evaluate(() => {
+      const a = document.querySelector(".daw-brand a");
+      const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      a.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(prevented).toBe(false);
+  });
+
   test("its tooltip is translated like every other label", async ({ page }) => {
     // An icon with no text is only labelled by its title and aria-label, so a
     // hardcoded English string here would be the one part of the bar that does

@@ -1692,8 +1692,12 @@ async def _render_task(
                         )
                         # Only the encoder's own faults count toward turning
                         # it off: never a full disk or a missing file (#791).
+                        # h264_vaapi counts against the node it ran on, so
+                        # the next render can move on to another (#1033).
                         if video_encoder.blames_encoder(encoder, exc.code, exc.stderr):
-                            await asyncio.to_thread(video_encoder.record_failure, encoder, exc.code)
+                            await asyncio.to_thread(
+                                video_encoder.record_failure, encoder, exc.code, run.device
+                            )
                         else:
                             logger.info("[%s] %s not held against the encoder", job.id, exc.code)
                         run.encoder, run.fallback = VIDEO_CPU_ENCODER, exc.code
