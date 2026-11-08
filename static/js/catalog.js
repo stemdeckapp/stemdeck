@@ -54,7 +54,7 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 // pass re-resolves the text without the dialog having to be rebuilt.
 //
 // Links open externally via the document-level a[target="_blank"] handler in
-// main.js (Tauri open_url on desktop).
+// main.js (click plus auxclick; Tauri open_url on desktop).
 const FRIEND_GROUPS = [
   {
     labelKey: "friends.cat.artists",
