@@ -48,6 +48,9 @@ jobs:
     uses: ./.github/workflows/release-tag-draft.yml
     permissions:
       contents: write
+    with:
+      # Windows is the one caller that creates the draft; macOS waits for it.
+      may_create: true
 
   build-and-upload:
     needs: [guard, draft]
@@ -75,6 +78,9 @@ jobs:
       REF_NAME: ${{ github.event_name == 'push' && needs.draft.outputs.tag || needs.guard.outputs.tag }}
       RELEASE_ID: ${{ github.event_name == 'push' && needs.draft.outputs.release_id || needs.guard.outputs.release_id }}
       RELEASE_PRERELEASE: ${{ github.event_name == 'push' && needs.draft.outputs.prerelease || needs.guard.outputs.prerelease }}
+      # The commit the tag points at: github.sha peeled by the draft job on a tag
+      # push (github.sha itself on a manual run, where it is a branch commit).
+      RUN_COMMIT: ${{ github.event_name == 'push' && needs.draft.outputs.commit || github.sha }}
     defaults:
       run:
         shell: powershell
@@ -181,7 +187,7 @@ jobs:
           API_URL: ${{ github.api_url }}
           REPO: ${{ github.repository }}
           TAG: ${{ env.REF_NAME }}
-          RUN_SHA: ${{ github.sha }}
+          RUN_SHA: ${{ env.RUN_COMMIT }}
         run: |
           node scripts/release/upload-assets.mjs `
             dist/StemDeck-Windows-x64.NVIDIA.zip `

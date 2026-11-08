@@ -23,7 +23,8 @@
 // tag and pre-release flag, pointing at the commit this run built (the
 // existing tag's commit, else target_commitish). Before each file it reads the
 // release again by id, and stops without uploading that file if the release
-// is no longer such a draft. "Re-run failed jobs" reuses the earlier job's
+// is no longer such a draft. After the last file it reads it once more, and
+// fails naming the files that landed if the release is no longer that draft. "Re-run failed jobs" reuses the earlier job's
 // result, so these checks are what stops a re-run after publishing.
 
 import fs from 'node:fs';
@@ -120,8 +121,10 @@ async function get(cfg, apiPath) {
   return res.json;
 }
 
-// Read the release by id and check it is still the validated draft.
-export async function readDraft(cfg) {
+// Read the release by id and check it is still the validated draft. `landed`
+// names the files this run already uploaded, so a refusal can say which of
+// them are now on a release that is no longer the validated draft.
+export async function readDraft(cfg, landed = []) {
   const rel = await get(cfg, `releases/${cfg.id}`);
   if (
     !isObject(rel) ||
@@ -135,13 +138,22 @@ export async function readDraft(cfg) {
   ) {
     stop(`release ${cfg.id} did not come back as a release object.`);
   }
-  if (rel.tag_name !== cfg.tag) stop(`release ${cfg.id} now has the tag ${rel.tag_name}, not ${cfg.tag}.`);
+  const already = landed.length
+    ? ` These files from this run are already on release ${cfg.id}: ${landed.join(', ')}.`
+    : '';
+  if (rel.tag_name !== cfg.tag) {
+    stop(`release ${cfg.id} now has the tag ${rel.tag_name}, not ${cfg.tag}.${already}`);
+  }
   if (rel.draft !== true) {
-    stop(`release ${cfg.tag} (release ${cfg.id}) is no longer a draft. Nothing more is uploaded to a published release.`);
+    stop(
+      `release ${cfg.tag} (release ${cfg.id}) is no longer a draft. Nothing more is uploaded to a published release.${
+        landed.length ? ` These files from this run landed on the published release: ${landed.join(', ')}.` : ''
+      }`,
+    );
   }
   if (rel.prerelease !== cfg.prerelease) {
     stop(
-      `the pre-release flag of ${cfg.tag} changed to ${rel.prerelease} after the guard read ${cfg.prerelease}. Start a new run.`,
+      `the pre-release flag of ${cfg.tag} changed to ${rel.prerelease} after the guard read ${cfg.prerelease}. Start a new run.${already}`,
     );
   }
   return rel;
@@ -180,13 +192,13 @@ export function uploadBase(cfg, rel) {
   return base;
 }
 
-async function uploadOne(cfg, file, attempts) {
+async function uploadOne(cfg, file, attempts, landed) {
   const name = path.basename(file);
   const size = fs.statSync(file).size;
   for (let attempt = 1; ; attempt++) {
     // Read the release again before every attempt: if it was published in
     // the meantime, this file is not uploaded.
-    const rel = await readDraft(cfg);
+    const rel = await readDraft(cfg, landed);
     const old = rel.assets.find((a) => isObject(a) && a.name === name);
     if (old) {
       const del = await request('DELETE', `${cfg.api}/repos/${cfg.repo}/releases/assets/${old.id}`, {
@@ -229,7 +241,15 @@ export async function run(env, files, { attempts = 3 } = {}) {
   await checkCommit(cfg, rel);
   uploadBase(cfg, rel);
   console.log(`Decision: UPLOAD ${files.length} files to draft ${cfg.tag} (release ${cfg.id}).`);
-  for (const f of files) await uploadOne(cfg, f, attempts);
+  const landed = [];
+  for (const f of files) {
+    await uploadOne(cfg, f, attempts, landed);
+    landed.push(path.basename(f));
+  }
+  // The check before each file cannot see a publish during the last upload.
+  // Read the release once more, so a file that landed on a published release
+  // fails the run and is named, instead of a green run saying "still a draft".
+  await readDraft(cfg, landed);
   console.log(`Done: ${files.length} files on draft ${cfg.tag}. The release was not edited and is still a draft.`);
 }
 
