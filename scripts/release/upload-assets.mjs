@@ -24,8 +24,9 @@
 // existing tag's commit, else target_commitish). Before each file it reads the
 // release again by id, and stops without uploading that file if the release
 // is no longer such a draft. After the last file it reads it once more, and
-// fails naming the files that landed if the release is no longer that draft. "Re-run failed jobs" reuses the earlier job's
-// result, so these checks are what stops a re-run after publishing.
+// fails naming the files that landed if the release is no longer that draft.
+// "Re-run failed jobs" reuses the earlier job's result, so these checks are
+// what stops a re-run after publishing.
 
 import fs from 'node:fs';
 import path from 'node:path';
