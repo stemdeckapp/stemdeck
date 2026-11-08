@@ -5,7 +5,7 @@ name: Release Tag Draft
 # one draft release exists for the tag, so the installers have a place to go
 # that nobody is notified about until the maintainer publishes it by hand.
 #
-# The run stops unless all of these hold:
+# The run stops (red) unless all of these hold:
 #
 #   1. The pushed ref is a strict release tag: v + MAJOR.MINOR.PATCH,
 #      optionally followed by -rc.N, -beta.N or -alpha.N. The trigger filter
@@ -13,17 +13,22 @@ name: Release Tag Draft
 #   2. The tag resolves to the commit this run builds (github.sha).
 #   3. That commit is an ancestor of (or equal to) main or big-release, read
 #      from a fresh fetch of both branches. Any fetch or git error refuses.
-#   4. No release with the tag is published. A published release owns its
-#      assets; this run never uploads into it.
-#   5. After this job, exactly one release has the tag, and it is a draft.
+#   4. After this job, exactly one release has the tag, and it is a draft.
 #      If none exists, one draft is created (pre-release when the tag has a
 #      suffix). If two exist, the run stops and names them.
 #
+# If the release for the tag is already published, the job passes with
+# build=false and the build is skipped: nothing is uploaded, and the run is
+# not red. Publishing a draft whose tag did not exist yet creates the tag,
+# and that tag push lands here.
+#
 # Both platform workflows call this job for the same tag at about the same
 # time. The job-level concurrency group is repository-wide and named after the
-# tag, so the two calls run one after the other: the first may create the
-# draft, the second then lists and finds it. The job also lists again after
-# creating, and stops if it then sees more than one release with the tag.
+# tag, so the two calls run one after the other. The first creates the draft,
+# takes its id from the create response, reads it back by that id, and then
+# waits until the release list shows it before finishing, so the second call
+# lists after the new draft is visible and reuses it instead of creating a
+# second one.
 #
 # It checks out no code. It needs `contents: write` to list drafts (a
 # read-only token sees none) and to create the draft.
@@ -35,11 +40,14 @@ on:
         description: "The validated tag. Set only when every check passed."
         value: ${{ jobs.ensure.outputs.tag }}
       release_id:
-        description: "The draft's numeric release id. Set only when every check passed."
+        description: "The draft's numeric release id. Set only when there is a draft to build into."
         value: ${{ jobs.ensure.outputs.release_id }}
       prerelease:
-        description: "The draft's pre-release flag, 'true' or 'false'. The upload writes it back unchanged."
+        description: "The draft's pre-release flag, 'true' or 'false'. The upload checks it is unchanged."
         value: ${{ jobs.ensure.outputs.prerelease }}
+      build:
+        description: "'true' when there is a draft to build into, 'false' when the release is already published."
+        value: ${{ jobs.ensure.outputs.build }}
 
 permissions: {}
 
@@ -58,6 +66,7 @@ jobs:
       tag: ${{ steps.draft.outputs.tag }}
       release_id: ${{ steps.draft.outputs.release_id }}
       prerelease: ${{ steps.draft.outputs.prerelease }}
+      build: ${{ steps.draft.outputs.build }}
     steps:
       - name: check the tag is a release tag on main or big-release
         id: tag
@@ -95,8 +104,10 @@ jobs:
 
           # 2 and 3. Fetch the tag and both branches (commits only, full
           # history, no file contents) and ask git. The token goes through
-          # GIT_CONFIG_* so it never appears on a command line.
+          # GIT_CONFIG_* so it never appears on a command line. GitHub masks
+          # the token itself, but not its base64 form, so mask that too.
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0="http.$SERVER_URL/.extraheader"
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
@@ -139,6 +150,9 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
           RUN_SHA: ${{ github.sha }}
+          # Seconds to wait for a new draft to show in the release list.
+          LIST_WAIT_TRIES: "20"
+          LIST_WAIT_SECONDS: "3"
         run: |
           set -euo pipefail
 
@@ -154,12 +168,15 @@ jobs:
 
           # Drafts are not returned by the get-by-tag endpoint, so list every
           # release and filter. A failed listing stops the step (set -e).
-          list() {
+          list_ids() {
             gh api --paginate "repos/$REPO/releases?per_page=100" |
-              jq -c --arg tag "$TAG" '.[] | select(.tag_name == $tag)
-                | {id, draft, prerelease}'
+              jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id'
           }
-          count_of() { printf '%s' "$1" | grep -c . || true; }
+          # The list can lag behind a write, so every decision about one
+          # release reads it by id.
+          read_release() {
+            gh api "repos/$REPO/releases/$1" | jq -c '{id, tag_name, draft, prerelease}'
+          }
 
           suffix_pattern='-(rc|beta|alpha)\.[0-9]+$'
           if [[ "$TAG" =~ $suffix_pattern ]]; then
@@ -168,40 +185,77 @@ jobs:
             wanted_prerelease=false
           fi
 
-          matches="$(list)"
-          count="$(count_of "$matches")"
-          echo "Releases with the tag $TAG before this step: $count"
+          ids="$(list_ids)"
+          count="$(printf '%s' "$ids" | grep -c . || true)"
+          echo "Releases with the tag $TAG in the list: $count"
+
+          if [ "$count" -gt 1 ]; then
+            refuse "$count releases have the tag $TAG (ids: $(printf '%s' "$ids" | paste -sd ' ' -)). Delete the extra ones so exactly one draft remains, then start a new run."
+          fi
 
           if [ "$count" -eq 0 ]; then
             echo "Creating a draft for $TAG (pre-release: $wanted_prerelease) at $RUN_SHA."
-            gh api -X POST "repos/$REPO/releases" \
+            id="$(gh api -X POST "repos/$REPO/releases" \
               -f tag_name="$TAG" \
               -f target_commitish="$RUN_SHA" \
               -f name="$TAG" \
               -f body="Draft created by the $TAG tag build. Write the release notes here before publishing." \
               -F draft=true \
               -F prerelease="$wanted_prerelease" \
-              --jq '"Created draft release \(.id)."'
-            matches="$(list)"
-            count="$(count_of "$matches")"
-            echo "Releases with the tag $TAG after creating: $count"
-          fi
+              --jq '.id')"
+            if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+              refuse "creating the draft for $TAG returned no release id."
+            fi
+            echo "Created draft release $id."
 
-          if [ "$count" -ne 1 ]; then
-            ids="$(printf '%s' "$matches" | jq -r '.id' | paste -sd ' ' -)"
-            refuse "$count releases have the tag $TAG (ids: $ids). Delete the extra ones so exactly one draft remains, then start a new run."
+            # Hold the concurrency group until the list shows the new draft,
+            # so the other platform's call finds it instead of creating a
+            # second one. Another release with the tag in the list means two
+            # were created after all.
+            seen=""
+            for _ in $(seq "$LIST_WAIT_TRIES"); do
+              ids="$(list_ids)"
+              others="$(printf '%s\n' "$ids" | grep -v -x -e "$id" -e '' || true)"
+              if [ -n "$others" ]; then
+                refuse "another release with the tag $TAG appeared (ids: $(printf '%s' "$others" | paste -sd ' ' -)) next to the new draft $id. Delete the extra ones so exactly one draft remains, then start a new run."
+              fi
+              if printf '%s\n' "$ids" | grep -q -x -e "$id"; then
+                seen=yes
+                break
+              fi
+              sleep "$LIST_WAIT_SECONDS"
+            done
+            if [ -z "$seen" ]; then
+              refuse "the new draft $id for $TAG is not in the release list yet, so the other platform could not find it. Start a new run in a minute; it will reuse draft $id."
+            fi
+            echo "Draft $id is in the release list."
+          else
+            id="$ids"
           fi
-
-          id="$(jq -r .id <<<"$matches")"
-          draft="$(jq -r .draft <<<"$matches")"
-          prerelease="$(jq -r .prerelease <<<"$matches")"
-          echo "Release $id: draft=$draft prerelease=$prerelease"
 
           if ! [[ "$id" =~ ^[0-9]+$ ]]; then
             refuse "release $TAG has no numeric id."
           fi
+          rel="$(read_release "$id")"
+          tag_name="$(jq -r .tag_name <<<"$rel")"
+          draft="$(jq -r .draft <<<"$rel")"
+          prerelease="$(jq -r .prerelease <<<"$rel")"
+          echo "Release $id: tag=$tag_name draft=$draft prerelease=$prerelease"
+
+          if [ "$tag_name" != "$TAG" ]; then
+            refuse "release $id has the tag $tag_name, not $TAG."
+          fi
           if [ "$draft" != "true" ]; then
-            refuse "release $TAG is already published. A tag build only uploads into a draft, never into a published release."
+            # Not an error: the release this tag belongs to is out already,
+            # most often because publishing it created this tag. Nothing is
+            # built or uploaded.
+            echo "::notice::Release $TAG is already published, so this tag push has nothing to build. Nothing was uploaded."
+            echo "Decision: SKIP. Release $TAG (release $id) is published; a tag build only uploads into a draft."
+            {
+              echo "tag=$TAG"
+              echo "build=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # A suffixed tag must stay a pre-release, so it can never become the
           # latest release. A final tag keeps whatever flag its draft has: the
@@ -218,4 +272,5 @@ jobs:
             echo "tag=$TAG"
             echo "release_id=$id"
             echo "prerelease=$prerelease"
+            echo "build=true"
           } >> "$GITHUB_OUTPUT"
