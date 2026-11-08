@@ -103,6 +103,17 @@ jobs:
       - run: shellcheck -S warning packaging/linux/install.sh
       - run: bash tests/linux/test_install_sh.sh
 
+  # The release tag helper (#1039). A wrong tag starts the Windows and macOS
+  # draft builds, so its refusals are tested here, against throwaway git
+  # repositories. ubuntu-latest because the uv container has no git.
+  release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - run: shellcheck -S warning scripts/release/tag.sh tests/ci/test_release_tag_sh.sh
+      - run: bash tests/ci/test_release_tag_sh.sh
+
   sast-bandit:
     runs-on: ubuntu-latest
     container:
