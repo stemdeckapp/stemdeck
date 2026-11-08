@@ -183,10 +183,13 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           COMMIT: ${{ steps.tag.outputs.commit }}
           MAY_CREATE: ${{ inputs.may_create }}
-          # How long to wait for a draft to show in the release list: the
-          # creator for its own new draft (20 x 3 s), the other caller for the
-          # creator's draft (90 x 10 s).
-          LIST_WAIT_TRIES: ${{ inputs.may_create && '20' || '90' }}
+          # How long to wait for a draft to show in the release list, in
+          # seconds of wall time, and how long to sleep between two lists: the
+          # creator for its own new draft (60 s, every 3 s), the other caller
+          # for the creator's draft (15 minutes, every 10 s). The wait stops at
+          # a deadline, not after a number of lists, so slow list calls cannot
+          # stretch it into the job's 20-minute limit before the refusal prints.
+          LIST_WAIT_LIMIT: ${{ inputs.may_create && '60' || '900' }}
           LIST_WAIT_SECONDS: ${{ inputs.may_create && '3' || '10' }}
         run: |
           set -euo pipefail
@@ -215,6 +218,16 @@ jobs:
           read_release() {
             gh api "repos/$REPO/releases/$1" | jq -c '{id, tag_name, draft, prerelease}'
           }
+          # Sleep the list interval, or less when the deadline ($1, in
+          # $SECONDS time) is nearer.
+          nap_until() {
+            local left=$(( $1 - SECONDS ))
+            if [ "$left" -gt "$LIST_WAIT_SECONDS" ]; then left="$LIST_WAIT_SECONDS"; fi
+            if [ "$left" -gt 0 ]; then sleep "$left"; fi
+          }
+          if ! [[ "$LIST_WAIT_LIMIT" =~ ^[0-9]+$ && "$LIST_WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
+            refuse "the list wait limit or interval is not a whole number of seconds."
+          fi
 
           suffix_pattern='-(rc|beta|alpha)\.[0-9]+$'
           if [[ "$TAG" =~ $suffix_pattern ]]; then
@@ -229,15 +242,15 @@ jobs:
 
           if [ "$count" -eq 0 ] && [ "$MAY_CREATE" != "true" ]; then
             # Never create here: the Windows tag job does. Wait for its draft.
-            echo "Waiting for the Windows tag job to create the draft for $TAG."
-            for _ in $(seq "$LIST_WAIT_TRIES"); do
-              sleep "$LIST_WAIT_SECONDS"
+            echo "Waiting up to $LIST_WAIT_LIMIT seconds for the Windows tag job to create the draft for $TAG."
+            deadline=$(( SECONDS + LIST_WAIT_LIMIT ))
+            while [ "$count" -eq 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+              nap_until "$deadline"
               ids="$(list_ids)"
               count="$(count_of "$ids")"
-              [ "$count" -eq 0 ] || break
             done
             if [ "$count" -eq 0 ]; then
-              refuse "no release with the tag $TAG appeared. The Windows tag job creates the draft; check its run, then start this one again."
+              refuse "no release with the tag $TAG appeared within $LIST_WAIT_LIMIT seconds. The Windows tag job creates the draft; check its run, then start this one again."
             fi
             echo "Releases with the tag $TAG in the list now: $count"
           fi
@@ -264,7 +277,8 @@ jobs:
             # Wait until the list shows the new draft, so the macOS job finds
             # it. Another release with the tag in the list means two exist.
             seen=""
-            for _ in $(seq "$LIST_WAIT_TRIES"); do
+            deadline=$(( SECONDS + LIST_WAIT_LIMIT ))
+            while [ "$SECONDS" -lt "$deadline" ]; do
               ids="$(list_ids)"
               others="$(printf '%s\n' "$ids" | grep -v -x -e "$id" -e '' || true)"
               if [ -n "$others" ]; then
@@ -274,7 +288,7 @@ jobs:
                 seen=yes
                 break
               fi
-              sleep "$LIST_WAIT_SECONDS"
+              nap_until "$deadline"
             done
             if [ -z "$seen" ]; then
               refuse "the new draft $id for $TAG is not in the release list yet. The macOS job keeps waiting for it. Re-run this workflow only after 'gh release list' shows $TAG, so it reuses draft $id; a re-run before that can create a second draft."

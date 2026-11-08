@@ -4,7 +4,9 @@
 # release-candidate-guard.yml (#1039, #1051).
 #
 # The scripts are taken out of the workflow files as they are committed, so
-# a change to a step is tested as written. They then run against:
+# a change to a step is tested as written. The callers' `may_create` wiring
+# in windows-release.yml and macos-release.yml is read from the same files
+# (#1055). The scripts then run against:
 #   - a throwaway bare git repository served over file://, for the tag shape,
 #     peel and ancestry checks;
 #   - a fake `gh` that keeps the releases in a JSON file, for the
@@ -81,6 +83,7 @@ PYEOF
 #   GH_STALE=N      the first N lists after a create leave the new one out
 #   GH_APPEAR=N     the Nth list call adds a draft for $GH_APPEAR_TAG (id 900),
 #                   as if the other platform's job had just created it
+#   GH_LIST_DELAY=N each release list takes N seconds
 cat > "$BIN/gh" <<'GHEOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -102,6 +105,7 @@ R="$STATE/releases.json"
 case "$method $path" in
   "GET repos/"*"/releases?per_page=100")
     [ -z "${GH_FAIL_LIST:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+    [ -z "${GH_LIST_DELAY:-}" ] || sleep "$GH_LIST_DELAY"
     n=$(( $(cat "$STATE/lists" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/lists"
     if [ -n "${GH_APPEAR:-}" ] && [ "$n" -eq "$GH_APPEAR" ]; then
       jq --arg t "$GH_APPEAR_TAG" '. + [{id: 900, tag_name: $t, draft: true, prerelease: true, target_commitish: "x"}]' "$R" > "$R.tmp" && mv "$R.tmp" "$R"
@@ -168,6 +172,50 @@ TAGOBJ=$(git -C "$W" rev-parse v1.0.0)          # the annotated tag object, not 
 SERVER="file://$(cd "$SANDBOX/srv" && (pwd -W 2>/dev/null || pwd))"
 
 # ---------------------------------------------------------------------------
+# 0. The callers' wiring (#1055). The step tests below set MAY_CREATE by hand,
+#    so they cannot see a caller that stopped passing it. Without
+#    `may_create: true` in windows-release.yml neither tag job creates the
+#    draft and every tag push fails after the macOS wait.
+# ---------------------------------------------------------------------------
+
+echo "== caller wiring =="
+while IFS= read -r line; do
+  case "$line" in
+    PASS*) PASS=$((PASS + 1)) ;;
+    FAIL*) FAIL=$((FAIL + 1)) ;;
+  esac
+  printf '%s\n' "$line"
+done < <("${PY[@]}" - "$WF" <<'PYEOF' 2>&1 || echo "FAIL  the wiring check could not run"
+import pathlib, sys, yaml
+wf = pathlib.Path(sys.argv[1])
+def load(name):
+    return yaml.safe_load((wf / name).read_text(encoding="utf-8"))
+def check(name, ok):
+    print(("PASS  " if ok else "FAIL  ") + name)
+uses = "./.github/workflows/release-tag-draft.yml"
+win = load("windows-release.yml")["jobs"]["draft"]
+mac = load("macos-release.yml")["jobs"]["draft"]
+check("windows-release.yml: the draft job calls release-tag-draft.yml", win.get("uses") == uses)
+check("windows-release.yml: passes may_create: true", (win.get("with") or {}).get("may_create") is True)
+check("macos-release.yml: the draft job calls release-tag-draft.yml", mac.get("uses") == uses)
+check("macos-release.yml: passes no may_create", "may_create" not in (mac.get("with") or {}))
+called = load("release-tag-draft.yml")
+on = called.get("on", called.get(True))  # PyYAML reads the key `on` as True
+inp = on["workflow_call"]["inputs"].get("may_create") or {}
+check("release-tag-draft.yml: may_create is a boolean input, false by default",
+      inp.get("type") == "boolean" and inp.get("default") is False)
+job = called["jobs"]["ensure"]
+env = next(s for s in job["steps"] if s.get("id") == "draft")["env"]
+check("release-tag-draft.yml: the draft step reads MAY_CREATE from inputs.may_create",
+      env.get("MAY_CREATE") == "${{ inputs.may_create }}")
+check("release-tag-draft.yml: the wait limit depends on inputs.may_create",
+      "inputs.may_create" in str(env.get("LIST_WAIT_LIMIT")))
+check("release-tag-draft.yml: the creator's concurrency group depends on inputs.may_create",
+      "inputs.may_create" in str(job["concurrency"]["group"]))
+PYEOF
+)
+
+# ---------------------------------------------------------------------------
 # 1. Tag shape, peel and ancestry
 # ---------------------------------------------------------------------------
 
@@ -203,10 +251,10 @@ check "the base64 credential is masked" 0 0 "^::add-mask::$(printf 'x-access-tok
 # ---------------------------------------------------------------------------
 
 new_state() { STATE="$(mktemp -d "$SANDBOX/state.XXXXXX")"; export STATE; mkdir -p "$STATE/commits"; echo "${1:-[]}" > "$STATE/releases.json"; }
-run_draft() {  # run_draft <tag> [may_create, default true]
+run_draft() {  # run_draft <tag> [may_create, default true]; wait limit and interval from LIST_WAIT_LIMIT, LIST_WAIT_SECONDS
   local o; o="$(mktemp)"
   env GH_TOKEN=fake REPO=o/r TAG="$1" COMMIT="$C2" MAY_CREATE="${2:-true}" GITHUB_OUTPUT="$o" \
-    LIST_WAIT_TRIES="${LIST_WAIT_TRIES:-5}" LIST_WAIT_SECONDS=0 bash "$SCRIPTS/draft.sh" > "$OUT" 2>&1
+    LIST_WAIT_LIMIT="${LIST_WAIT_LIMIT:-30}" LIST_WAIT_SECONDS="${LIST_WAIT_SECONDS:-0}" bash "$SCRIPTS/draft.sh" > "$OUT" 2>&1
   local rc=$?; cat "$o" >> "$OUT"; rm -f "$o"; return $rc
 }
 posts() { if [ -f "$STATE/posts.log" ]; then wc -l < "$STATE/posts.log" | tr -d ' '; else echo 0; fi; }
@@ -221,7 +269,7 @@ run_draft v1.1.0-rc.1 false; check "macOS afterwards reuses it" 0 $? "^release_i
 ok_if "  still one POST and one release" [ "$(posts)/$(releases)" = "1/1" ]
 new_state; GH_STALE=3 run_draft v1.1.0-rc.1; check "list lags 3 reads after the create: waits, then builds" 0 $? "is in the release list"
 ok_if "  no second POST" [ "$(posts)" = 1 ]
-new_state; GH_STALE=99 LIST_WAIT_TRIES=3 run_draft v1.1.0-rc.1; check "list never shows it: refused, says how to re-run safely" 1 $? "reuses draft 101"
+new_state; GH_STALE=99 LIST_WAIT_LIMIT=2 LIST_WAIT_SECONDS=1 run_draft v1.1.0-rc.1; check "list never shows it: refused, says how to re-run safely" 1 $? "reuses draft 101"
 new_state; run_draft v1.0.0; check "none, final tag: draft is not a pre-release" 0 $? "^prerelease=false$"
 new_state '[{"id":5,"tag_name":"v1.0.0","draft":false,"prerelease":false}]'
 run_draft v1.0.0; check "published: exits 0 with build=false" 0 $? "^build=false$"
@@ -249,9 +297,20 @@ echo "== ensure draft (macOS, never creates) =="
 new_state; GH_APPEAR=3 GH_APPEAR_TAG=v1.1.0-rc.1 run_draft v1.1.0-rc.1 false
 check "draft appears on the 3rd list: waits, then reuses it" 0 $? "^release_id=900$"
 ok_if "  never POSTs" [ "$(posts)" = 0 ]
-new_state; LIST_WAIT_TRIES=4 run_draft v1.1.0-rc.1 false
-check "draft never appears: refused, names the Windows job" 1 $? "The Windows tag job creates the draft"
+new_state; LIST_WAIT_LIMIT=2 LIST_WAIT_SECONDS=1 run_draft v1.1.0-rc.1 false
+check "draft never appears: refused, names the Windows job" 1 $? "within 2 seconds\. The Windows tag job creates the draft"
 ok_if "  never POSTs, no release made" [ "$(posts)/$(releases)" = "0/0" ]
+# The wait ends at a deadline, not after a number of lists (#1055): with
+# 2-second lists and a 3-second limit it lists about twice, where a count of
+# 90 lists would run for minutes. It still waits out the whole limit.
+new_state; started=$SECONDS
+GH_LIST_DELAY=2 LIST_WAIT_LIMIT=3 LIST_WAIT_SECONDS=0 run_draft v1.1.0-rc.1 false
+rc=$?; took=$((SECONDS - started))
+check "slow lists: refused at the deadline" 1 "$rc" "within 3 seconds"
+ok_if "  waits the limit, stops within one list after it ($took s)" [ "$took" -ge 3 -a "$took" -le 9 ]
+ok_if "  lists at most 3 times ($(cat "$STATE/lists") lists)" [ "$(cat "$STATE/lists")" -le 3 ]
+new_state; LIST_WAIT_LIMIT=1x run_draft v1.1.0-rc.1 false
+check "a wait limit that is not whole seconds: refused" 1 $? "not a whole number of seconds"
 new_state '[{"id":5,"tag_name":"v1.0.0","draft":false,"prerelease":false}]'
 run_draft v1.0.0 false; check "published: exits 0 with build=false" 0 $? "^build=false$"
 

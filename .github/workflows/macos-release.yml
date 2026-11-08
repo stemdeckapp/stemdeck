@@ -2,8 +2,8 @@ name: macOS Release
 
 on:
   # Pushing a version tag builds the installers into a draft release for that
-  # tag (#1039). The draft is created if none exists; this workflow never
-  # publishes it. Publishing is done by hand after testing, and it does not
+  # tag (#1039). The Windows tag job creates that draft; this workflow never
+  # creates or publishes it, and waits for it to appear. Publishing is done by hand after testing, and it does not
   # rebuild macOS: there is no release trigger here any more. The filter is
   # the first narrowing; the tag job checks the same shape with a strict regex.
   # The signing check below still refuses to build without every secret.
