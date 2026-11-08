@@ -158,6 +158,19 @@ reset({ publishAfterUploads: 1 });
 r = await quiet(() => run(env(), [fileA, fileB]));
 check('published mid-way: refused', !r.ok && /no longer a draft/.test(r.error?.message || ''), r.error?.message);
 check('published mid-way: only the first file was sent', state.uploaded.length === 1 && state.uploaded[0].name === 'StemDeck-A.zip');
+check('published mid-way: names the file that landed', /landed on the published release: StemDeck-A\.zip\./.test(r.error?.message || ''), r.error?.message);
+
+// ── 5b. published during the LAST file's upload: the run fails and names both ──
+reset({ publishAfterUploads: 2 });
+r = await quiet(() => run(env(), [fileA, fileB]));
+check('published during the last upload: run fails', !r.ok && r.error instanceof Refusal, r.error?.message);
+check(
+  'published during the last upload: names every file that landed',
+  /landed on the published release: StemDeck-A\.zip, StemDeck-B\.zip\./.test(r.error?.message || ''),
+  r.error?.message,
+);
+check('published during the last upload: no "still a draft" line', !r.lines.some((l) => /still a draft/.test(l)));
+check('published during the last upload: both files were sent, nothing after', state.uploaded.length === 2);
 
 // ── 6. tag, flag and commit changes are refused before any upload ──
 reset({ releases: { 42: release(42, { tag_name: 'v1.0.0-rc.2' }) } });
@@ -207,8 +220,8 @@ r = await quiet(() => run(env(), [fileA]));
 check('retry: succeeds on the second attempt', r.ok, r.error?.message);
 check('retry: two upload requests', uploads().length === 2);
 check(
-  'retry: the release was read again before the retry',
-  calls.filter((c) => c.method === 'GET' && c.path === '/repos/o/r/releases/42').length === 3,
+  'retry: the release was read before each attempt and once after the last file',
+  calls.filter((c) => c.method === 'GET' && c.path === '/repos/o/r/releases/42').length === 4,
 );
 
 server.close();
