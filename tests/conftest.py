@@ -107,6 +107,7 @@ def _isolate_export_caches(tmp_path, monkeypatch):
     in these caches, which in the real one could be a running server's."""
     monkeypatch.setattr("app.api.stems._MIXDOWN_CACHE_DIR", tmp_path / "_cache" / "mixdown")
     monkeypatch.setattr("app.api.stems._CLICK_CACHE_DIR", tmp_path / "_cache" / "click")
+    monkeypatch.setattr("app.api.stems._FX_PRINT_DIR", tmp_path / "_cache" / "fx-print")
 
 
 @pytest.fixture(autouse=True)

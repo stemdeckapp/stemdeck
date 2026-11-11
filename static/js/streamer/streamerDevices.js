@@ -11,13 +11,14 @@
 // its level() meter (captureGraph.js), friendlyName (trackInputs.js).
 //
 // Nothing is asked of the browser on page load: getUserMedia runs only once
-// the person allowed it here (the Allow button) or the browser says the
-// permission is already granted.
+// the person allowed it here (the Allow button), the browser says the
+// permission is already granted, or the page is the desktop app's, whose
+// shell grants it without a prompt.
 //
 // Phase 4 records from `getStreamerMedia()`.
 
 import { requestMedia, checkCaptureSupport } from "../capture/capturePermission.js";
-import { listDevices } from "../capture/captureDevices.js";
+import { isDesktopApp, listNamedDevices } from "../capture/captureDevices.js";
 import { openCapture } from "../capture/captureGraph.js";
 import { isRecording } from "../capture/recordUi.js";
 import { audioEngine } from "../state.js";
@@ -49,9 +50,18 @@ export function onDevicesChange(cb) {
 
 const realId = (d) => d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications";
 
-/** Read the devices again. Labels (and ids) show once permission is given. */
+/**
+ * Read the devices again. Labels (and ids) show once permission is given.
+ * In the desktop app, whose shell grants both kinds without asking but saves
+ * nothing, a nameless kind is opened once per page to read the names
+ * (captureDevices.needsNameUnlock), so a camera can be picked while No camera
+ * is chosen. The microphone goes first: when opening it names the cameras
+ * too, the camera is not opened.
+ */
 export async function refreshLists() {
-  const [v, a] = await Promise.all([listDevices("videoinput"), listDevices("audioinput")]);
+  const unlock = isDesktopApp();
+  const a = (await listNamedDevices("audioinput", { unlock })).devices;
+  const v = (await listNamedDevices("videoinput", { unlock })).devices;
   lists = { video: v.filter(realId), audio: a.filter(realId), videoCount: v.length, audioCount: a.length };
   // A list with names means that kind is allowed already.
   if (v.some((d) => d.label)) mayAsk.video = true;
@@ -86,8 +96,11 @@ export async function startDevices() {
     listening = true;
   }
   const [c, m] = await Promise.all([permissionState("camera"), permissionState("microphone")]);
-  if (c === "granted") mayAsk.video = true;
-  if (m === "granted") mayAsk.audio = true;
+  // The desktop app's shell grants both without a prompt (mediaperm.rs) but
+  // saves nothing, so the query reads "prompt" there: an Allow step would
+  // only be an extra click.
+  if (c === "granted" || isDesktopApp()) mayAsk.video = true;
+  if (m === "granted" || isDesktopApp()) mayAsk.audio = true;
   if (c === "denied" && !cam.stream) cam.reason = "denied";
   if (m === "denied" && !mic.capture) mic.reason = "denied";
   await refreshLists();

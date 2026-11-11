@@ -237,3 +237,23 @@ export function rawExtension(contentType) {
 export function isNoEncoder(status, detail) {
   return status === 422 && /libx264|AAC encoder/i.test(String(detail || ""));
 }
+
+// The instruments a take's live chain can be voiced for (fx/pedalSpecs.js
+// INSTRUMENTS; kept here so this model stays free of imports).
+const TAKE_FX_INSTRUMENTS = ["guitar", "bass", "voice"];
+// A stored live chain is a few hundred bytes; anything far larger is not one.
+const TAKE_FX_MAX_CHARS = 16384;
+
+/**
+ * A take's live effects record made safe: {chain, inst} (the chain as it was
+ * when the take began, Auto resolved to `inst`), or null for none. The chain
+ * is normalised where it plays (streamerFx.js); here only its shape and size
+ * are checked.
+ */
+export function takeFxOf(v) {
+  if (!v || typeof v !== "object" || !v.chain || typeof v.chain !== "object" || Array.isArray(v.chain)) return null;
+  let text = "";
+  try { text = JSON.stringify(v.chain); } catch { return null; }
+  if (text.length > TAKE_FX_MAX_CHARS) return null;
+  return { chain: JSON.parse(text), inst: TAKE_FX_INSTRUMENTS.includes(v.inst) ? v.inst : "guitar" };
+}

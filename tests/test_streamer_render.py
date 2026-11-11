@@ -540,3 +540,87 @@ async def test_a_failed_render_start_leaves_nothing_registered(
         assert r.status_code == 422
         assert (JOB, tid) not in takes_mod._renders
         assert (await c.get(f"/api/jobs/{JOB}/takes/{tid}/render")).json()["status"] == "none"
+
+
+# ─── Live effects: the take rendered through its effects print ───────────
+#
+# Performance records the clean input and keeps the chain it was heard
+# through; the browser prints the take through it (static/js/fx/fxPrint.js,
+# the take id as the print's lane) and the render plays the print in the
+# take's place (RenderBody.take_print).
+
+_PRINT_CHAIN = '{"r":1,"inst":"voice","trim":0,"bpm":null,"pedals":[{"type":"delay"}]}'
+
+
+def _tone_print(frames: int, rate: int) -> bytes:
+    import io
+
+    t = np.arange(frames) / rate
+    x = (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    buf = io.BytesIO()
+    sf.write(buf, np.stack([x, x], axis=1), rate, subtype="PCM_24", format="WAV")
+    return buf.getvalue()
+
+
+async def _print_take(c, tid: str, gain: float = 0.5) -> str:
+    """Upload a print of take `tid` (a 220 Hz tone at 0.5, as long as the
+    take's audio) with `gain`, as the browser does; returns its id."""
+    r = await c.post(f"/api/jobs/{JOB}/fx-prints", json={"lane": tid, "chain": _PRINT_CHAIN})
+    assert r.status_code == 200, r.text
+    info = r.json()
+    assert info["done"] is False
+    body = _tone_print(info["frames"], info["rate"])
+    rp = await c.put(
+        f"/api/jobs/{JOB}/fx-prints/{info['id']}/parts",
+        params={"seq": 0},
+        content=body,
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert rp.status_code == 200, rp.text
+    rf = await c.post(
+        f"/api/jobs/{JOB}/fx-prints/{info['id']}/finish", json={"lane": tid, "gain": gain}
+    )
+    assert rf.status_code == 200, rf.text
+    return info["id"]
+
+
+async def test_take_print_is_validated(jobs_dir, client, tmp_path, monkeypatch):
+    """A malformed print id is a 422, a well-formed one that was never made
+    (or made of another take) a 409: refused, never rendered without it."""
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    monkeypatch.setattr(takes_mod, "libx264_available", lambda: True)
+    monkeypatch.setattr(takes_mod, "aac_available", lambda: True)
+    async with client as c:
+        tid = await _take_with_camera(c, tmp_path)
+        other = await _take_with_camera(c, tmp_path)
+        base = f"/api/jobs/{JOB}/takes/{tid}/render"
+        for bad in ("nothex", "../../etc/passwd", "A" * 40, "0" * 39, 7, "0" * 65):
+            r = await c.post(base, json={"fit": "fill", "take_print": bad})
+            assert r.status_code == 422, (bad, r.text)
+        r = await c.post(base, json={"fit": "fill", "take_print": "0" * 40})
+        assert r.status_code == 409, r.text
+        # A print of another take is not this take's.
+        pid = await _print_take(c, other)
+        r = await c.post(base, json={"fit": "fill", "take_print": pid})
+        assert r.status_code == 409, r.text
+        assert "detail" in r.json() and str(tmp_path) not in r.text
+    # Nothing was queued by a refusal.
+    assert not takes_mod._renders
+
+
+async def test_the_render_plays_the_take_print_times_its_gain(jobs_dir, client, tmp_path):
+    """The take is silence; its print is a 220 Hz tone at 0.5 with a gain of
+    0.5: 0.25 peak on each side. The measure downmixes to mono (-ac 1), which
+    sums two equal sides at -3 dB: 0.25 x sqrt 2 peak, so an RMS of 0.25.
+    With the print the video's sound is that tone at that level; without it,
+    silence."""
+    _needs_x264()
+    _make_job(jobs_dir)
+    async with client as c:
+        tid = await _take_with_camera(c, tmp_path)
+        pid = await _print_take(c, tid, gain=0.5)
+        dry = await _render_rms(c, jobs_dir, tid, stems=[], gains=[])
+        wet = await _render_rms(c, jobs_dir, tid, stems=[], gains=[], take_print=pid)
+    assert dry < 0.005
+    assert wet == pytest.approx(0.25, rel=0.05)

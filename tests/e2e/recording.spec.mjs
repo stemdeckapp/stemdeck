@@ -40,7 +40,8 @@ test.describe("recording a take", () => {
     await expect(page.locator("#recPermission")).toBeHidden();
     // The input and the latency test live in Settings now; the panel links there.
     await expect(page.locator("#recSettingsLink")).toBeVisible();
-    await expect(page.locator("#recPanel select, #recPanel .rec-cal-progress")).toHaveCount(0);
+    // (The live effects' own selects, instrument and presets, are not inputs.)
+    await expect(page.locator("#recPanel select:not(#recLiveFx select), #recPanel .rec-cal-progress")).toHaveCount(0);
     // Choose a lane to mute while recording.
     await page.locator('#recMuteList input[value="drums"]').check();
     await page.keyboard.press("Escape");

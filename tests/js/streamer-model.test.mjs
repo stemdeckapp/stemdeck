@@ -8,6 +8,7 @@ const {
   peakBars, clockTenths, clockHours, rulerTicks,
   emptyHistory, pushHistory, undoHistory, redoHistory, HISTORY_CAP,
   TRIM_MIN, trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, ZOOM_MAX_PPS,
+  playheadLabelLeft,
 } = model;
 
 let failed = 0;
@@ -142,6 +143,14 @@ check("a song that already fits wider than the max never shrinks", near(pixelsPe
 check("zoom is clamped", near(pixelsPerSecond(200, 1000, -1), 5) && near(pixelsPerSecond(200, 1000, 3), ZOOM_MAX_PPS));
 check("tick step keeps labels apart", tickStep(5) === 15 && tickStep(100) === 1 && tickStep(0.1) === 300);
 check("ticks every step", eq(ticksEvery(65, 30).map((x) => x.label), ["0:00", "0:30", "1:00"]) && eq(ticksEvery(0, 5), []));
+
+// The playhead's time label (68 px): centred, kept whole and in view, never parted from its line
+check("the label is centred on the playhead", playheadLabelLeft(500, 68, 1000) === -34);
+check("at the song's start it starts at 0", playheadLabelLeft(0, 68, 1000) === 0 && playheadLabelLeft(10, 68, 1000) === -10);
+check("at the song's end it ends at the end", playheadLabelLeft(1000, 68, 1000) === -68 && playheadLabelLeft(990, 68, 1000) === -58);
+check("scrolled: it stays right of the view's left edge", playheadLabelLeft(410, 68, 3000, 400, 900) === -10);
+check("scrolled: it stays left of the view's right edge", playheadLabelLeft(890, 68, 3000, 400, 900) === -58);
+check("a playhead out of view keeps its label on the line", playheadLabelLeft(100, 68, 3000, 400, 900) === 0 && playheadLabelLeft(1200, 68, 3000, 400, 900) === -68);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

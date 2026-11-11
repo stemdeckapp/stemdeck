@@ -204,12 +204,18 @@ html.streamer-open .daw-footer { display: none !important; }
 /* ── The windows, the strip and the timeline ── */
 .sm-builder {
   flex: 1;
-  /* A 360 px preview, the strip under it and the timeline at its least. */
+  /* One 360 px preview (tier c, and before the first placement), the strip
+     under it and the timeline at its least. */
   min-height: calc(203px + var(--sm-col-gap) + var(--sm-strip-h) + var(--sm-gap) + var(--sm-tl-min));
   display: flex;
   flex-direction: column;
   gap: var(--sm-gap);
   container-type: size;
+}
+/* Two windows (tiers a, b and s) are sized by reviewModel.reviewTier to fit
+   the builder; they go down to 288 px wide (162 px high). */
+.sm-builder:is([data-tier="a"], [data-tier="b"], [data-tier="s"]) {
+  min-height: calc(162px + var(--sm-col-gap) + var(--sm-strip-h) + var(--sm-gap) + var(--sm-tl-min));
 }
 .sm-builder[hidden] { display: none; }
 /* The windows' column, centred over the timeline. */
@@ -224,15 +230,24 @@ html.streamer-open .daw-footer { display: none !important; }
   flex-direction: column;
   gap: var(--sm-col-gap);
 }
-/* Room for the live window and the take review side by side (tiers a and
-   b, reviewModel.reviewTier, set from the builder's size): the column
-   holds two windows of --sm-win-w. Tier c keeps one window, sized as above. */
+/* The live window and the take review are both shown, their size set from
+   the builder's (reviewModel.reviewTier): side by side (tiers a and b) the
+   column holds two windows of --sm-win-w; stacked (tier s, too narrow for
+   two across) it is one window wide, the review under the live window, the
+   pair within 65% of the builder's height. Tier c, the hard minimum (a
+   builder too short for two windows of 288 px), keeps one window, sized as
+   above. */
 .sm-builder:is([data-tier="a"], [data-tier="b"]) .sm-preview-col { width: calc(2 * var(--sm-win-w, 360px) + 12px); }
+.sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, 360px); }
 
 /* The windows: live (the camera as it is now) and review (the recorded take). */
 .sm-screens { position: relative; display: flex; gap: 12px; }
 .sm-screens > .sm-preview, .sm-screens > .sm-review { flex: 1 1 0; min-width: 0; }
-/* One window: the review only while it shows the take, in the live one's place. */
+/* Stacked: each window is the column's width and its own 16:9 height. */
+.sm-screens[data-tier="s"] { flex-direction: column; }
+.sm-screens[data-tier="s"] > .sm-preview, .sm-screens[data-tier="s"] > .sm-review { flex: none; }
+/* One window (tier c only): the review only while it shows the take, in the
+   live one's place. */
 .sm-screens[data-tier="c"] > .sm-review,
 .sm-screens:not([data-tier]) > .sm-review { display: none; }
 .sm-screens[data-tier="c"][data-shows="take"] > .sm-review { display: block; }
@@ -487,6 +502,60 @@ html.streamer-open .daw-footer { display: none !important; }
   margin-right: -8px;
   background: var(--sm-card);
 }
+/* The card's two tabs (streamerTabs.js), in its top row left of I play:
+   Timeline (the panel above) and Effects (Hear myself and the live effects).
+   A hidden panel is only not shown; nothing in it is taken down. */
+.sm-tabs {
+  position: absolute;
+  left: 12px;
+  top: var(--sm-ctl-top);
+  z-index: 7;
+  display: inline-flex;
+  gap: 2px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+}
+.sm-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sm-text-2);
+  font: 600 12.5px var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--easing), color var(--t-fast) var(--easing);
+}
+.sm-tab:hover:not([aria-selected="true"]) { background: rgba(255, 255, 255, .08); color: var(--sm-text); }
+.sm-tab[aria-selected="true"] { background: var(--sm-yellow); color: var(--sm-on-yellow); }
+/* "On" while the live chain changes the sound, readable from either tab. */
+.sm-tab-badge { font: 700 9.5px var(--font-mono); letter-spacing: .04em; color: var(--sm-yellow); }
+.sm-tab[aria-selected="true"] .sm-tab-badge { color: var(--sm-on-yellow); }
+.sm-tab-badge[hidden] { display: none; }
+.sm-tl-panel { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.sm-tl-panel[hidden], .sm-fxp[hidden] { display: none; }
+/* The Effects tab: under the tabs' row, scrolling when the card is short. */
+.sm-fxp {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2a333e transparent;
+  padding: calc(var(--sm-ctl-top) + 28px + 8px - var(--sm-tl-pad)) 4px 4px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  container-type: inline-size;
+}
 .sm-zoom { position: absolute; right: 12px; top: var(--sm-ctl-top); display: flex; align-items: center; gap: 8px; z-index: 4; }
 .sm-zoom-btn { width: 30px; height: 28px; }
 .sm-zoom-btn:disabled { opacity: .4; cursor: default; }
@@ -705,19 +774,17 @@ html.streamer-open .daw-footer { display: none !important; }
 }
 /* "I play": the part left out of the backing track, top left of the
    timeline card, level with the zoom control on the right. */
-/* Over the playhead's time label when the playhead is near the start (the
-   clock under the preview shows the time too). */
-.sm-part { position: absolute; left: 12px; top: var(--sm-ctl-top); z-index: 6; display: flex; align-items: center; gap: 8px; padding-right: 6px; background: var(--sm-card); }
+.sm-part { position: absolute; left: calc(12px + var(--sm-tabs-w, 172px) + 10px); top: var(--sm-ctl-top); z-index: 6; display: flex; align-items: center; gap: 8px; padding-right: 6px; background: var(--sm-card); }
 .sm-part-label { font-size: 12.5px; font-weight: 600; color: var(--sm-text-2); white-space: nowrap; }
 .sm-part-select { width: 170px; }
 .sm-part-select .sm-sel { height: 28px; padding: 0 30px 0 10px; font-size: 12.5px; }
 .sm-part-select .sm-sel-caret { top: 9px; right: 10px; }
 .sm-part-select .sm-sel:disabled { opacity: .6; cursor: default; }
-/* A song without stems or sections: said in the row, no layout change. */
+/* A song without stems, or a take lane before a take: said in the row, no
+   layout change. */
 .sm-tl-note { margin: 0; font-size: 12px; color: var(--sm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .sm-tl-note[hidden] { display: none; }
 .sm-tl-no-stems { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 2; }
-.sm-tl-no-sections { grid-column: 2; grid-row: 2; align-self: center; padding-left: 4px; position: sticky; left: calc(var(--sm-label-w) + 8px); width: max-content; max-width: 100%; }
 .sm-tl-lane { position: absolute; left: 16px; height: calc(50% - 6px); display: block; pointer-events: none; }
 .sm-tl-lane-0 { top: 4px; }
 .sm-tl-lane-1 { bottom: 4px; }
@@ -858,11 +925,15 @@ html.streamer-open .daw-footer { display: none !important; }
 }
 .sm-tl-tip[hidden] { display: none; }
 
-.sm-tl-overlay { grid-column: 2; grid-row: 1 / -1; position: relative; pointer-events: none; z-index: 1; }
-.sm-tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; left: 0; }
+/* The playhead: its line from the ruler down through the lanes, its time
+   label in the sections' row just over the ruler, clear of the tabs, I play
+   and the zoom in the top row. It runs over the section markers and never
+   takes their clicks. streamer.js keeps the label whole and in view. */
+.sm-tl-overlay { grid-column: 2; grid-row: 3 / -1; position: relative; pointer-events: none; z-index: 1; }
+.sm-tl-playhead { --sm-head-gap: 3px; position: absolute; top: 0; bottom: 0; width: 0; left: 0; }
 .sm-tl-playhead-time {
   position: absolute;
-  top: 0;
+  top: calc(-24px - var(--sm-head-gap));
   left: -34px;
   width: 68px;
   height: 24px;
@@ -874,7 +945,7 @@ html.streamer-open .daw-footer { display: none !important; }
   align-items: center;
   justify-content: center;
 }
-.sm-tl-playhead-line { position: absolute; top: 24px; bottom: 0; left: -1px; width: 2px; background: var(--sm-red); }
+.sm-tl-playhead-line { position: absolute; top: calc(0px - var(--sm-head-gap)); bottom: 0; left: -1px; width: 2px; background: var(--sm-red); }
 
 .sm-rec { z-index: 2; }
 
@@ -923,7 +994,10 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-heavy { margin: -2px 0 0; font-size: 12px; color: #e9c23a; }
 .sm-heavy[hidden] { display: none; }
 
-/* Over the preview while the camera is not showing. */
+/* Over the preview while the camera is not showing. The live window is a
+   width container, so a small window (two side by side or stacked) keeps the
+   whole note and its button inside it. */
+.sm-preview { container: sm-live / inline-size; }
 .sm-cam-state {
   position: absolute;
   left: 50%;
@@ -945,6 +1019,13 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-cam-text { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--sm-text-2); }
 .sm-cam-act { height: 32px; font-size: 12.5px; }
 .sm-cam-act[hidden] { display: none; }
+/* Under 520 px of window (under 293 px high): the note centred in the part
+   under the REC badge, a little tighter. */
+@container sm-live (max-width: 519px) {
+  .sm-cam-state { top: calc(50% + 22px); transform: translate(-50%, -50%); gap: 6px; padding: 8px 12px; max-width: 86%; }
+  .sm-cam-text { font-size: 12px; line-height: 1.35; }
+  .sm-cam-act { height: 28px; }
+}
 /* The camera's video: decoded and drawn into the canvas, never seen itself. */
 .sm-cam-source { position: fixed; left: -10000px; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 /* Resolution and frame rate side by side: the frame rate's column is as
@@ -1091,9 +1172,22 @@ html.streamer-open .daw-footer { display: none !important; }
   .sm-center { overflow: auto; }
   .sm-builder { flex: none; min-height: 0; container-type: inline-size; }
   .sm-row { flex-direction: column; justify-content: flex-start; }
-  /* cqw is the builder's width here. */
+  /* cqw is the builder's width here. The windows follow the same tiers as
+     above (streamer.js measures the column's height); only past the hard
+     minimum are they stacked at this width, with no --sm-win-w set, and the
+     column scrolls. */
   .sm-preview-col { width: clamp(480px, min(100cqw, 716px), 716px); }
-  .sm-tl { flex: none; height: 217px; }
+  .sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, clamp(480px, min(100cqw, 716px), 716px)); }
+  /* The tabs take a row of their own over the timeline here (34 px), so I
+     play and the zoom keep the whole width of the row under them. */
+  .sm-tl { flex: none; flex-direction: column; height: calc(217px + 34px); }
+  .sm-tabs { position: relative; left: auto; top: auto; flex: none; align-self: flex-start; margin: 0 0 6px 2px; }
+  .sm-part { left: 12px; top: calc(var(--sm-ctl-top) + 34px); }
+  .sm-zoom { top: calc(var(--sm-ctl-top) + 34px); }
+  .sm-fxp { padding-top: 0; overflow: visible; }
+  /* The column scrolls here, so the Effects tab grows to its content
+     rather than scrolling inside the card. */
+  .sm-tl:has(> .sm-fxp:not([hidden])) { height: auto; min-height: calc(217px + 34px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1152,3 +1246,95 @@ html.streamer-open .daw-footer { display: none !important; }
   .sm-clock-now { font-size: 14px; }
   .sm-clock-dur { font-size: 11.5px; }
 }
+
+/* ── Hear myself and the live effects (streamer/streamerFx.js) ──
+   The Effects tab of the timeline card: the switch, the headphones note and
+   the speakers warning, then the Live effects section. Its input side
+   (power, instrument, trim, meter, Clip), Low latency and the latency
+   readout stand in a column on the left; the strip runs left to right
+   beside them, the open pedal under it, as on a lane (fx.css). One column
+   when the tab is narrow. Controls at the card's own sizes (selects 32 px,
+   buttons 26 to 32 px). */
+.sm-monitor { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.sm-monitor .sm-switch-row { gap: 12px; padding: 1px 0; font-size: 12.5px; line-height: 1.3; }
+.sm-monitor .sm-switch { --sm-sw-w: 36px; --sm-sw-h: 20px; }
+.sm-monitor .sm-fx-warn { flex: 1 1 100%; }
+.sm-fx-note { margin: 0; font-size: 12px; line-height: 1.4; color: var(--sm-muted); overflow-wrap: break-word; }
+.sm-fx-note[hidden] { display: none; }
+.sm-fx-warn {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sm-red);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--sm-text);
+}
+.sm-fx-warn[hidden] { display: none; }
+.sm-fx {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--sm-line);
+  border-radius: 8px;
+  background: var(--sm-panel);
+}
+.sm-fx-title { font-size: 13px; font-weight: 600; color: var(--sm-text); }
+.sm-fx-grid { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 8px 16px; align-items: start; }
+.sm-fx-controls { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+@container (max-width: 560px) {
+  .sm-fx-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.sm-fx .sm-switch-row { gap: 12px; padding: 1px 0; font-size: 12.5px; }
+.sm-fx .sm-switch { --sm-sw-w: 36px; --sm-sw-h: 20px; }
+.sm-fx-latency { font-family: var(--font-mono); font-size: 11px; }
+.sm-fx-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sm-fx .fx-trim-row { flex-wrap: wrap; }
+.sm-fx .fx-inst-wrap,
+.sm-fx .fx-field { font-size: 12px; color: var(--sm-text-2); }
+.sm-fx .fx-inst,
+.sm-fx .fx-preset,
+.sm-fx .fx-select {
+  height: 32px;
+  padding: 0 8px;
+  border-color: var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+  color: var(--sm-text);
+  font-size: 12.5px;
+}
+.sm-fx .fx-field { flex-wrap: wrap; }
+.sm-fx .eq-power { height: 28px; }
+.sm-fx .fx-meter { height: 18px; }
+.sm-fx .fx-meter-text { line-height: 18px; font-size: 10px; }
+.sm-fx .fx-clip { height: 20px; line-height: 20px; }
+.sm-fx .fx-card { height: 36px; padding: 0 4px 0 6px; border-radius: 8px; }
+.sm-fx .fx-card-main { height: 32px; font-size: 12.5px; }
+.sm-fx .fx-card-power { height: 26px; font-size: 10px; }
+.sm-fx .fx-card-remove { width: 26px; height: 26px; font-size: 16px; }
+.sm-fx .fx-add { height: 32px; font-size: 12.5px; border-radius: 8px; }
+.sm-fx .fx-add-item { min-height: 32px; padding: 6px 10px; font-size: 12.5px; }
+.sm-fx .fx-pedal-name { font-size: 13px; }
+
+/* The take lane's Effects switch, beside its mute: lit while the take plays
+   through the chain it was heard with. */
+.sm-tl-fx {
+  flex: none;
+  margin-left: auto;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b949e;
+  font: 700 9px var(--font-mono);
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.sm-tl-fx.on { color: var(--sm-yellow); background: color-mix(in srgb, var(--sm-yellow) 14%, transparent); }
+.sm-tl-fx:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
+.sm-tl-fx:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-tl-fx:disabled { opacity: .45; cursor: default; }
+.sm-tl-fx[hidden] { display: none; }
+.sm-tl-fx:not([hidden]) + .sm-tl-mute { margin-left: 3px; }

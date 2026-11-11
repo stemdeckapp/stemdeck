@@ -26,6 +26,9 @@ import {
   panelKindFor, panelHeight, laneHasPanel, eqRowOrder, openPanelsHeight,
   OPEN_STORE_KEY, openKey, parseOpenStore, withOpenChoice,
 } from "./eqPanelKinds.js";
+// The effects rows (Advanced mode) share this layout: their height, place
+// and order are counted with the EQ rows', so player.js needs no change.
+import { setFxContext, syncFxRows, syncFxRowOrder, fxPanelsHeight } from "../fx/fxRows.js";
 
 // The panel modules, by kind, loaded on first open.
 const LOADERS = {
@@ -102,8 +105,9 @@ export function laneKind(lane) {
 
 /** Height the open panels add to the lane stack (px). player.js uses it. */
 export function eqPanelsHeight() {
-  if (!_enabled) return 0;
-  return openPanelsHeight(_lanes, isPanelOpen, laneKind);
+  const fxPx = fxPanelsHeight();
+  if (!_enabled) return fxPx;
+  return openPanelsHeight(_lanes, isPanelOpen, laneKind) + fxPx;
 }
 
 /**
@@ -119,6 +123,9 @@ export function setEqContext({ jobId, lanes, enabled }) {
   _want = !!enabled;
   _enabled = _want && _allowed && !!_jobId;
   if (!_enabled) for (const lane of [..._rows.keys()]) dropRows(lane);
+  // The effects row opens from this lane's EQ row, so it is open only while
+  // that row is.
+  setFxContext({ jobId, lanes, enabled, panelOpen: isPanelOpen });
 }
 
 // Practice and DAW: the tabs and the open panels go or come back, and the
@@ -179,8 +186,11 @@ function ensureTab(lane) {
     tab = el("button", "eq-tab");
     tab.type = "button";
     tab.dataset.eqLane = lane;
-    tab.append(el("span", "eq-tab-label", "EQ"), el("span", "eq-tab-dot"));
+    // The dot says the EQ changes the sound; the square says the lane's
+    // effects do (fx/fxRows.js marks the tab "fx-on", Advanced mode only).
+    tab.append(el("span", "eq-tab-label", "EQ"), el("span", "eq-tab-dot"), el("span", "eq-tab-fxdot"));
     tab.querySelector(".eq-tab-dot").setAttribute("aria-hidden", "true");
+    tab.querySelector(".eq-tab-fxdot").setAttribute("aria-hidden", "true");
     tab.addEventListener("click", (e) => {
       e.stopPropagation();
       setPanelOpen(lane, !isPanelOpen(lane));
@@ -284,6 +294,9 @@ function buildRows(lane, kind) {
     });
     head.append(power);
   }
+  // The effects chain's tab (fx/fxRows.js fills it, Advanced mode only): the
+  // lane's second panel, opening its row under this one.
+  head.append(el("div", "eq-fx-slot"));
   side.append(head, controls);
   mixRow.append(side);
   return { kind, waveRow, mixRow, body, controls, panel: null, loading: false };
@@ -336,6 +349,7 @@ export function syncEqRows() {
   if (!_enabled) {
     for (const lane of [..._rows.keys()]) dropRows(lane);
     dropTabs(null);
+    syncFxRows();
     return;
   }
   dropTabs(_lanes);
@@ -361,6 +375,8 @@ export function syncEqRows() {
     mountPanel(lane);
   }
   syncEqRowOrder();
+  // After the EQ rows, so an effects row goes right after its lane's EQ row.
+  syncFxRows();
 }
 
 /** A mounted panel's own measurements (tests read the spectrum's cost). */
@@ -378,6 +394,7 @@ export function syncEqRowOrder() {
     r.waveRow.style.order = Number.isFinite(wo) ? String(eqRowOrder(wo)) : "";
     r.mixRow.style.order = Number.isFinite(mo) ? String(eqRowOrder(mo)) : "";
   }
+  syncFxRowOrder();
 }
 
 /** The visible width of the waveform area, for panels that span it at any zoom. */

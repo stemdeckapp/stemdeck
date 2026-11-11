@@ -8,6 +8,19 @@
 // already translates, and its text comes from the help.* keys in i18n.js.
 
 import { t } from "./i18n.js";
+import { PEDALS } from "./fx/pedalSpecs.js";
+
+/** The Guide rows of the effects pedals' controls (fx/fxRows.js draws them). */
+function pedalHelpEntries() {
+  const rows = [];
+  for (const spec of Object.values(PEDALS)) {
+    for (const c of spec.controls) {
+      const cls = c.kind === "select" ? "fx-select" : "fx-knob";
+      rows.push([`.fx-pedal[data-type="${spec.type}"] .${cls}[data-ctl="${c.id}"]`, c.help, null, c.name]);
+    }
+  }
+  return rows;
+}
 
 /** Lane controls name their instrument in the text ("Silences the Drums"). */
 const laneName = (el) => el.closest(".mx-row, .lane-header")?.querySelector(".mx-name")?.textContent.trim() || "";
@@ -227,6 +240,60 @@ const HELP = [
   [".master-readout", "help.masterReadout", null, "master.helpReadoutTitle"],
   [".master-excerpt", "help.masterExcerpt", null, "master.excerpt"],
   [".master-meters", "help.masterMeters", null, "master.meters"],
+  // A live input's effects in the recording panel (capture/liveFxUi.js):
+  // the lanes' strip, so these come before its entries and say what
+  // differs for an input. Cards, their on and off, and the pedals' knobs
+  // read the same on both.
+  ["#recLiveFx .rec-live-head", "help.liveFx", null, "rec.liveFx.title"],
+  ["#recLiveFxTrack", "help.liveFxTrack", null, "rec.liveFx.track"],
+  ["#recLiveFx .fx-power", "help.liveFxPower"],
+  ["#recLiveFx .fx-inst", "help.liveFxInstrument", null, "fx.inst.label"],
+  ["#recLiveFx .fx-trim", "help.liveFxTrim", null, "fx.trim"],
+  ["#recLiveFx .fx-meter", "help.liveFxMeter", null, "fx.meter"],
+  ["#recLiveFx .fx-clip", "help.liveFxClip", null, "rec.liveFx.clip"],
+  ["#recLiveFx .rec-live-low", "help.liveFxLow", null, "rec.liveFx.low"],
+  ["#recLiveFxLatency", "help.liveFxLatency"],
+  ["#recLiveFx .fx-add", "help.liveFxAdd", null, "fx.add"],
+  ["#recLiveFx .fx-preset", "help.liveFxPreset", null, "fx.preset.label"],
+  // Performance's two tabs over the timeline card (streamer/streamerTabs.js).
+  ["#streamerTab-timeline", "help.smTabTimeline", null, "streamer.tabs.timeline"],
+  ["#streamerTab-effects", "help.smTabEffects", null, "streamer.tabs.effects"],
+  // Performance's Hear myself and live effects, its Effects tab
+  // (streamer/streamerFx.js): the strip runs left to right as on a lane.
+  // What reads the same as the recording panel's uses the same sentence.
+  ["#streamerHear", "help.smMonitor", null, "rec.monitor"],
+  ["#streamerFxTitle", "help.smFx", null, "rec.liveFx.title"],
+  ["#streamerFx .fx-power", "help.liveFxPower"],
+  ["#streamerFx .fx-inst-wrap, #streamerFx .fx-inst", "help.smFxInstrument", null, "fx.inst.label"],
+  ["#streamerFx .fx-trim", "help.liveFxTrim", null, "fx.trim"],
+  ["#streamerFx .fx-meter", "help.liveFxMeter", null, "fx.meter"],
+  ["#streamerFx .fx-clip", "help.liveFxClip", null, "rec.liveFx.clip"],
+  ["#streamerFx .sm-fx-low", "help.liveFxLow", null, "rec.liveFx.low"],
+  ["#streamerFxLatency", "help.liveFxLatency"],
+  ["#streamerFx .fx-add", "help.liveFxAdd", null, "fx.add"],
+  ["#streamerFx .fx-preset", "help.liveFxPreset", null, "fx.preset.label"],
+  ["#streamerFx .fx-card-power", "help.fxCardPower"],
+  ["#streamerFx .fx-card-remove", "help.fxCardRemove"],
+  ["#streamerFx .fx-card", "help.fxCard"],
+  // The take lane's Effects switch, beside its mute.
+  ["#streamer .sm-tl-fx", "help.smTakeFx", null, "streamer.lane.takeFx"],
+  // The effects chain (fx/fxRows.js, Advanced mode). Its tab and power
+  // button reuse the EQ's classes, so these come before the EQ entries.
+  [".fx-tab", "help.fxTab"],
+  [".fx-power", "help.fxPower"],
+  [".fx-inst", "help.fxInstrument", null, "fx.inst.label"],
+  [".fx-trim", "help.fxTrim", null, "fx.trim"],
+  [".fx-meter", "help.fxMeter", null, "fx.meter"],
+  [".fx-add-item", "help.fxAddItem"],
+  [".fx-add", "help.fxAdd", null, "fx.add"],
+  [".fx-card-power", "help.fxCardPower"],
+  [".fx-card-remove", "help.fxCardRemove"],
+  [".fx-card", "help.fxCard"],
+  [".fx-preset", "help.fxPreset", null, "fx.preset.label"],
+  // Every pedal's selects and knobs, from the pedal specs themselves, so a
+  // control cannot exist without its Guide sentence (each spec control names
+  // its help.* key; the knob or select carries its pedal's type).
+  ...pedalHelpEntries(),
   // EQ tab and panels. Inside .waves-column and the mixer rows, so before them.
   [".eq-tab", "help.eqTab"],
   [".eq-power", "help.eqPower"],

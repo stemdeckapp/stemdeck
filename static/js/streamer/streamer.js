@@ -33,7 +33,7 @@ import { isKaraokeOpen, closeKaraoke } from "../karaoke/karaoke.js";
 import {
   ASPECTS, defaultScene, withAspect, fitAspect, peakBars, clockTenths, clockHours,
   emptyHistory, pushHistory, undoHistory, redoHistory,
-  trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery,
+  trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, playheadLabelLeft,
 } from "./streamerModel.js";
 import { getBeats, getBeatGridSnap } from "../beatgrid.js";
 import { getTracks, selectTake, twoPress, requestTakesReload } from "../capture/takeLanes.js";
@@ -71,6 +71,11 @@ import { shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep,
 import { renderStage } from "./stageRenderer.js";
 import { reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio } from "./reviewModel.js";
 import { takeLaneRows, showsTakeLanes, chooseAction, followTake, scrollTarget, takeLanesSig } from "./takeListModel.js";
+import {
+  buildStreamerFx, initStreamerFx, paintStreamerFx, streamerFxOpened, streamerFxClosed, streamerFxSettingsChanged,
+  liveTakeFx, syncTakeChain, takeFxState, toggleTakeFx, takePrintItem, setStreamerFxShown,
+} from "./streamerFx.js";
+import { buildTabs, readTab, writeTab, viewCentre } from "./streamerTabs.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
@@ -259,6 +264,7 @@ function buildView() {
 
   root.append(center, scrim, side.aside, noTrack);
   ui = { center, head, builder, side, noTrack };
+  setStreamerFxShown(builder.timeline.tabs.current() === "effects");
   ui.canvas = builder.canvas;
   ui.ctx = builder.canvas.getContext("2d");
   const cs = getComputedStyle(document.documentElement);
@@ -374,8 +380,9 @@ function buildBuilder() {
   clock.append(clockNow, clockDur);
   strip.append(stripTitle, hist, clock);
   const rv = buildReview();
-  // The two windows side by side (or one, in a narrow workspace: the
-  // review takes the live window's place while a take plays).
+  // The two windows: side by side, or stacked when too narrow for two
+  // across (reviewModel.reviewTier). Only below the hard minimum is there
+  // one, the review taking the live window's place while a take plays.
   const screens = el("div", "sm-screens");
   screens.append(preview, rv.box, rv.switchBox);
   col.append(screens, strip);
@@ -490,7 +497,22 @@ function buildTimeline() {
     e.stopPropagation();
     toggleTakeMute();
   });
-  lanes[1].label.append(takeMute);
+  // The take's effects on or off (streamerFx.js): shown when the take that
+  // plays was heard through a chain. It plays and exports through it.
+  const takeFx = button("sm-tl-fx");
+  tx(takeFx, "fx.tab");
+  takeFx.setAttribute("aria-label", t("streamer.lane.takeFx"));
+  takeFx.title = t("streamer.lane.takeFx");
+  texts.push([takeFx, "streamer.lane.takeFx", "label"]);
+  takeFx.setAttribute("aria-pressed", "false");
+  takeFx.hidden = true;
+  takeFx.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (takesLocked()) return;
+    toggleTakeFx(performanceTrack()?.active?.id || null);
+    painted.takeFx = null;
+  });
+  lanes[1].label.append(takeFx, takeMute);
   // "I play": the part left out of the backing track (top left of the card).
   const partBox = el("div", "sm-part");
   const partSel = selectBox("sm-part-select");
@@ -516,12 +538,11 @@ function buildTimeline() {
   const videoNote = el("p", "sm-tl-video-note");
   videoNote.hidden = true;
   video.append(takeBlock, videoNote);
-  // A song without stems, and one without sections, say so in their rows.
+  // A song without stems says so in its row. One without sections leaves
+  // the sections' row empty: the playhead's time label runs along it.
   const noStems = tx(el("p", "sm-tl-note sm-tl-no-stems"), "streamer.noStems");
   noStems.hidden = true;
   audio.append(noStems);
-  const noSections = tx(el("p", "sm-tl-note sm-tl-no-sections"), "streamer.noSections");
-  noSections.hidden = true;
   // The kept range: a yellow box with an in and an out handle; what is
   // trimmed off is dimmed.
   const range = el("div", "sm-tl-range");
@@ -558,7 +579,7 @@ function buildTimeline() {
   takeRows.hidden = true;
   takeRows.setAttribute("aria-hidden", "true");
 
-  grid.append(mask, markers, noSections, ruler, videoLabel, video, audioLabels, audio, takeLabels, takeRows, dims, overlay, tip);
+  grid.append(mask, markers, ruler, videoLabel, video, audioLabels, audio, takeLabels, takeRows, dims, overlay, tip);
   scroll.append(grid);
   scroll.addEventListener("scroll", () => { painted.lanes = null; });
   // A plain wheel scrolls the zoomed song sideways, except over the take
@@ -569,12 +590,38 @@ function buildTimeline() {
     e.preventDefault();
     scroll.scrollLeft += e.deltaY;
   }, { passive: false });
-  card.append(partBox, zoomBox, scroll);
+  // Two tabs over the card (streamerTabs.js): Timeline, everything above,
+  // and Effects, Hear myself and the live effects (streamerFx.js). A hidden
+  // panel keeps its controls and the frame keeps painting it: the timeline
+  // follows a take that records while Effects shows.
+  const tlPanel = el("div", "sm-tl-panel");
+  tlPanel.id = "streamerTimelinePanel";
+  tlPanel.append(partBox, zoomBox, scroll);
+  const fxPanel = el("div", "sm-fxp");
+  fxPanel.id = "streamerEffectsPanel";
+  const liveFx = buildStreamerFx({ makeSwitch, tx });
+  fxPanel.append(liveFx.monitor, liveFx.effects);
+  const tabs = buildTabs({
+    tx,
+    panels: { timeline: tlPanel, effects: fxPanel },
+    labels: { timeline: "streamer.tabs.timeline", effects: "streamer.tabs.effects" },
+    initial: readTab(storage()),
+    onLeave: (tab) => tabLeft(tab),
+    onChange: (tab) => tabChanged(tab),
+  });
+  tabs.tabs.effects.append(liveFx.badge);
+  // "I play" starts right of the tabs, however long their words are.
+  const tabsObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => card.style.setProperty("--sm-tabs-w", `${Math.ceil(tabs.list.offsetWidth)}px`))
+    : null;
+  tabsObserver?.observe(tabs.list);
+  card.append(tabs.list, tlPanel, fxPanel);
   return {
+    tabs, tlPanel, fxPanel,
     partSel: partSel.sel,
-    takeHint, takeBlock, film, videoNote, takeMute, takeLabels, takeRows, takeRowEls: [],
+    takeHint, takeBlock, film, videoNote, takeMute, takeFx, takeLabels, takeRows, takeRowEls: [],
     card, zoomBox, zTrack, zFill, zThumb, zOut, zIn, scroll, grid, mask, markers, ruler, video, audio, lanes,
-    range, trimIn, trimOut, dimL, dimR, tip, head, headTime, noStems, noSections,
+    range, trimIn, trimOut, dimL, dimR, tip, head, headTime, noStems,
   };
 }
 
@@ -638,6 +685,7 @@ function buildSide() {
   // The studio's own input settings (Settings, Recording tab).
   inSet.addEventListener("click", () => openRecordingSettings());
   meterRow.append(meter, level, inSet);
+  // Hear myself and the live effects are in the Effects tab (buildTimeline).
   const grid = el("div", "sm-out-grid");
   const res = selectBox();
   for (const [v, k] of [["1080", "streamer.res1080"], ["720", "streamer.res720"]]) option(res.sel, v, k);
@@ -848,6 +896,7 @@ export function openStreamer() {
   for (const k of Object.keys(painted)) delete painted[k];
   shownJob = undefined;
   startDevices().catch((err) => console.warn("[streamer] reading the devices failed:", err));
+  streamerFxOpened();
   loop();
   notify();
   // Focus goes into the view, and back to what opened it on close.
@@ -884,7 +933,9 @@ export function closeStreamer() {
   window.removeEventListener("keydown", onKey, true);
   cancelAnimationFrame(raf);
   raf = 0;
-  // The camera light goes off, the input closes.
+  // Hear myself goes off (never back on by itself), then the camera light
+  // goes off and the input closes.
+  streamerFxClosed();
   stopDevices();
   flushScene(sceneJob);
   notify();
@@ -920,6 +971,7 @@ export function reviewState() {
     view: review.view,
     tier: review.tier,
     win: review.win,
+    scroll: review.scroll,
     shows: ui?.builder.screens.dataset.shows || null,
     src: review.src,
     hasVideo: Boolean(v),
@@ -986,6 +1038,9 @@ const windowsObserver = typeof ResizeObserver === "function" ? new ResizeObserve
 
 function observeLayout() {
   if (ui?.builder.panel) windowsObserver?.observe(ui.builder.panel);
+  // In the narrow band the builder is as tall as its content: a taller or
+  // shorter window changes the column's height, not the builder's.
+  if (ui?.center) windowsObserver?.observe(ui.center);
   if (!layerObserver) return;
   const lanes = document.getElementById("lanes");
   if (lanes) layerObserver.observe(lanes);
@@ -1058,7 +1113,10 @@ function frame() {
   paintTransport(hasTrack);
   paintDevices();
   paintMeter();
+  paintStreamerFx();
   syncTakeHold(job);
+  // The Performance track's lane plays the chain of the take that plays.
+  syncTakeChain({ job, trackId: performanceTrack()?.id, takeId: performanceTrack()?.active?.id, locked: takeOpen() });
   reviewTake(job);
   takeTick(tNow);
   feedLive(tNow);
@@ -1068,6 +1126,7 @@ function frame() {
   if (ui.builder.screens.dataset.shows !== "take") paintPreview();
   paintClock(tNow);
   paintTimeline(tNow);
+  paintTakeFx();
   paintPart();
 }
 
@@ -1188,7 +1247,7 @@ function paintPreview() {
 // already in the mix. Its <video> is built on first use and let go when the
 // view closes.
 
-const review = { video: null, src: "", engaged: false, pick: null, tier: "c", win: 0, view: "none", wasPlaying: false };
+const review = { video: null, src: "", engaged: false, pick: null, tier: "c", win: 0, scroll: false, view: "none", wasPlaying: false };
 
 function reviewVideo() {
   if (!review.video) {
@@ -1236,34 +1295,52 @@ function seekTo(sec) {
   painted.review = null;
 }
 
-/** Which windows show, from the Scene Builder's size (reviewModel.reviewTier). */
+/** Where the windows go, from the Scene Builder's size (reviewModel.reviewTier):
+ * side by side, stacked, or one below the hard minimum. Called by the
+ * builder's ResizeObserver; the canvases are sized from their boxes on every
+ * paint (painted.* is reset here so they redraw at the new size). */
 function placeWindows() {
   if (!ui || !open) return;
-  const { panel, row, screens } = ui.builder;
+  const { panel, row, screens, timeline } = ui.builder;
   if (!panel.clientWidth || !panel.clientHeight) return;
   const cs = getComputedStyle(panel);
   const px = (name, fallback) => {
     const v = parseFloat(cs.getPropertyValue(name));
     return Number.isFinite(v) ? v : fallback;
   };
+  // The narrow workspace (streamer.css, under 680 px): the column scrolls and
+  // the builder is as tall as its content, so the height that counts is what
+  // the column has under the mode header, and the timeline card's least is
+  // its own (the tabs take a row of their own there).
   const stacked = getComputedStyle(row).flexDirection === "column";
-  const { tier, win } = reviewTier({
+  let height = panel.clientHeight;
+  let tlMin = px("--sm-tl-min", 217);
+  if (stacked) {
+    const center = ui.center;
+    const ccs = getComputedStyle(center);
+    height = center.clientHeight - (parseFloat(ccs.paddingTop) || 0) - (parseFloat(ccs.paddingBottom) || 0)
+      - ui.head.card.offsetHeight - (parseFloat(ccs.rowGap) || 0);
+    tlMin = parseFloat(getComputedStyle(timeline.card).minHeight) || timeline.card.offsetHeight || tlMin;
+  }
+  const { tier, win, scroll } = reviewTier({
     width: panel.clientWidth,
-    height: panel.clientHeight,
+    height,
     pairGap: parseFloat(getComputedStyle(screens).columnGap) || 12,
     colGap: px("--sm-col-gap", 12),
     stripH: px("--sm-strip-h", 40),
     gap: px("--sm-gap", 8),
-    tlMin: px("--sm-tl-min", 217),
+    tlMin,
     stacked,
   });
-  if (review.tier === tier && review.win === win) return;
+  if (review.tier === tier && review.win === win && review.scroll === scroll) return;
   review.tier = tier;
   review.win = win;
+  review.scroll = scroll;
   screens.dataset.tier = tier;
   panel.dataset.tier = tier;
-  // The narrow band's own CSS sizes the column.
-  if (stacked) panel.style.removeProperty("--sm-win-w");
+  // Stacked past the hard minimum in the narrow band: the stylesheet's width,
+  // and the column scrolls.
+  if (scroll) panel.style.removeProperty("--sm-win-w");
   else panel.style.setProperty("--sm-win-w", `${win}px`);
   painted.review = null;
   painted.scene = null;
@@ -1413,6 +1490,8 @@ async function loadSettings() {
     settings = defaultRecordingSettings();
   }
   painted.devices = null;
+  // The input's live chain is in these settings.
+  streamerFxSettingsChanged();
 }
 
 function setSetting(patch) {
@@ -1750,6 +1829,9 @@ async function toggleRecording() {
     range: trimRange(scene, totalDuration),
     trackName: t("streamer.trackName"),
     draw: drawTakeFrame,
+    // The live chain as the take begins: the take records the clean input
+    // and plays back and exports through this copy.
+    fx: liveTakeFx(inputState().live),
   });
   if (!res.ok) flashNote(t(blockKey(res.reason)), badge);
   else if (!inputState().live) flashNote(t("streamer.rec.noMic"), badge);
@@ -1873,6 +1955,8 @@ async function runExport() {
       jobId: job,
       takeId,
       body,
+      // The take through the live effects it was heard with (or none).
+      print: takePrintItem(job, takeId),
       filename: exportFileName(meta.title, meta.artist),
       signal: abort.signal,
       onProgress: (f) => {
@@ -2171,6 +2255,42 @@ function timelineScale() {
   return { dur, view, pps: dur ? pixelsPerSecond(dur, view, zoom) : 0 };
 }
 
+// ── Tabs (streamerTabs.js) ──
+
+// Where the zoomed timeline's view was centred (seconds) when the Effects
+// tab took its place: a hidden panel has no width, and its scroll goes.
+let tlCentre = null;
+
+function storage() {
+  try { return window.localStorage; } catch (err) {
+    console.warn("[streamer] the browser's storage is not available:", err);
+    return null;
+  }
+}
+
+/** The Timeline tab is about to hide: its view's centre, measured while it shows. */
+function tabLeft(tab) {
+  if (tab !== "timeline" || !ui) return;
+  const { view, pps } = timelineScale();
+  tlCentre = viewCentre(ui.builder.timeline.scroll.scrollLeft, view, pps);
+}
+
+/**
+ * A tab shows: it is kept for this browser. The Timeline back again is
+ * measured and painted again whole (its width was nothing while hidden),
+ * centred where it was. The strip draws only while Effects shows; the
+ * monitor and its chain do not change.
+ */
+function tabChanged(tab) {
+  writeTab(storage(), tab);
+  if (tab === "timeline") {
+    for (const k of Object.keys(painted)) delete painted[k];
+    if (zoom > 0 && tlCentre !== null) zoomAnchor = tlCentre;
+    tlCentre = null;
+  }
+  setStreamerFxShown(tab === "effects");
+}
+
 function setZoom(z) {
   const next = Math.round(Math.max(0, Math.min(1, z)) * 100) / 100;
   if (next === zoom) return;
@@ -2322,6 +2442,9 @@ function wireTrimHandle(handle, which) {
   });
 }
 
+/** The playhead's time label's width (.sm-tl-playhead-time in streamer.css). */
+const HEAD_LABEL_W = 68;
+
 function paintTimeline(tNow) {
   const tl = ui.builder.timeline;
   const { dur, view, pps } = timelineScale();
@@ -2354,10 +2477,10 @@ function paintTimeline(tNow) {
     if (headX < left || headX > left + view - 24) tl.scroll.scrollLeft = Math.max(0, headX - 40);
   }
   tl.head.style.left = `${headX}px`;
-  // The time label stays whole at the song's two ends.
-  let labelLeft = Math.max(-34, -headX);
-  if (headX + labelLeft + 68 > contentW) labelLeft = contentW - headX - 68;
-  tl.headTime.style.left = `${labelLeft}px`;
+  // The time label (in the row over the ruler, streamer.css) stays whole at
+  // the song's two ends and in the part in view, out from under the labels.
+  const seen = tl.scroll.scrollLeft;
+  tl.headTime.style.left = `${playheadLabelLeft(headX, HEAD_LABEL_W, contentW, seen, seen + view)}px`;
   const ruler = tl.ruler;
   const tInt = String(Math.floor(tNow));
   if (painted.rulerNow !== tInt) {
@@ -2407,7 +2530,6 @@ function paintTimeline(tNow) {
       return [b, stem];
     }));
     for (const b of tl.markers.querySelectorAll(".sm-marker")) tl.edges.push({ el: b, left: parseFloat(b.style.left) - 7 });
-    tl.noSections.hidden = !dur || sections.length > 0;
     painted.tlEdges = null;
   }
   // A ruler label or section marker that would sit partly under the label
@@ -2483,6 +2605,21 @@ function paintTakeMute() {
   btn.disabled = takeOpen();
   btn.classList.toggle("off", muted);
   btn.setAttribute("aria-pressed", String(muted));
+}
+
+/** The take lane's Effects switch: the take that plays, its chain on or off. */
+function paintTakeFx() {
+  const btn = ui.builder.timeline.takeFx;
+  const track = performanceTrack();
+  const take = track?.active?.id || null;
+  const st = takeLane().state === "saved" && take ? takeFxState(take) : { show: false, on: false };
+  const sig = `${st.show}|${st.on}|${takesLocked()}|${take}`;
+  if (painted.takeFx === sig) return;
+  painted.takeFx = sig;
+  btn.hidden = !st.show;
+  btn.disabled = takesLocked();
+  btn.classList.toggle("on", st.on);
+  btn.setAttribute("aria-pressed", String(st.on));
 }
 
 /** The song's Performance track as the studio loaded it (takeLanes.getTracks:
@@ -2649,7 +2786,7 @@ function scrollTakeRowIntoView(takeId) {
 /** The take lane's take changed: it, its mute, the video lane, the review
  * and the export follow. */
 function takeChanged() {
-  for (const k of ["exp", "takeMute", "takeBlock", "lanes", "review", "reviewView"]) painted[k] = null;
+  for (const k of ["exp", "takeMute", "takeFx", "takeBlock", "lanes", "review", "reviewView"]) painted[k] = null;
 }
 
 /** Make `takeId` the take that plays (the take folder's own call), and the
@@ -2836,11 +2973,17 @@ function onKey(e) {
   // Delete and Backspace never reach the studio's "trash the open song"
   // (catalog.js) while Streamer is open, wherever focus is (the rail, the
   // library, a dialog), except where they edit text.
-  if ((e.key === "Delete" || e.key === "Backspace") && !typing) {
+  // An effect card in the live effects strip is the exception: its Delete
+  // removes the effect (fx/chainStrip.js, which stops the key there).
+  const onCard = e.target instanceof Element && !!e.target.closest("#streamerFx .fx-card");
+  if ((e.key === "Delete" || e.key === "Backspace") && !typing && !onCard) {
     e.preventDefault();
     e.stopPropagation();
     return;
   }
+  // The add menu of the live effects closes itself on Escape (and keeps
+  // the Output drawer open around it).
+  if (e.target instanceof Element && e.target.closest(".fx-add-menu")) return;
   if (e.target instanceof Element && e.target.closest("[role=dialog], .settings-overlay, .mode-menu")) return;
   const ours = streamerHasFocus(e);
 
@@ -2888,6 +3031,15 @@ export function initStreamer() {
     if (e.detail?.open && open) closeStreamer();
   });
   window.addEventListener("pagehide", () => { flushScene(sceneJob); });
+  // Performance's live effects: its input's channels and kind, the chain kept
+  // in the recording settings, and the track whose lane plays its takes'.
+  initStreamerFx({
+    channels: () => recordingInput()?.channels || null,
+    kind: () => recordingInput()?.kind || null,
+    read: () => settings.inputFx || null,
+    write: (rec) => setSetting({ inputFx: rec }),
+    trackId: () => (currentJobId ? streamerTrackId(currentJobId) : null),
+  });
   loadSettings();
   onRecordChange((state) => {
     painted.rec = null;

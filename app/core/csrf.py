@@ -41,9 +41,9 @@ Three checks, each cheap and each about one of those holes:
      off, on top of the names above. That is the opt-in for a proxied or Docker
      install that wants the rebinding protection too. "*" disables the check.
 
-3. A body sent to /api with a Content-Type must be JSON, except on the two
-   routes that take something else (the multipart file import and the raw
-   take-part upload). This is the belt to check 1's braces: text/plain and form
+3. A body sent to /api with a Content-Type must be JSON, except on the three
+   routes that take something else (the multipart file import, the raw
+   take-part upload and the raw effects-print part upload). This is the belt to check 1's braces: text/plain and form
    bodies are exactly what a no-cors page can send, and no StemDeck route reads
    one. A body with no Content-Type is let through; see _content_type_ok.
 
@@ -80,6 +80,8 @@ _RAW_BODY_ROUTES: tuple[tuple[str, re.Pattern[str], str | None], ...] = (
     ("POST", re.compile(r"^/api/jobs/?$"), "multipart/form-data"),
     # A recorded take arrives as raw float32 or video bytes, any type.
     ("PUT", re.compile(r"^/api/jobs/[^/]+/takes/[^/]+/parts/[^/]+$"), None),
+    # An effects chain print arrives as raw WAV bytes (app/core/fx_prints.py).
+    ("PUT", re.compile(r"^/api/jobs/[^/]+/fx-prints/[^/]+/parts$"), "application/octet-stream"),
 )
 
 # Kept generic on purpose: the reason is for the log, not for the caller.

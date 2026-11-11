@@ -21,12 +21,17 @@ from typing import NamedTuple
 import soundfile as sf
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+from app.core import fx_prints
 from app.core.config import (
     CACHE_DIR,
     CLICK_STEM_NAME,
     EXTRA_STEM_NAMES,
+    FX_PRINT_CHAIN_MAX_CHARS,
+    FX_PRINT_MAX_SEQ,
+    FX_PRINT_PART_MAX_BYTES,
     JOB_ID_RE,
     JOBS_DIR,
     STEM_NAMES,
@@ -153,6 +158,9 @@ MIXDOWN_MEDIA_TYPES = {
 # grow unboundedly on a long-running server.
 _MIXDOWN_CACHE_DIR = CACHE_DIR / "mixdown"
 _CLICK_CACHE_DIR = CACHE_DIR / "click"
+# Effects chain prints (app/core/fx_prints.py): derived audio, so the cache
+# folder, never the jobs folder.
+_FX_PRINT_DIR = CACHE_DIR / "fx-print"
 
 # The stems zip's click entry (#805) shares the zip's namespace with the stems
 # and the takes. Takes are named "<label>_<take id>" or "<take id>", never a bare
@@ -241,6 +249,7 @@ def _mixdown_cache_key(
     fx_fragment: str = "",
     master_fragment: str = "",
     lanes_fragment: str = "",
+    prints_fragment: str = "",
 ) -> str:
     """Every render input is in the key, so a different mixer state, region,
     or a Settings change (export sample rate) misses cleanly -- never a stale
@@ -250,7 +259,8 @@ def _mixdown_cache_key(
     ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry.
 
     `lanes_fragment` (the mode's lanes, which decide what Original holds) is
-    appended only when given, so every key made before lanes= is unchanged."""
+    appended only when given, so every key made before lanes= is unchanged.
+    `prints_fragment` (the effects prints that replaced lanes) likewise."""
     parts = [
         _RENDER_CACHE_VERSION,
         job_id,
@@ -281,6 +291,8 @@ def _mixdown_cache_key(
     ]
     if lanes_fragment:
         parts.append(lanes_fragment)
+    if prints_fragment:
+        parts.append(prints_fragment)
     raw = "|".join(parts)
     # Cache key, not a security context -- usedforsecurity=False documents
     # that for both readers and static analysis (bandit flags bare sha1()).
@@ -787,6 +799,205 @@ def build_render_fx(
     if master or any(prefixes):
         fragment = "fx:" + "|".join(prefixes) + "#" + master
     return RenderFx(prefixes, master, fragment)
+
+
+# ── Effects chain prints (Advanced mode) ──
+#
+# The browser renders a lane through its effects chain (static/js/fx/fxPrint.js)
+# and uploads it here in parts; an export that names it in prints= uses it in
+# place of the lane's file. EQ, key, gain, master and limiter then run on it
+# exactly as on a stem. Storage and checks: app/core/fx_prints.py.
+
+# Up to 16 lanes of "name:<40 hex>" and their commas.
+FX_PRINTS_PARAM_MAX_CHARS = 1536
+FX_PRINTS_QUERY_DESCRIPTION = (
+    "Effects chain prints replacing lanes, comma-separated lane:id pairs from "
+    "POST /api/jobs/{id}/fx-prints. Empty means none."
+)
+
+
+def _fx_print_source(job_id: str, lane: str) -> fx_prints.Source:
+    """The file a printable lane plays, validated: a single stem or a
+    recording track's active take. Original is refused: it can be several
+    stems summed, and a chain on each part is not a chain on the sum."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    if _is_recorded_lane(lane):
+        path = _take_lane_path(job_id, lane)
+        label = f"take:{_lane_take_id(job_id, lane)}"
+    elif lane in _MIXDOWN_NAMES and lane != "original":
+        path = _validate_stem_path(job_id, lane)
+        label = f"stem:{lane}:{path.name}"
+    else:
+        raise HTTPException(status_code=422, detail="this lane cannot carry effects")
+    try:
+        return fx_prints.source_info(path, label)
+    except Exception:
+        logger.exception("could not read the source of an fx print [job=%s lane=%s]", job_id, lane)
+        raise HTTPException(status_code=500, detail="could not read the lane") from None
+
+
+def _print_error(exc: fx_prints.PrintError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.message)
+
+
+def parse_prints_param(prints: str) -> dict[str, str]:
+    """The prints= value: {lane: print id}. Malformed, repeated or unknown
+    names are refused, never ignored: an ignored print exports the raw stem."""
+    if not isinstance(prints, str) or not prints:
+        return {}
+    out: dict[str, str] = {}
+    for item in prints.split(","):
+        lane, sep, pid = item.partition(":")
+        if (
+            not sep
+            or lane in out
+            or not fx_prints.PRINT_ID_RE.match(pid)
+            or not (lane in _MIXDOWN_NAMES or _is_recorded_lane(lane))
+            or lane == "original"
+        ):
+            raise HTTPException(status_code=422, detail="prints: malformed or repeated lane")
+        out[lane] = pid
+    if len(out) > 16:
+        raise HTTPException(status_code=422, detail="prints: too many lanes")
+    return out
+
+
+def resolve_lane_print(job_id: str, lane: str, pid: str) -> tuple[Path, float]:
+    """The finished print `pid` of `lane` (a stem, a track or a take id),
+    checked against that lane's file as it is now: (path in the print cache,
+    gain). A malformed id is a 422, a print that is missing or made from
+    another version of the file a 409, a lane that cannot carry one a 422."""
+    if not isinstance(pid, str) or not fx_prints.PRINT_ID_RE.match(pid):
+        raise HTTPException(status_code=422, detail="prints: malformed id")
+    source = _fx_print_source(job_id, lane)
+    try:
+        return fx_prints.resolve(_FX_PRINT_DIR, job_id, lane, pid, source)
+    except fx_prints.PrintError as exc:
+        raise _print_error(exc) from None
+
+
+def _apply_prints(
+    job_id: str, render_lanes: list[_RenderLane], prints: dict[str, str]
+) -> tuple[list[_RenderLane], str]:
+    """Each printed lane's file swapped for its print, its gain times the
+    print's gain. Returns the lanes and the cache key fragment ("" when no
+    print). Every print must name a lane of the mix."""
+    if not prints:
+        return render_lanes, ""
+    names = {lane.name for lane in render_lanes}
+    if any(lane not in names for lane in prints):
+        raise HTTPException(status_code=422, detail="prints: a lane is not in the mix")
+    out: list[_RenderLane] = []
+    for lane in render_lanes:
+        pid = prints.get(lane.name)
+        if pid is None:
+            out.append(lane)
+            continue
+        path, gain = resolve_lane_print(job_id, lane.name, pid)
+        out.append(lane._replace(path=path, gain=lane.gain * gain))
+    fragment = "fxp:" + ",".join(f"{k}={v}" for k, v in sorted(prints.items()))
+    return out, fragment
+
+
+class FxPrintBody(BaseModel):
+    lane: str = Field(..., min_length=1, max_length=32)
+    chain: str = Field(..., min_length=2, max_length=FX_PRINT_CHAIN_MAX_CHARS)
+
+
+class FxPrintFinishBody(BaseModel):
+    lane: str = Field(..., min_length=1, max_length=32)
+    # Non-finite values are refused by fx_prints.finish with a plain 422.
+    # Not with allow_inf_nan=False: pydantic's refusal echoes the input, and
+    # a JSON response cannot carry Infinity, so the 422 itself failed (500).
+    gain: float
+
+
+def _job_done_or_404(job_id: str) -> None:
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        raise HTTPException(status_code=404, detail="job not ready")
+
+
+@router.post("/jobs/{job_id}/fx-prints")
+async def begin_fx_print(job_id: str, body: FxPrintBody) -> dict:
+    """Start the upload of a lane's effects print, or answer that it exists.
+    Returns the print's id, whether it is done, and the format to render it
+    in: the lane file's own rate and length, stereo."""
+    _job_done_or_404(job_id)
+    source = await asyncio.to_thread(_fx_print_source, job_id, body.lane)
+    try:
+        return await asyncio.to_thread(
+            fx_prints.begin, _FX_PRINT_DIR, job_id, body.lane, source, body.chain
+        )
+    except fx_prints.PrintError as exc:
+        raise _print_error(exc) from None
+    except OSError:
+        logger.exception("could not start an fx print [job=%s]", job_id)
+        raise HTTPException(status_code=500, detail="could not store the print") from None
+
+
+async def _read_print_part(request: Request) -> bytes:
+    """The raw body, refused past FX_PRINT_PART_MAX_BYTES while it streams
+    in (the declared length can be absent or wrong)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > FX_PRINT_PART_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="part too large")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > FX_PRINT_PART_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="part too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.put("/jobs/{job_id}/fx-prints/{print_id}/parts")
+async def put_fx_print_part(
+    job_id: str,
+    print_id: str,
+    request: Request,
+    seq: int = Query(..., ge=0, le=FX_PRINT_MAX_SEQ),
+) -> dict:
+    """Append one part of a print's WAV file, in order."""
+    _job_done_or_404(job_id)
+    if not fx_prints.PRINT_ID_RE.match(print_id):
+        raise HTTPException(status_code=404, detail="no upload in progress")
+    data = await _read_print_part(request)
+    if not data:
+        raise HTTPException(status_code=422, detail="empty part")
+    try:
+        return await asyncio.to_thread(
+            fx_prints.append_part, _FX_PRINT_DIR, job_id, print_id, seq, data
+        )
+    except fx_prints.PrintError as exc:
+        raise _print_error(exc) from None
+    except OSError:
+        logger.exception("could not store an fx print part [job=%s]", job_id)
+        raise HTTPException(status_code=500, detail="could not store the print") from None
+
+
+@router.post("/jobs/{job_id}/fx-prints/{print_id}/finish")
+async def finish_fx_print(job_id: str, print_id: str, body: FxPrintFinishBody) -> dict:
+    """Check the uploaded print (a 24-bit stereo WAV at the lane's rate, as
+    long as the lane plus at most the tail) and keep it with its gain."""
+    _job_done_or_404(job_id)
+    if not fx_prints.PRINT_ID_RE.match(print_id):
+        raise HTTPException(status_code=404, detail="no upload in progress")
+    source = await asyncio.to_thread(_fx_print_source, job_id, body.lane)
+    try:
+        meta = await asyncio.to_thread(
+            fx_prints.finish, _FX_PRINT_DIR, job_id, print_id, body.gain, source, body.lane
+        )
+    except fx_prints.PrintError as exc:
+        raise _print_error(exc) from None
+    except OSError:
+        logger.exception("could not finish an fx print [job=%s]", job_id)
+        raise HTTPException(status_code=500, detail="could not store the print") from None
+    return {"id": print_id, "done": True, "frames": meta["frames"]}
 
 
 def parse_master_query(master: str) -> MasterSettings | None:
@@ -1783,6 +1994,9 @@ async def get_mixdown(
     lanes: str | None = Query(
         default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
     ),
+    prints: str = Query(
+        default="", max_length=FX_PRINTS_PARAM_MAX_CHARS, description=FX_PRINTS_QUERY_DESCRIPTION
+    ),
 ) -> FileResponse | StreamingResponse:
     """Render a mixdown of the given lanes at the given gains, streamed as WAV,
     MP3, FLAC, or OGG. Mirrors the studio mixer (per-stem volume, mute, solo) so the
@@ -1806,6 +2020,7 @@ async def get_mixdown(
     fx_req = parse_fx_query(fx)
     master_settings = parse_master_query(master)
     lane_set = parse_lanes_param(lanes)
+    print_map = parse_prints_param(prints)
     check_click_sound(click_sound)
     if (start is None) != (end is None) or (start is not None and start >= end):
         raise HTTPException(
@@ -1829,6 +2044,10 @@ async def get_mixdown(
     # stale cache entry from before the job was removed.
     render_lanes, unpitched = _expand_render_lanes(
         job_id, names, parsed_gains, parsed_pitches, lanes=lane_set
+    )
+    # A lane with an effects chain plays its print (Advanced mode).
+    render_lanes, prints_fragment = await asyncio.to_thread(
+        _apply_prints, job_id, render_lanes, print_map
     )
     # Like the transpose check, for an encoder this ffmpeg lacks: libvorbis is
     # optional (#824) and the UI disables OGG without it. A stale page or a
@@ -1893,6 +2112,7 @@ async def get_mixdown(
         render_fx.fragment,
         master_fragment,
         lanes_fragment="" if lane_set is None else "l:" + ",".join(sorted(lane_set)),
+        prints_fragment=prints_fragment,
     )
     headers = {
         "Content-Disposition": (
@@ -2026,6 +2246,9 @@ async def get_mixdown_loudness(
     lanes: str | None = Query(
         default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
     ),
+    prints: str = Query(
+        default="", max_length=FX_PRINTS_PARAM_MAX_CHARS, description=FX_PRINTS_QUERY_DESCRIPTION
+    ),
 ) -> dict:
     """The measured master of this mix (the same plan the export renders):
     loudness before, after the compressor and after the master, the gain and
@@ -2045,6 +2268,7 @@ async def get_mixdown_loudness(
     if settings is None:
         raise HTTPException(status_code=422, detail="master: required")
     lane_set = parse_lanes_param(lanes)
+    print_map = parse_prints_param(prints)
     if any(parsed_pitches) and not await asyncio.to_thread(_rubberband_available):
         raise HTTPException(
             status_code=422,
@@ -2052,6 +2276,9 @@ async def get_mixdown_loudness(
         )
     render_lanes, _unpitched = _expand_render_lanes(
         job_id, names, parsed_gains, parsed_pitches, lanes=lane_set
+    )
+    render_lanes, _prints_fragment = await asyncio.to_thread(
+        _apply_prints, job_id, render_lanes, print_map
     )
     paths = [lane.path for lane in render_lanes]
     render_fx = await asyncio.to_thread(
@@ -2130,6 +2357,9 @@ async def get_video_mixdown(
     lanes: str | None = Query(
         default=None, max_length=LANES_PARAM_MAX_CHARS, description=LANES_QUERY_DESCRIPTION
     ),
+    prints: str = Query(
+        default="", max_length=FX_PRINTS_PARAM_MAX_CHARS, description=FX_PRINTS_QUERY_DESCRIPTION
+    ),
 ) -> StreamingResponse:
     """Mux a fresh audio mixdown of the current mixer state with the job's preserved
     video into an MP4 (issue #219). Mirrors get_mixdown's audio graph (encoded
@@ -2165,6 +2395,9 @@ async def get_video_mixdown(
     # and rebuilds a transposed "original" lane from its parts.
     render_lanes, _unpitched = _expand_render_lanes(
         job_id, names, parsed_gains, parsed_pitches, lanes=parse_lanes_param(lanes)
+    )
+    render_lanes, _prints_fragment = await asyncio.to_thread(
+        _apply_prints, job_id, render_lanes, parse_prints_param(prints)
     )
     paths = [lane.path for lane in render_lanes]
 

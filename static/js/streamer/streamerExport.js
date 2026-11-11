@@ -17,6 +17,7 @@ import { buildRenderRequest, isNoEncoder } from "./recordModel.js";
 import { transposeExportAvailable } from "../state.js";
 import { transposeExportBlocked } from "../transposeExport.js";
 import { t } from "../i18n.js";
+import { ensurePrint } from "../fx/fxPrint.js";
 
 const base = (jobId, takeId) => `/api/jobs/${encodeURIComponent(jobId)}/takes/${encodeURIComponent(takeId)}`;
 
@@ -54,11 +55,25 @@ export function renderRequest({ trackId, settings, aspect, range, remove = "" })
  * the raw recording), "cancelled", or "failed".
  * `onProgress(fraction)`, `onTransferStart()` as triggerDownload's.
  */
-export async function exportTake({ jobId, takeId, body, filename, onProgress, onTransferStart, signal }) {
+export async function exportTake({ jobId, takeId, body, filename, onProgress, onTransferStart, signal, print = null }) {
   // A key change this FFmpeg cannot export (no rubberband, #858): fail here,
   // with the reason, rather than send a render the server refuses.
   if (transposeExportBlocked(body?.pitches, transposeExportAvailable)) {
     throw Object.assign(new Error(t("export.transposeUnavailable")), { code: "failed" });
+  }
+  // The take heard through live effects (streamerFx.takePrintItem): the take
+  // is the clean input, so its chain is printed here first, in the browser,
+  // with the same pedals the monitor and the lane play (fx/fxPrint.js), and
+  // the server renders the print in its place. The same chain on the same
+  // take is printed once.
+  if (print) {
+    try {
+      body = { ...body, take_print: await ensurePrint(jobId, print, { signal }) };
+    } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") throw Object.assign(new Error("cancelled"), { code: "cancelled" });
+      console.warn("[streamer] printing the take's effects failed:", err);
+      throw Object.assign(new Error(t("fx.print.failed")), { code: "failed" });
+    }
   }
   const res = await fetch(`${base(jobId, takeId)}/render`, {
     method: "POST",

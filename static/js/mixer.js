@@ -749,7 +749,9 @@ export function renderMixerRow(stem) {
   // (capture/takeLanes.js). On the right two columns the full height of the
   // row: the key (+, KEY and the offset, minus) and the rail of mute, solo,
   // the EQ tab (eq/eqRows.js fills the slot) and download, so they sit in the
-  // same place on every row.
+  // same place on every row. The effects chain's tab is not a fifth cell: five
+  // cells in a 72 px row are 14 px each, under the 17 px a rail cell needs, so
+  // it sits in the EQ row the EQ tab opens (fx/fxRows.js).
   const swatch = document.createElement("span");
   swatch.className = "mx-swatch";
   swatch.setAttribute("aria-hidden", "true");

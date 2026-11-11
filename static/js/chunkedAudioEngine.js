@@ -228,7 +228,14 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // master slot between master and the destination (fxChain.js). Declared
   // before the stem loop, which attaches each stem's slot.
   const stemMap = new Map();
-  const fx = createEngineFx(ctx, (name) => [...stemMap.values()].filter((s) => s.controlName === name));
+  // The effects chain of a lane (Advanced mode only) goes between its chunk
+  // sources and its gain; a lane without one is wired exactly as before
+  // (fx/chainHost.js).
+  const fx = createEngineFx(ctx, (name) => [...stemMap.values()].filter((s) => s.controlName === name), {
+    members: () => [...stemMap.values()],
+    liveNodes: (s) => s.activeNodes,
+    onLatencyChange: () => { _epoch++; },
+  });
   master.connect(fx.masterInput);
 
   let stNode = null;
@@ -583,7 +590,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       const node = ctx.createBufferSource();
       node.buffer = buf;
       if (!stNode) node.playbackRate.value = _playbackRate; // tape-effect fallback
-      node.connect(stem.gain);
+      node.connect(fx.sourceInput(stem));
       const offset = Math.max(0, Math.min(startSecs, buf.duration - 0.001));
       node.start(when, offset);
       stem.activeNodes.push(node);
@@ -732,6 +739,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _scheduledTo = _startOffset + dur;
       _audioStarted = true;
       _epoch++; // mapping is valid from here; see isClockReady
+      fx.transportStart(_startOffset, when);
       _fetchChunk(chunkIdx + 1); // pre-fetch next chunk
       tickLoop.schedule();
       return true;
@@ -785,6 +793,8 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     _epoch++;
     _scheduledTo = _startOffset;
     tickLoop.cancel();
+    // The chains' tails ring on after a stop (report D7).
+    fx.transportStop(_startOffset);
   }
 
   function seek(t) {
@@ -792,6 +802,8 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     // and clamped once it is. Clamping to 0 there lost a Play's snap to the
     // loop start, and any seek made while the stems loaded.
     const clamped = Math.max(0, _loaded ? Math.min(t, _duration || 0) : t);
+    // An echo of the old place never plays over the new one.
+    fx.transportSeek(clamped);
     const wasPlaying = playing;
     if (wasPlaying) {
       _stopNodes();
@@ -903,9 +915,11 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       master.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
     },
     // The click shares the unpitched input with drums while still using the
-    // common tempo stage and master gain.
-    sourceTimeToCtxTime,
-    ctxTimeToSourceTime,
+    // common tempo stage and master gain. It joins after the lanes, so it is
+    // put as late as the effects chains' lane alignment puts them (0 without
+    // a chain that has latency).
+    sourceTimeToCtxTime: (t) => sourceTimeToCtxTime(t) + fx.chainLatency(),
+    ctxTimeToSourceTime: (c) => ctxTimeToSourceTime(c - fx.chainLatency()),
     getScheduleEpoch: () => _epoch,
     // A take recording into this engine stops when it goes (takeRecorder.js).
     isDestroyed: () => destroyed,
@@ -919,7 +933,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       startCtxTime: _startCtxTime,
       startOffset: _startOffset,
       rate: _playbackRate,
-      pipelineLatencySeconds: _pipelineLatencySeconds() + fx.masterFxLatency(),
+      pipelineLatencySeconds: _pipelineLatencySeconds() + fx.masterFxLatency() + fx.chainLatency(),
       epoch: _epoch,
       playing: playing && _audioStarted,
     }),

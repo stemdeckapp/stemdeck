@@ -23,32 +23,12 @@
 
 import { eqSections, nodeQ } from "./eqMath.js";
 import { createMasterEffect } from "./masterFx.js";
+import { PARAM_RAMP, XFADE, rampTo } from "./fx/ramp.js";
+import { createChainHosts } from "./fx/chainHost.js";
 
-export const PARAM_RAMP = 0.02; // seconds
-export const XFADE = 0.02; // seconds
+export { PARAM_RAMP, XFADE };
 // The old branch is let go a little after its fade has reached 0.
 const RELEASE_MS = (XFADE + 0.05) * 1000;
-
-function rampTo(param, value, ctx, immediate, time = PARAM_RAMP) {
-  const now = ctx.currentTime;
-  if (immediate) {
-    param.cancelScheduledValues?.(0);
-    param.value = value;
-    return;
-  }
-  // Not cancelAndHoldAtTime: measured in Chromium, holding a ramp that is
-  // still running and starting the next from it clicked on every knob step
-  // (a 0.22 jump against 0.001 for the same sweep this way). The value the
-  // param has now is where the next ramp starts.
-  const current = param.value;
-  param.cancelScheduledValues?.(now);
-  param.setValueAtTime?.(current, now);
-  if (typeof param.linearRampToValueAtTime === "function") {
-    param.linearRampToValueAtTime(value, now + time);
-  } else {
-    param.value = value;
-  }
-}
 
 const signature = (sections) => sections.map((s) => s.type).join(",");
 
@@ -184,10 +164,18 @@ export function createFxSlot(ctx) {
  *
  * `membersOf(name)` returns the engine's playback sources whose controlName is
  * `name`; each carries `.fx` (its slot) once attachSource() has run.
+ *
+ * The effects chain (Advanced mode, fx/chainHost.js) sits before each
+ * source's gain. `members()` lists every playback source and
+ * `liveNodes(member)` the source nodes playing into one now, so a chain can
+ * be put in or taken out while the song plays. A source connects to
+ * sourceInput(member): the lane gain itself while the lane has no chain,
+ * exactly as before chains existed.
  */
-export function createEngineFx(ctx, membersOf) {
+export function createEngineFx(ctx, membersOf, { members = () => [], liveNodes = () => [], onLatencyChange = null } = {}) {
   const laneEq = new Map();
   const taps = createTapRegistry(ctx);
+  const chains = createChainHosts(ctx, { members, membersOf, liveNodes, onLatencyChange });
   const master = createFxSlot(ctx);
   let masterEq = null;
   // After the master EQ: the master effect (masterFx.js), created the first
@@ -248,8 +236,26 @@ export function createEngineFx(ctx, membersOf) {
       source.fx = slot;
       const eq = laneEq.get(source.controlName);
       if (eq) slot.setEq(eq, { immediate: true });
+      chains.attach(source);
       return slot;
     },
+    /** The node a playback source of `member` connects to. */
+    sourceInput: (member) => chains.inputOf(member),
+    /** A lane's effects chain spec (fx/chainHost.js), or null for none. */
+    setLaneChain: (name, spec, opts) => chains.setLane(name, spec, opts),
+    /** Song time `offset` enters the graph at ctx time `when` (play start). */
+    transportStart: (offset, when) => chains.start(offset, when),
+    transportStop: (songTime) => chains.stop(songTime),
+    /** A seek: the chains' echoes of the old place are flushed. */
+    transportSeek: (songTime) => chains.seek(songTime),
+    chainLatency: () => chains.latencySec(),
+    chainHostCount: () => chains.hostCount(),
+    getChainTap(name, opts) {
+      const nodes = chains.meterNodes(name);
+      if (!nodes.length) return null;
+      return taps.get(`${name}|chain`, nodes, opts);
+    },
+    releaseChainTap(name) { taps.release(`${name}|chain`); },
     /** The node the engine's master gain connects to. */
     masterInput: master.input,
     /** The end of the master chain: what reaches the speakers. */
@@ -335,6 +341,7 @@ export function createEngineFx(ctx, membersOf) {
     },
     dispose() {
       taps.releaseAll();
+      chains.dispose();
       if (mfxDrop) clearTimeout(mfxDrop);
       mfx?.effect.dispose();
       master.dispose();
@@ -407,5 +414,13 @@ export function engineFxApi(fx) {
     getMasterFxNodes: () => fx.getMasterFxNodes(),
     masterFxReduction: () => fx.masterFxReduction(),
     masterFxLatency: () => fx.masterFxLatency(),
+    // The effects chains (fx/, Advanced mode only; fxEngine.js decides).
+    supportsChain: true,
+    setLaneChain: (name, spec, opts) => fx.setLaneChain(name, spec, opts),
+    getChainTap: (name, opts) => fx.getChainTap(name, opts),
+    releaseChainTap: (name) => fx.releaseChainTap(name),
+    chainLatency: () => fx.chainLatency(),
+    // Structure, for checks: how many sources carry a chain host now.
+    chainHostCount: () => fx.chainHostCount(),
   };
 }

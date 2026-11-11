@@ -1,0 +1,367 @@
+/* The FX tab in each lane's EQ row and the effects row it opens (static/js/fx/fxRows.js).
+   Advanced mode only. The row reuses the EQ row's frame (eq.css
+   .eq-panel-lane, .eq-panel-row, .eq-side); this file adds the chain strip,
+   the pedal panel, the trim and the meter. Colours and sizes are tokens from
+   variables.css. */
+
+/* ── The tab, in the head of the lane's EQ row (eqRows.js .eq-fx-slot) ──
+   The lane's second panel, after the EQ's power switch: the EQ tab's own
+   face (eq.css .eq-tab: the bordered box, the dot, the chevron), as wide as
+   its label. Not a fifth cell of the lane's rail: five cells in a 72 px row
+   are 14 px each, under the 17 px a rail cell needs. */
+
+.eq-fx-slot {
+  display: flex;
+  flex-shrink: 0;
+}
+.eq-fx-slot:empty { display: none; }
+.eq-side-head .fx-tab {
+  width: auto;
+  min-width: 64px;
+}
+html:not(.mode-daw) .eq-fx-slot { display: none !important; }
+
+/* The rail's EQ tab while the lane's effects change the sound (fxRows.js
+   markRailTabs): a small gold square after the EQ's round dot, so the state
+   shows with both rows closed. */
+.eq-tab-fxdot { display: none; }
+.mx-rail .eq-tab.fx-on .eq-tab-fxdot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 1px;
+  background: var(--accent);
+}
+html:not(.mode-daw) .mx-rail .eq-tab .eq-tab-fxdot { display: none; }
+
+/* ── Mixer side ── */
+
+.fx-side { gap: 7px; }
+.fx-inst-wrap,
+.fx-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  min-width: 0;
+}
+.fx-inst-label,
+.fx-field-name { white-space: nowrap; }
+.fx-inst,
+.fx-preset,
+.fx-select {
+  height: 22px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+.fx-inst { flex: 1; }
+.fx-inst:focus-visible,
+.fx-preset:focus-visible,
+.fx-select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.fx-trim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fx-meter {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--eq-graph-bg);
+  overflow: hidden;
+}
+.fx-meter-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0;
+  background: color-mix(in srgb, var(--stem-color, var(--accent)) 70%, transparent);
+}
+.fx-meter.hot .fx-meter-bar { background: var(--danger); }
+.fx-meter-text {
+  position: relative;
+  display: block;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 14px;
+  color: var(--fg-2);
+  text-align: right;
+}
+
+/* ── Waveform side: the chain strip ── */
+
+.fx-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  overflow: visible;
+}
+.fx-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  min-height: 34px;
+}
+.fx-io {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.fx-arrow {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-right: 2px solid var(--muted-2);
+  border-top: 2px solid var(--muted-2);
+  transform: rotate(45deg);
+}
+.fx-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 4px 0 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--eq-plate);
+  flex-shrink: 0;
+  touch-action: none;
+  transition: border-color var(--t-fast), margin var(--t-fast);
+}
+.fx-card.selected { border-color: var(--gold-line); background: color-mix(in srgb, var(--eq-plate) 85%, var(--accent)); }
+.fx-card.off .fx-card-main { color: var(--muted); }
+.fx-card.dragging { opacity: 0.85; z-index: 3; position: relative; }
+.fx-card.gap-before { margin-left: 28px; }
+.fx-card.gap-after { margin-right: 28px; }
+.fx-card-grip {
+  width: 8px;
+  height: 16px;
+  cursor: grab;
+  background-image: radial-gradient(circle, var(--muted-2) 1px, transparent 1.5px);
+  background-size: 4px 4px;
+}
+.fx-card-main,
+.fx-card-power,
+.fx-card-remove,
+.fx-add,
+.fx-add-item {
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.fx-card-main { padding: 0 4px; font-weight: 600; height: 24px; }
+.fx-card-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+}
+/* On: a lit light and the word; off: a hollow light and the word. Never colour alone. */
+.fx-card-power::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+}
+.fx-card-power.on { color: var(--accent); border-color: var(--gold-line); background: var(--gold-soft); }
+.fx-card-power.on::before { background: currentColor; }
+.fx-card-remove { width: 20px; height: 20px; font-size: 14px; line-height: 1; color: var(--muted); }
+.fx-card-remove:hover,
+.fx-card-main:hover { color: var(--fg); }
+.fx-card-main:focus-visible,
+.fx-card-power:focus-visible,
+.fx-card-remove:focus-visible,
+.fx-add:focus-visible,
+.fx-add-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.fx-add {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed var(--border-strong);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.fx-add:hover:not(:disabled) { color: var(--fg); border-color: var(--muted-2); }
+.fx-add:disabled { opacity: 0.45; cursor: default; }
+/* The add menu: a popup anchored to "+ Add effect" (chainStrip.js
+   placeAddMenu sets left, top and, in a short window, max-height). In the
+   top layer as a popover, so no ancestor clips it; position: fixed either
+   way. The popover's own centring (inset 0, margin auto) is undone. */
+.fx-add-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 128px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--fg-2);
+  box-shadow: var(--shadow-panel);
+  z-index: 1000;
+}
+.fx-add-menu[popover]:not(:popover-open) { display: none; }
+.fx-add-item { flex-shrink: 0; text-align: left; padding: 4px 8px; }
+
+/* A vertical strip (a narrow panel: Performance's): In at the top, the
+   cards full width one under another, Out at the foot; the arrows point
+   down and a drag shows its gap above or below. */
+.fx-strip.fx-strip-vertical {
+  flex-direction: column;
+  align-items: stretch;
+  overflow-x: visible;
+}
+.fx-strip-vertical .fx-io { align-self: flex-start; }
+.fx-strip-vertical .fx-arrow { align-self: center; transform: rotate(135deg); }
+.fx-strip-vertical .fx-card.gap-before { margin-left: 0; margin-top: 28px; }
+.fx-strip-vertical .fx-card.gap-after { margin-right: 0; margin-bottom: 28px; }
+.fx-strip-vertical .fx-card-main { flex: 1; text-align: left; }
+.fx-add-item:hover { background: var(--panel-3); color: var(--fg); }
+
+/* The live region: read aloud, never drawn. */
+.fx-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── The selected pedal ── */
+
+.fx-pedal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.fx-pedal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fx-pedal-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.fx-knobs {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.fx-knob.is-synced .eq-knob-dial { opacity: 0.55; }
+.fx-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── A live input's chain in the recording panel (capture/liveFxUi.js) ──
+   The same strip as a lane's, in the panel's own column. */
+
+.rec-panel.has-live-fx { width: min(600px, calc(100vw - 16px)); }
+.rec-live-fx {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.rec-live-fx[hidden],
+.rec-live-fx [hidden] { display: none !important; }
+.rec-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rec-live-title { font-weight: 600; font-size: 12.5px; }
+.rec-live-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rec-live-fx .rec-live-side { gap: 7px; }
+.rec-live-fx .fx-trim-row { flex-wrap: wrap; }
+.rec-live-fx .rec-live-body {
+  position: static;
+  width: 100%;
+  height: auto;
+  padding: 6px 0 0;
+  background: transparent;
+  overflow: visible;
+}
+.rec-live-fx .fx-strip { padding-bottom: 2px; }
+.rec-live-latency { font-family: var(--font-mono); font-size: 11px; }
+
+/* The Clip light: lit while the input reached full scale in the last 1.5 s. */
+.fx-clip {
+  flex-shrink: 0;
+  padding: 0 6px;
+  height: 16px;
+  line-height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.fx-clip.on {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--bg);
+}
+
+/* Hear myself to what is probably a speaker: say so, plainly. */
+.rec-warn {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  line-height: 1.45;
+}

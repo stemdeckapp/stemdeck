@@ -29,7 +29,7 @@ import { startCameraRecording } from "../video/cameraRecorder.js";
 import { videoRecordBlockKey, supportedRecorderMimes, platformFromUserAgent } from "../video/recordSupport.js";
 import { audioEngine, playbackSpeed } from "../state.js";
 import { transport, togglePlayPause, setPlayheadTime } from "../transport.js";
-import { nextRecordState, isTakeOpen, startPoint, outputPixels, videoBitrate, performanceTrackId } from "./recordModel.js";
+import { nextRecordState, isTakeOpen, startPoint, outputPixels, videoBitrate, performanceTrackId, takeFxOf } from "./recordModel.js";
 import { resolutionOf } from "./outputSettings.js";
 
 const TRACK_KEY = (jobId) => `stemdeck:streamer:track:${jobId}`;
@@ -173,7 +173,7 @@ async function ensureTrack(jobId, name) {
  * `draw(ctx, width, height)` paints one output frame. Resolves
  * { ok: true } or { ok: false, reason }.
  */
-export async function startRecording({ jobId, capture, settings, aspect, range, trackName, draw, remove = "", channels = null, camera = null }) {
+export async function startRecording({ jobId, capture, settings, aspect, range, trackName, draw, remove = "", channels = null, camera = null, fx = null }) {
   if (isTakeOpen(rec.state) || rec.state === "exporting") return { ok: false, reason: "busy" };
   const block = recordBlock();
   if (block) return { ok: false, reason: block };
@@ -185,6 +185,11 @@ export async function startRecording({ jobId, capture, settings, aspect, range, 
   // camera open). A take of an older build may say "hidden" (its Camera
   // layer was hidden). The Video lane says so.
   if (["on", "off", "hidden"].includes(camera)) rec.recordedAt.camera = camera;
+  // The live effects the input was heard through as the take began
+  // ({chain, inst}, streamerFx.liveTakeFx), or none: the take records the
+  // clean input and plays back and exports through this copy.
+  const fxRec = takeFxOf(fx);
+  if (fxRec) rec.recordedAt.fx = fxRec;
   // Closed while starting (stopRecording before a session exists): stop here.
   const goOn = () => {
     if (rec.aborted) throw Object.assign(new Error("aborted"), { code: "aborted" });
@@ -354,9 +359,28 @@ export function takeInfo(takeId) {
   const removed = typeof v?.remove === "string" && ["", "drums", "bass", "guitar", "piano", "vocals"].includes(v.remove) ? v.remove : null;
   const span = (k) => (Number.isFinite(v?.[k]) && v[k] >= 0 ? v[k] : null);
   const camera = ["on", "off", "hidden"].includes(v?.camera) ? v.camera : null;
-  const info = ok ? { aspect: v.aspect, resolution: resolutionOf(v.resolution), fps: Number(v.fps), remove: removed, from: span("from"), to: span("to"), camera } : null;
+  const info = ok ? { aspect: v.aspect, resolution: resolutionOf(v.resolution), fps: Number(v.fps), remove: removed, from: span("from"), to: span("to"), camera, fx: takeFxOf(v.fx) } : null;
   takeInfos.set(takeId, info);
   return info;
+}
+
+/**
+ * Change take `takeId`'s live effects record (its Effects switch in the take
+ * lane): kept with the take's other recording facts, in this browser.
+ * Returns false when this browser does not know the take.
+ */
+export function setTakeFx(takeId, fx) {
+  const info = takeInfo(takeId);
+  if (!info) return false;
+  let raw = null;
+  try { raw = JSON.parse(readKept(TAKE_INFO_KEY(takeId)) || "null"); } catch { raw = null; }
+  if (!raw || typeof raw !== "object") return false;
+  const fxRec = takeFxOf(fx);
+  if (fxRec) raw.fx = fxRec;
+  else delete raw.fx;
+  writeKept(TAKE_INFO_KEY(takeId), JSON.stringify(raw));
+  takeInfos.set(takeId, { ...info, fx: fxRec });
+  return true;
 }
 
 /** Export started, finished or failed (streamerExport.js drives the render). */

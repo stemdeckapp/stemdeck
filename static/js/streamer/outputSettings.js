@@ -4,7 +4,11 @@
 // RecordingSettings (stored per user in the app's store, sceneStore's
 // neighbour; deviceIds are per machine, which is where the store lives):
 //   { videoDeviceId, audioDeviceId, audioChannels, resolution, fps,
-//     recordMixedAudio, autoStopAtEnd }
+//     recordMixedAudio, autoStopAtEnd, inputFx? }
+// inputFx, only once set: the input's live effects { chain, low } (the
+// chain descriptor of fx/chainModel.js and the Low latency switch), kept
+// as stored here and normalised where it is used (streamer/streamerFx.js),
+// where the instrument Auto stands for is known. Hear myself is never kept.
 // (An includeClick from an older build is ignored: a take never has a click.)
 // A device id of "" is the default device, NONE is "no camera" or "no audio
 // input". Nothing here touches the DOM or a device.
@@ -42,6 +46,21 @@ const flag = (v, dflt) => (typeof v === "boolean" ? v : dflt);
 const channelsOf = (v) => (Array.isArray(v) && v.length >= 1 && v.length <= 2
   && v.every((c) => Number.isInteger(c) && c >= 0 && c < 64) ? [...v] : null);
 
+// A stored live chain is a few hundred bytes; anything far larger is not one.
+const INPUT_FX_MAX_CHARS = 16384;
+
+/** A stored input effects record made safe ({chain, low}), or null for none. */
+export function inputFxOf(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const chain = v.chain && typeof v.chain === "object" && !Array.isArray(v.chain) ? v.chain : null;
+  const low = v.low === true;
+  if (!chain && !low) return null;
+  const out = { chain, low };
+  let size = Infinity;
+  try { size = JSON.stringify(out).length; } catch { size = Infinity; }
+  return size <= INPUT_FX_MAX_CHARS ? JSON.parse(JSON.stringify(out)) : null;
+}
+
 /** Stored settings made safe: anything missing or wrong takes its default. */
 export function parseRecordingSettings(raw) {
   let data = raw;
@@ -50,7 +69,7 @@ export function parseRecordingSettings(raw) {
   }
   const d = defaultRecordingSettings();
   if (!data || typeof data !== "object") return d;
-  return {
+  const out = {
     videoDeviceId: idOf(data.videoDeviceId),
     audioDeviceId: idOf(data.audioDeviceId),
     audioChannels: channelsOf(data.audioChannels),
@@ -59,6 +78,9 @@ export function parseRecordingSettings(raw) {
     recordMixedAudio: flag(data.recordMixedAudio, d.recordMixedAudio),
     autoStopAtEnd: flag(data.autoStopAtEnd, d.autoStopAtEnd),
   };
+  const fx = inputFxOf(data.inputFx);
+  if (fx) out.inputFx = fx;
+  return out;
 }
 
 export function serializeRecordingSettings(s) {

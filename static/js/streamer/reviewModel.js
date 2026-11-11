@@ -10,15 +10,20 @@
 // (app/api/takes.py, fit "fill"). So nothing is drawn over it here: it is
 // exactly the picture the MP4 will have.
 
-/** No window (live or review) is ever narrower than this, in CSS pixels. */
+/** Two windows side by side are each at least this wide, in CSS pixels;
+ * narrower, they stack, or stay across down to MIN_SMALL_W in a builder too
+ * short for stacking to do better (see reviewTier). */
 export const MIN_WINDOW_W = 360;
-// Two windows side by side only while each keeps at least this share of the
-// one window's size: below it the live preview would shrink to about half
-// of what it was (measured: 374 px windows at 1800 x 1020 with the library
-// open, against one of 760 px), and one large window with Live | Take reads
-// better. With the library folded (1920 x 1080) the pair is 596 px against
-// 1003 (0.59): side by side.
-export const PAIR_MIN_SHARE = 0.55;
+// The hard minimum: two windows (side by side or stacked) are never
+// narrower than this (162 px of 16:9 height). Below it, and only there,
+// one window is shown (tier "c"). With the timeline at its least (217 px)
+// and the strip, that is a builder under about 440 px high (400 in a short
+// workspace), where nothing else fits.
+export const MIN_SMALL_W = 288;
+// Stacked, the two windows and the gap between them take at most this
+// share of the builder's height: the strip and the Timeline / Effects card
+// keep the rest (and never less than the timeline's least).
+export const STACK_MAX_SHARE = 0.65;
 
 // Stopped or scrubbing: the frame shown is the playhead's within this much
 // (videoPreview.js STILL_SEC).
@@ -39,30 +44,45 @@ export const SEEK_LEAD = 0.03;
 
 /**
  * Where the windows go. The view's centre (the windows, the strip and the
- * timeline) is `width` x `height` CSS pixels; the two windows, when side by
- * side, are `pairGap` apart; under the windows sit the strip (`colGap` +
+ * timeline) is `width` x `height` CSS pixels; the two windows are `pairGap`
+ * apart (across or down); under the windows sit the strip (`colGap` +
  * `stripH`), the gap and the timeline at its least (`gap` + `tlMin`). A
- * window is 16:9.
+ * window is 16:9. The live window and the take review are both shown in
+ * every tier but "c".
  *
- * - "a": live and review side by side, each as large as the height allows,
- *   with room to spare across.
- * - "b": side by side, sharing the width as two equal windows (each smaller
- *   than the height would allow), both at least MIN_WINDOW_W and at least
- *   PAIR_MIN_SHARE of the one window's size.
- * - "c": one window; the review takes the live window's place while a take
- *   plays.
- * `stacked` (a narrow workspace, where the column scrolls) is always "c".
- * Returns { tier, win } with `win` the width of one window.
+ * - "a": side by side, each as large as the height allows, with room to
+ *   spare across.
+ * - "b": side by side, sharing the width as two equal windows, each at least
+ *   MIN_WINDOW_W (or, in a short builder where stacking cannot do better,
+ *   at least MIN_SMALL_W).
+ * - "s": stacked, the live window over the review, when the width is too
+ *   narrow for two side by side: each as wide as the builder allows while
+ *   the pair stays within STACK_MAX_SHARE of the height and leaves the
+ *   timeline its least.
+ * - "c": the hard minimum, below MIN_SMALL_W for both layouts: one window,
+ *   the review taking the live window's place while a take plays.
+ * `stacked` is the narrow workspace (under 680 px), where the column already
+ * scrolls: the same rules (`height` is then the height the column has for
+ * the builder), but below the hard minimum the two windows stack at the
+ * stylesheet's width and the column scrolls ({ tier: "s", scroll: true }),
+ * never one window.
+ * Returns { tier, win, scroll } with `win` the width of one window.
  */
-export function reviewTier({ width, height, pairGap = 12, colGap = 12, stripH = 40, gap = 8, tlMin = 217, minW = MIN_WINDOW_W, stacked = false }) {
-  const byHeight = Math.max(0, (height - colGap - stripH - gap - tlMin) * 16 / 9);
+export function reviewTier({ width, height, pairGap = 12, colGap = 12, stripH = 40, gap = 8, tlMin = 217, minW = MIN_WINDOW_W, minSmall = MIN_SMALL_W, stacked = false }) {
+  const room = height - colGap - stripH - gap - tlMin;
+  const byHeight = Math.max(0, room * 16 / 9);
   const avail = Math.max(0, width);
   const single = Math.floor(Math.max(minW, Math.min(avail, byHeight)));
-  if (stacked || !(width > 0) || !(height > 0)) return { tier: "c", win: single };
-  if (byHeight >= minW && 2 * byHeight + pairGap <= avail) return { tier: "a", win: Math.floor(byHeight) };
+  if (!(width > 0) || !(height > 0)) return stacked ? { tier: "s", win: Math.floor(avail), scroll: true } : { tier: "c", win: single, scroll: false };
+  if (byHeight >= minW && 2 * byHeight + pairGap <= avail) return { tier: "a", win: Math.floor(byHeight), scroll: false };
   const pair = Math.min(byHeight, (avail - pairGap) / 2);
-  if (pair >= minW && pair >= PAIR_MIN_SHARE * single) return { tier: "b", win: Math.floor(pair) };
-  return { tier: "c", win: single };
+  if (pair >= minW) return { tier: "b", win: Math.floor(pair), scroll: false };
+  const stackH = Math.max(0, Math.min(STACK_MAX_SHARE * height, room) - pairGap) / 2;
+  const stack = Math.min(avail, stackH * 16 / 9);
+  if (stack >= pair && stack >= minSmall) return { tier: "s", win: Math.floor(stack), scroll: false };
+  if (pair >= minSmall) return { tier: "b", win: Math.floor(pair), scroll: false };
+  if (stacked) return { tier: "s", win: Math.floor(avail), scroll: true };
+  return { tier: "c", win: single, scroll: false };
 }
 
 /**
@@ -137,11 +157,12 @@ export function syncStep({ playing, inTake, current, target, paused, speed }) {
 }
 
 /**
- * In tier "c" (one window), which picture is in it: "take" while the take
- * plays, "live" while it is paused (so Record is in reach), unless `pick`
+ * In tier "c" (one window, the hard minimum), which picture is in it:
+ * "take" while the take plays, "live" while it is paused (so Record is in
+ * reach), unless `pick`
  * ("live", "take" or null), the person's own choice from the Live | Take
  * switch, says otherwise; the pick is kept until the review goes back to
- * idle. In tiers "a" and "b" both are shown: "both".
+ * idle. In tiers "a", "b" and "s" both are shown: "both".
  */
 export function compactShows({ tier, view, pick }) {
   if (tier !== "c") return "both";

@@ -5,8 +5,9 @@
 //   MediaStreamAudioSourceNode -> inputNode (GainNode, input trim, all channels)
 //     ChannelSplitter -> one AnalyserNode per channel, made on first use
 //        (the meters: the device's loudest channel, an armed track's own)
-//     ChannelSplitter -> monitor mix (the armed tracks' channels, a mono
-//        channel in the centre) -> monitorGain (0 by default) -> destination
+//     ChannelSplitter -> one route per armed track's channels (a mono
+//        channel in the centre) -> [the track's live chain host] ->
+//        monitorGain (0 by default) -> destination
 //     inputNode -> ChannelSplitter -> ChannelMerger (1 or 2 channels) ->
 //        recorder ("capture-recorder" worklet) -> 0-gain sink -> destination
 //
@@ -15,14 +16,20 @@
 // armed together share one clock by construction. Recorders are pulled
 // through a silent sink so no engine can decide an unconnected worklet does
 // not need to run. Monitoring goes straight to the destination, past the
-// master, the effects and the tempo worklet, so it adds nothing to the round
-// trip.
+// master, the lanes' effects and the tempo worklet, so it adds nothing to
+// the round trip but its own chain's latency.
+//
+// A live chain (capture/inputFx.js decides when) is the lanes' chain host
+// (fx/chainHost.js), reused: it sits in the monitor route only. The
+// recorders tap the splitter, before any route, so a take is always the
+// clean input: what is heard is wet, what is recorded is dry.
 //
 // Echo cancellation, noise suppression and auto gain are always off: the first
 // removes the backing track from the take and pumps the instrument, the last
 // rides the level of a dynamic performance.
 
 import { requestMedia } from "./capturePermission.js";
+import { createChainHost, laterIn } from "../fx/chainHost.js";
 import { estimateRoundTripSec } from "./takeMath.js";
 import { loadCalibration } from "./latencyCalibration.js";
 
@@ -31,6 +38,9 @@ const _loaded = new WeakMap(); // AudioContext -> Promise of addModule
 // How long Stop waits for the worklet's last batch. A running one answers in
 // a few milliseconds; a suspended context (a background tab) can take longer.
 const STOP_ANSWER_MS = 3000;
+// A monitor route's dip while its chain host goes in or out (as a lane's).
+const ROUTE_FADE = 0.006;
+const ROUTE_HOLD = 0.02;
 
 function loadWorklet(ctx) {
   let p = _loaded.get(ctx);
@@ -176,7 +186,12 @@ export async function openSilentCapture(engine) {
     level() { return 0; },
     channelLevel() { return 0; },
     setMonitorChannels() {},
+    setMonitorRoutes() {},
     setMonitor() {},
+    monitorNode: null,
+    chainHostCount: () => 0,
+    routeLatencyFrames: () => 0,
+    routeChainCount: () => 0,
     setTrim() {},
     onDeviceLost() { return () => {}; },
     get closed() { return closed; },
@@ -252,7 +267,10 @@ export async function openCapture(engine, { deviceId = "", channelCount = 2 } = 
   monitorGain.channelCountMode = "explicit";
   monitorGain.channelInterpretation = "speakers";
   monitorGain.connect(ctx.destination);
-  let monitorNodes = [];
+  // key -> { chans, merger, node, host }: one per armed track's channels.
+  const routes = new Map();
+  let wholeDevice = false;
+  let monitorOn = false;
 
   // Per-channel analysers for the armed tracks' meters, made on first use.
   const chanMeters = new Map();
@@ -268,38 +286,115 @@ export async function openCapture(engine, { deviceId = "", channelCount = 2 } = 
     return m || null;
   }
 
-  /**
-   * What monitoring plays: a list of channel sets (each armed track's [c] or
-   * [a, b]), or null for every channel of the device as it comes. A mono
-   * channel is heard in the centre, a pair as left and right.
-   */
-  function routeMonitor(sets) {
-    for (const n of monitorNodes) {
+  // A dip on a route while its node is rewired at the bottom: connect() and
+  // disconnect() take no time, so a rewire under signal clicks (the lanes'
+  // chain hosts do the same, fx/chainHost.js duck). Silent monitoring needs
+  // none.
+  function duckRoute(r, fn) {
+    if (!monitorOn) { fn(); return; }
+    const g = r.node.gain;
+    const at = ctx.currentTime;
+    g.cancelScheduledValues(at);
+    g.setValueAtTime(g.value, at);
+    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
+    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
+    g.linearRampToValueAtTime(1, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
+    laterIn(ctx, ROUTE_FADE + ROUTE_HOLD / 2, fn);
+  }
+
+  function makeRoute(chans) {
+    const merger = ctx.createChannelMerger(chans.length);
+    chans.forEach((c, i) => splitter.connect(merger, c, i));
+    // Always two channels: a mono input is put in the centre (left = right)
+    // here, before any chain, so every pedal gets the stereo signal its
+    // explicit two-channel delay lines are built for. Without a chain this
+    // is what monitorGain ("speakers") did with the mono channel: the same
+    // samples on both sides.
+    const node = ctx.createGain();
+    node.channelCount = 2;
+    node.channelCountMode = "explicit";
+    node.channelInterpretation = "speakers";
+    merger.connect(node);
+    node.connect(monitorGain);
+    return { chans, merger, node, host: null };
+  }
+
+  function dropRoute(r) {
+    for (const n of [r.merger, r.node]) {
       try { n.disconnect(); } catch { /* not connected */ }
     }
-    monitorNodes = [];
-    try { inputNode.disconnect(monitorGain); } catch { /* not connected */ }
-    if (!sets) {
-      inputNode.connect(monitorGain);
+    r.host?.dispose();
+    r.host = null;
+  }
+
+  const hostTiming = () => ({ songTime: ctx.currentTime, when: ctx.currentTime });
+
+  // A route's chain: a spec for fx/chainHost.js, or null for none (the route
+  // goes straight to monitorGain, as before chains existed).
+  function setRouteSpec(r, spec) {
+    if (spec && !r.host) {
+      const host = createChainHost(ctx);
+      host.apply(spec, hostTiming(), { immediate: true });
+      host.output.connect(monitorGain);
+      r.host = host;
+      duckRoute(r, () => {
+        if (r.host !== host) return;
+        try { r.node.disconnect(monitorGain); } catch { /* not connected */ }
+        r.node.connect(host.input);
+      });
+    } else if (spec && r.host) {
+      r.host.apply(spec, hostTiming());
+    } else if (!spec && r.host) {
+      const host = r.host;
+      r.host = null;
+      duckRoute(r, () => {
+        try { r.node.disconnect(host.input); } catch { /* not connected */ }
+        if (!r.host) r.node.connect(monitorGain);
+        host.dispose();
+      });
+    }
+  }
+
+  /**
+   * What monitoring plays: a list of routes, each {key, channels, spec}
+   * (an armed track's [c] or [a, b], and its chain spec or null), or null
+   * for every channel of the device as it comes. A mono channel is heard in
+   * the centre, a pair as left and right. A route kept with the same
+   * channels keeps its nodes (and its chain's echoes); only what changed is
+   * rebuilt.
+   */
+  function routeMonitor(list) {
+    if (!list) {
+      for (const r of routes.values()) dropRoute(r);
+      routes.clear();
+      if (!wholeDevice) inputNode.connect(monitorGain);
+      wholeDevice = true;
       return;
     }
-    const seen = new Set();
-    for (const set of sets) {
-      const chans = (set || []).filter((c) => c < deviceChannels).slice(0, 2);
-      const key = chans.join(",");
-      if (!chans.length || seen.has(key)) continue;
-      seen.add(key);
-      const merger = ctx.createChannelMerger(chans.length);
-      chans.forEach((c, i) => splitter.connect(merger, c, i));
-      // The merger's output has as many channels as inputs: one for a mono
-      // channel, which monitorGain ("speakers") sends to both sides.
-      const node = ctx.createGain();
-      node.channelCount = chans.length;
-      node.channelCountMode = "explicit";
-      node.channelInterpretation = "discrete";
-      merger.connect(node);
-      node.connect(monitorGain);
-      monitorNodes.push(merger, node);
+    if (wholeDevice) {
+      try { inputNode.disconnect(monitorGain); } catch { /* not connected */ }
+      wholeDevice = false;
+    }
+    const wanted = new Map();
+    for (const item of list) {
+      const chans = (item?.channels || []).filter((c) => c < deviceChannels).slice(0, 2);
+      if (!chans.length || wanted.has(item.key)) continue;
+      wanted.set(item.key, { chans, spec: item.spec || null });
+    }
+    for (const [key, r] of [...routes]) {
+      const w = wanted.get(key);
+      if (!w || w.chans.join(",") !== r.chans.join(",")) {
+        dropRoute(r);
+        routes.delete(key);
+      }
+    }
+    for (const [key, w] of wanted) {
+      let r = routes.get(key);
+      if (!r) {
+        r = makeRoute(w.chans);
+        routes.set(key, r);
+      }
+      setRouteSpec(r, w.spec);
     }
   }
   routeMonitor(null);
@@ -458,13 +553,29 @@ export async function openCapture(engine, { deviceId = "", channelCount = 2 } = 
       }
       return peak;
     },
-    /** Monitor these channel sets (null: the whole device). */
+    /** Monitor these channel sets, no chain (null: the whole device). */
     setMonitorChannels(sets) {
-      routeMonitor(sets);
+      routeMonitor(sets ? sets.map((ch) => ({ key: (ch || []).join(","), channels: ch, spec: null })) : null);
+    },
+    /**
+     * Monitor these routes: [{key, channels, spec}], each with its own chain
+     * (capture/inputFx.js decides), or null for the whole device.
+     */
+    setMonitorRoutes(list) {
+      routeMonitor(list);
     },
     setMonitor(on, gain = 1) {
+      monitorOn = !!on;
       monitorGain.gain.setTargetAtTime(on ? Math.max(0, gain) : 0, ctx.currentTime, 0.01);
     },
+    /** What monitoring sends to the output (a tap for a meter or a test). */
+    monitorNode: monitorGain,
+    /** Chain hosts in the monitor path now (0 with monitoring off or no chain). */
+    chainHostCount: () => [...routes.values()].filter((r) => r.host).length,
+    /** A route's chain latency in frames, as built (0 without a host). */
+    routeLatencyFrames: (key) => routes.get(key)?.host?.latencyFrames() || 0,
+    /** Chains alive in a route's host: the active one plus those ringing out. */
+    routeChainCount: (key) => routes.get(key)?.host?.chainCount() || 0,
     setTrim(gain) {
       inputNode.gain.setTargetAtTime(Math.max(0, gain), ctx.currentTime, 0.01);
     },
@@ -479,7 +590,9 @@ export async function openCapture(engine, { deviceId = "", channelCount = 2 } = 
       track.removeEventListener("ended", onEnded);
       lostCbs.clear();
       for (const r of [...recorders]) r.dispose();
-      for (const n of [source, inputNode, splitter, sink, monitorGain, ...monitorNodes, ...[...chanMeters.values()].map((m) => m.a)]) {
+      for (const r of routes.values()) dropRoute(r);
+      routes.clear();
+      for (const n of [source, inputNode, splitter, sink, monitorGain, ...[...chanMeters.values()].map((m) => m.a)]) {
         try { n.disconnect(); } catch { /* not connected */ }
       }
       stream.getTracks().forEach((tr) => tr.stop());
