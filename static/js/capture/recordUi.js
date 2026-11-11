@@ -17,8 +17,10 @@
 // it says what to do instead of guessing: add a track, or arm one.
 //
 // The panel holds what changes from take to take: a level meter, the
-// monitoring switch (off by default, with the headphones note), which lanes
-// to mute while recording, and the slot the video recorder fills
+// monitoring switch (off by default, with the headphones note and a warning
+// when the sound goes to speakers), the armed tracks' live effects
+// (liveFxUi.js: heard live, never recorded), which lanes to mute while
+// recording, and the slot the video recorder fills
 // (#videoPanel). The input, the camera and the latency test are set once per
 // machine, in Settings > Recording (recordingSettings.js), which this panel
 // links to.
@@ -40,6 +42,9 @@ import {
   refreshTrackInputs, showTrackNote, autoPickChannel, trackMeters,
 } from "./takeLanes.js";
 import { channelsNeeded, defaultInputId } from "./trackInputs.js";
+import { attachCapture, setMonitoring, getInputFx, copyChainToLane, initInputFx } from "./inputFx.js";
+import { initLiveFxUi, renderLiveFx, hideLiveFx } from "./liveFxUi.js";
+import { inputChainsAllowed } from "../fxEngine.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -167,6 +172,7 @@ function closeCapture() {
   unwatchLost = null;
   capture?.close();
   capture = null;
+  attachCapture(null);
   captureWant = null;
   renderLatency();
 }
@@ -207,6 +213,8 @@ async function ensureCapture(want = wantedInput()) {
     capture = res.capture;
     captureWant = { deviceId, channelCount };
     wantCapture = true;
+    // The live chains are built (or not) before the monitor is heard.
+    setMonitoring(!!$("recMonitor")?.checked);
     routeMonitor(capture);
     // Device names and channel counts are readable once permission is given.
     refreshTrackInputs();
@@ -220,11 +228,13 @@ async function ensureCapture(want = wantedInput()) {
   return opening;
 }
 
-/** Monitoring plays what the armed tracks record; with none armed, the whole device. */
+/**
+ * Monitoring plays what the armed tracks record, each through its live
+ * chain when it has one (inputFx.js); with none armed, the whole device.
+ */
 function routeMonitor(c) {
   if (!c || c.closed) return;
-  const armed = audioArmed();
-  c.setMonitorChannels(armed.length ? armed.map((tr) => trackInput(tr).channels) : null);
+  attachCapture(c);
 }
 
 /**
@@ -328,6 +338,7 @@ function openPanel() {
   optsBtn?.setAttribute("aria-expanded", "true");
   renderMuteList();
   renderLatency();
+  renderLiveFx();
   const support = checkCaptureSupport();
   if (!support.ok) renderPermissionState($("recPermission"), support.reason, "audio");
   placePanel();
@@ -343,6 +354,7 @@ function closePanel() {
   panel.hidden = true;
   optsBtn?.setAttribute("aria-expanded", "false");
   stopMeter();
+  hideLiveFx();
   wantCapture = false;
   // The input stays open only while it is needed (a take, an armed track):
   // the browser shows a recording indicator for as long as it is.
@@ -708,7 +720,11 @@ function beginTakes(eng, caps, tracks, inputs) {
       },
     });
   });
-  group = { sessions, recorders, jobId, tracks, silent: caps.silent };
+  // Each audio track's live chain as it was when the take began: its lane
+  // gets a copy once the take is saved (onGroupDone).
+  const liveChains = new Map(tracks.filter((tr) => tr.kind !== "video")
+    .map((tr) => [tr.id, inputChainsAllowed("studio") ? getInputFx(tr.id).chain : null]));
+  group = { sessions, recorders, jobId, tracks, silent: caps.silent, liveChains };
   // A live waveform of a video track would draw its silence.
   for (const track of tracks) if (track.kind !== "video") mountLive(track.id);
   renderRecButton();
@@ -777,6 +793,14 @@ function onGroupDone(g, eng) {
   const failed = g.sessions.filter((s) => s.state === "failed");
   if (saved.length) {
     reviewSessions = saved.map((s, i) => Object.assign(s, { trackName: g.tracks[g.sessions.indexOf(s)]?.name || "" }));
+    // The take is the clean input; its lane plays it through a copy of the
+    // live chain it was heard through. Saved before the reload reads the mix.
+    for (const s of saved) {
+      const id = g.tracks[g.sessions.indexOf(s)]?.id;
+      if (id && g.liveChains?.get(id)) {
+        try { copyChainToLane(id, g.liveChains.get(id)); } catch (err) { console.warn("[rec] copying the live chain to the lane failed:", err); }
+      }
+    }
     // Something went wrong but the audio is saved: say what, and what to do.
     const note = failed.length ? "rec.status.someFailed"
       : saved.some((s) => s.placement === "estimated") ? "rec.status.unplaced"
@@ -880,8 +904,12 @@ export function initRecordUi() {
   e.settingsLink?.addEventListener("click", goToSettings);
   document.addEventListener(SETTINGS_EVENT, onSettingsChanged);
   e.monitor?.addEventListener("change", () => {
+    // On: the chains are built before the monitor fades in. Off: they go
+    // while it is still heard, so their removal is ducked, not clicked.
+    setMonitoring(e.monitor.checked);
     liveCapture()?.setMonitor(e.monitor.checked);
     e.panel.classList.toggle("monitoring", e.monitor.checked);
+    renderLiveFx();
   });
   e.keep?.addEventListener("click", onKeep);
   e.discard?.addEventListener("click", onDiscard);
@@ -894,6 +922,8 @@ export function initRecordUi() {
     }
   });
   initTrackControls();
+  initInputFx();
+  initLiveFxUi({ onLayout: () => { if (panelOpen()) placePanel(); } });
   // Arming a track on another device, or changing an armed track's input,
   // changes what the input should be: reopen it while the panel shows.
   document.addEventListener("stemdeck:tracks-armed", () => {
@@ -905,6 +935,7 @@ export function initRecordUi() {
     const live = liveCapture();
     if (live && !captureMatches(wantedInput())) closeCapture();
     else if (live) routeMonitor(live);
+    renderLiveFx();
     const armed = audioArmed().length;
     if (armed && audioEngine && checkCaptureSupport().ok) {
       ensureCapture().then(() => { if (panelOpen()) placePanel(); });

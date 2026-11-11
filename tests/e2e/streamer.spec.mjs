@@ -175,8 +175,11 @@ test.describe("Streamer Mode", () => {
     await openStudio(page);
     await openStreamer(page);
     await expect(sm(page, ".sm-canvas")).toBeVisible();
-    // No tabs at all: the one view is the camera, the strip and the timeline.
-    await expect(sm(page, ":is([role=tab], [role=tablist], [role=tabpanel])")).toHaveCount(0);
+    // No Templates or Scenes tab: the only tabs are the timeline card's own,
+    // Timeline and Effects (performance-tabs.spec.mjs).
+    await expect(sm(page, "[role=tablist]")).toHaveCount(1);
+    await expect(sm(page, "[role=tab]")).toHaveText(["Timeline", "Effects"]);
+    await expect(sm(page, "[role=tabpanel]")).toHaveCount(2);
     await expect(page.locator("#streamerOtherPanel")).toHaveCount(0);
     // No layers panel, no layer rows, no Add Layer, no selection box.
     await expect(sm(page, ":is(.sm-layers, .sm-layer, .sm-add, .sm-selbox)")).toHaveCount(0);
@@ -338,6 +341,15 @@ test.describe("Streamer Mode: timeline", () => {
     const dur = await ev(page, async () => (await import("/js/state.js")).totalDuration);
     await expect.poll(() => now(page)).toBeGreaterThan(dur * 0.45);
     expect(await now(page)).toBeLessThan(dur * 0.55);
+    // The playhead's time sits in the row over the ruler, under the tabs, and
+    // the "No sections yet" line is gone from that row.
+    await expect(sm(page, ".sm-tl-no-sections")).toHaveCount(0);
+    const flag = await sm(page, ".sm-tl-playhead-time").boundingBox();
+    const tabs = await sm(page, ".sm-tabs").boundingBox();
+    const apart = flag.x >= tabs.x + tabs.width || tabs.x >= flag.x + flag.width || flag.y >= tabs.y + tabs.height || tabs.y >= flag.y + flag.height;
+    expect(apart).toBe(true);
+    expect(flag.y).toBeGreaterThanOrEqual(tabs.y + tabs.height - 0.5);
+    expect(flag.y + flag.height).toBeLessThanOrEqual(rb.y + 0.5);
   });
 
   test("trim: the in handle sets the range, saved per song", async ({ page }) => {
@@ -364,9 +376,13 @@ test.describe("Streamer Mode polish", () => {
     await out.click();
     await expect(out).toHaveAttribute("aria-expanded", "true");
     expect(await ev(page, () => document.querySelector("#streamer .sm-side").contains(document.activeElement))).toBe(true);
+    // The drawer holds the sources and the output; Hear myself and the live
+    // effects are the Effects tab's, in reach without it (performance-tabs.spec.mjs).
+    await expect(sm(page, ".sm-side #streamerHear")).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(out).toHaveAttribute("aria-expanded", "false");
     await expect(out).toBeFocused();
+    await expect(page.locator("#streamerTab-effects")).toBeVisible();
   });
 
   test("under 1000 px: the label column is 56 px and the preview never under 480 px", async ({ page }) => {
@@ -586,13 +602,13 @@ test.describe("Streamer Mode input and take lane", () => {
 
 // The take review window (streamer.js, reviewModel.js): the recorded take
 // played beside the live preview in step with the transport, a note when
-// there is nothing to play, and one window in place of two when there is no
-// room for both.
+// there is nothing to play, and both windows in a smaller workspace too
+// (sizes in performance-layout.spec.mjs).
 test.describe("Streamer Mode take review", () => {
   const review = (page) => ev(page, async () => (await import("/js/streamer/streamer.js")).reviewState());
   const box = (page, sel) => sm(page, sel).evaluate((e) => { const r = e.getBoundingClientRect(); return { w: r.width, h: r.height, right: r.right }; });
 
-  test("two windows side by side when there is room, one when there is not", async ({ page }) => {
+  test("two windows side by side when there is room, and still two in a small window", async ({ page }) => {
     await page.setViewportSize({ width: 1800, height: 1020 });
     await openStudio(page);
     await page.locator("#sidebarCollapseBtn").click();
@@ -610,13 +626,13 @@ test.describe("Streamer Mode take review", () => {
     expect(Math.abs((pair.left - builder.left) - (builder.right - pair.right))).toBeLessThanOrEqual(2);
     // No take yet: the note says how to get one.
     await expect(sm(page, ".sm-review-note")).toHaveText("Record a take to review it here");
-    // A small window: one window, the live preview, and the review hidden.
-    // (Without the layers panel, 1280 x 720 has room for two windows.)
+    // A small window with the library open: the review stays in view beside
+    // or under the live window (one window only below the hard minimum).
     await page.locator("#sidebarCollapseBtn").click();
     await page.setViewportSize({ width: 1024, height: 700 });
-    await expect.poll(async () => (await review(page)).tier).toBe("c");
+    await expect.poll(async () => (await review(page)).tier).toMatch(/^[abs]$/);
     await expect(sm(page, ".sm-preview")).toBeVisible();
-    await expect(sm(page, ".sm-review")).toBeHidden();
+    await expect(sm(page, ".sm-review")).toBeVisible();
     await expect(sm(page, ".sm-view-switch")).toBeHidden();
   });
 

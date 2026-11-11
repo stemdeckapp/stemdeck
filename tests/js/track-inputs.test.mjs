@@ -14,6 +14,7 @@ import {
   channelChoices, defaultChannels, sameDevice, channelsNeeded, friendlyName, inputKind, choicesFor,
   normaliseDevices, findDevice, resolveInput, pickDefaultDevice, needsNameUnlock,
 } from "../../static/js/capture/trackInputs.js";
+import { namesHidden } from "../../static/js/capture/captureDevices.js";
 
 let pass = 0;
 let fail = 0;
@@ -119,6 +120,98 @@ check(
   "unlock: not with no input at all",
   !needsNameUnlock([{ kind: "videoinput", deviceId: "", label: "" }], { desktop: true }) && !needsNameUnlock(null, { desktop: true }),
 );
+
+check("unlock: the camera has its own rule", needsNameUnlock(nameless, { desktop: true, kind: "videoinput" }));
+check("names hidden: nameless inputs", namesHidden(nameless, "audioinput") && namesHidden(nameless, "videoinput"));
+check("names hidden: not once named, not with no device", !namesHidden(named, "audioinput") && !namesHidden([], "audioinput"));
+
+// The device list, as Settings > Recording and Performance read it. The page
+// starts nameless; one getUserMedia names the devices of that kind.
+function fakeMedia({ desktop, refuse = null, permission = "prompt" }) {
+  const media = { opens: [], granted: new Set() };
+  const devices = [
+    { kind: "audioinput", deviceId: "id-cam-mic", label: "Microphone (Logitech StreamCam) (046d:0893)" },
+    { kind: "audioinput", deviceId: "id-mgxu", label: "Line (2- MG-XU) (0499:1703)" },
+    { kind: "videoinput", deviceId: "id-cam", label: "Logitech StreamCam (046d:0893)" },
+  ];
+  globalThis.window = globalThis;
+  if (desktop) globalThis.__TAURI__ = { core: { invoke: async () => null } };
+  else delete globalThis.__TAURI__;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      permissions: { query: async () => ({ state: permission }) },
+      mediaDevices: {
+        enumerateDevices: async () => devices.map((d) => (media.granted.has(d.kind)
+          ? d : { kind: d.kind, deviceId: "", label: "", groupId: "" })),
+        getUserMedia: async (c) => {
+          const kind = c.video ? "videoinput" : "audioinput";
+          media.opens.push(kind);
+          if (refuse) throw Object.assign(new Error("refused"), { name: refuse });
+          media.granted.add(kind);
+          return { getTracks: () => [{ stop() {} }] };
+        },
+      },
+    },
+  });
+  return media;
+}
+
+{
+  const media = fakeMedia({ desktop: true });
+  const cd = await import("../../static/js/capture/captureDevices.js?desktop");
+  const first = await cd.listNamedDevices("audioinput", { unlock: true });
+  check("desktop: the first list opens the microphone once and is named",
+    media.opens.join() === "audioinput" && !first.hidden && first.devices.length === 2 && first.reason === null);
+  check("desktop: the inputs are named for the pickers",
+    normaliseDevices(first.devices).map((d) => d.name).join() === "Logitech StreamCam,MG-XU");
+  await cd.listNamedDevices("audioinput", { unlock: true });
+  check("desktop: a named list does not open the microphone again", media.opens.length === 1);
+  const cams = await cd.listNamedDevices("videoinput", { unlock: true });
+  check("desktop: the camera is opened once for its own names", media.opens.join() === "audioinput,videoinput" && !cams.hidden);
+}
+{
+  // Settings > Recording's two pickers refresh at once.
+  const media = fakeMedia({ desktop: true });
+  const cd = await import("../../static/js/capture/captureDevices.js?desktop-together");
+  const [a, b] = await Promise.all([
+    cd.listNamedDevices("audioinput", { unlock: true }),
+    cd.listNamedDevices("audioinput", { unlock: true }),
+  ]);
+  check("desktop: two pickers at once open the microphone once and both are named",
+    media.opens.length === 1 && !a.hidden && !b.hidden, `${media.opens.length} ${a.hidden} ${b.hidden}`);
+}
+{
+  const media = fakeMedia({ desktop: true, refuse: "NotAllowedError" });
+  const cd = await import("../../static/js/capture/captureDevices.js?desktop-refused");
+  const a = await cd.listNamedDevices("audioinput", { unlock: true });
+  const b = await cd.listNamedDevices("audioinput", { unlock: true });
+  check("desktop refused: tried once per page, not on every refresh", media.opens.length === 1);
+  check("desktop refused: the picker says Windows blocks it",
+    a.hidden && a.reason === "os-blocked-windows" && b.reason === "os-blocked-windows", `${a.reason} ${b.reason}`);
+}
+{
+  const media = fakeMedia({ desktop: false });
+  const cd = await import("../../static/js/capture/captureDevices.js?browser");
+  const a = await cd.listNamedDevices("audioinput", { unlock: true });
+  check("browser: never opens the microphone on its own", media.opens.length === 0);
+  check("browser: the picker says the microphone is not allowed yet", a.hidden && a.reason === "not-granted", a.reason);
+  check("browser: nameless inputs give the picker nothing to offer", normaliseDevices(a.devices).length === 0);
+}
+{
+  fakeMedia({ desktop: false, permission: "denied" });
+  const cd = await import("../../static/js/capture/captureDevices.js?browser-denied");
+  const a = await cd.listNamedDevices("audioinput", { unlock: true });
+  check("browser: a refusal in the site settings says so", a.hidden && a.reason === "denied", a.reason);
+}
+{
+  const media = fakeMedia({ desktop: false, permission: "granted" });
+  media.granted.add("audioinput");
+  const cd = await import("../../static/js/capture/captureDevices.js?browser-granted");
+  const a = await cd.listNamedDevices("audioinput", { unlock: true });
+  check("browser: an earlier grant lists the names with no message", !a.hidden && a.reason === null && media.opens.length === 0);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

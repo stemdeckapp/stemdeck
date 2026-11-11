@@ -195,7 +195,9 @@ export function buildRecordingPane(pane) {
   async function openInput(inp) {
     if (inp.capture && !inp.capture.closed) return inp.capture;
     if (inp.opening) return inp.opening;
-    if (!inp.sel.value) { renderPermissionState(inp.permission, null, "audio"); return null; }
+    // None: nothing to open. While the names are hidden (no microphone
+    // permission yet, or a refusal), say why under the picker.
+    if (!inp.sel.value) { renderPermissionState(inp.permission, inp.picker?.lockReason() || null, "audio"); return null; }
     const engine = engineForCapture();
     if (!engine) return null;
     if (engine.audioContext.state === "suspended") {

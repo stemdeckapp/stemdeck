@@ -276,3 +276,18 @@ export function ticksEvery(duration, step) {
   }
   return out;
 }
+
+/**
+ * Where the playhead's time label starts, relative to the playhead at
+ * `headX`: centred on it, pushed inside the song (0 to `contentW`) and inside
+ * the part of the song in view (`visLeft` to `visRight`, zoomed and
+ * scrolled), but never parted from its line, so it always touches the
+ * playhead. All in pixels of the song's column.
+ */
+export function playheadLabelLeft(headX, width, contentW, visLeft = 0, visRight = contentW) {
+  const lo = Math.max(0, visLeft);
+  const hi = Math.min(contentW, visRight);
+  let left = Math.max(lo, Math.min(hi - width, headX - width / 2));
+  left = Math.max(headX - width, Math.min(headX, left));
+  return left - headX;
+}

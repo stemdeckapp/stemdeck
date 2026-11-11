@@ -76,6 +76,12 @@ export function createMasterEffect(ctx) {
   const limCancel = ctx.createGain();
   const wet = ctx.createGain();
   const delay = ctx.createDelay(0.1);
+  // An explicit channel count. Measured in Chromium 151: a DelayNode at the
+  // default ("max") empties its line when its input stops (the input's
+  // channel count changes), so this path dropped its last 12 ms at every
+  // stop while the compressor path played them (tests/e2e/fx-chain-dsp.spec.mjs).
+  delay.channelCount = 2;
+  delay.channelCountMode = "explicit";
   const dry = ctx.createGain();
   const post = ctx.createGain();
   input.connect(pre);

@@ -25,7 +25,7 @@
 // app, a cleared profile): ids are per browser profile, names are not.
 
 import { t } from "../i18n.js";
-import { getRememberedDevice, listDevices, rememberDevice } from "./captureDevices.js";
+import { getRememberedDevice, listNamedDevices, needsNameUnlock, rememberDevice } from "./captureDevices.js";
 
 const ALIASES = new Set(["default", "communications"]);
 const USB_ID = /\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i;
@@ -178,49 +178,25 @@ export function pickDefaultDevice(devices, rememberedId) {
     || devices[0];
 }
 
-/**
- * Whether to open the microphone once just to read the device names.
- *
- * The desktop app grants its own page the microphone without asking
- * (desktop/src-tauri/src/mediaperm.rs) but never saves the grant, so every
- * page load starts with a list of nameless devices with no ids, which
- * normaliseDevices drops: the track picker read "No input found" until
- * something opened the microphone. A browser keeps the user's grant per site,
- * and opening the microphone there would mean a prompt at an unexpected
- * moment, so only the desktop app does this, and only once per page: a refusal
- * (the operating system's privacy settings) is not retried on every refresh.
- */
-export function needsNameUnlock(raw, { desktop = false, tried = false } = {}) {
-  if (!desktop || tried) return false;
-  const inputs = (raw || []).filter((d) => d.kind === "audioinput");
-  return inputs.length > 0 && inputs.every((d) => !d.label);
-}
-
-let _unlockTried = false;
-
-async function unlockInputNames(raw) {
-  const desktop = !!window.__TAURI__?.core?.invoke;
-  if (!needsNameUnlock(raw, { desktop, tried: _unlockTried })) return false;
-  _unlockTried = true;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    stream.getTracks().forEach((tr) => tr.stop());
-    return true;
-  } catch (e) {
-    console.warn("[rec] could not open the microphone to read the input names:", e);
-    return false;
-  }
-}
+// Whether to open the microphone once to read the names: the rule lives in
+// captureDevices.js, shared with the camera and Performance.
+export { needsNameUnlock };
 
 /**
- * The input devices, named and classed. Names need microphone permission.
- * `unlock` lets the desktop app open the microphone once to read them; pass
- * it only when an input picker is about to be shown or a track created.
+ * The input devices, named and classed, and whether their names are still
+ * hidden ({devices, hidden, reason}; see captureDevices.listNamedDevices).
+ * Names need microphone permission. `unlock` lets the desktop app open the
+ * microphone once to read them; pass it only when an input picker is about
+ * to be shown or a track created.
  */
+export async function readInputDevices({ unlock = false } = {}) {
+  const { devices, hidden, reason } = await listNamedDevices("audioinput", { unlock });
+  return { devices: normaliseDevices(devices), hidden, reason };
+}
+
+/** The input devices, named and classed (readInputDevices without the permission state). */
 export async function listInputDevices({ unlock = false } = {}) {
-  const raw = await listDevices("audioinput");
-  if (unlock && (await unlockInputNames(raw))) return normaliseDevices(await listDevices("audioinput"));
-  return normaliseDevices(raw);
+  return (await readInputDevices({ unlock })).devices;
 }
 
 /** The input a new track starts with: the Settings default device, its default channels. */
@@ -407,18 +383,26 @@ export const MISSING = "__missing__";
  * grouped as voice and instrument, the role's device selected, following
  * plugs and unplugs. `onChange(deviceId)` runs when the user picks (not on
  * refreshes); "" is None.
+ *
+ * In the desktop app the first refresh opens the microphone once to read the
+ * names (captureDevices.needsNameUnlock). In a browser without permission the
+ * names stay hidden: the picker then reads "Microphone not allowed yet"
+ * rather than a bare None, and `lockReason()` says why (a capturePermission
+ * reason) for the message under it; null once the names show.
  */
 export function buildRolePicker(selectEl, role, onChange) {
   let disposed = false;
   let names = new Map();
+  let lock = null;
   async function refresh() {
-    const devices = await listInputDevices();
+    const { devices, hidden, reason } = await readInputDevices({ unlock: true });
     if (disposed) return devices;
     names = new Map(devices.map((d) => [d.deviceId, d.name]));
+    lock = hidden && !devices.length ? reason : null;
     fillInputSelect(selectEl, devices);
     const none = document.createElement("option");
     none.value = "";
-    none.textContent = t("settings.rec.none");
+    none.textContent = t(lock ? "settings.rec.notAllowed" : "settings.rec.none");
     selectEl.prepend(none);
     selectEl.value = roleDevice(role, devices)?.deviceId || "";
     selectEl.disabled = devices.length === 0;
@@ -434,6 +418,7 @@ export function buildRolePicker(selectEl, role, onChange) {
   refresh();
   return {
     refresh,
+    lockReason: () => lock,
     dispose() {
       disposed = true;
       selectEl.removeEventListener("change", onPick);
@@ -450,14 +435,14 @@ export function buildRolePicker(selectEl, role, onChange) {
 export function buildInputPicker(selectEl, onChange) {
   let disposed = false;
   async function refresh() {
-    const devices = await listInputDevices();
+    const { devices, hidden } = await readInputDevices({ unlock: true });
     if (disposed) return devices;
     fillInputSelect(selectEl, devices);
     const dev = pickDefaultDevice(devices, getRememberedDevice("audioinput"));
     if (dev) selectEl.value = dev.deviceId;
     if (!devices.length) {
       const o = document.createElement("option");
-      o.textContent = t("rec.track.noInput");
+      o.textContent = t(hidden ? "settings.rec.notAllowed" : "rec.track.noInput");
       selectEl.append(o);
     }
     selectEl.disabled = devices.length === 0;

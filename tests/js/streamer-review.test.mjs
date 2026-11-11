@@ -2,7 +2,7 @@
 // the live and review windows go at each size, what the review shows, and
 // the sync of its video to the transport (the same placement as the export).
 import {
-  MIN_WINDOW_W, PAIR_MIN_SHARE, STILL_SEC, JUMP_SEC, NUDGE_MAX, SEEK_LEAD,
+  MIN_WINDOW_W, MIN_SMALL_W, STACK_MAX_SHARE, STILL_SEC, JUMP_SEC, NUDGE_MAX, SEEK_LEAD,
   reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio,
 } from "../../static/js/streamer/reviewModel.js";
 
@@ -29,38 +29,84 @@ r = reviewTier({ ...base, width: 1300, height: 670 });
 check("medium: two equal windows sharing the width (tier b)", r.tier === "b" && r.win === Math.floor((1300 - 12) / 2), JSON.stringify(r));
 check("tier b windows are at least the minimum", r.win >= MIN_WINDOW_W);
 check("tier b windows are smaller than the height allows", r.win < byH);
-// Too narrow for two windows of 360: one window (tier c).
-r = reviewTier({ ...base, width: 700, height: 670 });
-check("narrow: one window (tier c)", r.tier === "c", JSON.stringify(r));
-check("tier c window takes the width or the height, whichever is less", r.win === Math.floor(Math.min(700, byH)), JSON.stringify(r));
-// The boundary between b and c: two minimum windows (here more than 55% of
-// the one window: the height allows 600 px, 615 - 277 = 338 px of 16:9).
-const edge = 2 * MIN_WINDOW_W + 12;
-check("exactly two minimum windows: tier b", reviewTier({ ...base, width: edge, height: 615 }).tier === "b", JSON.stringify(reviewTier({ ...base, width: edge, height: 615 })));
-check("one pixel less: tier c", reviewTier({ ...base, width: edge - 1, height: 615 }).tier === "c");
-// Two windows of 360 or more, but under 55% of the one window: one window.
+// Two side-by-side windows of 360 or more are always side by side, however
+// large one window could be (no single-window tier above the hard minimum).
 r = reviewTier({ ...base, width: 780, height: 950 });
-check("two windows under 55% of one: tier c (one large window)", r.tier === "c" && r.win === 780, JSON.stringify(r));
-check("PAIR_MIN_SHARE is 0.55", PAIR_MIN_SHARE === 0.55);
+check("tall and narrow, two of 384 fit across: tier b", r.tier === "b" && r.win === 384, JSON.stringify(r));
+// Too narrow for two windows of 360 across: stacked (tier s), within the
+// share of the height and leaving the timeline its least.
+const stackOf = (w, h) => Math.floor(Math.min(w, (Math.min(STACK_MAX_SHARE * h, h - 277) - 12) / 2 * 16 / 9));
+r = reviewTier({ ...base, width: 700, height: 800 });
+check("narrow: stacked (tier s)", r.tier === "s" && r.win === stackOf(700, 800), JSON.stringify(r));
+check("tier s: the pair within 65% of the height", 2 * (r.win * 9 / 16) + 12 <= STACK_MAX_SHARE * 800 + 1);
+check("tier s: the timeline keeps its least", 800 - (2 * (r.win * 9 / 16) + 12) - 12 - 40 - 8 >= 217 - 1);
+r = reviewTier({ ...base, width: 700, height: 1400 });
+check("narrow and very tall: stacked windows as wide as the builder", r.tier === "s" && r.win === 700, JSON.stringify(r));
+check("STACK_MAX_SHARE is 0.65", STACK_MAX_SHARE === 0.65);
+// The boundary between b and s: two windows of 360 across.
+const edge = 2 * MIN_WINDOW_W + 12;
+check("exactly two windows of 360 across: tier b", reviewTier({ ...base, width: edge, height: 900 }).tier === "b", JSON.stringify(reviewTier({ ...base, width: edge, height: 900 })));
+check("one pixel less, tall: tier s", reviewTier({ ...base, width: edge - 1, height: 900 }).tier === "s", JSON.stringify(reviewTier({ ...base, width: edge - 1, height: 900 })));
+// One pixel less but short: stacking would make them smaller than the pair
+// across, so they stay across (above the hard minimum).
+r = reviewTier({ ...base, width: edge - 1, height: 615 });
+check("one pixel less, short: still two across (b), above the hard minimum", r.tier === "b" && r.win >= MIN_SMALL_W, JSON.stringify(r));
 // The maintainer's window (1920 x 1080, library folded): the builder is
-// 1536 x 841, and the windows get the width the layers panel had: two of 762.
+// 1536 x 841, two of 762.
 r = reviewTier({ ...base, width: 1536, height: 841 });
 check("1920 x 1080 with the library folded: tier b, two of 762", r.tier === "b" && r.win === 762, JSON.stringify(r));
-// A short window caps the height-limited width under the minimum: never b.
+// A short, wide builder: two smaller windows across rather than one.
 r = reviewTier({ ...base, width: 1900, height: 450 });
-check("too short for a 360 px window: tier c at the minimum", r.tier === "c" && r.win === MIN_WINDOW_W, JSON.stringify(r));
-check("a narrow workspace (stacked): always tier c", reviewTier({ ...base, width: 1900, height: 900, stacked: true }).tier === "c");
+check("short and wide: two across under 360 (tier b)", r.tier === "b" && r.win === Math.floor((450 - 277) * 16 / 9) && r.win >= MIN_SMALL_W, JSON.stringify(r));
+// The hard minimum: no room for two windows of 288 either way.
+r = reviewTier({ ...base, width: 1900, height: 420 });
+check("too short for two windows of 288: one window (tier c)", r.tier === "c" && r.win === MIN_WINDOW_W, JSON.stringify(r));
+check("MIN_SMALL_W is 288", MIN_SMALL_W === 288);
+// The narrow workspace (the column scrolls): the same rules with the height
+// the column has; below the hard minimum, stacked and scrolling, never one.
+r = reviewTier({ ...base, width: 616, height: 530, tlMin: 251, stacked: true });
+check("narrow workspace with room for two of 288 across: tier b, no scroll", r.tier === "b" && r.win === 302 && !r.scroll, JSON.stringify(r));
+r = reviewTier({ ...base, width: 600, height: 1100, tlMin: 251, stacked: true });
+check("narrow workspace, tall: stacked to fit, no scroll", r.tier === "s" && !r.scroll && r.win >= MIN_SMALL_W, JSON.stringify(r));
+r = reviewTier({ ...base, width: 400, height: 500, tlMin: 251, stacked: true });
+check("narrow workspace under the hard minimum: stacked, the column scrolls", r.tier === "s" && r.scroll, JSON.stringify(r));
+check("the wide builder never scrolls by tier", !reviewTier({ ...base, width: 1900, height: 420 }).scroll);
 check("no size yet: tier c", reviewTier({ ...base, width: 0, height: 0 }).tier === "c");
-// Monotonic: a wider builder never drops a tier.
-const rank = { c: 0, b: 1, a: 2 };
-let prev = -1;
+// Monotonic: a wider builder never drops a tier, and within a tier its
+// windows never shrink, at any height. (From stacked to side by side they
+// may: two across leave the timeline far more height.)
+const rank = { c: 0, s: 1, b: 2, a: 3 };
 let mono = true;
-for (let w = 600; w <= 2400; w += 10) {
-  const k = rank[reviewTier({ ...base, width: w, height: 700 }).tier];
-  if (k < prev) mono = false;
-  prev = k;
+let grow = true;
+for (const h of [420, 500, 615, 700, 800, 1000, 1400]) {
+  let prev = -1;
+  let prevWin = 0;
+  let prevTier = "";
+  for (let w = 600; w <= 2400; w += 10) {
+    const t = reviewTier({ ...base, width: w, height: h });
+    const k = rank[t.tier];
+    if (k < prev) mono = false;
+    if (t.tier === prevTier && t.win < prevWin - 1) grow = false;
+    prev = k;
+    prevTier = t.tier;
+    prevWin = t.win;
+  }
 }
 check("a wider builder never drops a tier", mono);
+check("a wider builder never shrinks the windows within a tier", grow);
+// Above the hard minimum both windows show, and they always fit the height
+// with the timeline at its least.
+let fits = true;
+for (let h = 440; h <= 1400; h += 20) {
+  for (let w = 660; w <= 2400; w += 20) {
+    const t = reviewTier({ ...base, width: w, height: h });
+    if (t.tier === "c") { fits = false; continue; }
+    const winH = t.win * 9 / 16;
+    const used = t.tier === "s" ? 2 * winH + 12 : winH;
+    if (used + 277 > h + 1 || (t.tier === "s" ? t.win : 2 * t.win + 12) > w + 1) fits = false;
+  }
+}
+check("above the hard minimum: two windows, always within the builder", fits);
 
 // ── What the review shows ──
 const v = (o) => reviewView({ hasTake: true, hasVideo: true, recording: false, playing: false, engaged: false, ...o });
@@ -142,8 +188,8 @@ for (let i = 0; i < 60 * 20; i++) {
 }
 check("simulated play, seek and speed change: within 100 ms", maxErr < 0.1, String(maxErr));
 
-// ── One window (tier c) ──
-check("tiers a and b show both", compactShows({ tier: "a", view: "play", pick: null }) === "both" && compactShows({ tier: "b", view: "idle", pick: null }) === "both");
+// ── One window (tier c, the hard minimum) ──
+check("tiers a, b and s show both", compactShows({ tier: "a", view: "play", pick: null }) === "both" && compactShows({ tier: "b", view: "idle", pick: null }) === "both" && compactShows({ tier: "s", view: "play", pick: null }) === "both");
 check("tier c, playing a take: the take", compactShows({ tier: "c", view: "play", pick: null }) === "take");
 check("tier c, paused after Play: live (Record in reach)", compactShows({ tier: "c", view: "still", pick: null }) === "live");
 check("tier c, paused, Take picked: the paused frame", compactShows({ tier: "c", view: "still", pick: "take" }) === "take");

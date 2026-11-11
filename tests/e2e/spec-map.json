@@ -200,6 +200,24 @@
       "specs": ["eq-engine", "eq-panels", "eq-suggest", "modes", "master-live", "lane-alignment"]
     },
     {
+      "why": "Effects chains (Advanced mode): the engine, the pedals, the FX row and the export prints",
+      "paths": [
+        "static/js/fx/**", "static/js/fxEngine.js", "static/js/fxChain.js", "static/css/fx.css",
+        "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js",
+        "app/core/fx_prints.py"
+      ],
+      "specs": ["fx-chain-dsp", "fx-chain-studio", "eq-panels", "lane-alignment", "modes", "help-mode", "export-menu", "live-input-fx", "performance-input-fx"]
+    },
+    {
+      "why": "Live input effects: an armed track's input heard through its chain while monitoring",
+      "paths": [
+        "static/js/capture/inputFx.js", "static/js/capture/liveFxUi.js", "static/js/capture/liveFxShared.js", "static/js/capture/captureGraph.js",
+        "static/js/capture/captureSettings.js", "static/js/capture/recordUi.js", "static/js/fx/**",
+        "static/js/fxEngine.js", "static/css/fx.css"
+      ],
+      "specs": ["live-input-fx", "performance-input-fx", "recording", "recording-tracks", "help-mode"]
+    },
+    {
       "why": "Master bus, mastering and export",
       "paths": [
         "static/js/masterEngine.js", "static/js/masterFx.js", "static/js/masterMath.js", "static/js/masterPanel.js",
@@ -221,7 +239,7 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout"]
     },
     {
       "why": "Video: camera takes, the video lane and encoder settings",

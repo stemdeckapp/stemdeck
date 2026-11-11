@@ -44,6 +44,9 @@ import { effectivePitch } from "./pitchBus.js";
 import { addVisualOnlyStems, buildPlaybackStems, hasCompressedStems, stemFileExt, sumPeaks } from "./playbackStems.js";
 import { layoutLanes, originalSource, jobOriginalSet, layoutSignature, baseLanes } from "./partChoice.js";
 import { applyAllLaneEq, exportFxParam } from "./eqEngine.js";
+import { applyAllLaneChains, setChainTempo, exportChainLanes } from "./fxEngine.js";
+import { ensurePrints, knownPrints, requestPrints } from "./fx/fxPrint.js";
+import { bpmFromBeats } from "./fx/chainModel.js";
 import { exportMasterParam, setMixSource, resetForSong as resetMasterForSong } from "./masterEngine.js";
 import { vuLevel } from "./vuScale.js";
 import { createMetronome } from "./metronome.js";
@@ -1329,6 +1332,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, title = "", peaks
       // The song's saved EQs, into whichever engine is up (or none yet: the
       // engine's ready handler applies them again).
       applyAllLaneEq();
+      // The effects chains (Advanced mode only; none anywhere else).
+      applyAllLaneChains();
       // Karaoke Mode applies its stem defaults after this, never before: the
       // saved mix loading here would overwrite them.
       document.dispatchEvent(new CustomEvent("stemdeck:mix-loaded", { detail: { id: jobId } }));
@@ -1791,6 +1796,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, title = "", peaks
             setLaneKeysAvailable(eng.supportsPitchShift?.() === true);
             applyAllLanePitches();
             applyAllLaneEq();
+            applyAllLaneChains();
             restoreGlobals();
           });
 
@@ -1801,6 +1807,8 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, title = "", peaks
             if (token !== visualRenderToken || multitrack !== mt || audioEngine !== eng) return;
             teardownMetronome();
             const beats = Array.isArray(grid?.beats) ? grid.beats : null;
+            // The tempo a synced delay follows (fxEngine.js).
+            setChainTempo(bpmFromBeats(beats));
             if (!beats?.length) {
               updateMetronomeAvailability(null, t("click.reason.noBeatGrid"));
               setExportClickAvailable(false);
@@ -1825,6 +1833,7 @@ export function wireUpAudio(jobId, stems, duration, thumbnail, title = "", peaks
               duration: totalDuration,
               onChange: (nextBeats, nextBars) => {
                 m?.setBeats?.(nextBeats);
+                setChainTempo(bpmFromBeats(nextBeats));
                 setMetronomeHasBars(Array.isArray(nextBars) && nextBars.length > 0);
                 applyMetronomeAccent();
                 syncBeatGridButtons();
@@ -1942,6 +1951,10 @@ function _absolute(url) {
 }
 
 function _triggerDownload(url, filename, onTransferStart) {
+  // A function: the URL is only known once the lanes' effects prints are
+  // made (fx/fxPrint.js). They are made after the save dialog, inside the
+  // busy state, so the dialog does not wait on a render.
+  if (typeof url === "function") return _triggerDownloadLater(url, filename, onTransferStart);
   const fullUrl = _absolute(url);
   const invoke = window.__TAURI__?.core?.invoke;
   if (invoke) {
@@ -1961,13 +1974,52 @@ function _triggerDownload(url, filename, onTransferStart) {
   // download manager and reports nothing back to the page. There is no dialog
   // to wait on, so the transfer is under way as soon as the click lands.
   onTransferStart?.();
+  _clickDownload(fullUrl, filename);
+  return true;
+}
+
+function _clickDownload(fullUrl, filename) {
   const a = document.createElement("a");
   a.href = fullUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+// The same two paths as _triggerDownload, with the URL made in between.
+// A failed print rejects with a message the export menu shows.
+async function _triggerDownloadLater(makeUrl, filename, onTransferStart) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    const token = await invoke("pick_export_destination", { filename });
+    if (!token) return false;
+    onTransferStart?.();
+    const fullUrl = _absolute(await makeUrl());
+    await invoke("download_to_path", { token, url: fullUrl });
+    return token;
+  }
+  onTransferStart?.();
+  _clickDownload(_absolute(await makeUrl()), filename);
   return true;
+}
+
+// The lanes of an export whose effects chain changes the sound, with the
+// audio each one plays (Advanced mode only; empty anywhere else, so every
+// other export keeps exactly the URL it had).
+function _chainItems(names) {
+  return exportChainLanes(names)
+    .map((x) => ({ ...x, url: _currentStems.find((s) => s.name === x.lane)?.url || null }))
+    .filter((x) => x.url);
+}
+
+async function _printsFor(items) {
+  try {
+    return await ensurePrints(currentJobId, items);
+  } catch (err) {
+    console.warn("[export] printing the effects failed:", err);
+    throw t("fx.print.failed");
+  }
 }
 
 // Per-lane effective gain mirroring mixer.js applyMix (volume + mute + solo),
@@ -2034,6 +2086,18 @@ function _mixQuery() {
   });
   const fx = exportFxParam(names);
   if (fx) q.set("fx", fx);
+  // A lane with effects is measured as it is heard: from its print. Until
+  // the print is made there is no mix to measure; it is made once the
+  // chain has rested, and the readout follows.
+  const items = _chainItems(names);
+  if (items.length) {
+    const prints = knownPrints(currentJobId, items);
+    if (!prints) {
+      requestPrints(currentJobId, items);
+      return null;
+    }
+    q.set("prints", prints);
+  }
   return { jobId: currentJobId, query: q.toString() };
 }
 setMixSource(_mixQuery);
@@ -2107,7 +2171,7 @@ export function setExportClickAvailable(on) {
 
 // Dynamic mixdown URL for the current mixer state. Returns null (no download)
 // when every lane is silenced; `region` appends the loop bounds.
-function _mixdownUrl(ext, region) {
+function _mixdownUrl(ext, region, prints = "") {
   if (!currentJobId) return null;
   const { names, gains, pitches, lanes } = _effectiveMixGains();
   if (!names.length) return null;
@@ -2125,6 +2189,8 @@ function _mixdownUrl(ext, region) {
   // gets the whole song's master gain: the server measures the full mix.
   const master = exportMasterParam();
   if (master) q.set("master", master);
+  // The lanes' effects prints (Advanced mode), only when there are any.
+  if (prints) q.set("prints", prints);
   if (region) {
     q.set("start", loopStart.toFixed(3));
     q.set("end", loopEnd.toFixed(3));
@@ -2161,6 +2227,10 @@ function _exportFilename(ext) {
 export function downloadCurrentMix(ext = "wav", onTransferStart) {
   const url = _mixdownUrl(ext, false);
   if (!url) return false;
+  const items = _chainItems(_effectiveMixGains().names);
+  if (items.length) {
+    return _triggerDownload(async () => _mixdownUrl(ext, false, await _printsFor(items)), _exportFilename(ext), onTransferStart);
+  }
   return _triggerDownload(url, _exportFilename(ext), onTransferStart);
 }
 
@@ -2182,12 +2252,20 @@ export function downloadCurrentVideo(onTransferStart) {
   const master = exportMasterParam();
   if (master) q.set("master", master);
   _clickParams(q);
+  const items = _chainItems(names);
   const safe = _currentTitle
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
   const name = safe ? `${safe}_video.mp4` : "video.mp4";
+  if (items.length) {
+    const jobId = currentJobId;
+    return _triggerDownload(async () => {
+      q.set("prints", await _printsFor(items));
+      return `/api/jobs/${jobId}/video.mp4?${q}`;
+    }, name, onTransferStart);
+  }
   return _triggerDownload(`/api/jobs/${currentJobId}/video.mp4?${q}`, name, onTransferStart);
 }
 
@@ -2292,7 +2370,12 @@ export function regionDragPayload(ext = "wav") {
   // A key change this FFmpeg cannot export: no drag, rather than a file the
   // server refuses to render (#858). Also keeps the prewarm from asking.
   if (mixTransposeBlocked()) return null;
-  const url = _mixdownUrl(ext, true);
+  // A drag hands over a file that exists: with effects, only once their
+  // prints are made (prewarmRegionMix makes them), never the raw stems.
+  const items = _chainItems(_effectiveMixGains().names);
+  const prints = items.length ? knownPrints(currentJobId, items) : "";
+  if (prints === null) return null;
+  const url = _mixdownUrl(ext, true, prints);
   if (!url) return null;
   return { url: _absolute(url), filename: _regionDragFilename(ext, url) };
 }
@@ -2308,6 +2391,13 @@ export function regionDragPayload(ext = "wav") {
 // Range: bytes=0-0 so this costs a render, which is the point, and not the
 // transfer, which would be the whole region twice.
 export function prewarmRegionMix(ext = "wav") {
+  const items = loopEnabled && loopStart < loopEnd ? _chainItems(_effectiveMixGains().names) : [];
+  if (items.length && knownPrints(currentJobId, items) === null) {
+    ensurePrints(currentJobId, items)
+      .then(() => prewarmRegionMix(ext))
+      .catch((err) => console.warn("[export] printing the effects for a drag failed:", err));
+    return;
+  }
   const payload = regionDragPayload(ext);
   if (!payload) return;
   fetch(payload.url, { headers: { Range: "bytes=0-0" } }).catch(() => {});
@@ -2317,5 +2407,9 @@ export function downloadRegionMix(ext = "wav", onTransferStart) {
   if (!loopEnabled || loopStart >= loopEnd) return false;
   const url = _mixdownUrl(ext, true);
   if (!url) return false;
+  const items = _chainItems(_effectiveMixGains().names);
+  if (items.length) {
+    return _triggerDownload(async () => _mixdownUrl(ext, true, await _printsFor(items)), _regionFilename(ext), onTransferStart);
+  }
   return _triggerDownload(url, _regionFilename(ext), onTransferStart);
 }

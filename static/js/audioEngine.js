@@ -51,8 +51,14 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const tracks = new Map();
   // Effects: a slot per track between its gain and its analyser, and the
   // master slot between master and the destination (fxChain.js).
+  // The effects chain of a lane (Advanced mode only) goes between its source
+  // and its gain; a lane without one is wired exactly as before (fx/chainHost.js).
   const fx = createEngineFx(ctx, (name) => [...tracks.values()]
-    .filter((t) => !t.visualOnly && t.controlName === name));
+    .filter((t) => !t.visualOnly && t.controlName === name), {
+    members: () => [...tracks.values()].filter((t) => !t.visualOnly),
+    liveNodes: (t) => (t.source ? [t.source] : []),
+    onLatencyChange: () => { _epoch++; },
+  });
   master.connect(fx.masterInput);
 
   let _playbackRate = 1.0;
@@ -288,13 +294,14 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       // SoundTouch handles time-stretch; playbackRate stays 1.0.
       // Falls back to tape-effect only when the worklet is unavailable.
       if (!stNode) src.playbackRate.value = _playbackRate;
-      src.connect(t.gain);
+      src.connect(fx.sourceInput(t));
       src.start(when, Math.max(0, Math.min(offset, t.buffer.duration)));
       t.source = src;
     }
     startCtxTime = when;
     startOffset = offset;
     _epoch++;
+    fx.transportStart(offset, when);
   }
 
   // Rate at which the source nodes consume their buffers. With SoundTouch
@@ -387,12 +394,16 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     startOffset = Math.max(0, Math.min(t, duration));
     _epoch++;
     tickLoop.cancel();
+    // The chains' tails ring on after a stop (report D7).
+    fx.transportStop(startOffset);
   }
 
   function seek(t) {
     // Before ready() the length is still growing as stems decode, so the
     // position is kept as asked and clamped once it is known.
     const clamped = Math.max(0, _loaded ? Math.min(t, duration || 0) : t);
+    // An echo of the old place never plays over the new one.
+    fx.transportSeek(clamped);
     if (playing) {
       stopSources();
       startSources(clamped); // bumps _epoch
@@ -506,8 +517,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     // click locked to the stems; the epoch tells the scheduler when to discard
     // clicks it already queued, and isClockReady guards the window where
     // `playing` is set but the mapping is not yet valid.
-    sourceTimeToCtxTime,
-    ctxTimeToSourceTime,
+    // The click joins after the lanes, so it is put as late as the effects
+    // chains' lane alignment puts them (0 without a chain that has latency).
+    sourceTimeToCtxTime: (t) => sourceTimeToCtxTime(t) + fx.chainLatency(),
+    ctxTimeToSourceTime: (c) => ctxTimeToSourceTime(c - fx.chainLatency()),
     getScheduleEpoch: () => _epoch,
     // A take recording into this engine stops when it goes (takeRecorder.js).
     isDestroyed: () => destroyed,
@@ -523,7 +536,8 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       startCtxTime,
       startOffset,
       rate: _playbackRate,
-      pipelineLatencySeconds: pipelineLatencySeconds() + fx.masterFxLatency(),
+      // The effects chains' lane alignment delays every lane alike (D8).
+      pipelineLatencySeconds: pipelineLatencySeconds() + fx.masterFxLatency() + fx.chainLatency(),
       epoch: _epoch,
       playing,
     }),

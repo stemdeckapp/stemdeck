@@ -1427,6 +1427,12 @@ class RenderBody(BaseModel):
     # The master, the export's master= value (app/pipeline/mastering.py);
     # "" means no master.
     master: str = Field(default="", max_length=stems_api.MASTER_PARAM_MAX_CHARS)
+    # Performance's live effects: the id of a finished effects print of this
+    # take (POST /api/jobs/{id}/fx-prints with the take id as the lane), heard
+    # through the chain the take was monitored with. The take is recorded
+    # clean; the render plays the print in its place, times its gain, with the
+    # take's EQ, gain and the master after it. None: the take as recorded.
+    take_print: str | None = Field(default=None, max_length=64)
 
     @field_validator("stems")
     @classmethod
@@ -1435,6 +1441,24 @@ class RenderBody(BaseModel):
             if len(name) > 32:
                 raise ValueError("unknown stem requested")
         return v
+
+
+class _TakeSound(NamedTuple):
+    """The take's sound in a render: its file, its gain and a cache-key
+    fragment ("" for the take as recorded)."""
+
+    path: Path
+    gain: float
+    key: str
+
+
+def _take_sound(job_id: str, take_id: str, folder: Path, body: RenderBody) -> _TakeSound:
+    """The take as recorded, or its effects print (body.take_print) checked
+    against the take's audio as it is now, its gain times the print's."""
+    if body.take_print is None:
+        return _TakeSound(folder / "audio.wav", body.take_gain, "")
+    path, gain = stems_api.resolve_lane_print(job_id, take_id, body.take_print)
+    return _TakeSound(path, body.take_gain * gain, f"fxp:{body.take_print}")
 
 
 class _RenderAudio(NamedTuple):
@@ -1731,10 +1755,14 @@ async def _prepare_render(
     body: RenderBody,
     camera: Path,
     audio: _RenderAudio,
+    take: _TakeSound | None = None,
 ) -> tuple[list[str], float, _MasterRetry | None, list[AudioLane], float, _GpuPlan]:
     """The render's command, length, master retry, lanes, start and GPU plan,
     from the take's sidecar and the request (the slow part of start_render).
-    `cmd` is the CPU (libx264) command; the GPU plan builds the others."""
+    `cmd` is the CPU (libx264) command; the GPU plan builds the others.
+    `take` is the take's sound (its audio.wav, or its effects print)."""
+    if take is None:
+        take = _TakeSound(folder / "audio.wav", body.take_gain, "")
     sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
     video = sidecar.get("video") or {}
     offset_ms = (
@@ -1778,19 +1806,20 @@ async def _prepare_render(
     master_chain = ""
     retry: _MasterRetry | None = None
     if master_settings is not None:
-        take_audio = folder / "audio.wav"
-        st = await asyncio.to_thread(take_audio.stat)
+        st = await asyncio.to_thread(take.path.stat)
         plan, rate_in = await stems_api.master_plan(
             job_id,
-            [lane.path for lane in lanes] + [take_audio],
+            [lane.path for lane in lanes] + [take.path],
             [f"{lane.fx_filter}{lane.pitch_filter}volume={lane.gain:.6f}" for lane in lanes]
-            + [f"{audio.take_fx}volume={body.take_gain:.6f}"],
+            + [f"{audio.take_fx}volume={take.gain:.6f}"],
             audio.master_fx,
             master_settings,
             True,
             [
                 *stems_api._take_versions(job_id, audio.names),
                 f"{take_id}@{st.st_size}:{st.st_mtime_ns}",
+                # The take through its effects is another mix to measure.
+                *([take.key] if take.key else []),
                 # A backing without a stem is another mix to measure.
                 *([f"without:{body.remove_stem}"] if body.remove_stem else []),
             ],
@@ -1806,8 +1835,8 @@ async def _prepare_render(
     ) -> list[str]:
         return build_video_render_cmd(
             lanes,
-            folder / "audio.wav",
-            body.take_gain,
+            take.path,
+            take.gain,
             camera,
             camera_start,
             duration,
@@ -1857,8 +1886,12 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
         body.range_in is None or body.range_out is None or body.range_out <= body.range_in
     ):
         raise HTTPException(status_code=422, detail="range needs range_in before range_out")
+    # The take through its live effects (Performance), checked before
+    # anything is queued: a stale or unknown print is refused, never
+    # replaced by the take as recorded.
+    take = await asyncio.to_thread(_take_sound, job_id, take_id, folder, body)
     audio = await asyncio.to_thread(
-        _render_lanes, job_id, take_id, body, folder / "audio.wav", entry.get("track_id") or None
+        _render_lanes, job_id, take_id, body, take.path, entry.get("track_id") or None
     )
     key = (job_id, take_id)
     run = _RenderRun()
@@ -1882,7 +1915,7 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
         _renders[key] = run
     try:
         cmd, duration, retry, lanes, start, run.gpu = await _prepare_render(
-            job_id, take_id, folder, body, camera, audio
+            job_id, take_id, folder, body, camera, audio, take
         )
     except BaseException:
         # Refused (or failed) before anything rendered: the earlier video

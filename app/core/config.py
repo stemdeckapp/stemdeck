@@ -487,6 +487,27 @@ TAKE_MAX_SEQ = 100_000
 TAKE_SLACK_SEC = 120
 TAKE_AUDIO_MAX_BYTES_PER_SEC = 48000 * 2 * 4  # float32 stereo at 48 kHz
 TAKE_CAMERA_MAX_BYTES_PER_SEC = 20_000_000 // 8  # 20 Mbit/s, 2.5x the 8 Mbit/s recorder
+
+# Effects chain prints (Advanced mode, static/js/fx/fxPrint.js): the browser
+# renders a lane through its effects chain and uploads it, in parts under the
+# 4 MB body limit, and the export uses it in place of the stem. Stored in the
+# cache folder, never the jobs folder: a print is derived and can be made again.
+FX_PRINT_PART_MAX_BYTES = 4 * 1024 * 1024
+FX_PRINT_MAX_SEQ = 2_000
+# A print is the lane's length plus the chain's tail, capped at this many
+# seconds (TAIL_CAP_SEC in static/js/fx/chainModel.js), plus one second of
+# slack for rounding.
+FX_PRINT_TAIL_MAX_SEC = 4
+FX_PRINT_SLACK_SEC = 1
+# The chain key the browser sends (chainModel.canonicalChain): eight pedals
+# of a dozen controls each fit in well under this.
+FX_PRINT_CHAIN_MAX_CHARS = 8192
+# The print folder's budget, oldest first. A five minute stereo print is about
+# 80 MB at 24 bits.
+FX_PRINT_CACHE_MAX_FILES = 40
+FX_PRINT_CACHE_MAX_BYTES = 3 * 1024 * 1024 * 1024
+# An upload that never finished is removed after this long.
+FX_PRINT_SESSION_TTL_SEC = 3600
 # Streamer Mode's recorder asks for at most 70% of that (recordModel.js
 # BITRATE_MAX), so a busy scene's overshoot still fits.
 # A take render's output: the canvas's short side for each size it offers.

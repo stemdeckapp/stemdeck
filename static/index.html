@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/css/recording.css" />
     <link rel="stylesheet" href="/css/daw.css" />
     <link rel="stylesheet" href="/css/eq.css" />
+    <link rel="stylesheet" href="/css/fx.css" />
     <link rel="stylesheet" href="/css/mastering.css" />
     <link rel="stylesheet" href="/css/video.css" />
     <link rel="stylesheet" href="/css/karaoke.css" />
@@ -1464,6 +1465,10 @@
       </label>
       <p class="rec-note rec-monitor-delay" id="recMonitorDelay"></p>
       <p class="rec-note" data-i18n="rec.headphonesNote">Use headphones. With speakers the song bleeds into the take, and hearing yourself can feed back.</p>
+      <!-- Shown while monitoring plays to speakers (capture/liveFxUi.js). -->
+      <p class="rec-warn" id="recSpeakersWarn" role="alert" hidden></p>
+      <!-- The armed track's live effects: heard, never recorded (capture/liveFxUi.js). -->
+      <section class="rec-live-fx" id="recLiveFx" hidden></section>
       <fieldset class="rec-mute">
         <legend data-i18n="rec.muteDuring">Mute while recording</legend>
         <div class="rec-mute-list" id="recMuteList"></div>

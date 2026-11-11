@@ -6,6 +6,8 @@
 //   insecure-context    the page is not a secure context (phone over plain http)
 //   unsupported         no navigator.mediaDevices.getUserMedia at all
 //   linux-webview       the same, inside the Linux desktop app (WebKitGTK)
+//   not-granted         not allowed yet, so the device names are hidden
+//                       (only for a picker; getUserMedia never returns it)
 //   denied              the browser or the user refused
 //   os-blocked-macos    macOS privacy settings refused (desktop app)
 //   os-blocked-windows  Windows privacy settings refused (desktop app)
@@ -19,7 +21,7 @@
 import { t } from "../i18n.js";
 
 const REASONS = new Set([
-  "insecure-context", "unsupported", "linux-webview", "denied", "os-blocked-macos",
+  "insecure-context", "unsupported", "linux-webview", "not-granted", "denied", "os-blocked-macos",
   "os-blocked-windows", "no-device", "device-busy", "rate-mismatch", "unknown",
 ]);
 

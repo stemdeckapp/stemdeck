@@ -268,8 +268,18 @@ test.describe("help mode leaves no control unexplained", () => {
     await page.locator("#streamer .sm-marker").last().hover();
     await expect(tip(page).locator("b")).toHaveText("Chorus");
     await expect(tip(page)).toContainText("move the playhead there");
-    // Narrow, the output panel folds into a drawer behind its own button.
+    // The Effects tab: its controls are explained too (the Guide takes
+    // clicks, so it goes off to switch tabs).
     await page.keyboard.press("Escape");
+    await page.locator("#streamerTab-effects").click();
+    await expect(page.locator("#streamerEffectsPanel")).toBeVisible();
+    await helpOn(page);
+    expect(await unexplained(page)).toEqual([]);
+    await page.locator("#streamerTab-effects").hover();
+    await expect(tip(page)).toContainText("live effects");
+    await page.keyboard.press("Escape");
+    await page.locator("#streamerTab-timeline").click();
+    // Narrow, the output panel folds into a drawer behind its own button.
     await page.setViewportSize({ width: 1100, height: 900 });
     await expect(page.locator("#streamer .sm-output-btn")).toBeVisible();
     await helpOn(page);
