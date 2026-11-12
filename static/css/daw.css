@@ -5780,6 +5780,29 @@ input, textarea { font-family: inherit; }
   overflow: hidden;
 }
 
+/* A chip's label never breaks inside the chip, in the row or in the panel.
+   A flex item may shrink down to its min-content width, and for a label with
+   a space in it ("Lead + Backing", the Korean "기타 소리") or any CJK label,
+   min-content is one word or one character wide. So when the row ran short
+   the chips shrank and their text wrapped onto a second line and out of the
+   30px box, the row stopped overflowing, and fitStemChips, which only folds a
+   row that overflows, saw nothing to fold. With nowrap, min-content is the
+   whole label: the chip keeps its width, the row overflows, and the chip
+   that no longer fits goes into the panel whole.
+   The boxes do not shrink either. The mode toggle is overflow: hidden, which
+   drops a flex item's automatic minimum width to 0, so nowrap alone would
+   have clipped "Lead + Backing" where it used to wrap it. */
+.daw-stem-chips .stem-choice,
+.stem-overflow .stem-choice,
+.vocal-mode-btn {
+  white-space: nowrap;
+}
+.daw-stem-chips > *,
+.stem-overflow > *,
+.stem-group > * {
+  flex-shrink: 0;
+}
+
 /* Fixed rather than absolute, for the same reason the footer's options panel
    is: it has to escape the bar it is anchored in. JS sets left/top from the
    button's own rect. */

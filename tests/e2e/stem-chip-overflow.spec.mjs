@@ -113,6 +113,48 @@ test.describe("extract row overflow", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("no chip breaks its own label onto a second line", async ({ page }) => {
+    // The row's height cannot see this. A chip is a flex item, so a short row
+    // used to shrink it to its min-content width, which for "Lead + Backing" is
+    // one word: the label went to two lines and out of the 30px box while the
+    // row itself stayed 30px tall and reported nothing to fold. Seen in the
+    // desktop app at 1008 to 1024. Counted from the label's own line boxes, so
+    // a clipped chip (scrollWidth past its box) is caught too.
+    const offenders = [];
+    for (const lang of ["en", "pt", "fr", "ko", "ja"]) {
+      await page.setViewportSize({ width: 1600, height: 900 });
+      await openIn(page, lang);
+      for (const [width, height] of [[1024, 768], [1008, 768], [900, 700]]) {
+        await page.setViewportSize({ width, height });
+        await page.waitForTimeout(400);
+        const bad = await page.evaluate(() =>
+          [...document.querySelectorAll("#stemChips .stem-choice, #stemChips .vocal-mode-btn")]
+            .map((el) => {
+              // Text nodes only: an inline span's own box is not a line.
+              const tops = new Set();
+              const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+              for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+                if (!t.textContent.trim()) continue;
+                const range = document.createRange();
+                range.selectNodeContents(t);
+                for (const r of range.getClientRects()) {
+                  if (r.width > 0) tops.add(Math.round(r.top));
+                }
+              }
+              return {
+                label: el.textContent.trim(),
+                lines: tops.size,
+                clipped: Math.round(el.scrollWidth - el.clientWidth),
+              };
+            })
+            .filter((c) => c.lines > 1 || c.clipped > 1),
+        );
+        for (const c of bad) offenders.push({ lang, width, ...c });
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("a settled row stops moving chips", async ({ page }) => {
     // The fitter is driven by a ResizeObserver on the composer, and it now
     // changes layout while it measures: it hides and shows the button, and
