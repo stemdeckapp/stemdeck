@@ -14,7 +14,7 @@ import { exportFxParam } from "../eqEngine.js";
 import { exportMasterParam } from "../masterEngine.js";
 import { waitForRender, cancelRender, renderDownloadUrl } from "../video/videoRender.js";
 import { buildRenderRequest, isNoEncoder } from "./recordModel.js";
-import { transposeExportAvailable } from "../state.js";
+import { transposeExportAvailable, mixerState } from "../state.js";
 import { transposeExportBlocked } from "../transposeExport.js";
 import { t } from "../i18n.js";
 import { ensurePrint } from "../fx/fxPrint.js";
@@ -44,6 +44,10 @@ export function renderRequest({ trackId, settings, aspect, range, remove = "" })
     fx: settings.recordMixedAudio ? exportFxParam(trackId ? [...names, trackId] : names) : "",
     master: exportMasterParam(),
     remove,
+    // The take lane's volume (its Performance lane slider): the take sits
+    // against the backing as it was heard. The backing's lanes carry their
+    // own volumes in `mix` (player.currentMixLanes).
+    takeGain: trackId ? mixerState[trackId]?.volume ?? 1 : 1,
   });
 }
 

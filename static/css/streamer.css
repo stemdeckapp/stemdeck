@@ -232,8 +232,8 @@ html.streamer-open .daw-footer { display: none !important; }
 }
 /* The live window and the take review are both shown, their size set from
    the builder's (reviewModel.reviewTier): side by side (tiers a and b) the
-   column holds two windows of --sm-win-w; stacked (tier s, too narrow for
-   two across) it is one window wide, the review under the live window, the
+   column holds two windows of --sm-win-w, down to 288 px each; stacked
+   (tier s, too narrow for two of 288 across) it is one window wide, the review under the live window, the
    pair within 65% of the builder's height. Tier c, the hard minimum (a
    builder too short for two windows of 288 px), keeps one window, sized as
    above. */
@@ -749,6 +749,47 @@ html.streamer-open .daw-footer { display: none !important; }
    name is the label's title). */
 .sm-tl-label-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sm-tl-label-stem:has(> .sm-tl-mute:not([hidden])) { gap: 2px; padding-left: 6px; }
+
+/* Performance's level slider (streamer/levelSlider.js): the lane volumes in
+   the labels and the Monitor level. A 3 px track like the zoom's, a thumb in
+   the lane's colour, a tick at 0 dB; the element itself is the hit area. */
+.sm-level {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: 4px;
+  --sm-level: var(--sm-yellow);
+}
+.sm-level[hidden] { display: none; }
+.sm-level:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-level.disabled { opacity: .45; cursor: default; }
+.sm-level-track { position: relative; flex: 1; height: 3px; border-radius: 2px; background: #2a333e; }
+.sm-level-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: color-mix(in srgb, var(--sm-level) 55%, #2a333e); }
+.sm-level-unity { position: absolute; top: -2px; width: 1px; height: 7px; margin-left: -.5px; background: #6b7682; }
+.sm-level-thumb { position: absolute; top: -4px; left: 0; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; background: var(--sm-level); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+/* In a lane label: along its bottom edge, under the name, in the lane's
+   colour. The name moves up to make room. */
+.sm-tl-audio-labels .sm-tl-label-stem { position: relative; }
+.sm-tl-vol { position: absolute; left: 1px; right: 1px; bottom: 0; --sm-level: var(--sm-lane); }
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) { flex-basis: 40px; min-height: 30px; align-items: flex-start; padding-top: 2px; padding-bottom: 12px; }
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) > .sm-tl-mute,
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) > .sm-tl-fx { margin-top: -2px; }
+/* The Monitor level, under Hear myself: its name, the slider, the dB. */
+.sm-monitor-level { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; font-size: 12.5px; color: var(--sm-text-2); }
+.sm-monitor-level-label { white-space: nowrap; }
+.sm-monitor-level-slider { flex: 0 1 140px; min-width: 64px; height: 20px; }
+.sm-monitor-level-value { flex: none; min-width: 4.5em; font: 500 11px var(--font-mono); color: var(--sm-muted); white-space: nowrap; }
+/* Touch: a bigger thumb everywhere; the Monitor level, which has the room,
+   a taller hit area too. */
+@media (pointer: coarse) {
+  .sm-level-thumb { width: 15px; height: 15px; top: -6px; margin-left: -7.5px; }
+  .sm-monitor-level-slider { height: 28px; }
+}
 .sm-tl-grip {
   flex: none;
   width: 12px;
@@ -1166,18 +1207,18 @@ html.streamer-open .daw-footer { display: none !important; }
 /* Under 680: the column scrolls. */
 @container streamer (max-width: 679px) {
   /* The header and the timeline fit any width (they wrap or scroll
-     themselves); only the live window keeps its 480 px, so a workspace
-     narrower than that scrolls sideways under the header, never squeezing
-     the window or hiding a control. */
+     themselves), and so do the windows: the column scrolls down, never
+     sideways (auto across all the same, so nothing could ever be out of
+     reach; performance-layout.spec.mjs holds it to no sideways overflow). */
   .sm-center { overflow: auto; }
   .sm-builder { flex: none; min-height: 0; container-type: inline-size; }
   .sm-row { flex-direction: column; justify-content: flex-start; }
   /* cqw is the builder's width here. The windows follow the same tiers as
      above (streamer.js measures the column's height); only past the hard
-     minimum are they stacked at this width, with no --sm-win-w set, and the
-     column scrolls. */
-  .sm-preview-col { width: clamp(480px, min(100cqw, 716px), 716px); }
-  .sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, clamp(480px, min(100cqw, 716px), 716px)); }
+     minimum are they stacked at the builder's width (--sm-win-w), and the
+     column scrolls down. */
+  .sm-preview-col { width: min(100cqw, 716px); }
+  .sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, min(100cqw, 716px)); }
   /* The tabs take a row of their own over the timeline here (34 px), so I
      play and the zoom keep the whole width of the row under them. */
   .sm-tl { flex: none; flex-direction: column; height: calc(217px + 34px); }

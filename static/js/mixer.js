@@ -23,6 +23,7 @@ import { getMode } from "./mode.js";
 import { t } from "./i18n.js";
 import { stemFileExt } from "./playbackStems.js";
 import { PITCH_MAX, PITCH_MIN, clampPitch, pitchBlockedKey, savedGlobalPitch } from "./pitchBus.js";
+import { levelText } from "./laneLevel.js";
 
 function defaultMixerEntry() {
   // `pitch` is the key this lane is actually in, in semitones from the
@@ -366,21 +367,31 @@ export function updateLaneKnobVisual(knobEl, v) {
   }
 }
 
-/** A lane's level as the readout shows it: "0.0", "+3.5", "-6.0" or "-∞" (dB). */
-export function levelText(v) {
-  if (!(v > 0)) return "-∞";
-  const db = (20 * Math.log10(v)).toFixed(1);
-  // "-0.0" from a level a hair under unity reads as a different number.
-  if (db === "-0.0") return "0.0";
-  return `${parseFloat(db) > 0 ? "+" : ""}${db}`;
-}
+// A lane's level as the readout shows it (laneLevel.js, where Performance's
+// lane volumes read it too).
+export { levelText };
 
 export function setLaneVolume(name, v) {
-  const state = mixerState[name];
-  if (!state) return;
-  state.volume = Math.max(0, Math.min(LANE_VOLUME_MAX, v));
-  const knob = mixerEl.querySelector(`.lane-knob[data-stem="${name}"]`);
-  if (knob) updateLaneKnobVisual(knob, state.volume);
+  setLanesVolume([name], v);
+}
+
+/**
+ * Set every lane in `names` to level `v` (the fader's range), then push the
+ * mix and save it once. Performance's Backing track sets all its lanes with
+ * one move. The engines glide each gain (setTargetAtTime), so a change while
+ * playing does not click.
+ */
+export function setLanesVolume(names, v) {
+  let changed = false;
+  for (const name of names || []) {
+    const state = mixerState[name];
+    if (!state) continue;
+    state.volume = Math.max(0, Math.min(LANE_VOLUME_MAX, v));
+    const knob = mixerEl?.querySelector(`.lane-knob[data-stem="${CSS.escape(name)}"]`);
+    if (knob) updateLaneKnobVisual(knob, state.volume);
+    changed = true;
+  }
+  if (!changed) return;
   applyMix();
   saveMix();
 }

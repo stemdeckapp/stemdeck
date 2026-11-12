@@ -3036,19 +3036,34 @@ function applyQueueDecorations(snap = getQueueSnapshot()) {
  *  the three panels around the mixer. The state is one class on .app plus one
  *  localStorage flag, and a second writer reproducing those by hand is exactly
  *  the kind of pair that drifts the first time either changes.
+ *
+ *  `byHand: false` is a view folding the library to make room (Performance
+ *  in a narrow window, streamer/libraryFold.js): the same class and
+ *  aria-expanded, but the person's own choice stays saved, so a reload or the
+ *  view closing gives back what they had. Every change is announced
+ *  ("stemdeck:library-collapse", { collapsed, byHand }) so that view can tell
+ *  a person's own toggle from its fold.
  */
-export function setSidebarCollapsed(isCollapsed) {
+export function setSidebarCollapsed(isCollapsed, { byHand = true } = {}) {
   const app = document.querySelector(".app");
   if (!app) return;
   app.classList.toggle("cat-collapsed", isCollapsed);
   document
     .getElementById("sidebarCollapseBtn")
     ?.setAttribute("aria-expanded", String(!isCollapsed));
-  try {
-    localStorage.setItem("stemdeck.catalog.collapsed", isCollapsed ? "1" : "0");
-  } catch (e) {
-    console.warn("[catalog] could not persist sidebar state:", e);
+  if (byHand) {
+    try {
+      localStorage.setItem("stemdeck.catalog.collapsed", isCollapsed ? "1" : "0");
+    } catch (e) {
+      console.warn("[catalog] could not persist sidebar state:", e);
+    }
   }
+  document.dispatchEvent(new CustomEvent("stemdeck:library-collapse", { detail: { collapsed: Boolean(isCollapsed), byHand } }));
+}
+
+/** The library sidebar is folded to the rail. */
+export function isSidebarCollapsed() {
+  return Boolean(document.querySelector(".app")?.classList.contains("cat-collapsed"));
 }
 
 function wireCatalogToggle() {

@@ -262,6 +262,7 @@ const HELP = [
   // (streamer/streamerFx.js): the strip runs left to right as on a lane.
   // What reads the same as the recording panel's uses the same sentence.
   ["#streamerHear", "help.smMonitor", null, "rec.monitor"],
+  ["#streamerMonitorLevel, #streamerMonitorLevelLabel", "help.smMonitorLevel", null, "streamer.fx.monitorLevel"],
   ["#streamerFxTitle", "help.smFx", null, "rec.liveFx.title"],
   ["#streamerFx .fx-power", "help.liveFxPower"],
   ["#streamerFx .fx-inst-wrap, #streamerFx .fx-inst", "help.smFxInstrument", null, "fx.inst.label"],
@@ -277,6 +278,9 @@ const HELP = [
   ["#streamerFx .fx-card", "help.fxCard"],
   // The take lane's Effects switch, beside its mute.
   ["#streamer .sm-tl-fx", "help.smTakeFx", null, "streamer.lane.takeFx"],
+  // The two lanes' volume sliders, along the bottom of their labels.
+  ["#streamer .sm-tl-vol-backing", "help.smBackingVolume", null, "streamer.lane.backingVolume"],
+  ["#streamer .sm-tl-vol-take", "help.smTakeVolume", null, "streamer.lane.takeVolume"],
   // The effects chain (fx/fxRows.js, Advanced mode). Its tab and power
   // button reuse the EQ's classes, so these come before the EQ entries.
   [".fx-tab", "help.fxTab"],

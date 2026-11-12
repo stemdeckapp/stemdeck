@@ -556,6 +556,19 @@ export async function leaveModeView(page) {
 }
 
 /**
+ * Open the library again by hand while Performance is open. Performance
+ * folds an open library in a window under about 1140 px wide
+ * (streamer/libraryFold.js) and leaves it open once a person opens it
+ * again, so a spec that needs the narrower timeline beside the library
+ * (room for the 6 s fixture to zoom) calls this after the fold.
+ */
+export async function reopenLibraryInPerformance(page) {
+  await page.waitForFunction(() => document.querySelector(".app")?.classList.contains("cat-collapsed"));
+  await page.locator("#sidebarCollapseBtn").click();
+  await page.waitForFunction(() => Math.round(document.getElementById("catalogPanel").getBoundingClientRect().width) === 390);
+}
+
+/**
  * Put the fixture back to its one version (#804). Versions live on the
  * server, which every spec shares, so a spec that makes one (Extract on the
  * open song, Save as new version) leaves it behind for the next spec unless

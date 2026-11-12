@@ -15,6 +15,10 @@ input, textarea { font-family: inherit; }
      same number, so the divider under the logo is the one the rail already
      draws, and the bar proper starts where the library does. */
   --rail-w: 66px;
+  /* The library sidebar's open width (rail included), as a variable:
+     Performance reads it to tell whether its two windows fit beside an open
+     library (streamer/libraryFold.js). */
+  --sidebar-w: 390px;
   width: 100vw;
   height: 100vh;
   background: var(--bg);
@@ -520,7 +524,7 @@ input, textarea { font-family: inherit; }
    SIDEBAR / CATALOG
    ═══════════════════════════════════ */
 .sidebar {
-  width: 390px;
+  width: var(--sidebar-w);
   flex-shrink: 0;
   background: var(--bg-2);
   border-right: 1px solid var(--border);
@@ -5774,6 +5778,29 @@ input, textarea { font-family: inherit; }
   min-width: 0;
   flex-wrap: nowrap;
   overflow: hidden;
+}
+
+/* A chip's label never breaks inside the chip, in the row or in the panel.
+   A flex item may shrink down to its min-content width, and for a label with
+   a space in it ("Lead + Backing", the Korean "기타 소리") or any CJK label,
+   min-content is one word or one character wide. So when the row ran short
+   the chips shrank and their text wrapped onto a second line and out of the
+   30px box, the row stopped overflowing, and fitStemChips, which only folds a
+   row that overflows, saw nothing to fold. With nowrap, min-content is the
+   whole label: the chip keeps its width, the row overflows, and the chip
+   that no longer fits goes into the panel whole.
+   The boxes do not shrink either. The mode toggle is overflow: hidden, which
+   drops a flex item's automatic minimum width to 0, so nowrap alone would
+   have clipped "Lead + Backing" where it used to wrap it. */
+.daw-stem-chips .stem-choice,
+.stem-overflow .stem-choice,
+.vocal-mode-btn {
+  white-space: nowrap;
+}
+.daw-stem-chips > *,
+.stem-overflow > *,
+.stem-group > * {
+  flex-shrink: 0;
 }
 
 /* Fixed rather than absolute, for the same reason the footer's options panel

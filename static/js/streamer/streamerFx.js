@@ -24,8 +24,16 @@
 //   (fx/fxPrint.js, the take id as the print's lane) and the server renders
 //   the print in place of the take's audio (app/api/takes.py take_print).
 //
-// What is kept: the chain (instrument and trim included) and Low latency, in
-// Performance's recording settings (outputSettings.js inputFx). Hear myself
+// How loud: the Monitor level under Hear myself, the capture graph's monitor
+// gain (captureGraph.setMonitor's gain, after the chain, glided so a move does
+// not click). It never reaches the recorder, which taps the input before any
+// route, so the take stays the clean input at its own level. It starts at
+// and never goes past unity, the level Hear myself always played at
+// (laneLevel.MONITOR_LEVEL_MAX).
+//
+// What is kept: the chain (instrument and trim included), Low latency and
+// the Monitor level, in Performance's recording settings (outputSettings.js
+// inputFx and monitorLevel). Hear myself
 // is not kept: it is off at every page load and whenever Performance closes
 // (a monitor that comes back on by itself next to a microphone and speakers
 // can feed back). Which tab shows is kept by streamerTabs.js; the strip is
@@ -45,6 +53,8 @@ import { getMixMode } from "../mixer.js";
 import { isMixSwitching } from "../mixMode.js";
 import { getStreamerMedia } from "./streamerDevices.js";
 import { takeInfo, setTakeFx } from "./streamerRecord.js";
+import { makeLevelSlider } from "./levelSlider.js";
+import { MONITOR_LEVEL_DEFAULT, MONITOR_LEVEL_MAX, monitorLevelOf, levelText as levelTextOf } from "../laneLevel.js";
 
 /** The one route Performance monitors: its input. */
 export const ROUTE = "performance";
@@ -56,7 +66,14 @@ let host = {
   kind: () => null,
   read: () => null,
   write: () => {},
+  level: () => MONITOR_LEVEL_DEFAULT,
+  setLevel: () => {},
 };
+
+/** The Monitor level now (0 to MONITOR_LEVEL_MAX). */
+export function monitorLevel() {
+  return monitorLevelOf(host.level());
+}
 
 /** Performance's live input effects controller. */
 export const perfFx = createInputFx({
@@ -93,11 +110,31 @@ export function setHearing(on) {
   // As the recording panel: the chain is built (or taken out, ducked, while
   // the monitor still plays) before the monitor's gain moves.
   perfFx.setMonitoring(hear);
-  attached?.setMonitor(hear);
+  attached?.setMonitor(hear, monitorLevel());
   ui?.hearSwitch.set(hear);
   paintNotes();
   paintSpeakers();
   paintLatency();
+}
+
+/**
+ * The Monitor level set to `v` (0 to MONITOR_LEVEL_MAX): heard at once when
+ * Hear myself is on (the monitor gain glides there), and kept in the
+ * recording settings when `save`. Never turns Hear myself on.
+ */
+export function setMonitorLevel(v, { save = true } = {}) {
+  const next = monitorLevelOf(v);
+  host.setLevel(next, save);
+  attached?.setMonitor(hear, next);
+  paintLevel();
+}
+
+function paintLevel() {
+  if (!ui) return;
+  const v = monitorLevel();
+  ui.level.paint(v, true);
+  const text = t("streamer.vol.db", { db: levelTextOf(v) });
+  if (ui.levelValue.textContent !== text) ui.levelValue.textContent = text;
 }
 
 function el(tag, cls, text) {
@@ -134,7 +171,25 @@ export function buildStreamerFx({ makeSwitch, tx }) {
   warn.id = "streamerSpeakersWarn";
   warn.setAttribute("role", "alert");
   warn.hidden = true;
-  monitor.append(hearSwitch.b, note, warn);
+  // The Monitor level: how loud Hear myself plays the input, against the
+  // backing. Set on every move (glided), kept once a move ends.
+  const levelRow = el("div", "sm-monitor-level");
+  const levelLabel = tx(el("span", "sm-monitor-level-label"), "streamer.fx.monitorLevel");
+  levelLabel.id = "streamerMonitorLevelLabel";
+  const level = makeLevelSlider({
+    cls: "sm-monitor-level-slider",
+    labelKey: "streamer.fx.monitorLevel",
+    max: MONITOR_LEVEL_MAX,
+    reset: MONITOR_LEVEL_DEFAULT,
+    get: () => monitorLevel(),
+    set: (v) => setMonitorLevel(v, { save: false }),
+    commit: (v) => setMonitorLevel(v, { save: true }),
+  });
+  level.el.id = "streamerMonitorLevel";
+  const levelValue = el("span", "sm-monitor-level-value");
+  levelValue.setAttribute("aria-hidden", "true");
+  levelRow.append(levelLabel, level.el, levelValue);
+  monitor.append(hearSwitch.b, levelRow, note, warn);
 
   const section = el("section", "sm-fx");
   section.id = "streamerFx";
@@ -161,7 +216,7 @@ export function buildStreamerFx({ makeSwitch, tx }) {
   const badge = el("span", "sm-tab-badge");
   badge.setAttribute("aria-hidden", "true");
   badge.hidden = true;
-  ui = { hearSwitch, note, warn, badge, section, state, side, low, latency, body };
+  ui = { hearSwitch, note, warn, badge, section, state, side, low, latency, body, level, levelValue };
   paintSection();
   return { monitor, effects: section, badge };
 }
@@ -203,6 +258,7 @@ function paintSection() {
     else strip.refresh();
   } else unmount();
   ui.low.set(perfFx.getInputFx(ROUTE).low);
+  paintLevel();
   paintNotes();
   paintLatency();
 }
@@ -247,7 +303,7 @@ export function paintStreamerFx() {
     perfFx.attachCapture(attached);
     // A new input starts silent (captureGraph.js): it plays only if Hear
     // myself is on, once its routes are built.
-    attached?.setMonitor(hear);
+    attached?.setMonitor(hear, monitorLevel());
     paintSection();
   }
   const ch = host.channels();
@@ -263,6 +319,8 @@ export function paintStreamerFx() {
 /** The settings were read (or changed elsewhere): the chain follows them. */
 export function streamerFxSettingsChanged() {
   perfFx.apply();
+  // The Monitor level read again: heard at once if Hear myself is on.
+  attached?.setMonitor(hear, monitorLevel());
   paintSection();
 }
 
@@ -367,8 +425,8 @@ let inited = false;
  * `write(rec)` stores it (null: nothing set). `trackId()` is the open song's
  * Performance track (its lane plays its take's chain).
  */
-export function initStreamerFx({ channels, kind, read, write, trackId }) {
-  host = { channels, kind, read, write };
+export function initStreamerFx({ channels, kind, read, write, level, setLevel, trackId }) {
+  host = { channels, kind, read, write, level: level || host.level, setLevel: setLevel || host.setLevel };
   if (inited) return;
   inited = true;
   perfFx.init();

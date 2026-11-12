@@ -2,8 +2,8 @@
 // the live and review windows go at each size, what the review shows, and
 // the sync of its video to the transport (the same placement as the export).
 import {
-  MIN_WINDOW_W, MIN_SMALL_W, STACK_MAX_SHARE, STILL_SEC, JUMP_SEC, NUDGE_MAX, SEEK_LEAD,
-  reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio,
+  MIN_WINDOW_W, MIN_SMALL_W, STACK_MAX_SHARE, STILL_SEC, JUMP_SEC, NUDGE_MAX, SEEK_LEAD, SIDE_PANEL_AT,
+  reviewTier, foldsLibrary, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio,
 } from "../../static/js/streamer/reviewModel.js";
 
 let failed = 0;
@@ -33,24 +33,32 @@ check("tier b windows are smaller than the height allows", r.win < byH);
 // large one window could be (no single-window tier above the hard minimum).
 r = reviewTier({ ...base, width: 780, height: 950 });
 check("tall and narrow, two of 384 fit across: tier b", r.tier === "b" && r.win === 384, JSON.stringify(r));
-// Too narrow for two windows of 360 across: stacked (tier s), within the
-// share of the height and leaving the timeline its least.
-const stackOf = (w, h) => Math.floor(Math.min(w, (Math.min(STACK_MAX_SHARE * h, h - 277) - 12) / 2 * 16 / 9));
+// Too narrow for two windows of 360 across: still side by side, smaller,
+// down to the hard minimum (the strip and the card keep the height under
+// them), however tall the builder.
 r = reviewTier({ ...base, width: 700, height: 800 });
-check("narrow: stacked (tier s)", r.tier === "s" && r.win === stackOf(700, 800), JSON.stringify(r));
-check("tier s: the pair within 65% of the height", 2 * (r.win * 9 / 16) + 12 <= STACK_MAX_SHARE * 800 + 1);
-check("tier s: the timeline keeps its least", 800 - (2 * (r.win * 9 / 16) + 12) - 12 - 40 - 8 >= 217 - 1);
+check("narrow: two across under 360 (tier b), not stacked", r.tier === "b" && r.win === 344, JSON.stringify(r));
 r = reviewTier({ ...base, width: 700, height: 1400 });
-check("narrow and very tall: stacked windows as wide as the builder", r.tier === "s" && r.win === 700, JSON.stringify(r));
+check("narrow and very tall: still two across (tier b)", r.tier === "b" && r.win === 344, JSON.stringify(r));
+// The 800 x 900 window with the library folded: a builder of 716 x 667.
+r = reviewTier({ ...base, width: 716, height: 667 });
+check("800 x 900, library folded: two of 352 across", r.tier === "b" && r.win === 352, JSON.stringify(r));
+// The boundary between b and s: two windows of 288 across.
+const edge = 2 * MIN_SMALL_W + 12;
+check("exactly two windows of 288 across: tier b", reviewTier({ ...base, width: edge, height: 900 }).tier === "b", JSON.stringify(reviewTier({ ...base, width: edge, height: 900 })));
+// One pixel less: stacked (tier s), within the share of the height and
+// leaving the timeline its least.
+const stackOf = (w, h) => Math.floor(Math.min(w, (Math.min(STACK_MAX_SHARE * h, h - 277) - 12) / 2 * 16 / 9));
+r = reviewTier({ ...base, width: edge - 1, height: 900 });
+check("one pixel less, tall: stacked (tier s)", r.tier === "s" && r.win === stackOf(edge - 1, 900), JSON.stringify(r));
+check("tier s: the pair within 65% of the height", 2 * (r.win * 9 / 16) + 12 <= STACK_MAX_SHARE * 900 + 1);
+check("tier s: the timeline keeps its least", 900 - (2 * (r.win * 9 / 16) + 12) - 12 - 40 - 8 >= 217 - 1);
+r = reviewTier({ ...base, width: 500, height: 1400 });
+check("narrow and very tall: stacked windows as wide as the builder", r.tier === "s" && r.win === 500, JSON.stringify(r));
 check("STACK_MAX_SHARE is 0.65", STACK_MAX_SHARE === 0.65);
-// The boundary between b and s: two windows of 360 across.
-const edge = 2 * MIN_WINDOW_W + 12;
-check("exactly two windows of 360 across: tier b", reviewTier({ ...base, width: edge, height: 900 }).tier === "b", JSON.stringify(reviewTier({ ...base, width: edge, height: 900 })));
-check("one pixel less, tall: tier s", reviewTier({ ...base, width: edge - 1, height: 900 }).tier === "s", JSON.stringify(reviewTier({ ...base, width: edge - 1, height: 900 })));
-// One pixel less but short: stacking would make them smaller than the pair
-// across, so they stay across (above the hard minimum).
-r = reviewTier({ ...base, width: edge - 1, height: 615 });
-check("one pixel less, short: still two across (b), above the hard minimum", r.tier === "b" && r.win >= MIN_SMALL_W, JSON.stringify(r));
+// One pixel less but short: no room to stack two of 288 either: one window.
+r = reviewTier({ ...base, width: edge - 1, height: 600 });
+check("one pixel less, short: one window (tier c)", r.tier === "c", JSON.stringify(r));
 // The maintainer's window (1920 x 1080, library folded): the builder is
 // 1536 x 841, two of 762.
 r = reviewTier({ ...base, width: 1536, height: 841 });
@@ -67,9 +75,11 @@ check("MIN_SMALL_W is 288", MIN_SMALL_W === 288);
 r = reviewTier({ ...base, width: 616, height: 530, tlMin: 251, stacked: true });
 check("narrow workspace with room for two of 288 across: tier b, no scroll", r.tier === "b" && r.win === 302 && !r.scroll, JSON.stringify(r));
 r = reviewTier({ ...base, width: 600, height: 1100, tlMin: 251, stacked: true });
-check("narrow workspace, tall: stacked to fit, no scroll", r.tier === "s" && !r.scroll && r.win >= MIN_SMALL_W, JSON.stringify(r));
+check("narrow workspace, tall, two of 288 fit across: tier b, no scroll", r.tier === "b" && !r.scroll && r.win === 294, JSON.stringify(r));
+r = reviewTier({ ...base, width: 560, height: 1100, tlMin: 251, stacked: true });
+check("narrow workspace, tall, too narrow for two of 288: stacked to fit, no scroll", r.tier === "s" && !r.scroll && r.win === 560, JSON.stringify(r));
 r = reviewTier({ ...base, width: 400, height: 500, tlMin: 251, stacked: true });
-check("narrow workspace under the hard minimum: stacked, the column scrolls", r.tier === "s" && r.scroll, JSON.stringify(r));
+check("narrow workspace under the hard minimum: stacked at the builder's width, the column scrolls", r.tier === "s" && r.scroll && r.win === 400, JSON.stringify(r));
 check("the wide builder never scrolls by tier", !reviewTier({ ...base, width: 1900, height: 420 }).scroll);
 check("no size yet: tier c", reviewTier({ ...base, width: 0, height: 0 }).tier === "c");
 // Monotonic: a wider builder never drops a tier, and within a tier its
@@ -82,7 +92,7 @@ for (const h of [420, 500, 615, 700, 800, 1000, 1400]) {
   let prev = -1;
   let prevWin = 0;
   let prevTier = "";
-  for (let w = 600; w <= 2400; w += 10) {
+  for (let w = 300; w <= 2400; w += 10) {
     const t = reviewTier({ ...base, width: w, height: h });
     const k = rank[t.tier];
     if (k < prev) mono = false;
@@ -98,7 +108,7 @@ check("a wider builder never shrinks the windows within a tier", grow);
 // with the timeline at its least.
 let fits = true;
 for (let h = 440; h <= 1400; h += 20) {
-  for (let w = 660; w <= 2400; w += 20) {
+  for (let w = 600; w <= 2400; w += 20) {
     const t = reviewTier({ ...base, width: w, height: h });
     if (t.tier === "c") { fits = false; continue; }
     const winH = t.win * 9 / 16;
@@ -107,6 +117,42 @@ for (let h = 440; h <= 1400; h += 20) {
   }
 }
 check("above the hard minimum: two windows, always within the builder", fits);
+// Side by side before stacked: wherever two of 288 fit across (and the
+// height leaves them room), the windows are side by side.
+let across = true;
+for (let h = 440; h <= 1400; h += 20) {
+  for (let w = 2 * MIN_SMALL_W + 12; w <= 2400; w += 20) {
+    if ((h - 277) * 16 / 9 < MIN_SMALL_W) continue;
+    if (!/^[ab]$/.test(reviewTier({ ...base, width: w, height: h }).tier)) across = false;
+  }
+}
+check("two of 288 fit across: never stacked", across);
+
+// -- The library folds for Performance --
+// The sidebar is 390 px open and 66 folded (daw.css); the centre column has
+// 18 px of padding across.
+const lib = { sidebarOpenW: 390, padX: 18 };
+// Library open: the layer is the window less 390 (the 1024 x 768 window of
+// the report: 634 px of layer, two of 360 do not fit).
+check("1024 wide, library open: folds", foldsLibrary({ ...lib, layerW: 1024 - 390, sidebarW: 390 }));
+check("800 wide, library open: folds", foldsLibrary({ ...lib, layerW: 800 - 390, sidebarW: 390 }));
+check("1240 wide, library open: stays open", !foldsLibrary({ ...lib, layerW: 1240 - 390, sidebarW: 390 }));
+check("1280 wide, library open: stays open", !foldsLibrary({ ...lib, layerW: 1280 - 390, sidebarW: 390 }));
+check("1366 wide, library open: stays open", !foldsLibrary({ ...lib, layerW: 1366 - 390, sidebarW: 390 }));
+check("1920 wide, library open: stays open", !foldsLibrary({ ...lib, layerW: 1920 - 390, sidebarW: 390 }));
+// The same answer folded and open, and while the sidebar slides: no flip.
+let steady = true;
+for (let vw = 700; vw <= 2000; vw += 1) {
+  const open = foldsLibrary({ ...lib, layerW: vw - 390, sidebarW: 390 });
+  for (const sw of [66, 150, 300, 389]) if (foldsLibrary({ ...lib, layerW: vw - sw, sidebarW: sw }) !== open) steady = false;
+}
+check("the answer is the same open, folded and sliding", steady);
+// The edge: the centre exactly two of 360 and their gap.
+const edgeLayer = 2 * MIN_WINDOW_W + 12 + 18;
+check("exactly two of 360 beside the open library: stays open", !foldsLibrary({ ...lib, layerW: edgeLayer, sidebarW: 390 }));
+check("one pixel less: folds", foldsLibrary({ ...lib, layerW: edgeLayer - 1, sidebarW: 390 }));
+check("from SIDE_PANEL_AT the output panel's 300 px count", SIDE_PANEL_AT === 1200 && !foldsLibrary({ ...lib, layerW: 1200, sidebarW: 390 }));
+check("no size yet: no fold", !foldsLibrary({ ...lib, layerW: 0, sidebarW: 390 }) && !foldsLibrary({ layerW: 500, sidebarW: 390, sidebarOpenW: NaN }));
 
 // ── What the review shows ──
 const v = (o) => reviewView({ hasTake: true, hasVideo: true, recording: false, playing: false, engaged: false, ...o });
