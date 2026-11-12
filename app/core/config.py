@@ -399,6 +399,50 @@ TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
 TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ", 30))
 MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
 MODEL_DOWNLOAD_BACKOFF = (2, 5)
+_MODEL_MIRROR_DEFAULT = "https://files.stemdeck.app"
+
+
+def parse_model_mirror(raw: str | None) -> str | None:
+    """The base address of the model mirror (app/core/model_download.py), or
+    None for no mirror. Unset means the default mirror; an empty value turns
+    the mirror off. Only an https address with a host and no user name,
+    password, query or fragment is used: anything else is refused with a
+    warning and the mirror is off, so a mistyped setting never sends a
+    download somewhere unverified by TLS. The files are checked against their
+    full SHA-256 either way; https keeps who answers honest too."""
+    if raw is None:
+        return _MODEL_MIRROR_DEFAULT
+    raw = raw.strip()
+    if not raw:
+        return None
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(raw)
+        port_ok = parts.port is None or 0 < parts.port < 65536
+    except ValueError:
+        parts, port_ok = None, False
+    if (
+        parts is None
+        or not port_ok
+        or parts.scheme != "https"
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or "?" in raw
+        or "#" in raw
+        or any(seg in (".", "..") for seg in parts.path.split("/"))
+        or "\\" in raw
+        or any(ch.isspace() for ch in raw)
+    ):
+        logger.warning("STEMDECK_MODEL_MIRROR is not an https address; the model mirror is off")
+        return None
+    return raw.rstrip("/")
+
+
+# Where the separation model is fetched from first (app/core/model_download.py),
+# before its original host. Read once, at import, like every setting here.
+MODEL_MIRROR = parse_model_mirror(os.environ.get("STEMDECK_MODEL_MIRROR"))
 TIMEOUT_MODEL_STALL = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_STALL", 120))
 # Minutes with no separation or analysis running before the idle Demucs
 # worker is stopped and the beat model dropped (#975); 0 never unloads. The worker exists to skip a model

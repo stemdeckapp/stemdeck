@@ -500,6 +500,45 @@ def test_progress_before_ready_is_the_download_and_after_it_separation(tmp_path,
     assert [s for s in stages if s.endswith("%")] == ["Separating 30%"]
 
 
+# The mirror's copy arrives whole but wrong, and the original host's follows:
+# the lines app/core/model_download.py writes between the two.
+_MIRROR_FALLBACK_WORKER = """
+import sys, json, os
+sys.stderr.write('Downloading: "http://models.example/m-0123abcd.th" to /c/m-0123abcd.th\\n')
+sys.stderr.write("100%|##########| 80.2M/80.2M\\n")
+sys.stderr.write("model mirror failed (SHA-256 does not match), downloading from the original host\\n")
+sys.stderr.write('Downloading: "http://models.example/m-0123abcd.th" to /c/m-0123abcd.th\\n')
+sys.stderr.write(" 60%|######    |\\r100%|##########| 80.2M/80.2M\\n@@READY@@\\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "vocals.wav"), "wb").write(b"RIFF")
+    sys.stderr.write(" 30%|###       |\\r@@DONE@@\\n")
+    sys.stderr.flush()
+"""
+
+
+def test_the_download_after_a_failed_mirror_still_reads_as_the_download(tmp_path, monkeypatch):
+    stages = _record_stages(monkeypatch)
+    monkeypatch.setattr(
+        sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _MIRROR_FALLBACK_WORKER]
+    )
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+    job = Job(id="abcdefabc342")
+
+    sep_mod.separate(job, tmp_path / "source.wav", tmp_path)
+
+    assert [s for s in stages if s.endswith("%")] == [
+        "Downloading the separation model 100%",
+        "Downloading the separation model 60%",
+        "Downloading the separation model 100%",
+        "Separating 30%",
+    ]
+    assert job.progress == pytest.approx(0.30)
+
+
 def test_after_ready_a_silent_worker_gets_the_long_limit(job, tmp_path, monkeypatch):
     """Inference on a GPU can be silent for minutes; only the model's load and
     download are held to the short limit."""
