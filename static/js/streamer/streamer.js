@@ -78,6 +78,7 @@ import {
 import { buildTabs, readTab, writeTab, viewCentre } from "./streamerTabs.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
+import { libraryFoldStart, libraryFoldEnd, fitLibrary } from "./libraryFold.js";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
 // The header's title while no song is open.
 const NO_TITLE = String.fromCharCode(0x2014);
@@ -914,6 +915,9 @@ function focusView() {
 
 export function closeStreamer() {
   if (!open) return;
+  // In a window too narrow for the two windows beside an open library, the
+  // library folds while Performance is open (libraryFold.js).
+  libraryFoldStart();
   // A take in progress stops first and is kept (on the Streamer track): it
   // can still be exported when Streamer opens again.
   if (takeOpen()) stopRecording();
@@ -952,6 +956,8 @@ export function closeStreamer() {
 }
 
 /** A Streamer take is open (starting, recording or stopping). */
+  // A library Performance folded opens again.
+  libraryFoldEnd();
 export function isStreamerTakeOpen() {
   return takeOpen();
 }
@@ -1083,6 +1089,8 @@ function frame() {
     // running says whose take it is: paintExport).
     if (!exporting) {
       exportNote = "";
+  const ccs = ui?.center ? getComputedStyle(ui.center) : null;
+  fitLibrary(a.width, ccs ? (parseFloat(ccs.paddingLeft) || 0) + (parseFloat(ccs.paddingRight) || 0) : 18);
       exportError = null;
     }
     painted.exp = null;
@@ -1338,10 +1346,9 @@ function placeWindows() {
   review.scroll = scroll;
   screens.dataset.tier = tier;
   panel.dataset.tier = tier;
-  // Stacked past the hard minimum in the narrow band: the stylesheet's width,
-  // and the column scrolls.
-  if (scroll) panel.style.removeProperty("--sm-win-w");
-  else panel.style.setProperty("--sm-win-w", `${win}px`);
+  // Stacked past the hard minimum in the narrow band, the windows are the
+  // builder's width and the column scrolls down (never sideways).
+  panel.style.setProperty("--sm-win-w", `${win}px`);
   painted.review = null;
   painted.scene = null;
 }

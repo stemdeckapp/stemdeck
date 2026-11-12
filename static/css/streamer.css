@@ -232,8 +232,8 @@ html.streamer-open .daw-footer { display: none !important; }
 }
 /* The live window and the take review are both shown, their size set from
    the builder's (reviewModel.reviewTier): side by side (tiers a and b) the
-   column holds two windows of --sm-win-w; stacked (tier s, too narrow for
-   two across) it is one window wide, the review under the live window, the
+   column holds two windows of --sm-win-w, down to 288 px each; stacked
+   (tier s, too narrow for two of 288 across) it is one window wide, the review under the live window, the
    pair within 65% of the builder's height. Tier c, the hard minimum (a
    builder too short for two windows of 288 px), keeps one window, sized as
    above. */
@@ -1166,18 +1166,18 @@ html.streamer-open .daw-footer { display: none !important; }
 /* Under 680: the column scrolls. */
 @container streamer (max-width: 679px) {
   /* The header and the timeline fit any width (they wrap or scroll
-     themselves); only the live window keeps its 480 px, so a workspace
-     narrower than that scrolls sideways under the header, never squeezing
-     the window or hiding a control. */
+     themselves), and so do the windows: the column scrolls down, never
+     sideways (auto across all the same, so nothing could ever be out of
+     reach; performance-layout.spec.mjs holds it to no sideways overflow). */
   .sm-center { overflow: auto; }
   .sm-builder { flex: none; min-height: 0; container-type: inline-size; }
   .sm-row { flex-direction: column; justify-content: flex-start; }
   /* cqw is the builder's width here. The windows follow the same tiers as
      above (streamer.js measures the column's height); only past the hard
-     minimum are they stacked at this width, with no --sm-win-w set, and the
-     column scrolls. */
-  .sm-preview-col { width: clamp(480px, min(100cqw, 716px), 716px); }
-  .sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, clamp(480px, min(100cqw, 716px), 716px)); }
+     minimum are they stacked at the builder's width (--sm-win-w), and the
+     column scrolls down. */
+  .sm-preview-col { width: min(100cqw, 716px); }
+  .sm-builder[data-tier="s"] .sm-preview-col { width: var(--sm-win-w, min(100cqw, 716px)); }
   /* The tabs take a row of their own over the timeline here (34 px), so I
      play and the zoom keep the whole width of the row under them. */
   .sm-tl { flex: none; flex-direction: column; height: calc(217px + 34px); }

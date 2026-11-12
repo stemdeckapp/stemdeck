@@ -10,9 +10,10 @@
 // (app/api/takes.py, fit "fill"). So nothing is drawn over it here: it is
 // exactly the picture the MP4 will have.
 
-/** Two windows side by side are each at least this wide, in CSS pixels;
- * narrower, they stack, or stay across down to MIN_SMALL_W in a builder too
- * short for stacking to do better (see reviewTier). */
+/** The size two windows side by side are meant to have, in CSS pixels: the
+ * library folds in Performance when it leaves less than two of these across
+ * (foldsLibrary). Narrower, the two stay side by side down to MIN_SMALL_W
+ * and only then stack (see reviewTier). */
 export const MIN_WINDOW_W = 360;
 // The hard minimum: two windows (side by side or stacked) are never
 // narrower than this (162 px of 16:9 height). Below it, and only there,
@@ -20,6 +21,10 @@ export const MIN_WINDOW_W = 360;
 // and the strip, that is a builder under about 440 px high (400 in a short
 // workspace), where nothing else fits.
 export const MIN_SMALL_W = 288;
+// streamer.css: from this layer width on, the Recording & Output panel sits
+// beside the centre column (SIDE_PANEL_W wide); narrower, it is a drawer.
+export const SIDE_PANEL_AT = 1200;
+export const SIDE_PANEL_W = 300;
 // Stacked, the two windows and the gap between them take at most this
 // share of the builder's height: the strip and the Timeline / Effects card
 // keep the rest (and never less than the timeline's least).
@@ -53,19 +58,19 @@ export const SEEK_LEAD = 0.03;
  * - "a": side by side, each as large as the height allows, with room to
  *   spare across.
  * - "b": side by side, sharing the width as two equal windows, each at least
- *   MIN_WINDOW_W (or, in a short builder where stacking cannot do better,
- *   at least MIN_SMALL_W).
- * - "s": stacked, the live window over the review, when the width is too
- *   narrow for two side by side: each as wide as the builder allows while
- *   the pair stays within STACK_MAX_SHARE of the height and leaves the
+ *   MIN_SMALL_W: the pair shrinks to the hard minimum before it stacks, so
+ *   the strip and the Timeline / Effects card keep the height under them.
+ * - "s": stacked, the live window over the review, only when two side by
+ *   side would be under MIN_SMALL_W: each as wide as the builder allows
+ *   while the pair stays within STACK_MAX_SHARE of the height and leaves the
  *   timeline its least.
  * - "c": the hard minimum, below MIN_SMALL_W for both layouts: one window,
  *   the review taking the live window's place while a take plays.
  * `stacked` is the narrow workspace (under 680 px), where the column already
  * scrolls: the same rules (`height` is then the height the column has for
  * the builder), but below the hard minimum the two windows stack at the
- * stylesheet's width and the column scrolls ({ tier: "s", scroll: true }),
- * never one window.
+ * builder's width and the column scrolls down ({ tier: "s", scroll: true }),
+ * never one window and never sideways.
  * Returns { tier, win, scroll } with `win` the width of one window.
  */
 export function reviewTier({ width, height, pairGap = 12, colGap = 12, stripH = 40, gap = 8, tlMin = 217, minW = MIN_WINDOW_W, minSmall = MIN_SMALL_W, stacked = false }) {
@@ -76,13 +81,29 @@ export function reviewTier({ width, height, pairGap = 12, colGap = 12, stripH = 
   if (!(width > 0) || !(height > 0)) return stacked ? { tier: "s", win: Math.floor(avail), scroll: true } : { tier: "c", win: single, scroll: false };
   if (byHeight >= minW && 2 * byHeight + pairGap <= avail) return { tier: "a", win: Math.floor(byHeight), scroll: false };
   const pair = Math.min(byHeight, (avail - pairGap) / 2);
-  if (pair >= minW) return { tier: "b", win: Math.floor(pair), scroll: false };
+  if (pair >= minSmall) return { tier: "b", win: Math.floor(pair), scroll: false };
   const stackH = Math.max(0, Math.min(STACK_MAX_SHARE * height, room) - pairGap) / 2;
   const stack = Math.min(avail, stackH * 16 / 9);
-  if (stack >= pair && stack >= minSmall) return { tier: "s", win: Math.floor(stack), scroll: false };
-  if (pair >= minSmall) return { tier: "b", win: Math.floor(pair), scroll: false };
+  if (stack >= minSmall) return { tier: "s", win: Math.floor(stack), scroll: false };
   if (stacked) return { tier: "s", win: Math.floor(avail), scroll: true };
   return { tier: "c", win: single, scroll: false };
+}
+
+/**
+ * Whether Performance folds the library sidebar: when, with the library
+ * open, the centre column would be narrower than two windows of `minW` and
+ * the gap between them. `layerW` is Performance's layer as it is now and
+ * `sidebarW` the sidebar as it is now (open, folded, or between the two
+ * while it slides): their sum does not change as the library opens or
+ * folds, so the answer is the same in both states and the fold never flips
+ * back and forth. `sidebarOpenW` is the sidebar's open width (daw.css
+ * --sidebar-w), `padX` the centre column's padding across.
+ */
+export function foldsLibrary({ layerW, sidebarW, sidebarOpenW, padX = 18, pairGap = 12, minW = MIN_WINDOW_W }) {
+  if (!(layerW > 0) || !(sidebarOpenW > 0)) return false;
+  const openLayer = layerW + Math.max(0, sidebarW || 0) - sidebarOpenW;
+  const centre = openLayer - (openLayer >= SIDE_PANEL_AT ? SIDE_PANEL_W : 0) - padX;
+  return centre < 2 * minW + pairGap;
 }
 
 /**

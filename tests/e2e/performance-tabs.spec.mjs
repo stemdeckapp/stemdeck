@@ -21,7 +21,7 @@
 // performance-input-fx.spec.mjs (it has the fake input they need).
 
 import { test, expect } from "@playwright/test";
-import { openStudio, chooseMode, leaveModeView } from "./helpers.mjs";
+import { openStudio, chooseMode, leaveModeView, reopenLibraryInPerformance } from "./helpers.mjs";
 import { removeTracks } from "./recording-helpers.mjs";
 
 test.afterEach(async ({ request }) => removeTracks(request));
@@ -199,10 +199,12 @@ test.describe("Performance tabs", () => {
   });
 
   test("the Timeline shown again is measured again: zoom, scroll, Fit and a resize while hidden", async ({ page }) => {
-    // A narrow window leaves the 6 s fixture room to zoom (streamer.spec.mjs).
+    // A narrow window leaves the 6 s fixture room to zoom (streamer.spec.mjs),
+    // with the library that Performance folds there opened again by hand.
     await page.setViewportSize({ width: 1024, height: 900 });
     await openStudio(page);
     await openPerformance(page);
+    await reopenLibraryInPerformance(page);
     for (let i = 0; i < 10; i++) await sm(page, ".sm-zoom-in").click();
     await expect(sm(page, ".sm-zoom-track")).toHaveAttribute("aria-valuenow", "100");
     await expect.poll(async () => { const m = await measured(page); return m.scrollW > m.client + 40; }).toBe(true);
@@ -257,6 +259,7 @@ test.describe("Performance tabs", () => {
     }
     // Zoomed in and scrolled: the label stays in view, right of the labels.
     await page.setViewportSize({ width: 1024, height: 900 });
+    await reopenLibraryInPerformance(page);
     for (let i = 0; i < 10; i++) await sm(page, ".sm-zoom-in").click();
     await expect.poll(async () => { const m = await measured(page); return m.scrollW > m.client + 40; }).toBe(true);
     await page.evaluate(() => {

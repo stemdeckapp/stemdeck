@@ -8,7 +8,7 @@
 // workspace view at a time with Karaoke.
 
 import { test, expect } from "@playwright/test";
-import { JOB_ID, SIBLING_JOB_ID, openStudio, chooseMode, leaveModeView } from "./helpers.mjs";
+import { JOB_ID, SIBLING_JOB_ID, openStudio, chooseMode, leaveModeView, reopenLibraryInPerformance } from "./helpers.mjs";
 import { removeTracks } from "./recording-helpers.mjs";
 
 // A take recorded here makes a Performance track on the shared e2e backend,
@@ -318,8 +318,10 @@ test.describe("Streamer Mode: timeline", () => {
   test("zoom, Fit and the ruler", async ({ page }) => {
     // Full zoom is 120 px a second (streamerModel.js ZOOM_MAX_PPS). The fixture
     // song is 6 s long, so on a wide window the fitted view is already past
-    // that and zoom has nothing to add: a narrow window leaves it room.
+    // that and zoom has nothing to add: a narrow window leaves it room, with
+    // the library that Performance folds there opened again by hand.
     await page.setViewportSize({ width: 1024, height: 900 });
+    await reopenLibraryInPerformance(page);
     const widths = () => ev(page, () => {
       const s = document.querySelector("#streamer .sm-tl-scroll");
       return [s.clientWidth, s.scrollWidth];
@@ -385,15 +387,22 @@ test.describe("Streamer Mode polish", () => {
     await expect(page.locator("#streamerTab-effects")).toBeVisible();
   });
 
-  test("under 1000 px: the label column is 56 px and the preview never under 480 px", async ({ page }) => {
+  test("under 1000 px: the label column is 56 px and the two windows side by side, nothing scrolling sideways", async ({ page }) => {
+    // The library folds for Performance here (libraryFold.js), so the two
+    // windows of 288 px or more fit side by side (reviewModel.reviewTier).
     await page.setViewportSize({ width: 800, height: 700 });
     await openStudio(page);
     await openStreamer(page);
+    await page.waitForFunction(() => Math.round(document.getElementById("catalogPanel").getBoundingClientRect().width) === 66);
+    await page.waitForTimeout(300);
     const label = await sm(page, ".sm-tl-label-video").boundingBox();
     const preview = await sm(page, ".sm-preview").boundingBox();
+    const take = await sm(page, ".sm-review").boundingBox();
     expect(Math.round(label.width)).toBe(56);
-    expect(preview.width).toBeGreaterThanOrEqual(479);
+    expect(preview.width).toBeGreaterThanOrEqual(287.5);
+    expect(Math.abs(take.y - preview.y)).toBeLessThanOrEqual(1);
     expect(await ev(page, () => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+    expect(await ev(page, () => { const c = document.querySelector("#streamer .sm-center"); return c.scrollWidth > c.clientWidth + 1; })).toBe(false);
   });
 
   // The live window gives way so no control needs scrolling: the workspace,

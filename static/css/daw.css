@@ -15,6 +15,10 @@ input, textarea { font-family: inherit; }
      same number, so the divider under the logo is the one the rail already
      draws, and the bar proper starts where the library does. */
   --rail-w: 66px;
+  /* The library sidebar's open width (rail included), as a variable:
+     Performance reads it to tell whether its two windows fit beside an open
+     library (streamer/libraryFold.js). */
+  --sidebar-w: 390px;
   width: 100vw;
   height: 100vh;
   background: var(--bg);
@@ -520,7 +524,7 @@ input, textarea { font-family: inherit; }
    SIDEBAR / CATALOG
    ═══════════════════════════════════ */
 .sidebar {
-  width: 390px;
+  width: var(--sidebar-w);
   flex-shrink: 0;
   background: var(--bg-2);
   border-right: 1px solid var(--border);
