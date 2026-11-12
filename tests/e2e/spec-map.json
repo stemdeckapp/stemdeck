@@ -239,7 +239,12 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume"]
+    },
+    {
+      "why": "A lane's level as a number (the Studio fader's dB text, Performance's lane volumes and Monitor level)",
+      "paths": ["static/js/laneLevel.js"],
+      "specs": ["performance-volume", "lane-alignment", "track-header", "export-menu", "karaoke", "performance-input-fx"]
     },
     {
       "why": "Video: camera takes, the video lane and encoder settings",

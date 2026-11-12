@@ -17,13 +17,14 @@ const near = (a, b, e = 1e-9) => Math.abs(a - b) < e;
 
 // Defaults and serialization
 const d = defaultRecordingSettings();
-check("defaults: default devices, 1080p, 30 fps, mixed audio on, auto-stop on", eq(d, {
+check("defaults: default devices, 1080p, 30 fps, mixed audio on, auto-stop on, Monitor level at unity", eq(d, {
   videoDeviceId: "", audioDeviceId: "", audioChannels: null, resolution: "1080", fps: 30, recordMixedAudio: true, autoStopAtEnd: true,
+  monitorLevel: 1,
 }));
 check("the settings key", SETTINGS_KEY === "stemdeck:streamer:recording");
 check("choices: 720p and 1080p only, no 4K", eq(RESOLUTIONS, ["720", "1080"]) && eq(FRAME_RATES, [24, 30, 60]));
 check("garbage gives the defaults", eq(parseRecordingSettings(null), d) && eq(parseRecordingSettings("{nope"), d) && eq(parseRecordingSettings(7), d));
-const mine = { videoDeviceId: "cam1", audioDeviceId: NONE, audioChannels: [1], resolution: "720", fps: 24, recordMixedAudio: false, autoStopAtEnd: false };
+const mine = { videoDeviceId: "cam1", audioDeviceId: NONE, audioChannels: [1], resolution: "720", fps: 24, recordMixedAudio: false, autoStopAtEnd: false, monitorLevel: 0.5 };
 check("round trip", eq(parseRecordingSettings(JSON.stringify(serializeRecordingSettings(mine))), mine));
 check("a wrong value takes its default, the rest is kept", eq(parseRecordingSettings({ ...mine, resolution: "8K", fps: 25 }), { ...mine, resolution: "1080", fps: 30 }));
 // Settings saved before the click switch was removed: includeClick (on, off

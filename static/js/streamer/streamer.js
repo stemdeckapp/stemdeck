@@ -58,7 +58,9 @@ import { loadFilmstrip, drawFilmstrip } from "../video/videoLane.js";
 import { openRecordingSettings } from "../capture/recordingSettings.js";
 import { storeGet, storeSet } from "../utils.js";
 import { showError } from "../job.js";
-import { toggleStemMute, getMixMode, holdLaneSilent } from "../mixer.js";
+import { toggleStemMute, getMixMode, holdLaneSilent, setLanesVolume } from "../mixer.js";
+import { makeLevelSlider } from "./levelSlider.js";
+import { groupLevel, LANE_VOLUME_MAX } from "../laneLevel.js";
 import { isMixSwitching } from "../mixMode.js";
 import { setPerformanceTrackRule } from "../modeStems.js";
 import {
@@ -76,9 +78,9 @@ import {
   liveTakeFx, syncTakeChain, takeFxState, toggleTakeFx, takePrintItem, setStreamerFxShown,
 } from "./streamerFx.js";
 import { buildTabs, readTab, writeTab, viewCentre } from "./streamerTabs.js";
+import { libraryFoldStart, libraryFoldEnd, fitLibrary } from "./libraryFold.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
-import { libraryFoldStart, libraryFoldEnd, fitLibrary } from "./libraryFold.js";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
 // The header's title while no song is open.
 const NO_TITLE = String.fromCharCode(0x2014);
@@ -514,6 +516,29 @@ function buildTimeline() {
     painted.takeFx = null;
   });
   lanes[1].label.append(takeFx, takeMute);
+  // Each lane's volume, a slider along the bottom of its label: the Backing
+  // track's sets every lane heard but the take, the take's its track's lane.
+  // The same stored level as the Studio fader (mixerState[lane].volume, in
+  // Performance's own record of the song) and the same engine path, so what
+  // is heard is what the export renders (streamerExport.renderRequest).
+  const backingVol = makeLevelSlider({
+    cls: "sm-tl-vol sm-tl-vol-backing",
+    labelKey: "streamer.lane.backingVolume",
+    max: LANE_VOLUME_MAX,
+    get: () => backingLevel(),
+    set: (v) => setBackingLevel(v),
+  });
+  backingVol.el.hidden = true;
+  const takeVol = makeLevelSlider({
+    cls: "sm-tl-vol sm-tl-vol-take",
+    labelKey: "streamer.lane.takeVolume",
+    max: LANE_VOLUME_MAX,
+    get: () => takeLevel(),
+    set: (v) => setTakeLevel(v),
+  });
+  takeVol.el.hidden = true;
+  lanes[0].label.append(backingVol.el);
+  lanes[1].label.append(takeVol.el);
   // "I play": the part left out of the backing track (top left of the card).
   const partBox = el("div", "sm-part");
   const partSel = selectBox("sm-part-select");
@@ -620,7 +645,7 @@ function buildTimeline() {
   return {
     tabs, tlPanel, fxPanel,
     partSel: partSel.sel,
-    takeHint, takeBlock, film, videoNote, takeMute, takeFx, takeLabels, takeRows, takeRowEls: [],
+    takeHint, takeBlock, film, videoNote, takeMute, takeFx, backingVol, takeVol, takeLabels, takeRows, takeRowEls: [],
     card, zoomBox, zTrack, zFill, zThumb, zOut, zIn, scroll, grid, mask, markers, ruler, video, audio, lanes,
     range, trimIn, trimOut, dimL, dimR, tip, head, headTime, noStems,
   };
@@ -890,6 +915,9 @@ export function openStreamer() {
   root.hidden = false;
   document.documentElement.classList.add("streamer-open");
   for (const id of ["lanes", "master-drawer"]) document.getElementById(id)?.setAttribute("inert", "");
+  // In a window too narrow for the two windows beside an open library, the
+  // library folds while Performance is open (libraryFold.js).
+  libraryFoldStart();
   placeLayer();
   window.addEventListener("resize", placeLayer);
   observeLayout();
@@ -915,9 +943,6 @@ function focusView() {
 
 export function closeStreamer() {
   if (!open) return;
-  // In a window too narrow for the two windows beside an open library, the
-  // library folds while Performance is open (libraryFold.js).
-  libraryFoldStart();
   // A take in progress stops first and is kept (on the Streamer track): it
   // can still be exported when Streamer opens again.
   if (takeOpen()) stopRecording();
@@ -931,6 +956,8 @@ export function closeStreamer() {
   }
   window.removeEventListener("resize", placeLayer);
   layerObserver?.disconnect();
+  // A library Performance folded opens again.
+  libraryFoldEnd();
   windowsObserver?.disconnect();
   // The take's video and its source are let go.
   releaseReview();
@@ -956,8 +983,6 @@ export function closeStreamer() {
 }
 
 /** A Streamer take is open (starting, recording or stopping). */
-  // A library Performance folded opens again.
-  libraryFoldEnd();
 export function isStreamerTakeOpen() {
   return takeOpen();
 }
@@ -1064,6 +1089,8 @@ function placeLayer() {
   root.style.top = `${Math.round(a.top)}px`;
   root.style.width = `${Math.round(a.width)}px`;
   root.style.height = `${Math.max(0, Math.round(bottom - a.top))}px`;
+  const ccs = ui?.center ? getComputedStyle(ui.center) : null;
+  fitLibrary(a.width, ccs ? (parseFloat(ccs.paddingLeft) || 0) + (parseFloat(ccs.paddingRight) || 0) : 18);
 }
 
 // ── The frame ──
@@ -1089,8 +1116,6 @@ function frame() {
     // running says whose take it is: paintExport).
     if (!exporting) {
       exportNote = "";
-  const ccs = ui?.center ? getComputedStyle(ui.center) : null;
-  fitLibrary(a.width, ccs ? (parseFloat(ccs.paddingLeft) || 0) + (parseFloat(ccs.paddingRight) || 0) : 18);
       exportError = null;
     }
     painted.exp = null;
@@ -1798,6 +1823,66 @@ function toggleTakeMute() {
   painted.takeMute = null;
 }
 
+// ── Lane volumes ──
+//
+// The Backing track is every lane the song plays with but the Performance
+// track (the stems, Original, other recording tracks): exactly what the MP4
+// export mixes under the take (streamerExport.renderRequest). Its slider
+// sets them all to one level, so they keep the balance the stems have; the
+// take's slider is the Performance track's own lane volume. Both are the
+// Studio fader's stored level in Performance's record of the song
+// (mixer.js: each mode keeps its own mix, so Practice and Advanced keep
+// theirs), saved per song and read again on every reload and take reload.
+
+/** The lanes the Backing track's slider sets (loaded, in the mix). */
+function backingNames() {
+  const id = currentJobId ? streamerTrackId(currentJobId) : null;
+  return Object.keys(trackIndex || {}).filter((n) => n !== id && mixerState[n]);
+}
+
+/** Lane volumes can be set now: Performance's own mix is the one open. */
+function volumesUsable() {
+  return getMixMode() === "streamer" && !isMixSwitching();
+}
+
+function backingLevel() {
+  return groupLevel(backingNames().map((n) => mixerState[n].volume));
+}
+
+function setBackingLevel(v) {
+  if (!volumesUsable()) return;
+  setLanesVolume(backingNames(), v);
+}
+
+/** The Performance track's lane, when it is loaded with a take to play. */
+function takeTrack() {
+  const id = currentJobId ? streamerTrackId(currentJobId) : null;
+  return id && mixerState[id] && trackIndex[id] !== undefined ? id : null;
+}
+
+function takeLevel() {
+  const id = takeTrack();
+  return id ? mixerState[id].volume : 1;
+}
+
+function setTakeLevel(v) {
+  const id = takeTrack();
+  if (!id || !volumesUsable()) return;
+  setLanesVolume([id], v);
+}
+
+/** The two lane sliders: shown with their lane, set from the mix. */
+function paintLaneVolumes(specs) {
+  const tl = ui.builder.timeline;
+  const usable = volumesUsable();
+  const backing = Boolean(specs[0]) && backingNames().length > 0;
+  if (tl.backingVol.el.hidden === backing) tl.backingVol.el.hidden = !backing;
+  if (backing) tl.backingVol.paint(backingLevel(), usable);
+  const take = Boolean(takeTrack() && takeLane().state === "saved");
+  if (tl.takeVol.el.hidden === take) tl.takeVol.el.hidden = !take;
+  if (take) tl.takeVol.paint(takeLevel(), usable);
+}
+
 const BLOCK_KEY = {
   "tempo": "streamer.rec.tempo",
   "no-engine": "streamer.rec.noSong",
@@ -2187,6 +2272,9 @@ function choosePart(value) {
   if (!job || job !== currentJobId || !part.loaded) return;
   const remove = effectiveChoice({ remove: value }, part.present);
   if (remove === part.remove) return;
+  // The part played until now joins the Backing track at its level, so the
+  // backing keeps one level (the slider sets all its lanes at once).
+  if (part.remove && volumesUsable()) setLanesVolume([...excludedNames(part.remove)], backingLevel());
   // The rest of the record (the voice form a lead/backing split froze,
   // modeStems.js) is kept: only "I play" changes here.
   const record = serializeChoice({ ...parseChoice(part.record), remove });
@@ -2595,6 +2683,7 @@ function paintTimeline(tNow) {
   paintTakeRows({ src, left, view, pps, dur, color: specs[1]?.color || ui.accent });
   paintTakeBlock(x, dur);
   paintTakeMute();
+  paintLaneVolumes(specs);
 }
 
 /** The take lane's mute button: shown with a saved take on a loaded track,
@@ -3045,6 +3134,12 @@ export function initStreamer() {
     kind: () => recordingInput()?.kind || null,
     read: () => settings.inputFx || null,
     write: (rec) => setSetting({ inputFx: rec }),
+    // The Monitor level: set in memory on every move, stored when it ends.
+    level: () => settings.monitorLevel,
+    setLevel: (v, save) => {
+      if (save) setSetting({ monitorLevel: v });
+      else settings = applySettings(settings, { monitorLevel: v });
+    },
     trackId: () => (currentJobId ? streamerTrackId(currentJobId) : null),
   });
   loadSettings();

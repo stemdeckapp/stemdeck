@@ -161,6 +161,11 @@ export function exportFileName(title, artist, ext = "mp4") {
 
 // ── The render request ──
 
+// The take lane's volume as the render takes it: the Studio fader's range
+// (constants.LANE_VOLUME_MAX, +6 dB); the server takes up to 4.
+export const TAKE_GAIN_MAX = 2;
+const takeGainOf = (g) => (typeof g === "number" && Number.isFinite(g) ? Math.max(0, Math.min(TAKE_GAIN_MAX, g)) : 1);
+
 /**
  * The body of POST /takes/{id}/render for a Streamer take:
  * - mix: { names, gains, pitches } as heard (player.currentMixLanes), with
@@ -172,11 +177,15 @@ export function exportFileName(title, artist, ext = "mp4") {
  * - the kept range as span "range";
  * - never a click (Performance has no click switch);
  * - the lanes' EQ and the master when given;
- * - `remove`: the part the musician played, left out of the backing.
+ * - `remove`: the part the musician played, left out of the backing;
+ * - `takeGain`: the take lane's volume in Performance's mix (its Studio
+ *   fader's linear gain, 0 to TAKE_GAIN_MAX), so the take sits against the
+ *   backing as it was heard. Only with the mixed audio: the take's sound
+ *   alone is exported as it was recorded (gain 1).
  */
 export function buildRenderRequest({
   mix, exclude = [], mixedAudio = true, aspect = "16:9",
-  resolution = "1080", fps = 30, range, fx = "", master = "", remove = "",
+  resolution = "1080", fps = 30, range, fx = "", master = "", remove = "", takeGain = 1,
 }) {
   const names = [];
   const gains = [];
@@ -192,7 +201,7 @@ export function buildRenderRequest({
   const body = {
     stems: names,
     gains,
-    take_gain: 1,
+    take_gain: mixedAudio ? takeGainOf(takeGain) : 1,
     canvas: aspect,
     fit: "fill",
     mirror: false,

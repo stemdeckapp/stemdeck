@@ -749,6 +749,47 @@ html.streamer-open .daw-footer { display: none !important; }
    name is the label's title). */
 .sm-tl-label-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sm-tl-label-stem:has(> .sm-tl-mute:not([hidden])) { gap: 2px; padding-left: 6px; }
+
+/* Performance's level slider (streamer/levelSlider.js): the lane volumes in
+   the labels and the Monitor level. A 3 px track like the zoom's, a thumb in
+   the lane's colour, a tick at 0 dB; the element itself is the hit area. */
+.sm-level {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: 4px;
+  --sm-level: var(--sm-yellow);
+}
+.sm-level[hidden] { display: none; }
+.sm-level:focus-visible { outline: 2px solid var(--sm-blue); outline-offset: 1px; }
+.sm-level.disabled { opacity: .45; cursor: default; }
+.sm-level-track { position: relative; flex: 1; height: 3px; border-radius: 2px; background: #2a333e; }
+.sm-level-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: color-mix(in srgb, var(--sm-level) 55%, #2a333e); }
+.sm-level-unity { position: absolute; top: -2px; width: 1px; height: 7px; margin-left: -.5px; background: #6b7682; }
+.sm-level-thumb { position: absolute; top: -4px; left: 0; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; background: var(--sm-level); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+/* In a lane label: along its bottom edge, under the name, in the lane's
+   colour. The name moves up to make room. */
+.sm-tl-audio-labels .sm-tl-label-stem { position: relative; }
+.sm-tl-vol { position: absolute; left: 1px; right: 1px; bottom: 0; --sm-level: var(--sm-lane); }
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) { flex-basis: 40px; min-height: 30px; align-items: flex-start; padding-top: 2px; padding-bottom: 12px; }
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) > .sm-tl-mute,
+.sm-tl-label-stem:has(> .sm-tl-vol:not([hidden])) > .sm-tl-fx { margin-top: -2px; }
+/* The Monitor level, under Hear myself: its name, the slider, the dB. */
+.sm-monitor-level { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; font-size: 12.5px; color: var(--sm-text-2); }
+.sm-monitor-level-label { white-space: nowrap; }
+.sm-monitor-level-slider { flex: 0 1 140px; min-width: 64px; height: 20px; }
+.sm-monitor-level-value { flex: none; min-width: 4.5em; font: 500 11px var(--font-mono); color: var(--sm-muted); white-space: nowrap; }
+/* Touch: a bigger thumb everywhere; the Monitor level, which has the room,
+   a taller hit area too. */
+@media (pointer: coarse) {
+  .sm-level-thumb { width: 15px; height: 15px; top: -6px; margin-left: -7.5px; }
+  .sm-monitor-level-slider { height: 28px; }
+}
 .sm-tl-grip {
   flex: none;
   width: 12px;

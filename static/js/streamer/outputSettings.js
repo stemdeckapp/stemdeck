@@ -4,7 +4,10 @@
 // RecordingSettings (stored per user in the app's store, sceneStore's
 // neighbour; deviceIds are per machine, which is where the store lives):
 //   { videoDeviceId, audioDeviceId, audioChannels, resolution, fps,
-//     recordMixedAudio, autoStopAtEnd, inputFx? }
+//     recordMixedAudio, autoStopAtEnd, monitorLevel, inputFx? }
+// monitorLevel: the Monitor level of the input heard through Hear myself
+// (Effects tab), linear 0 to 1 (laneLevel.monitorLevelOf: never above the
+// unity Hear myself always played at). Hear myself itself is never kept.
 // inputFx, only once set: the input's live effects { chain, low } (the
 // chain descriptor of fx/chainModel.js and the Low latency switch), kept
 // as stored here and normalised where it is used (streamer/streamerFx.js),
@@ -12,6 +15,8 @@
 // (An includeClick from an older build is ignored: a take never has a click.)
 // A device id of "" is the default device, NONE is "no camera" or "no audio
 // input". Nothing here touches the DOM or a device.
+
+import { MONITOR_LEVEL_DEFAULT, monitorLevelOf } from "../laneLevel.js";
 
 export const SETTINGS_KEY = "stemdeck:streamer:recording";
 export const NONE = "none";
@@ -38,6 +43,7 @@ export function defaultRecordingSettings() {
     fps: 30,
     recordMixedAudio: true,
     autoStopAtEnd: true,
+    monitorLevel: MONITOR_LEVEL_DEFAULT,
   };
 }
 
@@ -77,6 +83,7 @@ export function parseRecordingSettings(raw) {
     fps: FRAME_RATES.includes(Number(data.fps)) ? Number(data.fps) : d.fps,
     recordMixedAudio: flag(data.recordMixedAudio, d.recordMixedAudio),
     autoStopAtEnd: flag(data.autoStopAtEnd, d.autoStopAtEnd),
+    monitorLevel: monitorLevelOf(data.monitorLevel),
   };
   const fx = inputFxOf(data.inputFx);
   if (fx) out.inputFx = fx;

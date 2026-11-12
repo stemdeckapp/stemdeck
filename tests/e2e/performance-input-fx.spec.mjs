@@ -710,6 +710,7 @@ test.describe("Performance input effects", () => {
       ["#streamerTab-timeline", "help.smTabTimeline"],
       ["#streamerTab-effects", "help.smTabEffects"],
       ["#streamerHear", "help.smMonitor"],
+      ["#streamerMonitorLevel", "help.smMonitorLevel"],
       ["#streamerFxTitle", "help.smFx"],
       ["#streamerFx .fx-power", "help.liveFxPower"],
       ["#streamerFx .fx-inst", "help.smFxInstrument"],
