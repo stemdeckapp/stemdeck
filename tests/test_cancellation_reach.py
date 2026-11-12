@@ -148,7 +148,7 @@ def test_cancelling_a_running_vocal_split_terminates_it(monkeypatch):
     registry_register(job)
 
     proc = _LiveProc()
-    monkeypatch.setattr(_jobs_api, "registry_get_proc", lambda job_id: proc)
+    monkeypatch.setattr(_jobs_api, "registry_get_proc", lambda job_id, op: proc)
 
     _jobs_api.cancel_job(job.id)
 
@@ -163,7 +163,7 @@ def test_cancelling_a_plain_done_job_still_does_nothing(monkeypatch):
     registry_register(job)
 
     proc = _LiveProc()
-    monkeypatch.setattr(_jobs_api, "registry_get_proc", lambda job_id: proc)
+    monkeypatch.setattr(_jobs_api, "registry_get_proc", lambda job_id, op: proc)
 
     _jobs_api.cancel_job(job.id)
 

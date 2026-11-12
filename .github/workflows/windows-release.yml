@@ -1,27 +1,86 @@
 name: Windows Release
 
 on:
-  release:
-    types: [published]
+  # Pushing a version tag builds the installers into a draft release for that
+  # tag (#1039). The draft is created if none exists; this workflow never
+  # publishes it. Publishing is done by hand after testing, and it does not
+  # rebuild Windows: there is no release trigger here any more. The filter is
+  # the first narrowing; the tag job checks the same shape with a strict regex.
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+"
+  # Manual build (#1027): builds the commit this run is started on and uploads
+  # to an existing draft with this tag. The guard job refuses any tag that is
+  # not exactly one draft targeting that commit, so a published release can
+  # never be overwritten from here.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing draft release, e.g. v0.21.0-rc.1"
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # One group per tag: a tag push (github.ref is refs/tags/<tag>) and a manual
+  # run for the same tag share it, so they queue instead of building side by
+  # side. Nothing cancels a run in progress. GitHub keeps at most one run
+  # waiting per group; a newer waiting run replaces an older waiting one.
+  group: ${{ github.workflow }}-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  guard:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/release-candidate-guard.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ inputs.tag }}
+      allow_final_draft: true
+
+  draft:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/release-tag-draft.yml
+    permissions:
+      contents: write
+    with:
+      # Windows is the one caller that creates the draft; macOS waits for it.
+      may_create: true
+
   build-and-upload:
+    needs: [guard, draft]
+    # Exactly one of the two jobs runs; the build needs that one to pass. On a
+    # tag push whose release is already published the draft job passes with
+    # build=false (nothing to upload), and this job is skipped.
+    if: >-
+      ${{ !cancelled() && (
+        (github.event_name == 'push' && needs.draft.result == 'success' && needs.draft.outputs.build == 'true') ||
+        (github.event_name == 'workflow_dispatch' && needs.guard.result == 'success')
+      ) }}
     # Runner must be windows/x64 with PowerShell, Docker, and rustup.
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 90
     permissions:
       contents: write
-    # Source the tag from the github context (evaluated by Actions) rather than
-    # $env:GITHUB_REF_NAME, which is only injected by runner >= 2.290. Keeps the
-    # build working on older self-hosted runners. (#212 follow-up)
+    # The release this run builds into, from the job that validated it: the
+    # pushed tag (github.ref_name, checked by the draft job) or the manual
+    # run's tag input (checked by the guard). These are the only places the
+    # tag is chosen. If the job set nothing, the values are empty and the
+    # version step and the upload script stop the build. The github context
+    # is evaluated by Actions, so this also works on runners older than 2.290,
+    # which do not inject $env:GITHUB_REF_NAME (#212 follow-up).
     env:
-      REF_NAME: ${{ github.ref_name }}
+      REF_NAME: ${{ github.event_name == 'push' && needs.draft.outputs.tag || needs.guard.outputs.tag }}
+      RELEASE_ID: ${{ github.event_name == 'push' && needs.draft.outputs.release_id || needs.guard.outputs.release_id }}
+      RELEASE_PRERELEASE: ${{ github.event_name == 'push' && needs.draft.outputs.prerelease || needs.guard.outputs.prerelease }}
+      # The commit the tag points at: github.sha peeled by the draft job on a tag
+      # push (github.sha itself on a manual run, where it is a branch commit).
+      RUN_COMMIT: ${{ github.event_name == 'push' && needs.draft.outputs.commit || github.sha }}
     defaults:
       run:
         shell: powershell
@@ -43,8 +102,6 @@ jobs:
             Set-Content "desktop/src-tauri/Cargo.toml"
           (Get-Content "desktop/src-tauri/tauri.conf.json") -replace '"version": "[^"]*"', "`"version`": `"$version`"" |
             Set-Content "desktop/src-tauri/tauri.conf.json"
-          (Get-Content "pyproject.toml") -replace '^version = ".*"', "version = `"$version`"" |
-            Set-Content "pyproject.toml"
           (Get-Content "desktop/package.json") -replace '"version": "[^"]*"', "`"version`": `"$version`"" |
             Set-Content "desktop/package.json"
           Write-Host "Wrote version $version to all version files"
@@ -111,21 +168,33 @@ jobs:
             if (-not (Test-Path $f)) { Write-Error "missing release asset: $f"; exit 1 }
           }
 
-      - name: upload artifacts
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
-        with:
-          # Carry the release's own flag. The action defaults `prerelease` to
-          # false and writes it back, so attaching assets silently promoted a
-          # pre-release to the latest release -- which also fires `released`,
-          # pushing :latest to GHCR, and makes the in-app updater offer a build
-          # that was never verified.
-          prerelease: ${{ github.event.release.prerelease }}
-          fail_on_unmatched_files: true
-          files: |
-            dist/StemDeck-Windows-x64.NVIDIA.zip
-            dist/StemDeck-Windows-x64.NVIDIA.zip.sha256
-            dist/StemDeck-Windows-x64.zip
-            dist/StemDeck-Windows-x64.zip.sha256
-            dist/StemDeck-Windows-x64-app.zip
-            dist/StemDeck-Windows-x64-app.zip.sha256
+      # The guard or draft job ran once, at the start of this run, and "Re-run
+      # failed jobs" reuses its result. So on every attempt, for a tag push
+      # and a manual run alike, the upload script first reads the release by
+      # the id validated earlier and checks it is still a draft with the
+      # validated tag and pre-release flag, pointing at the commit this run
+      # built, and reads it again before each file. It uploads to that release
+      # id only and never edits the release: no draft or prerelease field is
+      # written, so nothing here can publish or promote it. If the release is
+      # no longer a draft, the remaining files are not uploaded.
+      #
+      # softprops/action-gh-release is not used here: it finds the release by
+      # tag, so a second release with the tag could receive the files, and it
+      # writes draft and prerelease back to the release.
+      - name: upload to the validated draft by id
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_URL: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ env.REF_NAME }}
+          RUN_SHA: ${{ env.RUN_COMMIT }}
+        run: |
+          node scripts/release/upload-assets.mjs `
+            dist/StemDeck-Windows-x64.NVIDIA.zip `
+            dist/StemDeck-Windows-x64.NVIDIA.zip.sha256 `
+            dist/StemDeck-Windows-x64.zip `
+            dist/StemDeck-Windows-x64.zip.sha256 `
+            dist/StemDeck-Windows-x64-app.zip `
+            dist/StemDeck-Windows-x64-app.zip.sha256 `
             dist/StemDeck-Windows-x64-runtime-version.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

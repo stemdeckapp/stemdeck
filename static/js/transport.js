@@ -2,7 +2,7 @@ import { fmtTime, fmtTickLabel, fmtTimeMs, parseTimecode, storeGet, storeSet } f
 import { MIN_LOOP_SEC, loopDragResult } from "./loopRegion.js";
 import { tickStepAt } from "./rulerTicks.js";
 import {
-  playBtn, playMiniBtn, stopBtn, loopBtn, timeEl, masterFader,
+  playBtn, stopBtn, loopBtn,
   speedBtns,
   pitchDownBtn,
   pitchUpBtn,
@@ -11,27 +11,30 @@ import {
   pitchWrap,
   speedWrap,
   rulerTime, wavesGrid, loopRegionEl, playheadMarker,
-  multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd, masterVolume,
+  multitrack, audioEngine, totalDuration, loopEnabled, loopStart, loopEnd,
   waveScroll, waveCanvas, multitrackContainer,
   presenceRulerEl, presencePlayheadEl,
-  footerTimeElapsed, footerTimeTotal, footerWaveTicks, npScrubFill, footerWaveDrawFn,
+  footerTimeElapsed, footerTimeTotal,
   loopStartInput, loopEndInput,
   metroBtn, metroPanel, metroMoreBtn, metroVolEl, metroVolBtn, metroVolPanel, metroVolLabel, metroBarEl, metroBarCustomEl, metroGroupEl, metroNoteEl,
-  metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl,
+  metroHalfBtn, metroOneBtn, metroDoubleBtn, metroCountInEl, metroSoundEl,
+  metronomeSound, setMetronomeSound,
   metronome, metronomeEnabled, metronomeVolume, metronomeBeatsPerBar, metronomeHasBars,
   metronomeCountInBars, setMetronomeCountInBars,
   metronomeGrouping, setMetronomeGrouping,
   setMetronomeHasBars,
   setMetronomeEnabled, setMetronomeVolume, setMetronomeBeatsPerBar,
-  setLoopEnabled, setLoopStart, setLoopEnd, setMasterVolume, setPlaybackSpeed,
+  setLoopEnabled, setLoopStart, setLoopEnd, setPlaybackSpeed, playbackSpeed,
   waveZoom, setWaveZoom, overviewRerenderFn,
 } from "./state.js";
-import { applyMix, nudgeAllLanePitches, resetAllLanePitches } from "./mixer.js";
+import { nudgeAllLanePitches, resetAllLanePitches, mixGlobals, setMixGlobals } from "./mixer.js";
 import { isDownbeatIndex, barPositionIndex, getBeats as getGridBeats, getBars as getGridBars } from "./beatgrid.js";
 import { computeCountIn, defaultGrouping, normaliseGrouping } from "./metronome.js";
+import { CLICK_SOUNDS } from "./clickSounds.js";
 import { t, onLanguageChange } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
 import { refitFooter } from "./footerFit.js";
+import { initRecordUi } from "./capture/recordUi.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
 // it to show, so it is the floor rather than a soft default.
@@ -102,9 +105,17 @@ export function transport() {
   return audioEngine ?? multitrack;
 }
 
+// While a song loads there is no engine yet, and the transport is a multitrack
+// still building its <audio> elements. Until they exist its setTime() throws,
+// and its play() plays nothing but starts a frame loop that destroy() never
+// cancels.
+function loadingMultitrack(tx) {
+  return tx === multitrack && tx.audios.length === 0;
+}
+
 export function setPlayheadTime(sec) {
   const tx = audioEngine ?? multitrack;
-  if (!tx || !totalDuration) return;
+  if (!tx || !totalDuration || loadingMultitrack(tx)) return;
   const next = Math.max(0, Math.min(totalDuration, sec));
   tx.setTime(next);
   updatePlayheadMarker(next);
@@ -114,14 +125,14 @@ export function setPlayheadTime(sec) {
 
 // Spacing of the timeline's labelled ticks: rulerTicks.js, a module of its own
 // so node can test it. `contentWidthPx` is the width the ticks will actually
-// occupy; omitted (the footer strip) the step is the plain duration-based one.
+// occupy.
 // The step the ruler was last built with. buildRuler mutates elements inside
 // .wave-scroll, which is the element the resize observer watches, so rebuilding
 // unconditionally from that callback can re-trigger it. Comparing against this
 // makes the rebuild idempotent: once the ruler matches the width, it settles.
 let _rulerStep = 0;
 
-function tickStep(durationSec, contentWidthPx = 0) {
+function tickStep(durationSec, contentWidthPx) {
   return tickStepAt(durationSec, contentWidthPx, waveZoom);
 }
 
@@ -155,8 +166,141 @@ export function buildRuler(durationSec) {
   }
 }
 
+let _laneLayer = null;
+let _laneLine = null;
+
+/**
+ * The playhead line over the lanes: an element of its own in the lane layer
+ * (waves.css .lane-playhead-line). It used to be the layer's ::before placed
+ * by a custom property on the layer, and setting that every frame made the
+ * browser restyle every element under the layer (1800 to 2700 with takes:
+ * about 10 ms a frame); moving one element restyles one.
+ */
+function laneLine(layer) {
+  if (_laneLine?.isConnected && _laneLine.parentElement === layer) return _laneLine;
+  _laneLine = layer.querySelector(":scope > .lane-playhead-line");
+  if (!_laneLine) {
+    _laneLine = document.createElement("div");
+    _laneLine.className = "lane-playhead-line";
+    _laneLine.setAttribute("aria-hidden", "true");
+    layer.appendChild(_laneLine);
+  }
+  return _laneLine;
+}
+
+// The lanes are covered by Streamer or Karaoke: nothing to move under them
+// (the view's close moves the line to where the song is).
+const lanesCovered = () => {
+  const c = document.documentElement.classList;
+  return c.contains("streamer-open") || c.contains("karaoke-open");
+};
+
+// Where the playhead line ends, measured only when the layout changes.
+//
+// The line over the lanes ends at the last lane, and the ruler's own line
+// ends there too. Both used to be measured every frame, after this frame's
+// writes, which forced a layout inside the frame's script on top of the one
+// the frame does anyway (121 a second instead of 60, measured with 45 takes,
+// 53 rows), to read numbers that had not changed. Now they are kept,
+// and measured again only when something that decides them changes: a row
+// added, removed or resized (an EQ panel, a take lane, the zoom, the window),
+// the ruler or the lanes' boxes resized, or a scroll that moves the lanes
+// under the ruler. Each of those re-measures and re-applies at once, in the
+// frame it happened, so the line looks exactly as it did.
+let _laneGeom = null; // { height, markerH } as CSS lengths; null: measure
+let _lanePct = null; // the playhead's last position, in percent
+let _laneWatched = null; // the layer the observers are on
+let _laneResize = null;
+let _laneRows = null;
+
+function measureLaneGeometry(layer, m) {
+  const rows = layer.querySelectorAll(":scope > .stem-waveform-row");
+  const last = rows[rows.length - 1];
+  const geom = { height: last ? `${last.offsetTop + last.offsetHeight}px` : "0px", markerH: null };
+  // The ruler's own line (waves.css .playhead-marker::after) shows through
+  // where no lane covers it: end it at the last lane too. Rects are in
+  // screen pixels and the app may be CSS-zoomed; the ruler's height in
+  // both units gives the factor back to layout pixels.
+  if (last) {
+    const zoom = rulerTime.getBoundingClientRect().height / (rulerTime.offsetHeight || 1) || 1;
+    const span = (last.getBoundingClientRect().bottom - m.getBoundingClientRect().top) / zoom;
+    // ::after starts 8px down and adds 26px to the variable.
+    geom.markerH = `${Math.max(0, span - 8 - 26)}px`;
+  }
+  return geom;
+}
+
+function applyLaneGeometry(line, m, geom) {
+  if (line.style.height !== geom.height) line.style.height = geom.height;
+  if (geom.markerH !== null && m.style.getPropertyValue("--wave-playhead-h") !== geom.markerH) {
+    m.style.setProperty("--wave-playhead-h", geom.markerH);
+  }
+}
+
+/** Measure and apply again now, where the line already is. */
+function refreshLaneGeometry() {
+  _laneGeom = null;
+  if (_lanePct === null || !totalDuration || lanesCovered()) return;
+  const m = rulerTime?.querySelector(".playhead-marker");
+  if (!m || !_laneLayer?.isConnected) return;
+  _laneGeom = measureLaneGeometry(_laneLayer, m);
+  applyLaneGeometry(laneLine(_laneLayer), m, _laneGeom);
+}
+
+// A scroll moves the lanes under the ruler (the marker's span), not the rows.
+function onLaneScroll(e) {
+  const t = e.target;
+  if (t === document || (t instanceof Node && (t.contains(_laneLayer) || t.contains(rulerTime)))) refreshLaneGeometry();
+}
+
+/**
+ * Watch what decides the geometry: the rows (added, removed, resized), the
+ * layer, the ruler, and every box between them and their common ancestor.
+ * Without ResizeObserver the geometry is measured every frame, as before.
+ */
+function watchLaneLayer(layer) {
+  if (_laneWatched === layer) return;
+  _laneResize?.disconnect();
+  _laneRows?.disconnect();
+  _laneWatched = layer;
+  _laneGeom = null;
+  if (typeof ResizeObserver !== "function" || typeof MutationObserver !== "function") {
+    _laneResize = null;
+    _laneRows = null;
+    return;
+  }
+  // The callback runs after layout and before paint: re-measured there, the
+  // frame that changed the layout is painted with the new geometry.
+  _laneResize = new ResizeObserver(refreshLaneGeometry);
+  const boxes = new Set([layer, rulerTime]);
+  const top = document.getElementById("lanes") || document.body;
+  for (const start of [layer, rulerTime]) {
+    for (let n = start?.parentElement; n && n !== document.body; n = n.parentElement) {
+      boxes.add(n);
+      if (n === top) break;
+    }
+  }
+  for (const row of layer.children) boxes.add(row);
+  for (const box of boxes) if (box) _laneResize.observe(box);
+  _laneRows = new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of r.addedNodes) if (n.nodeType === 1) _laneResize.observe(n);
+      for (const n of r.removedNodes) if (n.nodeType === 1) _laneResize.unobserve(n);
+    }
+    // The resize callback for a new row follows after layout; a removal has
+    // none, so measure on the next frame's update.
+    _laneGeom = null;
+  });
+  _laneRows.observe(layer, { childList: true });
+  if (!onLaneScroll.added) {
+    document.addEventListener("scroll", onLaneScroll, { capture: true, passive: true });
+    window.addEventListener("resize", refreshLaneGeometry);
+    onLaneScroll.added = true;
+  }
+}
+
 export function updatePlayheadMarker(currentSec) {
-  if (!playheadMarker || !totalDuration) return;
+  if (!playheadMarker || !totalDuration || lanesCovered()) return;
   const m = rulerTime.querySelector(".playhead-marker");
   if (m) {
     // Position relative to the ruler itself (the marker is a ruler
@@ -165,15 +309,27 @@ export function updatePlayheadMarker(currentSec) {
     // zoom scales getBoundingClientRect() values, while left/width
     // styles are interpreted in unzoomed layout pixels.
     const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
+    _lanePct = pct;
+    // The same line over the lanes (waves.css), above a video track's frames.
+    if (!_laneLayer?.isConnected) _laneLayer = document.querySelector(".stem-waveform-layer");
+    if (_laneLayer) watchLaneLayer(_laneLayer);
+    // Measured before this frame's writes, so the read finds the layout as
+    // the last frame left it rather than forcing it again.
+    if (_laneLayer && (!_laneGeom || !_laneResize)) _laneGeom = measureLaneGeometry(_laneLayer, m);
     m.style.left = `${pct}%`;
+    if (_laneLayer) {
+      const line = laneLine(_laneLayer);
+      // Ends at the last lane: the + track row under it is not a lane.
+      line.style.left = `${pct}%`;
+      applyLaneGeometry(line, m, _laneGeom);
+    }
   }
 }
 
 // Mirror the elapsed/total time into the transport-footer's two side
-// labels (which used to show hardcoded "00:00.000" / "03:38.000") and
-// drive the small scrub bar in the now-playing card. Driven from the
-// same wavesurfer "timeupdate" event that already updates #t-time, so
-// every label stays in sync without extra event plumbing.
+// labels (which used to show hardcoded "00:00.000" / "03:38.000"). Driven
+// from the same wavesurfer "timeupdate" event that already updates #t-time,
+// so every label stays in sync without extra event plumbing.
 //
 // Written only when the text actually changes. This runs every frame while
 // playing, and assigning textContent replaces the text node even when the
@@ -185,26 +341,6 @@ export function updateFooterTimes(currentSec) {
   const total = fmtTime(totalDuration);
   if (footerTimeElapsed && footerTimeElapsed.textContent !== elapsed) footerTimeElapsed.textContent = elapsed;
   if (footerTimeTotal && footerTimeTotal.textContent !== total) footerTimeTotal.textContent = total;
-  const pct = Math.max(0, Math.min(100, (currentSec / totalDuration) * 100));
-  if (npScrubFill) npScrubFill.style.width = `${pct}%`;
-  footerWaveDrawFn?.(pct / 100);
-}
-
-// Time labels above the footer waveform. Same ticks as the ruler over the
-// lanes, positioned the same way (percent of duration), because the footer
-// strip is now indented to share that ruler's left edge and width.
-export function buildFooterWaveTicks(durationSec) {
-  if (!footerWaveTicks) return;
-  footerWaveTicks.innerHTML = "";
-  if (!durationSec || durationSec <= 0) return;
-  const step = tickStep(durationSec);
-  for (let t = 0; t <= durationSec; t += step) {
-    const tick = document.createElement("div");
-    tick.className = "tick";
-    tick.style.left = `${(t / durationSec) * 100}%`;
-    tick.innerHTML = `<span class="tick-label">${fmtTickLabel(t)}</span>`;
-    footerWaveTicks.appendChild(tick);
-  }
 }
 
 // Build the presence-panel ruler labels from the actual track duration.
@@ -452,7 +588,7 @@ function wireLoopInputs() {
 // this wait is skipped entirely (readyState is already >= 3 by the time play
 // is pressed after a seek).
 function _playWhenReady() {
-  if (!multitrack) return;
+  if (!multitrack || loadingMultitrack(multitrack)) return;
   const inTauri = Boolean(window.__TAURI__?.core?.invoke);
   if (!inTauri) { multitrack.play(); return; }
 
@@ -520,11 +656,23 @@ function _armCountIn(eng, startPos) {
   // this one's clicks belong to this one. A destroyed metronome ignores them.
   const generation = ++_countInGeneration;
   const clickTrack = metronome;
-  eng.play(leadIn).then((started) => {
+  const start = eng.play(leadIn);
+  start.then((started) => {
     if (!started || generation !== _countInGeneration) return;
     clickTrack.playCountIn(sourceClicks);
   });
-  return true;
+  return start;
+}
+
+// The Play button is lit as soon as Play is pressed, because the engine may
+// only start after a fetch, or after its stems load. A start that never
+// happened (the stems could not be read, or the fetch failed) must not leave
+// it lit over silence. A pause or another Play in between leaves the engine
+// in charge of the state, so only an engine that is not playing turns it off.
+function _unlightIfNotStarted(start) {
+  Promise.resolve(start).then((started) => {
+    if (!started && !audioEngine?.isPlaying?.()) playBtn.classList.remove("playing");
+  }, (err) => console.warn("[transport] play failed:", err));
 }
 
 export function togglePlayPause() {
@@ -548,7 +696,7 @@ export function togglePlayPause() {
     ctx.resume().catch(() => {});
   }
   // Snap playhead to loopStart on play (DAW convention).
-  if (loopEnabled && totalDuration > 0) {
+  if (loopEnabled && totalDuration > 0 && !loadingMultitrack(tx)) {
     tx.setTime(loopStart);
   }
   if (eng) {
@@ -556,7 +704,27 @@ export function togglePlayPause() {
     // same position playback will actually start from.
     let startPos = eng.getCurrentTime?.() ?? 0;
     if (totalDuration > 0 && startPos >= totalDuration) startPos = 0;
-    if (!_armCountIn(eng, startPos)) eng.play();
+    _unlightIfNotStarted(_armCountIn(eng, startPos) || eng.play());
+    playBtn.classList.add("playing");
+    stopBtn.classList.remove("stopped");
+  } else {
+    _playWhenReady();
+  }
+}
+
+/**
+ * Play on from where the playhead is: no count-in and no snap to the loop
+ * start, which are for a press of Play. For playback that was going before a
+ * reload of the song (reloadPlace.js), so it carries on where it stopped.
+ */
+export function resumePlayback() {
+  const eng = audioEngine;
+  const tx = eng ?? multitrack;
+  if (!tx || tx.isPlaying()) return;
+  const ctx = tx.audioContext;
+  if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+  if (eng) {
+    _unlightIfNotStarted(eng.play());
     playBtn.classList.add("playing");
     stopBtn.classList.remove("stopped");
   } else {
@@ -570,7 +738,7 @@ export function stopTransport() {
   if (!tx) return;
   tx.pause();
   _dropCountIn(); // a count-in in progress must not outlive Stop
-  tx.setTime(loopEnabled ? loopStart : 0); // engine: setTime → onTime → stop visual
+  if (!loadingMultitrack(tx)) tx.setTime(loopEnabled ? loopStart : 0); // engine: setTime → onTime → stop visual
   if (eng) playBtn.classList.remove("playing");
 }
 
@@ -940,7 +1108,6 @@ export function wireTransportButtons() {
   // a screen reader is told.
   setMetroOptionsAvailable(false);
   playBtn.addEventListener("click", togglePlayPause);
-  playMiniBtn?.addEventListener("click", togglePlayPause);
   stopBtn.addEventListener("click", stopTransport);
   loopBtn.addEventListener("click", toggleLoop);
   wireLoopDrag();
@@ -948,18 +1115,10 @@ export function wireTransportButtons() {
   wireLoopInputs();
   wireZoomButtons();
   wireLaneScrollSync();
-  masterFader?.addEventListener("input", () => {
-    setMasterVolume(parseFloat(masterFader.value));
-    applyMix();
-  });
-  masterFader?.addEventListener("dblclick", () => {
-    masterFader.value = "0.5";
-    setMasterVolume(0.5);
-    applyMix();
-  });
   wireSpeedControl();
   wireMetronomeControl();
   wirePitchControl();
+  initRecordUi();
 }
 
 // Three buttons rather than a dial -- practice speeds for slowing a part
@@ -1002,9 +1161,35 @@ function paintSlowButton() {
  * pressed is the one lit, so half speed and a slow speed set to 0.50x never
  * light together.
  */
-function applySpeed(rate, btn = null) {
+function applySpeed(rate, btn = null, { record = true } = {}) {
   const pressed = btn ?? (rate >= 1 ? normalBtn() : slowBtn());
   const applied = pressed === halfBtn() ? 0.5 : pressed === slowBtn() ? _slowRate : 1;
+  applyRate(applied, pressed, { record });
+}
+
+// The range any speed may take (Karaoke's presets and its 5% steps reach
+// 1.5x; the transport's three buttons stay inside it).
+export const SPEED_MIN = 0.5;
+export const SPEED_MAX = 1.5;
+
+/**
+ * Play at exactly `rate` (clamped to SPEED_MIN..SPEED_MAX, in hundredths), from
+ * anywhere other than the three buttons: Karaoke Mode's presets and steps. The
+ * button whose speed it is lights (half at 0.5, the slow button at its own
+ * speed, normal at 1); any other speed lights none, so the transport never
+ * claims a speed that is not playing.
+ */
+export function setSpeed(rate) {
+  const r = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(rate) || 1)) * 100) / 100;
+  const pressed = r === 0.5 ? halfBtn() : r === 1 ? normalBtn() : Math.abs(r - _slowRate) < 1e-6 ? slowBtn() : null;
+  applyRate(r, pressed);
+  return r;
+}
+
+function applyRate(applied, pressed, { record = true } = {}) {
+  // The speed is part of the open mode's saved record of the song. Not when
+  // the speed is only being put back (a song loads, a mode is restored).
+  if (record) setMixGlobals({ speed: applied });
   setPlaybackSpeed(applied);
   for (const b of speedBtns) {
     if (!b) continue;
@@ -1090,8 +1275,22 @@ function applyPitch(semitones) {
   const clamped = Math.max(PITCH_MIN, Math.min(PITCH_MAX, Math.round(semitones)));
   const delta = clamped - _pitchSemitones;
   _pitchSemitones = clamped;
+  // Remembered with the mix; the lane writes below save it.
+  setMixGlobals({ pitch: clamped }, { save: false });
   renderPitch();
   if (delta !== 0) nudgeAllLanePitches(delta);
+}
+
+/** Move the global key to `semitones` (clamped like the buttons): Karaoke
+ * Mode's Key panel, through the same path as the transport's buttons. */
+export function setGlobalPitch(semitones) {
+  if (!_pitchAvailable) return;
+  applyPitch(semitones);
+}
+
+/** The global key as the transport shows it. */
+export function getGlobalPitch() {
+  return { semitones: _pitchSemitones, available: _pitchAvailable, min: PITCH_MIN, max: PITCH_MAX };
 }
 
 /**
@@ -1108,8 +1307,26 @@ export function resetPitch() {
 /** The user's reset: the global key and every lane, back to the original. */
 export function resetAllKeys() {
   _pitchSemitones = 0;
+  setMixGlobals({ pitch: 0 }, { save: false });
   resetAllLanePitches();
   renderPitch();
+}
+
+/**
+ * Put the speed and the global key back to what the open mode's record of the
+ * song holds: when a song's mix and engine are up, and when another mode's
+ * record replaces the open one. The lanes' own keys came with the record, so
+ * the key is only the counter here (nothing is nudged), and the speed is
+ * applied only when it differs from the one playing, so a mode switch does not
+ * restart the sources for nothing.
+ */
+export function restoreGlobals() {
+  _pitchSemitones = mixGlobals.pitch;
+  renderPitch();
+  const r = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, mixGlobals.speed)) * 100) / 100;
+  if (r === playbackSpeed) return;
+  const pressed = r === 0.5 ? halfBtn() : r === 1 ? normalBtn() : Math.abs(r - _slowRate) < 1e-6 ? slowBtn() : null;
+  applyRate(r, pressed, { record: false });
 }
 
 export function updatePitchAvailability(available) {
@@ -1124,8 +1341,10 @@ function wirePitchControl() {
   pitchResetBtn?.addEventListener("click", () => resetAllKeys());
 }
 
+/** A song is being torn down or opened: back to 1x, and not remembered (the
+ * song's own saved speed comes back with its mix: restoreGlobals). */
 export function resetSpeed() {
-  applySpeed(1.0);
+  applySpeed(1.0, null, { record: false });
 }
 
 function wireSpeedControl() {
@@ -1165,7 +1384,26 @@ function _saveMetroPrefs() {
     beatsPerBar: metronomeBeatsPerBar,
     grouping: metronomeGrouping,
     countInBars: metronomeCountInBars,
+    sound: metronomeSound,
   }).catch((e) => console.warn("[transport] failed to save metronome prefs:", e));
+}
+
+// The sound selector's options are the presets in clickSounds.js, in its
+// order, so a preset added there needs no markup here. data-i18n carries each
+// name through a language switch like the static options beside it.
+function _renderMetroSound() {
+  if (!metroSoundEl) return;
+  const ids = CLICK_SOUNDS.presets.map((p) => p.id);
+  if ([...metroSoundEl.options].map((o) => o.value).join() !== ids.join()) {
+    metroSoundEl.replaceChildren(...CLICK_SOUNDS.presets.map((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.dataset.i18n = p.label;
+      opt.textContent = t(p.label);
+      return opt;
+    }));
+  }
+  metroSoundEl.value = metronomeSound;
 }
 
 /**
@@ -1609,7 +1847,12 @@ function wireMetronomeControl() {
       // rather than silently turning it off.
       if (typeof prefs.countInBars === "number") setMetronomeCountInBars(prefs.countInBars);
       else if (typeof prefs.countIn === "boolean") setMetronomeCountInBars(prefs.countIn ? 1 : 0);
+      // Absent before #805, and an id a later version removed: both read as
+      // Classic (setMetronomeSound normalises).
+      if (typeof prefs.sound === "string") setMetronomeSound(prefs.sound);
+      metronome?.setSound?.(metronomeSound);
     }
+    _renderMetroSound();
     _renderMetroVolume();
     _renderMetroBar();
     _renderCountIn();
@@ -1640,6 +1883,15 @@ function wireMetronomeControl() {
     });
   }
 
+  _renderMetroSound();
+  metroSoundEl?.addEventListener("change", () => {
+    setMetronomeSound(metroSoundEl.value);
+    // The running click switches on its next beat, without a pop (see
+    // metronome.setSound); exports read metronomeSound when they are built.
+    metronome?.setSound?.(metronomeSound);
+    _saveMetroPrefs();
+  });
+
   metroCountInEl?.addEventListener("change", () => {
     setMetronomeCountInBars(parseInt(metroCountInEl.value, 10));
     _renderCountIn();
@@ -1669,4 +1921,16 @@ function wireMetronomeControl() {
 
   metroBarCustomEl?.addEventListener("change", _applyCustomBeatsPerBar);
   metroGroupEl?.addEventListener("change", _applyGrouping);
+}
+
+// Closing Streamer or Karaoke uncovers the lanes: the playhead line moves to
+// where the song is now (it is not moved while they cover the lanes).
+for (const name of ["stemdeck:streamer-changed", "stemdeck:karaoke-changed"]) {
+  document.addEventListener(name, (e) => {
+    if (e.detail?.open) return;
+    requestAnimationFrame(() => {
+      const now = transport()?.getCurrentTime?.();
+      if (Number.isFinite(now)) updatePlayheadMarker(now);
+    });
+  });
 }

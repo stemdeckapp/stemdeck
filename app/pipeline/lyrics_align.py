@@ -44,6 +44,7 @@ from app.core.config import (
     LYRICS_ALIGN_TOLERANCE_SEC,
 )
 from app.core.models import Job
+from app.core.stem_files import stem_path
 from app.pipeline.audio_stats import vocal_envelope
 
 logger = logging.getLogger("stemdeck.lyrics")
@@ -194,7 +195,7 @@ def estimate_offset(starts: list[float], strength: np.ndarray, hop: float) -> fl
 def _envelope(stems_dir: Path) -> tuple[float, list[int]] | None:
     """The vocals stem's envelope: the one kept beside it when it is not
     older than the stem, else read from the stem now. None without vocals."""
-    vocals = stems_dir / "vocals.wav"
+    vocals = stem_path(stems_dir, "vocals")
     if not vocals.is_file():
         return None
     kept = stems_dir / _ENVELOPE_FILE

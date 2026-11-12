@@ -214,6 +214,6 @@ test.describe("lyrics from the server", () => {
     const { lrclib, served } = await setUp(page, { server: null });
     await expect.poll(() => lrclib.length).toBeGreaterThan(0);
     expect(served.length).toBeGreaterThan(0);
-    await expect(page.locator("#lyricsStatus")).toContainText("Could not reach LRCLIB");
+    await expect(page.locator("#lyricsStatus")).toContainText("LRCLIB did not answer");
   });
 });

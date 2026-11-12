@@ -1,0 +1,339 @@
+// The Donate dialog, opened from the Donate button in the left rail
+// (index.html). Laid out like a donate page: a hero on top, the ways to give
+// (and their amounts, for a way that takes one) on the left, and sharing
+// StemDeck on the right.
+//
+// The links live in donateLinks.js, and its isConfigured() decides what shows:
+// a way's tile only once its link is a real https:// address, and the Donate
+// button only once at least one way is set. Nothing points nowhere.
+//
+// The amount (a preset or a custom whole-dollar amount, 2 or more) reaches a
+// page only through an optional template in donateLinks.js that contains
+// {amount}. So only a way with such a template is a choice in the dialog, with
+// the presets, the custom amount and the arrow under it. A way without one has
+// a tile that is itself the link to its page, where the donor chooses the
+// amount (and, on Liberapay, how often), and no amount is offered for it here
+// (#1037).
+//
+// Every link out (a tile that is a link, the arrow) is a plain
+// a[target="_blank"]: the document-level handler in main.js routes it through
+// the Tauri open_url command on desktop, and a browser opens it in a new tab.
+// Nothing from Stripe or Liberapay is loaded by this page. The QR code is
+// drawn by this app's own server (/api/qr), when the dialog first opens, and so
+// is the small QR inside a link tile whose way is on in DONATE_QR.
+
+import { DONATE_LINKS, DONATE_LINK_TEMPLATES, DONATE_QR, SOCIAL_LINKS, donateHref, isConfigured, socialHref } from "./donateLinks.js";
+import { t, onLanguageChange } from "./i18n.js";
+
+export const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
+export const AMOUNT_MIN = 2;
+export const AMOUNT_MAX = 10000;
+const WAY_NAMES = { stripe: "Stripe", liberapay: "Liberapay" };
+
+/** The template with this amount in it, or null when it is not a usable one. */
+function fillTemplate(tpl, amount) {
+  if (typeof tpl !== "string" || !tpl.includes("{amount}")) return null;
+  return donateHref(tpl.split("{amount}").join(String(amount)));
+}
+
+/**
+ * Where the arrow goes for this way and amount, or null while the way is a
+ * placeholder. The plain link decides whether the way is live; a template with
+ * {amount} is used on top of it only when an amount is picked.
+ */
+export function donateUrl(way, amount, links = DONATE_LINKS, templates = DONATE_LINK_TEMPLATES) {
+  const plain = donateHref(links?.[way]);
+  if (!plain) return null;
+  if (Number.isInteger(amount) && amount >= AMOUNT_MIN) {
+    const filled = fillTemplate(templates?.[way], amount);
+    if (filled) return filled;
+  }
+  return plain;
+}
+
+/**
+ * Whether this way's page takes the amount picked in the dialog: its link is
+ * set and it has a usable {amount} template. Only such a way is a choice with
+ * presets, a custom amount and the arrow. Any other set way has a tile that is
+ * itself the link, because an amount picked here would never reach its page.
+ */
+export function takesAmount(way, links = DONATE_LINKS, templates = DONATE_LINK_TEMPLATES) {
+  return donateHref(links?.[way]) !== null && fillTemplate(templates?.[way], AMOUNT_MIN) !== null;
+}
+
+/** The address of this app's own QR drawing for a link, or null when the link is not usable. */
+export function donateQrSrc(href) {
+  const link = donateHref(href);
+  return link ? `/api/qr?url=${encodeURIComponent(link)}` : null;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** The "leaves the app" mark on a tile that is a link: a box with an arrow out. */
+function outIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of Object.entries({
+    class: "donate-way-out", width: "14", height: "14", viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round",
+    "aria-hidden": "true", focusable: "false",
+  })) svg.setAttribute(k, v);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M14 4h6v6M20 4l-9 9M18 14v4.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10");
+  svg.append(path);
+  return svg;
+}
+
+/**
+ * Turn a way's tile into a plain external link to its page, keeping its
+ * contents and data-way. The document-level a[target="_blank"] handler in
+ * main.js opens it through open_url on desktop; a browser opens a new tab.
+ */
+function toLinkTile(tile, href) {
+  const a = document.createElement("a");
+  a.className = `${tile.className} is-link`;
+  a.dataset.way = tile.dataset.way;
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.append(...tile.childNodes, outIcon());
+  if (DONATE_QR[tile.dataset.way] === true) {
+    // The code and its caption are drawn between the icon and the words. The code is
+    // decorative (the tile's own name says where it goes); the caption is the
+    // tile's description. Its address is set when the dialog first opens, so
+    // nothing is fetched before then.
+    const img = document.createElement("img");
+    img.className = "donate-way-qr";
+    img.alt = "";
+    img.width = img.height = 128;
+    img.dataset.qr = donateQrSrc(href) ?? "";
+    const caption = document.createElement("span");
+    caption.className = "donate-way-scan-caption";
+    caption.id = `donateScan-${tile.dataset.way}`;
+    caption.dataset.i18n = "donate.qrCaption";
+    caption.textContent = t("donate.qrCaption");
+    const box = document.createElement("span");
+    box.className = "donate-way-scan";
+    box.append(img, caption);
+    // A code that cannot load takes its caption with it.
+    img.addEventListener("error", () => { box.hidden = true; });
+    a.classList.add("has-qr");
+    a.setAttribute("aria-describedby", caption.id);
+    // After the words in the markup, so the Guide, which titles a control from
+    // its first line of text, says "One-time donation"; the CSS puts it above them.
+    a.querySelector(".donate-way-via").after(box);
+  }
+  tile.replaceWith(a);
+  return a;
+}
+
+/**
+ * Read the custom amount field. Only digits are kept (whole US dollars). While
+ * typing, an amount below the minimum is not an amount yet; on commit (leaving
+ * the field or Enter) it is raised to the minimum, and anything above the
+ * maximum is lowered to it. `hint` names why the field changed, if it did.
+ */
+export function readAmount(raw, commit = false) {
+  const text = String(raw ?? "").trim();
+  const digits = text.replace(/\D+/g, "").replace(/^0+(?=\d)/, "").slice(0, 6);
+  let hint = /\D/.test(text) ? "digits" : null;
+  if (!digits) return { value: "", amount: null, hint };
+  const n = Number(digits);
+  if (commit && n < AMOUNT_MIN) return { value: String(AMOUNT_MIN), amount: AMOUNT_MIN, hint: "min" };
+  if (n > AMOUNT_MAX) {
+    if (commit) return { value: String(AMOUNT_MAX), amount: AMOUNT_MAX, hint: "max" };
+    return { value: digits, amount: null, hint: "max" };
+  }
+  return { value: digits, amount: n >= AMOUNT_MIN ? n : null, hint };
+}
+
+const HINT_KEYS = { digits: "donate.hintDigits", min: "donate.hintMin", max: "donate.hintMax" };
+
+function focusables(root) {
+  return [...root.querySelectorAll("button, [href], input, select, textarea, [tabindex]")].filter(
+    (el) => el.tabIndex >= 0 && !el.disabled && !el.hidden && el.getClientRects().length > 0,
+  );
+}
+
+export function wireDonateDialog() {
+  const btn = document.getElementById("donateBtn");
+  const dialog = document.getElementById("donateDialog");
+  const close = document.getElementById("donateClose");
+  if (!btn || !dialog || dialog.dataset.ready === "1") return;
+  dialog.dataset.ready = "1";
+
+  // A way whose link is not set has no tile, and with none set there is no
+  // Donate button (hidden in index.html until this runs) and nothing to wire.
+  // A set way whose page takes no amount gets a tile that is the link itself,
+  // so a press goes straight to that page (#1037). A way that takes one stays
+  // a choice, with the amounts and the arrow under it.
+  const tiles = [...dialog.querySelectorAll(".donate-way[data-way]")].map((tile) => {
+    const way = tile.dataset.way;
+    tile.hidden = !isConfigured(way);
+    return tile.hidden || takesAmount(way) ? tile : toLinkTile(tile, donateUrl(way, null));
+  });
+  const live = tiles.filter((tile) => !tile.hidden);
+  btn.hidden = !live.length;
+  if (!live.length) return;
+  const choices = live.filter((tile) => takesAmount(tile.dataset.way));
+  const links = live.filter((tile) => !choices.includes(tile));
+  const presetRow = dialog.querySelector(".donate-presets");
+  const customRow = dialog.querySelector(".donate-custom-row");
+  const presets = [...dialog.querySelectorAll(".donate-preset[data-amount]")];
+  const custom = document.getElementById("donateCustom");
+  const go = document.getElementById("donateGo");
+  const hintEl = document.getElementById("donateHint");
+  const qr = document.getElementById("donateQr");
+  const shareBtn = document.getElementById("donateShare");
+  // The follow buttons (Instagram, X): each shows only once its link is set in
+  // SOCIAL_LINKS. Icon only, so the name comes from donate.followOn. Nothing
+  // is loaded from either site; a click opens the browser like any link out.
+  const socials = [...dialog.querySelectorAll("a.donate-social[data-social]")];
+  for (const a of socials) {
+    const href = socialHref(a.dataset.social, SOCIAL_LINKS);
+    a.hidden = !href;
+    if (href) a.href = href;
+    else a.removeAttribute("href");
+  }
+
+  // The chosen way is always one that takes an amount; with none, there is no
+  // choice to make and no amount is offered at all.
+  const state = { way: choices[0]?.dataset.way ?? null, amount: null, fromPreset: false, hint: null };
+  if (presetRow) presetRow.hidden = !state.way;
+  if (customRow) customRow.hidden = !state.way;
+
+  const render = () => {
+    for (const tile of choices) tile.setAttribute("aria-pressed", String(tile.dataset.way === state.way));
+    for (const tile of links) {
+      // From the keys, not the spans' text, which a language change may not
+      // have reached yet when this runs.
+      const keyOf = (sel) => tile.querySelector(sel)?.dataset.i18n;
+      const name = t("donate.wayLink", { name: t(keyOf(".donate-way-name")), via: t(keyOf(".donate-way-via")) });
+      tile.setAttribute("aria-label", name);
+      tile.title = name;
+    }
+    for (const p of presets) {
+      p.setAttribute("aria-pressed", String(state.fromPreset && Number(p.dataset.amount) === state.amount));
+    }
+    const href = donateUrl(state.way, state.amount);
+    if (go) {
+      if (href) go.href = href;
+      else go.removeAttribute("href");
+      go.hidden = !href;
+      if (state.way) {
+        const label = t("donate.go", { way: WAY_NAMES[state.way] || state.way });
+        go.setAttribute("aria-label", label);
+        go.title = label;
+      }
+    }
+    if (hintEl) {
+      hintEl.hidden = !state.hint;
+      hintEl.textContent = state.hint
+        ? t(HINT_KEYS[state.hint], { min: AMOUNT_MIN, max: AMOUNT_MAX.toLocaleString("en-US") })
+        : "";
+    }
+    if (qr) qr.alt = t("donate.qrAlt");
+    for (const a of socials) {
+      const name = t("donate.followOn", { name: a.dataset.name });
+      a.setAttribute("aria-label", name);
+      a.title = name;
+    }
+    for (const cap of dialog.querySelectorAll(".donate-way-scan-caption")) cap.textContent = t("donate.qrCaption");
+  };
+
+  for (const tile of choices) {
+    tile.addEventListener("click", () => {
+      state.way = tile.dataset.way;
+      render();
+    });
+  }
+  for (const p of presets) {
+    p.addEventListener("click", () => {
+      state.amount = Number(p.dataset.amount);
+      state.fromPreset = true;
+      state.hint = null;
+      if (custom) custom.value = "";
+      render();
+    });
+  }
+  const readCustom = (commit) => {
+    const res = readAmount(custom.value, commit);
+    if (custom.value !== res.value) custom.value = res.value;
+    state.hint = res.hint;
+    if (res.value || !state.fromPreset) {
+      state.amount = res.amount;
+      state.fromPreset = false;
+    }
+    render();
+  };
+  custom?.addEventListener("input", () => readCustom(false));
+  custom?.addEventListener("change", () => readCustom(true));
+  custom?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      readCustom(true);
+    }
+  });
+
+  // System share where the platform has it; otherwise the button stays hidden.
+  const canShare = typeof navigator.share === "function";
+  if (shareBtn && canShare) {
+    shareBtn.hidden = false;
+    shareBtn.addEventListener("click", async () => {
+      try {
+        await navigator.share({ title: "StemDeck", url: REPO_URL });
+      } catch (err) {
+        if (err?.name !== "AbortError") console.warn("[donate] share failed:", err);
+      }
+    });
+  }
+
+  render();
+  onLanguageChange(render);
+
+  let opener = null;
+  const open = () => {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : btn;
+    if (qr && !qr.getAttribute("src")) qr.src = donateQrSrc(REPO_URL);
+    for (const img of dialog.querySelectorAll("img.donate-way-qr[data-qr]")) {
+      if (img.dataset.qr && !img.getAttribute("src")) img.src = img.dataset.qr;
+    }
+    dialog.classList.remove("hidden");
+    close?.focus();
+  };
+  const hide = () => {
+    if (dialog.classList.contains("hidden")) return;
+    dialog.classList.add("hidden");
+    // Back to whatever opened it: the Donate button in the rail.
+    const back = opener?.isConnected && opener.getClientRects().length ? opener : btn;
+    back.focus();
+    opener = null;
+  };
+
+  btn.addEventListener("click", open);
+  close?.addEventListener("click", hide);
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target !== dialog) return;
+    // Kept from moving focus to the page, so it can go back to the opener.
+    e.preventDefault();
+    hide();
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      hide();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const items = focusables(dialog);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+}

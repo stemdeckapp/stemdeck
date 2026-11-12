@@ -36,6 +36,9 @@ const KIND_KEYS = {
   playback: "notifKind.playbackFailed",
   export: "notifKind.exportFailed",
   update: "notifKind.updateCheckFailed",
+  // A Lead + Backing split that did not make its stems (#832). The song
+  // itself is fine, so it is not an import failure.
+  split: "notifKind.splitFailed",
 };
 function kindLabel(kind) {
   return kind in KIND_KEYS ? t(KIND_KEYS[kind]) : t("notifKind.default");
@@ -367,7 +370,9 @@ function buildCard(record) {
   title.textContent = kindLabel(record.kind);
   const desc = document.createElement("div");
   desc.className = "daw-notif-card-desc";
-  desc.textContent = `${record.cause || record.message} · ${relativeTime(record.at)}`;
+  // A failed import's message is already its cause in a sentence (#175); the
+  // bare cause key is for the report's title.
+  desc.textContent = `${(record.kind !== "import" && record.cause) || record.message} · ${relativeTime(record.at)}`;
   body.append(title, desc);
 
   const dismiss = document.createElement("button");

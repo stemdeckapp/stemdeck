@@ -85,8 +85,9 @@ New API endpoints and pipeline stages should come with tests under `tests/`. The
 
 ## License
 
-StemDeck is licensed under the [Apache License 2.0](LICENSE). By contributing, you agree that your
-contributions are licensed under the same terms.
+StemDeck is licensed under the [GNU Affero General Public License v3.0 only](LICENSE)
+(AGPL-3.0-only). Contributions are accepted under the same license: by contributing, you agree
+that your contributions are licensed under AGPL-3.0-only.
 
 ## Questions
 

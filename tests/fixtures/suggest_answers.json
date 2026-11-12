@@ -1,0 +1,1187 @@
+{
+ "bass": {
+  "status": "ok",
+  "target": "bass.balanced",
+  "mode": "replace",
+  "layout": "bass",
+  "choices": [
+   {
+    "id": "bass.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "bass.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "bass.bright",
+    "label_key": "suggest.target.bright"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 4.23,
+    "outside": 3.27
+   },
+   "current": {
+    "rms": 4.23,
+    "outside": 3.27
+   },
+   "suggested": {
+    "rms": 2.32,
+    "outside": 1.08
+   }
+  },
+  "loudness": {
+   "current_change": 0.0,
+   "suggested_change": 0.02,
+   "bands_change": -1.78
+  },
+  "bands": [
+   {
+    "slot": "low",
+    "type": "bell",
+    "f": 250.0,
+    "g": -4.0,
+    "q": 1.0,
+    "slope": 12
+   },
+   {
+    "slot": "mid",
+    "type": "bell",
+    "f": 1600.0,
+    "g": 2.0,
+    "q": 1.4,
+    "slope": 12
+   },
+   {
+    "slot": "hs",
+    "type": "highshelf",
+    "f": 1000.0,
+    "g": 6.0,
+    "q": 0.707,
+    "slope": 12
+   }
+  ],
+  "out": 1.8,
+  "eq": {
+   "out": 1.8,
+   "bands": [
+    {
+     "type": "bell",
+     "f": 250.0,
+     "g": -4.0,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 1600.0,
+     "g": 2.0,
+     "q": 1.4,
+     "slope": 12
+    },
+    {
+     "type": "highshelf",
+     "f": 1000.0,
+     "g": 6.0,
+     "q": 0.707,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 250.0,
+     "g": -4.0,
+     "dev": 3.6,
+     "region": "lowmid"
+    }
+   },
+   {
+    "key": "suggest.why.bellBoost",
+    "vars": {
+     "f": 1600.0,
+     "g": 2.0,
+     "dev": -8.0,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.highShelfBoost",
+    "vars": {
+     "f": 1000.0,
+     "g": 6.0,
+     "dev": -6.0,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -1.8,
+     "out": 1.8
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 4.23,
+     "after": 2.32
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 137.2
+  },
+  "lane": "bass"
+ },
+ "guitar": {
+  "status": "ok",
+  "target": "guitar.bright",
+  "mode": "replace",
+  "layout": "guitar",
+  "choices": [
+   {
+    "id": "guitar.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "guitar.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "guitar.bright",
+    "label_key": "suggest.target.bright"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 5.96,
+    "outside": 4.63
+   },
+   "current": {
+    "rms": 5.96,
+    "outside": 4.63
+   },
+   "suggested": {
+    "rms": 3.76,
+    "outside": 2.6
+   }
+  },
+  "loudness": {
+   "current_change": 0.0,
+   "suggested_change": -0.05,
+   "bands_change": -2.95
+  },
+  "bands": [
+   {
+    "slot": "ls",
+    "type": "lowshelf",
+    "f": 200.0,
+    "g": -2.0,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "low",
+    "type": "bell",
+    "f": 400.0,
+    "g": -4.5,
+    "q": 1.0,
+    "slope": 12
+   },
+   {
+    "slot": "mid",
+    "type": "bell",
+    "f": 1600.0,
+    "g": -6.0,
+    "q": 1.0,
+    "slope": 12
+   },
+   {
+    "slot": "high",
+    "type": "bell",
+    "f": 8000.0,
+    "g": 6.0,
+    "q": 1.0,
+    "slope": 12
+   },
+   {
+    "slot": "hs",
+    "type": "highshelf",
+    "f": 1000.0,
+    "g": 1.0,
+    "q": 0.707,
+    "slope": 12
+   }
+  ],
+  "out": 2.9,
+  "eq": {
+   "out": 2.9,
+   "bands": [
+    {
+     "type": "lowshelf",
+     "f": 200.0,
+     "g": -2.0,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 400.0,
+     "g": -4.5,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 1600.0,
+     "g": -6.0,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 8000.0,
+     "g": 6.0,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "highshelf",
+     "f": 1000.0,
+     "g": 1.0,
+     "q": 0.707,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.lowShelfCut",
+    "vars": {
+     "f": 200.0,
+     "g": -2.0,
+     "dev": 1.7,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 400.0,
+     "g": -4.5,
+     "dev": 3.0,
+     "region": "lowmid"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 1600.0,
+     "g": -6.0,
+     "dev": 4.0,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.bellBoost",
+    "vars": {
+     "f": 8000.0,
+     "g": 6.0,
+     "dev": -11.3,
+     "region": "high"
+    }
+   },
+   {
+    "key": "suggest.why.highShelfBoost",
+    "vars": {
+     "f": 1000.0,
+     "g": 1.0,
+     "dev": -2.1,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -2.9,
+     "out": 2.9
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 5.96,
+     "after": 3.76
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 118.5
+  },
+  "lane": "guitar"
+ },
+ "keys": {
+  "status": "ok",
+  "target": "keys.balanced",
+  "mode": "replace",
+  "layout": "keys",
+  "choices": [
+   {
+    "id": "keys.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "keys.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "keys.bright",
+    "label_key": "suggest.target.bright"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 7.15,
+    "outside": 5.89
+   },
+   "current": {
+    "rms": 7.15,
+    "outside": 5.89
+   },
+   "suggested": {
+    "rms": 6.23,
+    "outside": 5.08
+   }
+  },
+  "loudness": {
+   "current_change": 0.0,
+   "suggested_change": 0.02,
+   "bands_change": -1.58
+  },
+  "bands": [
+   {
+    "slot": "body",
+    "type": "lowshelf",
+    "f": 120.0,
+    "g": 3.5,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "presence",
+    "type": "bell",
+    "f": 2000.0,
+    "g": -6.0,
+    "q": 1.0,
+    "slope": 12
+   }
+  ],
+  "out": 1.6,
+  "eq": {
+   "out": 1.6,
+   "bands": [
+    {
+     "type": "lowshelf",
+     "f": 120.0,
+     "g": 3.5,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 2000.0,
+     "g": -6.0,
+     "q": 1.0,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.lowShelfBoost",
+    "vars": {
+     "f": 120.0,
+     "g": 3.5,
+     "dev": -5.1,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 2000.0,
+     "g": -6.0,
+     "dev": 5.9,
+     "region": "uppermid"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -1.6,
+     "out": 1.6
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 7.15,
+     "after": 6.23
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 15.9
+  },
+  "lane": "piano"
+ },
+ "drum": {
+  "status": "ok",
+  "target": "drums.balanced",
+  "mode": "replace",
+  "layout": "free",
+  "choices": [
+   {
+    "id": "drums.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "drums.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "drums.bright",
+    "label_key": "suggest.target.bright"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 5.97,
+    "outside": 2.93
+   },
+   "current": {
+    "rms": 5.97,
+    "outside": 2.93
+   },
+   "suggested": {
+    "rms": 4.08,
+    "outside": 1.16
+   }
+  },
+  "loudness": {
+   "current_change": 0.0,
+   "suggested_change": -0.01,
+   "bands_change": -2.31
+  },
+  "bands": [
+   {
+    "slot": "lowshelf",
+    "type": "lowshelf",
+    "f": 80.0,
+    "g": 3.0,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 160.0,
+    "g": -3.0,
+    "q": 1.4,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 800.0,
+    "g": -2.0,
+    "q": 0.7,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 1600.0,
+    "g": -6.0,
+    "q": 0.7,
+    "slope": 12
+   }
+  ],
+  "out": 2.3,
+  "eq": {
+   "out": 2.3,
+   "bands": [
+    {
+     "type": "lowshelf",
+     "f": 80.0,
+     "g": 3.0,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 160.0,
+     "g": -3.0,
+     "q": 1.4,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 800.0,
+     "g": -2.0,
+     "q": 0.7,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 1600.0,
+     "g": -6.0,
+     "q": 0.7,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.lowShelfBoost",
+    "vars": {
+     "f": 80.0,
+     "g": 3.0,
+     "dev": -8.6,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 160.0,
+     "g": -3.0,
+     "dev": 2.3,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 800.0,
+     "g": -2.0,
+     "dev": 3.7,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 1600.0,
+     "g": -6.0,
+     "dev": 5.7,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -2.3,
+     "out": 2.3
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 5.97,
+     "after": 4.08
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 99.2
+  },
+  "lane": "drums"
+ },
+ "graphMerge": {
+  "status": "ok",
+  "target": "other.balanced",
+  "mode": "merge",
+  "layout": "free",
+  "choices": [
+   {
+    "id": "other.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "other.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "other.bright",
+    "label_key": "suggest.target.bright"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 8.05,
+    "outside": 6.13
+   },
+   "current": {
+    "rms": 8.47,
+    "outside": 6.62
+   },
+   "suggested": {
+    "rms": 4.4,
+    "outside": 2.74
+   }
+  },
+  "loudness": {
+   "current_change": 1.2,
+   "suggested_change": 1.22,
+   "bands_change": -4.18
+  },
+  "bands": [
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 200.0,
+    "g": 6.0,
+    "q": 0.7,
+    "slope": 12
+   },
+   {
+    "slot": "lowshelf",
+    "type": "lowshelf",
+    "f": 200.0,
+    "g": 2.0,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 1000.0,
+    "g": -4.5,
+    "q": 2.0,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 2000.0,
+    "g": -6.0,
+    "q": 0.7,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 8000.0,
+    "g": -6.0,
+    "q": 0.7,
+    "slope": 12
+   }
+  ],
+  "out": 5.7,
+  "eq": {
+   "out": 5.7,
+   "bands": [
+    {
+     "type": "bell",
+     "f": 300.0,
+     "g": -3.0,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 200.0,
+     "g": 6.0,
+     "q": 0.7,
+     "slope": 12
+    },
+    {
+     "type": "lowshelf",
+     "f": 200.0,
+     "g": 2.0,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 1000.0,
+     "g": -4.5,
+     "q": 2.0,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 2000.0,
+     "g": -6.0,
+     "q": 0.7,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 8000.0,
+     "g": -6.0,
+     "q": 0.7,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.bellBoost",
+    "vars": {
+     "f": 200.0,
+     "g": 6.0,
+     "dev": -11.7,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.lowShelfBoost",
+    "vars": {
+     "f": 200.0,
+     "g": 2.0,
+     "dev": -8.9,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 1000.0,
+     "g": -4.5,
+     "dev": 5.4,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 2000.0,
+     "g": -6.0,
+     "dev": 7.4,
+     "region": "uppermid"
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 8000.0,
+     "g": -6.0,
+     "dev": 7.3,
+     "region": "high"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -4.2,
+     "out": 4.2
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 8.47,
+     "after": 4.4
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 47.4
+  },
+  "lane": "other"
+ },
+ "master": {
+  "status": "ok",
+  "target": "mix.warm",
+  "mode": "replace",
+  "layout": "master",
+  "choices": [
+   {
+    "id": "mix.balanced",
+    "label_key": "suggest.target.balanced"
+   },
+   {
+    "id": "mix.warm",
+    "label_key": "suggest.target.warm"
+   },
+   {
+    "id": "mix.bright",
+    "label_key": "suggest.target.bright"
+   },
+   {
+    "id": "mix.bassy",
+    "label_key": "suggest.target.bassy"
+   }
+  ],
+  "freqs": [
+   20,
+   25,
+   31.5,
+   40,
+   50,
+   63,
+   80,
+   100,
+   125,
+   160,
+   200,
+   250,
+   315,
+   400,
+   500,
+   630,
+   800,
+   1000,
+   1250,
+   1600,
+   2000,
+   2500,
+   3150,
+   4000,
+   5000,
+   6300,
+   8000,
+   10000,
+   12500,
+   16000,
+   20000
+  ],
+  "distance": {
+   "raw": {
+    "rms": 4.49,
+    "outside": 2.9
+   },
+   "current": {
+    "rms": 4.49,
+    "outside": 2.9
+   },
+   "suggested": {
+    "rms": 2.19,
+    "outside": 0.83
+   }
+  },
+  "loudness": {
+   "current_change": 0.0,
+   "suggested_change": 0.0,
+   "bands_change": -1.3
+  },
+  "bands": [
+   {
+    "slot": "lowcut",
+    "type": "lowcut",
+    "f": 31.5,
+    "g": 0.0,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 160.0,
+    "g": -2.0,
+    "q": 1.0,
+    "slope": 12
+   },
+   {
+    "slot": "lowshelf",
+    "type": "lowshelf",
+    "f": 250.0,
+    "g": -2.0,
+    "q": 0.707,
+    "slope": 12
+   },
+   {
+    "slot": "bell",
+    "type": "bell",
+    "f": 1250.0,
+    "g": 6.0,
+    "q": 0.7,
+    "slope": 12
+   }
+  ],
+  "out": 1.3,
+  "eq": {
+   "out": 1.3,
+   "bands": [
+    {
+     "type": "lowcut",
+     "f": 31.5,
+     "g": 0.0,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 160.0,
+     "g": -2.0,
+     "q": 1.0,
+     "slope": 12
+    },
+    {
+     "type": "lowshelf",
+     "f": 250.0,
+     "g": -2.0,
+     "q": 0.707,
+     "slope": 12
+    },
+    {
+     "type": "bell",
+     "f": 1250.0,
+     "g": 6.0,
+     "q": 0.7,
+     "slope": 12
+    }
+   ]
+  },
+  "why": [
+   {
+    "key": "suggest.why.lowCut",
+    "vars": {
+     "f": 31.5,
+     "dev": 7.0
+    }
+   },
+   {
+    "key": "suggest.why.bellCut",
+    "vars": {
+     "f": 160.0,
+     "g": -2.0,
+     "dev": 4.2,
+     "region": "bass"
+    }
+   },
+   {
+    "key": "suggest.why.lowShelfCut",
+    "vars": {
+     "f": 250.0,
+     "g": -2.0,
+     "dev": 4.0,
+     "region": "lowmid"
+    }
+   },
+   {
+    "key": "suggest.why.bellBoost",
+    "vars": {
+     "f": 1250.0,
+     "g": 6.0,
+     "dev": -5.8,
+     "region": "mid"
+    }
+   },
+   {
+    "key": "suggest.why.out",
+    "vars": {
+     "d": -1.3,
+     "out": 1.3
+    }
+   },
+   {
+    "key": "suggest.why.distance",
+    "vars": {
+     "before": 4.49,
+     "after": 2.19
+    }
+   }
+  ],
+  "analysis": {
+   "seconds": 194.3,
+   "gated_seconds": 156.0,
+   "i": -16.186,
+   "tp": -1.993,
+   "lra": 3.69
+  },
+  "master": {
+   "preset": "streaming",
+   "target_lufs": -14.0,
+   "ceiling_dbtp": -1.0,
+   "comp": 0.0,
+   "limit_db": 1.2,
+   "why": {
+    "key": "suggest.why.master.streaming",
+    "vars": {
+     "i": -16.2,
+     "plr": 14.2,
+     "target": -14.0,
+     "limit": 1.2
+    }
+   }
+  }
+ }
+}

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -267,3 +271,166 @@ def test_auto_sections_saved_choice_beats_the_env_default(monkeypatch, _isolated
     settings_mod.set_auto_sections(True)
     monkeypatch.setenv("STEMDECK_AUTO_SECTIONS", "")
     assert settings_mod.get_auto_sections() is True
+
+
+# ── the gate against real peer addresses (#859) ──
+#
+# The tests above fake the peer by patching _is_loopback, or rely on
+# TestClient's "testclient" peer. These give the app a real address instead,
+# the way uvicorn would: a device elsewhere on the network (203.0.113.5, a
+# documentation address), loopback, and the machine's own LAN address, which
+# is what the report in #859 used for its curl.
+
+OUTSIDE = "203.0.113.5"
+OWN_LAN_IP = "192.168.1.77"
+REFUSED = "StemDeck is not available on the network"
+
+
+@pytest.fixture()
+def own_ips(monkeypatch):
+    """The machine's own interface IPs, fixed so no test depends on the host."""
+    monkeypatch.setattr("app.main._local_ips", lambda: frozenset({OWN_LAN_IP}))
+
+
+@pytest.fixture()
+def network_off(own_ips):
+    settings_mod.set_allow_network(False)
+
+
+def _peer(host: str) -> TestClient:
+    return TestClient(app, client=(host, 50000))
+
+
+def _assert_refused(r) -> None:
+    assert r.status_code == 403
+    assert REFUSED in r.text
+
+
+def test_off_refuses_every_method_from_another_device(network_off):
+    from app.core import config
+    from app.core.models import Job
+    from app.core.registry import _jobs
+
+    with _peer(OUTSIDE) as c:
+        job = Job(id="abcdefabcd59", status="done")
+        _jobs[job.id] = job
+        (config.JOBS_DIR / job.id).mkdir()
+        before = set(_jobs)
+        try:
+            _assert_refused(c.get("/"))
+            _assert_refused(c.get("/api/jobs"))
+            _assert_refused(c.get("/api/settings"))
+            _assert_refused(c.post("/api/jobs", json={"url": "https://example.com/a"}))
+            _assert_refused(c.post("/api/settings", json={"allow_network": True}))
+            _assert_refused(c.delete(f"/api/jobs/{job.id}"))
+
+            # Nothing was created, deleted or switched on.
+            assert set(_jobs) == before
+            assert (config.JOBS_DIR / job.id).is_dir()
+            assert sorted(p.name for p in config.JOBS_DIR.iterdir() if p.is_dir()) == [job.id]
+            assert settings_mod.get_allow_network() is False
+        finally:
+            _jobs.pop(job.id, None)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
+def test_off_serves_loopback(network_off, host):
+    with _peer(host) as c:
+        assert c.get("/").status_code == 200
+        assert c.get("/api/settings").status_code == 200
+        assert c.get("/api/jobs").status_code == 200
+
+
+def test_off_serves_the_machines_own_lan_address(network_off):
+    # The case in #859: a curl from the Mac to its own LAN address is the
+    # host reaching itself, which the gate always serves by design.
+    with _peer(OWN_LAN_IP) as c:
+        r = c.get("/api/settings")
+        assert r.status_code == 200
+        assert r.json()["allow_network"] is False
+
+
+@pytest.mark.parametrize(
+    "host,served",
+    [("::ffff:203.0.113.5", False), ("::ffff:127.0.0.1", True)],
+)
+def test_off_reads_ipv4_mapped_peers_as_ipv4(network_off, host, served):
+    with _peer(host) as c:
+        r = c.get("/api/settings")
+    if served:
+        assert r.status_code == 200
+    else:
+        _assert_refused(r)
+
+
+def test_on_serves_another_device(own_ips):
+    settings_mod.set_allow_network(True)
+    with _peer(OUTSIDE) as c:
+        assert c.get("/api/settings").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/no-such-page", "/api/no-such-route"])
+def test_off_refuses_before_routing(network_off, path):
+    # A 404 here would mean a route answered first.
+    with _peer(OUTSIDE) as c:
+        _assert_refused(c.get(path))
+
+
+def test_toggling_applies_without_a_restart(own_ips):
+    settings_mod.set_allow_network(False)
+    with _peer("127.0.0.1") as host:
+        outside = _peer(OUTSIDE)
+        _assert_refused(outside.get("/api/settings"))
+
+        assert host.post("/api/settings", json={"allow_network": True}).status_code == 200
+        assert outside.get("/api/settings").status_code == 200
+
+        assert host.post("/api/settings", json={"allow_network": False}).status_code == 200
+        _assert_refused(outside.get("/api/settings"))
+
+
+# ── what the desktop backend actually listens on (#859) ──
+#
+# The shell binds loopback while network access is off and every interface
+# while it is on, and says which through STEMDECK_BIND_HOST. Settings reports
+# it, so the switch shows what is listening, not only what was saved.
+
+
+@pytest.mark.parametrize(
+    "bind_host,listening",
+    [("127.0.0.1", False), ("0.0.0.0", True), (None, None)],
+)
+def test_settings_report_what_the_backend_listens_on(monkeypatch, bind_host, listening):
+    monkeypatch.setattr("app.main.BIND_HOST", bind_host)
+    with _peer("127.0.0.1") as c:
+        assert c.get("/api/settings").json()["network_listening"] is listening
+
+
+@pytest.mark.parametrize(
+    "env,bind_host",
+    [("127.0.0.1", "127.0.0.1"), (" 0.0.0.0 ", "0.0.0.0"), ("", None), (None, None)],
+)
+def test_the_bind_host_is_read_from_the_shells_variable(tmp_path, env, bind_host):
+    # The variable the Rust shell sets, read the way a fresh backend reads it.
+    # A subprocess, because config reads it once at import.
+    child_env = {**os.environ, "STEMDECK_DATA_DIR": str(tmp_path)}
+    child_env.pop("STEMDECK_BIND_HOST", None)
+    if env is not None:
+        child_env["STEMDECK_BIND_HOST"] = env
+    out = subprocess.run(
+        [sys.executable, "-c", "from app.core import config; print(repr(config.BIND_HOST))"],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert out == repr(bind_host)
+
+
+def test_a_saved_choice_does_not_change_what_is_listening(monkeypatch):
+    # The new bind needs the restart; until then the report stays the old one.
+    monkeypatch.setattr("app.main.BIND_HOST", "127.0.0.1")
+    with _peer("127.0.0.1") as c:
+        body = c.post("/api/settings", json={"allow_network": True}).json()
+        assert body["allow_network"] is True
+        assert c.get("/api/settings").json()["network_listening"] is False

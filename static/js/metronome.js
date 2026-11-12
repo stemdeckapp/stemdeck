@@ -24,18 +24,19 @@
 const LOOKAHEAD_SEC = 0.25;
 const TICK_MS = 50;
 
-// Click voice. Two sine partials give the tick some body without a sample
-// file; the short exponential decay keeps the transient tight so it reads as
-// percussive rather than tonal.
-const CLICK_FREQ = 1000;
-// Group starts sit between the downbeat and a plain beat in pitch and level, so
-// a grouped bar reads as strong/medium/weak rather than as identical accents
-// (#595). Geometric middle of the two: the ear hears pitch ratios, so the
-// midpoint of 1000 and 1500 is 1225, not 1250. Mirrored in click_render.py.
-const GROUP_FREQ = 1225;
-const ACCENT_FREQ = 1500;
-const CLICK_DECAY = 0.035;
-const CLICK_ATTACK = 0.001;
+// The click's voice is a preset from clickSounds.js (#805): one table, read by
+// this file and by the export renderer (app/pipeline/click_sounds.py), and the
+// same synthesis on both sides, so a click sounds the same monitored and
+// exported. Each voice is rendered once per sound, level and context rate into
+// an AudioBuffer and replayed for every beat. Classic is the click this file
+// used to build from oscillators: the same sine under the same two exponential
+// ramps, now computed up front instead of by the graph.
+import { DEFAULT_CLICK_SOUND, normaliseClickSound, renderVoice } from "./clickSounds.js";
+
+// A click due sooner than this when the sound changes keeps the voice it was
+// scheduled with: it may already be playing, and stopping it mid-voice is the
+// pop the switch must not make. Everything later is re-voiced (setSound).
+const REVOICE_MARGIN_SEC = 0.02;
 
 // Click strength at one beat. click_render.py defines the same three.
 export const LEVEL_WEAK = 0;
@@ -192,9 +193,13 @@ export function computeCountIn(
  *                               ctxTimeToSourceTime, getScheduleEpoch,
  *                               isClockReady, getMasterNode, audioContext.
  * @param {number[]} beats       Ascending beat times in seconds.
- * @param {{volume?:number, beatsPerBar?:number}} opts
+ * @param {{volume?:number, beatsPerBar?:number, sound?:string}} opts
  */
-export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 } = {}) {
+export function createMetronome(
+  engine,
+  beats,
+  { volume = 0.6, beatsPerBar = 0, sound = DEFAULT_CLICK_SOUND } = {},
+) {
   const ctx = engine?.audioContext;
   const master = engine?.getMasterNode?.();
   if (!ctx || !master
@@ -260,19 +265,22 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
   let destroyed = false;
   let timerId = null;
   let _beatsPerBar = beatsPerBar;
+  let _sound = normaliseClickSound(sound);
+  // Rendered voices, by `${sound}|${level}`, at this context's rate.
+  const _voices = new Map();
 
   // Index of the next beat to schedule, and the epoch that index belongs to.
   // A mismatch means the engine seeked/looped/changed rate under us and both
   // the cursor and every queued click are stale.
   let cursor = 0;
   let epoch = -1;
-  /** @type {{osc:OscillatorNode, env:GainNode}[]} */
+  /** @type {{src:AudioBufferSourceNode, when:number, level:number}[]} */
   let queued = [];
   // Count-in one-shots are tracked separately from the running click's `queued`:
   // they are scheduled outside the _tick loop (which may not even be running when
   // the click track is off) and must survive until they sound or the transport
   // cancels them. See playCountIn / cancelCountIn.
-  /** @type {{osc:OscillatorNode, env:GainNode}[]} */
+  /** @type {{src:AudioBufferSourceNode, when:number, level:number}[]} */
   let countInQueued = [];
 
   // First beat at or after `t`. Binary search rather than a scan: tracks run to
@@ -288,20 +296,45 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
     return lo;
   }
 
+  function _release(src) {
+    try { src.stop(); } catch { /* already stopped */ }
+    try { src.disconnect(); } catch { /* noop */ }
+  }
+
   function _cancelQueued() {
-    for (const { osc, env } of queued) {
-      try { osc.stop(); } catch { /* already stopped */ }
-      try { env.disconnect(); } catch { /* noop */ }
-    }
+    for (const { src } of queued) _release(src);
     queued = [];
   }
 
   function _cancelCountIn() {
-    for (const { osc, env } of countInQueued) {
-      try { osc.stop(); } catch { /* already stopped */ }
-      try { env.disconnect(); } catch { /* noop */ }
-    }
+    for (const { src } of countInQueued) _release(src);
     countInQueued = [];
+  }
+
+  function _voice(level) {
+    const key = `${_sound}|${level}`;
+    let buf = _voices.get(key);
+    if (!buf) {
+      const samples = Float32Array.from(renderVoice(_sound, level, ctx.sampleRate));
+      buf = ctx.createBuffer(1, samples.length, ctx.sampleRate);
+      buf.copyToChannel(samples, 0);
+      _voices.set(key, buf);
+    }
+    return buf;
+  }
+
+  // Swap the voice of every click in `sink` that is not due yet: the old
+  // source is stopped before it starts (silent) and a new one takes its exact
+  // time. The click already sounding, if any, finishes on its own voice.
+  function _revoice(sink) {
+    const cutoff = ctx.currentTime + REVOICE_MARGIN_SEC;
+    for (const entry of sink.slice()) {
+      if (entry.when <= cutoff) continue;
+      const i = sink.indexOf(entry);
+      if (i >= 0) sink.splice(i, 1);
+      _release(entry.src);
+      _scheduleClick(entry.when, entry.level, sink);
+    }
   }
 
   // Schedule one click to sound at AudioContext time `when`. `sink` is the list
@@ -310,31 +343,17 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
   function _scheduleClick(when, level, sink = queued) {
     // Booleans still arrive from callers that only distinguish the downbeat.
     const lv = level === true ? LEVEL_DOWNBEAT : level === false ? LEVEL_WEAK : Number(level) || 0;
-    const osc = ctx.createOscillator();
-    const env = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value =
-      lv === LEVEL_DOWNBEAT ? ACCENT_FREQ : lv === LEVEL_GROUP ? GROUP_FREQ : CLICK_FREQ;
+    // One node per click: the envelope is in the buffer, so there is no gain
+    // node per click to automate or to forget to disconnect.
+    const src = ctx.createBufferSource();
+    src.buffer = _voice(lv);
+    src.connect(gain);
+    src.start(when);
 
-    // Ramp from near-silence rather than 0: setValueAtTime(0) followed by an
-    // exponential ramp is a no-op in the spec (exponential ramps cannot start
-    // at zero), which would leave the click at full level and click twice.
-    env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(
-      lv === LEVEL_DOWNBEAT ? 1.0 : lv === LEVEL_GROUP ? 0.85 : 0.7,
-      when + CLICK_ATTACK,
-    );
-    env.gain.exponentialRampToValueAtTime(0.0001, when + CLICK_DECAY);
-
-    osc.connect(env);
-    env.connect(gain);
-    osc.start(when);
-    osc.stop(when + CLICK_DECAY + 0.01);
-
-    const entry = { osc, env };
+    const entry = { src, when, level: lv };
     sink.push(entry);
-    osc.onended = () => {
-      try { env.disconnect(); } catch { /* noop */ }
+    src.onended = () => {
+      try { src.disconnect(); } catch { /* noop */ }
       const i = sink.indexOf(entry);
       if (i >= 0) sink.splice(i, 1);
     };
@@ -421,6 +440,23 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
       else _stop();
     },
     isEnabled: () => enabled,
+    /**
+     * Change the click's sound. Takes effect on the next click not yet due:
+     * clicks already handed to the audio clock are re-voiced in place, at
+     * their own times, and one already sounding is left to finish, so the
+     * switch neither pops nor drops or doubles a beat. Also re-voices a
+     * count-in in progress.
+     */
+    setSound(id) {
+      const next = normaliseClickSound(id);
+      if (destroyed || next === _sound) return;
+      _sound = next;
+      _revoice(queued);
+      _revoice(countInQueued);
+    },
+    getSound: () => _sound,
+    /** Clicks handed to the audio clock and not yet ended (tests, leak checks). */
+    pendingCount: () => queued.length + countInQueued.length,
     setVolume(v) {
       if (destroyed) return;
       gain.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
@@ -506,6 +542,7 @@ export function createMetronome(engine, beats, { volume = 0.6, beatsPerBar = 0 }
       destroyed = true;
       _stop();
       _cancelCountIn();
+      _voices.clear();
       try { gain.disconnect(); } catch { /* noop */ }
     },
   };

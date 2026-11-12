@@ -14,6 +14,28 @@ export async function fetchJobs() {
   return res.json();
 }
 
+/** Library order (#772): oldest first by when the song was added, the order
+ *  the Queue runs them in, so the first song added is the first row. Takes
+ *  anything with `createdAt` (seconds) and `id`: a desktop track or a phone
+ *  card. Songs added in the same second fall back to their id, so the order
+ *  never depends on how the list happened to be stored. */
+export function compareOldestFirst(a, b) {
+  const byTime = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+  if (byTime !== 0) return byTime;
+  const idA = String(a?.id ?? "");
+  const idB = String(b?.id ?? "");
+  return idA < idB ? -1 : idA > idB ? 1 : 0;
+}
+
+/** When a library row was added (seconds), the time the order above reads:
+ *  the job's created_at as the server sent it, whenever it has, so the Library
+ *  and the Queue order by one clock. The browser's clock can be skewed against
+ *  the server's (a Docker host), so `nowSec` only stamps a row the server has
+ *  not described yet, and the server's time replaces it once it arrives. */
+export function addedAt(serverCreatedAt, storedCreatedAt, nowSec = Date.now() / 1000) {
+  return serverCreatedAt ?? storedCreatedAt ?? nowSec;
+}
+
 export function deriveSource(sourceUrl) {
   if (!sourceUrl) return "Local file";
   if (sourceUrl.startsWith("local:")) return "Local file";

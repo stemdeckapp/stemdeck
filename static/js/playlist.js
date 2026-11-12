@@ -9,6 +9,7 @@
 
 import { addPlaylistToLibrary } from "./catalog.js";
 import { showError } from "./job.js";
+import { responseErrorMessage } from "./errorReason.js";
 import { t, plural } from "./i18n.js";
 
 /** Does this URL look like a playlist we should offer to expand? Deliberately
@@ -128,7 +129,7 @@ export async function importPlaylist(url, stems) {
       body: JSON.stringify({ url, stems }),
     });
     result = await res.json();
-    if (!res.ok) throw new Error(result.detail || res.statusText);
+    if (!res.ok) throw new Error(responseErrorMessage(res, result));
   } catch (err) {
     showError(t("playlist.couldNotImport", { message: err.message }));
     return 0;

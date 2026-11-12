@@ -33,6 +33,7 @@
     "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico"],
     "macOS": {
       "minimumSystemVersion": "13.0",
+      "entitlements": "Entitlements.plist",
       "dmg": {
         "windowSize": {
           "width": 660,

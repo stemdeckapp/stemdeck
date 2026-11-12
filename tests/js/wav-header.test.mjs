@@ -197,15 +197,15 @@ FILES.clear(); requests = [];
   const eng = createChunkedAudioEngine([{ name: "vocals", url: "/missing.wav" }]);
   const ok = await eng.ready;
   check("404 stem: rejected", ok === false);
-  check("404 stem: says 'could not load', not 'format'",
-    /could not load/i.test(eng.getLoadError() || ""), eng.getLoadError());
+  check("404 stem: says unreachable, not undecodable",
+    eng.getLoadError() === "player.loadError.unreachable", eng.getLoadError());
   eng.destroy();
 }
 {
   const eng = createChunkedAudioEngine([]);
   const ok = await eng.ready;
   check("no stems: rejected", ok === false);
-  check("no stems: distinct message", /no stem files/i.test(eng.getLoadError() || ""), eng.getLoadError());
+  check("no stems: distinct message", eng.getLoadError() === "player.loadError.noStems", eng.getLoadError());
   eng.destroy();
 }
 

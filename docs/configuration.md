@@ -4,7 +4,7 @@
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `STEMDECK_DEMUCS_DEVICE` | auto | Force Torch device: `cuda`, `mps`, or `cpu`. |
+| `STEMDECK_DEMUCS_DEVICE` | auto | Force Torch device: `cuda` (NVIDIA, or AMD with a ROCm build of torch), `mps`, or `cpu`. |
 | `STEMDECK_DEMUCS_MODEL` | `htdemucs_6s` | Demucs model name. |
 | `STEMDECK_JOBS_DIR` | `./jobs` | Where job directories land. |
 | `STEMDECK_DATA_DIR` | (none) | Portable mode root; sets all sub-dirs below to live inside it. |
@@ -19,14 +19,52 @@
 | `STEMDECK_MAX_DURATION_SEC` | `1200` | Reject audio longer than this (seconds). |
 | `STEMDECK_JOB_TTL_SECONDS` | `86400` | How long to keep job dirs on disk. |
 | `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |
+| `STEMDECK_STEM_FORMAT` | `mp3` | How new songs' stems are stored: `mp3` or `wav`. Songs already in the library keep their format. A choice saved in Settings > Library wins over this. |
+| `STEMDECK_STEM_MP3_KBPS` | `128` | MP3 stem bitrate: `128`, `192` or `256` (constant bitrate). Used only with `mp3`. |
+| `STEMDECK_VIDEO_ENCODER` | (none) | H.264 encoder for video renders: `auto`, `cpu` or one encoder (`h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_vaapi`, `h264_videotoolbox`). Wins over Settings > Export > Video encoder; `cpu` turns the GPU encoders off. |
+| `STEMDECK_VAAPI_DEVICE` | (none) | Linux, `h264_vaapi` only: use this DRM render node (`renderD129` or `/dev/dri/renderD129`) and no other. Unset, every `/dev/dri/renderD*` node is tested in number order and the first that passes its test encode is used, so a hybrid-GPU machine needs this only to prefer one working GPU over another. |
 | `STEMDECK_TIMEOUT_FFMPEG` | `300` | ffmpeg subprocess timeout (seconds). |
 | `STEMDECK_TIMEOUT_ANALYZE` | `120` | Audio analysis timeout (seconds). |
 | `STEMDECK_TIMEOUT_DEMUCS_STALL` | `1800` | Kill Demucs if no output for this many seconds. |
+| `STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ` | `30` | Give up on one try of the separation model's download after this many seconds without data. |
+| `STEMDECK_MODEL_DOWNLOAD_ATTEMPTS` | `3` | Tries for the separation model's download, 2 s then 5 s apart, before the Split fails and names the file and the folder to put it in by hand. |
+| `STEMDECK_MODEL_MIRROR` | `https://files.stemdeck.app` | Where the default separation model (`htdemucs_6s`) is downloaded from first, under the same path as on `dl.fbaipublicfiles.com`. The file is used only if its size and full SHA-256 match the ones StemDeck ships with; on any failure the original host is used. `https` only; an empty value turns the mirror off. Other models are always downloaded from their own host. |
+| `STEMDECK_TIMEOUT_MODEL_STALL` | `120` | Stop the separation worker if it is silent this many seconds while it downloads its model. Everything else, separating included, uses the Demucs stall limit above. |
+| `STEMDECK_IDLE_UNLOAD_MINUTES` | `10` | Minutes with no separation or analysis running before the separation worker and the beat model are unloaded from memory; `0` keeps them loaded. The next track loads them again and starts a few seconds later. Unloading frees the graphics card's memory, and another program may take it meanwhile, so the next separation on the GPU can fall back to the CPU (its progress line says so). A value saved in Settings > General wins over this. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
 
-`run.sh` also reads: `HOST` (default `127.0.0.1`), `PORT` (default `8765`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+`run.sh` also reads: `HOST` (default `0.0.0.0`, every network interface), `PORT` (default `8000`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+
+### Who can reach StemDeck
+
+While **Make StemDeck available on your network** is off, the desktop app's
+backend listens on `127.0.0.1` only, and there is no https listener at all.
+Other devices cannot connect to it, and the operating system has no reason to
+ask about a firewall rule. Turning the setting on restarts the backend on
+every interface, with the https listener beside it, which takes a few seconds;
+turning it off restarts it back onto `127.0.0.1`. If a separation is running,
+StemDeck asks first, because the restart stops it: the song waits in the
+queue, paused, and starts again from the beginning when you press Start. See
+[the https section](#serving-other-devices-why-https-is-not-optional) for what a
+phone needs once it is on.
+
+StemDeck also checks every request itself. While the setting is off it answers
+only the machine it runs on, through loopback (`127.0.0.1`, `::1`) or one of
+the machine's own addresses, and a request from any other device gets a 403
+that says StemDeck is not available on the network, before it reaches any page
+or API. On the desktop this covers the moment between saving the choice and
+the restart that applies it.
+
+Docker, Unraid and `run.sh` start with network access on, because a headless
+server exists to be reached from other devices. They listen on every interface
+(`run.sh`: `HOST`, default `0.0.0.0`) whatever the setting says, so for them
+the 403 above is the whole control. To start one with it off, set
+`STEMDECK_ALLOW_NETWORK=0` (any value other than `1` means off). In server
+mode the switch in Settings is shown on and read-only, so the variable is the
+way to change it. If you want a server's port unreachable from other devices
+at the network level, block it in your firewall.
 
 ### Serving other devices: why https is not optional
 
@@ -60,18 +98,19 @@ host out of its own server.
 The desktop app does the same thing without being configured, because it has
 two audiences that need opposite things.
 
-- **Plain http on `127.0.0.1`** for its own window. Loopback is already a
+- **Plain http**, which its own window reaches at `127.0.0.1`. Loopback is already a
   secure context, so nothing is lost, and it is the only scheme that works: a
   self-signed certificate would raise a warning page the app window has no way
   to click through.
 - **https on the LAN**, port 8443 by default, for phones and other computers.
-  This is the address Settings shows and the QR code points at.
+  This is the address Settings shows and the QR code points at. It runs only
+  while network access is on.
 
 Both listeners serve the same process, so there is one library, one queue and
 one Demucs worker either way.
 
-The certificate is generated on your own machine the first time you enable
-network access, and lives in `<data>/certs/` beside `jobs/` and
+The certificate is generated on your own machine the first time the app
+starts with network access on, and lives in `<data>/certs/` beside `jobs/` and
 `settings.json`. Nothing is shipped in the download: a certificate in the
 release would publish its private key to everyone who downloaded it, which is
 worse than plain http because it looks secure. It is regenerated automatically
@@ -90,5 +129,56 @@ These are for development and testing. Release builds only recognize the variabl
 | `STEMDECK_DATA_DIR` | all | release | Override the user data directory (default: platform-standard location) |
 | `STEMDECK_ROOT` | all | release | Override the app root directory (default: derived from executable path) |
 | `STEMDECK_PYTHON` | all | **debug builds only** | Override the Python executable path |
+| `STEMDECK_FFMPEG` | all | release | Use this ffmpeg instead of the one setup chose. See [Choosing the FFmpeg](#choosing-the-ffmpeg-the-desktop-app-uses) |
+| `STEMDECK_FFPROBE` | all | release | The ffprobe to use with `STEMDECK_FFMPEG` (default: the ffprobe beside it). Ignored without `STEMDECK_FFMPEG` once setup has recorded a pair, and setup.log says so |
 | `STEMDECK_FFMPEG_URL` | Windows, macOS | release | Override the FFmpeg download URL |
 | `STEMDECK_FFPROBE_URL` | macOS | release | Override the ffprobe download URL |
+| `STEMDECK_WEBKIT_DMABUF` | Linux | release | WebKitGTK's DMA-BUF renderer: `auto` (default), `on` or `off`. See [Troubleshooting](troubleshooting.md#linux-desktop-app) |
+
+### Choosing the FFmpeg the desktop app uses
+
+Setup finds an FFmpeg once and records it in `config.json` in the data folder
+(`ffmpegPath`, `ffprobePath`). Every launch after that uses the recorded pair.
+
+To use a different one, set `STEMDECK_FFMPEG` to the path of an `ffmpeg` in
+the environment StemDeck starts from, and `STEMDECK_FFPROBE` too if its
+`ffprobe` is not in the same folder. A full path is safest. A relative path is
+taken from the folder StemDeck was started in, and a bare `ffmpeg` is looked up
+on PATH. On every launch StemDeck checks that pair the same way setup does:
+FFmpeg 5.1 or newer, the encoders exports need, and an ffprobe that runs.
+
+- A pair that passes is used instead of the recorded one, without changing
+  `config.json`, so removing the variable brings the recorded pair back.
+- A pair that fails is ignored and the recorded pair is used, and
+  `logs/setup.log` in the data folder says which variable was ignored and why.
+- Before setup has recorded a pair, a variable naming a file that exists but
+  fails the checks stops setup with the reason. A variable naming a file that
+  does not exist is passed over, and setup finds or downloads an FFmpeg as it
+  would without it.
+- An FFmpeg without libvorbis passes; OGG export is then unavailable.
+
+StemDeck reads the variable when it starts, so quit it fully and open it again
+after any change. How to set it so the app sees it:
+
+- **macOS.** An app opened from the Finder or the Dock does not see variables
+  set in a shell profile. Run
+  `launchctl setenv STEMDECK_FFMPEG /opt/homebrew/bin/ffmpeg`, quit StemDeck
+  (StemDeck menu, Quit) and open it again. The setting lasts until you log out
+  or restart the Mac, so run it again after a restart, or start StemDeck from
+  Terminal with the variable set:
+  `STEMDECK_FFMPEG=/opt/homebrew/bin/ffmpeg /Applications/StemDeck.app/Contents/MacOS/stemdeck`.
+  `launchctl unsetenv STEMDECK_FFMPEG` removes it.
+- **Linux.** A launcher started from the desktop menu does not see variables
+  set in `~/.bashrc`. Copy `stemdeck.desktop` from
+  `~/.local/share/applications` (or `/usr/share/applications` for a system
+  install) into `~/.local/share/applications` if it is not there, and put
+  `env` in front of the command on its `Exec=` line:
+  `Exec=env STEMDECK_FFMPEG=/usr/local/bin/ffmpeg "/path/to/StemDeck"`.
+  A `.desktop` file has no `Environment=` key; `env` is the way. Reinstalling
+  StemDeck rewrites this file, so check the line after an update. Started from
+  a terminal, `STEMDECK_FFMPEG=/usr/local/bin/ffmpeg ./StemDeck` works too.
+- **Windows.** Open Start, search for "Edit environment variables for your
+  account", add `STEMDECK_FFMPEG` with the full path to `ffmpeg.exe`, and click
+  OK. Then quit StemDeck and open it again. Explorer keeps the variables it had
+  when you signed in, so if StemDeck still does not see it when opened from
+  Explorer or the Start menu, sign out and back in.

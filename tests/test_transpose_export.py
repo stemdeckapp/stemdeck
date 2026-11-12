@@ -206,6 +206,22 @@ def test_asking_for_a_transpose_an_ffmpeg_cannot_do_says_so(client, tmp_path, mo
     assert "transpose" in r.json()["detail"]
 
 
+@pytest.mark.parametrize("health", [False, None])
+def test_the_refusal_follows_the_answer_health_reports(client, tmp_path, monkeypatch, health):
+    """/api/health's transpose_export is the same probe the routes ask (#858),
+    so a UI that offered a transposed export on `true` is never refused, and
+    one that held it back on `false` was right to. No ffmpeg (null) refuses."""
+    from app.api import stems as stems_mod
+
+    _setup_job(tmp_path)
+    monkeypatch.setattr(stems_mod, "transpose_export", lambda: health)
+    r = client.get(f"/api/jobs/{JOB}/mixdown.wav?stems=vocals&gains=1.0&pitches=2")
+    assert r.status_code == 422
+    assert r.json()["detail"] == "this ffmpeg build cannot transpose (no rubberband filter)"
+    loud = client.get(f"/api/jobs/{JOB}/mixdown/loudness?stems=vocals&gains=1.0&pitches=2")
+    assert loud.status_code == 422
+
+
 def test_an_export_with_no_transpose_never_probes_for_rubberband(client, tmp_path, monkeypatch):
     """A build with no pitch support must keep exporting normally."""
     from app.api import stems as stems_mod

@@ -291,9 +291,19 @@ async function verifyEngine(name, create) {
   );
 
   engine.setGain('original', 0.37);
-  const groupedGains = originalAnalysers.map((analyser) =>
-    ctx.nodes.find((node) => node.type === 'gain'
-      && node.connections.some((edge) => edge.destination === analyser))?.gain.value);
+  // The lane gain is the head of the chain that ends at the analyser: walk
+  // back through the effects slot (input, dry, output gain) to the first node
+  // nothing feeds.
+  const headOf = (node) => {
+    let at = node;
+    for (let hops = 0; hops < 10; hops++) {
+      const prev = ctx.nodes.find((n) => n.connections.some((edge) => edge.destination === at));
+      if (!prev) return at;
+      at = prev;
+    }
+    return null;
+  };
+  const groupedGains = originalAnalysers.map((analyser) => headOf(analyser)?.gain?.value);
   check(`${name} applies one mixer control to every complement source`, groupedGains.every((v) => v === 0.37));
   check(`${name} reports pitch support only after worklet setup`, engine.supportsPitchShift() === true);
 

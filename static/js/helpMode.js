@@ -8,6 +8,19 @@
 // already translates, and its text comes from the help.* keys in i18n.js.
 
 import { t } from "./i18n.js";
+import { PEDALS } from "./fx/pedalSpecs.js";
+
+/** The Guide rows of the effects pedals' controls (fx/fxRows.js draws them). */
+function pedalHelpEntries() {
+  const rows = [];
+  for (const spec of Object.values(PEDALS)) {
+    for (const c of spec.controls) {
+      const cls = c.kind === "select" ? "fx-select" : "fx-knob";
+      rows.push([`.fx-pedal[data-type="${spec.type}"] .${cls}[data-ctl="${c.id}"]`, c.help, null, c.name]);
+    }
+  }
+  return rows;
+}
 
 /** Lane controls name their instrument in the text ("Silences the Drums"). */
 const laneName = (el) => el.closest(".mx-row, .lane-header")?.querySelector(".mx-name")?.textContent.trim() || "";
@@ -15,21 +28,47 @@ const chipName = (el) => el.textContent.trim();
 /** The instrument a presence card measures, by its own name ("Drums"), not
  *  the card's heading ("Drum intensity"), so the sentence reads naturally. */
 const presenceName = (el) => t(`stem.${el.dataset.stem}`);
+/** A row of the Stems popover names its instrument ("Drums"). */
+const stemsRowName = (el) => el.closest(".stems-pop-row")?.querySelector(".stems-pop-name")?.textContent.trim() || "";
 
 // Order matters only where selectors overlap: the first match wins.
 const HELP = [
   ["#helpModeBtn", "help.helpMode"],
   [".daw-brand a", "help.website"],
   ["#uploadFileBtn", "help.upload"],
+  ["#fileClear", "help.fileClear"],
   ["#url", "help.search"],
+  // The search results under it (search.js), a panel of its own on the body.
+  ["#search-panel .search-tab", "help.searchTab"],
+  ["#search-panel .search-play", "help.searchPreviewPlay"],
+  ["#search-panel .search-seek", "help.searchPreviewSeek"],
+  ["#search-panel .search-preview-btn", "help.searchPreview"],
+  ["#search-panel .search-row", "help.searchResult"],
   ["#stemAllBtn", "help.stemAll"],
   [".stem-choice[data-stem]", "help.stemChip", chipName],
+  ["#stemMoreBtn", "help.stemMore"],
   ['.vocal-mode-btn[data-mode="all"]', "help.vocalCombined"],
   ['.vocal-mode-btn[data-mode="split"]', "help.vocalSplit"],
+  // The Mode menu (modeUi.js): Practice and Advanced, and the two views
+  // that are entered only from it, Karaoke and Performance.
+  ['.mode-item[data-mode="practice"]', "help.modePractice"],
+  ['.mode-item[data-mode="daw"]', "help.modeAdvanced"],
+  ['.mode-item[data-mode="karaoke"]', "help.karaoke"],
+  ['.mode-item[data-mode="streamer"]', "help.streamer"],
+  ["#modeBtn", "help.mode"],
   ["#autoSectionsBtn", "help.detectStructure"],
+  ["#autoLyricsBtn", "help.detectLyrics"],
   ['.daw-panel-toggle[data-panel="analysis"]', "help.analysisToggle"],
   ['.daw-panel-toggle[data-panel="sections"]', "help.sectionsToggle"],
   ["#submit", "help.extract"],
+  ["#job-cancel", "help.jobCancel"],
+  // Try again on the notice a failed Lead + Backing split shows (#832).
+  [".split-retry-btn", "help.splitRetry"],
+  // Try again on the box a failed link import shows (#175), before the box's
+  // plain Try again, whose class it also has.
+  [".import-retry-btn", "help.importRetry"],
+  ["#error .retry-btn", "help.errorRetry"],
+  ["#error .error-close", "help.errorClose"],
   ["#fav-btn", "help.favorite"],
   ["#np-details-btn", "help.songDetails"],
   ["#sidebarCollapseBtn", "help.toggleLibrary"],
@@ -38,15 +77,141 @@ const HELP = [
   [".rail-lyrics", "help.lyrics"],
   [".rail-trash", "help.trash"],
   [".rail-queue", "help.queue"],
+  // The notifications panel, before the bell it hangs from.
+  ["#notifReleaseDismiss", "help.notifDismiss"],
+  ["#notifReleaseCard", "help.notifRelease"],
+  ["#notifList .daw-notif-error .daw-notif-dismiss", "help.notifDismiss"],
+  ["#notifList .daw-notif-error", "help.notifFailure"],
+  ["#notifClearAll", "help.notifClear"],
+  [".daw-notif-close", "help.notifClose"],
   ["#notifBtn", "help.notifications"],
   ["#friendsBtn", "help.recommend"],
   ["#settingsBtn", "settings"],
   ["#aboutBtn", "help.about"],
-  ["#catalogSearch", "help.searchLibrary"],
+  // The Donate dialog (donate.js), opened from the rail. The button and each
+  // way's tile show only once its link is set (donateLinks.js). A way whose
+  // page takes no amount has a tile that is a link to it (a); one that takes
+  // an amount from an {amount} template is a choice (button) (#1037).
+  ["#donateClose", "help.donateClose"],
+  ['a.donate-way[data-way="stripe"]', "help.donateWayStripeLink"],
+  ['button.donate-way[data-way="stripe"]', "help.donateWayStripePick"],
+  ['a.donate-way[data-way="liberapay"]', "help.donateWayLiberapayLink"],
+  ['button.donate-way[data-way="liberapay"]', "help.donateWayLiberapayPick"],
+  [".donate-preset", "help.donatePreset"],
+  ["#donateCustom", "help.donateCustom"],
+  ["#donateGo", "help.donateGo"],
+  ["#donateQr", "help.donateQr", null, "donate.qrAlt"],
+  ["#donateShare", "help.donateShare"],
+  ["#donateStar", "help.donateStar"],
+  // Icon-only follow links: the Guide titles them from donate.followOn.
+  ["#donateInstagram", "help.donateInstagram", (el) => el.dataset.name, "donate.followOn"],
+  ["#donateX", "help.donateX", (el) => el.dataset.name, "donate.followOn"],
+  ["#donateBtn", "help.donate"],
+  // The dialog the desktop network switch opens to restart StemDeck (#859).
+  [".net-restart-go", "help.netRestartGo"],
+  [".net-restart-cancel", "help.netRestartCancel"],
+  [".net-restart-retry", "help.netRestartRetry"],
+  ["#catalogSearch, #catalogToggle", "help.searchLibrary"],
   ["#newFolderBtn", "help.newFolder"],
+  ["#clearBinBtn", "help.emptyTrash"],
+  ["#catalogList .folder-head .f-subfolder", "help.folderSub"],
+  ["#catalogList .folder-head .f-del", "help.folderDelete"],
+  ["#catalogList .folder-head", "help.folder"],
+  ["#catalogList .cat-item .cat-del", "help.songTrash"],
+  ["#catalogList .cat-item .cat-extract", "help.songExtract"],
+  // A Queue row's remove button (#772): stops the extraction, keeps the song.
+  ["#catalogList .queue-row .queue-cancel", "help.queueStop"],
+  ["#catalogList .queue-row .queue-top", "help.queueTop"],
+  ["#catalogList .queue-row.queue-running", "help.queueRunning"],
+  ["#catalogList .queue-row", "help.queueRow"],
+  ["#catalogList .queue-start-btn", "help.queueStart"],
   ["#catalogList .cat-item.in-trash", "help.trashedSong"],
   ["#catalogList .cat-item", "help.song"],
+  // A version of a song, under its row (#804).
+  ["#catalogList .cat-version .cat-version-del", "help.versionRowDelete"],
+  ["#catalogList .cat-version", "help.versionRow"],
+  // The Lyrics view of the sidebar (lyrics.js). Align and Sync lines come
+  // before the plain links, which share their class.
+  ["#lyricsPanel .lyrics-line", "help.lyricsLine"],
+  // The Align panel and the Sync lines panel under the links, and the
+  // controls of the line in hand while syncing.
+  ["#lyricsAlign .lyrics-align-start", "help.lyricsAlignStart"],
+  ["#lyricsAlign .lyrics-align-nudge", "help.lyricsAlignNudge"],
+  ["#lyricsAlign .lyrics-align-detect", "help.lyricsAlignDetect"],
+  ["#lyricsAlign .lyrics-align-reset", "help.lyricsAlignReset"],
+  ["#lyricsAlign .lyrics-align-done", "help.lyricsAlignDone"],
+  ["#lyricsAlign .lyrics-align-sync", "help.lyricsSync"],
+  ["#lyricsSync .lyrics-sync-tap", "help.lyricsSyncTap", null, "lyrics.sync.tap"],
+  ["#lyricsSync .lyrics-sync-undo", "help.lyricsSyncUndo"],
+  ["#lyricsSync .lyrics-sync-opt-leadIn", "help.lyricsSyncLeadIn"],
+  ["#lyricsSync .lyrics-sync-opt-snap", "help.lyricsSyncSnap"],
+  ["#lyricsSync .lyrics-sync-opt-ripple", "help.lyricsSyncRipple"],
+  ["#lyricsSync .lyrics-sync-retime", "help.lyricsSyncRetime"],
+  ["#lyricsSync .lyrics-sync-detected", "help.lyricsSyncResetDetected"],
+  ["#lyricsSync .lyrics-sync-original", "help.lyricsSyncResetOriginal"],
+  ["#lyricsSync .lyrics-align-done", "help.lyricsLaneDone"],
+  ["#lyricsPanel .lyrics-line-tools .lyrics-line-here", "help.lyricsLineHere"],
+  ["#lyricsPanel .lyrics-line-tools .lyrics-align-nudge", "help.lyricsLineNudge"],
+  ["#lyricsPanel .lyrics-align-toggle", "help.lyricsAlign"],
+  ["#lyricsPanel .lyrics-sync-toggle", "help.lyricsSync"],
+  ["#lyricsPanel .lyrics-version", "help.lyricsVersion"],
+  ["#lyricsPanel .lyrics-link[aria-expanded]", "help.lyricsVersions"],
+  ["#lyricsPanel .lyrics-link", "help.lyricsLookUp"],
+  // The sections bar (sections.js): the lock and the cross sit inside a block.
   ["#sectionsAddBtn", "help.addSection"],
+  ["#sectionsClearBtn", "help.clearSections"],
+  ["#sectionsHideBtn", "help.sectionsHide"],
+  [".section-block .section-lock", "help.sectionLock"],
+  [".section-block .section-del", "help.sectionDelete"],
+  [".section-block", "help.section"],
+  // The lyrics lane, shown while Sync lines is on (lyricsLane.js).
+  ["#lyricsLaneDone", "help.lyricsLaneDone"],
+  [".lyr-mark", "help.lyricsMark"],
+  // The Stems control in the mixer header and its popover (stemsControl.js).
+  ["#laneStemsBtn", "help.stemsButton"],
+  [".stems-pop-row", "help.stemsLane", stemsRowName],
+  ['.stems-pop-seg-btn[data-form="combined"]', "help.stemsVoiceCombined"],
+  ['.stems-pop-seg-btn[data-form="split"]', "help.stemsVoiceSplit"],
+  [".stems-pop-split", "help.stemsSplit"],
+  [".stems-pop-reset", "help.stemsReset"],
+  [".stems-pop-apply", "help.stemsApply"],
+  // The song's versions, at the foot of the Stems popover (#804).
+  ["#laneVersionSelect", "help.versionSelect"],
+  [".stems-pop-vname", "help.versionName"],
+  [".stems-pop-vrename", "help.versionRename"],
+  [".stems-pop-vnew", "help.versionSaveNew"],
+  [".stems-pop-vdelete", "help.versionDelete"],
+  ["#t-rec", "help.record"],
+  ["#t-rec-opts", "help.recOptions"],
+  // The recording panel opened by the arrow beside Record (recordUi.js), and
+  // its video part (video/videoTake.js).
+  ["#recSettingsLink", "help.recSettingsLink"],
+  // The links the panel adds to its messages: no input found, no track yet.
+  ["#recPermission .rec-link", "help.recSettingsLink"],
+  ["#recStatus .rec-link", "help.addTrack"],
+  [".rec-check:has(#recMonitor)", "help.recMonitor"],
+  ["#recPanel .rec-mute", "help.recMute"],
+  ["#recKeep", "help.recKeep"],
+  ["#recDiscard", "help.recDiscard"],
+  [".vid-toggle", "help.vidCamera"],
+  [".vid-nudge", "help.vidDelay"],
+  [".vid-span", "help.vidSpan"],
+  [".vid-make", "help.vidMake"],
+  [".vid-stop", "help.vidStop"],
+  [".vid-download", "help.vidDownload"],
+  ["#addTrackBtn", "help.addTrack"],
+  ["#addVideoTrackBtn", "help.addVideoTrack"],
+  [".track-tool.track-preview", "help.trackPreview", laneName],
+  // The preview window that button opens (video/videoPreview.js).
+  [".video-preview-close", "help.videoPreviewClose"],
+  [".video-preview", "help.videoPreview"],
+  [".track-tool.track-delete", "help.trackDelete", laneName],
+  [".track-arm", "help.trackArm", laneName],
+  [".track-input", "help.trackInput", laneName],
+  [".track-lane .take-menu-btn", "help.trackMenu", laneName],
+  [".take-folder-toggle", "help.takeFolder", laneName],
+  [".take-folder-row .take-play", "help.takePlay", laneName],
+  [".take-folder-row .take-folder-menu-btn", "help.takeMenu", laneName],
   [".mx-fader", "help.volume", laneName],
   [".lane-key-step.up", "help.laneKeyUp", laneName],
   [".lane-key-step.down", "help.laneKeyDown", laneName],
@@ -57,12 +222,114 @@ const HELP = [
   ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
   ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],
   ['.daw-meta-card[data-meta="lufs"]', "help.meta.lufs"],
+  // The note under the cards after an older song was measured again (#923).
+  ["#loudness-note-dismiss", "help.meta.loudnessNoteDismiss"],
   ['.daw-meta-card[data-meta="duration"]', "help.meta.duration"],
   ['.daw-meta-card[data-meta="dr"]', "help.meta.dr"],
   ['.daw-meta-card[data-meta="stability"]', "help.meta.stability"],
   [".stem-presence-panel .stem-card[data-stem]", "help.presence", presenceName],
   ["#ruler-time", "help.waves", null, "help.wavesTitle"],
+  // The Master drawer (masterPanel.js). Its power button and its EQ reuse
+  // the EQ panels' classes, so these come before the EQ entries.
+  [".master-close", "help.masterClose", null, "master.close"],
+  [".master-power", "help.masterPower", null, "master.title"],
+  [".master-presets", "help.masterPresets", null, "master.presetsAria"],
+  [".master-target, .master-ceiling", "help.masterFields", null, "master.helpFieldsTitle"],
+  [".master-glue", "help.masterGlue", null, "master.glue"],
+  [".master-listen", "help.masterListen", null, "master.listen"],
+  [".master-readout", "help.masterReadout", null, "master.helpReadoutTitle"],
+  [".master-excerpt", "help.masterExcerpt", null, "master.excerpt"],
+  [".master-meters", "help.masterMeters", null, "master.meters"],
+  // A live input's effects in the recording panel (capture/liveFxUi.js):
+  // the lanes' strip, so these come before its entries and say what
+  // differs for an input. Cards, their on and off, and the pedals' knobs
+  // read the same on both.
+  ["#recLiveFx .rec-live-head", "help.liveFx", null, "rec.liveFx.title"],
+  ["#recLiveFxTrack", "help.liveFxTrack", null, "rec.liveFx.track"],
+  ["#recLiveFx .fx-power", "help.liveFxPower"],
+  ["#recLiveFx .fx-inst", "help.liveFxInstrument", null, "fx.inst.label"],
+  ["#recLiveFx .fx-trim", "help.liveFxTrim", null, "fx.trim"],
+  ["#recLiveFx .fx-meter", "help.liveFxMeter", null, "fx.meter"],
+  ["#recLiveFx .fx-clip", "help.liveFxClip", null, "rec.liveFx.clip"],
+  ["#recLiveFx .rec-live-low", "help.liveFxLow", null, "rec.liveFx.low"],
+  ["#recLiveFxLatency", "help.liveFxLatency"],
+  ["#recLiveFx .fx-add", "help.liveFxAdd", null, "fx.add"],
+  ["#recLiveFx .fx-preset", "help.liveFxPreset", null, "fx.preset.label"],
+  // Performance's two tabs over the timeline card (streamer/streamerTabs.js).
+  ["#streamerTab-timeline", "help.smTabTimeline", null, "streamer.tabs.timeline"],
+  ["#streamerTab-effects", "help.smTabEffects", null, "streamer.tabs.effects"],
+  // Performance's Hear myself and live effects, its Effects tab
+  // (streamer/streamerFx.js): the strip runs left to right as on a lane.
+  // What reads the same as the recording panel's uses the same sentence.
+  ["#streamerHear", "help.smMonitor", null, "rec.monitor"],
+  ["#streamerMonitorLevel, #streamerMonitorLevelLabel", "help.smMonitorLevel", null, "streamer.fx.monitorLevel"],
+  ["#streamerFxTitle", "help.smFx", null, "rec.liveFx.title"],
+  ["#streamerFx .fx-power", "help.liveFxPower"],
+  ["#streamerFx .fx-inst-wrap, #streamerFx .fx-inst", "help.smFxInstrument", null, "fx.inst.label"],
+  ["#streamerFx .fx-trim", "help.liveFxTrim", null, "fx.trim"],
+  ["#streamerFx .fx-meter", "help.liveFxMeter", null, "fx.meter"],
+  ["#streamerFx .fx-clip", "help.liveFxClip", null, "rec.liveFx.clip"],
+  ["#streamerFx .sm-fx-low", "help.liveFxLow", null, "rec.liveFx.low"],
+  ["#streamerFxLatency", "help.liveFxLatency"],
+  ["#streamerFx .fx-add", "help.liveFxAdd", null, "fx.add"],
+  ["#streamerFx .fx-preset", "help.liveFxPreset", null, "fx.preset.label"],
+  ["#streamerFx .fx-card-power", "help.fxCardPower"],
+  ["#streamerFx .fx-card-remove", "help.fxCardRemove"],
+  ["#streamerFx .fx-card", "help.fxCard"],
+  // The take lane's Effects switch, beside its mute.
+  ["#streamer .sm-tl-fx", "help.smTakeFx", null, "streamer.lane.takeFx"],
+  // The two lanes' volume sliders, along the bottom of their labels.
+  ["#streamer .sm-tl-vol-backing", "help.smBackingVolume", null, "streamer.lane.backingVolume"],
+  ["#streamer .sm-tl-vol-take", "help.smTakeVolume", null, "streamer.lane.takeVolume"],
+  // The effects chain (fx/fxRows.js, Advanced mode). Its tab and power
+  // button reuse the EQ's classes, so these come before the EQ entries.
+  [".fx-tab", "help.fxTab"],
+  [".fx-power", "help.fxPower"],
+  [".fx-inst", "help.fxInstrument", null, "fx.inst.label"],
+  [".fx-trim", "help.fxTrim", null, "fx.trim"],
+  [".fx-meter", "help.fxMeter", null, "fx.meter"],
+  [".fx-add-item", "help.fxAddItem"],
+  [".fx-add", "help.fxAdd", null, "fx.add"],
+  [".fx-card-power", "help.fxCardPower"],
+  [".fx-card-remove", "help.fxCardRemove"],
+  [".fx-card", "help.fxCard"],
+  [".fx-preset", "help.fxPreset", null, "fx.preset.label"],
+  // Every pedal's selects and knobs, from the pedal specs themselves, so a
+  // control cannot exist without its Guide sentence (each spec control names
+  // its help.* key; the knob or select carries its pedal's type).
+  ...pedalHelpEntries(),
+  // EQ tab and panels. Inside .waves-column and the mixer rows, so before them.
+  [".eq-tab", "help.eqTab"],
+  [".eq-power", "help.eqPower"],
+  [".eq-toolbar .eq-ab", "help.eqAb", null, "help.eqAbTitle"],
+  [".eq-toolbar .eq-undo, .eq-toolbar .eq-redo", "help.eqUndo", null, "help.eqUndoTitle"],
+  [".eq-toolbar .eq-reset", "help.eqReset", null, "eq.reset"],
+  [".eq-toolbar .eq-suggest-btn", "help.eqSuggest", null, "suggest.button"],
+  [".eq-suggest-card", "help.eqSuggestCard", null, "suggest.title"],
+  [".eq-preset", "help.eqPresets", null, "eq.presets"],
+  [".eq-out", "help.eqOut", null, "eq.out"],
+  [".eq-analyzer", "help.eqAnalyzer", null, "eq.analyzer"],
+  [".eq-band-list", "help.eqBands", null, "help.eqBandsTitle"],
+  [".eq-graph-wrap", "help.eqGraph", null, "help.eqGraphTitle"],
+  [".eq-plate", "help.eqPedal", null, "help.eqPedalTitle"],
+  [".eq-pedal-curve", "help.eqCurve", null, "help.eqCurveTitle"],
+  [".eq-voice-panel", "help.eqVoice", null, "eq.panel.voice"],
+  // Inside .waves-column, so before it: a take lane is its own control.
+  [".take-folder-lane", "help.takeLane", null, "rec.folder.play"],
+  [".loop-grip", "help.loopGrip", null, "loop.dragOut"],
   [".waves-column", "help.waves", null, "help.wavesTitle"],
+  // The beat grid editor's toolbar, opened by Grid in the click options
+  // (beatgridUi.js).
+  ["#bg-tool-move", "help.bgMove"],
+  ["#bg-tool-insert", "help.bgAdd"],
+  ["#bg-tool-delete", "help.bgDelete"],
+  ["#bg-tool-bar", "help.bgBar"],
+  [".bg-check:has(#bg-ripple)", "help.bgRipple"],
+  [".bg-check:has(#bg-snap)", "help.bgSnap"],
+  [".bg-meter", "help.bgBarLen", null, "beatgrid.barAria"],
+  ["#bg-undo, #bg-redo", "help.bgUndo", null, "help.eqUndoTitle"],
+  ["#bg-reset", "help.bgReset"],
+  ["#bg-done", "help.bgDone"],
   ["#t-stop", "help.stop"],
   ["#t-play", "help.play"],
   ["#t-loop", "help.loop"],
@@ -76,24 +343,109 @@ const HELP = [
   ["#t-pitch-reset", "help.keyReset"],
   ["#t-metro", "help.click"],
   ["#t-metro-vol-btn", "help.clickVolume"],
+  ["#t-metro-vol-panel", "help.clickVolume", null, "click.volumeAria"],
   ["#t-metro-more", "help.clickMore"],
+  // The click options: inline when they fit, else in the popover above.
+  ["#t-metro-countin", "help.clickCountIn"],
+  ["#t-metro-bar", "help.clickAccent"],
+  ["#t-metro-bar-custom", "help.clickBeats"],
+  ["#t-metro-group", "help.clickGroup"],
+  ["#t-metro-edit", "help.clickGrid", null, "click.editTitle"],
+  [".metro-mult", "help.clickRate", null, "click.rateAria"],
+  ["#t-metro-sound", "help.clickSound", null, "click.soundAria"],
+  ["#t-master-btn", "help.masterChip", null, "master.title"],
   ["#t-export-btn", "help.export"],
+  // The Export menu's parts.
+  [".export-format-toggle", "help.exportFormat", null, "export.formatAria"],
+  ["#t-export-click-wrap", "help.exportClick"],
+  ["#t-export-count-in-wrap", "help.exportCountIn"],
+  ["#t-export-master", "help.masterExportRow", null, "master.title"],
+  ["#t-export-mix", "help.exportMix"],
+  ["#t-export-stems", "help.exportStems"],
+  ["#t-export-region", "help.exportRegion"],
+  // Shown when a transposed mix cannot be exported (#858).
+  [".export-transpose-unavailable", "help.exportTransposeUnavailable"],
+  // Performance Mode's two windows (streamer.js): the live camera and the
+  // take review, and the Live | Take switch shown when only one window fits.
+  ["#streamer .sm-view-switch", "help.smViewSwitch"],
+  ["#streamer .sm-review", "help.smReview"],
+  // Allow or Retry, over the live window and under each device select.
+  ["#streamer .sm-cam-act, #streamer .sm-dev-act", "help.smDeviceAct"],
+  // The head row, the undo of the scene and the timeline's ruler.
+  ["#streamer .sm-aspect", "help.smAspect", null, "streamer.aspectAria"],
+  ["#streamer .sm-safe", "help.smSafeZones"],
+  ["#streamer .sm-output-btn", "help.smOutputToggle"],
+  ["#streamer .sm-stop", "help.smStop"],
+  ["#streamer .sm-play", "help.play"],
+  ["#streamer .sm-history", "help.smUndo", null, "help.eqUndoTitle"],
+  ["#streamer .sm-tl-ruler", "help.smRuler", null, "streamer.position"],
+  // A section's marker over the timeline, named by its section.
+  ["#streamer .sm-marker", "help.smMarker"],
+  // The REC button sits inside the live window, so it comes first. Its own
+  // name: the badge reads "READY" or the time, which says nothing about it.
+  ["#streamer .sm-rec", "help.smRec", null, "streamer.recOn"],
+  // Its own name: the REC badge's "READY" is the first text inside it.
+  ["#streamer .sm-preview", "help.smPreview", null, "streamer.previewHint"],
+  // The Recording & Output card (streamer.js buildSide): each field with its label.
+  ["#streamer .sm-select:has(#streamerVideoSrc), #streamer label[for=streamerVideoSrc]", "help.smVideoSource", null, "streamer.videoSource"],
+  ["#streamer .sm-select:has(#streamerAudioSrc), #streamer label[for=streamerAudioSrc]", "help.smAudioSource", null, "streamer.audioSource"],
+  ["#streamer .sm-out-col:has(#streamerRes)", "help.smResolution", null, "streamer.resolution"],
+  ["#streamer .sm-out-col:has(#streamerFps)", "help.smFps", null, "streamer.fps"],
+  ["#streamer .sm-in-settings", "help.recSettingsLink"],
+  ['#streamer .sm-switch-row[data-setting="recordMixedAudio"]', "help.smMixedAudio"],
+  ['#streamer .sm-switch-row[data-setting="autoStopAtEnd"]', "help.smAutoStop"],
+  ["#streamer .sm-export-cancel", "help.smExportCancel"],
+  ["#streamer .sm-export-raw", "help.smSaveRaw"],
+  // Its text changes with the take (Try again), so the name is fixed.
+  ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.go"],
+  ["#streamer .sm-export-reveal", "help.smReveal", null, "streamer.export.reveal"],
+  ["#streamer .sm-part", "help.smPart", null, "streamer.part.label"],
+  // The timeline's take lanes (streamer.js paintTakeRows): a row per take of
+  // the Performance track, its label (a button, named "Take 2") and its wave
+  // (named by its title, "Play Take 2"), and its Delete ("Delete Take 2").
+  ["#streamer .sm-tl-take-del", "help.smTakeDelete"],
+  ["#streamer .sm-tl-take-label, #streamer .sm-tl-take-row", "help.smTakeLane"],
+  // The Take Timeline's zoom and its trim handles (the handles name themselves).
+  ["#streamer .sm-zoom", "help.smZoom", null, "streamer.zoom"],
+  ["#streamer .sm-tl-trim", "help.smTrim"],
+  // Karaoke Mode's own controls (karaoke/karaoke.js). The fullscreen view is
+  // a layer on the page body, so its exit button is matched by its own class.
+  [".kk-fs-btn", "help.kkFullscreen"],
+  [".kk-fs-exit", "help.kkFullscreenExit"],
+  [".kk-fs-play", "help.play"],
+  // Shown in place of the lyrics when the song has none with timing.
+  [".kk-empty-btn", "help.kkOpenLyrics"],
+  ["#karaoke .kk-bar", "help.kkProgress"],
+  ["#karaoke .kk-key", "help.kkKey", null, "karaoke.key"],
+  // The backing track's card has no switch: it always plays.
+  ["#karaoke .kk-stem.fixed", "help.kkStemFixed"],
+  ["#karaoke .kk-stem", "help.kkStem", chipName],
+  ["#karaoke .kk-side, #karaoke .kk-side-strip", "help.kkQueue", null, "karaoke.tabQueue"],
+  ["#karaoke .kk-voice", "help.kkVoice", null, "karaoke.voiceForm"],
+  ["#karaoke .kk-transport", "help.kkTransport", null, "karaoke.transport"],
 ];
 
-// Every option in Settings, by tab: the tab and option names are the dialog's
-// own keys, the one-line descriptions are help.set.*.
+// Every option in Settings, by section, in the order of the dialog's own
+// navigation (SETTINGS_SECTIONS in catalog.js): the section and option names
+// are the dialog's own keys, the one-line descriptions are help.set.*.
 const SETTINGS = [
   ["settings.tab.general", [
     ["settings.language.title", "help.set.language"],
+    ["settings.device.title", "help.set.device"],
+    ["settings.device.copyDetails", "help.set.deviceCopy"],
+    ["settings.quality.title", "help.set.quality"],
+    ["settings.idleUnload.title", "help.set.idleUnload"],
     ["settings.maxDuration.title", "help.set.maxDuration"],
     ["settings.playlistLimit.title", "help.set.playlistLimit"],
     ["settings.cookies.title", "help.set.cookies"],
+  ]],
+  ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],
     ["settings.exportsLocation.title", "help.set.exportsLocation"],
+    ["settings.stemFormat.title", "help.set.stemFormat"],
+    ["settings.stemBitrate.title", "help.set.stemBitrate"],
     ["settings.autoDelete.title", "help.set.autoDelete"],
-    ["settings.device.title", "help.set.device"],
-    ["settings.quality.title", "help.set.quality"],
-    ["settings.exportLogs.title", "help.set.exportLogs"],
+    ["settings.outOfSync.subhead", "help.set.outOfSync"],
     ["settings.resetData.title", "help.set.resetData"],
   ]],
   ["settings.tab.songDetails", [
@@ -101,15 +453,25 @@ const SETTINGS = [
     ["settings.discogs.title", "help.set.discogs"],
     ["settings.transcribe.title", "help.set.transcribe"],
   ]],
+  ["settings.tab.export", [
+    ["settings.export.sampleRate.title", "help.set.sampleRate"],
+    ["settings.export.videoQuality.title", "help.set.videoQuality"],
+    ["settings.export.encoder.title", "help.set.encoder"],
+  ]],
+  ["settings.tab.recording", [
+    ["settings.rec.mic.title", "help.set.recMic"],
+    ["settings.rec.iface.title", "help.set.recIface"],
+    ["settings.rec.latency.title", "help.set.recLatency"],
+    ["settings.rec.camera.title", "help.set.recCamera"],
+  ]],
   ["settings.tab.network", [
     ["settings.network.allowTitle", "help.set.network"],
     ["settings.network.port.title", "help.set.port"],
   ]],
-  ["settings.tab.export", [
-    ["settings.export.sampleRate.title", "help.set.sampleRate"],
-    ["settings.export.videoQuality.title", "help.set.videoQuality"],
+  ["settings.tab.logs", [
+    ["settings.exportLogs.title", "help.set.exportLogs"],
+    [null, "help.set.logs"],
   ]],
-  ["settings.tab.logs", [[null, "help.set.logs"]]],
   ["settings.tab.registry", [[null, "help.set.registry"]]],
 ];
 
@@ -124,10 +486,6 @@ let introTimer = null;
 const INTRO_MS = 1600;
 let current = null;
 
-export function isHelpModeOn() {
-  return on;
-}
-
 /** The help entry for whatever is under the pointer, and the element it is for. */
 function findEntry(target) {
   if (!(target instanceof Element)) return null;
@@ -140,7 +498,10 @@ function findEntry(target) {
 
 function isVisible(el) {
   const r = el.getBoundingClientRect();
-  return r.width > 0 && r.height > 0;
+  if (r.width > 0 && r.height > 0) return true;
+  // display: contents draws no box of its own (a lane's key value in the
+  // side-rail header): it is visible when what it holds is.
+  return getComputedStyle(el).display === "contents" && [...el.children].some(isVisible);
 }
 
 /** The control's own label, which the app already translates. Visible text
@@ -303,11 +664,24 @@ function onPointerOver(e) {
   else if (!tipEl.contains(e.target)) hide();
 }
 
-// Help mode takes every press except Guide itself, so pointing around the
-// studio can never act on it. A click shows that control's box, which is also
-// how help mode works on a touch screen.
+// Help mode takes every press except Guide itself and the buttons that only
+// open a menu or a popover, so pointing around the studio can never act on
+// it. Those buttons still open what they open (choosing in it is taken like
+// any press), so the parts inside explain themselves too: the Mode menu, the
+// Stems popover, the Export menu, the click volume and options, and the
+// notifications, and the Donate dialog. The Record arrow is not among them:
+// its panel opens the microphone. A click shows that control's box, which is also how help mode
+// works on a touch screen.
+const PASS = "#helpModeBtn, #modeBtn, #laneStemsBtn, #t-export-btn, #t-metro-vol-btn, #t-metro-more, #notifBtn, #donateBtn";
+
 function swallow(e) {
-  if (e.target instanceof Element && e.target.closest("#helpModeBtn")) return;
+  if (e.target instanceof Element && e.target.closest(PASS)) {
+    if (e.type === "click" && !e.target.closest("#helpModeBtn")) {
+      const entry = findEntry(e.target);
+      if (entry) show(entry);
+    }
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
   if (e.type === "click") {
@@ -330,7 +704,10 @@ function onKey(e) {
   }
 }
 
-const PRESS_EVENTS = ["pointerdown", "mousedown", "click", "dblclick", "dragstart", "contextmenu"];
+// auxclick is the middle button's click: a cancelled mousedown does not stop the
+// browser from firing it, and main.js turns it into open_url, so the Guide has
+// to take it as well (#1041).
+const PRESS_EVENTS = ["pointerdown", "mousedown", "click", "auxclick", "dblclick", "dragstart", "contextmenu"];
 
 export function setHelpMode(next) {
   if (next === on) return;

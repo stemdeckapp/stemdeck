@@ -124,12 +124,12 @@ test.describe("a Trash row", () => {
     await seedFullTrash(page);
     await openTrash(page);
     await trashRow(page, JOB_ID).click();
-    await trashRow(page, THIRD_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, THIRD_ID).click({ modifiers: ["ControlOrMeta"] });
     await expect(trashRow(page, JOB_ID)).toHaveClass(/selected/);
     await expect(trashRow(page, THIRD_ID)).toHaveClass(/selected/);
     await expect(trashRow(page, SIBLING_JOB_ID)).not.toHaveClass(/selected/);
 
-    await trashRow(page, JOB_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, JOB_ID).click({ modifiers: ["ControlOrMeta"] });
     await expect(trashRow(page, JOB_ID)).not.toHaveClass(/selected/);
     await expect(trashRow(page, THIRD_ID)).toHaveClass(/selected/);
   });
@@ -176,7 +176,7 @@ test.describe("a Trash row", () => {
     const calls = await seedFullTrash(page);
     await openTrash(page);
     await trashRow(page, JOB_ID).click();
-    await trashRow(page, THIRD_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, THIRD_ID).click({ modifiers: ["ControlOrMeta"] });
     await holdOn(page, THIRD_ID, 1300);
     await expect(trashRow(page, JOB_ID)).toHaveCount(0);
     await expect(trashRow(page, THIRD_ID)).toHaveCount(0);
@@ -189,7 +189,7 @@ test.describe("a Trash row", () => {
     await seedFullTrash(page);
     await openTrash(page);
     await trashRow(page, JOB_ID).click();
-    await trashRow(page, THIRD_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, THIRD_ID).click({ modifiers: ["ControlOrMeta"] });
     const box = await trashRow(page, THIRD_ID).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -205,7 +205,7 @@ test.describe("a Trash row", () => {
     await seedFullTrash(page);
     await openTrash(page);
     await trashRow(page, JOB_ID).click();
-    await trashRow(page, THIRD_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, THIRD_ID).click({ modifiers: ["ControlOrMeta"] });
     const box = await trashRow(page, SIBLING_JOB_ID).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -219,7 +219,7 @@ test.describe("a Trash row", () => {
     const calls = await seedFullTrash(page);
     await openTrash(page);
     await trashRow(page, JOB_ID).click();
-    await trashRow(page, THIRD_ID).click({ modifiers: ["Control"] });
+    await trashRow(page, THIRD_ID).click({ modifiers: ["ControlOrMeta"] });
     await holdOn(page, SIBLING_JOB_ID, 1300);
     await expect(trashRow(page, SIBLING_JOB_ID)).toHaveCount(0);
     await expect(trashRow(page, JOB_ID)).toBeVisible();

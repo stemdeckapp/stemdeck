@@ -52,6 +52,16 @@ in `acceptance.spec.mjs`, which runs them in the order they can, not by id.
 | Timeline | T1 |
 | Errors and cancel | E1 to E6 |
 | Fixes since 0.18.1 | V1 to V4 |
+| Upgrade from 0.20.0 (QA catalogue ids) | UPG-01, UPG-02 |
+
+UPG-01 and UPG-02 start the build a third time, last, on a 0.20.0 library:
+`tests/fixtures/upgrade-0.20.0`, written by the 0.20.0 code (`make.py`
+there), copied to `data\acceptance-upg` with WAV stems added. The build gets
+the package's data folder with the old `settings.json` that names the old
+library, which is how a new version unzipped over the old folder, or installed
+by the in-app update, finds them. UPG-01 is skipped when
+`Documents\StemDeck\jobs` exists, since a lost StemData location would open
+that folder in a build before 0.21.0.
 
 The line by line timing checks:
 
@@ -92,13 +102,13 @@ report replaces it with `[key]` should it ever appear.
   downloaded runtime archives, so later runs are fast.
 - Starts `StemDeck.exe` with `LOCALAPPDATA` pointed at
   `%TEMP%\stemdeck-acceptance\LocalAppData` (emptied every run), which also
-  holds the WebView2 profile. A portable build is not isolated by default: it
-  restores settings from `%LOCALAPPDATA%\StemDeck` and mirrors changes back
-  there. With the redirect, the real `%LOCALAPPDATA%\StemDeck` and the real
-  library are never read or written; the report says whether the real
-  settings file stayed byte for byte the same.
-- Refuses to run if `Documents\StemDeck\user-data.json` exists, since the
-  build would copy that library layout into the test run.
+  holds the WebView2 profile. A portable build before 0.21.0 was not isolated
+  by default: it restored settings from `%LOCALAPPDATA%\StemDeck` and mirrored
+  changes back there. With the redirect, the real `%LOCALAPPDATA%\StemDeck` and
+  the real library are never read or written, whichever build is under test;
+  the report says whether the real settings file stayed byte for byte the same.
+- Refuses to run if `Documents\StemDeck\user-data.json` exists, since a build
+  before 0.21.0 would copy that library layout into the test run.
 - Closes the app it started, and its backend, at the end, also after a
   failure. It never looks at any other StemDeck process.
 

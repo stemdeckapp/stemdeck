@@ -47,6 +47,7 @@ def _done_job_dir(jobs_dir, job_id="a1b2c3d4e5f6"):
     stems = jobs_dir / job_id / "stems"
     stems.mkdir(parents=True)
     (stems / "vocals.wav").write_bytes(b"RIFF")
+    _registry.mark_stems_complete(jobs_dir / job_id)
     return jobs_dir / job_id
 
 
@@ -103,7 +104,7 @@ def test_reset_reports_what_it_could_not_remove(jobs_dir, monkeypatch):
 
     monkeypatch.setattr("shutil.rmtree", _boom)
 
-    undeleted = _registry.reset_all(jobs_dir)
+    undeleted, _skipped = _registry.reset_all(jobs_dir)
 
     assert undeleted == ["a1b2c3d4e5f6"], "reset must not claim success it did not have"
 
@@ -129,4 +130,4 @@ def test_reset_records_survivors_so_they_cannot_come_back(jobs_dir, monkeypatch)
 def test_a_clean_reset_reports_nothing_undeleted(jobs_dir):
     _done_job_dir(jobs_dir)
 
-    assert _registry.reset_all(jobs_dir) == []
+    assert _registry.reset_all(jobs_dir) == ([], [])

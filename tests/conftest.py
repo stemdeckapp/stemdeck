@@ -95,6 +95,22 @@ def _no_discogs_api(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_backing_cache(tmp_path, monkeypatch):
+    """The backing and rest sums go to a temporary cache, never the real one."""
+    monkeypatch.setattr("app.pipeline.backing.CACHE_ROOT", tmp_path / "_backing_cache")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_export_caches(tmp_path, monkeypatch):
+    """Exports render to a temporary cache, never the real one. The startup
+    sweep that every TestClient lifespan runs removes the half-written files
+    in these caches, which in the real one could be a running server's."""
+    monkeypatch.setattr("app.api.stems._MIXDOWN_CACHE_DIR", tmp_path / "_cache" / "mixdown")
+    monkeypatch.setattr("app.api.stems._CLICK_CACHE_DIR", tmp_path / "_cache" / "click")
+    monkeypatch.setattr("app.api.stems._FX_PRINT_DIR", tmp_path / "_cache" / "fx-print")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_jobs_dir(tmp_path, monkeypatch):
     """Point every JOBS_DIR at a temp dir, for every test, no exceptions.
 
@@ -125,6 +141,9 @@ def _isolate_job_queue():
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
     _jobqueue._paused = False
+    # Every TestClient's shutdown leaves this set, and a pipeline failure under
+    # it is read as an interruption rather than a failure.
+    _jobqueue._stopping = False
     # restore() populates this at import time from whatever registry is on disk;
     # the app lifespan drains it into the queue, which would otherwise leak a
     # real job into a test's queue.
@@ -136,8 +155,22 @@ def _isolate_job_queue():
     _jobqueue._queue.clear()
     _jobqueue._running_id = None
     _jobqueue._paused = False
+    _jobqueue._stopping = False
     _registry._pending_resume.clear()
     _registry._deleted.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_library_answers():
+    """The library list keeps each song's disk answer module-wide (#976). Tests
+    reuse job ids, so one test's kept answer must not meet the next test."""
+    from app.api import jobs as _jobs_api
+
+    _jobs_api._stems_answers.clear()
+    _jobs_api._no_source_seen.clear()
+    yield
+    _jobs_api._stems_answers.clear()
+    _jobs_api._no_source_seen.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -149,6 +182,22 @@ def _relax_secure_origin_gate(monkeypatch):
     import app.main as _main
 
     monkeypatch.setattr(_main, "_secure_origin_required", lambda: False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _test_hosts_are_own_names(monkeypatch):
+    """The cross-site guard refuses a Host it does not know while network access
+    is off, and the test clients address the app as "testserver", "test" or "t".
+    Treated here as the machine's own names, so the gate tests that switch
+    network access off fail for their own reason. tests/test_csrf_guard.py
+    checks the real rule."""
+    from app.core import csrf as _csrf
+
+    real = _csrf.own_hostnames()
+    monkeypatch.setattr(
+        _csrf, "own_hostnames", lambda: real | frozenset({"testserver", "test", "t"})
+    )
     yield
 
 
@@ -170,3 +219,34 @@ def _isolate_network_settings(tmp_path, monkeypatch):
     _settings._state = None  # force a fresh load from the isolated path
     yield
     _settings._state = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vocal_split_status(tmp_path, monkeypatch):
+    """Every split a test runs records its outcome (#832): never in the real
+    data folder, and never carried from one test into the next."""
+    from app.pipeline import vocal_split_status as _vss
+
+    monkeypatch.setattr(_vss, "_status_path", tmp_path / "vocal-split-status.json")
+    _vss.reset_state()
+    yield
+    _vss.reset_state()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_video_encoder(tmp_path, monkeypatch):
+    """No test touches the machine's GPU encoders or the real probe cache.
+    The suite defaults to the CPU kill switch, so every existing render runs
+    libx264 exactly as before; tests/test_video_encoder.py clears it."""
+    from app.pipeline import video_encoder as _ve
+
+    monkeypatch.setattr(_ve, "_cache_path", tmp_path / "video_encoders.json")
+    monkeypatch.setattr(_ve, "VIDEO_ENCODER_OVERRIDE", "cpu")
+    # Never the machine's own /dev/dri, nor a STEMDECK_VAAPI_DEVICE it sets.
+    monkeypatch.setattr(_ve, "DRI_DIR", tmp_path / "no-dri")
+    # Nor its /sys/class/drm (the GPU ids in the probe cache key).
+    monkeypatch.setattr(_ve, "SYS_DRM_DIR", tmp_path / "no-sys")
+    monkeypatch.setattr(_ve, "VAAPI_DEVICE_OVERRIDE", "")
+    _ve.reset_state()
+    yield
+    _ve.reset_state()

@@ -149,3 +149,59 @@ def test_a_permanently_broken_load_is_only_healed_once(tmp_path):
     # 2 for the first call (try, heal, retry), then 1 each for the two after it.
     assert len(attempts) == 4
     assert artifact.exists(), "later attempts must not keep deleting it"
+
+
+def test_a_half_written_vocal_split_index_is_fetched_again(tmp_path, monkeypatch):
+    """audio-separator writes its model list (download_checks.json) in place, so
+    a setup ended mid-fetch leaves it half written. Its own loader then fails
+    on that file every time, before any model is looked at."""
+    import json
+    import logging
+
+    from audio_separator.separator import Separator
+    from audio_separator.separator import separator as separator_module
+
+    from app.core.model_cache import vocal_split_artifacts
+
+    root = tmp_path / "audio-separator"
+    root.mkdir()
+    (root / "download_checks.json").write_text('{"vr_download_list": {')
+    index = {
+        key: {}
+        for key in (
+            "demucs_download_list",
+            "vr_download_list",
+            "mdx_download_list",
+            "mdx_download_vip_list",
+            "mdx23c_download_list",
+            "mdx23c_download_vip_list",
+            "roformer_download_list",
+        )
+    }
+    body = json.dumps(index).encode()
+
+    class Response:
+        status_code = 200
+        headers = {"content-length": str(len(body))}
+
+        def iter_content(self, chunk_size):
+            yield body
+
+    fetched = []
+
+    def get(url, **kwargs):
+        fetched.append(url)
+        return Response()
+
+    monkeypatch.setattr(separator_module.requests, "get", get)
+    separator = Separator.__new__(Separator)
+    separator.model_file_dir = str(root)
+    separator.logger = logging.getLogger("test.audio_separator")
+
+    load_or_heal(
+        separator.list_supported_model_files,
+        lambda: vocal_split_artifacts(tmp_path, "UVR_MDXNET_KARA_2.onnx"),
+    )
+
+    assert [url.rsplit("/", 1)[1] for url in fetched] == ["download_checks.json"]
+    assert json.loads((root / "download_checks.json").read_text()) == index

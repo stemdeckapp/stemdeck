@@ -540,7 +540,3 @@ export function initSearch(onSelect) {
     close();
   });
 }
-
-export function closeSearch() {
-  close();
-}

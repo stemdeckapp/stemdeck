@@ -5,9 +5,11 @@ import functools
 import io
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
+import shutil
 import signal
 import socket
 import time
@@ -23,14 +25,17 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
-from app.core import tls_listener
+from app.core import csrf, tls_listener
 from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddleware
 from app.core.config import (
     ACOUSTID_CHECK_KEY,
+    ALLOWED_HOSTS,
+    BIND_HOST,
     DEMUCS_MODEL,
     DISCOGS_CHECK_TOKEN,
     FFMPEG_BIN,
     HTTPS_PORT,
+    IDLE_UNLOAD_MINUTES_MAX,
     JOBS_DIR,
     LOGS_DIR,
     SSL_CERTFILE,
@@ -39,9 +44,13 @@ from app.core.config import (
     available_torch_devices,
     configure_portable_environment,
     ensure_runtime_dirs,
+    ffmpeg_executable,
+    torch_gpu_backend,
     torch_load_error,
 )
+from app.core.device_reason import cpu_reason, device_diagnostics, refresh_nvidia_gpu
 from app.core.logging_setup import configure_logging
+from app.core.models import JobBusy
 from app.core.process import process_exists as _process_exists
 from app.core.redact import redact
 from app.core.registry import all_jobs as registry_all_jobs
@@ -60,33 +69,42 @@ from app.core.settings import (
     get_allow_network,
     get_auto_delete_days,
     get_auto_delete_jobs,
+    get_auto_lyrics,
     get_auto_sections,
     get_cookies_file,
     get_demucs_device,
     get_demucs_device_choice,
     get_export_sample_rate,
+    get_idle_unload_minutes,
     get_jobs_dir,
     get_max_duration_sec,
     get_playlist_max_items,
     get_port,
     get_separation_quality,
+    get_stem_format,
+    get_stem_mp3_kbps,
     get_transcribe_lyrics,
+    get_video_encoder,
     get_video_max_height,
     set_acoustid_api_key,
     set_allow_network,
     set_auto_delete_days,
     set_auto_delete_jobs,
+    set_auto_lyrics,
     set_auto_sections,
     set_cookies_file,
     set_demucs_device,
     set_discogs_token,
     set_export_sample_rate,
+    set_idle_unload_minutes,
     set_jobs_dir,
     set_max_duration_sec,
     set_playlist_max_items,
     set_port,
     set_separation_quality,
+    set_stem_storage,
     set_transcribe_lyrics,
+    set_video_encoder,
     set_video_max_height,
 )
 from app.core.stems_location import (
@@ -94,11 +112,20 @@ from app.core.stems_location import (
     abandon_relocation,
     begin_relocation,
     directory_size,
+    is_relocating,
     move_library,
+    remove_moved,
     validate_target,
 )
-from app.pipeline.collect import sweep_failed_jobs, sweep_old_jobs
+from app.pipeline.audio_encoders import (
+    MIN_FFMPEG_VERSION,
+    export_formats,
+    ffmpeg_too_old,
+    transpose_export,
+)
+from app.pipeline.collect import sweep_crash_leftovers, sweep_failed_jobs, sweep_old_jobs
 from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_section_workspaces
+from app.pipeline.vocal_split_status import capability as vocal_split_capability
 
 # Set the stemdeck logger level (Python's default root level of WARNING would
 # silently drop every logger.info(...) call) and attach the rotating file log
@@ -107,7 +134,10 @@ from app.pipeline.sections import sweep_orphaned_workspaces as sweep_orphaned_se
 # STEMDECK_LOG_LEVEL=DEBUG) to see them.
 configure_logging()
 logging.getLogger("stemdeck").info(
-    "demucs config: model=%s device=%s", DEMUCS_MODEL, get_demucs_device()
+    "demucs config: model=%s device=%s gpu=%s",
+    DEMUCS_MODEL,
+    get_demucs_device(),
+    torch_gpu_backend(available_torch_devices()),
 )
 
 configure_portable_environment()
@@ -208,6 +238,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     qt = jobqueue.start_worker()
     _background_tasks.add(qt)
     qt.add_done_callback(_background_tasks.discard)
+    # Unloads the separation worker and the beat model once they have been
+    # idle for the Settings' minutes (#975). Cancelled first at shutdown.
+    from app.pipeline import idle_unload
+
+    idle_task = asyncio.create_task(idle_unload.run())
+    _background_tasks.add(idle_task)
+    idle_task.add_done_callback(_background_tasks.discard)
     # Jobs that were queued or in flight when the process last died. restore()
     # already put them back to "queued"; this puts them back in the queue.
     #
@@ -221,6 +258,48 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sweep_orphaned_section_workspaces, JOBS_DIR)
     except Exception:
         _log.exception("could not sweep orphaned section workspaces")
+    # A take render the last process was killed in the middle of left its
+    # temp file beside the take (take_render.run_video_render): nothing is
+    # rendering yet, so any such file is an orphan.
+    try:
+        from app.pipeline.take_render import sweep_render_temps
+
+        await asyncio.to_thread(sweep_render_temps, JOBS_DIR)
+    except Exception:
+        _log.exception("could not sweep stale render files")
+    # The same for a stem fill, a vocal split decode, a stem write, an export
+    # render and a stems zip.
+    try:
+        from app.api.stems import _CLICK_CACHE_DIR, _MIXDOWN_CACHE_DIR
+
+        await asyncio.to_thread(
+            sweep_crash_leftovers, JOBS_DIR, (_MIXDOWN_CACHE_DIR, _CLICK_CACHE_DIR)
+        )
+    except Exception:
+        _log.exception("could not sweep crash leftovers")
+
+    # An FFmpeg older than 5.1 cannot run any export (app/pipeline/audio_encoders.py).
+    # The server still starts, so imports and playback work and the page can
+    # say the same thing (/api/health ffmpeg_too_old).
+    too_old = await asyncio.to_thread(ffmpeg_too_old)
+    if too_old:
+        minimum = ".".join(map(str, MIN_FFMPEG_VERSION))
+        _log.error(
+            "FFmpeg %s at %s is too old: StemDeck needs FFmpeg %s or newer, and every "
+            "export and master will fail with this one. Install FFmpeg %s or newer, or "
+            "set STEMDECK_FFMPEG to one, then restart StemDeck.",
+            too_old,
+            shutil.which(ffmpeg_executable()) or ffmpeg_executable(),
+            minimum,
+            minimum,
+        )
+
+    # The first nvidia-smi answer, asked now so opening Settings does not wait
+    # for it (app/core/device_reason.py, #247). Not awaited: the shell is
+    # polling /api/health to learn that this server is up.
+    gt = asyncio.create_task(asyncio.to_thread(refresh_nvidia_gpu))
+    _background_tasks.add(gt)
+    gt.add_done_callback(_background_tasks.discard)
 
     resumed = take_pending_resume()
     if resumed:
@@ -251,15 +330,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     await tls_listener.stop()
     # Stop taking new work. Deliberately not cancelling the in-flight job: it is
-    # blocked in asyncio.to_thread, which cannot be cancelled, so it dies with
-    # the process exactly as it did before the queue existed.
+    # blocked in asyncio.to_thread, which cannot be cancelled. First, though:
+    # the worker kill below ends a separation, and this is what makes the
+    # runner keep that job to resume rather than fail it.
     jobqueue.request_stop()
+    # No idle unload from here on: the kill below is the last word.
+    idle_task.cancel()
+    # Running take renders (ffmpeg processes) stop with the server.
+    from app.api.takes import cancel_all_renders
+
+    cancel_all_renders()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
-    # its own, unlike the desktop backend itself.
-    from app.pipeline.separate import _kill_worker
+    # its own, unlike the desktop backend itself. Waits for an idle unload
+    # that was already stopping it.
+    from app.pipeline.separate import shutdown_worker
 
-    _kill_worker()
+    await asyncio.to_thread(shutdown_worker)
 
 
 # Phones hitting the self-hosted server URL get the mobile UI; everything
@@ -314,6 +401,27 @@ def health() -> dict[str, object]:
         "status": "ok",
         "version": app_version(),
         "ffmpeg_configured": FFMPEG_BIN.is_file(),
+        # {"wav", "mp3", "flac", "ogg": whether this ffmpeg can encode it}, or
+        # null when that is unknown. OGG is false on an ffmpeg without
+        # libvorbis, which the export menu then shows as unavailable (#824).
+        # Probed once per ffmpeg binary, so this stays a cheap poll.
+        "export_formats": export_formats(),
+        # Whether this ffmpeg has the rubberband filter a transposed export
+        # needs, or null when there is no ffmpeg to ask. False on the macOS
+        # download and Homebrew's plain ffmpeg, and the export menu then says
+        # so before a transposed mix is exported, rather than the export
+        # failing with a 422 at the end (#858). Probed once per binary.
+        "transpose_export": transpose_export(),
+        # The version of this ffmpeg when it is older than 5.1, which cannot
+        # run any export, else null. The page then says so. Read from the
+        # version line cached per binary, like transpose_export.
+        "ffmpeg_too_old": ffmpeg_too_old(),
+        # {"available": bool, "reason": code or None}: whether Lead + Backing
+        # can be made on this install. False only after setup or a real split
+        # found a dependency missing on these exact packages, which the
+        # Vocals choice then shows as unavailable before anyone picks it
+        # (#832). Read from a small file, so this stays a cheap poll.
+        "vocal_split": vocal_split_capability(),
         "demucs_model": DEMUCS_MODEL,
         "demucs_device": get_demucs_device(),
         # Who is answering. The desktop shell spawns this backend and then polls
@@ -350,6 +458,8 @@ def _is_lan_ipv4(ip: str) -> bool:
 
 
 def _settings_payload() -> dict[str, object]:
+    devices = available_torch_devices()
+    why = cpu_reason()
     return {
         "allow_network": get_allow_network(),
         # Off unless the user asked for it. The days value is published even
@@ -361,6 +471,9 @@ def _settings_payload() -> dict[str, object]:
         # job and produces suggestions rather than ground truth, so the user
         # decides whether to pay for it.
         "auto_sections": get_auto_sections(),
+        # Lyrics on import (LRCLIB and the transcript). Off until the user
+        # turns Detect lyrics on; kept until changed.
+        "auto_lyrics": get_auto_lyrics(),
         "auto_delete_days_min": AUTO_DELETE_DAYS_MIN,
         "auto_delete_days_max": AUTO_DELETE_DAYS_MAX,
         "max_duration_sec": get_max_duration_sec(),
@@ -373,9 +486,20 @@ def _settings_payload() -> dict[str, object]:
         "video_max_height": get_video_max_height(),
         "export_sample_rate": get_export_sample_rate(),
         "separation_quality": get_separation_quality(),
+        # Idle minutes before the separation worker and the beat model unload
+        # (#975), 0 for never; the ceiling so the field can say it.
+        "idle_unload_minutes": get_idle_unload_minutes(),
+        "idle_unload_minutes_max": IDLE_UNLOAD_MINUTES_MAX,
+        # How new songs' stems are stored (#783). Read when a job finishes;
+        # songs already in the library keep their own format.
+        "stem_format": get_stem_format(),
+        "stem_mp3_kbps": get_stem_mp3_kbps(),
         # Whisper lyrics for a job no lookup found any for: "auto" (on a GPU
         # only) | "on" | "off".
         "transcribe_lyrics": get_transcribe_lyrics(),
+        # The take render's H.264 encoder: "auto" | "cpu" | an encoder name.
+        # GET/POST /api/video-encoders list and test what this machine has.
+        "video_encoder": get_video_encoder(),
         # Absent unless the user set one. Only the path is exposed, never the
         # file's contents -- those are the user's YouTube session.
         "cookies_file": get_cookies_file(),
@@ -393,10 +517,19 @@ def _settings_payload() -> dict[str, object]:
         # available lets the UI gray out devices this machine can't use.
         "demucs_device": get_demucs_device_choice(),
         "demucs_device_resolved": get_demucs_device(),
-        "demucs_devices_available": available_torch_devices(),
+        "demucs_devices_available": devices,
+        # What drives "cuda": "cuda" (NVIDIA) | "rocm" (AMD) | None. A ROCm
+        # build serves an AMD GPU as "cuda", so the device alone cannot tell
+        # the user which kind of GPU separation runs on (#825).
+        "gpu_backend": torch_gpu_backend(devices),
         # Set when torch is installed but cannot load, which stops separation
         # on every device (#730). Read after the probe above refreshed it.
         "torch_error": torch_load_error(),
+        # Why the NVIDIA GPU is not used, as one code (app/core/device_reason.py),
+        # or None when it is in use or the machine has none (#247). The
+        # diagnostics line is what Copy GPU details puts on the clipboard.
+        "demucs_device_why": why,
+        "device_diagnostics": device_diagnostics(why),
     }
 
 
@@ -425,7 +558,18 @@ def get_settings(request: Request) -> dict[str, object]:
     # Show the port the server is actually running on rather than the stored
     # preference (which only takes effect on the next restart) -- so the field
     # reflects reality. Editing it still saves the preference via POST.
-    return {**_settings_payload(), "port": port, "lan_addresses": addresses}
+    #
+    # The same for the network switch on desktop: allow_network is the saved
+    # choice, network_listening is whether this process listens beyond
+    # loopback, which only changes when the shell restarts it (#859). None
+    # when the shell did not start this server.
+    listening = None if BIND_HOST is None else not _is_loopback(BIND_HOST)
+    return {
+        **_settings_payload(),
+        "port": port,
+        "lan_addresses": addresses,
+        "network_listening": listening,
+    }
 
 
 # The detail for a key AcoustID refuses, which the Settings field tells apart
@@ -433,6 +577,16 @@ def get_settings(request: Request) -> dict[str, object]:
 ACOUSTID_KEY_REFUSED = "AcoustID does not accept this key"
 # The same for a Discogs token Discogs answers 401.
 DISCOGS_TOKEN_REFUSED = "Discogs does not accept this token"
+
+
+def _whole_minutes(value: object) -> bool:
+    """A JSON number with no fraction, 0 or more. Not a bool (a JSON true is
+    an int in Python) and not a string, "5" included."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, float) and not (math.isfinite(value) and value.is_integer()):
+        return False
+    return value >= 0
 
 
 @app.post("/api/settings", tags=["settings"])
@@ -444,23 +598,37 @@ async def update_settings(request: Request) -> dict[str, object]:
         body = await request.json()
     except Exception:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
     if "allow_network" in body:
         set_allow_network(bool(body["allow_network"]))
     if "auto_delete_jobs" in body:
         set_auto_delete_jobs(bool(body["auto_delete_jobs"]))
     if "auto_sections" in body:
         set_auto_sections(bool(body["auto_sections"]))
+    if "auto_lyrics" in body:
+        set_auto_lyrics(bool(body["auto_lyrics"]))
+    if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
+        # Refused rather than clamped: true would be stored as 1 minute and -1
+        # as 0, which turns the unload off, so a typo must not change it.
+        raise HTTPException(
+            status_code=422,
+            detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
+        )
     for key, setter in (
         ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),
         ("playlist_max_items", set_playlist_max_items),
         ("video_max_height", set_video_max_height),
         ("port", set_port),
+        ("idle_unload_minutes", set_idle_unload_minutes),
     ):
         if key in body:
             try:
                 setter(int(body[key]))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: JSON Infinity or 1e400 parses to a float inf,
+                # and int(inf) raises it, which used to answer 500.
                 raise HTTPException(status_code=422, detail=f"{key} must be an integer") from None
     if "export_sample_rate" in body:
         try:
@@ -472,7 +640,7 @@ async def update_settings(request: Request) -> dict[str, object]:
         try:
             set_cookies_file(body["cookies_file"])
         except ValueError as e:
-            # "cookies file not found" / "not readable" -- both safe to show.
+            # One fixed sentence for every refusal, so safe to show.
             raise HTTPException(status_code=422, detail=str(e)) from None
         except (TypeError, OSError):
             raise HTTPException(status_code=422, detail="invalid cookies file") from None
@@ -523,12 +691,28 @@ async def update_settings(request: Request) -> dict[str, object]:
             set_separation_quality(str(body["separation_quality"]))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
+    if "stem_format" in body or "stem_mp3_kbps" in body:
+        try:
+            # Both checked before either is kept: one bad value changes nothing.
+            set_stem_storage(body.get("stem_format"), body.get("stem_mp3_kbps"))
+        except ValueError as e:
+            # The messages list the whitelist; they never echo the value.
+            raise HTTPException(status_code=422, detail=str(e)) from None
     if "transcribe_lyrics" in body:
         try:
             set_transcribe_lyrics(str(body["transcribe_lyrics"]))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
-    return _settings_payload()
+    if "video_encoder" in body:
+        if not isinstance(body["video_encoder"], str):
+            raise HTTPException(status_code=422, detail="video_encoder must be a string")
+        try:
+            set_video_encoder(body["video_encoder"])
+        except ValueError as e:
+            # The message lists the whitelist; it never echoes the value.
+            raise HTTPException(status_code=422, detail=str(e)) from None
+    # Off the event loop: the payload can run nvidia-smi (app/core/device_reason.py).
+    return await asyncio.to_thread(_settings_payload)
 
 
 _ACTIVE_JOB_STATUSES = ("queued", "downloading", "analyzing", "separating", "processing")
@@ -602,6 +786,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
         body = await request.json()
     except Exception:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
     raw = body.get("path")
     if not isinstance(raw, str):
         raise HTTPException(status_code=422, detail="path is required")
@@ -618,6 +804,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
                 status_code=409,
                 detail="Finish or cancel the imports in the queue before moving the stems folder",
             )
+        if any(j.post_hoc_running() for j in registry_all_jobs().values()):
+            raise JobBusy()
         target = validate_target(Path(raw), JOBS_DIR)
     except StemsLocationError as e:
         abandon_relocation()
@@ -637,6 +825,10 @@ async def set_stems_location(request: Request) -> dict[str, object]:
         raise HTTPException(status_code=500, detail="Could not move the stems folder") from None
 
     _, persisted = set_jobs_dir(str(target))
+    if persisted:
+        # Not before: until the new location is saved, a restart reads the old
+        # folder, so it has to stay whole.
+        await asyncio.to_thread(remove_moved, JOBS_DIR, result.copied)
     _log.info(
         "stems library moved to %s (%d entries, %d bytes, persisted=%s)",
         target,
@@ -667,7 +859,8 @@ async def set_stems_location(request: Request) -> dict[str, object]:
 @app.post("/api/reset", tags=["settings"])
 def reset_app_data() -> dict[str, object]:
     """Factory reset (Settings -> General -> "Reset app data"): delete every
-    job directory and the registry, so no old work session can resurface
+    job directory and the registry (only StemDeck's own entries: see
+    registry.reset_all), so no old work session can resurface
     across package reinstalls -- on desktop, the runtime state that actually
     persists (~/Documents/StemDeck, not the extracted package's own bundled
     data/ folder) survives a fresh install otherwise. The browser-side
@@ -685,20 +878,31 @@ def reset_app_data() -> dict[str, object]:
     active = [j for j in registry_all_jobs().values() if j.status in _ACTIVE_JOB_STATUSES]
     if active:
         raise HTTPException(status_code=409, detail="cannot reset while a job is in progress")
+    if any(j.post_hoc_running() for j in registry_all_jobs().values()):
+        raise JobBusy()
     # Clear the queue alongside the registry, or the worker would keep popping
     # ids that no longer resolve and the queue view would report ghosts.
+    from app.api.takes import forget_job_locks
     from app.pipeline import jobqueue
+    from app.pipeline.backing import forget_job as forget_backing
 
     jobqueue.clear()
+    job_ids = list(registry_all_jobs())
     # Anything that could not be removed is reported rather than swallowed: the
     # frontend used to take an unconditional {"ok": true} as licence to wipe its
     # own deletion tombstone, and any surviving directory was then re-adopted on
     # the next start with nothing left to suppress it (#521). reset_all also
     # records the survivors server-side, so they stay deleted regardless.
-    undeleted = reset_registry(JOBS_DIR)
+    undeleted, skipped = reset_registry(JOBS_DIR)
+    for job_id in job_ids:
+        forget_backing(job_id)
+        forget_job_locks(job_id)
     if undeleted:
         _log.warning("reset left %d entries on disk: %s", len(undeleted), undeleted)
-    return {"ok": True, "undeleted": len(undeleted)}
+    if skipped:
+        # Not StemDeck's: the jobs folder is shared with something else.
+        _log.info("reset left %d entries that are not StemDeck's", len(skipped))
+    return {"ok": True, "undeleted": len(undeleted), "skipped": len(skipped)}
 
 
 @app.get("/api/registry", tags=["settings"])
@@ -804,15 +1008,22 @@ def _line_time(line: str) -> float | None:
     return None
 
 
+def _tail_bytes(path: Path, limit: int) -> tuple[bytes, bool]:
+    """The last `limit` bytes of a file from a line start, without reading all
+    of it, and whether anything before them was left out."""
+    size = path.stat().st_size
+    with path.open("rb") as f:
+        if size <= limit:
+            return f.read(limit), False
+        f.seek(size - limit)
+        f.readline()  # discard the partial first line
+        return f.read(limit), True
+
+
 def _tail_lines(path: Path) -> list[str]:
-    """Last _LOG_TAIL_BYTES of a file as lines, without reading all of it."""
+    """Last _LOG_TAIL_BYTES of a file as lines."""
     try:
-        size = path.stat().st_size
-        with path.open("rb") as f:
-            if size > _LOG_TAIL_BYTES:
-                f.seek(size - _LOG_TAIL_BYTES)
-                f.readline()  # discard the partial first line
-            raw = f.read()
+        raw, _cut = _tail_bytes(path, _LOG_TAIL_BYTES)
     except OSError:
         return []
     return raw.decode("utf-8", errors="replace").splitlines()
@@ -857,7 +1068,7 @@ def get_log_tail(view: str, minutes: int = 60) -> PlainTextResponse:
         body = (
             f"No entries in the last {window} minutes.\n"
             if lines
-            else f"No log file yet at {logs_dir / files[0]}.\n"
+            else f"No log file yet ({files[0]}).\n"
         )
         return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
@@ -877,14 +1088,23 @@ def get_log_tail(view: str, minutes: int = 60) -> PlainTextResponse:
     return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
 
+# Per file in the zip. Above the application log's 5 MB rotation, so only
+# backend.log or setup.log, which rotate at launch and not by size, are cut.
+_LOG_ZIP_FILE_BYTES = 8_000_000
+
+
 @app.get("/api/logs.zip", tags=["settings"])
 def download_logs_zip() -> StreamingResponse:
     """Bundle the log files into a zip for support and bug reports.
 
     Only the known log names are read, never whatever else happens to be in the
     directory: the set is fixed above, so a stray file dropped in LOGS_DIR can
-    never be swept into a download. Built in memory -- these are capped at 5 MB
-    x 3 backups plus two small desktop logs, so the whole set is bounded.
+    never be swept into a download. Built in memory, bounded by
+    _LOG_ZIP_FILE_BYTES per file.
+
+    Redacted like the Logs viewer, because the Settings text offers this zip
+    for attaching to a public bug report. Decoded with surrogateescape so a
+    byte that is not UTF-8 goes back into the file unchanged.
     """
     logs_dir = LOGS_DIR.resolve()
     buf = io.BytesIO()
@@ -895,15 +1115,21 @@ def download_logs_zip() -> StreamingResponse:
             try:
                 if not path.is_file():
                     continue
-                zf.writestr(name, path.read_bytes())
-                written += 1
+                raw, cut = _tail_bytes(path, _LOG_ZIP_FILE_BYTES)
             except OSError:
                 _log.warning("could not add %s to the log bundle", name, exc_info=True)
+                continue
+            text = redact(raw.decode("utf-8", errors="surrogateescape"))
+            if cut:
+                text = "[... earlier part of this log not included ...]\n" + text
+            zf.writestr(name, text.encode("utf-8", errors="surrogateescape"))
+            written += 1
         if written == 0:
             # An empty zip is a confusing download; say so inside it instead.
+            # No folder named: on desktop it is inside the user's home.
             zf.writestr(
                 "README.txt",
-                f"No log files were found in {logs_dir}.\n"
+                "No log files were found in the StemDeck logs folder.\n"
                 "Logging starts on the first message after the app launches.\n",
             )
 
@@ -1004,6 +1230,82 @@ async def limit_json_body_size(request: Request, call_next):
                 )
         elif declared.isdigit() and int(declared) > _JSON_BODY_LIMIT:
             return JSONResponse({"detail": "request body too large"}, status_code=413)
+    return await call_next(request)
+
+
+# After a stems folder move, JOBS_DIR in this process still names the folder the
+# library left until the restart (app/core/stems_location.py). A favourite, a
+# Trash, an edit or an import accepted now lands there and is gone on the next
+# start, when the moved registry wins. So every write is refused with a code the
+# UI translates, except the settings, which live outside the library, and the
+# lookups that POST only to carry a body. A second move is refused too: it would
+# move nothing out of the emptied folder, and a failed one would reopen the door.
+_WRITES_ALLOWED_DURING_MOVE = frozenset({"/api/settings", "/api/search", "/api/playlist/preview"})
+
+
+@app.middleware("http")
+async def refuse_writes_until_restart(request: Request, call_next):
+    path = request.url.path
+    if (
+        is_relocating()
+        and request.method in csrf.UNSAFE_METHODS
+        and path.startswith("/api/")
+        and path not in _WRITES_ALLOWED_DURING_MOVE
+    ):
+        return JSONResponse(
+            {
+                "detail": "Restart StemDeck to finish moving your stems folder. "
+                "Until then, changes are not saved.",
+                "code": "restart_required",
+            },
+            status_code=409,
+        )
+    return await call_next(request)
+
+
+# A delete, a library move or a reset refused while a stem fill or a vocal split
+# runs. Its own code, which the UI translates, so it never reads as the restart
+# refusal above.
+@app.exception_handler(JobBusy)
+async def refuse_while_busy(_request: Request, _exc: JobBusy) -> JSONResponse:
+    return JSONResponse(
+        {
+            "detail": "A song is still being separated (missing stems or Lead + Backing). "
+            "Try again when it has finished.",
+            "code": "job_busy",
+        },
+        status_code=409,
+    )
+
+
+# Cross-site guard (app/core/csrf.py has the reasoning and every rule). Inside
+# the network and secure-origin gates, so a device those gates refuse gets
+# their explanation rather than this one; outside the headers middleware, so a
+# refusal still carries the CSP. Network access is read per request because
+# the Settings toggle changes it live.
+_HOST_REFUSED_MESSAGE = """StemDeck does not answer to this address.
+
+Open it at http://localhost or the machine's own IP address instead. Behind a
+reverse proxy or under another name, add that name to STEMDECK_ALLOWED_HOSTS
+(a comma-separated list) and restart."""
+
+
+@app.middleware("http")
+async def cross_site_guard(request: Request, call_next):
+    refusal = csrf.check_request(
+        request.method,
+        request.url.path,
+        request.headers,
+        allow_network=get_allow_network(),
+        desktop=_is_desktop_shell(),
+        extra_hosts=ALLOWED_HOSTS,
+        local_ips=_local_ips(),
+    )
+    if refusal is not None:
+        _log.info("refused %s %s: %s", request.method, request.url.path, refusal.reason)
+        if refusal.detail == csrf.REFUSED_HOST:
+            return PlainTextResponse(_HOST_REFUSED_MESSAGE, status_code=refusal.status)
+        return JSONResponse({"detail": refusal.detail}, status_code=refusal.status)
     return await call_next(request)
 
 
@@ -1147,6 +1449,11 @@ async def secure_origin_gate(request: Request, call_next):
 # refuses requests from OTHER devices when availability is off. The host machine
 # (loopback or its own LAN IP) is always served, so the app keeps working
 # locally regardless of this setting.
+#
+# In server mode this is the whole control. On desktop the shell also binds
+# loopback only while the setting is off (#859), so this is the second line:
+# it covers the moment between saving the choice and the restart that applies
+# it, and anything that starts the desktop backend on every interface.
 @app.middleware("http")
 async def network_gate(request: Request, call_next):
     if not get_allow_network():

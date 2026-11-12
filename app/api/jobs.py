@@ -7,10 +7,12 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Literal
 
@@ -18,10 +20,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, StrictBool, field_validator
 
+from app.api.takes import cancel_job_renders, forget_job_locks
 from app.core.config import (
     DISCOGS_LOOKUP_BUDGET_SEC,
     JOB_ID_RE,
     JOBS_DIR,
+    LIBRARY_RACY_WINDOW_NS,
+    LOUDNESS_UPGRADE_QUEUE_MAX,
     LYRICS_LOOKUP_BUDGET_SEC,
     LYRICS_OFFSET_MAX_SEC,
     LYRICS_TIMED_MAX_CHARS,
@@ -33,14 +38,24 @@ from app.core.config import (
     TIMEOUT_IDENTIFY_BACKFILL,
     TIMEOUT_LYRICS_LOOKUP,
     TIMEOUT_WORK_BACKFILL,
+    UPLOAD_EXTS,
     ffprobe_executable,
 )
-from app.core.models import FINISHED_STATUSES, Job, JobCancelled, _set, settle_cancelled
+from app.core.models import (
+    FINISHED_STATUSES,
+    LOUDNESS_VERSION,
+    Job,
+    JobBusy,
+    JobCancelled,
+    _set,
+    settle_cancelled,
+)
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
-from app.core.registry import is_upload
+from app.core.registry import is_upload, keep_added_time, metadata_lock, saved_fields
 from app.core.registry import mark_deleted as registry_mark_deleted
+from app.core.registry import operation as registry_operation
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
@@ -50,14 +65,31 @@ from app.core.registry import set_favorite as registry_set_favorite
 from app.core.registry import set_trashed as registry_set_trashed
 from app.core.settings import (
     get_acoustid_api_key,
+    get_auto_lyrics,
     get_auto_sections,
     get_discogs_token,
     get_max_duration_sec,
 )
+from app.core.stem_files import stem_path, stem_url
 from app.core.stems_location import is_relocating
-from app.pipeline import discogs, jobqueue
+from app.core.versions import (
+    MAX_VERSIONS,
+    VERSION_ID_RE,
+    VERSION_NAME_MAX_CHARS,
+    active_of,
+    clean_name,
+    clean_stems,
+    make_version,
+    versions_of,
+)
+from app.core.vocal_split_outcome import CANCELLED as SPLIT_CANCELLED
+from app.core.vocal_split_outcome import WORKER_FAILED as SPLIT_WORKER_FAILED
+from app.core.vocal_split_outcome import message_for as split_message_for
+from app.pipeline import discogs, jobqueue, vocal_split_status
+from app.pipeline.analyze import dynamic_range_db, measure_loudness
 from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
+from app.pipeline.backing import forget_job as forget_backing
 from app.pipeline.collect import merge_stem_peaks, presence_for_split, remove_job_dir
 from app.pipeline.download import InvalidYouTubeURL, fetch_audio_tags, validate_youtube_url
 from app.pipeline.errors import classify_failure
@@ -93,13 +125,14 @@ from app.pipeline.lyrics_retime import (
 )
 from app.pipeline.lyrics_retime import saved_view as saved_retime_view
 from app.pipeline.runner import _pipeline_lock
-from app.pipeline.vocal_split import split_vocals
+from app.pipeline.stem_fill import FillRefused, cancel_fill, fill_stems, missing_stems
+from app.pipeline.stem_storage import store_split_stems
+from app.pipeline.vocal_split import VocalSplitError, split_vocals
 from app.pipeline.work_lookup import find_work, might_have_work
 
 router = APIRouter(tags=["jobs"])
 logger = logging.getLogger("stemdeck.api")
 
-_ALLOWED_EXTS = frozenset((".mp3", ".wav", ".flac", ".mp4", ".m4a", ".ogg", ".opus"))
 _MAX_UPLOAD_BYTES = 400 * 1024 * 1024  # 400 MB
 _WS_RE = re.compile(r"\s+")
 
@@ -175,36 +208,162 @@ def _rmtree_job(job_id: str) -> bool:
     return remove_job_dir(JOBS_DIR / job_id)
 
 
-def _job_files_missing(job: Job) -> bool:
+# GET /api/jobs reports every finished song's files as present or missing, on
+# every call (#976). Asking the disk afresh each time cost two path resolves, a
+# stat and a directory listing per song, which is one network round trip after
+# another on an SMB or NAS library. The answer is now kept per song, beside the
+# identity and modification time of the stems folder it was read from, and used
+# only while one lstat of that folder still returns exactly those values. The
+# song folder itself is checked from one listing of the jobs folder per request
+# (_LibraryView), not one call per song.
+#
+# What invalidates it: deleting, renaming or replacing the song folder or its
+# stems folder (the folder is gone from the listing, the lstat fails, or the
+# identity changes), adding or removing a file directly in the stems folder
+# (its modification time changes), either folder turned into a link or junction
+# (no longer a plain folder, so the full check runs and refuses a target
+# outside the library, as the serving routes do). Nothing expires on a timer,
+# because nothing needs to: every change that alters the answer alters the key.
+# The jobs folder is not part of the key: JOBS_DIR is fixed for the life of the
+# process (a library move restarts it), and any other path to the same folder
+# goes through a link, which the plain-folder checks already refuse to trust.
+#
+# What it cannot see: a stems folder put back with its exact identity and
+# modification time, which only a timestamp-preserving copy onto the same file
+# ID does. A change made within LIBRARY_RACY_WINDOW_NS of a listing could leave
+# the time unchanged on a filesystem that stores it coarsely (FAT keeps two
+# seconds), so a folder that recent is never trusted; a file server whose
+# clock runs behind this machine's narrows that guard by the difference.
+_DirKey = tuple[int, int, int]  # st_dev, st_ino, st_mtime_ns
+_stems_answers: dict[str, tuple[_DirKey, bool]] = {}
+_no_source_seen: dict[str, _DirKey] = {}
+
+
+def _dir_key(st: os.stat_result) -> _DirKey:
+    return (st.st_dev, st.st_ino, st.st_mtime_ns)
+
+
+class _LibraryView:
+    """One request's look at the jobs folder: JOBS_DIR resolved once, and,
+    for a request about many songs, one listing of it that says which song
+    folders exist and are plain folders, without a call per song."""
+
+    def __init__(self, *, listed: bool) -> None:
+        self.root = JOBS_DIR.resolve()
+        self._entries: dict[str, os.DirEntry] | None = None
+        if listed:
+            try:
+                with os.scandir(JOBS_DIR) as it:
+                    self._entries = {entry.name: entry for entry in it}
+            except OSError:
+                self._entries = None
+
+    def song_dir_is_plain(self, job_id: str) -> bool:
+        """Whether the song folder is a plain folder, not a file, link or
+        junction. Raises FileNotFoundError when it is not there.
+
+        Only the kind is read from the listing, never the time: NTFS updates
+        the copy of a folder's times kept in its parent's index lazily, so a
+        listing can show a song folder's old modification time after
+        something was added to it."""
+        if self._entries is None:
+            return _is_plain_dir(os.lstat(JOBS_DIR / job_id))
+        entry = self._entries.get(job_id)
+        if entry is None:
+            raise FileNotFoundError(job_id)
+        if not entry.is_dir(follow_symlinks=False):
+            return False
+        if os.name == "nt":
+            # Carried by the listing on Windows, so this costs no call. A
+            # junction reports itself as a folder and is told apart here.
+            return _is_plain_dir(entry.stat(follow_symlinks=False))
+        return True
+
+
+def _is_plain_dir(st: os.stat_result) -> bool:
+    """A real folder: not a file, and not a link or junction (lstat follows
+    neither, and a junction still reports itself as a folder)."""
+    return stat.S_ISDIR(st.st_mode) and not (
+        getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _settled(st: os.stat_result) -> bool:
+    """Changed long enough ago for its modification time to be trusted."""
+    return time.time_ns() - st.st_mtime_ns >= LIBRARY_RACY_WINDOW_NS
+
+
+def _stems_missing_on_disk(job_id: str, jobs_root: Path) -> bool:
+    """The full check: resolves the stems folder, refuses one that leads out
+    of the library (the serving routes refuse it too), and lists it."""
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    if not stems_dir.is_relative_to(jobs_root):
+        return True
+    return not stems_dir.is_dir() or not any(stems_dir.iterdir())
+
+
+def _job_files_missing(job: Job, view: _LibraryView | None = None) -> bool:
     """True when a "done" job's stem files are gone from disk: the folder was
     deleted or moved outside the app, not just an in-flight relocation (#354),
     which is a known, temporary absence and must not flap the library."""
     if is_relocating():
         return False
-    stems_dir = (JOBS_DIR / job.id / "stems").resolve()
-    if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+    view = view or _LibraryView(listed=False)
+    try:
+        song_dir_plain = view.song_dir_is_plain(job.id)
+        stems = os.lstat(JOBS_DIR / job.id / "stems")
+    except FileNotFoundError:
         return True
-    return not stems_dir.is_dir() or not any(stems_dir.iterdir())
+    except OSError:
+        return _stems_missing_on_disk(job.id, view.root)
+    if not song_dir_plain or not _is_plain_dir(stems) or not _settled(stems):
+        return _stems_missing_on_disk(job.id, view.root)
+    key = _dir_key(stems)
+    kept = _stems_answers.get(job.id)
+    if kept is not None and kept[0] == key:
+        return kept[1]
+    missing = _stems_missing_on_disk(job.id, view.root)
+    _stems_answers[job.id] = (key, missing)
+    return missing
 
 
-def _job_state(job: Job) -> dict:
+def _fill_source_format(job: Job) -> None:
+    """Uploads made before the format was recorded still have it on disk: the
+    kept source is source.<ext>, the extension it was validated against. Kept
+    on the job once found, and persisted with it next time. Uploads finished
+    before sources were kept have nothing to find and stay None, which the
+    client shows as the plain note; for those the empty answer is kept beside
+    the song folder's identity and modification time, so the folder is
+    searched again only once an entry in it has been added, removed or
+    renamed, or the folder itself replaced."""
+    try:
+        # The folder's own lstat, not the listing's copy (see song_dir_is_plain).
+        song_dir = os.lstat(JOBS_DIR / job.id)
+    except OSError:
+        song_dir = None
+    key = None
+    if song_dir is not None and _is_plain_dir(song_dir) and _settled(song_dir):
+        key = _dir_key(song_dir)
+        if _no_source_seen.get(job.id) == key:
+            return
+    source = _retained_source(job.id)
+    if source is not None:
+        job.source_format = source.suffix.lower().removeprefix(".")
+        _no_source_seen.pop(job.id, None)
+    elif key is not None:
+        _no_source_seen[job.id] = key
+
+
+def _job_state(job: Job, view: _LibraryView | None = None) -> dict:
     """job.to_state() with "done" downgraded to "unavailable" when the stem
     files are missing from disk - ground truth for the client, replacing the
     old approach of the frontend guessing from a 404 or a disappearance from
     the job list, neither of which caught a job whose registry entry survived
     but whose stems folder did not."""
     if job.source_format is None and (job.source_url or "").startswith("local:"):
-        # Uploads made before the format was recorded still have it on disk:
-        # the kept source is source.<ext>, the extension it was validated
-        # against. Kept on the job once found, so the disk is asked once per
-        # job rather than on every state, and persisted with it next time.
-        # Uploads finished before sources were kept have nothing to find and
-        # stay None, which the client shows as the plain note.
-        source = _retained_source(job.id)
-        if source is not None:
-            job.source_format = source.suffix.lower().removeprefix(".")
+        _fill_source_format(job)
     state = job.to_state()
-    if job.status == "done" and _job_files_missing(job):
+    if job.status == "done" and _job_files_missing(job, view):
         state["status"] = "unavailable"
     return state
 
@@ -217,19 +376,22 @@ class JobRequest(BaseModel):
     # rejected, so a future model with extra stems doesn't break older
     # clients pinning the old set.
     stems: list[str] | None = None
+    # Lead + Backing (#848): split the vocals once the job is done. Ignored
+    # when the selection has no vocals.
+    vocal_split: bool = False
+
+
+def _note_split_request(job: Job) -> None:
+    """Say in the log that Lead + Backing came with the import, so the log
+    tells a split that was never asked for from one that ran."""
+    if job.vocal_split_wanted:
+        logger.info("[%s] vocal split requested with the import", job.id)
 
 
 @router.post("")
 async def create_job(request: Request) -> dict[str, str]:
     """Submit a YouTube URL (JSON body) or upload an audio file (multipart/form-data)
     to start a stem-separation job. Returns the new job ID."""
-    if is_relocating():
-        # The stems folder just moved. This process still writes to the old one,
-        # so anything accepted now would be orphaned by the restart.
-        raise HTTPException(
-            status_code=409,
-            detail="Restart StemDeck to finish moving your stems folder before importing",
-        )
     ct = request.headers.get("content-type", "")
     if "multipart/form-data" in ct:
         return await _create_local_job(request)
@@ -263,11 +425,14 @@ async def _create_youtube_job(request: Request) -> dict[str, str]:
         # last thing the pipeline does, and the toggle clears itself as soon
         # as the user opens another song.
         auto_sections=get_auto_sections(),
+        auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=payload.vocal_split and "vocals" in selected,
     )
     if not registry_register_if_capacity(job, MAX_PENDING_URL_JOBS):
         raise HTTPException(status_code=503, detail=_URL_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    _note_split_request(job)
     return {"job_id": job.id}
 
 
@@ -298,7 +463,7 @@ async def _create_local_job(request: Request) -> dict[str, str]:
 
     filename: str = getattr(upload, "filename", "") or ""
     ext = Path(filename).suffix.lower()
-    if ext not in _ALLOWED_EXTS:
+    if ext not in UPLOAD_EXTS:
         raise HTTPException(
             status_code=422,
             detail=f"Unsupported file type '{ext}': accepted formats are .mp3, .wav, .flac, .mp4, .m4a, .ogg, and .opus",
@@ -335,7 +500,9 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         try:
             duration = await asyncio.to_thread(_probe_duration, source_path)
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Could not read file duration: {e}") from e
+            # The error names ffprobe's path and the job folder: log it, do not send it.
+            logger.warning("[%s] could not read the upload's duration", job_id, exc_info=True)
+            raise HTTPException(status_code=422, detail="Could not read file duration") from e
 
         max_duration = get_max_duration_sec()
         if duration > max_duration:
@@ -362,12 +529,16 @@ async def _create_local_job(request: Request) -> dict[str, str]:
         source_format=ext.removeprefix("."),
         audio_tags=audio_tags,
         auto_sections=get_auto_sections(),
+        auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=form.get("vocal_split") == "true" and "vocals" in selected,
     )
+    await asyncio.to_thread(keep_added_time, job, job_dir)
     if not registry_register_if_capacity(job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    _note_split_request(job)
     return {"job_id": job.id}
 
 
@@ -380,9 +551,15 @@ def list_jobs(trashed: Literal["exclude", "include", "only"] = "exclude") -> lis
     Trash moved server-side it happily listed tracks the user had deleted on
     their desktop hours earlier.
     """
-    jobs = sorted(registry_all_jobs().values(), key=lambda j: j.created_at)
+    everything = registry_all_jobs()
+    # Answers kept for songs no longer in the registry would only grow.
+    for kept in (_stems_answers, _no_source_seen):
+        for job_id in [job_id for job_id in list(kept) if job_id not in everything]:
+            kept.pop(job_id, None)
+    jobs = sorted(everything.values(), key=lambda j: j.created_at)
+    view = _LibraryView(listed=True)
     return [
-        _job_state(job)
+        _job_state(job, view)
         for job in jobs
         if job.status == "done"
         and (trashed == "include" or (job.trashed_at is not None) == (trashed == "only"))
@@ -410,6 +587,7 @@ def trash_job(job_id: str) -> dict:
         job.stop_requested = True
         _cancel_pipeline(job)
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
 
 
@@ -422,12 +600,25 @@ def restore_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "trashed_at": job.trashed_at}
+
+
+def _failed_dir(job_id: str) -> Path:
+    """jobs/failed/<id>, the quarantine _quarantine_failed_job moves a failed
+    job to. JOB_ID_RE rejects "failed", so the quarantine dir can never be
+    addressed as a job id; join it explicitly and re-verify the result stays
+    inside."""
+    failed_dir = (JOBS_DIR / "failed" / job_id).resolve()
+    if not failed_dir.is_relative_to((JOBS_DIR / "failed").resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    return failed_dir
 
 
 @router.post("/{job_id}/extract")
 def extract_stopped_job(job_id: str) -> dict:
-    """Run a stopped job again from the start, from the source it kept (#748).
+    """Run a stopped job, or a failed upload, again from the start, from the
+    source it kept (#748).
 
     The only way a job stopped by the Trash goes back in the queue. Restore
     does not do it: taking a song out of the Trash is not a request to spend
@@ -439,16 +630,46 @@ def extract_stopped_job(job_id: str) -> dict:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != "stopped":
-        raise HTTPException(status_code=409, detail="only a stopped job can be extracted again")
+    # A failed upload too: its file is the one copy, kept by the quarantine
+    # (#868). A failed link is tried again as a new import of the link.
+    failed_upload = job.status == "error" and is_upload(job)
+    if job.status != "stopped" and not failed_upload:
+        raise HTTPException(
+            status_code=409, detail="only a stopped job or a failed upload can be extracted again"
+        )
     if job.trashed_at is not None:
         raise HTTPException(status_code=409, detail="restore it from the Trash first")
+    job_dir = JOBS_DIR / job_id
+    failed_dir = _failed_dir(job_id)
+    # Not when the quarantine failed and left the folder where it was.
+    moved = failed_upload and not any(job_dir.glob("source.*"))
+    if moved:
+        if not any(failed_dir.glob("source.*")):
+            raise HTTPException(status_code=409, detail="the file is no longer kept")
+        try:
+            failed_dir.rename(job_dir)
+        except OSError as exc:
+            logger.warning("could not move %s back for extract", failed_dir, exc_info=True)
+            raise HTTPException(
+                status_code=409, detail="the kept file could not be moved back"
+            ) from exc
     limit = MAX_PENDING_UPLOAD_JOBS if is_upload(job) else MAX_PENDING_URL_JOBS
-    if not registry_requeue_if_capacity(job, JOBS_DIR / job_id, limit):
+    if not registry_requeue_if_capacity(job, job_dir, limit):
+        if moved:
+            try:
+                job_dir.rename(failed_dir)
+            except OSError:
+                # Not lost: the next press runs it from jobs/<id>.
+                logger.warning("could not put %s back after a full queue", job_dir, exc_info=True)
         raise HTTPException(
             status_code=503,
             detail=_UPLOAD_QUEUE_FULL_DETAIL if is_upload(job) else _URL_QUEUE_FULL_DETAIL,
         )
+    try:
+        (job_dir / "error.txt").unlink(missing_ok=True)
+    except OSError:
+        # The job is queued already; a stale error.txt only costs a few KB.
+        logger.warning("could not delete the old error.txt of %s", job_id, exc_info=True)
     registry_persist(JOBS_DIR)
     jobqueue.enqueue(job_id)
     return job.to_state()
@@ -470,7 +691,111 @@ def set_favorite(job_id: str, body: FavoriteBody) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     registry_persist(JOBS_DIR)
+    _keep_saved_fields(job)
     return {"job_id": job.id, "favorite": job.favorite}
+
+
+# Songs whose loudness was measured again this run, queued for it, or tried and
+# failed: one attempt each, so a song with nothing to measure does not cost an
+# ffmpeg run on every request. A restart tries the failures once more.
+_LOUDNESS_TRIED: set[str] = set()
+# The songs waiting for the one background thread that measures them, oldest
+# first. _LOUDNESS_LOCK covers the set, this queue and _LOUDNESS_WORKER.
+_LOUDNESS_PENDING: deque[str] = deque()
+_LOUDNESS_LOCK = threading.Lock()
+_LOUDNESS_WORKER: threading.Thread | None = None
+
+
+def _loudness_sources(job_id: str) -> tuple[str, list[Path]]:
+    """What to measure for a finished song, and which of LOUDNESS_BASES that
+    is: its kept upload if it has one ("source"), else the sum of its stems
+    ("stems", the mix; the link's source is deleted once separated)."""
+    source = _retained_source(job_id)
+    if source is not None:
+        return "source", [source]
+    stems_dir = (JOBS_DIR / job_id / "stems").resolve()
+    if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        return "stems", []
+    return "stems", [p for p in (stem_path(stems_dir, n) for n in STEM_NAMES) if p.is_file()]
+
+
+def _queue_loudness_upgrade(job: Job) -> None:
+    """Queue a finished song whose stored loudness comes from an older
+    measurement (see LOUDNESS_VERSION) to be measured again in the background
+    (F11): the request answers with the stored numbers, and the next one has
+    the new. A full queue, or a separation running, leaves the song for a
+    later open."""
+    global _LOUDNESS_WORKER
+    if job.status != "done" or job.loudness_version == LOUDNESS_VERSION:
+        return
+    if jobqueue.running_id() is not None:
+        return
+    with _LOUDNESS_LOCK:
+        if job.id in _LOUDNESS_TRIED or len(_LOUDNESS_PENDING) >= LOUDNESS_UPGRADE_QUEUE_MAX:
+            return
+        _LOUDNESS_TRIED.add(job.id)
+        _LOUDNESS_PENDING.append(job.id)
+        if _LOUDNESS_WORKER is None:
+            worker = threading.Thread(
+                target=_upgrade_queued_loudness, name="loudness-upgrade", daemon=True
+            )
+            worker.start()
+            _LOUDNESS_WORKER = worker
+
+
+def _upgrade_queued_loudness() -> None:
+    """The background thread: one song at a time, then one registry save for
+    all of them. metadata.json gets each song's numbers as they come."""
+    global _LOUDNESS_WORKER
+    measured = False
+    while True:
+        with _LOUDNESS_LOCK:
+            if not _LOUDNESS_PENDING:
+                _LOUDNESS_WORKER = None
+                break
+            job_id = _LOUDNESS_PENDING.popleft()
+        try:
+            measured = _upgrade_loudness(job_id) or measured
+        except Exception:
+            logger.exception("[%s] loudness measurement failed", job_id)
+    if measured:
+        registry_persist(JOBS_DIR)
+
+
+def _upgrade_loudness(job_id: str) -> bool:
+    """Measure one queued song, about 2 s, up to TIMEOUT_ANALYZE. Best effort:
+    on failure the old numbers stay and the song is not retried until a
+    restart. True when the song has new numbers."""
+    job = registry_get(job_id)
+    if job is None or job.status != "done":
+        return False
+    if jobqueue.running_id() is not None:
+        # Never beside a separation (checked when queued, and again here for
+        # one that started since): this song is measured on a later open.
+        with _LOUDNESS_LOCK:
+            _LOUDNESS_TRIED.discard(job_id)
+        return False
+    basis, sources = _loudness_sources(job_id)
+    if not sources or is_relocating():
+        return False
+    lufs, peak_db = measure_loudness(sources)
+    if lufs is None or peak_db is None:
+        return False
+    dr = dynamic_range_db(lufs, peak_db)
+    # _set writes in this order, and a GET can read the job between two
+    # writes. The basis goes first and the version last, so no reader sees
+    # the current version without the basis that says the numbers moved
+    # (#923): the page would take the song as never measured again.
+    fields = {
+        "loudness_remeasured": basis,
+        "lufs": lufs,
+        "peak_db": peak_db,
+        "dynamic_range": dr,
+        "loudness_version": LOUDNESS_VERSION,
+    }
+    _set(job, **fields)
+    _write_metadata_fields(job_id, fields)
+    return True
 
 
 @router.get("/{job_id}")
@@ -479,6 +804,7 @@ def get_job(job_id: str) -> dict:
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    _queue_loudness_upgrade(job)
     return _job_state(job)
 
 
@@ -489,25 +815,60 @@ def cancel_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status in FINISHED_STATUSES:
+        # Extract missing stems first: a split or a lyrics timing waiting
+        # behind it would otherwise take the cancel and terminate the fill's
+        # worker under this id. Its stages read a stand-in's flag, which
+        # cancel_fill sets once the fill holds the pipeline lock; before that,
+        # the song's flag stops it from starting, and the process under this
+        # id is someone else's, so it is left alone.
+        if job.stem_fill == "running":
+            job.cancel_requested = True
+            if cancel_fill(job_id):
+                proc = registry_get_proc(job_id, "fill")
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
         # A vocal split only ever runs on a done job, so this early return made
         # it uncancellable by construction: the flag was never even set, while
         # the split held _pipeline_lock and stalled the whole import queue for
         # its full duration (#519). Terminating the worker is enough -- the
         # split's own error path marks it failed and releases the lock.
-        if job.vocal_split == "running":
+        elif job.vocal_split == "running":
             job.cancel_requested = True
-            proc = registry_get_proc(job_id)
+            proc = registry_get_proc(job_id, "split")
             if proc is not None and proc.poll() is None:
                 proc.terminate()
         # A line-by-line timing of its lyrics (POST .../lyrics/retime) stops
         # the same way: the run sees its own flag, never the job's, and
         # leaves the lyrics as they were.
         elif cancel_run(job_id):
-            proc = registry_get_proc(job_id)
+            proc = registry_get_proc(job_id, "retime")
             if proc is not None and proc.poll() is None:
                 proc.terminate()
         return job.to_state()
     _cancel_pipeline(job)
+    return job.to_state()
+
+
+@router.post("/{job_id}/stop")
+def stop_job(job_id: str) -> dict:
+    """Take a job out of the Queue: stop its extraction and keep the song (#772).
+
+    What the Queue's remove button sends. It used to send cancel, which deletes
+    the job's folder, so the song left the Library as well and never reached
+    the Trash. A stop settles as "stopped" with its files kept, the state a
+    trashed import ends in (#748) but out of the Trash, so the Library shows it
+    with Extract. A link that had not downloaded yet keeps its link, and
+    Extract fetches it again. A job already finished is left as it is.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in FINISHED_STATUSES:
+        job.stop_requested = True
+        _cancel_pipeline(job)
+        registry_persist(JOBS_DIR)
     return job.to_state()
 
 
@@ -558,6 +919,7 @@ class ResplitBody(BaseModel):
     trusted, and an empty result falls back to every stem."""
 
     stems: list[str] = Field(default_factory=list, max_length=len(STEM_NAMES))
+    vocal_split: bool = False
 
 
 def _retained_source(job_id: str) -> Path | None:
@@ -575,7 +937,7 @@ def _retained_source(job_id: str) -> Path | None:
         resolved = candidate.resolve()
         if (
             resolved.is_file()
-            and resolved.suffix.lower() in _ALLOWED_EXTS
+            and resolved.suffix.lower() in UPLOAD_EXTS
             and resolved.is_relative_to(JOBS_DIR.resolve())
         ):
             return resolved
@@ -675,12 +1037,18 @@ async def resplit_job(job_id: str, body: ResplitBody) -> dict:
         work=job.work,
         has_lyrics=has_lyrics,
         auto_sections=get_auto_sections(),
+        # The song's lyrics came along with it: keep looking for them only if
+        # Detect lyrics is on.
+        auto_lyrics=get_auto_lyrics(),
+        vocal_split_wanted=body.vocal_split and "vocals" in selected,
     )
+    await asyncio.to_thread(keep_added_time, new_job, new_dir)
     if not registry_register_if_capacity(new_job, MAX_PENDING_UPLOAD_JOBS):
         shutil.rmtree(new_dir, ignore_errors=True)
         raise HTTPException(status_code=503, detail=_UPLOAD_QUEUE_FULL_DETAIL)
     jobqueue.enqueue(new_job.id)
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    _note_split_request(new_job)
     # source_url comes back because the client cannot derive it: it is
     # deliberately not the one it asked with, and the library keys its
     # dedup on exactly this string.
@@ -703,45 +1071,284 @@ async def start_vocal_split(job_id: str) -> Response:
         raise HTTPException(status_code=409, detail="vocal split already running")
     if job.vocal_split == "done":
         return JSONResponse(_job_state(job), status_code=202)
+    # Refused, not queued behind it: starting it here cleared the cancel sent
+    # to the fill. No await from here to "running", and the fill re-checks
+    # after its own, so the two never both start.
+    if job.stem_fill == "running":
+        raise JobBusy()
 
     stems_dir = (JOBS_DIR / job_id / "stems").resolve()
     if not stems_dir.is_relative_to(JOBS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="job not found")
 
+    # A cancel is for the run it was sent to. One left over from an earlier
+    # run would otherwise read as this one being cancelled.
+    job.cancel_requested = False
     job.vocal_split = "running"
+    job.vocal_split_reason = None
     _set(job, stage="Splitting lead/backing vocals...")
+    # Saved before it starts: a restart during the split then reads it as
+    # interrupted, so a page that finds the job asking for Lead + Backing
+    # (vocal_split_wanted) never starts it a second time.
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     try:
         async with _pipeline_lock:
-            new_names = await asyncio.to_thread(split_vocals, job, stems_dir)
+            # Cancelled while it waited behind an import: never start.
+            if job.cancel_requested:
+                raise VocalSplitError(
+                    "vocal split cancelled before it started", code=SPLIT_CANCELLED
+                )
+            logger.info("[%s] vocal split started", job_id)
+            started = time.monotonic()
+            with registry_operation("split"):
+                new_names = await asyncio.to_thread(split_vocals, job, stems_dir)
+                # The peaks are read from the new WAVs first; then the two are
+                # kept the way the song keeps its stems (#783). Neither raises.
+                rms_values = await asyncio.to_thread(
+                    merge_stem_peaks, stems_dir, ["vocals", *new_names]
+                )
+                await asyncio.to_thread(store_split_stems, job, stems_dir, new_names)
     except Exception as e:
         cause = classify_failure("\n".join([*(getattr(e, "tail", None) or []), str(e)]))
         logger.warning("[%s] vocal split failed: %s", job_id, e, exc_info=True)
         _write_vocal_split_error(stems_dir, cause, getattr(e, "tail", None) or [str(e)])
+        # The song stays done with its Vocals stem, and now says why the pair
+        # is missing (#832). Only the code leaves the server: the exception's
+        # words stay in the log and vocal_split_error.txt.
+        code = getattr(e, "code", None) or (
+            SPLIT_CANCELLED if job.cancel_requested else SPLIT_WORKER_FAILED
+        )
+        vocal_split_status.record(False, code, source="split")
+        job.cancel_requested = False
         job.vocal_split = "error"
+        job.vocal_split_reason = code
         _set(job, stage="Done")
-        registry_persist(JOBS_DIR)
-        raise HTTPException(status_code=500, detail="vocal split failed") from e
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+        return JSONResponse(
+            {
+                "detail": "vocal split failed",
+                "vocal_split_reason": code,
+                "vocal_split_message": split_message_for(code),
+            },
+            status_code=500,
+        )
 
+    vocal_split_status.record(True, source="split")
+    logger.info(
+        "[%s] vocal split done in %.1fs: %s",
+        job_id,
+        time.monotonic() - started,
+        ", ".join(new_names),
+    )
     existing = {s["name"] for s in job.stems}
     for name in new_names:
         if name not in existing:
-            job.stems.append({"name": name, "url": f"/api/jobs/{job_id}/stems/{name}.wav"})
-    # "vocals" rides along so presence_for_split can recover the scale the base
-    # stems were normalised against; without it the two new cards would have no
-    # percentage to show.
-    rms_values = merge_stem_peaks(stems_dir, ["vocals", *new_names])
+            job.stems.append({"name": name, "url": stem_url(job_id, stems_dir, name)})
+    # "vocals" rode along in merge_stem_peaks above so presence_for_split can
+    # recover the scale the base stems were normalised against; without it the
+    # two new cards would have no percentage to show.
     extra_presence = presence_for_split(rms_values, job.stem_presence)
     if extra_presence:
         job.stem_presence = {**(job.stem_presence or {}), **extra_presence}
+    # A cancel that arrived after the worker finished lost the race. Left set,
+    # it would stop the next run on this song that reads the flag.
+    job.cancel_requested = False
     job.vocal_split = "done"
     _set(job, stage="Done")
-    registry_persist(JOBS_DIR)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
     return JSONResponse(_job_state(job))
+
+
+# -- Versions (#804)
+#
+# A version is a named choice of stems over the song's one set of stem files
+# (app/core/versions.py). These endpoints only ever change the song's record:
+# none of them reads, writes or deletes a stem file. Each runs on the event
+# loop with no await between reading the versions and writing them back, so
+# two requests cannot interleave a read-modify-write.
+
+
+class VersionCreateBody(BaseModel):
+    name: str | None = Field(default=None, max_length=VERSION_NAME_MAX_CHARS * 4)
+    stems: list[str] = Field(min_length=1, max_length=len(STEM_NAMES))
+    # Make it the version that opens with the song.
+    select: StrictBool = False
+
+
+class VersionRenameBody(BaseModel):
+    name: str = Field(max_length=VERSION_NAME_MAX_CHARS * 4)
+
+
+def _versions_payload(job: Job) -> dict:
+    versions = versions_of(job)
+    return {"job_id": job.id, "versions": versions, "active_version": active_of(job, versions)}
+
+
+def _version_job(job_id: str, *, ready: bool = True) -> Job:
+    """The job whose versions a request changes, after the id checks.
+    404 for anything that is not a known job; 409 while it is not done."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if ready and job.status != "done":
+        raise HTTPException(status_code=409, detail="the song is not ready")
+    return job
+
+
+def _check_version_id(version_id: str) -> None:
+    if not VERSION_ID_RE.match(version_id):
+        raise HTTPException(status_code=404, detail="version not found")
+
+
+@router.get("/{job_id}/versions")
+async def list_versions(job_id: str) -> dict:
+    """The versions of a song and the one that opens with it."""
+    return _versions_payload(_version_job(job_id, ready=False))
+
+
+@router.post("/{job_id}/versions", status_code=201)
+async def create_version(job_id: str, body: VersionCreateBody) -> dict:
+    """A new version of the song showing `stems`. Nothing is separated or
+    copied on disk: it is settings only."""
+    job = _version_job(job_id)
+    stems = clean_stems(body.stems)
+    if not stems:
+        raise HTTPException(status_code=422, detail="choose at least one known stem")
+    versions = versions_of(job)
+    if len(versions) >= MAX_VERSIONS:
+        raise HTTPException(status_code=409, detail="this song has too many versions")
+    version = make_version(versions, body.name, stems)
+    versions.append(version)
+    active = version["id"] if body.select else active_of(job, versions)
+    _set(job, versions=versions, active_version=active)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
+    return {"version": version, **_versions_payload(job)}
+
+
+@router.patch("/{job_id}/versions/{version_id}")
+async def rename_version(job_id: str, version_id: str, body: VersionRenameBody) -> dict:
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    name = clean_name(body.name)
+    if name is None:
+        raise HTTPException(status_code=422, detail="a version needs a name")
+    versions = versions_of(job)
+    target = next((v for v in versions if v["id"] == version_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="version not found")
+    target["name"] = name
+    _set(job, versions=versions, active_version=active_of(job, versions))
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
+    return _versions_payload(job)
+
+
+@router.delete("/{job_id}/versions/{version_id}")
+async def delete_version(job_id: str, version_id: str) -> dict:
+    """Forget a version. Its stems stay: every version shares the song's one
+    set of stem files, and no stem file is ever deleted here. The last
+    version cannot be deleted: a song always has one."""
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    versions = versions_of(job)
+    if not any(v["id"] == version_id for v in versions):
+        raise HTTPException(status_code=404, detail="version not found")
+    if len(versions) == 1:
+        raise HTTPException(status_code=409, detail="a song keeps at least one version")
+    remaining = [v for v in versions if v["id"] != version_id]
+    # The deleted one was opening with the song: the first left does now.
+    _set(job, versions=remaining, active_version=active_of(job, remaining))
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
+    return _versions_payload(job)
+
+
+@router.post("/{job_id}/versions/{version_id}/select")
+async def select_version(job_id: str, version_id: str) -> dict:
+    """Make a version the one that opens with the song."""
+    job = _version_job(job_id)
+    _check_version_id(version_id)
+    versions = versions_of(job)
+    if not any(v["id"] == version_id for v in versions):
+        raise HTTPException(status_code=404, detail="version not found")
+    _set(job, versions=versions, active_version=version_id)
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
+    return _versions_payload(job)
+
+
+class FillStemsBody(BaseModel):
+    stems: list[str] = Field(min_length=1, max_length=len(STEM_NAMES))
+
+
+_FILL_REFUSALS = {
+    "no_source": "no source kept for this track",
+    "model": "this song was separated with another model",
+}
+
+
+@router.post("/{job_id}/fill-stems")
+async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
+    """Extract on a song already in the library (#804): separate only the
+    stems of `stems` it has no file for, with the model and quality it was
+    separated with. The stems it has are never replaced. Answers at once,
+    with nothing separated, when none is missing; otherwise when the run is
+    over, with the song's state."""
+    job = _version_job(job_id)
+    wanted = clean_stems(body.stems)
+    if not wanted:
+        raise HTTPException(status_code=422, detail="choose at least one known stem")
+    job_dir = (JOBS_DIR / job_id).resolve()
+    stems_dir = (job_dir / "stems").resolve()
+    if not stems_dir.is_dir() or not stems_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.post_hoc_running():
+        raise HTTPException(status_code=409, detail="the song is busy")
+    missing = await asyncio.to_thread(missing_stems, stems_dir, wanted)
+    if not missing:
+        return JSONResponse({"filled": [], "state": _job_state(job)})
+    source = _retained_source(job_id) if (job.source_url or "").startswith("local:") else None
+    if source is None and (job.source_url or "local:").startswith("local:"):
+        raise HTTPException(status_code=409, detail=_FILL_REFUSALS["no_source"])
+    # Checked again here, after the await above: the first of two requests
+    # to get this far is the one that runs, and a split started meanwhile
+    # keeps the song.
+    if job.post_hoc_running():
+        raise HTTPException(status_code=409, detail="the song is busy")
+    # A cancel is for the run it was sent to, as for the vocal split.
+    job.cancel_requested = False
+    job.stem_fill = "running"
+    _set(job, stage="Extracting missing stems...")
+    try:
+        async with _pipeline_lock:
+            with registry_operation("fill"):
+                filled = await asyncio.to_thread(fill_stems, job, job_dir, wanted, source)
+    except FillRefused as e:
+        job.stem_fill = "error"
+        _set(job, stage="Done")
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+        raise HTTPException(status_code=409, detail=_FILL_REFUSALS[e.code]) from None
+    except Exception:
+        if not job.cancel_requested:
+            logger.exception("[%s] filling missing stems failed", job_id)
+        job.stem_fill = "error"
+        _set(job, stage="Done")
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+        # Stopped by POST .../cancel: every stem the song had is still there.
+        if job.cancel_requested:
+            return JSONResponse({"detail": "the extraction was cancelled"}, status_code=409)
+        return JSONResponse({"detail": "could not extract the missing stems"}, status_code=500)
+    job.stem_fill = "done"
+    _set(job, stage="Done")
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    return JSONResponse({"filled": filled, "state": _job_state(job)})
 
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
-_SECTIONS_WRITE_LOCK = threading.Lock()
 
 
 def _write_json_atomic(path: Path, data: dict) -> None:
@@ -831,7 +1438,7 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
         raise HTTPException(status_code=404, detail="job not found")
     meta_path = job_dir / "metadata.json"
 
-    with _SECTIONS_WRITE_LOCK:
+    with metadata_lock:
         meta: dict = {}
         try:
             if meta_path.is_file():
@@ -882,7 +1489,7 @@ def _write_metadata_fields(job_id: str, fields: dict[str, object]) -> None:
     if not meta_path.is_relative_to(JOBS_DIR.resolve()):
         return
     # The same lock as the sections editor, the other read-modify-write here.
-    with _SECTIONS_WRITE_LOCK:
+    with metadata_lock:
         try:
             if not meta_path.is_file():
                 return
@@ -892,7 +1499,15 @@ def _write_metadata_fields(job_id: str, fields: dict[str, object]) -> None:
             meta.update(fields)
             _write_json_atomic(meta_path, meta)
         except (OSError, ValueError):
-            logger.warning("could not record audio tags in metadata for %s", job_id, exc_info=True)
+            logger.warning("could not update metadata.json for %s", job_id, exc_info=True)
+
+
+def _keep_saved_fields(job: Job) -> None:
+    """Copy what the user set on a song (favourite, Trash, versions) into its
+    metadata.json, so a registry rebuilt from the folders keeps it. Read under
+    the lock, so of two quick changes the later one is what stays."""
+    with metadata_lock:
+        _write_metadata_fields(job.id, saved_fields(job))
 
 
 @router.post("/{job_id}/audio-tags")
@@ -934,7 +1549,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
     if (
         job.audio_tags
         and (job.artist or not tagged_artist_name(job.audio_tags.get("artist")))
-        and lyrics_settled(job_dir)
+        and (lyrics_settled(job_dir) or job.auto_lyrics is False)
         and not _wants_identity(job, job.audio_tags)
         and not _wants_work(job, job.identity, job.audio_tags)
     ):
@@ -958,7 +1573,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                 tags = await asyncio.wait_for(
                     asyncio.to_thread(_lookup_audio_tags, job), timeout=TIMEOUT_FETCH_TAGS
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[%s] audio tag lookup timed out after %ds", job_id, TIMEOUT_FETCH_TAGS
                 )
@@ -994,7 +1609,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=TIMEOUT_IDENTIFY_BACKFILL,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] identification timed out", job_id)
         work = None
         # The work behind a soundtrack, once the identity says which recording
@@ -1011,12 +1626,15 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=TIMEOUT_WORK_BACKFILL,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] work lookup timed out", job_id)
         lyrics = None
         query = build_query(job, audio_tags=tags, band=artist, identity=identity)
-        # Not asked again while LRCLIB's last "nothing" is recent.
-        if query is not None and not lyrics_settled(job_dir):
+        # Not asked again while LRCLIB's last "nothing" is recent, and never
+        # for a track imported with Detect lyrics off: its Lyrics tab offers
+        # the lookup instead (POST .../lyrics/lookup), so opening the track
+        # does not fetch what the user turned off.
+        if job.auto_lyrics is not False and query is not None and not lyrics_settled(job_dir):
             # find_lyrics never raises, and starts no request past its budget.
             try:
                 lyrics = await asyncio.wait_for(
@@ -1028,7 +1646,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
                     ),
                     timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.info("[%s] lyrics lookup timed out", job_id)
     finally:
         _TAG_LOOKUPS.discard(job_id)
@@ -1047,7 +1665,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
         and not lyrics_path(job_dir).is_file()
         and await asyncio.to_thread(keep_answer, job, job_dir, lyrics)
     ):
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
     found: dict[str, object] = {}
     if tags and not job.audio_tags:
         found["audio_tags"] = tags
@@ -1059,7 +1677,7 @@ async def refresh_audio_tags(job_id: str) -> dict:
         found["work"] = work
     if found:
         _set(job, **found)
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
         await asyncio.to_thread(_write_metadata_fields, job_id, found)
     return {
         "audio_tags": job.audio_tags,
@@ -1100,7 +1718,7 @@ def _fingerprint_audio(job: Job) -> list[Path]:
     stems_root = (JOBS_DIR / job.id / "stems").resolve()
     stems = []
     for name in STEM_NAMES:
-        path = (stems_root / f"{name}.wav").resolve()
+        path = stem_path(stems_root, name).resolve()
         if path.is_file() and path.is_relative_to(JOBS_DIR.resolve()):
             stems.append(path)
     return stems
@@ -1165,7 +1783,7 @@ async def get_artist_extra(job_id: str) -> dict:
     try:
         # Shielded, so one caller giving up does not cancel another's answer.
         answer = await asyncio.wait_for(asyncio.shield(task), DISCOGS_LOOKUP_BUDGET_SEC + 1)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("[%s] Discogs lookup timed out", job_id)
         answer = None
     except Exception:
@@ -1292,7 +1910,7 @@ async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None)
             ),
             timeout=LYRICS_LOOKUP_BUDGET_SEC + TIMEOUT_LYRICS_LOOKUP + 1,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("[%s] lyrics lookup timed out", job_id)
         raise HTTPException(status_code=502, detail="lyrics service unreachable") from None
     except Exception:
@@ -1307,7 +1925,7 @@ async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None)
         and not lyrics_path(job_dir).is_file()
         and await asyncio.to_thread(keep_answer, job, job_dir, answer)
     ):
-        registry_persist(JOBS_DIR)
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
     try:
         return await asyncio.to_thread(get_lyrics, job_id)
     except HTTPException:
@@ -1465,7 +2083,7 @@ def _retime_ready(job_dir: Path, lyrics: dict | None) -> None:
             raise HTTPException(status_code=404, detail="no lyrics")
     if not lyric_pairs(lyrics):
         raise HTTPException(status_code=409, detail="lyrics have no lines")
-    vocals = (job_dir / "stems" / "vocals.wav").resolve()
+    vocals = stem_path(job_dir / "stems", "vocals").resolve()
     if not vocals.is_relative_to(JOBS_DIR.resolve()) or not vocals.is_file():
         raise HTTPException(status_code=409, detail="no vocals stem")
 
@@ -1485,9 +2103,10 @@ async def _retime_task(job: Job, job_dir: Path, run: RetimeRun, lyrics: dict | N
             run.started = True
             if cancelled():
                 raise JobCancelled()
-            outcome = await asyncio.to_thread(
-                retime_job, job, job_dir, cancelled=cancelled, report=report, lyrics=lyrics
-            )
+            with registry_operation("retime"):
+                outcome = await asyncio.to_thread(
+                    retime_job, job, job_dir, cancelled=cancelled, report=report, lyrics=lyrics
+                )
         run.outcome = outcome
         run.state = outcome.state
     except JobCancelled:
@@ -1669,12 +2288,7 @@ def get_failure(job_id: str) -> dict:
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
 
-    # JOB_ID_RE rejects "failed", so the quarantine dir can never be addressed
-    # as a job id; join it explicitly and re-verify the result stays inside.
-    failed_dir = (JOBS_DIR / "failed" / job_id).resolve()
-    if not failed_dir.is_relative_to((JOBS_DIR / "failed").resolve()):
-        raise HTTPException(status_code=404, detail="job not found")
-    path = failed_dir / "error.txt"
+    path = _failed_dir(job_id) / "error.txt"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no failure evidence for this job")
 
@@ -1836,25 +2450,42 @@ def reset_beats(job_id: str) -> dict:
 
 
 @router.delete("/{job_id}")
-def delete_job(job_id: str) -> dict[str, str]:
-    """Delete a completed or failed job and remove its stem files from disk."""
+def delete_job(job_id: str, response: Response) -> dict[str, str]:
+    """Delete a completed or failed job and remove its stem files from disk.
+
+    A job emptied from the Trash while the stop its trash sent is still
+    settling answers 202: the page has already let it go, so a refusal left
+    its folder and record on disk with nothing showing them (#748). The id is
+    marked deleted first, and the runner removes the job once it settles
+    (jobqueue.finish_deferred_delete)."""
     if not JOB_ID_RE.match(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     job = registry_get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in FINISHED_STATUSES:
-        raise HTTPException(status_code=409, detail="job is still running")
+        if job.trashed_at is None:
+            raise HTTPException(status_code=409, detail="job is still running")
+        registry_mark_deleted(job_id)
+        registry_persist(JOBS_DIR)
+        # Read after the mark: settled meanwhile, it is deleted below instead.
+        if job.status not in FINISHED_STATUSES:
+            response.status_code = 202
+            return {"job_id": job_id, "status": "deleting"}
+    if job.post_hoc_running():
+        raise JobBusy()
     # A timing of its lyrics in flight stops rather than write into a
     # directory being removed (it also checks the job is still registered).
-    if cancel_run(job_id) and job.vocal_split != "running":
-        proc = registry_get_proc(job_id)
+    if cancel_run(job_id):
+        proc = registry_get_proc(job_id, "retime")
         if proc is not None and proc.poll() is None:
             proc.terminate()
         # The worker may still have the vocals open while it stops.
         if not wait_run_ended(job_id, RETIME_DELETE_WAIT_SEC):
             logger.warning("[%s] lyrics timing still stopping; removing files anyway", job_id)
     forget_run(job_id)
+    # A video render of one of its takes writes into the folder about to go.
+    cancel_job_renders(job_id)
     # A fingerprint of its audio may still have a file open (Windows).
     release_source(job_id)
     removed = _rmtree_job(job_id)
@@ -1863,6 +2494,10 @@ def delete_job(job_id: str) -> dict[str, str]:
     # re-adopted by restore() on the next start and the track reappears.
     registry_mark_deleted(job_id)
     registry_remove(job_id)
+    # Its cached backing and rest sums, and the locks it and its takes made:
+    # after the registry, so no new request for it gets that far.
+    forget_backing(job_id)
+    forget_job_locks(job_id)
     registry_persist(JOBS_DIR)
     if not removed:
         raise HTTPException(

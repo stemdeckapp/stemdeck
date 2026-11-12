@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 
 import pytest
 
+from app.core import registry as _registry
 from app.core.models import Job
 from app.core.registry import _jobs
 from app.pipeline import jobqueue
@@ -318,3 +320,42 @@ async def test_pausing_does_not_touch_a_running_job(worker, monkeypatch):
 
 async def test_start_worker_begins_unpaused(worker):
     assert jobqueue.is_paused() is False
+
+
+# ── the one resume after a crash ─────────────────────────────────────────────
+
+
+async def test_a_job_that_kills_the_process_gets_one_resume(worker, monkeypatch, tmp_path):
+    """Counted when the job starts, and on disk before it runs: a job that
+    takes the process down never reaches a save of its own. Restarts while the
+    restored queue waits for Start do not use the resume up."""
+    on_disk: list[int] = []
+
+    async def _dies(job, url, jobs_dir):
+        # The process dies here: registry.json is all the next start has.
+        saved = json.loads(_registry.registry_path(tmp_path).read_text(encoding="utf-8"))
+        on_disk.append(saved["jobs"][0]["resume_attempts"])
+
+    monkeypatch.setattr("app.pipeline.runner.run_pipeline", _dies)
+    job = _job("aaaaaaaaaaaa")
+    _registry.persist(tmp_path)
+
+    def restart() -> Job:
+        _jobs.clear()
+        _registry.restore(tmp_path)
+        assert _registry.take_pending_resume() == [job.id]
+        return _jobs[job.id]
+
+    jobqueue.enqueue(job.id)
+    await _drain(lambda: on_disk == [1] and jobqueue.running_id() is None)
+
+    for _ in range(3):  # restarted, never started
+        restored = restart()
+        assert restored.status == "queued"
+    jobqueue.enqueue(job.id)  # Start: the resume
+    await _drain(lambda: on_disk == [1, 2] and jobqueue.running_id() is None)
+
+    _jobs.clear()
+    _registry.restore(tmp_path)
+    assert _jobs[job.id].status == "error"
+    assert _registry.take_pending_resume() == []

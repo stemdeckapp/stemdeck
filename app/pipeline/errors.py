@@ -42,6 +42,9 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cannot allocate memory",
             "out of memory",
             "memoryerror",
+            # MIOpen, ROCm's cuDNN, failing to allocate on an AMD GPU (#825).
+            # Here, ahead of the other MIOpen statuses below.
+            "miopenstatusallocfailed",
         ),
     ),
     (
@@ -53,6 +56,13 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cudnn error",
             "not currently implemented for the mps device",
             "torch not compiled with cuda",
+            # A ROCm build of torch on an AMD GPU (#825): no kernels for the
+            # card's gfx target (HIP's "invalid device function" is caught
+            # above), a HIP runtime that cannot reach the card (no /dev/kfd
+            # access), and any other MIOpen failure.
+            "hiperrornobinaryforgpu",
+            "no hip gpus are available",
+            "miopenstatus",
         ),
     ),
     (
@@ -63,6 +73,10 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "disk quota exceeded",
         ),
     ),
+    # The separation model's download (#125), in the words of
+    # app/core/model_download.py and separate.py's stall message. Only those
+    # words: a network error on its own is just as likely a song's download.
+    ("model-download", ("model download failed:",)),
     # Source-fetch failures (#434). Placed after the resource-level causes above
     # so a genuine disk-full or OOM during a download still classifies as such,
     # and before "bad-input" so yt-dlp's wording wins over the generic
@@ -105,7 +119,8 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def classify_failure(text: str) -> str:
     """Map failure output to one of: out-of-memory, unsupported-device,
-    disk-full, source-blocked, source-unavailable, bad-input, unknown."""
+    disk-full, model-download, source-blocked, source-unavailable, bad-input,
+    unknown."""
     low = text.lower()
     for cause, patterns in _CAUSE_PATTERNS:
         if any(p in low for p in patterns):

@@ -1,6 +1,11 @@
 THIRD-PARTY NOTICES
 ===================
 
+StemDeck itself is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only). The full text is in LICENSE.txt in the
+app's Contents/Resources folder, and the source code is at
+https://github.com/stemdeckapp/stemdeck
+
 StemDeck for macOS uses a thin Tauri app plus a downloaded runtime pack.
 
 Bundled in StemDeck.app:
@@ -27,16 +32,44 @@ StemDeck downloads FFmpeg and ffprobe at first run and calls them as
 separate executables. They are not linked into StemDeck and do not
 change StemDeck's own license.
 
-Build: ffmpeg 8.1.1 and ffprobe 8.1.1, from evermeet.cx
-License: GNU General Public License v3 or later
+A native FFmpeg already installed on the Mac, or a pair already in
+StemDeck's data folder, is used first. When StemDeck downloads FFmpeg,
+the build depends on the Mac:
+
+- It tries ffmpeg and ffprobe n8.1.2, from the shaka-project
+  static-ffmpeg-binaries release n8.1.2-1, built for the Mac's own
+  processor (Apple Silicon or Intel).
+- On an Intel Mac where that download fails, it falls back to ffmpeg
+  8.1.1 and ffprobe 8.1.1, from evermeet.cx. Those builds are for Intel
+  Macs only, so StemDeck's own default sources never download them on
+  an Apple Silicon Mac.
+
+License: both builds are configured with --enable-gpl and
+         --enable-version3, so they are under the GNU General Public
+         License v3 or later.
          https://www.gnu.org/licenses/gpl-3.0.html
 
 Written offer of source. The complete corresponding source is:
 
-  FFmpeg itself, release 8.1.1
+  FFmpeg itself, releases n8.1.2 and 8.1.1
     https://git.ffmpeg.org/ffmpeg.git
-  The build's configuration, reported by `ffmpeg -version`
+  The shaka-project build: its scripts, configuration and the version of
+  every library it links
+    https://github.com/shaka-project/static-ffmpeg-binaries/releases/tag/n8.1.2-1
+    https://github.com/shaka-project/static-ffmpeg-binaries/tree/n8.1.2-1
+  The libraries in the shaka-project build, at the versions its release
+  notes list:
+    libvpx    https://chromium.googlesource.com/webm/libvpx
+    SVT-AV1   https://gitlab.com/AOMediaCodec/SVT-AV1
+    x264      https://code.videolan.org/videolan/x264
+    x265      https://bitbucket.org/multicoreware/x265_git.git
+    LAME      https://lame.sourceforge.io/
+    Opus      https://github.com/xiph/opus
+    mbedTLS   https://github.com/Mbed-TLS/mbedtls
+  The evermeet.cx build's configuration, reported by `ffmpeg -version`
     https://evermeet.cx/ffmpeg/
+  The evermeet.cx build's external libraries, with their source links
+    https://evermeet.cx/ffmpeg/info/ffmpeg/8.1.1
 
 If either link stops resolving, open an issue at
 https://github.com/stemdeckapp/stemdeck/issues and the source will be

@@ -21,6 +21,7 @@
 #     cpu-only                 # marker read by is_cpu_only_package
 #     README-LINUX.txt
 #     THIRD_PARTY_NOTICES.txt
+#     LICENSE.txt              # StemDeck's own license (AGPL-3.0-only)
 #     backend/{app,static,pyproject.toml,uv.lock}
 #     python/{bin/python,lib/pythonX.Y/...}   # full PBS install
 
@@ -30,7 +31,9 @@ PACKAGE_NAME="${PACKAGE_NAME:-StemDeck-Linux-x64}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-dist}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
-TORCH_VERSION="${TORCH_VERSION:-2.6.0}"
+# TORCH_VERSION may be set to override the torch line; bake-cpu-torch.sh reads
+# the default, and the torchvision that goes with it, from
+# packaging/torch-versions.json (#778).
 SKIP_TAURI_BUILD="${SKIP_TAURI_BUILD:-0}"
 # CPU_ONLY=1 (default): force the CPU-only torch wheel and mark the package so the
 # desktop shell skips GPU detection. CPU_ONLY=0: keep the project's default torch,
@@ -136,14 +139,11 @@ uv pip install --system --python "$BUNDLED_PYTHON" "$REPO_ROOT"
 # machines (install_cuda_torch, gated cfg(not(macos)) so it covers Linux). The
 # NVIDIA variant differs only by omitting the cpu-only marker below.
 #
-# pip strips the local '+cpu' version when resolving, so the project install
-# pulls the CUDA wheel even if a CPU wheel was requested; --force-reinstall
-# --no-deps replaces just the torch/torchaudio wheels (proven on Windows).
+# The swap includes torchvision, which the project install pulled as the CUDA
+# build too, and fails the build if the result cannot load (#778). See the
+# script for why torchvision has to be named.
 echo "==> Baking CPU-only torch (NVIDIA variant downloads CUDA at first run)"
-"$BUNDLED_PYTHON" -m pip install \
-  "torch==${TORCH_VERSION}+cpu" "torchaudio==${TORCH_VERSION}+cpu" \
-  --index-url https://download.pytorch.org/whl/cpu \
-  --force-reinstall --no-deps
+bash "${REPO_ROOT}/scripts/linux/bake-cpu-torch.sh" "$BUNDLED_PYTHON"
 
 # The project install above pulled the default Linux torch, which is the CUDA
 # build, dragging in nvidia-* CUDA runtime packages (cuDNN, cuBLAS, NCCL, ...) and
@@ -180,6 +180,8 @@ printf '{ "version": "%s" }\n' "$RESOLVED_VERSION" > "$BACKEND_DIR/static/versio
 
 cp "$REPO_ROOT/packaging/linux/README-LINUX.txt" "$STAGE/README-LINUX.txt"
 cp "$REPO_ROOT/packaging/linux/THIRD_PARTY_NOTICES.txt" "$STAGE/THIRD_PARTY_NOTICES.txt"
+# The AGPL asks for a copy of the license with every copy of the program.
+cp "$REPO_ROOT/LICENSE" "$STAGE/LICENSE.txt"
 
 # Desktop-entry assets for the optional installer (#360). Carried inside the
 # package so the installer needs no second download and no asset URL that could
@@ -240,6 +242,10 @@ done
 # Re-verify after the widened strip: the check above ran before it and would not
 # catch a strip that removed something load-bearing (#407, #421).
 "$BUNDLED_PYTHON" -c "import fastapi, uvicorn, yt_dlp, demucs, torch, torchaudio, librosa, pyloudnorm, soundfile, audio_separator, onnxruntime; print('Post-strip import check OK')"
+# And the torch bundle gate once more, on the stripped tree that ships. Both
+# variants bake CPU torch, so both expect +cpu (#778).
+"$BUNDLED_PYTHON" "${REPO_ROOT}/scripts/check_torch_bundle.py" \
+  --versions "${REPO_ROOT}/packaging/torch-versions.json" --expect-cpu
 
 # Full license texts for everything in the venv, generated from the venv rather
 # than maintained by hand. MIT, BSD and Apache-2.0 all require the copyright
