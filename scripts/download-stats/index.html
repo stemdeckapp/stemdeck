@@ -4,22 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>StemDeck Downloads</title>
-<meta name="description" content="Download counts of every StemDeck release, recorded every 10 minutes.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="description" content="Total StemDeck downloads across all releases, recorded every 10 minutes.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one column, a mixer-strip header (latest release + meters), then the timeline, then the per-release table. */
+/* One column: a big total, then one line chart of that total over time. */
 :root {
-  --bg: #f5f6f8;
-  --panel: #ffffff;
-  --fg: #16181d;
-  --muted: #5d6472;
-  --line: #dfe2e8;
-  --grid: #e9ebf0;
-  --accent: #e2561b;        /* latest release */
-  --s1: #2f6fdf; --s2: #12957a; --s3: #9a55d6; --s4: #c48a07; --s5: #c23b6b;
-  --good: #1a8a4a; --ramp-l: 42%;
+  --bg: #f5f6f8; --panel: #ffffff; --fg: #16181d; --muted: #5d6472; --line: #dfe2e8; --grid: #e9ebf0;
+  --accent: #e2561b; --accent-fill: rgba(226, 86, 27, 0.12); --good: #1a8a4a; --warn: #c48a07;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -28,447 +19,170 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-    --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f; --ramp-l: 66%;
-    color-scheme: dark;
+    --accent: #ff7a3d; --accent-fill: rgba(255, 122, 61, 0.14); --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-  --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f; --ramp-l: 66%;
-  color-scheme: dark;
+  --accent: #ff7a3d; --accent-fill: rgba(255, 122, 61, 0.14); --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
 body {
-  margin: 0; background: var(--bg); color: var(--fg);
-  font: 15px/1.5 var(--font-body);
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 28px 48px;
 }
-.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 20px; }
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 20px; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
-h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
-.status { font: 0.8rem var(--font-mono); color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
-.status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: 1px; }
-.status .dot.stale { background: var(--s4); }
-
-.hero { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 18px; grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 1fr)); }
-.hero > div { min-width: 0; }
+h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01em; }
+.status { font: 0.8rem var(--font-mono); color: var(--muted); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: 1px; }
+.dot.stale { background: var(--warn); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 16px; }
+.top { display: flex; flex-wrap: wrap; gap: 12px 40px; align-items: flex-end; }
 .label { font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-.big { font: 700 2.8rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--accent); margin-top: 6px; }
-.mid { font: 600 1.5rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; margin-top: 8px; }
-.sub { font-size: 0.82rem; color: var(--muted); margin-top: 4px; }
-.tag { font: 500 0.95rem var(--font-mono); }
-.pill { display: inline-block; font: 500 0.68rem var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; color: var(--s4); margin-left: 6px; vertical-align: 2px; }
-
-.chart-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 10px; display: grid; gap: 10px; }
-.chart-head { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; }
-.chart-head h2 { font: 600 1rem var(--font-display); margin: 0; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.seg button { font: 500 0.8rem var(--font-body); background: transparent; color: var(--muted); border: 0; padding: 6px 12px; cursor: pointer; }
-.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.canvas-box { position: relative; height: 380px; }
-.canvas-box.short { height: 300px; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 0.8rem var(--font-mono); }
-.legend button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--fg); }
-.legend button[aria-pressed="false"] { opacity: 0.4; }
-.legend button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-.swatch { width: 14px; height: 3px; border-radius: 2px; }
-.note { font-size: 0.78rem; color: var(--muted); }
-
-.table-box { overflow: auto; max-height: 460px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; min-width: 560px; }
-th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
-th { position: sticky; top: 0; background: var(--panel); font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-th:first-child, td:first-child { text-align: left; }
-tr:last-child td { border-bottom: 0; }
-tbody tr { cursor: pointer; }
-tbody tr:hover td { background: var(--grid); }
-tbody tr.off td { opacity: 0.4; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.chips .seg button { padding: 5px 11px; }
-.chips .hint { font-size: 0.78rem; color: var(--muted); }
-td a { color: inherit; text-decoration: none; font-family: var(--font-mono); }
-td a:hover { text-decoration: underline; }
-td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
-.error { color: var(--s5); font-size: 0.85rem; }
-
-@media (max-width: 760px) {
-  .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .hero > div:first-child { grid-column: 1 / -1; }
-  .canvas-box { height: 300px; }
-  .big { font-size: 2.3rem; }
-}
+.big { font: 700 3.4rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--accent); margin-top: 6px; }
+.mid { font: 600 1.4rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; margin-top: 8px; }
+.sub { font-size: 0.82rem; color: var(--muted); }
+.box { position: relative; height: 380px; }
+.note { font-size: 0.8rem; color: var(--muted); }
+@media (max-width: 640px) { .box { height: 300px; } .big { font-size: 2.6rem; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>StemDeck Downloads</h1>
-    <div class="status" aria-live="polite">
-      <span><span class="dot" id="dot"></span><span id="updated">Loading…</span></span>
-      <span id="countdown"></span>
-    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span> · one point every 10 min</div>
   </header>
 
-  <section class="hero" aria-label="Latest release">
-    <div>
-      <div class="label">Latest release</div>
-      <div class="big" id="latest-total">–</div>
-      <div class="sub"><span class="tag" id="latest-tag">–</span><span id="latest-pill"></span> · <span id="latest-age">–</span></div>
-    </div>
-    <div>
-      <div class="label">All releases</div>
-      <div class="mid" id="all-total">–</div>
-      <div class="sub" id="all-sub">total downloads</div>
-    </div>
-    <div>
-      <div class="label">Last hour</div>
-      <div class="mid" id="d-hour">–</div>
-      <div class="sub">new downloads</div>
-    </div>
-    <div>
-      <div class="label">Last 24 hours</div>
-      <div class="mid" id="d-day">–</div>
-      <div class="sub">new downloads</div>
-    </div>
-    <div>
-      <div class="label">vs previous release</div>
-      <div class="mid" id="vs-prev">–</div>
-      <div class="sub" id="vs-prev-sub">at the same age</div>
-    </div>
-  </section>
-
-  <section class="chart-card" aria-label="Total downloads by release">
-    <div class="chart-head"><h2>Total downloads by release</h2><span class="note" id="bars-note"></span></div>
-    <div class="canvas-box short"><canvas id="bars" aria-label="Bar chart of total downloads per release"></canvas></div>
-  </section>
-
-  <section class="chart-card" aria-label="Download timeline">
-    <div class="chart-head">
-      <h2>Cumulative downloads</h2>
-      <div class="seg" role="group" aria-label="X axis">
-        <button type="button" id="mode-time" aria-pressed="true">Timeline</button>
-        <button type="button" id="mode-age" aria-pressed="false">Days since release</button>
+  <section class="card" aria-label="Total downloads">
+    <div class="top">
+      <div>
+        <div class="label">Total downloads, all releases</div>
+        <div class="big" id="total">–</div>
+        <div class="sub" id="releases">–</div>
+      </div>
+      <div>
+        <div class="label">Since recording started</div>
+        <div class="mid" id="since">–</div>
+        <div class="sub" id="since-sub">&nbsp;</div>
+      </div>
+      <div>
+        <div class="label">Last hour</div>
+        <div class="mid" id="hour">–</div>
+        <div class="sub">new downloads</div>
       </div>
     </div>
-    <div class="chips" id="legend"></div>
-    <div class="canvas-box"><canvas id="chart" aria-label="Line chart of cumulative downloads per release"></canvas></div>
-    <div class="note">Recording started recently, so history before that is not known. Dashed segments run from a new release's publish date to its first recorded count; nothing was measured in between, and older releases start at their first recorded count. Counts include installers and app bundles, not checksum or metadata files.</div>
-    <div class="error" id="error" hidden></div>
-  </section>
-
-  <section class="table-box" aria-label="Releases">
-    <table>
-      <thead><tr><th>Release</th><th>Published</th><th>Downloads</th><th>Per day</th><th>Last 24 h</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <div class="box"><canvas id="chart" aria-label="Line chart of total downloads over time"></canvas></div>
+    <div class="note" id="note"></div>
   </section>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 (() => {
-  const REPO = "stemdeckapp/stemdeck";
-  const REFRESH_MS = 60 * 1000;  // re-read the local data file; the server records every 10 minutes
+  const REFRESH_MS = 60 * 1000;   // re-read the data file; the recorder adds a point every 10 minutes
   const STALE_MS = 25 * 60 * 1000;
-  const TRACKED = Infinity;  // every published release
-  const RECENT = 6;
-  const SKIP = [".sha256", ".txt", ".json", ".sig", ".asc"];
   const HOUR = 3600e3, DAY = 24 * HOUR;
-  let filter = "all";   // all | recent | stable
-  // The latest release is the accent colour. Older ones step through a hue
-  // ramp, newest to oldest, so neighbouring versions look alike.
-  const colorFor = (i, n) => i === 0 ? css("--accent") : `hsl(${Math.round(205 + 150 * (i - 1) / Math.max(1, n - 2))} 62% ${css("--ramp-l")})`;
-  const isShown = (r, i) => !hidden.has(r.tag) && (filter === "all" || (filter === "recent" && i < RECENT) || (filter === "stable" && !r.prerelease && !/-(alpha|beta|rc)/.test(r.tag)));
-
-  let mode = "time";
   let chart = null;
-  let model = null;          // {releases: [{tag, published, prerelease, url, points:[{x,y}]}], updated}
-  const hidden = new Set();
-  let nextAt = Date.now() + REFRESH_MS;
 
   const $ = (id) => document.getElementById(id);
-  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const fmt = (n) => n == null ? "–" : n.toLocaleString("en-US");
-  const fmtSigned = (n) => n == null ? "–" : (n > 0 ? "+" : "") + n.toLocaleString("en-US");
-  const fmtDate = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  const fmtDateTime = (ms) => new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const age = (ms) => { const d = ms / DAY; return d < 1 ? `${Math.max(1, Math.round(ms / HOUR))} h old` : `${d < 10 ? d.toFixed(1) : Math.round(d)} days old`; };
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const fmt = (n) => n.toLocaleString("en-US");
+  const signed = (n) => (n > 0 ? "+" : "") + fmt(n);
+  const when = (ms) => new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-  async function loadHistory() {
-    try {
-      const r = await fetch(`data.json?t=${Date.now()}`, { cache: "no-store" });
-      if (!r.ok) return null;
-      return await r.json();
-    } catch { return null; }
-  }
-
-  async function loadLive() {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, {
-      headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
-    });
-    if (!r.ok) throw new Error(r.status === 403 ? "GitHub API rate limit reached; showing recorded history only." : `GitHub API answered ${r.status}.`);
-    const list = (await r.json()).filter((x) => !x.draft && x.published_at);
-    list.sort((a, b) => b.published_at.localeCompare(a.published_at));
-    return list.slice(0, TRACKED).map((x) => ({
-      tag: x.tag_name,
-      published: Date.parse(x.published_at),
-      prerelease: !!x.prerelease,
-      url: x.html_url,
-      count: x.assets.filter((a) => !SKIP.some((s) => a.name.toLowerCase().endsWith(s))).reduce((s, a) => s + a.download_count, 0),
-    }));
-  }
-
-  function buildModel(history, live) {
-    const now = Date.now();
-    const meta = new Map();
-    if (history && history.releases) {
-      for (const [tag, r] of Object.entries(history.releases)) {
-        meta.set(tag, { tag, published: Date.parse(r.published_at), prerelease: r.prerelease, url: r.url });
+  // One point per snapshot: the sum over every release that existed at that
+  // time. A snapshot that is missing a release published before it was taken
+  // is incomplete, so it is skipped rather than drawn as a false dip.
+  function series(data) {
+    const published = new Map(Object.entries(data.releases).map(([tag, r]) => [tag, Date.parse(r.published_at)]));
+    const out = [];
+    for (const s of data.snapshots) {
+      const t = Date.parse(s.t);
+      let complete = true, sum = 0, n = 0;
+      for (const [tag, pub] of published) {
+        if (pub > t) continue;
+        if (!(tag in s.d)) { complete = false; break; }
+        sum += s.d[tag]; n++;
       }
+      if (complete && n) out.push({ x: t, y: sum, n });
     }
-    let order = history && history.tracked ? [...history.tracked] : [];
-    if (live) {
-      for (const r of live) meta.set(r.tag, { tag: r.tag, published: r.published, prerelease: r.prerelease, url: r.url });
-      order = live.map((r) => r.tag);
-    }
-    order = order.filter((t) => meta.has(t)).slice(0, TRACKED);
-
-    const releases = order.map((tag) => {
-      const m = meta.get(tag);
-      const pts = [];
-      for (const s of (history && history.snapshots) || []) {
-        if (tag in s.d) pts.push({ x: Date.parse(s.t), y: s.d[tag] });
-      }
-      const l = live && live.find((r) => r.tag === tag);
-      if (l && (!pts.length || now - pts[pts.length - 1].x > 60e3)) pts.push({ x: now, y: l.count, live: true });
-      pts.sort((a, b) => a.x - b.x);
-      // Releases under two weeks old start at zero on their publish date; the
-      // dashed segment up to the first recorded count was not measured. Older
-      // releases start at their first recorded count.
-      if ((!pts.length || pts[0].x > m.published) && (now - m.published < 14 * DAY || !pts.length)) pts.unshift({ x: m.published, y: 0, gap: true });
-      return { ...m, points: pts };
-    });
-    const updated = live ? now : history && history.updated ? Date.parse(history.updated) : null;
-    return { releases, updated, live: !!live || (updated != null && now - updated < STALE_MS) };
+    return out;
   }
 
-  // Count at a given time, interpolated between the measured points around it.
-  function valueAt(points, t) {
-    if (!points.length || t < points[0].x) return null;
-    for (let i = points.length - 1; i >= 0; i--) {
-      if (points[i].x <= t) {
-        const a = points[i], b = points[i + 1];
-        if (!b) return a.y;
-        return Math.round(a.y + (b.y - a.y) * (t - a.x) / (b.x - a.x));
-      }
-    }
-    return null;
+  function atOrBefore(pts, t) {
+    let found = null;
+    for (const p of pts) { if (p.x <= t) found = p; else break; }
+    return found;
   }
 
-  function current(r) { return r.points[r.points.length - 1].y; }
+  function render(data) {
+    const pts = series(data);
+    if (!pts.length) { $("updated").textContent = "No data yet"; return; }
+    const first = pts[0], last = pts[pts.length - 1];
+    $("total").textContent = fmt(last.y);
+    $("releases").textContent = `across ${last.n} releases`;
+    $("since").textContent = pts.length > 1 ? signed(last.y - first.y) : "–";
+    $("since-sub").textContent = `since ${when(first.x)}`;
+    const hourAgo = atOrBefore(pts, last.x - HOUR);
+    $("hour").textContent = hourAgo ? signed(last.y - hourAgo.y) : "–";
+    const age = Date.now() - Date.parse(data.updated);
+    $("updated").textContent = `Updated ${when(Date.parse(data.updated))}`;
+    $("dot").classList.toggle("stale", age > STALE_MS);
+    $("note").textContent = pts.length < 6
+      ? "Recording just started, so the line is short. GitHub only reports current totals, so earlier history cannot be recovered. Counts include installers and app bundles, not checksum or metadata files."
+      : "Counts include installers and app bundles, not checksum or metadata files.";
 
-  function renderSummary() {
-    const now = Date.now();
-    const [latest, prev] = model.releases;
-    if (!latest) return;
-    $("latest-total").textContent = fmt(current(latest));
-    $("latest-tag").textContent = latest.tag;
-    $("latest-pill").innerHTML = latest.prerelease ? '<span class="pill">pre-release</span>' : "";
-    $("latest-age").textContent = age(now - latest.published);
-
-    const delta = (r, span) => {
-      const firstMeasured = r.points.find((p) => !p.gap);
-      if (!firstMeasured || now - span < firstMeasured.x) return null;  // not recorded that far back yet
-      const before = valueAt(r.points, Math.max(now - span, r.published));
-      return before == null ? null : current(r) - before;
+    const span = last.x - first.x;
+    const accent = css("--accent"), muted = css("--muted"), grid = css("--grid"), line = css("--line"), panel = css("--panel"), fg = css("--fg");
+    const short = Math.max(span, 30 * 60e3) < 2 * DAY;
+    const dataset = {
+      data: pts, borderColor: accent, backgroundColor: css("--accent-fill"), fill: true, borderWidth: 2.5, tension: 0,
+      pointRadius: (c) => (c.dataIndex === pts.length - 1 ? 5 : pts.length < 40 ? 3 : 0), pointHoverRadius: 5, pointBackgroundColor: accent,
     };
-    $("d-hour").textContent = fmtSigned(delta(latest, HOUR));
-    $("d-day").textContent = fmtSigned(delta(latest, DAY));
-
-    if (prev) {
-      const ageMs = now - latest.published;
-      const prevAt = valueAt(prev.points, prev.published + ageMs);
-      const measured = prev.points.some((p) => !p.gap && p.x <= prev.published + ageMs);
-      if (prevAt != null && measured) {
-        const diff = current(latest) - prevAt;
-        $("vs-prev").textContent = fmtSigned(diff);
-        $("vs-prev-sub").textContent = `${prev.tag} had ${fmt(prevAt)} at the same age`;
-      } else {
-        $("vs-prev").textContent = fmt(current(prev));
-        $("vs-prev-sub").textContent = `${prev.tag} total so far`;
-      }
-    }
-
-    $("updated").textContent = model.updated ? `Updated ${fmtDateTime(model.updated)}` : "Not updated yet";
-    $("dot").classList.toggle("stale", !model.live);
-  }
-
-  function renderTable() {
-    const now = Date.now();
-    $("rows").innerHTML = "";
-    model.releases.forEach((r, i) => {
-      const tr = document.createElement("tr");
-      const days = Math.max((now - r.published) / DAY, 1 / 24);
-      const firstMeasured = r.points.find((p) => !p.gap);
-      const day = firstMeasured && firstMeasured.x <= now - DAY ? current(r) - valueAt(r.points, now - DAY) : null;
-      const cells = [
-        `<span class="swatch" style="background:${colorFor(i, model.releases.length)}"></span><a href="${r.url}" target="_blank" rel="noopener"></a>${r.prerelease ? '<span class="pill">pre</span>' : ""}`,
-        fmtDate(r.published), fmt(current(r)), days < 1 ? "–" : fmt(Math.round(current(r) / days)), day == null ? "–" : fmtSigned(day),
-      ];
-      tr.classList.toggle("off", !isShown(r, i));
-      tr.title = "Click to show or hide this release in the chart";
-      tr.addEventListener("click", (e) => {
-        if (e.target.closest("a")) return;
-        hidden.has(r.tag) ? hidden.delete(r.tag) : hidden.add(r.tag);
-        renderTable(); renderChart();
-      });
-      tr.innerHTML = cells.map((c) => `<td>${c}</td>`).join("");
-      tr.querySelector("a").textContent = r.tag;
-      $("rows").appendChild(tr);
-    });
-  }
-
-  function renderLegend() {
-    const box = $("legend");
-    box.innerHTML = "";
-    const seg = document.createElement("div");
-    seg.className = "seg";
-    seg.setAttribute("role", "group");
-    seg.setAttribute("aria-label", "Which releases to draw");
-    [["all", `All ${model.releases.length}`], ["recent", `Latest ${RECENT}`], ["stable", "Stable only"]].forEach(([key, label]) => {
-      const b = document.createElement("button");
-      b.type = "button"; b.textContent = label;
-      b.setAttribute("aria-pressed", String(filter === key));
-      b.addEventListener("click", () => { filter = key; hidden.clear(); renderLegend(); renderTable(); renderChart(); });
-      seg.appendChild(b);
-    });
-    const hint = document.createElement("span");
-    hint.className = "hint";
-    hint.textContent = "Click a row in the table to show or hide a single release.";
-    box.append(seg, hint);
-  }
-
-  function renderChart() {
-    if (!window.Chart) { $("error").hidden = false; $("error").textContent = "The chart library did not load."; return; }
-    const fg = css("--fg"), muted = css("--muted"), grid = css("--grid"), panel = css("--panel"), line = css("--line");
-    const datasets = model.releases.map((r, i) => {
-      const color = colorFor(i, model.releases.length);
-      const data = r.points.map((p) => ({ x: mode === "time" ? p.x : (p.x - r.published) / DAY, y: p.y, gap: p.gap, live: p.live }));
-      return {
-        label: r.tag, data, hidden: !isShown(r, i),
-        borderColor: color, backgroundColor: color,
-        borderWidth: i === 0 ? 3 : i < RECENT ? 1.8 : 1.1,
-        pointRadius: (ctx) => (ctx.dataIndex === data.length - 1 ? (i === 0 ? 4 : i < RECENT ? 2.5 : 0) : 0),
-        pointHoverRadius: 4, tension: 0, order: i === 0 ? 0 : i,
-        segment: { borderDash: (ctx) => (data[ctx.p0DataIndex] && data[ctx.p0DataIndex].gap ? [4, 4] : undefined) },
-      };
-    });
-    const xTicks = mode === "time"
-      ? { callback: function (v) {
-          const short = this.max - this.min < 2 * DAY;
-          const d = new Date(v);
-          return short ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        }, maxTicksLimit: 8 }
-      : { callback: (v) => `${+v.toFixed(1)}d`, maxTicksLimit: 10 };
     const options = {
       responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      interaction: { mode: "nearest", intersect: false, axis: "xy" },
+      interaction: { mode: "nearest", intersect: false, axis: "x" },
       scales: {
-        x: { type: "linear", min: mode === "age" ? 0 : undefined, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, ...xTicks } },
-        y: { beginAtZero: true, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : v } },
+        x: {
+          type: "linear", min: first.x, max: Math.max(last.x, first.x + 30 * 60e3),
+          grid: { color: grid }, border: { color: line },
+          ticks: { color: muted, maxTicksLimit: 7, font: { family: "JetBrains Mono", size: 11 },
+            callback: (v) => short ? new Date(v).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric" }) },
+        },
+        y: {
+          grace: "8%", grid: { color: grid }, border: { color: line },
+          ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => fmt(Math.round(v)) },
+        },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: panel, titleColor: fg, bodyColor: fg, borderColor: line, borderWidth: 1,
+          backgroundColor: panel, titleColor: fg, bodyColor: fg, borderColor: line, borderWidth: 1, displayColors: false,
           titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "JetBrains Mono" },
-          callbacks: {
-            title: (items) => items.length ? (mode === "time" ? fmtDateTime(items[0].parsed.x) : `Day ${items[0].parsed.x.toFixed(1)} after release`) : "",
-            label: (item) => ` ${item.dataset.label}: ${fmt(item.parsed.y)}${item.raw.gap ? " (publish)" : item.raw.live ? " (live)" : ""}`,
-          },
+          callbacks: { title: (items) => when(items[0].parsed.x), label: (i) => `${fmt(i.parsed.y)} downloads` },
         },
       },
     };
-    if (chart) { chart.data.datasets = datasets; chart.options = options; chart.update(); }
-    else chart = new Chart($("chart"), { type: "line", data: { datasets }, options });
+    if (chart) { chart.data.datasets = [dataset]; chart.options = options; chart.update(); }
+    else chart = new Chart($("chart"), { type: "line", data: { datasets: [dataset] }, options });
   }
-
-  let bars = null;
-  function renderBars() {
-    if (!window.Chart) return;
-    const rel = [...model.releases].reverse();   // oldest on the left, newest on the right
-    const n = model.releases.length;
-    const total = model.releases.reduce((sum, r) => sum + current(r), 0);
-    $("all-total").textContent = fmt(total);
-    $("all-sub").textContent = `across ${n} releases`;
-    $("bars-note").textContent = `${fmt(total)} in total, oldest to newest`;
-    const muted = css("--muted"), grid = css("--grid"), line = css("--line"), panel = css("--panel"), fg = css("--fg");
-    const data = {
-      labels: rel.map((r) => r.tag),
-      datasets: [{ data: rel.map(current), backgroundColor: rel.map((r) => colorFor(model.releases.indexOf(r), n)), borderRadius: 2, maxBarThickness: 18 }],
-    };
-    const options = {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      scales: {
-        x: { grid: { display: false }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 10 }, maxRotation: 90, minRotation: 90, autoSkip: true, maxTicksLimit: 42 } },
-        y: { beginAtZero: true, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : v } },
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: panel, titleColor: fg, bodyColor: fg, borderColor: line, borderWidth: 1,
-          titleFont: { family: "JetBrains Mono", weight: "600" }, bodyFont: { family: "JetBrains Mono" },
-          callbacks: { label: (item) => ` ${fmt(item.parsed.y)} downloads · ${fmtDate(rel[item.dataIndex].published)}` },
-        },
-      },
-    };
-    if (bars) { bars.data = data; bars.options = options; bars.update(); }
-    else bars = new Chart($("bars"), { type: "bar", data, options });
-  }
-
-  function renderAll() { renderSummary(); renderBars(); renderLegend(); renderTable(); renderChart(); }
 
   async function refresh() {
-    const history = await loadHistory();
-    // Normally the data file written by the recorder is the only source. The
-    // GitHub API is a fallback for opening the page without the recorder.
-    const live = history ? null : await loadLive().catch((e) => { $("error").hidden = false; $("error").textContent = e.message; return null; });
-    if (history || live) $("error").hidden = true;
-    if (!history && !live) {
+    try {
+      const r = await fetch(`data.json?t=${Date.now()}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      render(await r.json());
+    } catch {
       $("updated").textContent = "No data yet";
-      if ($("error").hidden) { $("error").hidden = false; $("error").textContent = "Could not reach GitHub or the recorded history."; }
-      return;
     }
-    model = buildModel(history, live);
-    renderAll();
   }
 
-  function setMode(m) {
-    mode = m;
-    $("mode-time").setAttribute("aria-pressed", String(m === "time"));
-    $("mode-age").setAttribute("aria-pressed", String(m === "age"));
-    try { localStorage.setItem("sd-dl-mode", m); } catch {}
-    if (model) renderChart();
-  }
-  $("mode-time").addEventListener("click", () => setMode("time"));
-  $("mode-age").addEventListener("click", () => setMode("age"));
-  try { const m = localStorage.getItem("sd-dl-mode"); if (m === "age" || m === "time") setMode(m); } catch {}
-
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => model && renderAll());
-
-  setInterval(() => {
-    const left = Math.max(0, nextAt - Date.now());
-    $("countdown").textContent = "Recorded every 10 min";
-    if (left === 0) { nextAt = Date.now() + REFRESH_MS; refresh(); }
-  }, 1000);
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && Date.now() > nextAt) { nextAt = Date.now() + REFRESH_MS; refresh(); }
-  });
-
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", refresh);
+  setInterval(refresh, REFRESH_MS);
   refresh();
 })();
 </script>
