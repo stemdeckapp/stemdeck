@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>StemDeck Downloads</title>
-<meta name="description" content="Download count of the latest StemDeck release and the 5 before it, refreshed every 10 minutes.">
+<meta name="description" content="Download counts of every StemDeck release, recorded every 10 minutes.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -19,7 +19,7 @@
   --grid: #e9ebf0;
   --accent: #e2561b;        /* latest release */
   --s1: #2f6fdf; --s2: #12957a; --s3: #9a55d6; --s4: #c48a07; --s5: #c23b6b;
-  --good: #1a8a4a;
+  --good: #1a8a4a; --ramp-l: 42%;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -28,13 +28,13 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-    --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f;
+    --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f; --ramp-l: 66%;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-  --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f;
+  --accent: #ff7a3d; --s1: #6c9cff; --s2: #3cc7a4; --s3: #bb8cf0; --s4: #e3b13a; --s5: #ec6a98; --good: #4bc77f; --ramp-l: 66%;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -77,12 +77,18 @@ h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01
 .swatch { width: 14px; height: 3px; border-radius: 2px; }
 .note { font-size: 0.78rem; color: var(--muted); }
 
-.table-box { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.table-box { overflow: auto; max-height: 460px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 0.88rem; min-width: 560px; }
 th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
-th { font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+th { position: sticky; top: 0; background: var(--panel); font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 th:first-child, td:first-child { text-align: left; }
 tr:last-child td { border-bottom: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--grid); }
+tbody tr.off td { opacity: 0.4; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chips .seg button { padding: 5px 11px; }
+.chips .hint { font-size: 0.78rem; color: var(--muted); }
 td a { color: inherit; text-decoration: none; font-family: var(--font-mono); }
 td a:hover { text-decoration: underline; }
 td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
@@ -137,9 +143,9 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
         <button type="button" id="mode-age" aria-pressed="false">Days since release</button>
       </div>
     </div>
-    <div class="legend" id="legend"></div>
+    <div class="chips" id="legend"></div>
     <div class="canvas-box"><canvas id="chart" aria-label="Line chart of cumulative downloads per release"></canvas></div>
-    <div class="note">Dashed segments run from a release's publish date to its first recorded count; nothing was measured in between. Counts include installers and app bundles, not checksum or metadata files.</div>
+    <div class="note">Recording started recently, so history before that is not known. Dashed segments run from a new release's publish date to its first recorded count; nothing was measured in between, and older releases start at their first recorded count. Counts include installers and app bundles, not checksum or metadata files.</div>
     <div class="error" id="error" hidden></div>
   </section>
 
@@ -157,10 +163,15 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
   const REPO = "stemdeckapp/stemdeck";
   const REFRESH_MS = 60 * 1000;  // re-read the local data file; the server records every 10 minutes
   const STALE_MS = 25 * 60 * 1000;
-  const TRACKED = 6;
+  const TRACKED = Infinity;  // every published release
+  const RECENT = 6;
   const SKIP = [".sha256", ".txt", ".json", ".sig", ".asc"];
   const HOUR = 3600e3, DAY = 24 * HOUR;
-  const COLOR_TOKENS = ["--accent", "--s1", "--s2", "--s3", "--s4", "--s5"];
+  let filter = "all";   // all | recent | stable
+  // The latest release is the accent colour. Older ones step through a hue
+  // ramp, newest to oldest, so neighbouring versions look alike.
+  const colorFor = (i, n) => i === 0 ? css("--accent") : `hsl(${Math.round(205 + 150 * (i - 1) / Math.max(1, n - 2))} 62% ${css("--ramp-l")})`;
+  const isShown = (r, i) => !hidden.has(r.tag) && (filter === "all" || (filter === "recent" && i < RECENT) || (filter === "stable" && !r.prerelease && !/-(alpha|beta|rc)/.test(r.tag)));
 
   let mode = "time";
   let chart = null;
@@ -185,7 +196,7 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
   }
 
   async function loadLive() {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, {
+    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, {
       headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
     });
     if (!r.ok) throw new Error(r.status === 403 ? "GitHub API rate limit reached; showing recorded history only." : `GitHub API answered ${r.status}.`);
@@ -224,9 +235,10 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
       const l = live && live.find((r) => r.tag === tag);
       if (l && (!pts.length || now - pts[pts.length - 1].x > 60e3)) pts.push({ x: now, y: l.count, live: true });
       pts.sort((a, b) => a.x - b.x);
-      // Anchor every line at zero on its publish date. The segment up to the
-      // first recorded count is drawn dashed: it was not measured.
-      if (!pts.length || pts[0].x > m.published) pts.unshift({ x: m.published, y: 0, gap: true });
+      // Releases under two weeks old start at zero on their publish date; the
+      // dashed segment up to the first recorded count was not measured. Older
+      // releases start at their first recorded count.
+      if ((!pts.length || pts[0].x > m.published) && (now - m.published < 14 * DAY || !pts.length)) pts.unshift({ x: m.published, y: 0, gap: true });
       return { ...m, points: pts };
     });
     const updated = live ? now : history && history.updated ? Date.parse(history.updated) : null;
@@ -259,7 +271,7 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
 
     const delta = (r, span) => {
       const firstMeasured = r.points.find((p) => !p.gap);
-      if (!firstMeasured || (now - span < firstMeasured.x && now - span > r.published)) return null;
+      if (!firstMeasured || now - span < firstMeasured.x) return null;  // not recorded that far back yet
       const before = valueAt(r.points, Math.max(now - span, r.published));
       return before == null ? null : current(r) - before;
     };
@@ -293,9 +305,16 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
       const firstMeasured = r.points.find((p) => !p.gap);
       const day = firstMeasured && firstMeasured.x <= now - DAY ? current(r) - valueAt(r.points, now - DAY) : null;
       const cells = [
-        `<span class="swatch" style="background:${css(COLOR_TOKENS[i])}"></span><a href="${r.url}" target="_blank" rel="noopener"></a>${r.prerelease ? '<span class="pill">pre</span>' : ""}`,
+        `<span class="swatch" style="background:${colorFor(i, model.releases.length)}"></span><a href="${r.url}" target="_blank" rel="noopener"></a>${r.prerelease ? '<span class="pill">pre</span>' : ""}`,
         fmtDate(r.published), fmt(current(r)), days < 1 ? "–" : fmt(Math.round(current(r) / days)), day == null ? "–" : fmtSigned(day),
       ];
+      tr.classList.toggle("off", !isShown(r, i));
+      tr.title = "Click to show or hide this release in the chart";
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
+        hidden.has(r.tag) ? hidden.delete(r.tag) : hidden.add(r.tag);
+        renderTable(); renderChart();
+      });
       tr.innerHTML = cells.map((c) => `<td>${c}</td>`).join("");
       tr.querySelector("a").textContent = r.tag;
       $("rows").appendChild(tr);
@@ -305,41 +324,48 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
   function renderLegend() {
     const box = $("legend");
     box.innerHTML = "";
-    model.releases.forEach((r, i) => {
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-label", "Which releases to draw");
+    [["all", `All ${model.releases.length}`], ["recent", `Latest ${RECENT}`], ["stable", "Stable only"]].forEach(([key, label]) => {
       const b = document.createElement("button");
-      b.type = "button";
-      b.setAttribute("aria-pressed", String(!hidden.has(r.tag)));
-      b.innerHTML = `<span class="swatch" style="background:${css(COLOR_TOKENS[i])};height:${i === 0 ? 4 : 2}px"></span>`;
-      b.append(r.tag + (i === 0 ? " (latest)" : ""));
-      b.addEventListener("click", () => {
-        hidden.has(r.tag) ? hidden.delete(r.tag) : hidden.add(r.tag);
-        renderLegend(); renderChart();
-      });
-      box.appendChild(b);
+      b.type = "button"; b.textContent = label;
+      b.setAttribute("aria-pressed", String(filter === key));
+      b.addEventListener("click", () => { filter = key; hidden.clear(); renderLegend(); renderTable(); renderChart(); });
+      seg.appendChild(b);
     });
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "Click a row in the table to show or hide a single release.";
+    box.append(seg, hint);
   }
 
   function renderChart() {
     if (!window.Chart) { $("error").hidden = false; $("error").textContent = "The chart library did not load."; return; }
     const fg = css("--fg"), muted = css("--muted"), grid = css("--grid"), panel = css("--panel"), line = css("--line");
     const datasets = model.releases.map((r, i) => {
-      const color = css(COLOR_TOKENS[i]);
+      const color = colorFor(i, model.releases.length);
       const data = r.points.map((p) => ({ x: mode === "time" ? p.x : (p.x - r.published) / DAY, y: p.y, gap: p.gap, live: p.live }));
       return {
-        label: r.tag, data, hidden: hidden.has(r.tag),
+        label: r.tag, data, hidden: !isShown(r, i),
         borderColor: color, backgroundColor: color,
-        borderWidth: i === 0 ? 3 : 1.6,
-        pointRadius: (ctx) => (ctx.dataIndex === data.length - 1 ? (i === 0 ? 4 : 2.5) : 0),
+        borderWidth: i === 0 ? 3 : i < RECENT ? 1.8 : 1.1,
+        pointRadius: (ctx) => (ctx.dataIndex === data.length - 1 ? (i === 0 ? 4 : i < RECENT ? 2.5 : 0) : 0),
         pointHoverRadius: 4, tension: 0, order: i === 0 ? 0 : i,
         segment: { borderDash: (ctx) => (data[ctx.p0DataIndex] && data[ctx.p0DataIndex].gap ? [4, 4] : undefined) },
       };
     });
     const xTicks = mode === "time"
-      ? { callback: (v) => new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric" }), maxTicksLimit: 8 }
+      ? { callback: function (v) {
+          const short = this.max - this.min < 2 * DAY;
+          const d = new Date(v);
+          return short ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        }, maxTicksLimit: 8 }
       : { callback: (v) => `${+v.toFixed(1)}d`, maxTicksLimit: 10 };
     const options = {
       responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      interaction: { mode: "nearest", intersect: false, axis: "x" },
+      interaction: { mode: "nearest", intersect: false, axis: "xy" },
       scales: {
         x: { type: "linear", min: mode === "age" ? 0 : undefined, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, ...xTicks } },
         y: { beginAtZero: true, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : v } },

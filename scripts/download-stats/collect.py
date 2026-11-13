@@ -21,7 +21,7 @@ import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-TRACKED = 6  # latest release + the 5 before it
+TRACKED = None  # None = every published release
 FULL_RES = timedelta(days=14)  # keep every snapshot this far back
 THIN_STEP = timedelta(hours=1)  # older than that: one snapshot per hour
 
@@ -35,8 +35,18 @@ def counts_as_download(asset_name: str) -> bool:
 
 
 def fetch_releases(repo: str) -> list[dict]:
+    out: list[dict] = []
+    for page in range(1, 11):  # up to 1000 releases
+        batch = fetch_page(repo, page)
+        out.extend(batch)
+        if len(batch) < 100:
+            break
+    return out
+
+
+def fetch_page(repo: str, page: int) -> list[dict]:
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/releases?per_page=30",
+        f"https://api.github.com/repos/{repo}/releases?per_page=100&page={page}",
         headers={
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -95,7 +105,7 @@ def main() -> int:
         r for r in fetch_releases(repo) if not r.get("draft") and r.get("published_at")
     ]
     published.sort(key=lambda r: r["published_at"], reverse=True)
-    tracked = published[:TRACKED]
+    tracked = published if TRACKED is None else published[:TRACKED]
     if not tracked:
         print("No published releases yet; nothing to record.")
         return 0
