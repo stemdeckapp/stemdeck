@@ -53,7 +53,7 @@ h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01
 .status .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: 1px; }
 .status .dot.stale { background: var(--s4); }
 
-.hero { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 18px; grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr)); }
+.hero { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 18px; grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 1fr)); }
 .hero > div { min-width: 0; }
 .label { font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .big { font: 700 2.8rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--accent); margin-top: 6px; }
@@ -70,6 +70,7 @@ h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01
 .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .canvas-box { position: relative; height: 380px; }
+.canvas-box.short { height: 300px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 0.8rem var(--font-mono); }
 .legend button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--fg); }
 .legend button[aria-pressed="false"] { opacity: 0.4; }
@@ -119,6 +120,11 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
       <div class="sub"><span class="tag" id="latest-tag">–</span><span id="latest-pill"></span> · <span id="latest-age">–</span></div>
     </div>
     <div>
+      <div class="label">All releases</div>
+      <div class="mid" id="all-total">–</div>
+      <div class="sub" id="all-sub">total downloads</div>
+    </div>
+    <div>
       <div class="label">Last hour</div>
       <div class="mid" id="d-hour">–</div>
       <div class="sub">new downloads</div>
@@ -133,6 +139,11 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
       <div class="mid" id="vs-prev">–</div>
       <div class="sub" id="vs-prev-sub">at the same age</div>
     </div>
+  </section>
+
+  <section class="chart-card" aria-label="Total downloads by release">
+    <div class="chart-head"><h2>Total downloads by release</h2><span class="note" id="bars-note"></span></div>
+    <div class="canvas-box short"><canvas id="bars" aria-label="Bar chart of total downloads per release"></canvas></div>
   </section>
 
   <section class="chart-card" aria-label="Download timeline">
@@ -386,7 +397,40 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
     else chart = new Chart($("chart"), { type: "line", data: { datasets }, options });
   }
 
-  function renderAll() { renderSummary(); renderLegend(); renderTable(); renderChart(); }
+  let bars = null;
+  function renderBars() {
+    if (!window.Chart) return;
+    const rel = [...model.releases].reverse();   // oldest on the left, newest on the right
+    const n = model.releases.length;
+    const total = model.releases.reduce((sum, r) => sum + current(r), 0);
+    $("all-total").textContent = fmt(total);
+    $("all-sub").textContent = `across ${n} releases`;
+    $("bars-note").textContent = `${fmt(total)} in total, oldest to newest`;
+    const muted = css("--muted"), grid = css("--grid"), line = css("--line"), panel = css("--panel"), fg = css("--fg");
+    const data = {
+      labels: rel.map((r) => r.tag),
+      datasets: [{ data: rel.map(current), backgroundColor: rel.map((r) => colorFor(model.releases.indexOf(r), n)), borderRadius: 2, maxBarThickness: 18 }],
+    };
+    const options = {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: {
+        x: { grid: { display: false }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 10 }, maxRotation: 90, minRotation: 90, autoSkip: true, maxTicksLimit: 42 } },
+        y: { beginAtZero: true, grid: { color: grid }, border: { color: line }, ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : v } },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: panel, titleColor: fg, bodyColor: fg, borderColor: line, borderWidth: 1,
+          titleFont: { family: "JetBrains Mono", weight: "600" }, bodyFont: { family: "JetBrains Mono" },
+          callbacks: { label: (item) => ` ${fmt(item.parsed.y)} downloads · ${fmtDate(rel[item.dataIndex].published)}` },
+        },
+      },
+    };
+    if (bars) { bars.data = data; bars.options = options; bars.update(); }
+    else bars = new Chart($("bars"), { type: "bar", data, options });
+  }
+
+  function renderAll() { renderSummary(); renderBars(); renderLegend(); renderTable(); renderChart(); }
 
   async function refresh() {
     const history = await loadHistory();
