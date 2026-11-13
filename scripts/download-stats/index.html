@@ -155,7 +155,8 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
 <script>
 (() => {
   const REPO = "stemdeckapp/stemdeck";
-  const REFRESH_MS = 10 * 60 * 1000;
+  const REFRESH_MS = 60 * 1000;  // re-read the local data file; the server records every 10 minutes
+  const STALE_MS = 25 * 60 * 1000;
   const TRACKED = 6;
   const SKIP = [".sha256", ".txt", ".json", ".sig", ".asc"];
   const HOUR = 3600e3, DAY = 24 * HOUR;
@@ -229,7 +230,7 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
       return { ...m, points: pts };
     });
     const updated = live ? now : history && history.updated ? Date.parse(history.updated) : null;
-    return { releases, updated, live: !!live };
+    return { releases, updated, live: !!live || (updated != null && now - updated < STALE_MS) };
   }
 
   // Count at a given time, interpolated between the measured points around it.
@@ -362,8 +363,11 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
   function renderAll() { renderSummary(); renderLegend(); renderTable(); renderChart(); }
 
   async function refresh() {
-    const [history, live] = await Promise.all([loadHistory(), loadLive().catch((e) => { $("error").hidden = false; $("error").textContent = e.message; return null; })]);
-    if (live) $("error").hidden = true;
+    const history = await loadHistory();
+    // Normally the data file written by the recorder is the only source. The
+    // GitHub API is a fallback for opening the page without the recorder.
+    const live = history ? null : await loadLive().catch((e) => { $("error").hidden = false; $("error").textContent = e.message; return null; });
+    if (history || live) $("error").hidden = true;
     if (!history && !live) {
       $("updated").textContent = "No data yet";
       if ($("error").hidden) { $("error").hidden = false; $("error").textContent = "Could not reach GitHub or the recorded history."; }
@@ -388,7 +392,7 @@ td .swatch { display: inline-block; vertical-align: middle; margin-right: 8px; }
 
   setInterval(() => {
     const left = Math.max(0, nextAt - Date.now());
-    $("countdown").textContent = `Next refresh ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, "0")}`;
+    $("countdown").textContent = "Recorded every 10 min";
     if (left === 0) { nextAt = Date.now() + REFRESH_MS; refresh(); }
   }, 1000);
   document.addEventListener("visibilitychange", () => {

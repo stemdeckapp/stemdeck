@@ -90,3 +90,4 @@ Thumbs.db
 
 # Imported design references (kept local, not shipped)
 design/
+scripts/download-stats/data.json
