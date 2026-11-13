@@ -185,7 +185,7 @@ def test_zip_temp_is_removed_when_the_build_is_cancelled(
     started = threading.Event()
     release = threading.Event()
 
-    def slow_build(sources, fmt, dest, prefix, click):
+    def slow_build(sources, fmt, dest, prefix, click, **_project):
         built.append(dest)
         with open(dest, "wb") as f:
             f.write(b"PK partial")
@@ -207,6 +207,7 @@ def test_zip_temp_is_removed_when_the_build_is_cancelled(
                 click_gain=0.6,
                 click_groups="",
                 click_sound=stems_mod.DEFAULT_CLICK_SOUND,
+                reaper=False,
             )
         )
         assert await asyncio.to_thread(started.wait, 10)

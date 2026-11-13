@@ -8,7 +8,7 @@ import {
 } from "./state.js";
 import { STEM_NAMES, syncStemNamesFromAPI } from "./constants.js";
 import { refreshStemChoiceVisuals } from "./stemChoice.js";
-import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, downloadRegionMix, regionDragPayload, stemRegionDragPayload, prewarmRegionMix, mixTransposeBlocked } from "./player.js";
+import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentVideo, downloadAllStemsZip, openStemsInReaper, downloadRegionMix, regionDragPayload, stemRegionDragPayload, prewarmRegionMix, mixTransposeBlocked } from "./player.js";
 import { transposeExportFromHealth } from "./transposeExport.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
@@ -595,11 +595,31 @@ function wireFooterControls() {
   const itemMix    = document.getElementById("t-export-mix");
   const itemStems  = document.getElementById("t-export-stems");
   const itemRegion = document.getElementById("t-export-region");
+  const itemReaper = document.getElementById("t-export-reaper");
+  const itemOpenReaper = document.getElementById("t-export-open-reaper");
+  // Open in REAPER needs the desktop app (it unpacks the project on disk and
+  // launches REAPER, which a browser download cannot do) and a REAPER to
+  // launch: the one chosen in Settings > External editors, or one found where
+  // its installer puts it. Asked again each time the menu opens, so
+  // installing REAPER or choosing it in Settings shows the row without a
+  // restart. A shell without the command keeps the row hidden.
+  async function refreshOpenReaperRow() {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!itemOpenReaper || !invoke) return;
+    try {
+      const status = await invoke("reaper_status");
+      itemOpenReaper.hidden = !status?.path;
+    } catch (e) {
+      console.warn("[export] could not look for REAPER:", e);
+      itemOpenReaper.hidden = true;
+    }
+  }
+  refreshOpenReaperRow();
   const mixDescEl  = itemMix?.querySelector(".chip-item-desc");
+  const allItems = () => [itemMix, itemStems, itemReaper, itemOpenReaper, itemRegion];
   // Only the rows actually visible in the current format mode (MP4 hides the
-  // audio-only Stems/Region rows).
-  const actionItems = () =>
-    [itemMix, itemStems, itemRegion].filter((it) => it && it.offsetParent !== null);
+  // audio-only Stems/REAPER/Region rows).
+  const actionItems = () => allItems().filter((it) => it && it.offsetParent !== null);
 
   // MP4 is a format choice, shown only for jobs with a preserved video track.
   // It applies to the mix only — stems/region are audio-only.
@@ -622,6 +642,7 @@ function wireFooterControls() {
     // A previous (video) job may have left MP4 selected; revert if unavailable now.
     if (format === "mp4" && !videoAvailable()) setFormat("wav");
     applyTransposeGate();
+    refreshOpenReaperRow();
     exportPanel?.classList.remove("hidden");
     exportBtn?.setAttribute("aria-expanded", "true");
   }
@@ -730,7 +751,7 @@ function wireFooterControls() {
     // by the time this runs every row is hidden and a visibility-filtered clear
     // would clear nothing at all -- leaving the menu dead for the rest of the
     // session (#335).
-    for (const it of [itemMix, itemStems, itemRegion]) it?.removeAttribute("aria-disabled");
+    for (const it of allItems()) it?.removeAttribute("aria-disabled");
     applyFormatState(); // re-derives the region row's genuine disabled state
   }
 
@@ -854,6 +875,21 @@ function wireFooterControls() {
     e.stopPropagation();
     if (itemStems.getAttribute("aria-disabled") === "true") return;
     runExport((onStart) => downloadAllStemsZip(format, onStart), t("export.noStems"));
+  });
+
+  // The same zip plus a REAPER project (.rpp) naming every file in it.
+  itemReaper?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (itemReaper.getAttribute("aria-disabled") === "true") return;
+    runExport((onStart) => downloadAllStemsZip(format, onStart, { reaper: true }), t("export.noStems"));
+  });
+
+  // Desktop only: save that zip, unpack it into a folder beside it and open
+  // the project with the system's app for .rpp files.
+  itemOpenReaper?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (itemOpenReaper.getAttribute("aria-disabled") === "true") return;
+    runExport((onStart) => openStemsInReaper(format, onStart), t("export.noStems"));
   });
 
   // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.

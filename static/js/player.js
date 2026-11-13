@@ -2275,8 +2275,29 @@ export function downloadCurrentVideo(onTransferStart) {
 // Returns false when there is nothing to zip, matching downloadCurrentMix and
 // downloadCurrentVideo, so the caller can skip the "Exporting…" state instead of
 // showing it for a download that never starts.
-export function downloadAllStemsZip(format = "wav", onTransferStart) {
-  if (!currentJobId) return false;
+export function downloadAllStemsZip(format = "wav", onTransferStart, { reaper = false } = {}) {
+  const req = _stemsZipRequest(format, reaper);
+  if (!req) return false;
+  return _triggerDownload(req.url, req.filename, onTransferStart);
+}
+
+// Open in REAPER (desktop only): the REAPER zip saved where the user picks,
+// then unpacked into a folder beside it and its project opened, by the
+// desktop shell (open_reaper_project). Same false-for-nothing contract.
+export function openStemsInReaper(format = "wav", onTransferStart) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  const req = _stemsZipRequest(format, true);
+  if (!invoke || !req) return false;
+  return _triggerDownload(req.url, req.filename, onTransferStart).then((token) => {
+    if (!token) return false;
+    return invoke("open_reaper_project", { token }).then(() => token);
+  });
+}
+
+// The stems zip's URL and file name for the current song, or null when there
+// is nothing to put in it. `reaper` adds the .rpp project.
+function _stemsZipRequest(format, reaper) {
+  if (!currentJobId) return null;
   // The stems the user extracted for this song, in the chosen format, whatever
   // the open mode shows as lanes (modeStems.js works them out). Recorded tracks
   // are lanes of their own and ride along when present.
@@ -2284,20 +2305,22 @@ export function downloadAllStemsZip(format = "wav", onTransferStart) {
   const extracted = layout ? layout.extracted : [...selectedStems];
   const takes = _currentStems.filter((s) => isTakeName(s.name) && s.url).map((s) => s.name);
   const names = [...extracted, ...takes];
-  if (!names.length) return false;
+  if (!names.length) return null;
   const safe = _currentTitle
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/_{2,}/g, "_")
     .slice(0, 80)
     .replace(/^_+|_+$/g, "");
-  const name = safe ? `${safe}_stems.zip` : "stems.zip";
+  const kind = reaper ? "reaper" : "stems";
+  const filename = safe ? `${safe}_${kind}.zip` : `${kind}.zip`;
   const q = new URLSearchParams({ format, stems: names.join(",") });
   // Include click track: the zip gets the click as its own file too, lined up
   // with the stems (#805). The count-in is a mix-export option only: the
   // stems in a zip start at the song's first sample, so there is nowhere
   // before them for a count-in to go.
   _clickParams(q);
-  return _triggerDownload(`/api/jobs/${currentJobId}/stems/all.zip?${q}`, name, onTransferStart);
+  if (reaper) q.set("reaper", "1");
+  return { url: `/api/jobs/${currentJobId}/stems/all.zip?${q}`, filename };
 }
 
 function _regionFilename(ext) {

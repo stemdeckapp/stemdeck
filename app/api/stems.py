@@ -81,6 +81,7 @@ from app.pipeline.mastering import (
     run_plan,
     trim_filter,
 )
+from app.pipeline.reaper_project import build_rpp
 from app.pipeline.take_render import (
     AAC_ENCODE_ARGS,
     AAC_ENCODE_ARGS_ALT,
@@ -2654,23 +2655,45 @@ def _render_click_stem(click: _ClickStem, reference: Path, fmt: str, workdir: Pa
     return out
 
 
+def _add_reaper_project(
+    sources: list[tuple[str, Path]], fmt: str, dest: Path, prefix: str, bpm: float | None
+) -> None:
+    """Blocking: add `<song>.rpp` to the finished zip, naming each of its
+    entries by the same arcname, so the project opens wherever the zip is
+    unpacked. The first source is the length and rate reference, as for the
+    click: every stem shares the song's frame count, and a transcode keeps
+    the rate."""
+    info = sf.info(str(sources[0][1]))
+    files = [(name, _arcname(prefix, name, fmt)) for name, _p in sources]
+    text = build_rpp(files, fmt, int(info.samplerate), info.frames / info.samplerate, bpm)
+    with zipfile.ZipFile(dest, "a", zipfile.ZIP_STORED) as zf:
+        zf.writestr(f"{prefix or 'stems'}.rpp", text.encode("utf-8"))
+
+
 def _build_stems_zip_with_click(
     sources: list[tuple[str, Path]],
     fmt: str,
     dest: Path,
     prefix: str,
     click: _ClickStem | None,
+    reaper_bpm: float | None = None,
+    reaper: bool = False,
 ) -> None:
-    """Blocking: _build_stems_zip, plus the click entry when one is asked for.
-    The first source is the length reference: every stem and take shares the
-    song's frame count."""
+    """Blocking: _build_stems_zip, plus the click entry when one is asked for,
+    plus a REAPER project for them all when `reaper` is set. The first source
+    is the length reference: every stem and take shares the song's frame
+    count."""
     if click is None:
         _build_stems_zip(sources, fmt, dest, prefix)
+        if reaper:
+            _add_reaper_project(sources, fmt, dest, prefix, reaper_bpm)
         return
     with tempfile.TemporaryDirectory(prefix=".zipwork-", dir=dest.parent) as td:
         path = _render_click_stem(click, sources[0][1], fmt, Path(td))
         extra = [(CLICK_STEM_NAME, path)] if path is not None else []
         _build_stems_zip([*sources, *extra], fmt, dest, prefix)
+        if reaper:
+            _add_reaper_project([*sources, *extra], fmt, dest, prefix, reaper_bpm)
 
 
 @router.get("/jobs/{job_id}/stems/all.zip")
@@ -2690,8 +2713,14 @@ async def get_all_stems_zip(
     click_sound: str = Query(
         default=DEFAULT_CLICK_SOUND, max_length=32, description=CLICK_SOUND_QUERY_DESCRIPTION
     ),
+    reaper: bool = Query(default=False, description="Add a REAPER project (.rpp) for the stems"),
 ) -> FileResponse:
     """Bundle the requested stems into a single ZIP, named after the song.
+
+    `reaper` adds `<song>.rpp`: a REAPER project with one track per file in
+    the zip (the click too, when asked for), at the song's sample rate and
+    tempo, each file named relative to the project so it opens wherever the
+    zip is unpacked. Without it the zip is exactly as before.
 
     `stems` is the active subset selected in the DAW (whitelisted). When omitted,
     every available stem is included.
@@ -2761,17 +2790,19 @@ async def get_all_stems_zip(
         raise HTTPException(status_code=404, detail="no stems found")
 
     click_stem: _ClickStem | None = None
-    if click:
-        grid = await asyncio.to_thread(_read_beat_grid, job_id)
-        if grid is not None:
-            click_stem = _ClickStem(
-                grid,
-                click_gain,
-                click_mult if click_mult in (0.5, 1.0, 2.0) else 1.0,
-                click_accent,
-                _parse_groups(click_groups, click_accent),
-                click_sound,
-            )
+    grid = await asyncio.to_thread(_read_beat_grid, job_id) if (click or reaper) else None
+    reaper_bpm: float | None = None
+    if grid is not None and isinstance(grid.get("bpm"), (int, float)):
+        reaper_bpm = float(grid["bpm"])
+    if click and grid is not None:
+        click_stem = _ClickStem(
+            grid,
+            click_gain,
+            click_mult if click_mult in (0.5, 1.0, 2.0) else 1.0,
+            click_accent,
+            _parse_groups(click_groups, click_accent),
+            click_sound,
+        )
 
     # In the export cache under a dot name, like a render: the cache prune
     # leaves it alone, and the startup sweep removes it if the process dies.
@@ -2783,7 +2814,15 @@ async def get_all_stems_zip(
 
     def build() -> None:
         try:
-            _build_stems_zip_with_click(sources, fmt, tmp_path, _title_slug(job.title), click_stem)
+            _build_stems_zip_with_click(
+                sources,
+                fmt,
+                tmp_path,
+                _title_slug(job.title),
+                click_stem,
+                reaper_bpm=reaper_bpm,
+                reaper=reaper,
+            )
         except Exception:
             # Logged here: after a cancel nobody awaits the thread.
             logger.exception("failed to build stems zip for job %s", job_id)
@@ -2800,7 +2839,7 @@ async def get_all_stems_zip(
         temp.end("request")
         raise
 
-    filename = f"{_safe_title(job.title)}_stems.zip"
+    filename = f"{_safe_title(job.title)}_{'reaper' if reaper else 'stems'}.zip"
     return FileResponse(
         tmp_path,
         media_type="application/zip",

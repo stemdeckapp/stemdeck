@@ -4395,6 +4395,79 @@ async function wireExportsLocation(overlay) {
   });
 }
 
+// External editors: which REAPER "Open in REAPER" launches. Desktop only,
+// like the exports folder: the browser cannot launch anything, so the whole
+// group goes. The path is kept by the desktop shell, never by this page.
+async function wireExternalEditors(overlay) {
+  const group = overlay.querySelector(".settings-group-external-editors");
+  const pathEl = overlay.querySelector(".reaper-app-path");
+  const choose = overlay.querySelector(".set-reaper-app");
+  const reset = overlay.querySelector(".reset-reaper-app");
+  const msg = overlay.querySelector(".reaper-app-msg");
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!group || !pathEl || !choose) return;
+  if (!invoke) {
+    group.remove();
+    return;
+  }
+
+  const setMessage = (text, kind = "") => {
+    if (!msg) return;
+    msg.textContent = text || "";
+    msg.className = `reaper-app-msg${kind ? " " + kind : ""}`;
+  };
+  const show = (status) => {
+    const found = status?.path || "";
+    pathEl.textContent = found
+      ? `${found}${status.source === "detected" ? ` ${i18nT("settings.reaper.foundSuffix")}` : ""}`
+      : i18nT("settings.reaper.notFound");
+    pathEl.title = found;
+    if (reset) reset.hidden = status?.source !== "chosen" && !status?.chosen_missing;
+    if (status?.chosen_missing) {
+      setMessage(i18nT("settings.reaper.chosenMissing", { path: status.chosen_missing }), "error");
+    } else {
+      setMessage("");
+    }
+  };
+
+  try {
+    const status = await invoke("reaper_status");
+    // An older shell without the command: no row rather than a wrong one.
+    if (!status) {
+      group.remove();
+      return;
+    }
+    show(status);
+  } catch (e) {
+    console.warn("[settings] could not look for REAPER:", e);
+    group.remove();
+    return;
+  }
+
+  choose.addEventListener("click", async () => {
+    choose.disabled = true;
+    try {
+      const status = await invoke("pick_reaper_app");
+      if (status) show(status);
+    } catch (e) {
+      console.warn("[settings] REAPER picker failed:", e);
+      setMessage(typeof e === "string" && e ? e : i18nT("settings.reaper.pickerFailed"), "error");
+    } finally {
+      choose.disabled = false;
+    }
+  });
+  reset?.addEventListener("click", async () => {
+    reset.disabled = true;
+    try {
+      show(await invoke("reset_reaper_app"));
+    } catch (e) {
+      console.warn("[settings] REAPER reset failed:", e);
+    } finally {
+      reset.disabled = false;
+    }
+  });
+}
+
 async function wireStemsLocation(overlay) {
   const pathEl = overlay.querySelector(".stems-location-path");
   const sizeEl = overlay.querySelector(".stems-location-size");
@@ -5643,6 +5716,23 @@ function openLibraryEditor() {
             </div>
           </div>
         </div>
+        <div class="settings-group settings-group-external-editors">
+          <h4 class="settings-group-title" data-i18n="settings.group.externalEditors">External editors</h4>
+          <div class="settings-section">
+            <div class="settings-row settings-row-stack reaper-app-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title">REAPER</div>
+                <div class="settings-row-desc" data-i18n="settings.reaper.desc">Used by Open in REAPER in the Export menu. StemDeck finds REAPER where its installer puts it; choose it here if yours is somewhere else.</div>
+              </div>
+              <div class="stems-location">
+                <code class="reaper-app-path" title=""></code>
+                <button class="settings-btn set-reaper-app" type="button" data-i18n="settings.reaper.choose">Choose…</button>
+                <button class="settings-btn reset-reaper-app" type="button" data-i18n="settings.reaper.reset" hidden>Find automatically</button>
+              </div>
+              <div class="reaper-app-msg" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
         <div class="settings-group settings-group-stem-files">
           <h4 class="settings-group-title" data-i18n="settings.group.stemFiles">Stem files</h4>
           <div class="settings-section">
@@ -6013,6 +6103,7 @@ function openLibraryEditor() {
     const storage = overlay.querySelector(".settings-group-storage");
     if (storage && !storage.querySelector(".settings-row")) storage.remove();
   });
+  wireExternalEditors(overlay);
   wireNetworkSetting(overlay).then(() => watchNetworkStatus(overlay));
   if (!isDesktop) {
     overlay.querySelector(".net-access-input")?.setAttribute("disabled", "");
