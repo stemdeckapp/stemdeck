@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>StemDeck Downloads</title>
-<meta name="description" content="Total StemDeck downloads across all releases, recorded every 10 minutes.">
+<meta name="description" content="Total downloads of every StemDeck release, refreshed every 10 minutes.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* One column: a big total, then one line chart of that total over time. */
+/* One column: a heading with the grand total, then one bar per release, newest first. */
 :root {
-  --bg: #f5f6f8; --panel: #ffffff; --fg: #16181d; --muted: #5d6472; --line: #dfe2e8; --grid: #e9ebf0;
-  --accent: #e2561b; --accent-fill: rgba(226, 86, 27, 0.12); --good: #1a8a4a; --warn: #c48a07;
+  --bg: #f5f6f8; --panel: #ffffff; --fg: #16181d; --muted: #5d6472; --line: #dfe2e8;
+  --bar: #4a86e8; --bar-pre: #a9c4f2; --accent: #e2561b; --good: #1a8a4a; --warn: #c48a07;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -18,13 +18,13 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-    --accent: #ff7a3d; --accent-fill: rgba(255, 122, 61, 0.14); --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
+    --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38;
+    --bar: #6c9cff; --bar-pre: #3b5a96; --accent: #ff7a3d; --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38; --grid: #20242c;
-  --accent: #ff7a3d; --accent-fill: rgba(255, 122, 61, 0.14); --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
+  --bg: #101216; --panel: #171a20; --fg: #e9ebf0; --muted: #969eac; --line: #2a2f38;
+  --bar: #6c9cff; --bar-pre: #3b5a96; --accent: #ff7a3d; --good: #4bc77f; --warn: #e3b13a; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -33,142 +33,74 @@ body {
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 28px 48px;
 }
-.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 20px; }
-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 24px; }
 h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01em; }
 .status { font: 0.8rem var(--font-mono); color: var(--muted); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: 1px; }
 .dot.stale { background: var(--warn); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 16px; }
-.top { display: flex; flex-wrap: wrap; gap: 12px 40px; align-items: flex-end; }
-.label { font: 500 0.72rem var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-.big { font: 700 3.4rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--accent); margin-top: 6px; }
-.mid { font: 600 1.4rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; margin-top: 8px; }
-.sub { font-size: 0.82rem; color: var(--muted); }
-.box { position: relative; height: 380px; }
+.total { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.total b { font: 700 2.6rem/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.total span { color: var(--muted); font-size: 0.9rem; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px; }
+.row { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr) 4.2rem; align-items: center; gap: 12px; padding: 4px 0; }
+.row + .row { border-top: 1px solid var(--line); }
+.tag { font: 500 0.85rem var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); text-decoration: none; }
+a.tag:hover { text-decoration: underline; }
+.track { height: 16px; }
+.fill { height: 100%; min-width: 2px; border-radius: 0 3px 3px 0; background: var(--bar); }
+.row.pre .fill { background: var(--bar-pre); }
+.row.latest .fill { background: var(--accent); }
+.row.latest .tag, .row.latest .num { color: var(--accent); font-weight: 600; }
+.num { font: 500 0.85rem var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
 .note { font-size: 0.8rem; color: var(--muted); }
-@media (max-width: 640px) { .box { height: 300px; } .big { font-size: 2.6rem; } }
+@media (max-width: 480px) { .row { grid-template-columns: 6.6rem minmax(0, 1fr) 3.6rem; gap: 8px; } .tag { font-size: 0.78rem; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>StemDeck Downloads</h1>
-    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span> · one point every 10 min</div>
+    <div class="status"><span class="dot" id="dot"></span><span id="updated">Loading…</span> · refreshed every 10 min</div>
   </header>
-
-  <section class="card" aria-label="Total downloads">
-    <div class="top">
-      <div>
-        <div class="label">Total downloads, all releases</div>
-        <div class="big" id="total">–</div>
-        <div class="sub" id="releases">–</div>
-      </div>
-      <div>
-        <div class="label">Since recording started</div>
-        <div class="mid" id="since">–</div>
-        <div class="sub" id="since-sub">&nbsp;</div>
-      </div>
-      <div>
-        <div class="label">Last hour</div>
-        <div class="mid" id="hour">–</div>
-        <div class="sub">new downloads</div>
-      </div>
-    </div>
-    <div class="box"><canvas id="chart" aria-label="Line chart of total downloads over time"></canvas></div>
-    <div class="note" id="note"></div>
-  </section>
+  <div class="total"><b id="total">–</b><span id="count">total downloads</span></div>
+  <div class="card" id="rows" role="list" aria-label="Total downloads by release"></div>
+  <div class="note">Total downloads per release, newest first. Counts include installers and app bundles, not checksum or metadata files. Lighter bars are alpha releases.</div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 (() => {
-  const REFRESH_MS = 60 * 1000;   // re-read the data file; the recorder adds a point every 10 minutes
   const STALE_MS = 25 * 60 * 1000;
-  const HOUR = 3600e3, DAY = 24 * HOUR;
-  let chart = null;
-
   const $ = (id) => document.getElementById(id);
-  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const fmt = (n) => n.toLocaleString("en-US");
-  const signed = (n) => (n > 0 ? "+" : "") + fmt(n);
   const when = (ms) => new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-  // One point per snapshot: the sum over every release that existed at that
-  // time. A snapshot that is missing a release published before it was taken
-  // is incomplete, so it is skipped rather than drawn as a false dip.
-  function series(data) {
-    const published = new Map(Object.entries(data.releases).map(([tag, r]) => [tag, Date.parse(r.published_at)]));
-    const out = [];
-    for (const s of data.snapshots) {
-      const t = Date.parse(s.t);
-      let complete = true, sum = 0, n = 0;
-      for (const [tag, pub] of published) {
-        if (pub > t) continue;
-        if (!(tag in s.d)) { complete = false; break; }
-        sum += s.d[tag]; n++;
-      }
-      if (complete && n) out.push({ x: t, y: sum, n });
-    }
-    return out;
-  }
-
-  function atOrBefore(pts, t) {
-    let found = null;
-    for (const p of pts) { if (p.x <= t) found = p; else break; }
-    return found;
-  }
-
   function render(data) {
-    const pts = series(data);
-    if (!pts.length) { $("updated").textContent = "No data yet"; return; }
-    const first = pts[0], last = pts[pts.length - 1];
-    $("total").textContent = fmt(last.y);
-    $("releases").textContent = `across ${last.n} releases`;
-    $("since").textContent = pts.length > 1 ? signed(last.y - first.y) : "–";
-    $("since-sub").textContent = `since ${when(first.x)}`;
-    const hourAgo = atOrBefore(pts, last.x - HOUR);
-    $("hour").textContent = hourAgo ? signed(last.y - hourAgo.y) : "–";
-    const age = Date.now() - Date.parse(data.updated);
+    const snap = data.snapshots[data.snapshots.length - 1];
+    if (!snap) { $("updated").textContent = "No data yet"; return; }
+    const tags = data.tracked.filter((t) => t in snap.d);   // newest first
+    const max = Math.max(...tags.map((t) => snap.d[t]), 1);
+    const total = tags.reduce((s, t) => s + snap.d[t], 0);
+    $("total").textContent = fmt(total);
+    $("count").textContent = `total downloads across ${tags.length} releases`;
     $("updated").textContent = `Updated ${when(Date.parse(data.updated))}`;
-    $("dot").classList.toggle("stale", age > STALE_MS);
-    $("note").textContent = pts.length < 6
-      ? "Recording just started, so the line is short. GitHub only reports current totals, so earlier history cannot be recovered. Counts include installers and app bundles, not checksum or metadata files."
-      : "Counts include installers and app bundles, not checksum or metadata files.";
+    $("dot").classList.toggle("stale", Date.now() - Date.parse(data.updated) > STALE_MS);
 
-    const span = last.x - first.x;
-    const accent = css("--accent"), muted = css("--muted"), grid = css("--grid"), line = css("--line"), panel = css("--panel"), fg = css("--fg");
-    const short = Math.max(span, 30 * 60e3) < 2 * DAY;
-    const dataset = {
-      data: pts, borderColor: accent, backgroundColor: css("--accent-fill"), fill: true, borderWidth: 2.5, tension: 0,
-      pointRadius: (c) => (c.dataIndex === pts.length - 1 ? 5 : pts.length < 40 ? 3 : 0), pointHoverRadius: 5, pointBackgroundColor: accent,
-    };
-    const options = {
-      responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      interaction: { mode: "nearest", intersect: false, axis: "x" },
-      scales: {
-        x: {
-          type: "linear", min: first.x, max: Math.max(last.x, first.x + 30 * 60e3),
-          grid: { color: grid }, border: { color: line },
-          ticks: { color: muted, maxTicksLimit: 7, font: { family: "JetBrains Mono", size: 11 },
-            callback: (v) => short ? new Date(v).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric" }) },
-        },
-        y: {
-          grace: "8%", grid: { color: grid }, border: { color: line },
-          ticks: { color: muted, font: { family: "JetBrains Mono", size: 11 }, callback: (v) => fmt(Math.round(v)) },
-        },
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: panel, titleColor: fg, bodyColor: fg, borderColor: line, borderWidth: 1, displayColors: false,
-          titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "JetBrains Mono" },
-          callbacks: { title: (items) => when(items[0].parsed.x), label: (i) => `${fmt(i.parsed.y)} downloads` },
-        },
-      },
-    };
-    if (chart) { chart.data.datasets = [dataset]; chart.options = options; chart.update(); }
-    else chart = new Chart($("chart"), { type: "line", data: { datasets: [dataset] }, options });
+    const box = $("rows");
+    box.replaceChildren(...tags.map((tag, i) => {
+      const meta = data.releases[tag] || {};
+      const row = document.createElement("div");
+      row.className = "row" + (i === 0 ? " latest" : "") + (/-(alpha|beta|rc)/.test(tag) ? " pre" : "");
+      row.setAttribute("role", "listitem");
+      const a = document.createElement("a");
+      a.className = "tag"; a.textContent = tag; a.href = meta.url || "#"; a.target = "_blank"; a.rel = "noopener";
+      const track = document.createElement("div"); track.className = "track";
+      const fill = document.createElement("div"); fill.className = "fill"; fill.style.width = (snap.d[tag] / max * 100) + "%";
+      track.appendChild(fill);
+      const num = document.createElement("div"); num.className = "num"; num.textContent = fmt(snap.d[tag]);
+      row.append(a, track, num);
+      return row;
+    }));
   }
 
   async function refresh() {
@@ -176,13 +108,9 @@ h1 { font: 700 1.6rem/1.15 var(--font-display); margin: 0; letter-spacing: -0.01
       const r = await fetch(`data.json?t=${Date.now()}`, { cache: "no-store" });
       if (!r.ok) throw new Error(r.status);
       render(await r.json());
-    } catch {
-      $("updated").textContent = "No data yet";
-    }
+    } catch { $("updated").textContent = "No data yet"; }
   }
-
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", refresh);
-  setInterval(refresh, REFRESH_MS);
+  setInterval(refresh, 60 * 1000);
   refresh();
 })();
 </script>
