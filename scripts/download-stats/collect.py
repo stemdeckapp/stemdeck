@@ -25,13 +25,7 @@ TRACKED = None  # None = every published release
 FULL_RES = timedelta(days=14)  # keep every snapshot this far back
 THIN_STEP = timedelta(hours=1)  # older than that: one snapshot per hour
 
-# Checksums and small metadata files are fetched by scripts and the app's
-# updater, not by people installing StemDeck, so they do not count.
-SKIP_SUFFIXES = (".sha256", ".txt", ".json", ".sig", ".asc")
-
-
-def counts_as_download(asset_name: str) -> bool:
-    return not asset_name.lower().endswith(SKIP_SUFFIXES)
+# Every file attached to a release counts, which matches the total GitHub shows.
 
 
 def fetch_releases(repo: str) -> list[dict]:
@@ -115,7 +109,7 @@ def main() -> int:
     for rel in tracked:
         tag = rel["tag_name"]
         counts[tag] = sum(
-            a["download_count"] for a in rel.get("assets", []) if counts_as_download(a["name"])
+            a["download_count"] for a in rel.get("assets", [])
         )
         data["releases"][tag] = {
             "name": rel.get("name") or tag,
