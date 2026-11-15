@@ -8,7 +8,7 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { paintLoudnessNote, wireLoudnessNote } from "./loudnessNote.js";
-import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
+import { showError, importFromUrl, detachForegroundJob, reset, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
 import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -387,6 +387,44 @@ function replaceTrackId(oldId, newId) {
     folder.items = [...new Set(folder.items)];
   }
   if (_currentTrackId === oldId) _currentTrackId = newId;
+}
+
+/**
+ * Empty the studio when the song in it leaves the library (#1072).
+ *
+ * Trashing or deleting a song used to forget it in the list only: the mixer,
+ * the audio engine and the now-playing card kept showing it. reset() is what
+ * opening an empty studio already does, and it also closes the import stream
+ * when the song was still importing.
+ *
+ * The composer goes back to "nothing to act on", the state loadTrackIntoStudio
+ * gives a song that is neither importable nor re-splittable. Opening a
+ * link-sourced song put its link in the box and lifted `required`, so leaving
+ * them meant Extract stems imported the trashed song again. A link typed in
+ * since is the person's own and stays: only the song's own link is cleared.
+ */
+function unloadIfOpen(trackId) {
+  if (!trackId || _currentTrackId !== trackId) return;
+  const sourceUrl = tracks[trackId]?.sourceUrl;
+  _currentTrackId = null;
+  reset();
+  setResplitTarget(null);
+  const urlInput = document.getElementById("url");
+  if (urlInput) {
+    if (sourceUrl && urlInput.value.trim() === sourceUrl) urlInput.value = "";
+    urlInput.setAttribute("required", "");
+  }
+}
+
+/**
+ * Whether a load of `trackId` begun under `token` must stop: another song was
+ * opened since, or this one went to the Trash while it loaded (#1072).
+ * Trashing does not move the token, so without the second check a song
+ * trashed mid-load still opened, or was wired into the studio unloadIfOpen
+ * had just emptied.
+ */
+function loadSuperseded(token, trackId) {
+  return token !== _loadTrackToken || getTrashFolder().items.includes(trackId);
 }
 
 function purgeTrash() {
@@ -1127,7 +1165,7 @@ function moveTrackToTrash(trackId) {
   removeTrackFromFolders(trackId);
   const trash = getTrashFolder();
   if (trash && !trash.items.includes(trackId)) trash.items.unshift(trackId);
-  if (_currentTrackId === trackId) _currentTrackId = null;
+  unloadIfOpen(trackId);
   // The user is done with this track — clear any failure tied to it (#401).
   // purgeTrash() does the same on permanent delete, for a job that errors
   // after being trashed but before it's purged.
@@ -1215,7 +1253,7 @@ async function loadTrackIntoStudio(trackId) {
   // are reflected — cached localStorage data can be stale.
   try {
     const res = await fetch(`/api/jobs/${trackId}`);
-    if (token !== _loadTrackToken) return;
+    if (loadSuperseded(token, trackId)) return;
     if (res.ok) {
       const state = await res.json();
       track = stateMetadataToTrack(state, track);
@@ -1235,7 +1273,7 @@ async function loadTrackIntoStudio(trackId) {
     }
   } catch (e) { console.warn("[catalog] server sync failed, using stored track:", e); }
 
-  if (token !== _loadTrackToken) return;
+  if (loadSuperseded(token, trackId)) return;
   // A reprocessing track may still carry the previous extraction's stems
   // (hadStoredAudio), but it isn't ready — loading it would replace the live
   // job-progress overlay with stale audio. Leave the progress UI in place.
@@ -1290,7 +1328,7 @@ async function loadTrackIntoStudio(trackId) {
     track.vocalSplit || (track.audioStems.some((s) => s?.name === "lead_vocals") ? "done" : "none"),
     track.vocalSplitReason || null,
   );
-  if (token !== _loadTrackToken) return;
+  if (loadSuperseded(token, trackId)) return;
   // Performance's own track is a lane in Performance only (modeStems.js).
   wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
@@ -1419,6 +1457,9 @@ function deleteFolder(folderId) {
     if (tracks[trackId] && trash && !trash.items.includes(trackId)) {
       trash.items.unshift(trackId);
     }
+    // After the Trash holds it, as in moveTrackToTrash: loadSuperseded reads
+    // that membership to stop a load of this song still under way (#1072).
+    unloadIfOpen(trackId);
   }
   saveState();
   render();
