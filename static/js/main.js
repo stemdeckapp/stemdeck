@@ -14,8 +14,9 @@ import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
-import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange } from "./transport.js";
+import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange, clearLoop, isCountInRunning } from "./transport.js";
 import { setSectionsLoopBridge, refreshSectionsAddState } from "./sections.js";
+import { setTimelineTagsBridge, seekToTagForKey, shortcutIndex, refreshTagLoopState } from "./timelineTags.js";
 import { wireStemListControls, laneDragIcon } from "./mixer.js";
 import { initCatalog, collectDiagnostics, wireCatalogControls } from "./catalog.js";
 import { initNotifications, notifyFailure, dismissFailuresByJobId } from "./notifications.js";
@@ -30,8 +31,9 @@ import { initHelpMode } from "./helpMode.js";
 import { initVideoTake } from "./video/videoTake.js";
 import { initMasterPanel } from "./masterPanel.js";
 import { initModeUi } from "./modeUi.js";
-import { initKaraoke } from "./karaoke/karaoke.js";
-import { initStreamer } from "./streamer/streamer.js";
+import { initKaraoke, isKaraokeOpen } from "./karaoke/karaoke.js";
+import { initStreamer, isStreamerOpen, isStreamerTakeOpen } from "./streamer/streamer.js";
+import { isRecording } from "./capture/recordUi.js";
 import { initMixMode } from "./mixMode.js";
 import { initModeStems } from "./modeStems.js";
 import { initStemsControl } from "./stemsControl.js";
@@ -502,6 +504,16 @@ setSectionsLoopBridge({
   setLoopRange,
 });
 onLoopChange(refreshSectionsAddState);
+// Tags (#1075) the same way: where the playhead is, and move it.
+setTimelineTagsBridge({
+  getTime: () => transport()?.getCurrentTime() ?? null,
+  seek: setPlayheadTime,
+  // The marker loop buttons arm the same loop a section does.
+  getLoop: () => ({ enabled: loopEnabled, start: loopStart, end: loopEnd }),
+  setLoopRange,
+  clearLoop,
+});
+onLoopChange(refreshTagLoopState);
 wireBeatGridUi();
 wireFooterControls();
 wireStemListControls();
@@ -1191,8 +1203,39 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     setLoopEnd(Math.max(transport().getCurrentTime(), loopStart + 0.5));
     updateLoopRegionVisual();
+  } else if (shortcutIndex(e.code, e.key) >= 0 && seekToTagForKey(e, markerKeyState(e))) {
+    // 1 to 9 jump to the song's first nine markers (#1075). Plain digits, not
+    // Ctrl or Cmd with one: those switch the browser's tabs and a page cannot
+    // take them, and Alt is excluded above (Option types a symbol on a Mac,
+    // and Alt+digit switches tabs in Firefox on Linux). No other key in the
+    // app uses a digit. A digit with no marker is left alone, and so is every
+    // digit outside the studio view (tagShortcutIndex in timelineTags.js).
+    e.preventDefault();
   }
 });
+
+/**
+ * What the marker keys need to know about the rest of the app, each read from
+ * the module that owns it. A dialog counts when it is modal and showing, or
+ * when the key was pressed inside one or inside a menu (the rule karaoke.js
+ * and streamer.js use for their own keys). A non-modal one that does not have
+ * the key, such as the floating video window, leaves the digits working.
+ */
+function markerKeyState(e) {
+  const inDialog = e.target instanceof Element && Boolean(e.target.closest("[role=dialog], [role=menu]"));
+  const modalOpen = [...document.querySelectorAll('[role=dialog][aria-modal="true"]')]
+    .some((el) => el.getClientRects().length > 0);
+  return {
+    karaokeOpen: isKaraokeOpen(),
+    streamerOpen: isStreamerOpen(),
+    dialogOpen: inDialog || modalOpen,
+    // helpMode.js marks the page with this class while the Guide is on, as
+    // modeUi.js reads it.
+    guideOpen: document.body.classList.contains("help-mode"),
+    recording: isRecording() || isStreamerTakeOpen(),
+    countIn: isCountInRunning(),
+  };
+}
 
 // ─── Drag audio out to a DAW or a folder ───
 //

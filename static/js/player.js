@@ -67,6 +67,7 @@ import {
   updateMetronomeAvailability, applyMetronomeAccent,
 } from "./transport.js";
 import { destroySections } from "./sections.js";
+import { destroyTimelineTags } from "./timelineTags.js";
 import { t, plural, onLanguageChange } from "./i18n.js";
 import { paintNowPlayingArt } from "./formatIcon.js";
 
@@ -1011,6 +1012,7 @@ export function destroyPlayer() {
   document.querySelector(".app")?.classList.remove("engine-waveforms");
   document.querySelector(".app")?.classList.add("no-track");
   destroySections();
+  destroyTimelineTags();
   stopStemVuLoop();
   resetSpeed();
   resetPitch();

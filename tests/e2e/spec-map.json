@@ -167,6 +167,16 @@
       "specs": ["sections-lock", "sections-loop", "sections-rename", "sections-zoom", "song-structure-toggle", "zoom", "footer-time", "karaoke", "loop-transport"]
     },
     {
+      "why": "Tags: the bar under Sections, seeking, the digit keys, and their saving",
+      "paths": ["static/js/timelineTags.js"],
+      "specs": ["timeline-tags", "sections-loop", "panel-toggles", "help-mode"]
+    },
+    {
+      "why": "Markers: the digit keys and their guard (main.js), the seek and the bar's scroll (transport.js), and the list read when a song opens (catalog.js)",
+      "paths": ["static/js/main.js", "static/js/transport.js", "static/js/catalog.js"],
+      "specs": ["timeline-tags"]
+    },
+    {
       "why": "Beat grid, metronome and count-in",
       "paths": ["static/js/beatgrid.js", "static/js/beatgridUi.js", "static/js/metronome.js", "static/js/clickSounds.js", "app/pipeline/click_render.py", "app/pipeline/click_sounds.py"],
       "specs": ["click-track", "click-sound", "count-in-replay", "lane-alignment", "footer-fit", "zoom", "live-wave"]

@@ -1456,6 +1456,98 @@ def update_sections(job_id: str, body: SectionsBody) -> dict:
     return {"job_id": job_id, "sections": validated, "sections_source": "manual"}
 
 
+class TimelineTagItem(BaseModel):
+    """One Tag (#1075): a named point on the timeline that a click seeks to."""
+
+    id: str
+    name: str
+    time: float
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, v: str) -> str:
+        if not _SECTION_ID_RE.match(v):
+            raise ValueError("invalid tag id")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return v.strip()[:64] or "Tag"
+
+    @field_validator("time")
+    @classmethod
+    def _check_time(cls, v: float) -> float:
+        # NaN and infinity fail this comparison too, so neither is stored.
+        if not (0 <= v < 86400):
+            raise ValueError("time out of range")
+        return round(v, 3)
+
+
+# A Tag is placed by hand, one press each, so a song with a thousand is far
+# past any real use; the bound keeps a hostile body small (#481 is why every
+# editor list has one).
+_MAX_TIMELINE_TAGS = 1000
+
+
+class TimelineTagsBody(BaseModel):
+    timeline_tags: list[TimelineTagItem] = Field(max_length=_MAX_TIMELINE_TAGS)
+
+    @field_validator("timeline_tags")
+    @classmethod
+    def _check_unique_ids(cls, v: list[TimelineTagItem]) -> list[TimelineTagItem]:
+        # The page renames and deletes a tag by its id. Two with one id would
+        # make either action land on both.
+        if len({tag.id for tag in v}) != len(v):
+            raise ValueError("duplicate tag id")
+        return v
+
+
+@router.patch("/{job_id}/timeline-tags")
+def update_timeline_tags(job_id: str, body: TimelineTagsBody) -> dict:
+    """Save the song's Tags (#1075), the whole list, the way sections are saved.
+
+    A separate endpoint, not a field on the sections one: saving a tag must not
+    mark automatic sections as edited by hand, and must not have to resend them.
+    """
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    validated = [tag.model_dump() for tag in sorted(body.timeline_tags, key=lambda t: t.time)]
+
+    job_dir = (JOBS_DIR / job_id).resolve()
+    if not job_dir.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="job not found")
+    meta_path = job_dir / "metadata.json"
+
+    # The same lock and the same durable write as the sections editor: both
+    # read metadata.json, change one key and write it back whole.
+    with metadata_lock:
+        meta: dict = {}
+        try:
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            # Valid JSON that is not an object (a list, a number) has no key to
+            # set: refused with the same answer as an unreadable file rather
+            # than a bare TypeError, and the file is left as it is.
+            if not isinstance(meta, dict):
+                logger.error("failed to write tags for %s: metadata.json is not an object", job_id)
+                raise HTTPException(status_code=500, detail="failed to save tags")
+            meta["timeline_tags"] = validated
+            _write_json_atomic(meta_path, meta)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.exception("failed to write tags for %s: %s", job_id, exc)
+            raise HTTPException(status_code=500, detail="failed to save tags") from exc
+
+        _set(job, timeline_tags=validated)
+        registry_persist(JOBS_DIR)
+
+    return {"job_id": job_id, "timeline_tags": validated}
+
+
 # Jobs whose tags are being looked up right now. Only touched on the event
 # loop, with no await between the check and the add, so a plain set is enough.
 _TAG_LOOKUPS: set[str] = set()

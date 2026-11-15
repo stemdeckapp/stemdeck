@@ -149,7 +149,21 @@ _BACK_FROM_METADATA = (
     "stem_mp3_kbps",
     "loudness_version",
     "loudness_remeasured",
+    # The song's Tags (#1075). 0.20.0 does not know them, so a record it saved
+    # holds none and metadata.json is their only copy. Without this the next
+    # tag saved would replace them all on disk.
+    "timeline_tags",
 )
+
+
+def _clean_timeline_tags(value: object) -> list[dict] | None:
+    """The timeline markers a record or metadata.json holds, or None for
+    anything that is not a list of objects. The one check for the field: the
+    rebuild from a folder and _repair_field_types both use it. Each entry is
+    checked by the page that draws it."""
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        return None
+    return value
 
 
 def register(job: Job) -> Job:
@@ -460,6 +474,10 @@ def _repair_field_types(job: Job) -> list[str]:
                 # No song was added before 1970. The auto-delete sweep would
                 # take one that says so as long expired.
                 ok = ok and value >= 0
+        elif ok and f.name == "timeline_tags" and value is not None:
+            # The same check the rebuild from a folder applies, so a record
+            # and a metadata.json read back after a downgrade agree with it.
+            ok = _clean_timeline_tags(value) is not None
         elif ok and f.name in _ENTRY_IDS:
             ok = all(
                 isinstance(entry, dict) and _ENTRY_IDS[f.name].match(str(entry.get("id")))
@@ -962,6 +980,11 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         stem_presence=meta.get("stem_presence"),
         sections=meta.get("sections"),
         sections_source=meta.get("sections_source"),
+        # Through _clean_timeline_tags, the one check _repair_field_types also
+        # applies to a registry record and to metadata.json read back after a
+        # downgrade, so a hand-edited value that is not a list of objects is
+        # dropped instead of loaded.
+        timeline_tags=_clean_timeline_tags(meta.get("timeline_tags")),
         tags=meta.get("tags"),
         audio_tags=clean_audio_tags(meta.get("audio_tags")),
         identity=clean_identity(meta.get("identity")),

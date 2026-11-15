@@ -277,7 +277,7 @@
           </button>
           <span class="daw-panel-toggles-sep" aria-hidden="true">-</span>
           <button class="daw-panel-toggle" type="button" data-panel="sections" aria-pressed="true"
-                  title="Show or hide the sections bar" data-i18n-title="panels.sectionsTitle" data-i18n-aria-label="panels.sectionsTitle">
+                  title="Show or hide the Sections and Markers bars" data-i18n-title="panels.sectionsTitle" data-i18n-aria-label="panels.sectionsTitle">
             <span data-i18n="sections.title">Sections</span>
           </button>
         </div>
@@ -620,7 +620,7 @@
                      finding Collapse > Sections first (#634). It is that same
                      switch. An icon only: with Clear and Add, a word would
                      overflow the 300px column in German. -->
-                <button class="sections-add-btn-label sections-hide-btn" id="sectionsHideBtn" type="button" title="Hide the sections bar. Collapse > Sections brings it back." aria-label="Hide the sections bar" data-i18n-title="sections.hideTitle" data-i18n-aria-label="sections.hideAria">
+                <button class="sections-add-btn-label sections-hide-btn" id="sectionsHideBtn" type="button" title="Hide the Sections and Markers bars. Collapse > Sections brings them back." aria-label="Hide the Sections and Markers bars" data-i18n-title="sections.hideTitle" data-i18n-aria-label="sections.hideAria">
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/><path d="M4 20 20 4"/></svg>
                 </button>
               </span>
@@ -632,6 +632,29 @@
                  which solves the same problem the same way. -->
             <div class="daw-sections-area" id="daw-sections">
               <div class="daw-sections-track" id="daw-sections-track"></div>
+            </div>
+          </div>
+
+          <!-- Markers bar (#1075, "timeline tags" in the code): named points that a click seeks to, without
+               the loop a section always makes. The Sections bar's second row,
+               so Collapse > Sections and its Hide put both away (daw.css).
+               timelineTags.js fills the track; it slides with the waveform
+               like the sections track above it. -->
+          <div class="daw-tags-ribbon">
+            <div class="daw-mixer-label daw-sections-header daw-tags-header">
+              <span class="daw-sections-title-group">
+                <span class="daw-label-title" data-i18n="tags.title">Markers</span>
+              </span>
+              <span class="sections-header-actions">
+                <span class="sections-save-indicator hidden" id="tagsSaveIndicator" aria-live="polite"></span>
+                <button class="sections-add-btn-label" id="tagsAddBtn" type="button" title="Add a marker where the playhead is" aria-label="Add a marker where the playhead is" data-i18n-title="tags.addTitle" data-i18n-aria-label="tags.addTitle">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  <span data-i18n="sections.add">Add</span>
+                </button>
+              </span>
+            </div>
+            <div class="daw-sections-area daw-tags-area">
+              <div class="daw-sections-track daw-tags-track" id="daw-tags-track"></div>
             </div>
           </div>
 
