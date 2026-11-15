@@ -186,8 +186,6 @@ test.describe("markers", () => {
       return { on: st.loopEnabled, start: st.loopStart, end: st.loopEnd };
     });
 
-  const loopBtn = (id) => page.locator(`${tag(id)} .tag-loop`);
-
   async function pressLoop(page, id) {
     await page.locator(tag(id)).hover();
     await page.locator(`${tag(id)} .tag-loop`).click();
