@@ -331,8 +331,10 @@ test.describe("markers", () => {
 
     const btn = page.locator(`${tag("t1")} .tag-loop`);
     await expect(btn).toHaveAttribute("aria-disabled", "true");
-    await page.locator(tag("t1")).hover();
-    await btn.click();
+    // The two markers sit 0.1 s apart on a 6 s song, so the second one's
+    // number covers the first. The keyboard reaches the button without the pointer.
+    await btn.focus();
+    await page.keyboard.press("Enter");
     expect((await loopBounds(page)).on).toBe(false);
   });
 
