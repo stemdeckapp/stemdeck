@@ -8,7 +8,7 @@ import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedSte
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
 import { paintLoudnessNote, wireLoudnessNote } from "./loudnessNote.js";
-import { showError, importFromUrl, detachForegroundJob, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
+import { showError, importFromUrl, detachForegroundJob, reset, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
 import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
@@ -387,6 +387,21 @@ function replaceTrackId(oldId, newId) {
     folder.items = [...new Set(folder.items)];
   }
   if (_currentTrackId === oldId) _currentTrackId = newId;
+}
+
+/**
+ * Empty the studio when the song in it leaves the library (#1072).
+ *
+ * Trashing or deleting a song used to forget it in the list only: the mixer,
+ * the audio engine and the now-playing card kept showing it. reset() is what
+ * opening an empty studio already does, and it also closes the import stream
+ * when the song was still importing.
+ */
+function unloadIfOpen(trackId) {
+  if (!trackId || _currentTrackId !== trackId) return;
+  _currentTrackId = null;
+  reset();
+  setResplitTarget(null);
 }
 
 function purgeTrash() {
@@ -1127,7 +1142,7 @@ function moveTrackToTrash(trackId) {
   removeTrackFromFolders(trackId);
   const trash = getTrashFolder();
   if (trash && !trash.items.includes(trackId)) trash.items.unshift(trackId);
-  if (_currentTrackId === trackId) _currentTrackId = null;
+  unloadIfOpen(trackId);
   // The user is done with this track — clear any failure tied to it (#401).
   // purgeTrash() does the same on permanent delete, for a job that errors
   // after being trashed but before it's purged.
