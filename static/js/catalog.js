@@ -1457,6 +1457,9 @@ function deleteFolder(folderId) {
     if (tracks[trackId] && trash && !trash.items.includes(trackId)) {
       trash.items.unshift(trackId);
     }
+    // After the Trash holds it, as in moveTrackToTrash: loadSuperseded reads
+    // that membership to stop a load of this song still under way (#1072).
+    unloadIfOpen(trackId);
   }
   saveState();
   render();

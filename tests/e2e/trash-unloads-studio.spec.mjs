@@ -120,6 +120,46 @@ test("trashing a song that is not open leaves the open one playing", async ({ pa
   await expect(page.locator(".app")).not.toHaveClass(/no-track/);
 });
 
+test("deleting the folder that holds the open song empties the studio", async ({ page }) => {
+  // deleteFolder moves the folder's songs to the Trash itself, without
+  // moveTrackToTrash, so it has to unload the open one on its own. Unsorted
+  // cannot be deleted, so the song sits in a folder of the person's own.
+  await stubTrash(page);
+  await seedCatalogState(page, {
+    folders: [
+      { id: "f-unsorted", name: "Unsorted", items: [SIBLING_JOB_ID], color: null },
+      { id: "f-e2e-setlist", name: "Set list", items: [JOB_ID], color: null },
+      { id: "trash", name: "Trash", items: [], color: null },
+    ],
+    tracks: {
+      [JOB_ID]: fixtureTrack(JOB_ID, TRACK_TITLE),
+      [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, SIBLING_TITLE),
+    },
+  });
+  await stubFavorites(page);
+  await stubExportEndpoints(page);
+  await stubUpdateCheck(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.locator(`.cat-item[data-id="${JOB_ID}"]`).first().click();
+  await page.waitForFunction(
+    () => !/\/\s*00:00\s*$/.test(document.querySelector("#t-time")?.textContent || "00:00 / 00:00"),
+    null,
+    { timeout: 20000 },
+  );
+  await expect(page.locator(".app")).not.toHaveClass(/no-track/);
+
+  // The folder's delete button only shows on hover; it asks for no confirmation.
+  const head = page.locator('#catalogList .folder[data-id="f-e2e-setlist"] > .folder-head');
+  await head.hover();
+  await head.locator(".f-del").click();
+
+  await expect(page.locator('#catalogList .folder[data-id="f-e2e-setlist"]')).toHaveCount(0);
+  await expect(page.locator(".app")).toHaveClass(/no-track/);
+  await expect(page.locator(".cat-item.active")).toHaveCount(0);
+  await expect(page.locator("#submit")).toHaveAttribute("data-resplit-job", "");
+});
+
 test("trashing an open link-sourced song leaves Extract stems nothing to import", async ({ page }) => {
   await stubTrash(page);
   await seedWithSource(page, LINK);
