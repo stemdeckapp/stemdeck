@@ -12,7 +12,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Store key holding the REAPER the user chose. Absent = detect.
 pub const REAPER_PATH_KEY: &str = "reaper_path";
@@ -117,6 +116,7 @@ fn reg_exe() -> PathBuf {
 #[cfg(windows)]
 fn registry_dirs() -> Vec<PathBuf> {
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     ["HKLM\\SOFTWARE\\REAPER", "HKCU\\SOFTWARE\\REAPER"]
         .iter()
