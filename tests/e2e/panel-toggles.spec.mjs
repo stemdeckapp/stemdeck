@@ -103,7 +103,7 @@ test.describe("the sections bar's own Hide button", () => {
   test("hides the bar from the keyboard, and Collapse brings it back", async ({ page }) => {
     await openStudio(page, { tauri: true });
     await expect(ribbon(page)).toBeVisible();
-    await expect(hide(page)).toHaveAccessibleName("Hide the sections bar");
+    await expect(hide(page)).toHaveAccessibleName("Hide the Sections and Markers bars");
 
     await hide(page).focus();
     await page.keyboard.press("Enter");

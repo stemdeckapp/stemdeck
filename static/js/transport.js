@@ -626,6 +626,23 @@ function _dropCountIn() {
   metronome?.cancelCountIn?.();
 }
 
+/**
+ * Whether a count-in is running: playback has been started with count-in
+ * bars set, and the song has not entered yet. Read from the engine's own
+ * start (its clock mapping) rather than kept as a flag of its own, so it can
+ * never disagree with what is heard. A start still waiting for its stems or
+ * its first chunk counts too, since its count-in has not begun. The marker
+ * keys (timelineTags.js) leave the playhead alone meanwhile.
+ */
+export function isCountInRunning() {
+  const eng = audioEngine;
+  if (metronomeCountInBars < 1 || !eng?.isPlaying?.()) return false;
+  if (!eng.isClockReady?.()) return true;
+  const ctx = eng.audioContext;
+  const mapping = eng.getOutputMapping?.();
+  return Boolean(ctx && mapping) && mapping.startCtxTime > ctx.currentTime;
+}
+
 // Arm a count-in when it is enabled and the engine + grid can support one.
 // Starts the audio late (engine.play(leadIn)) and schedules the count clicks in
 // the gap, whether or not the running click is on. Returns true when it took
@@ -740,6 +757,14 @@ export function stopTransport() {
   _dropCountIn(); // a count-in in progress must not outlive Stop
   if (!loadingMultitrack(tx)) tx.setTime(loopEnabled ? loopStart : 0); // engine: setTime → onTime → stop visual
   if (eng) playBtn.classList.remove("playing");
+}
+
+/// Switch the loop off and hide its region. The caller that armed a loop for
+/// someone else (the marker bar's loop button) uses this to put it away.
+export function clearLoop() {
+  setLoopEnabled(false);
+  loopBtn.classList.remove("active");
+  updateLoopRegionVisual();
 }
 
 export function toggleLoop() {
@@ -938,6 +963,9 @@ export function syncRulerScroll() {
   // The lyrics lane (lyricsLane.js), the same kind of strip again.
   const lyricsTrack = document.getElementById("daw-lyrics-track");
   if (lyricsTrack) lyricsTrack.style.transform = shift;
+  // The Tags bar (timelineTags.js, #1075), the same kind of strip again.
+  const tagsTrack = document.getElementById("daw-tags-track");
+  if (tagsTrack) tagsTrack.style.transform = shift;
 }
 
 export function applyWaveZoom() {

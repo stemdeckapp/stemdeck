@@ -4,6 +4,7 @@ import { prepareLayout, shownTracks } from "./modeStems.js";
 import { applyServerVersions, deleteVersion, openVersion, versionLabel, versionStemsText } from "./versions.js";
 import { activeVersionId, songVersions } from "./versionScope.js";
 import { initSections } from "./sections.js";
+import { initTimelineTags } from "./timelineTags.js";
 import { audioEngine, bpmChip, foregroundJobId, keyChip, multitrack, selectedStems, titleEl } from "./state.js";
 import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js";
 import { formatKey } from "./keyLabel.js";
@@ -871,6 +872,9 @@ function stateMetadataToTrack(state, fallbackTrack) {
     tags: state.tags ?? fallbackTrack.tags ?? [],
     sections: state.sections ?? fallbackTrack.sections ?? null,
     sectionsSource: state.sections_source ?? fallbackTrack.sectionsSource ?? null,
+    // The song's Tags (#1075). Not `??`: a song with none answers null, and
+    // that is newer than whatever the row last held.
+    timelineTags: "timeline_tags" in state ? state.timeline_tags : fallbackTrack.timelineTags ?? null,
     sourceUrl: state.source_url || fallbackTrack.sourceUrl,
     sourceFormat: state.source_format ?? fallbackTrack.sourceFormat ?? null,
     // The source's own artist, title, album and lyrics (#699), read at import.
@@ -1332,6 +1336,7 @@ async function loadTrackIntoStudio(trackId) {
   // Performance's own track is a lane in Performance only (modeStems.js).
   wireUpAudio(trackId, [...track.audioStems, ...takeStemsFromJob(track.takes, shownTracks(trackId, track.tracks))], track.duration || 0, track.thumb, track.title || "", peaksPromise, track.hasVideo ?? false, track.videoStatus ?? null);
   initSections(trackId, track.sections, track.duration || 0);
+  initTimelineTags(trackId, track.timelineTags, track.duration || 0);
   // Its lanes change when the split ends.
   if (track.vocalSplit === "running") followVocalSplit(trackId);
   // Not awaited: the track is already loading, and the answer arrives as a

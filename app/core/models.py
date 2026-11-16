@@ -280,6 +280,13 @@ class Job:
     # for a job made before the setting existed, which looks as it always did.
     auto_lyrics: bool | None = None
     sections_source: Literal["automatic", "manual"] | None = None
+    # Points on the timeline the user saved to jump back to (#1075): Tags in
+    # the studio, [{id, name, time}]. A section always loops and cannot hold
+    # two start points, so these are their own layer, never derived from the
+    # audio and never touched by the pipeline. Named for the timeline because
+    # `tags` below is already the source's genre words. None until the first
+    # one is saved.
+    timeline_tags: list[dict] | None = None
     tags: list[str] | None = None  # YouTube tags + categories, lowercased, max 8
     stems: list[dict[str, str]] = field(default_factory=list)
     # Recorded takes, finished ones only, in creation order: the lanes the
@@ -465,6 +472,7 @@ class Job:
             "stem_presence": self.stem_presence,
             "sections": self.sections,
             "sections_source": self.sections_source,
+            "timeline_tags": self.timeline_tags,
             "auto_lyrics": self.auto_lyrics,
             "tags": self.tags,
             "stems": self.stems,

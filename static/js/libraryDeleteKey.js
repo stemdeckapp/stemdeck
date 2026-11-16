@@ -24,7 +24,8 @@ export function isTextEditingTarget(target) {
 }
 
 /**
- * Whether the studio's one-key shortcuts (Space, [, ], L, K, I, O) leave this
+ * Whether the studio's one-key shortcuts (Space, [, ], L, K, I, O, and 1 to 9
+ * for the tags) leave this
  * key alone: Ctrl, Cmd and Alt chords belong to the browser and the OS, and a
  * field or select with focus keeps its own keys.
  */

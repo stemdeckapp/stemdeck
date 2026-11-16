@@ -1779,6 +1779,130 @@ input, textarea { font-family: inherit; }
   to { transform: rotate(360deg); }
 }
 
+/* ── Tags bar (#1075, timelineTags.js) ──
+   The Sections bar's header and track, one row lower and shorter: a tag is a
+   point, not a span, so it needs one line of text, not a block. Each mark is
+   a line at its moment with its key number and name to the right of it, in
+   the neutral text colours, so it never reads as a coloured section. */
+.daw-tags-ribbon {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.daw-tags-header { padding-top: 3px; padding-bottom: 3px; }
+.daw-sections-area.daw-tags-area { height: 26px; }
+.tag-mark {
+  position: absolute;
+  top: 3px; bottom: 3px;
+  display: flex;
+  align-items: center;
+  max-width: 160px;
+  border-left: 2px solid var(--fg-2);
+}
+.tag-mark:hover, .tag-mark:focus-within, .tag-mark.tag-renaming { z-index: 3; }
+.tag-seek {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 6px 0 5px;
+  border: 0;
+  border-radius: 0 4px 4px 0;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.tag-mark:hover .tag-seek { background: var(--panel-3); color: var(--fg); }
+.tag-mark:hover { border-left-color: var(--fg); }
+.tag-num {
+  flex-shrink: 0;
+  min-width: 13px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+.tag-mark:hover .tag-num { background: var(--border-strong); }
+.tag-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Folded to nothing until the mark is hovered, focused or looping, but never
+   display: none, which would take it out of the Tab order: a keyboard user
+   must be able to land on it, and focus-within then opens it. */
+.tag-loop {
+  display: flex;
+  flex-shrink: 0;
+  width: 0; height: 16px;
+  margin-left: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  border: none;
+  border-radius: 3px;
+  background: var(--panel-3);
+  color: var(--fg-2);
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+  align-items: center; justify-content: center;
+}
+.tag-mark:hover .tag-loop,
+.tag-mark:focus-within .tag-loop,
+.tag-loop.active {
+  width: 16px;
+  margin-left: -2px;
+  opacity: 1;
+}
+.tag-loop:hover { color: var(--fg); background: var(--border-strong); }
+.tag-loop[aria-disabled="true"] { cursor: not-allowed; }
+.tag-mark:hover .tag-loop[aria-disabled="true"],
+.tag-mark:focus-within .tag-loop[aria-disabled="true"] { opacity: 0.4; }
+.tag-loop.active { background: var(--accent); color: var(--bg); }
+.tag-loop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-mark.tag-renaming .tag-loop { display: none; }
+.tag-del {
+  display: none;
+  flex-shrink: 0;
+  width: 16px; height: 16px;
+  margin-left: -2px;
+  border: none;
+  border-radius: 3px;
+  background: var(--panel-3);
+  color: var(--fg-2);
+  font-size: 13px; line-height: 1;
+  cursor: pointer;
+  align-items: center; justify-content: center;
+  padding: 0;
+}
+.tag-del:hover { color: var(--fg); background: var(--border-strong); }
+.tag-mark:hover .tag-del { display: flex; }
+.tag-mark.tag-renaming .tag-del { display: none; }
+.tag-rename-input {
+  width: 140px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  outline: none;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 10.5px;
+  caret-color: var(--accent);
+}
+
 /* Add section button — lives in the Sections label column */
 .sections-add-btn-label {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1907,6 +2031,10 @@ input, textarea { font-family: inherit; }
 
 .app.panel-analysis-off .daw-track-header { display: none; }
 .app.panel-sections-off .daw-section-ribbon { display: none; }
+/* The Tags bar is the Sections bar's second row (#1075), so the same switch
+   puts it away. A fourth Collapse toggle does not fit: the column holds three
+   (see .daw-composer-stack .daw-panel-toggle). */
+.app.panel-sections-off .daw-tags-ribbon { display: none; }
 
 /* ── Waveform header ── */
 .daw-wave-header {
@@ -4895,12 +5023,14 @@ input, textarea { font-family: inherit; }
 /* No track loaded: hide main waveform content */
 .daw.is-import .daw-track-header,
 .daw.is-import .daw-section-ribbon,
+.daw.is-import .daw-tags-ribbon,
 .daw.is-import .daw-wave-header,
 .daw.is-import .daw-content { opacity: 0.3; pointer-events: none; }
 .daw.is-import .daw-content .mixer-column { opacity: 1; pointer-events: auto; }
 
 .daw.no-track .daw-track-header,
 .daw.no-track .daw-section-ribbon,
+.daw.no-track .daw-tags-ribbon,
 .daw.no-track .daw-wave-header,
 .daw.no-track .daw-content { opacity: 0.3; pointer-events: none; }
 /* Overlay and job progress live inside .daw-content but must stay fully visible while processing */

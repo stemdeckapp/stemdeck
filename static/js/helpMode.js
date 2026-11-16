@@ -164,6 +164,11 @@ const HELP = [
   [".section-block .section-lock", "help.sectionLock"],
   [".section-block .section-del", "help.sectionDelete"],
   [".section-block", "help.section"],
+  // The Tags bar under it (timelineTags.js, #1075): the cross sits inside a tag.
+  ["#tagsAddBtn", "help.addTag"],
+  [".tag-mark .tag-loop", "help.tagLoop"],
+  [".tag-mark .tag-del", "help.tagDelete"],
+  [".tag-mark", "help.tag"],
   // The lyrics lane, shown while Sync lines is on (lyricsLane.js).
   ["#lyricsLaneDone", "help.lyricsLaneDone"],
   [".lyr-mark", "help.lyricsMark"],

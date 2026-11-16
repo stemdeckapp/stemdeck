@@ -227,10 +227,15 @@ test.describe("help mode leaves no control unexplained", () => {
     ];
     const res = await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections } });
     expect(res.ok(), "seeding sections").toBe(true);
+    // And tags (#1075), so a tag's own button is on screen as well.
+    const tags = [{ id: "t1", name: "Solo", time: 2 }];
+    const tagged = await page.request.patch(`/api/jobs/${JOB_ID}/timeline-tags`, { data: { timeline_tags: tags } });
+    expect(tagged.ok(), "seeding tags").toBe(true);
   });
 
   test.afterEach(async ({ page }) => {
     await page.request.patch(`/api/jobs/${JOB_ID}/sections`, { data: { sections: [] } });
+    await page.request.patch(`/api/jobs/${JOB_ID}/timeline-tags`, { data: { timeline_tags: [] } });
   });
 
   test("in the studio, in Advanced and in Practice", async ({ page }) => {
@@ -393,7 +398,7 @@ test.describe("help mode leaves no control unexplained", () => {
     await openStudio(page);
     await helpOn(page);
     await page.locator("#sectionsHideBtn").hover();
-    await expect(tip(page).locator("b")).toHaveText("Hide the sections bar");
-    await expect(tip(page)).toContainText("Collapse > Sections brings it back");
+    await expect(tip(page).locator("b")).toHaveText("Hide the Sections and Markers bars");
+    await expect(tip(page)).toContainText("Collapse > Sections brings them back");
   });
 });

@@ -395,6 +395,9 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "stem_presence": job.stem_presence,
         "sections": job.sections,
         "sections_source": job.sections_source,
+        # This write replaces the whole file, so anything the user saved on
+        # the song before a run finishes again has to be carried in it (#1075).
+        "timeline_tags": job.timeline_tags,
         "tags": job.tags,
         "has_video": job.has_video,
         "video_status": job.video_status,
