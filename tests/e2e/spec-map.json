@@ -67,6 +67,11 @@
 
   "rules": [
     {
+      "why": "REAPER export (#1071): the .rpp the zip endpoint adds (?reaper=1), the two export rows and their desktop-only branch, and the External editors setting",
+      "paths": ["app/pipeline/reaper_project.py", "static/js/player.js", "static/js/main.js", "static/js/catalog.js", "static/js/helpMode.js"],
+      "specs": ["reaper-export", "export-menu", "help-mode"]
+    },
+    {
       "why": "The note under the loudness cards after an older song was measured again (#923), and the seed that keeps the fixture songs from showing it.",
       "paths": ["static/js/loudnessNote.js", "tests/e2e/seed.py"],
       "specs": ["loudness-note", "help-mode"]

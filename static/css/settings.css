@@ -301,7 +301,7 @@
 
 /* ── Library ── */
 .stems-location { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.stems-location-path, .exports-location-path {
+.stems-location-path, .exports-location-path, .reaper-app-path {
   flex: 1; min-width: 0; height: var(--set-control-h); box-sizing: border-box;
   display: flex; align-items: center; padding: 0 12px;
   border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border);
@@ -309,11 +309,11 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .stems-location-size { flex-shrink: 0; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.stems-location-msg, .exports-location-msg, .cookies-file-msg, .acoustid-key-msg, .discogs-token-msg, .idle-unload-msg {
+.stems-location-msg, .exports-location-msg, .reaper-app-msg, .cookies-file-msg, .acoustid-key-msg, .discogs-token-msg, .idle-unload-msg {
   margin-top: 8px; font-size: 13px; line-height: 1.45; color: var(--muted);
 }
-.stems-location-msg:empty, .exports-location-msg:empty, .cookies-file-msg:empty, .idle-unload-msg:empty { display: none; }
-.stems-location-msg.error, .exports-location-msg.error, .cookies-file-msg,
+.stems-location-msg:empty, .exports-location-msg:empty, .reaper-app-msg:empty, .cookies-file-msg:empty, .idle-unload-msg:empty { display: none; }
+.stems-location-msg.error, .exports-location-msg.error, .reaper-app-msg.error, .cookies-file-msg,
 .acoustid-key-msg.error, .discogs-token-msg.error, .idle-unload-msg.error { color: var(--danger); }
 .stems-location-msg.ok { color: var(--accent); }
 
@@ -538,3 +538,6 @@
   .settings-foot-note { display: none; }
   .settings-foot { justify-content: flex-end; }
 }
+
+/* The REAPER row's "Find automatically" shows only once a REAPER is chosen. */
+.reset-reaper-app[hidden] { display: none; }

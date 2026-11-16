@@ -5,6 +5,7 @@ mod dmabuf;
 mod dragout;
 mod dropin;
 mod mediaperm;
+mod reaper;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -633,6 +634,10 @@ fn main() {
             pick_export_destination,
             download_to_path,
             reveal_saved,
+            open_reaper_project,
+            reaper_status,
+            pick_reaper_app,
+            reset_reaper_app,
             pick_stems_folder,
             pick_exports_folder,
             current_exports_dir,
@@ -831,6 +836,70 @@ async fn pick_exports_folder(app: tauri::AppHandle) -> Result<Option<String>, St
     store.set(EXPORTS_DIR_KEY, serde_json::Value::String(chosen.clone()));
     store.save().map_err(|e| e.to_string())?;
     Ok(Some(chosen))
+}
+
+/// Which REAPER "Open in REAPER" would launch: the one chosen in Settings
+/// while it exists, else one found where an installer puts it.
+fn reaper_status_for(app: &tauri::AppHandle) -> reaper::Status {
+    reaper::resolve(
+        stored_string(app, reaper::REAPER_PATH_KEY).as_deref(),
+        reaper::detect,
+    )
+}
+
+/// The External editors row and the Export menu ask this. Async so the
+/// registry query never runs on the main thread.
+#[tauri::command]
+async fn reaper_status(app: tauri::AppHandle) -> Result<reaper::Status, String> {
+    tauri::async_runtime::spawn_blocking(move || reaper_status_for(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Native picker for the REAPER to use, persisted here like the exports
+/// folder: nothing in the WebView names a program for the shell to run.
+/// Returns the new status, or None when the user cancels.
+#[tauri::command]
+async fn pick_reaper_app(app: tauri::AppHandle) -> Result<Option<reaper::Status>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut dialog = app.dialog().file().set_title("Choose REAPER");
+    if cfg!(windows) {
+        dialog = dialog.add_filter("REAPER", &["exe"]);
+    } else if cfg!(target_os = "macos") {
+        dialog = dialog.add_filter("REAPER", &["app"]);
+    }
+    dialog.pick_file(move |path| {
+        let _ = tx.send(path);
+    });
+    let Some(picked) = rx.recv().map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let chosen = picked.into_path().map_err(|e| e.to_string())?;
+    if !reaper::usable(&chosen) {
+        return Err("that is not a program StemDeck can open".to_string());
+    }
+    let store = app
+        .store(documents_store_path(&app)?)
+        .map_err(|e| e.to_string())?;
+    store.set(
+        reaper::REAPER_PATH_KEY,
+        serde_json::Value::String(chosen.to_string_lossy().into_owned()),
+    );
+    store.save().map_err(|e| e.to_string())?;
+    reaper_status(app).await.map(Some)
+}
+
+/// Forget the chosen REAPER and go back to finding it.
+#[tauri::command]
+async fn reset_reaper_app(app: tauri::AppHandle) -> Result<reaper::Status, String> {
+    let store = app
+        .store(documents_store_path(&app)?)
+        .map_err(|e| e.to_string())?;
+    store.delete(reaper::REAPER_PATH_KEY);
+    store.save().map_err(|e| e.to_string())?;
+    reaper_status(app).await
 }
 
 /// The exports folder as it stands, for the Settings row to display.
@@ -4870,6 +4939,142 @@ async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> R
     let mut child = with_user_env(Command::new(program).args(&args))
         .spawn()
         .map_err(|e| format!("could not open the file manager: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// A folder beside `zip` for its contents, named after it without a trailing
+/// "_reaper", and never one that is already there: " (2)", " (3)"... are
+/// tried instead, so an earlier project and anything the user did in it are
+/// never written over.
+fn reaper_project_dir(zip: &Path) -> Result<PathBuf, String> {
+    let parent = zip
+        .parent()
+        .ok_or_else(|| "the saved file has no folder".to_string())?;
+    let stem = zip
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("REAPER project");
+    let base = stem
+        .strip_suffix("_reaper")
+        .filter(|s| !s.is_empty())
+        .unwrap_or(stem);
+    for n in 1..1000 {
+        let name = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base} ({n})")
+        };
+        let dir = parent.join(name);
+        if !dir.exists() {
+            return Ok(dir);
+        }
+    }
+    Err("could not find a free folder name for the project".to_string())
+}
+
+/// Unpacks a stems zip with a REAPER project into `dir` and returns the .rpp.
+/// Only plain files at the top of the zip are taken (that is all the export
+/// writes), so no entry can land outside `dir`.
+fn unpack_reaper_zip(zip_path: &Path, dir: &Path) -> Result<PathBuf, String> {
+    let file = fs::File::open(zip_path)
+        .map_err(|e| format!("failed to open {}: {e}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("failed to read {}: {e}", zip_path.display()))?;
+    fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    let mut project = None;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("failed to read {}: {e}", zip_path.display()))?;
+        if !entry.is_file() {
+            continue;
+        }
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
+        if name.components().count() != 1 {
+            continue;
+        }
+        let dest = dir.join(&name);
+        let mut out = fs::File::create(&dest)
+            .map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("failed to write {}: {e}", dest.display()))?;
+        if dest
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("rpp"))
+        {
+            project = Some(dest);
+        }
+    }
+    project.ok_or_else(|| "the export has no REAPER project in it".to_string())
+}
+
+/// Unpacks the zip into a new folder beside it and returns the .rpp. When the
+/// zip cannot be unpacked (no project in it, a bad entry) the folder is
+/// removed again: it is new, so nothing of the user's is in it, and the zip
+/// stays, because it is what they saved.
+fn unpack_reaper_zip_beside(zip_path: &Path) -> Result<PathBuf, String> {
+    let dir = reaper_project_dir(zip_path)?;
+    unpack_reaper_zip(zip_path, &dir).inspect_err(|_| {
+        let _ = fs::remove_dir_all(&dir);
+    })
+}
+
+/// The program and arguments that open `path` with the app the system has
+/// for it: REAPER, for a .rpp, once REAPER is installed. Arguments, never a
+/// shell string, as for reveal_command.
+fn open_with_default_app_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
+    #[cfg(target_os = "windows")]
+    {
+        // explorer.exe opens a file with its associated app, and unlike
+        // `cmd /c start` never reads the path as a command line.
+        ("explorer", vec![path.as_os_str().to_owned()])
+    }
+    #[cfg(target_os = "macos")]
+    {
+        ("open", vec![path.as_os_str().to_owned()])
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        ("xdg-open", vec![path.as_os_str().to_owned()])
+    }
+}
+
+/// "Open in REAPER": unpacks the stems zip the save `token` wrote into a new
+/// folder beside it, removes the zip (the folder is what was asked for), and
+/// opens the project in it with the REAPER from Settings (chosen or found),
+/// or the system's app for .rpp files when none is found. Takes the save's
+/// token, never a path, like reveal_saved: only a file this app just wrote
+/// for this export can be unpacked or opened.
+#[tauri::command]
+async fn open_reaper_project(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BackendState>,
+    token: String,
+) -> Result<(), String> {
+    let zip_path = saved_file(&state, &token)?;
+    let rpp = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
+        let rpp = unpack_reaper_zip_beside(&zip_path)?;
+        let _ = fs::remove_file(&zip_path);
+        Ok(rpp)
+    })
+    .await
+    .map_err(|e| format!("unpacking the project failed: {e}"))??;
+    let status = reaper_status(app).await?;
+    let (program, args) = match status.path {
+        Some(exe) => reaper::launch_command(Path::new(&exe), &rpp),
+        None => {
+            let (p, a) = open_with_default_app_command(&rpp);
+            (std::ffi::OsString::from(p), a)
+        }
+    };
+    let mut child = with_user_env(Command::new(&program).args(&args))
+        .spawn()
+        .map_err(|e| format!("could not open the project: {e}"))?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
@@ -13484,6 +13689,77 @@ configuration: --cc=clang\n";
                 || joined.iter().any(|a| a == "/tmp"),
             "{joined:?}"
         );
+    }
+
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write;
+        let mut zw = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        for (name, data) in entries {
+            zw.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+
+    #[test]
+    fn reaper_zip_unpacks_into_a_new_folder_and_finds_the_project() {
+        let dir = std::env::temp_dir().join(format!("stemdeck-rpp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("Song_reaper.zip");
+        write_test_zip(
+            &zip_path,
+            &[
+                ("Song_vocals.wav", b"RIFFv"),
+                ("Song.rpp", b"<REAPER_PROJECT\n>\n"),
+                ("../escape.wav", b"no"),
+                ("sub/nested.wav", b"no"),
+            ],
+        );
+        // An earlier project of the same name is left alone.
+        fs::create_dir_all(dir.join("Song")).unwrap();
+        let target = super::reaper_project_dir(&zip_path).unwrap();
+        assert_eq!(target, dir.join("Song (2)"));
+        let rpp = super::unpack_reaper_zip(&zip_path, &target).unwrap();
+        assert_eq!(rpp, target.join("Song.rpp"));
+        assert_eq!(fs::read(target.join("Song_vocals.wav")).unwrap(), b"RIFFv");
+        assert!(
+            !dir.join("escape.wav").exists(),
+            "nothing lands outside the folder"
+        );
+        assert!(
+            !target.join("sub").exists(),
+            "only top-level files are taken"
+        );
+        assert_eq!(fs::read_dir(dir.join("Song")).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_zip_without_a_project_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("stemdeck-rpp2-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("Song_stems.zip");
+        write_test_zip(&zip_path, &[("Song_vocals.wav", b"RIFFv")]);
+        let target = super::reaper_project_dir(&zip_path).unwrap();
+        assert_eq!(target, dir.join("Song_stems"));
+        assert!(super::unpack_reaper_zip(&zip_path, &target).is_err());
+        // Through the command's own path the half-made folder is cleaned up
+        // and the saved zip is left alone.
+        let _ = fs::remove_dir_all(&target);
+        assert!(super::unpack_reaper_zip_beside(&zip_path).is_err());
+        assert!(!target.exists(), "no empty project folder is left behind");
+        assert!(zip_path.is_file(), "the saved zip stays");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_with_default_app_passes_the_path_as_one_argument() {
+        let path = PathBuf::from("/tmp/a b; echo pwned & \"q\".rpp");
+        let (_program, args) = super::open_with_default_app_command(&path);
+        assert_eq!(args, vec![path.as_os_str().to_owned()]);
     }
 
     #[test]

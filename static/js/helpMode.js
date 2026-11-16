@@ -367,6 +367,8 @@ const HELP = [
   ["#t-export-master", "help.masterExportRow", null, "master.title"],
   ["#t-export-mix", "help.exportMix"],
   ["#t-export-stems", "help.exportStems"],
+  ["#t-export-reaper", "help.exportReaper"],
+  ["#t-export-open-reaper", "help.openReaper"],
   ["#t-export-region", "help.exportRegion"],
   // Shown when a transposed mix cannot be exported (#858).
   [".export-transpose-unavailable", "help.exportTransposeUnavailable"],
@@ -447,6 +449,7 @@ const SETTINGS = [
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],
     ["settings.exportsLocation.title", "help.set.exportsLocation"],
+    ["settings.reaper.title", "help.set.reaper"],
     ["settings.stemFormat.title", "help.set.stemFormat"],
     ["settings.stemBitrate.title", "help.set.stemBitrate"],
     ["settings.autoDelete.title", "help.set.autoDelete"],

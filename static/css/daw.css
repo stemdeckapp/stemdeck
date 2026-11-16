@@ -3826,7 +3826,11 @@ input, textarea { font-family: inherit; }
 
 /* In MP4 mode only "Export Mix" applies — the audio-only Stems/Region rows
    are hidden. main.js toggles .fmt-mp4 on the panel. */
+/* Open in REAPER is desktop-only: main.js unhides it inside the app. */
+#t-export-open-reaper[hidden],
 #t-export-panel.fmt-mp4 #t-export-stems,
+#t-export-panel.fmt-mp4 #t-export-reaper,
+#t-export-panel.fmt-mp4 #t-export-open-reaper,
 #t-export-panel.fmt-mp4 #t-export-region { display: none; }
 
 /* ── About dialog ── */

@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import subprocess
 import sys
 import wave
@@ -469,6 +470,90 @@ async def test_no_grid_means_no_click_file_not_an_error(client, jobs_dir):
         r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?click=1")
     assert r.status_code == 200
     assert "Clicky_click.wav" not in _zip(r.content).namelist()
+
+
+async def test_the_zip_has_no_reaper_project_unless_asked(client, jobs_dir):
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip")
+    assert not any(n.endswith(".rpp") for n in _zip(r.content).namelist())
+    assert "Clicky_stems.zip" in r.headers["content-disposition"]
+
+
+async def test_the_reaper_project_names_every_file_in_the_zip(client, jobs_dir):
+    """?reaper=1: one track per file, the click too, each FILE exactly a zip
+    member, at the stems' rate and length and the grid's tempo."""
+    from tests.test_reaper_project import rpp_files
+
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    grid_path = jobs_dir / JOB / "stems" / "beats.json"
+    grid_path.write_text(json.dumps({**GRID, "bpm": 123.456}), encoding="utf-8")
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?reaper=1&click=1")
+    assert r.status_code == 200
+    assert "Clicky_reaper.zip" in r.headers["content-disposition"]
+    zf = _zip(r.content)
+    rpp = zf.read("Clicky.rpp").decode("utf-8")
+    audio = sorted(n for n in zf.namelist() if n != "Clicky.rpp")
+    assert audio == ["Clicky_click.wav", "Clicky_drums.wav", "Clicky_vocals.wav"]
+    assert sorted(rpp_files(rpp)) == audio
+    assert f"SAMPLERATE {SR} 0 0" in rpp
+    assert "TEMPO 123.456 4 4" in rpp
+    length = float(re.search(r"LENGTH ([\d.]+)", rpp).group(1))
+    assert length == pytest.approx(STEM_SECONDS, abs=1 / SR)
+
+
+async def test_the_reaper_project_follows_a_transcoded_format(client, jobs_dir):
+    from tests.test_reaper_project import rpp_files
+
+    skip_without_ffmpeg()
+    _make_job(jobs_dir, grid=False)
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?format=flac&reaper=1")
+    assert r.status_code == 200
+    rpp = _zip(r.content).read("Clicky.rpp").decode("utf-8")
+    assert sorted(rpp_files(rpp)) == ["Clicky_drums.flac", "Clicky_vocals.flac"]
+    assert "<SOURCE FLAC" in rpp
+    assert "TEMPO 120 4 4" in rpp  # no beat grid
+
+
+async def test_the_default_zip_is_the_legacy_zip_byte_for_byte(client, jobs_dir):
+    """Without the option the endpoint builds exactly what _build_stems_zip
+    builds on its own: reaper=0 and no parameter at all give the same bytes."""
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    async with client as c:
+        default = await c.get(f"/api/jobs/{JOB}/stems/all.zip")
+        off = await c.get(f"/api/jobs/{JOB}/stems/all.zip?reaper=0")
+    assert default.status_code == off.status_code == 200
+    names = _zip(default.content).namelist()
+    stems_dir = jobs_dir / JOB / "stems"
+    sources = [
+        (n.removeprefix("Clicky_").removesuffix(".wav"), stems_dir / f"{n.removeprefix('Clicky_')}")
+        for n in names
+    ]
+    legacy = jobs_dir / "legacy.zip"
+    stems_mod._build_stems_zip(sources, "wav", legacy, "Clicky")
+    assert default.content == off.content == legacy.read_bytes()
+    assert "Clicky_stems.zip" in default.headers["content-disposition"]
+
+
+async def test_the_reaper_option_is_a_boolean(client, jobs_dir):
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?reaper=maybe")
+    assert r.status_code == 422
+
+
+async def test_the_reaper_option_still_checks_the_job_first(client, jobs_dir):
+    async with client as c:
+        unknown = await c.get("/api/jobs/aaaaaaaaaaaa/stems/all.zip?reaper=1")
+        traversal = await c.get("/api/jobs/..%2F..%2Fetc/stems/all.zip?reaper=1")
+    assert unknown.status_code == 404
+    assert traversal.status_code == 404
 
 
 def test_the_click_entry_cannot_collide_with_a_stem():
