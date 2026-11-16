@@ -5013,6 +5013,17 @@ fn unpack_reaper_zip(zip_path: &Path, dir: &Path) -> Result<PathBuf, String> {
     project.ok_or_else(|| "the export has no REAPER project in it".to_string())
 }
 
+/// Unpacks the zip into a new folder beside it and returns the .rpp. When the
+/// zip cannot be unpacked (no project in it, a bad entry) the folder is
+/// removed again: it is new, so nothing of the user's is in it, and the zip
+/// stays, because it is what they saved.
+fn unpack_reaper_zip_beside(zip_path: &Path) -> Result<PathBuf, String> {
+    let dir = reaper_project_dir(zip_path)?;
+    unpack_reaper_zip(zip_path, &dir).inspect_err(|_| {
+        let _ = fs::remove_dir_all(&dir);
+    })
+}
+
 /// The program and arguments that open `path` with the app the system has
 /// for it: REAPER, for a .rpp, once REAPER is installed. Arguments, never a
 /// shell string, as for reveal_command.
@@ -5047,8 +5058,7 @@ async fn open_reaper_project(
 ) -> Result<(), String> {
     let zip_path = saved_file(&state, &token)?;
     let rpp = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
-        let dir = reaper_project_dir(&zip_path)?;
-        let rpp = unpack_reaper_zip(&zip_path, &dir)?;
+        let rpp = unpack_reaper_zip_beside(&zip_path)?;
         let _ = fs::remove_file(&zip_path);
         Ok(rpp)
     })
@@ -13736,6 +13746,12 @@ configuration: --cc=clang\n";
         let target = super::reaper_project_dir(&zip_path).unwrap();
         assert_eq!(target, dir.join("Song_stems"));
         assert!(super::unpack_reaper_zip(&zip_path, &target).is_err());
+        // Through the command's own path the half-made folder is cleaned up
+        // and the saved zip is left alone.
+        let _ = fs::remove_dir_all(&target);
+        assert!(super::unpack_reaper_zip_beside(&zip_path).is_err());
+        assert!(!target.exists(), "no empty project folder is left behind");
+        assert!(zip_path.is_file(), "the saved zip stays");
         let _ = fs::remove_dir_all(&dir);
     }
 

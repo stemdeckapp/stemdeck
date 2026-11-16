@@ -66,6 +66,10 @@ def build_rpp(
             "    <ITEM",
             "      POSITION 0",
             f"      LENGTH {length_s:.6f}",
+            # REAPER loops an item's source by default. A transcode can end a
+            # few ms short of the length measured on the WAV, and a loop would
+            # repeat its head there.
+            "      LOOP 0",
             f"      NAME {_quote(file)}",
             f"      <SOURCE {source_type}",
             f"        FILE {_quote(file)}",

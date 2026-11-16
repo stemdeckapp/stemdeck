@@ -107,6 +107,13 @@ pub fn windows_candidates(
     out
 }
 
+/// The system's own reg.exe, not whatever `reg` a PATH search would find first.
+#[cfg(windows)]
+fn reg_exe() -> PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| OsString::from(r"C:\Windows"));
+    PathBuf::from(root).join("System32").join("reg.exe")
+}
+
 #[cfg(windows)]
 fn registry_dirs() -> Vec<PathBuf> {
     use std::os::windows::process::CommandExt;
@@ -114,7 +121,7 @@ fn registry_dirs() -> Vec<PathBuf> {
     ["HKLM\\SOFTWARE\\REAPER", "HKCU\\SOFTWARE\\REAPER"]
         .iter()
         .filter_map(|key| {
-            let out = Command::new("reg")
+            let out = Command::new(reg_exe())
                 .args(["query", key, "/ve"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()

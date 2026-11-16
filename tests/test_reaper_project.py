@@ -51,3 +51,15 @@ def test_quote_and_label():
     assert _quote('say "hi"') == "'say \"hi\"'"
     assert track_label("backing_vocals") == "Backing Vocals"
     assert track_label("Take_1_t1a2b3") == "Take 1 T1a2b3"
+
+
+def test_items_do_not_loop_their_source():
+    """REAPER loops an item's source by default; a transcode a few ms short of
+    the item would repeat its head."""
+    text = build_rpp([("bass", "bass.mp3"), ("drums", "drums.mp3")], "mp3", 44100, 3.0, 100)
+    assert text.count("      LOOP 0\n") == 2
+
+
+def test_a_name_with_quotes_stays_one_token():
+    text = build_rpp([("x", 'it\'s "odd".wav')], "wav", 44100, 1.0, 100)
+    assert 'FILE `it\'s "odd".wav`' in text
