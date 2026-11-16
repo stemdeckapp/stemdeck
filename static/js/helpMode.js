@@ -449,6 +449,7 @@ const SETTINGS = [
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],
     ["settings.exportsLocation.title", "help.set.exportsLocation"],
+    ["settings.reaper.title", "help.set.reaper"],
     ["settings.stemFormat.title", "help.set.stemFormat"],
     ["settings.stemBitrate.title", "help.set.stemBitrate"],
     ["settings.autoDelete.title", "help.set.autoDelete"],

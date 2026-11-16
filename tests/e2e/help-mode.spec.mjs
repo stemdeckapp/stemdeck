@@ -189,7 +189,7 @@ test.describe("help mode", () => {
     await openStudio(page);
     await helpOn(page);
     await page.locator("#settingsBtn").hover();
-    for (const text of ["General", "Library", "Song details", "Network", "Export", "Recording", "Logs", "Registry", "Port", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone"]) {
+    for (const text of ["General", "Library", "Song details", "Network", "Export", "Recording", "Logs", "Registry", "Port", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches"]) {
       await expect(tip(page)).toContainText(text);
     }
   });

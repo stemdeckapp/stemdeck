@@ -5721,7 +5721,7 @@ function openLibraryEditor() {
           <div class="settings-section">
             <div class="settings-row settings-row-stack reaper-app-row">
               <div class="settings-row-text">
-                <div class="settings-row-title">REAPER</div>
+                <div class="settings-row-title" data-i18n="settings.reaper.title">REAPER</div>
                 <div class="settings-row-desc" data-i18n="settings.reaper.desc">Used by Open in REAPER in the Export menu. StemDeck finds REAPER where its installer puts it; choose it here if yours is somewhere else.</div>
               </div>
               <div class="stems-location">

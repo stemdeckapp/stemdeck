@@ -519,6 +519,43 @@ async def test_the_reaper_project_follows_a_transcoded_format(client, jobs_dir):
     assert "TEMPO 120 4 4" in rpp  # no beat grid
 
 
+async def test_the_default_zip_is_the_legacy_zip_byte_for_byte(client, jobs_dir):
+    """Without the option the endpoint builds exactly what _build_stems_zip
+    builds on its own: reaper=0 and no parameter at all give the same bytes."""
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    async with client as c:
+        default = await c.get(f"/api/jobs/{JOB}/stems/all.zip")
+        off = await c.get(f"/api/jobs/{JOB}/stems/all.zip?reaper=0")
+    assert default.status_code == off.status_code == 200
+    names = _zip(default.content).namelist()
+    stems_dir = jobs_dir / JOB / "stems"
+    sources = [
+        (n.removeprefix("Clicky_").removesuffix(".wav"), stems_dir / f"{n.removeprefix('Clicky_')}")
+        for n in names
+    ]
+    legacy = jobs_dir / "legacy.zip"
+    stems_mod._build_stems_zip(sources, "wav", legacy, "Clicky")
+    assert default.content == off.content == legacy.read_bytes()
+    assert "Clicky_stems.zip" in default.headers["content-disposition"]
+
+
+async def test_the_reaper_option_is_a_boolean(client, jobs_dir):
+    skip_without_ffmpeg()
+    _make_job(jobs_dir)
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?reaper=maybe")
+    assert r.status_code == 422
+
+
+async def test_the_reaper_option_still_checks_the_job_first(client, jobs_dir):
+    async with client as c:
+        unknown = await c.get("/api/jobs/aaaaaaaaaaaa/stems/all.zip?reaper=1")
+        traversal = await c.get("/api/jobs/..%2F..%2Fetc/stems/all.zip?reaper=1")
+    assert unknown.status_code == 404
+    assert traversal.status_code == 404
+
+
 def test_the_click_entry_cannot_collide_with_a_stem():
     assert CLICK_STEM_NAME == "click"
     assert CLICK_STEM_NAME not in (*STEM_NAMES, *EXTRA_STEM_NAMES, "original", "mix")
