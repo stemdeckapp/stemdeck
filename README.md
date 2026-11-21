@@ -155,7 +155,7 @@ In Performance mode:
 
 - **Key, tempo and loudness,** found for you.
 - **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
-- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along. With an NVIDIA GPU, or an AMD one on Linux, StemDeck can also write them down from the vocals when none are found.
+- **Synced lyrics** from LRCLIB, with timing you can fix by tapping along, or imported from a `.lrc` file you pick. With an NVIDIA GPU, or an AMD one on Linux, StemDeck can also write them down from the vocals when none are found.
 - **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
 
 ### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share

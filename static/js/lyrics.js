@@ -294,6 +294,7 @@ function show(entry, others = [], from = "store") {
   // Words to align, or to say why they cannot be: not for an instrumental.
   // The panel goes under the tools row, above the versions list.
   if (entry.synced || entry.plain) tools.append(syncToggle(), alignToggle());
+  tools.append(importButton(true));
   if (baseLines.length && alignOpen && !syncOpen) tools.after(alignPanel());
   const remove = el("button", "lyrics-link", t("lyrics.remove"));
   remove.type = "button";
@@ -1261,7 +1262,7 @@ function versionList(matches, all) {
 function offer(matches) {
   clearLyrics();
   setStatus(t("lyrics.pickVersion"), "muted");
-  versionsEl.append(versionList(matches, matches));
+  versionsEl.append(versionList(matches, matches), importButton());
 }
 
 /** Save `match` on the open track and show it, with `others` still offered. */
@@ -1296,7 +1297,7 @@ async function removeLyrics() {
 function showRemoved() {
   clearLyrics();
   setStatus(t("lyrics.removed"), "muted");
-  versionsEl.append(lookAgainButton());
+  versionsEl.append(lookAgainButton(), importButton());
   announceChange();
 }
 
@@ -1311,6 +1312,99 @@ function lookAgainButton() {
     loadForCurrentTrack();
   });
   return again;
+}
+
+// ── Import a .lrc ──
+//
+// The page can read the file it is handed, never the folder around it, so a
+// .lrc sitting beside the MP3 is not found on its own: this is a file the user
+// picks. Its text goes to the server, which keeps it as lyrics.json, source
+// "file" -- the shape an upload's own lyrics tag makes -- so it survives a
+// reload, reaches the other devices, and Align and Sync treat it like any
+// other lyrics. Timed lines keep their stamps; text without any is kept as
+// plain lyrics; the server drops what the page could not show (a NetEase
+// export's JSON credit lines).
+
+// One .lrc is a few KB; anything past this is not lyrics, and the server's
+// body cap would refuse it after the upload.
+const LYRICS_FILE_MAX_BYTES = 512 * 1024;
+
+let importInput = null;
+
+/** "Import lyrics…", or "Replace lyrics…" when the track already has some. */
+function importButton(replace = false) {
+  const button = el("button", "lyrics-link", t(replace ? "lyrics.replace" : "lyrics.import"));
+  button.type = "button";
+  button.title = t("lyrics.importTitle");
+  button.addEventListener("click", () => {
+    if (!importInput) {
+      importInput = document.createElement("input");
+      importInput.type = "file";
+      importInput.accept = ".lrc,.txt,text/plain";
+      importInput.hidden = true;
+      importInput.addEventListener("change", () => {
+        const file = importInput.files?.[0] ?? null;
+        importInput.value = "";
+        if (file) importLyricsFile(file);
+      });
+      document.body.append(importInput);
+    }
+    importInput.click();
+  });
+  return button;
+}
+
+/** A picked file's text: UTF-8 when it parses, else GB18030, which a .lrc
+ * saved on a Chinese Windows usually is (the browser decodes it too). */
+async function readLyricsFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder("gb18030").decode(bytes);
+    } catch {
+      return new TextDecoder().decode(bytes);
+    }
+  }
+}
+
+async function importLyricsFile(file) {
+  const info = getCurrentTrackInfo();
+  if (!info) return;
+  if (file.size > LYRICS_FILE_MAX_BYTES) {
+    setStatus(t("lyrics.importTooLarge"), "error");
+    return;
+  }
+  setStatus(t("lyrics.importing"), "loading");
+  try {
+    const text = await readLyricsFile(file);
+    if (!text.trim()) {
+      setStatus(t("lyrics.importEmpty"), "error");
+      return;
+    }
+    const res = await fetch(`/api/jobs/${encodeURIComponent(info.id)}/lyrics/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(`lyrics import -> ${res.status}`);
+    const found = fromServerLyrics(await res.json().catch(() => null));
+    if (!found?.entry) throw new Error("no lyrics kept");
+    // The tab shows what this browser kept for a track before the server's
+    // answer, so a version picked earlier (or a removal) would hide this.
+    await dropStoreSave();
+    await storeSet(storeKey(info.id), null);
+    answered.delete(info.id);
+    if (getCurrentTrackInfo()?.id !== info.id) return;
+    show(found.entry, found.others, "server");
+    if (!found.entry.synced && !found.entry.instrumental) {
+      setStatus(t("lyrics.importNoTiming"), "muted");
+    }
+  } catch (err) {
+    console.warn("lyrics import failed", err);
+    setStatus(t("lyrics.importFailed"), "error");
+  }
 }
 
 /**
@@ -1347,6 +1441,7 @@ async function lookUp(info, { song }) {
     if (res.status === 404 && data?.nothing_known) {
       setStatus(t("lyrics.nothingKnown"), "muted");
       nothingKnownFor = info.id;
+      versionsEl.append(importButton());
       return;
     }
     const found = fromServerLyrics(data);
@@ -1362,7 +1457,7 @@ async function lookUp(info, { song }) {
     console.warn("lyrics lookup failed", err);
     setStatus(t("lyrics.offline"), "error");
     // There is no search box to press again, so the retry is offered here.
-    versionsEl.replaceChildren(lookAgainButton());
+    versionsEl.replaceChildren(lookAgainButton(), importButton());
   } finally {
     if (searchController === controller) searchController = null;
   }
@@ -1371,7 +1466,10 @@ async function lookUp(info, { song }) {
 /** A lookup's answer that kept nothing: versions to pick from, or none. */
 function showAnswer({ song, matches }) {
   if (matches.length) offer(matches);
-  else setStatus(t("lyrics.notFound", { song }), "muted");
+  else {
+    setStatus(t("lyrics.notFound", { song }), "muted");
+    versionsEl.append(importButton());
+  }
 }
 
 /**
@@ -1539,13 +1637,14 @@ async function loadForCurrentTrack() {
       lookUpAsked.add(info.id);
       loadForCurrentTrack();
     });
-    versionsEl.replaceChildren(now);
+    versionsEl.replaceChildren(now, importButton());
     return;
   }
   if (token !== loadToken) return;
   if (!song) {
     setStatus(t("lyrics.nothingKnown"), "muted");
     nothingKnownFor = info.id;
+    versionsEl.append(importButton());
     return;
   }
   if (answered.has(info.id)) {

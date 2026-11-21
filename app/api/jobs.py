@@ -104,6 +104,7 @@ from app.pipeline.lyrics_lookup import (
     candidates_path,
     copy_lyrics,
     find_lyrics,
+    import_lyrics,
     keep_answer,
     lookup_lyrics,
     lyrics_path,
@@ -2129,6 +2130,38 @@ async def _lyrics_body(
         return model(**data)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="invalid lyrics edit") from exc
+
+
+class LyricsImportBody(BaseModel):
+    """A .lrc or .txt the user picked, whole: LRC with its stamps, or text to
+    show as it is. Sized like lyrics.json's own text (a .lrc is a few KB)."""
+
+    text: str = Field(min_length=1, max_length=_TEXT_MAX_CHARS)
+
+
+@router.post("/{job_id}/lyrics/import")
+async def import_lyrics_route(job_id: str, request: Request) -> Response:
+    """Keep the lyrics from a .lrc or .txt the user picked in the Lyrics tab.
+
+    The page can read the file it is handed, never the folder around it, so a
+    .lrc sitting beside the MP3 is not found by itself. It is read here and
+    posted as text (the page decodes a Windows file's GB18030 first), and kept
+    as lyrics.json, source "file": the same shape an upload's own lyrics tag
+    makes (app/pipeline/lyrics_lookup.py). Replaces whatever the track had,
+    including the user's own timing and Align offset of the old lyrics, which
+    belong to those lines. 422 when the text carries no words at all.
+    """
+    job, job_dir = _lyrics_job(job_id)
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail="job is not finished")
+    body = await _lyrics_body(request, LyricsImportBody)
+    entry = await asyncio.to_thread(import_lyrics, job, job_dir, body.text)
+    if entry is None:
+        raise HTTPException(status_code=422, detail="no lyrics in the text")
+    try:
+        return await asyncio.to_thread(get_lyrics, job_id)
+    except HTTPException:
+        return JSONResponse(entry, headers={"Cache-Control": "no-cache"})
 
 
 @router.post("/{job_id}/lyrics/offset")
