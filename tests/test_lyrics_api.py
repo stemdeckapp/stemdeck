@@ -1,5 +1,6 @@
-"""GET /api/jobs/{id}/lyrics, the Align panel's POST .../lyrics/offset and
-.../lyrics/align, and lyrics.json for older tracks through the tag backfill
+"""GET /api/jobs/{id}/lyrics, POST .../lyrics/import (a .lrc or .txt the user
+picked), the Align panel's POST .../lyrics/offset and .../lyrics/align, and
+lyrics.json for older tracks through the tag backfill
 (POST /api/jobs/{id}/audio-tags). No network: conftest answers LRCLIB as
 offline, and tests that want an answer stand in for it."""
 
@@ -731,3 +732,91 @@ def test_lookup_refuses_a_malformed_band(client, band):
 def test_lookup_crafted_or_unknown_ids_are_refused_not_500(client, job_id):
     r = client.post(f"/api/jobs/{job_id}/lyrics/lookup", json={})
     assert r.status_code in (404, 405)
+
+
+# ── POST .../lyrics/import: a .lrc or .txt the user picked ──
+
+
+def test_a_lrc_is_kept_as_the_files_lyrics(client):
+    job = _done_job(audio_tags=TAGS)
+    text = "[00:01.00]The smile of dawn\n[00:03.50]arrived in style"
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": text})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "file"
+    assert body["timing"] == "exact"
+    assert body["synced"] == text
+    assert body["plain"] == ""
+    assert body["track"] == "Metropolis"
+    assert body["artist"] == "Dream Theater"
+    assert body["duration"] == 572.0
+    assert client.get(f"/api/jobs/{job.id}/lyrics").json() == body
+    assert client.get(f"/api/jobs/{job.id}").json()["has_lyrics"] is True
+
+
+def test_lines_the_page_cannot_show_are_dropped(client):
+    """A NetEase export puts its credits among the lyrics as JSON objects."""
+    job = _done_job()
+    text = (
+        '{"t":0,"c":[{"tx":"Composed: "}]}\n'
+        "[ti:Song]\n"
+        "[00:01.00]one\n"
+        '{"t":1000,"c":[{"tx":"Lyrics: "}]}\n'
+        "[00:03.00]two\n"
+    )
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": text})
+    assert r.status_code == 200
+    assert r.json()["synced"] == "[ti:Song]\n[00:01.00]one\n[00:03.00]two"
+
+
+def test_text_without_timings_is_kept_as_plain_lyrics(client):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "just words\nsecond line"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["synced"] == ""
+    assert body["plain"] == "just words\nsecond line"
+
+
+def test_an_import_replaces_the_old_lyrics_and_its_timing(client):
+    job = _synced_job()
+    client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 15.94})
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "[00:02.00]new words"})
+    assert r.status_code == 200
+    served = client.get(f"/api/jobs/{job.id}/lyrics").json()
+    assert served["synced"] == "[00:02.00]new words"
+    assert "offset_sec" not in served, "the old lines' timing is not these lines'"
+
+
+def test_an_import_clears_the_lrclib_candidates(client):
+    job = _done_job()
+    (jobs_mod.JOBS_DIR / job.id / "lyrics_candidates.json").write_text(
+        json.dumps({"v": 1, "searched_at": time.time(), "others": []}), encoding="utf-8"
+    )
+    client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "[00:01.00]one"})
+    assert not (jobs_mod.JOBS_DIR / job.id / "lyrics_candidates.json").exists()
+
+
+def test_an_import_with_no_words_is_422(client):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": " \n\t "})
+    assert r.status_code == 422
+    assert not _lyrics_file(job).is_file()
+
+
+def test_an_import_past_the_text_limit_is_422(client):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "x" * 100_001})
+    assert r.status_code == 422
+
+
+def test_an_import_needs_a_finished_job(client):
+    job = _done_job()
+    job.status = "running"
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "[00:01.00]one"})
+    assert r.status_code == 409
+
+
+def test_an_import_of_an_unknown_job_is_404(client):
+    r = client.post("/api/jobs/bbbbbbbbbbbb/lyrics/import", json={"text": "[00:01.00]one"})
+    assert r.status_code == 404

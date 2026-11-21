@@ -800,6 +800,78 @@ def _from_file(query: LyricsQuery, fallback_title: str) -> dict[str, Any]:
     }
 
 
+def lyrics_from_text(
+    text: str,
+    *,
+    track: str = "",
+    artist: str = "",
+    album: str = "",
+    duration: float = 0.0,
+) -> dict[str, Any] | None:
+    """The lyrics a .lrc or text file the user picked makes, in the shape
+    lyrics.json keeps, or None when it has no words.
+
+    Timed lyrics keep their LRC lines as they are, tags included: the page's
+    parseLrc owns what a stamp means. Text with no [mm:ss.xx] stamp is kept as
+    plain lyrics, shown as it is. A line that is neither a tag nor a stamped
+    line is dropped, because the page could not show it: a NetEase export puts
+    its credits among the lyrics as JSON objects ({"t":0,"c":[...]}), and they
+    would only make the file larger and the sync editor's line list longer.
+    """
+    text = _lyric_text(text, _TEXT_MAX_CHARS)
+    if not text.strip():
+        return None
+    if has_synced_lines(text):
+        kept = [
+            line for line in text.split("\n") if not line.strip() or line.lstrip().startswith("[")
+        ]
+        synced = "\n".join(kept).strip("\n")
+        if not has_synced_lines(synced):
+            return None
+        plain = ""
+    else:
+        synced, plain = "", text.strip("\n")
+    return {
+        "v": 1,
+        "source": "file",
+        "track": track,
+        "artist": artist,
+        "album": album,
+        "duration": duration,
+        "synced": synced,
+        "plain": plain,
+        "instrumental": False,
+        "timing": "exact",
+        "others": [],
+        "lrclib_id": None,
+    }
+
+
+def import_lyrics(job: Job, job_dir: Path, text: str) -> dict[str, Any] | None:
+    """Keep the lyrics from a file the user picked in the Lyrics tab as the
+    job's lyrics.json, and return the entry as written; None when the text has
+    no words or could not be written.
+
+    Kept as source "file": every client that shows the file's own lyrics shows
+    these too (the Lyrics tab's SERVER_SOURCES), and an older client that does
+    not know a new source would drop them altogether. LRCLIB's candidates for
+    the track go, since the user's own copy is the answer now.
+    """
+    query = build_query(job)
+    tags = job.audio_tags or {}
+    entry = lyrics_from_text(
+        text,
+        track=(query.track if query else "") or _name(tags.get("title")) or job.title,
+        artist=(query.artist if query else "") or _name(tags.get("artist")),
+        album=(query.album if query else "") or _name(tags.get("album")),
+        duration=_number(job.duration_sec),
+    )
+    if entry is None or not write_lyrics(job, job_dir, entry):
+        return None
+    candidates_path(job_dir).unlink(missing_ok=True)
+    return entry
+
+
 def _artist_aliases(query: LyricsQuery, cancelled: Callable[[], bool]) -> list[str]:
     """The names MusicBrainz and Wikidata record for the query's artist."""
     if not (query.artist_ids or query.band_id):
