@@ -1,6 +1,6 @@
 # Browser tests for static/js (#339), as one reusable workflow. ci.yml calls it
 # for pull requests into main, pushes to main and releases; e2e-full.yml calls it for every push to
-# big-release, the nightly run and a manual run. The steps live only here.
+# next-release, the nightly run and a manual run. The steps live only here.
 #
 # This drives the real UI against the real backend, including the Tauri code
 # path, which is where #335 hid because it was invisible in a browser.

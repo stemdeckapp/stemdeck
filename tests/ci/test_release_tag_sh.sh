@@ -24,14 +24,14 @@ trap 'rm -rf "$SANDBOX"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-# A bare "remote" with main and big-release, and a fresh clone per case.
+# A bare "remote" with main and next-release, and a fresh clone per case.
 git init -q --bare "$SANDBOX/remote.git"
 git init -q -b main "$SANDBOX/seed"
 (
   cd "$SANDBOX/seed" &&
     echo one > file.txt && git add file.txt && git commit -q -m one &&
-    git checkout -q -b big-release && echo two >> file.txt && git commit -q -am two &&
-    git push -q "$SANDBOX/remote.git" main big-release
+    git checkout -q -b next-release && echo two >> file.txt && git commit -q -am two &&
+    git push -q "$SANDBOX/remote.git" main next-release
 )
 
 fresh() {  # fresh <branch>: prints the path of a new clone on <branch>
@@ -140,11 +140,11 @@ check "  on HEAD" "$([ "$(git -C "$D" rev-parse 'v1.4.0^{commit}')" = "$(git -C 
 check "  not pushed without --push" "$(! remote_tag v1.4.0 && echo 1 || echo 0)"
 check "  says what it will tag first" "$([[ "$OUT" == *"Will create the annotated tag v1.4.0"* ]] && echo 1 || echo 0)"
 
-D="$(fresh big-release)"
+D="$(fresh next-release)"
 OUT="$(run_tag "$D" tag v1.5.0-rc.1 --push)"; CODE=$?
-check "big-release with --push: tag created and pushed" "$([ $CODE -eq 0 ] && remote_tag v1.5.0-rc.1 && echo 1 || echo 0)" "exit $CODE: $OUT"
-check "  remote tag points at the big-release tip" \
-  "$([ "$(git -C "$SANDBOX/remote.git" rev-parse 'v1.5.0-rc.1^{commit}')" = "$(git -C "$SANDBOX/remote.git" rev-parse big-release)" ] && echo 1 || echo 0)"
+check "next-release with --push: tag created and pushed" "$([ $CODE -eq 0 ] && remote_tag v1.5.0-rc.1 && echo 1 || echo 0)" "exit $CODE: $OUT"
+check "  remote tag points at the next-release tip" \
+  "$([ "$(git -C "$SANDBOX/remote.git" rev-parse 'v1.5.0-rc.1^{commit}')" = "$(git -C "$SANDBOX/remote.git" rev-parse next-release)" ] && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------------------
 

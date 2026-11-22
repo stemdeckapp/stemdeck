@@ -1,9 +1,9 @@
 {
   "_readme": [
     "Which Playwright specs a pull request to a branch other than main runs. Read by scripts/ci/select-e2e.mjs.",
-    "A pull request to main, a push to main or big-release, a release, the nightly run and a manual run of e2e-full.yml run the whole suite and ignore this file.",
+    "A pull request to main, a push to main or next-release, a release, the nightly run and a manual run of e2e-full.yml run the whole suite and ignore this file.",
     "Otherwise the run is: the spec files the PR adds or changes, plus 'smoke', plus the specs of every rule whose paths match a changed file.",
-    "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to big-release catches what core misses.",
+    "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to next-release catches what core misses.",
     "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
     "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
     "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",

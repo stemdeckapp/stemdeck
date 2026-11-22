@@ -9,9 +9,9 @@
 # Refuses unless all of these hold:
 #   - no tracked file has uncommitted changes (untracked files are ignored:
 #     the tag names a commit, not the working tree);
-#   - the current branch is main or big-release;
+#   - the current branch is main or next-release;
 #   - after a fetch, HEAD equals the remote tip of that branch, and is an
-#     ancestor of (or equal to) origin/main or origin/big-release;
+#     ancestor of (or equal to) origin/main or origin/next-release;
 #   - the tag matches the workflow guard's regex: v1.2.3, optionally
 #     -rc.N, -beta.N or -alpha.N, no leading zeros;
 #   - the tag exists neither locally nor on the remote.
@@ -61,17 +61,17 @@ fi
 
 branch="$(git symbolic-ref --quiet --short HEAD || true)"
 case "$branch" in
-  main|big-release) ;;
-  "") refuse "HEAD is detached. Check out main or big-release." ;;
-  *) refuse "the current branch is '$branch'. A release is tagged from main or big-release." ;;
+  main|next-release) ;;
+  "") refuse "HEAD is detached. Check out main or next-release." ;;
+  *) refuse "the current branch is '$branch'. A release is tagged from main or next-release." ;;
 esac
 
 echo "Fetching $REMOTE ..."
 # --no-tags: the local and remote tag checks below stay separate questions.
 git fetch --quiet --no-tags "$REMOTE" \
   "+refs/heads/main:refs/remotes/$REMOTE/main" \
-  "+refs/heads/big-release:refs/remotes/$REMOTE/big-release" ||
-  refuse "could not fetch main and big-release from $REMOTE."
+  "+refs/heads/next-release:refs/remotes/$REMOTE/next-release" ||
+  refuse "could not fetch main and next-release from $REMOTE."
 
 head="$(git rev-parse HEAD)"
 tip="$(git rev-parse --verify --quiet "refs/remotes/$REMOTE/$branch")" ||
@@ -83,7 +83,7 @@ if [ "$head" != "$tip" ]; then
 fi
 
 on_branch=""
-for b in main big-release; do
+for b in main next-release; do
   rc=0
   git merge-base --is-ancestor "$head" "refs/remotes/$REMOTE/$b" || rc=$?
   case "$rc" in
@@ -92,7 +92,7 @@ for b in main big-release; do
     *) refuse "git could not check whether HEAD is on $REMOTE/$b (exit $rc)." ;;
   esac
 done
-[ -n "$on_branch" ] || refuse "HEAD is on neither $REMOTE/main nor $REMOTE/big-release."
+[ -n "$on_branch" ] || refuse "HEAD is on neither $REMOTE/main nor $REMOTE/next-release."
 
 if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
   refuse "the tag $TAG already exists locally."

@@ -147,7 +147,7 @@ chmod +x "$BIN/gh"
 export PATH="$BIN:$PATH"
 
 # ---------------------------------------------------------------------------
-# A served repository: main c1-c2, big-release c1-c2-c3, and c4 off both.
+# A served repository: main c1-c2, next-release c1-c2-c3, and c4 off both.
 # ---------------------------------------------------------------------------
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -159,15 +159,15 @@ W="$SANDBOX/work"
 git init -q -b main "$W"
 git -C "$W" commit -q --allow-empty -m c1; C1=$(git -C "$W" rev-parse HEAD)
 git -C "$W" commit -q --allow-empty -m c2; C2=$(git -C "$W" rev-parse HEAD)
-git -C "$W" checkout -q -b big-release
+git -C "$W" checkout -q -b next-release
 git -C "$W" commit -q --allow-empty -m c3; C3=$(git -C "$W" rev-parse HEAD)
 git -C "$W" checkout -q --detach "$C1"
 git -C "$W" commit -q --allow-empty -m off; C4=$(git -C "$W" rev-parse HEAD)
 git -C "$W" tag -a v1.0.0 -m v1.0.0 "$C2"       # annotated, on main
-git -C "$W" tag v1.1.0-rc.1 "$C3"               # lightweight, on big-release only
+git -C "$W" tag v1.1.0-rc.1 "$C3"               # lightweight, on next-release only
 git -C "$W" tag -a v1.2.0-rc.1 -m x "$C4"       # on neither branch
 git -C "$W" tag v1.02.0 "$C2"; git -C "$W" tag v1.0.0-rc1 "$C2"; git -C "$W" tag v1.0.0-RC.1 "$C2"
-git -C "$W" push -q "$SANDBOX/srv/o/r.git" main big-release --tags
+git -C "$W" push -q "$SANDBOX/srv/o/r.git" main next-release --tags
 TAGOBJ=$(git -C "$W" rev-parse v1.0.0)          # the annotated tag object, not a commit
 SERVER="file://$(cd "$SANDBOX/srv" && (pwd -W 2>/dev/null || pwd))"
 
@@ -230,8 +230,8 @@ echo "== tag check =="
 run_tag v1.0.0 "$C2"; check "annotated tag on main, github.sha the commit: passes" 0 $? "is on main\.|^commit=$C2$"
 run_tag v1.0.0 "$TAGOBJ"; check "annotated tag, github.sha the tag object: peeled, passes" 0 $? "github.sha is a tag object; its commit is $C2"
 grep -q "^commit=$C2$" "$OUT"; check "  hands the peeled commit to the build" 0 $?
-run_tag v1.1.0-rc.1 "$C3"; check "lightweight rc tag on big-release only: passes" 0 $? "is on big-release\.|^commit=$C3$"
-run_tag v1.2.0-rc.1 "$C4"; check "tag on neither branch: refused" 1 $? "on neither main nor big-release"
+run_tag v1.1.0-rc.1 "$C3"; check "lightweight rc tag on next-release only: passes" 0 $? "is on next-release\.|^commit=$C3$"
+run_tag v1.2.0-rc.1 "$C4"; check "tag on neither branch: refused" 1 $? "on neither main nor next-release"
 for bad in v1.02.0 v1.0.0-rc1 v1.0.0-RC.1 'v1.0.0;id' 'v1.0.0 '; do
   run_tag "$bad" "$C2"; check "bad tag '$bad': refused" 1 $? "not a release tag"
 done
@@ -240,9 +240,9 @@ run_tag v1.0.0 "$(printf 'a%.0s' {1..40})"; check "github.sha not in the fetched
 run_tag v1.0.0 "$C2" workflow_dispatch; check "not a push: refused" 1 $? "only runs for a tag push"
 run_tag v1.0.0 "$C2" push refs/heads/v1.0.0; check "a branch named like a tag: refused" 1 $? "not a release tag"
 run_tag v9.9.9 "$C2"; check "tag missing on the server: fetch fails closed" 1 $? "could not fetch"
-git -C "$SANDBOX/srv/o/r.git" branch -q -m big-release gone
-run_tag v1.0.0 "$C2"; check "big-release missing: fetch fails closed" 1 $? "could not fetch"
-git -C "$SANDBOX/srv/o/r.git" branch -q -m gone big-release
+git -C "$SANDBOX/srv/o/r.git" branch -q -m next-release gone
+run_tag v1.0.0 "$C2"; check "next-release missing: fetch fails closed" 1 $? "could not fetch"
+git -C "$SANDBOX/srv/o/r.git" branch -q -m gone next-release
 run_tag v1.0.0 "$C2"
 check "the base64 credential is masked" 0 0 "^::add-mask::$(printf 'x-access-token:%s' fake | base64 | tr -d '\n')$"
 

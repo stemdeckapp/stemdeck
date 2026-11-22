@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Which test suites does a change need? Prints JSON, for example
-//   {"base":"big-release","files":4,"browser":true,"pytest":false,"rust":false,"node":true,"i18n":true}
+//   {"base":"next-release","files":4,"browser":true,"pytest":false,"rust":false,"node":true,"i18n":true}
 //
-//   node scripts/changed-areas.mjs [--base big-release] [--files a b c]
+//   node scripts/changed-areas.mjs [--base next-release] [--files a b c]
 //
 // The files are the diff of HEAD against the merge base with <base>, plus
 // uncommitted and untracked changes. With --files the list is taken as given
@@ -51,7 +51,7 @@ export function changedFiles(base) {
 
 function main() {
   const argv = process.argv.slice(2);
-  let base = "big-release";
+  let base = "next-release";
   let files = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--base") base = argv[++i];
