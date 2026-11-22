@@ -2,5 +2,9 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # Updates are work like any other, so they go to the integration branch,
+    # never straight to main (#1086). Dependabot reads this file from main,
+    # so the target takes effect once it reaches main at the next release.
+    target-branch: next-release
     schedule:
       interval: weekly
