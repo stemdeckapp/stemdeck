@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { globToRegExp, loadMap, select } from "../../scripts/ci/select-e2e.mjs";
 
 const map = loadMap();
-const pr = (files, base = "big-release") => select({ event: "pull_request", base, files, map, exists: () => true });
+const pr = (files, base = "next-release") => select({ event: "pull_request", base, files, map, exists: () => true });
 const spec = (name) => `tests/e2e/${name}.spec.mjs`;
 const smoke = map.smoke.map(spec);
 
@@ -37,7 +37,7 @@ test("a changed spec is selected", () => {
 });
 
 test("a deleted spec is not passed to playwright", () => {
-  const r = select({ event: "pull_request", base: "big-release", files: [spec("gone")], map, exists: () => false });
+  const r = select({ event: "pull_request", base: "next-release", files: [spec("gone")], map, exists: () => false });
   assert.equal(r.full, false);
   assert.ok(!r.specs.includes(spec("gone")));
 });
@@ -56,7 +56,7 @@ test("modeUi.js selects modes and help-mode", () => {
 });
 
 test("full mode runs everything, whatever the base", () => {
-  assert.equal(select({ mode: "full", base: "big-release", files: ["README.md"], map }).full, true);
+  assert.equal(select({ mode: "full", base: "next-release", files: ["README.md"], map }).full, true);
   assert.equal(select({ mode: "full", base: "", files: [], map }).full, true);
 });
 
@@ -65,7 +65,7 @@ test("scoped mode to main still runs everything", () => {
 });
 
 test("scoped mode to another base selects like a pull request", () => {
-  const r = select({ mode: "scoped", base: "big-release", files: ["static/js/queue.js"], map, exists: () => true });
+  const r = select({ mode: "scoped", base: "next-release", files: ["static/js/queue.js"], map, exists: () => true });
   assert.equal(r.full, false);
   assert.ok(r.specs.includes(spec("queue-progress")));
 });

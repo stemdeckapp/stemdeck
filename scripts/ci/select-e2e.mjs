@@ -2,12 +2,12 @@
 // Which Playwright specs CI runs. Prints the spec paths, space separated, for
 // `npx playwright test`. Prints nothing when the whole suite should run.
 //
-//   node scripts/ci/select-e2e.mjs --mode scoped --base big-release
+//   node scripts/ci/select-e2e.mjs --mode scoped --base next-release
 //   node scripts/ci/select-e2e.mjs --mode full
-//   node scripts/ci/select-e2e.mjs --event pull_request --base big-release --files a b c
+//   node scripts/ci/select-e2e.mjs --event pull_request --base next-release --files a b c
 //
 // .github/workflows/e2e.yml passes --mode: "full" for a pull request to main,
-// a push to main, a release, a push to big-release, the nightly run and a
+// a push to main, a release, a push to next-release, the nightly run and a
 // manual run; "scoped" for a pull request to any other branch. Without --mode
 // the event decides, as it did before: only a pull_request is scoped.
 //
@@ -19,7 +19,7 @@
 // for a pull request to main, and when the diff cannot be worked out.
 // Why the reduced set must never miss a mapped spec: #806 broke an untouched
 // spec (queue-progress) by changing static/js/queue.js. Whatever a scoped run
-// misses, the full run on the next push to big-release catches.
+// misses, the full run on the next push to next-release catches.
 //
 // The reason for the choice goes to stderr, so the CI log shows it.
 

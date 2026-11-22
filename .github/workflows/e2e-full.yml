@@ -1,23 +1,23 @@
-# The whole Playwright suite on big-release, the integration branch. A pull
-# request into big-release does not run Playwright (ci.yml), so this is where a
+# The whole Playwright suite on next-release, the integration branch. A pull
+# request into next-release does not run Playwright (ci.yml), so this is where a
 # broken spec shows up: within minutes of the merge that broke it, on that
 # merge's commit. It never blocks a pull request.
 #
 # Triggers:
-# - every push to big-release (each merged pull request);
-# - nightly, on big-release;
+# - every push to next-release (each merged pull request);
+# - nightly, on next-release;
 # - by hand, on any branch: gh workflow run e2e-full.yml --repo stemdeckapp/stemdeck --ref <branch>
 #   (or -f ref=<branch-or-sha> to test another ref with this branch's workflow).
 #
 # The schedule only fires from the default branch: GitHub reads this file, and
 # the e2e.yml it calls, from main. Until this file reaches main there is no
-# nightly run; pushes to big-release and manual runs work before that.
+# nightly run; pushes to next-release and manual runs work before that.
 
 name: e2e-full
 
 on:
   push:
-    branches: [big-release]
+    branches: [next-release]
   schedule:
     # 04:17 UTC, off the top of the hour when hosted runners are busiest.
     - cron: "17 4 * * *"
@@ -30,7 +30,7 @@ on:
 
 permissions: {}
 
-# No concurrency group on purpose: a push to big-release, the nightly and a
+# No concurrency group on purpose: a push to next-release, the nightly and a
 # manual run are each a record of one commit, and none may cancel another.
 
 jobs:
@@ -41,6 +41,6 @@ jobs:
     with:
       mode: full
       # A scheduled run checks out the default branch (main) unless told
-      # otherwise, so the nightly names big-release explicitly. A push tests
+      # otherwise, so the nightly names next-release explicitly. A push tests
       # its own commit; a manual run tests the ref input, else its own branch.
-      checkout-ref: ${{ github.event_name == 'schedule' && 'big-release' || inputs.ref || github.sha }}
+      checkout-ref: ${{ github.event_name == 'schedule' && 'next-release' || inputs.ref || github.sha }}

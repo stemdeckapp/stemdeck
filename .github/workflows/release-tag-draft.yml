@@ -15,7 +15,7 @@ name: Release Tag Draft
 #      show it, and actions/checkout peels the tag for the same comparison),
 #      but the GitHub docs only say "tip commit pushed to the ref", so the
 #      job peels it either way and hands the peeled commit to the build.
-#   3. That commit is an ancestor of (or equal to) main or big-release, read
+#   3. That commit is an ancestor of (or equal to) main or next-release, read
 #      from a fresh fetch of both branches. Any fetch or git error refuses.
 #   4. After this job, exactly one release has the tag, and it is a draft.
 #      If two exist, the run stops and names them.
@@ -90,7 +90,7 @@ jobs:
       prerelease: ${{ steps.draft.outputs.prerelease }}
       build: ${{ steps.draft.outputs.build }}
     steps:
-      - name: check the tag is a release tag on main or big-release
+      - name: check the tag is a release tag on main or next-release
         id: tag
         shell: bash
         env:
@@ -138,8 +138,8 @@ jobs:
           git fetch --quiet --no-tags --filter=tree:0 "$SERVER_URL/$REPO.git" \
             "+refs/tags/$TAG:refs/tags/$TAG" \
             "+refs/heads/main:refs/remotes/origin/main" \
-            "+refs/heads/big-release:refs/remotes/origin/big-release" ||
-            refuse "could not fetch the tag, main and big-release to check where the tag is."
+            "+refs/heads/next-release:refs/remotes/origin/next-release" ||
+            refuse "could not fetch the tag, main and next-release to check where the tag is."
 
           tag_commit="$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}")" ||
             refuse "the tag $TAG does not resolve to a commit."
@@ -156,7 +156,7 @@ jobs:
           fi
 
           on_branch=""
-          for branch in main big-release; do
+          for branch in main next-release; do
             # Exit 0 is yes, 1 is no; anything else is an error and refuses.
             rc=0
             git merge-base --is-ancestor "$run_commit" "refs/remotes/origin/$branch" || rc=$?
@@ -167,7 +167,7 @@ jobs:
             esac
           done
           if [ -z "$on_branch" ]; then
-            refuse "the tagged commit $run_commit is on neither main nor big-release."
+            refuse "the tagged commit $run_commit is on neither main nor next-release."
           fi
           {
             echo "tag=$TAG"
