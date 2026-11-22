@@ -1,0 +1,38 @@
+# Only next-release and hotfix/* branches of this repository may merge into
+# main (#1086). main receives released code only; work goes to next-release.
+#
+# pull_request_target, not pull_request, on purpose: it runs the copy of this
+# workflow and of the script that is on main, so a pull request cannot edit
+# the check it is being judged by. Nothing from the pull request is checked
+# out or run; the job reads only the branch and repository names.
+#
+# Make the job "main-pr-source" a required check on main only after this file
+# is on main. Before that it never runs, so requiring it would block the
+# release pull request that brings it there.
+#
+# edited is included so that changing a pull request's base to main runs the
+# check again.
+
+name: Main PR source
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  main-pr-source:
+    runs-on: ubuntu-latest
+    steps:
+      # The default ref under pull_request_target is main, the trusted copy.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: check the source branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: bash scripts/ci/main-pr-source.sh

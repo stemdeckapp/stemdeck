@@ -108,15 +108,18 @@ jobs:
   # Windows and macOS draft builds, so both are tested here, against
   # throwaway git repositories and a fake gh. The step test reads the step
   # scripts out of the workflow files, so it tests them as committed.
+  # The main-pr-source check (#1086) is tested here too: it decides which
+  # branches may merge into main, and a wrong pass is silent.
   # ubuntu-latest because the uv container has no git.
   release-scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck jq python3-yaml
-      - run: shellcheck -S warning scripts/release/tag.sh tests/ci/test_release_tag_sh.sh tests/ci/test_release_tag_draft_sh.sh
+      - run: shellcheck -S warning scripts/release/tag.sh tests/ci/test_release_tag_sh.sh tests/ci/test_release_tag_draft_sh.sh scripts/ci/main-pr-source.sh tests/ci/test_main_pr_source_sh.sh
       - run: bash tests/ci/test_release_tag_sh.sh
       - run: bash tests/ci/test_release_tag_draft_sh.sh
+      - run: bash tests/ci/test_main_pr_source_sh.sh
 
   sast-bandit:
     runs-on: ubuntu-latest
