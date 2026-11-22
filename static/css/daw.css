@@ -6070,15 +6070,6 @@ html:not(.mode-daw) #master-drawer {
 .mode-item-check { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted-2); box-sizing: border-box; }
 .mode-item[aria-checked="true"] .mode-item-check { background: var(--accent); border-color: var(--accent); }
 .mode-item[aria-checked="true"] .mode-item-name { color: var(--accent); }
-.mode-item-tag {
-  padding: 1px 6px;
-  border: 1px solid var(--muted-2);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--muted);
-}
 .mode-item-desc { padding-left: 15px; font-size: 11px; line-height: 1.35; color: var(--muted); }
 .mode-note { margin: 4px 6px 2px; font-size: 11px; color: var(--accent); }
 .mode-note[hidden] { display: none; }
