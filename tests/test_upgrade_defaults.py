@@ -75,12 +75,23 @@ def test_new_songs_store_mp3_at_128_kbps(client):
     assert (body["stem_format"], body["stem_mp3_kbps"]) == ("mp3", 128)
 
 
-def test_detect_lyrics_is_off_and_a_new_import_looks_for_none(client):
+def test_detect_lyrics_is_off_and_a_new_import_looks_for_none(client, online_sources_on):
     assert _settings.get_auto_lyrics() is False
     assert client.get("/api/settings").json()["auto_lyrics"] is False
     r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
     assert r.status_code == 200
     assert registry.get(r.json()["job_id"]).auto_lyrics is False
+
+
+def test_online_sources_are_off_and_a_link_is_refused(client):
+    # The 0.20.0 file has no online_sources key, and an install that never
+    # accepted the disclaimer must not be taken to have accepted it (#1089).
+    assert _settings.get_online_sources() is False
+    assert client.get("/api/settings").json()["online_sources"] is False
+    r = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    assert r.status_code == 403
+    assert r.json()["code"] == "online_sources_off"
+    assert registry._jobs == {}
 
 
 def test_an_upgrade_writes_neither_choice_into_settings_json(client):
@@ -96,3 +107,4 @@ def test_an_upgrade_writes_neither_choice_into_settings_json(client):
     assert "stem_format" not in on_disk
     assert "stem_mp3_kbps" not in on_disk
     assert "auto_lyrics" not in on_disk
+    assert "online_sources" not in on_disk

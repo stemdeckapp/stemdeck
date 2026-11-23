@@ -109,9 +109,11 @@ export function resetPackageState() {
   for (const name of ["musicbrainz", "mixdown", "click"]) rm(path.join(DATA_DIR, "cache", name));
   // jobs_dir names the package's own folder, so neither the Documents default
   // nor a restored setting can ever point the build at a real library.
+  // online_sources is on because the run imports links (importLink in
+  // helpers.mjs), and a build starts with them off (#1089).
   fs.writeFileSync(
     path.join(DATA_DIR, "settings.json"),
-    JSON.stringify({ jobs_dir: JOBS_DIR }, null, 2),
+    JSON.stringify({ jobs_dir: JOBS_DIR, online_sources: true }, null, 2),
   );
   rm(FAKE_LOCALAPPDATA);
   fs.mkdirSync(FAKE_LOCALAPPDATA, { recursive: true });

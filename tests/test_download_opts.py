@@ -15,6 +15,11 @@ import pytest
 from app.core.models import Job
 from app.pipeline import download as dl_mod
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 
 class _FakeYDL:
     """Records the options dict and returns just enough to get through."""

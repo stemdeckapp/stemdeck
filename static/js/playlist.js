@@ -8,8 +8,9 @@
 // smuggled in between the two calls.
 
 import { addPlaylistToLibrary } from "./catalog.js";
-import { showError } from "./job.js";
+import { showError, showOnlineSourcesOff } from "./job.js";
 import { responseErrorMessage } from "./errorReason.js";
+import { isOnlineSourcesRefusal } from "./onlineSources.js";
 import { t, plural } from "./i18n.js";
 
 /** Does this URL look like a playlist we should offer to expand? Deliberately
@@ -102,7 +103,13 @@ export async function importPlaylist(url, stems) {
       body: JSON.stringify({ url }),
     });
     preview = await res.json();
-    if (!res.ok) throw new Error(preview.detail || res.statusText);
+    // Online sources off (#1089): said as itself, not as a playlist that
+    // could not be read.
+    if (isOnlineSourcesRefusal(preview)) {
+      showOnlineSourcesOff();
+      return 0;
+    }
+    if (!res.ok) throw new Error(responseErrorMessage(res, preview));
   } catch (err) {
     showError(t("playlist.couldNotRead", { message: err.message }));
     return 0;
@@ -129,6 +136,10 @@ export async function importPlaylist(url, stems) {
       body: JSON.stringify({ url, stems }),
     });
     result = await res.json();
+    if (isOnlineSourcesRefusal(result)) {
+      showOnlineSourcesOff();
+      return 0;
+    }
     if (!res.ok) throw new Error(responseErrorMessage(res, result));
   } catch (err) {
     showError(t("playlist.couldNotImport", { message: err.message }));

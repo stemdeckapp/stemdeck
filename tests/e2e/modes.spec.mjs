@@ -23,9 +23,8 @@ test.describe("studio modes", () => {
     await page.locator("#modeBtn").click();
     await expect(page.locator(".mode-item")).toHaveCount(4);
     await expect(page.locator('.mode-item[data-mode="streaming"]')).toHaveCount(0);
-    // Advanced, Karaoke and Performance are tagged; Practice is not (#810).
-    await expect(page.locator(".mode-item .mode-item-tag")).toHaveText(["Experimental", "Experimental", "Experimental"]);
-    await expect(page.locator('.mode-item[data-mode="practice"] .mode-item-tag')).toHaveCount(0);
+    // No mode carries an Experimental tag since 0.21.0 shipped (#1088).
+    await expect(page.locator(".mode-item .mode-item-tag")).toHaveCount(0);
     await page.locator('.mode-item[data-mode="daw"]').click();
     await expect(page.locator("html")).toHaveAttribute("data-mode", "daw");
     await expect(page.locator("#t-rec")).toBeVisible();

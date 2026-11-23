@@ -10,6 +10,7 @@
 // tests/test_registry_persistence.py.
 import { test, expect } from "@playwright/test";
 import {
+  allowOnlineSources,
   JOB_ID, SIBLING_JOB_ID, SIBLING_TITLE, TRACK_TITLE,
   fixtureTrack, seedCatalogState, seedLibrary, readCatalogState, stubUpdateCheck, stubVocalSplitHealth, openStudio,
 } from "./helpers.mjs";
@@ -112,6 +113,7 @@ test.describe("Lead + Backing chosen at import", () => {
       });
       await seedLibrary(page);
       await stubUpdateCheck(page);
+      await allowOnlineSources(page);
       await page.goto("/", { waitUntil: "domcontentloaded" });
 
       const split = page.locator('#vocalModeToggle .vocal-mode-btn[data-mode="split"]');

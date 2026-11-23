@@ -19,7 +19,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { seedLibrary } from "./helpers.mjs";
+import { allowOnlineSources, seedLibrary } from "./helpers.mjs";
 
 const RESULTS = [
   { title: "Tina Turner - The Best", duration: 250, uploader: "Tina Turner", thumbnail: null, too_long: false, url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
@@ -58,6 +58,7 @@ async function stubPreview(page) {
 
 async function openApp(page) {
   await seedLibrary(page);
+  await allowOnlineSources(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#url").waitFor({ state: "visible" });
 }

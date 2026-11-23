@@ -332,6 +332,28 @@ export async function stubFavorites(page, serverFavorites = {}) {
   return writes;
 }
 
+/**
+ * Online search and link import are off until the user accepts the text in
+ * Settings, Experimental (#1089), and the page offers them only once
+ * GET /api/settings says online_sources is true. A spec that drives the search
+ * box or a link import, with those endpoints stubbed, calls this before the
+ * page loads: the page then reads the setting as on.
+ *
+ * Only the page's view of it changes. The backend's setting is left as it is,
+ * because the backend is shared by the whole suite and a spec that turned it
+ * on for real would leave it on for every spec after it. A request that does
+ * reach the real backend with a link still gets the 403 (covered by pytest,
+ * tests/test_online_sources.py).
+ */
+export async function allowOnlineSources(page) {
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const json = await response.json();
+    return route.fulfill({ response, json: { ...json, online_sources: true } });
+  });
+}
+
 export async function openStudio(page, { tauri = false, updateAvailable = false, serverFavorites = {} } = {}) {
   await seedLibrary(page);
   const favoriteWrites = await stubFavorites(page, serverFavorites);

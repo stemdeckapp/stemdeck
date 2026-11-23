@@ -14,6 +14,11 @@ import pytest
 import app.pipeline.download as dl
 from app.core.models import Job, JobCancelled
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 
 class _SlowYoutubeDL:
     """A YoutubeDL whose probe takes ``seconds`` and records that it ran."""

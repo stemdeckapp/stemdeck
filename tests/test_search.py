@@ -16,6 +16,11 @@ from fastapi.testclient import TestClient
 from app.api import search as api_search
 from app.pipeline import search as search_mod
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 
 class _FakeYDL:
     """Captures the options and the target string, returns canned entries."""

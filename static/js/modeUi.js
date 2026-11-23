@@ -69,8 +69,6 @@ function paint() {
     item.setAttribute("aria-checked", String(on));
     item.querySelector(".mode-item-name").textContent = t(`mode.${m}`);
     item.querySelector(".mode-item-desc").textContent = t(`mode.${m}Desc`);
-    const tag = item.querySelector(".mode-item-tag");
-    if (tag) tag.textContent = t("mode.experimental");
   }
   if (menu) menu.setAttribute("aria-label", t("mode.menuAria"));
 }
@@ -88,8 +86,6 @@ function build() {
     item.tabIndex = -1;
     const head = el("span", "mode-item-head");
     head.append(el("span", "mode-item-check"), el("span", "mode-item-name"));
-    // Practice is the settled mode; the other three are new in 0.21.0 (#810).
-    if (m !== "practice") head.append(el("span", "mode-item-tag"));
     item.append(head, el("span", "mode-item-desc"));
     item.addEventListener("click", (e) => {
       e.stopPropagation();

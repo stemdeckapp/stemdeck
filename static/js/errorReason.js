@@ -14,11 +14,20 @@ export const RESTART_REQUIRED = "restart_required";
 // The server's code for a delete, a library move or a reset it refuses while a
 // stem fill or a vocal split runs (refuse_while_busy in app/main.py).
 export const JOB_BUSY = "job_busy";
+// The server's code for search, a preview, a link import or a playlist it
+// refuses while online sources are off in Settings, Experimental
+// (refuse_online_sources_off in app/main.py, #1089).
+export const ONLINE_SOURCES_OFF = "online_sources_off";
+// The cause a link job carries when its turn came while online sources were
+// off: it is then "stopped", not failed, and waits for Extract
+// (_wait_for_online_sources in app/pipeline/runner.py).
+export const ONLINE_SOURCES_OFF_CAUSE = "online-sources-off";
 
 /** The translated sentence for a code this side knows, or "". */
 export function codeMessage(data) {
   if (data?.code === RESTART_REQUIRED) return t("settings.stemsLocation.restartToSave");
   if (data?.code === JOB_BUSY) return t("library.songBusy");
+  if (data?.code === ONLINE_SOURCES_OFF) return t("onlineSources.off");
   return "";
 }
 
@@ -58,6 +67,7 @@ export function errorReason(err) {
 // The causes classify_failure gives a failed job (app/pipeline/errors.py), and
 // the sentence that says each one with its next step (#175).
 const CAUSE_KEYS = {
+  [ONLINE_SOURCES_OFF_CAUSE]: "job.cause.onlineSourcesOff",
   "out-of-memory": "job.cause.outOfMemory",
   "unsupported-device": "job.cause.unsupportedDevice",
   "disk-full": "job.cause.diskFull",
@@ -79,6 +89,11 @@ export function failureCause(detail) {
   const m = /^([a-z-]+)(?:\s+\S\s+([\s\S]*))?$/.exec(text);
   if (m && Object.prototype.hasOwnProperty.call(CAUSE_KEYS, m[1])) return { cause: m[1], message: (m[2] || "").trim() };
   return { cause: "", message: text };
+}
+
+/** Whether a job state is a link stopped because online sources were off. */
+export function stoppedForOnlineSources(state) {
+  return state?.status === "stopped" && failureCause(state.error_detail).cause === ONLINE_SOURCES_OFF_CAUSE;
 }
 
 /**

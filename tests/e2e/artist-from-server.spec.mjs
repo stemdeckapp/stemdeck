@@ -8,6 +8,7 @@
 // then only for the saved band by its id, never a search.
 import { test, expect } from "@playwright/test";
 import {
+  allowOnlineSources,
   JOB_ID,
   SIBLING_JOB_ID,
   fixtureTrack,
@@ -117,6 +118,7 @@ test.describe("band found by the server during the import", () => {
     const queue = await stubImportQueue(page, JOB_ID);
     // Only the sibling is in the library, so nothing is open and the finished
     // import opens itself.
+    await allowOnlineSources(page);
     await openPage(page, { [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)") });
 
     await page.locator("#url").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ");

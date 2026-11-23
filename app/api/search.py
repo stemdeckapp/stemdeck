@@ -25,10 +25,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.online_sources import OnlineSourcesOff, require_online_sources
 from app.core.settings import get_max_duration_sec
 from app.pipeline.download import InvalidYouTubeURL
 from app.pipeline.preview import PreviewUnavailable
@@ -95,7 +96,10 @@ def _clear_cache() -> None:
     _cache.clear()
 
 
-@router.post("")
+# Both endpoints that reach YouTube or SoundCloud refuse while online sources
+# are off (#1089): 403 "online_sources_off", before the body is read. The list
+# of sources below is not gated; it asks nothing of anyone.
+@router.post("", dependencies=[Depends(require_online_sources)])
 async def search_sources(request: Request) -> dict:
     try:
         body = await request.json()
@@ -142,6 +146,9 @@ async def search_sources(request: Request) -> dict:
             )
     except UnsupportedSearch as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    except OnlineSourcesOff:
+        # Turned off while this search waited: the same 403 as at the door.
+        raise
     except Exception as e:
         logger.exception("search failed")
         raise HTTPException(status_code=502, detail="Could not reach that service") from e
@@ -181,6 +188,11 @@ def _proxy(stream: dict, range_header: str | None):
     Range is forwarded rather than swallowed, so seeking the time bar costs one
     short request instead of pulling the track from the beginning again.
     """
+    # Online sources first, asked again at the call that opens the socket:
+    # they may have been turned off since the endpoint let the request in, and
+    # a resolved preview can come from the cache without reaching yt-dlp
+    # (#1089).
+    require_online_sources()
     # Belt and suspenders, the same shape as the path-traversal checks in
     # api/stems.py. preview.resolve() already refuses anything that is not
     # http(s), and this refuses it again at the one call that actually opens a
@@ -214,7 +226,7 @@ def _proxy(stream: dict, range_header: str | None):
     return upstream, body
 
 
-@router.get("/preview")
+@router.get("/preview", dependencies=[Depends(require_online_sources)])
 async def preview(url: str, request: Request):
     """Stream a search result's audio so it can be auditioned before import."""
     try:
@@ -223,6 +235,8 @@ async def preview(url: str, request: Request):
         raise HTTPException(status_code=422, detail=str(e)) from e
     except PreviewUnavailable as e:
         raise HTTPException(status_code=404, detail="No preview available for this track") from e
+    except OnlineSourcesOff:
+        raise
     except Exception as e:
         logger.exception("preview resolve failed")
         raise HTTPException(status_code=502, detail="Could not load a preview") from e
@@ -234,6 +248,8 @@ async def preview(url: str, request: Request):
     except urllib.error.HTTPError as e:
         # A signed URL that expired between resolve and play, most often.
         raise HTTPException(status_code=502, detail="Could not load a preview") from e
+    except OnlineSourcesOff:
+        raise
     except Exception as e:
         logger.exception("preview proxy failed")
         raise HTTPException(status_code=502, detail="Could not load a preview") from e

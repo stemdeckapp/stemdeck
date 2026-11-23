@@ -17,6 +17,7 @@
 import { test, expect } from "@playwright/test";
 
 import {
+  allowOnlineSources,
   JOB_ID,
   SIBLING_JOB_ID,
   SIBLING_TITLE,
@@ -58,6 +59,7 @@ async function open(page) {
   const queue = await stubImportQueue(page, JOB_ID, "Importing Song");
   await stubExportEndpoints(page);
   await stubUpdateCheck(page);
+  await allowOnlineSources(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await row(page, SIBLING_JOB_ID).waitFor({ timeout: 20000 });
   await page.locator("#url").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ");

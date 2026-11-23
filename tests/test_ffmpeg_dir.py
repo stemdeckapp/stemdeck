@@ -22,6 +22,11 @@ from pathlib import Path
 
 import pytest
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 EXE = ".exe" if sys.platform.startswith("win") else ""
 ENV = ("STEMDECK_DATA_DIR", "STEMDECK_FFMPEG", "STEMDECK_FFPROBE", "STEMDECK_FFMPEG_DIR")
 

@@ -120,7 +120,11 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 def classify_failure(text: str) -> str:
     """Map failure output to one of: out-of-memory, unsupported-device,
     disk-full, model-download, source-blocked, source-unavailable, bad-input,
-    unknown."""
+    unknown.
+
+    Online sources being off is not among them: it is known by its exception
+    type, OnlineSourcesOff, and the runner settles that job as stopped rather
+    than failed (#1089), so it never reaches this text match."""
     low = text.lower()
     for cause, patterns in _CAUSE_PATTERNS:
         if any(p in low for p in patterns):

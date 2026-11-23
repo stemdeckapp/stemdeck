@@ -17,6 +17,11 @@ from fastapi.testclient import TestClient
 from app.api import search as api_search
 from app.pipeline import preview as preview_mod
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 AUDIO_LOW = {

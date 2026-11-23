@@ -605,7 +605,7 @@ def test_no_write_route_is_left_out_of_the_refusal(client, moved):
     ],
 )
 def test_reads_and_settings_keep_working_until_the_restart(
-    client, moved, method, path, body, status
+    client, moved, online_sources_on, method, path, body, status
 ):
     r = client.request(method, path, json=body)
     assert r.status_code == status, r.text
@@ -659,7 +659,7 @@ def test_writes_work_again_after_the_restart(client, moved, monkeypatch):
     assert saved["jobs"][0]["favorite"] is True
 
 
-def test_a_failed_move_leaves_the_app_usable(client, tmp_path):
+def test_a_failed_move_leaves_the_app_usable(client, online_sources_on, tmp_path):
     """Nothing moved, so this process is still right about where the library is
     and there is no reason to make the user restart."""
     from app.core import stems_location

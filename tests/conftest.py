@@ -221,6 +221,16 @@ def _isolate_network_settings(tmp_path, monkeypatch):
     _settings._state = None
 
 
+@pytest.fixture
+def online_sources_on(_isolate_network_settings):
+    """Turn online sources on (#1089). They are off by default, and every test
+    starts from that: search, previews, link imports and playlists answer 403
+    until the user accepts the disclaimer in Settings, Experimental. A test of
+    one of those paths asks for this; a test of the refusal does not."""
+    _settings.set_online_sources(True)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_vocal_split_status(tmp_path, monkeypatch):
     """Every split a test runs records its outcome (#832): never in the real

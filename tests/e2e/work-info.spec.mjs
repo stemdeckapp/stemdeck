@@ -8,6 +8,7 @@
 // ones for Wicked (Q616439), so the tests run offline.
 import { test, expect } from "@playwright/test";
 import {
+  allowOnlineSources,
   JOB_ID,
   SIBLING_JOB_ID,
   fixtureTrack,
@@ -326,6 +327,7 @@ test.describe("the work a soundtrack is from", () => {
         : route.fallback());
     // The import runs in the background (#747); the queue says when it is done.
     const queue = await stubImportQueue(page, JOB_ID);
+    await allowOnlineSources(page);
     const tagAsks = await openPage(page, { [SIBLING_JOB_ID]: fixtureTrack(SIBLING_JOB_ID, "E2E Fixture Track (again)") });
 
     await page.locator("#url").fill("https://www.youtube.com/watch?v=6Nn8rBmhDjE");

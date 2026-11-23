@@ -75,6 +75,7 @@ def test_a_removed_upload_can_be_extracted_again(client: TestClient) -> None:
 
 def test_a_waiting_link_with_no_audio_yet_is_kept_and_extract_fetches_it(
     client: TestClient,
+    online_sources_on: None,
 ) -> None:
     """A link has no audio until its turn. Its link is the song: kept as
     stopped, Extract queues it and the pipeline downloads it again."""

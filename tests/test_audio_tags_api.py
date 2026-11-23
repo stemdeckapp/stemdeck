@@ -19,6 +19,11 @@ import app.api.jobs as jobs_mod
 from app.core.models import Job
 from app.core.registry import _jobs
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 LITHIUM_URL = "https://www.youtube.com/watch?v=pkcJEvMcnEg"
 QUEEN = {"id": "Q15862", "name": "Queen", "englishName": "Queen"}
 NIRVANA = {"id": "Q11649", "name": "Nirvana", "englishName": "Nirvana"}

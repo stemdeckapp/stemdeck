@@ -11,6 +11,7 @@ from yt_dlp import YoutubeDL
 
 from app.core.config import bundled_js_runtime, ffmpeg_dir, js_solver_available
 from app.core.models import Job, JobCancelled, _set
+from app.core.online_sources import OnlineSourcesOff, require_online_sources
 from app.core.settings import get_cookies_file, get_max_duration_sec, get_video_max_height
 from app.pipeline.audio_tags import tags_from_ytdlp
 
@@ -46,6 +47,9 @@ _NON_RETRIABLE = (
 
 
 def _is_retriable(exc: Exception) -> bool:
+    # Turned off in Settings: asking again cannot change the answer.
+    if isinstance(exc, OnlineSourcesOff):
+        return False
     msg = str(exc).lower()
     if any(s in msg for s in _NON_RETRIABLE):
         return False
@@ -249,7 +253,13 @@ def _base_ydl_opts(extractors: list[str], *, use_cookies: bool = False) -> dict:
     `allowed_extractors` is a required argument rather than a default because
     it is the SSRF boundary (#173) and the two valid values are genuinely
     different; a caller must state which one it means.
+
+    Also where the online sources opt-in holds for every one of them, and for
+    search and preview, which build theirs here too (#1089). Raises
+    OnlineSourcesOff while the user has it off, so no YoutubeDL is ever made
+    then, whichever path asked for one.
     """
+    require_online_sources()
     opts: dict = {
         "quiet": True,
         "allowed_extractors": extractors,
@@ -566,6 +576,10 @@ def _download_video_track(job: Job, url: str, job_dir: Path, *, use_cookies: boo
 
 
 def download(job: Job, url: str, job_dir: Path) -> Path:
+    # Before the status says it is downloading: a link queued before online
+    # sources were turned off, or kept in the registry from before the update
+    # that added the setting, fails at once with the reason (#1089).
+    require_online_sources()
     url = normalize_youtube_url(url)
     logger.info("[%s] download starting: %s", job.id, url)
     _set(job, status="downloading", progress=0.0, stage="Processing...")

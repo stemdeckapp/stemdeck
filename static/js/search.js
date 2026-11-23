@@ -19,6 +19,13 @@
 // backspacing does constantly) mostly does not hit the network at all.
 
 import { t, applyTranslations, onLanguageChange } from "./i18n.js";
+import {
+  LOOKS_LIKE_URL,
+  isOnlineSourcesRefusal,
+  onOnlineSourcesChange,
+  onlineSourcesOn,
+  setOnlineSourcesState,
+} from "./onlineSources.js";
 
 // A pause long enough to mean "stopped typing".
 const IDLE_MS = 450;
@@ -53,11 +60,10 @@ let audio = null;
 let previewIndex = -1;
 let rafId = 0;
 
-// Anything that could be a link is left alone: it belongs to the import flow,
-// not to search. Deliberately loose. A false positive here costs one search
-// that would have failed anyway, a false negative sends a URL to YouTube as a
-// search term.
-const LOOKS_LIKE_URL = /^\s*(https?:\/\/|www\.)|\b(youtube\.com|youtu\.be|soundcloud\.com)\b/i;
+// Anything that could be a link (LOOKS_LIKE_URL, onlineSources.js) is left
+// alone: it belongs to the import flow, not to search. Deliberately loose. A
+// false positive here costs one search that would have failed anyway, a false
+// negative sends a URL to YouTube as a search term.
 
 const TABS = [
   { source: "youtube", kind: "track", labelKey: "search.tab.ytSongs" },
@@ -129,6 +135,33 @@ function setStatus(text) {
   listEl.textContent = "";
   statusEl.textContent = text;
   statusEl.classList.toggle("hidden", !text);
+}
+
+// Online sources off (#1089): the box neither searches nor imports a link, so
+// whatever is typed or pasted gets the one line that says where to turn them
+// on, in place of results and with no source tabs to choose from.
+function showOff() {
+  stopPreview();
+  if (timerId) { clearTimeout(timerId); timerId = null; }
+  controller?.abort();
+  controller = null;
+  items = [];
+  cursor = -1;
+  lastQuery = "";
+  input?.removeAttribute("aria-activedescendant");
+  tabsEl.classList.add("hidden");
+  panel.classList.add("search-off");
+  setStatus(t("onlineSources.off"));
+  open();
+}
+
+// The box's placeholder says what it does now: search and drop while online
+// sources are on, drop or upload while they are off. Through data-i18n, so a
+// language switch keeps the right one.
+function paintPlaceholder() {
+  const key = onlineSourcesOn() ? "topbar.urlPlaceholder" : "topbar.urlPlaceholderOff";
+  input.setAttribute("data-i18n-placeholder", key);
+  input.placeholder = t(key);
 }
 
 function render(maxDurationSec) {
@@ -373,6 +406,17 @@ async function run(query) {
     // A newer search started while this was in flight. Its result is the only
     // one that should reach the DOM.
     if (mine.signal.aborted || mine !== controller) return;
+    if (r.status === 403) {
+      // Turned off since the page read the setting (another tab, a phone):
+      // believe the server.
+      const body = await r.json().catch(() => null);
+      if (mine !== controller) return;
+      if (isOnlineSourcesRefusal(body)) {
+        setOnlineSourcesState(false);
+        showOff();
+        return;
+      }
+    }
     if (!r.ok) { items = []; setStatus(t("search.failed")); lastQuery = ""; return; }
     const data = await r.json();
     if (mine !== controller) return;
@@ -390,6 +434,12 @@ function schedule(force = false) {
   const raw = input.value;
   const query = raw.trim();
   if (timerId) { clearTimeout(timerId); timerId = null; }
+  if (!onlineSourcesOn()) {
+    if (query) showOff(); else close();
+    return;
+  }
+  tabsEl.classList.remove("hidden");
+  panel.classList.remove("search-off");
   if (query.length < MIN_QUERY || LOOKS_LIKE_URL.test(raw)) { close(); return; }
   if (!force && query === lastQuery) return;
   // A trailing space means a finished word, which is a far stronger signal
@@ -468,6 +518,13 @@ export function initSearch(onSelect) {
   input.setAttribute("aria-controls", "search-panel");
 
   buildPanel(wrap);
+  paintPlaceholder();
+  // Turned on or off in Settings while the page is open: the placeholder and
+  // an open panel follow at once, without a reload.
+  onOnlineSourcesChange(() => {
+    paintPlaceholder();
+    if (!panel.classList.contains("hidden")) schedule(true);
+  });
 
   input.addEventListener("input", () => schedule());
   input.addEventListener("focus", () => { if (items.length) open(); });

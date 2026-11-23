@@ -384,7 +384,9 @@ async def test_a_song_without_recorded_settings_fills_at_standard(
     assert calls[0]["quality"] == "standard"
 
 
-async def test_a_link_is_downloaded_again_into_scratch(jobs_dir, client, monkeypatch, no_peaks):
+async def test_a_link_is_downloaded_again_into_scratch(
+    jobs_dir, client, monkeypatch, no_peaks, online_sources_on
+):
     _make_job(jobs_dir, names=("vocals",), source_url="https://www.youtube.com/watch?v=abc")
     seen = {}
 

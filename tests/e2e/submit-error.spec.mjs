@@ -9,7 +9,7 @@
 // POST /api/jobs and the version DELETE never leave the page.
 
 import { test, expect } from "@playwright/test";
-import { openStudio, JOB_ID, resetVersions } from "./helpers.mjs";
+import { allowOnlineSources, openStudio, JOB_ID, resetVersions } from "./helpers.mjs";
 
 const URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const PROXY_413 = { status: 413, contentType: "text/html", body: "<html><body><h1>413 Request Entity Too Large</h1></body></html>" };
@@ -34,6 +34,7 @@ async function dropFiles(page, names) {
 
 test.describe("a refused submit", () => {
   test("an import answered with a proxy's HTML page says the status, not a parse error", async ({ page }) => {
+    await allowOnlineSources(page);
     await openStudio(page);
     await refuseImports(page);
     await page.locator("#url").fill(URL);
@@ -47,6 +48,7 @@ test.describe("a refused submit", () => {
   });
 
   test("an ok answer that is not JSON says no reason was given, not a script error", async ({ page }) => {
+    await allowOnlineSources(page);
     await openStudio(page);
     await page.route("**/api/jobs", (route) =>
       route.request().method() === "POST"
