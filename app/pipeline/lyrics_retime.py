@@ -1973,9 +1973,11 @@ def retime_job(
         if cancelled():
             raise JobCancelled()
         now = read_lyrics(job_dir)
-        # Other lyrics since (another version, letters mended): this timing
-        # is not theirs.
-        if now is None or lyric_line_texts(now) != [text for _t, text in pairs]:
+        # Other lyrics since (another version, letters mended, a file the
+        # user imported): this timing is not theirs. The same lines are not
+        # enough: an imported .lrc of the same words carries the user's own
+        # timing, which a timing made for the old copy must not override.
+        if now is None or any(now[key] != entry[key] for key in ("source", "synced", "plain")):
             raise RetimeFailed("the lyrics changed meanwhile")
         if not write_lyrics(job, job_dir, {**now, "aligned": aligned}):
             raise RetimeFailed("could not write lyrics")

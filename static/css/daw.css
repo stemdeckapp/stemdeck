@@ -4645,9 +4645,15 @@ input, textarea { font-family: inherit; }
 }
 .lyrics-link:hover { text-decoration: underline; }
 /* Align, for lyrics with no timing to move: still focusable, so its tooltip
-   says why (lyrics.js). */
-.lyrics-link[aria-disabled="true"] { color: var(--muted); cursor: default; }
-.lyrics-link[aria-disabled="true"]:hover { text-decoration: none; }
+   says why (lyrics.js). Disabled outright only while an import replaces the
+   lyrics (lyrics.js pauseEdits). */
+.lyrics-link[aria-disabled="true"],
+.lyrics-link:disabled { color: var(--muted); cursor: default; }
+.lyrics-link[aria-disabled="true"]:hover,
+.lyrics-link:disabled:hover { text-decoration: none; }
+/* Replace lyrics, armed: the first press said what goes with the old lyrics,
+   the second picks the file (lyrics.js importButton). */
+.lyrics-link.armed { color: var(--danger); text-align: start; }
 
 /* The Align panel: under the tools row, the sidebar's width, every control a
    button so the keys reach them all. The nudges sit either side of the

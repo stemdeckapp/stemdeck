@@ -12,6 +12,8 @@
 //      saved from the artist box and the song's name cleaned out of the
 //      title. Kept straight away only when a version is the same length as
 //      the track; otherwise the versions are offered to pick from.
+// A .lrc or .txt the user imports (Import .lrc, Replace lyrics) replaces
+// whatever the track had, on the server, as the file's own lyrics.
 // There is no search box: what is looked up is what the track says it is.
 // What was kept belongs to the track and comes back whenever it is open.
 //
@@ -37,7 +39,7 @@
 // textContent, never as HTML: anyone can edit LRCLIB or a tag, and this page
 // can reach the desktop app's native commands.
 
-import { t, getLanguage } from "./i18n.js";
+import { t, plural, getLanguage } from "./i18n.js";
 import { storeGet, storeSet } from "./utils.js";
 import { getCurrentTrackInfo, getCurrentTrackArtist } from "./catalog.js";
 import { transport, setPlayheadTime } from "./transport.js";
@@ -55,6 +57,12 @@ import {
   offsetToStart,
   alignedFrom,
 } from "./lyricsLookup.js";
+import {
+  LYRICS_FILE_MAX_BYTES,
+  LYRICS_TEXT_MAX_CHARS,
+  lyricsFileText,
+  importErrorKey,
+} from "./lyricsFile.js";
 import {
   timingOf,
   serializeLrc,
@@ -1319,91 +1327,231 @@ function lookAgainButton() {
 // The page can read the file it is handed, never the folder around it, so a
 // .lrc sitting beside the MP3 is not found on its own: this is a file the user
 // picks. Its text goes to the server, which keeps it as lyrics.json, source
-// "file" -- the shape an upload's own lyrics tag makes -- so it survives a
+// "file" (the shape an upload's own lyrics tag makes), so it survives a
 // reload, reaches the other devices, and Align and Sync treat it like any
 // other lyrics. Timed lines keep their stamps; text without any is kept as
-// plain lyrics; the server drops what the page could not show (a NetEase
-// export's JSON credit lines).
+// plain lyrics, which, like plain lyrics from anywhere, cannot be aligned or
+// synced line by line; the server drops what the page could not show (a
+// NetEase export's JSON credit lines). Reading the bytes and the limits are
+// lyricsFile.js's.
 
-// One .lrc is a few KB; anything past this is not lyrics, and the server's
-// body cap would refuse it after the upload.
-const LYRICS_FILE_MAX_BYTES = 512 * 1024;
-
+// One file input for the page, made on the first press: the track it is for
+// is the one open when its button was pressed (importFor), not whichever is
+// open when the dialog closes.
 let importInput = null;
+let importFor = null;
+let importing = false; // one import at a time from this page
+// How long Replace stays armed: a sentence naming what goes to read, where
+// a version's delete says one word for 4 s.
+const REPLACE_ARMED_MS = 10_000;
+// An import that has not answered by then (the saves before it, or the POST)
+// is given up, and the user told to try again: a .lrc is a few KB.
+const IMPORT_TIMEOUT_MS = 30_000;
 
-/** "Import lyrics…", or "Replace lyrics…" when the track already has some. */
+/** The work on the lyrics shown that an import would lose: the keys of the
+ * sentences naming it, [] for none. Their own timing and the Align offset
+ * belong to these lines and go with them. */
+function workLostByReplace() {
+  if (!shownEntry) return [];
+  return [
+    shownEntry.userSynced ? "lyrics.lostUserSynced" : "",
+    shownEntry.aligned ? "lyrics.lostAligned" : "",
+    offset || shownEntry.offsetSec ? "lyrics.lostOffset" : "",
+  ].filter(Boolean);
+}
+
+/** "a, b and c" in the app's language. */
+function listOf(items) {
+  try {
+    return new Intl.ListFormat(getLanguage(), { type: "conjunction" }).format(items);
+  } catch (err) {
+    console.warn("list format failed", err);
+    return items.join(", ");
+  }
+}
+
+function pickLyricsFile(trackId) {
+  if (!importInput) {
+    importInput = document.createElement("input");
+    importInput.type = "file";
+    importInput.accept = ".lrc,.txt,text/plain";
+    importInput.hidden = true;
+    importInput.addEventListener("change", () => {
+      const file = importInput.files?.[0] ?? null;
+      importInput.value = "";
+      if (file && importFor) importLyricsFile(file, importFor);
+    });
+    document.body.append(importInput);
+  }
+  importFor = trackId;
+  importInput.click();
+}
+
+/**
+ * "Import .lrc…", or "Replace lyrics…" when the track already has some.
+ * Replacing lyrics the user timed or aligned takes two presses, as deleting
+ * a version does: the first says what goes with them, the second picks the
+ * file. Lyrics nobody worked on are replaced at once.
+ */
 function importButton(replace = false) {
-  const button = el("button", "lyrics-link", t(replace ? "lyrics.replace" : "lyrics.import"));
+  const label = t(replace ? "lyrics.replace" : "lyrics.import");
+  const button = el("button", "lyrics-link lyrics-import", label);
   button.type = "button";
   button.title = t("lyrics.importTitle");
+  let armTimer = 0;
+  let before = null; // the status line the armed sentence took the place of
+  const disarm = () => {
+    clearTimeout(armTimer);
+    armTimer = 0;
+    if (!button.classList.contains("armed")) return;
+    button.classList.remove("armed");
+    button.textContent = label;
+    // Put back what the status said, unless something else has said more.
+    if (before && statusEl.textContent === before.armedText) setStatus(before.text, before.kind);
+    before = null;
+  };
   button.addEventListener("click", () => {
-    if (!importInput) {
-      importInput = document.createElement("input");
-      importInput.type = "file";
-      importInput.accept = ".lrc,.txt,text/plain";
-      importInput.hidden = true;
-      importInput.addEventListener("change", () => {
-        const file = importInput.files?.[0] ?? null;
-        importInput.value = "";
-        if (file) importLyricsFile(file);
-      });
-      document.body.append(importInput);
+    const trackId = getCurrentTrackInfo()?.id;
+    if (!trackId) return;
+    if (importing) {
+      importStatus(trackId, "lyrics.importBusy", "loading");
+      return;
     }
-    importInput.click();
+    const lost = replace ? workLostByReplace() : [];
+    if (lost.length && !button.classList.contains("armed")) {
+      const sentence = t("lyrics.replaceConfirm", { lost: listOf(lost.map((key) => t(key))) });
+      button.classList.add("armed");
+      button.textContent = sentence;
+      // Said again in the status line, a polite live region: a screen reader
+      // does not read a button's new text while focus stays on it.
+      before = { text: statusEl.textContent, kind: statusEl.className.replace(/^lyrics-status\s*/, ""), armedText: sentence };
+      setStatus(sentence, "error");
+      armTimer = setTimeout(disarm, REPLACE_ARMED_MS);
+      return;
+    }
+    disarm();
+    pickLyricsFile(trackId);
   });
+  button.addEventListener("blur", disarm);
   return button;
 }
 
-/** A picked file's text: UTF-8 when it parses, else GB18030, which a .lrc
- * saved on a Chinese Windows usually is (the browser decodes it too). */
-async function readLyricsFile(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    try {
-      return new TextDecoder("gb18030").decode(bytes);
-    } catch {
-      return new TextDecoder().decode(bytes);
-    }
-  }
+/** Forget the offset and timing waiting to be saved, unsent: they were for
+ * lyrics an import has just replaced, and sent now they would land on the
+ * new ones. */
+function dropPendingSaves() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  pendingSave = null;
+  clearTimeout(userSaveTimer);
+  userSaveTimer = 0;
+  userSave = null;
 }
 
-async function importLyricsFile(file) {
-  const info = getCurrentTrackInfo();
-  if (!info) return;
+/** Say `key` in the Lyrics tab, if it still shows `trackId`. */
+function importStatus(trackId, key, kind) {
+  if (getCurrentTrackInfo()?.id !== trackId) return;
+  setStatus(t(key, { max: new Intl.NumberFormat(getLanguage()).format(LYRICS_TEXT_MAX_CHARS) }), kind);
+}
+
+/**
+ * While an import is on its way: Align and Sync lines closed, and their links
+ * disabled, so nothing edits the lyrics being replaced (an offset nudged now
+ * would be saved after the new lyrics). Answers what to put back.
+ */
+function pauseEdits() {
+  const paused = { align: Boolean(align), sync: Boolean(sync), toggles: [alignToggleEl, syncToggleEl] };
+  if (sync) closeSync(false, { keepOpen: true });
+  if (align) {
+    closeAlign(false);
+    alignOpen = true; // reopened with these lyrics, or the new ones (show)
+  }
+  for (const toggle of paused.toggles) if (toggle) toggle.disabled = true;
+  return paused;
+}
+
+/** Undo pauseEdits. When the lyrics were not replaced (the import failed),
+ * the panel that was open opens again; replaced, show() drew new links. */
+function resumeEdits(paused, trackId) {
+  for (const toggle of paused.toggles) if (toggle) toggle.disabled = false;
+  const same = shownTrackId === trackId && alignToggleEl === paused.toggles[0] && syncToggleEl === paused.toggles[1];
+  if (!same) return;
+  if (paused.sync) openSync();
+  else if (paused.align) openAlign();
+}
+
+/** `promise`, or a rejection after `ms`. */
+function withTimeout(promise, ms) {
+  let timer = 0;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+async function importLyricsFile(file, trackId) {
+  if (importing) return;
+  // Not read at all past the size no lyrics reach.
   if (file.size > LYRICS_FILE_MAX_BYTES) {
-    setStatus(t("lyrics.importTooLarge"), "error");
+    importStatus(trackId, "lyrics.importTooLong", "error");
     return;
   }
-  setStatus(t("lyrics.importing"), "loading");
+  importing = true;
+  importStatus(trackId, "lyrics.importing", "loading");
+  let paused = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMPORT_TIMEOUT_MS);
   try {
-    const text = await readLyricsFile(file);
-    if (!text.trim()) {
-      setStatus(t("lyrics.importEmpty"), "error");
+    const read = lyricsFileText(new Uint8Array(await file.arrayBuffer()));
+    if (read.error) {
+      const keys = { tooLong: "lyrics.importTooLong", notText: "lyrics.importNotText", empty: "lyrics.importEmpty" };
+      importStatus(trackId, keys[read.error], "error");
       return;
     }
-    const res = await fetch(`/api/jobs/${encodeURIComponent(info.id)}/lyrics/import`, {
+    if (shownTrackId === trackId) paused = pauseEdits();
+    // Saved first, so nothing meant for the old lyrics reaches the server
+    // after the new ones. Saves that do not finish in time stop the import:
+    // sent late, they could still land after it.
+    await withTimeout(flushSave(), IMPORT_TIMEOUT_MS);
+    const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/lyrics/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: read.text }),
+      signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`lyrics import -> ${res.status}`);
-    const found = fromServerLyrics(await res.json().catch(() => null));
+    if (!res.ok) {
+      console.warn(`lyrics import -> ${res.status}`);
+      importStatus(trackId, importErrorKey(res.status), "error");
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    const found = fromServerLyrics(data);
     if (!found?.entry) throw new Error("no lyrics kept");
     // The tab shows what this browser kept for a track before the server's
     // answer, so a version picked earlier (or a removal) would hide this.
-    await dropStoreSave();
-    await storeSet(storeKey(info.id), null);
-    answered.delete(info.id);
-    if (getCurrentTrackInfo()?.id !== info.id) return;
+    await storeSet(storeKey(trackId), null);
+    answered.delete(trackId);
+    if (getCurrentTrackInfo()?.id !== trackId) return;
+    if (shownTrackId === trackId) dropPendingSaves();
+    // A lookup or a load still on its way would draw over these.
+    searchController?.abort();
+    searchController = null;
+    loadToken++;
     show(found.entry, found.others, "server");
-    if (!found.entry.synced && !found.entry.instrumental) {
-      setStatus(t("lyrics.importNoTiming"), "muted");
+    const dropped = Number(data?.dropped_lines) || 0;
+    if (!found.entry.synced) setStatus(t("lyrics.importNoTiming"), "muted");
+    else if (dropped > 0) setStatus(plural("lyrics.importDropped", dropped), "muted");
+    // show() drew the tools row again, and focus went with the old button.
+    if (!document.activeElement || document.activeElement === document.body) {
+      versionsEl.querySelector(".lyrics-import")?.focus();
     }
   } catch (err) {
     console.warn("lyrics import failed", err);
-    setStatus(t("lyrics.importFailed"), "error");
+    importStatus(trackId, "lyrics.importFailed", "error");
+  } finally {
+    clearTimeout(timer);
+    if (paused) resumeEdits(paused, trackId);
+    importing = false;
   }
 }
 

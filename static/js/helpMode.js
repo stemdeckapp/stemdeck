@@ -170,6 +170,8 @@ const HELP = [
   ["#lyricsPanel .lyrics-align-toggle", "help.lyricsAlign"],
   ["#lyricsPanel .lyrics-sync-toggle", "help.lyricsSync"],
   ["#lyricsPanel .lyrics-version", "help.lyricsVersion"],
+  // Import .lrc, and Replace lyrics once the song has some.
+  ["#lyricsPanel .lyrics-import", "help.lyricsImport"],
   ["#lyricsPanel .lyrics-link[aria-expanded]", "help.lyricsVersions"],
   ["#lyricsPanel .lyrics-link", "help.lyricsLookUp"],
   // The sections bar (sections.js): the lock and the cross sit inside a block.

@@ -167,9 +167,10 @@
       "why": "Lyrics: the panel, the lane, sync and alignment, and the lookups",
       "paths": [
         "static/js/lyrics.js", "static/js/lyricsLane.js", "static/js/lyricsLookup.js", "static/js/lyricsSync.js",
-        "static/js/artistLookup.js", "static/js/zhVariants.js", "app/pipeline/lyrics_*.py", "app/pipeline/zh_variants.py"
+        "static/js/lyricsFile.js", "static/js/artistLookup.js", "static/js/zhVariants.js", "app/pipeline/lyrics_*.py",
+        "app/pipeline/zh_variants.py"
       ],
-      "specs": ["lyrics", "lyrics-align", "lyrics-cjk", "lyrics-from-server", "lyrics-sync", "lyrics-toggle", "audio-tags-backfill", "karaoke"]
+      "specs": ["lyrics", "lyrics-align", "lyrics-cjk", "lyrics-from-server", "lyrics-import", "lyrics-sync", "lyrics-toggle", "audio-tags-backfill", "karaoke"]
     },
     {
       "why": "Song sections: lock, loop, rename, zoom, and the ruler",

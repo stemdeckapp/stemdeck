@@ -99,6 +99,8 @@ from app.pipeline.identify import can_identify_title, identify_and_find_band, re
 from app.pipeline.lyrics_align import detect_offset
 from app.pipeline.lyrics_lookup import (
     _TEXT_MAX_CHARS,
+    LyricsChanged,
+    NoLyricsInText,
     NotTheseLyrics,
     build_query,
     candidates_path,
@@ -1779,11 +1781,9 @@ async def refresh_audio_tags(job_id: str) -> dict:
             "identity": None,
             "work": None,
         }
-    if (
-        lyrics
-        and not lyrics_path(job_dir).is_file()
-        and await asyncio.to_thread(keep_answer, job, job_dir, lyrics)
-    ):
+    # Not over lyrics kept meanwhile (a file imported in the Lyrics tab):
+    # checked by keep_answer under the lock the import writes under.
+    if lyrics and await asyncio.to_thread(keep_answer, job, job_dir, lyrics, unless_kept=True):
         await asyncio.to_thread(registry_persist, JOBS_DIR)
     found: dict[str, object] = {}
     if tags and not job.audio_tags:
@@ -2039,10 +2039,10 @@ async def lookup_lyrics_route(job_id: str, body: LyricsLookupBody | None = None)
         _LYRICS_LOOKUPS.discard(job_id)
     if registry_get(job_id) is not job:
         raise HTTPException(status_code=404, detail="job not found")
-    if (
-        answer is not None
-        and not lyrics_path(job_dir).is_file()
-        and await asyncio.to_thread(keep_answer, job, job_dir, answer)
+    # Not over lyrics kept meanwhile (a file imported while LRCLIB was
+    # asked): checked by keep_answer under the lock the import writes under.
+    if answer is not None and await asyncio.to_thread(
+        keep_answer, job, job_dir, answer, unless_kept=True
     ):
         await asyncio.to_thread(registry_persist, JOBS_DIR)
     try:
@@ -2134,7 +2134,9 @@ async def _lyrics_body(
 
 class LyricsImportBody(BaseModel):
     """A .lrc or .txt the user picked, whole: LRC with its stamps, or text to
-    show as it is. Sized like lyrics.json's own text (a .lrc is a few KB)."""
+    show as it is. Sized like lyrics.json's own text (a .lrc is a few KB):
+    _TEXT_MAX_CHARS, which the page checks before it posts
+    (LYRICS_TEXT_MAX_CHARS in static/js/lyricsFile.js)."""
 
     text: str = Field(min_length=1, max_length=_TEXT_MAX_CHARS)
 
@@ -2144,24 +2146,39 @@ async def import_lyrics_route(job_id: str, request: Request) -> Response:
     """Keep the lyrics from a .lrc or .txt the user picked in the Lyrics tab.
 
     The page can read the file it is handed, never the folder around it, so a
-    .lrc sitting beside the MP3 is not found by itself. It is read here and
+    .lrc sitting beside the MP3 is not found by itself. It is read there and
     posted as text (the page decodes a Windows file's GB18030 first), and kept
     as lyrics.json, source "file": the same shape an upload's own lyrics tag
     makes (app/pipeline/lyrics_lookup.py). Replaces whatever the track had,
     including the user's own timing and Align offset of the old lyrics, which
-    belong to those lines. 422 when the text carries no words at all.
+    belong to those lines. Answers the entry as GET .../lyrics then serves it,
+    plus "dropped_lines" when lines with words but no stamp were left out of
+    a timed file.
+
+    409 while the track is not finished (its own lookup may still write), 413
+    past the body cap, 422 for text that is not the model (empty, longer than
+    _TEXT_MAX_CHARS) or that carries no words at all. Never reaches the
+    network, so it works with online sources off.
     """
     job, job_dir = _lyrics_job(job_id)
     if job.status != "done":
         raise HTTPException(status_code=409, detail="job is not finished")
     body = await _lyrics_body(request, LyricsImportBody)
-    entry = await asyncio.to_thread(import_lyrics, job, job_dir, body.text)
-    if entry is None:
-        raise HTTPException(status_code=422, detail="no lyrics in the text")
+    had_lyrics = job.has_lyrics
     try:
-        return await asyncio.to_thread(get_lyrics, job_id)
-    except HTTPException:
-        return JSONResponse(entry, headers={"Cache-Control": "no-cache"})
+        kept = await asyncio.to_thread(import_lyrics, job, job_dir, body.text)
+    except NoLyricsInText:
+        raise HTTPException(status_code=422, detail="no lyrics in the text") from None
+    if kept is None:
+        raise HTTPException(status_code=500, detail="could not save lyrics")
+    entry, dropped = kept
+    # has_lyrics is kept in the registry, as the lookup's is.
+    if not had_lyrics:
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+    # Untimed lines a partly timed file lost, for the tab to say so: an added
+    # key, only when there were any, which older clients ignore.
+    answer = {**entry, "dropped_lines": dropped} if dropped else entry
+    return JSONResponse(answer, headers={"Cache-Control": "no-cache"})
 
 
 @router.post("/{job_id}/lyrics/offset")
@@ -2172,11 +2189,25 @@ async def set_lyrics_offset_route(job_id: str, request: Request) -> dict:
     is never rewritten, and applied by the page. Answers the offset kept."""
     job, job_dir = _lyrics_job(job_id)
     body = await _lyrics_body(request, LyricsOffsetBody)
-    await asyncio.to_thread(_synced_lyrics, job_dir)
-    entry = await asyncio.to_thread(set_lyrics_offset, job, job_dir, body.offset_sec)
-    if entry is None:
-        raise HTTPException(status_code=500, detail="could not save lyrics")
+    synced = (await asyncio.to_thread(_synced_lyrics, job_dir))["synced"]
+    entry = await _keep_offset(job, job_dir, body.offset_sec, synced)
     return {"offset_sec": entry["offset_sec"]}
+
+
+async def _keep_offset(job: Job, job_dir: Path, offset: float, synced: str) -> dict:
+    """set_lyrics_offset for the lyrics whose synced text is ``synced``,
+    read before: 409 when other lyrics are kept by the time it writes (a file
+    imported meanwhile, plain or timed), 404 when none are, 500 when they
+    could not be written."""
+    try:
+        entry = await asyncio.to_thread(set_lyrics_offset, job, job_dir, offset, synced)
+    except LyricsChanged:
+        raise HTTPException(status_code=409, detail="the lyrics changed meanwhile") from None
+    if entry is None:
+        if not await asyncio.to_thread(lyrics_path(job_dir).is_file):
+            raise HTTPException(status_code=404, detail="no lyrics")
+        raise HTTPException(status_code=500, detail="could not save lyrics")
+    return entry
 
 
 @router.post("/{job_id}/lyrics/align")
@@ -2213,10 +2244,9 @@ async def align_lyrics_route(job_id: str, request: Request) -> dict:
     if shift is None or abs(shift) > LYRICS_OFFSET_MAX_SEC:
         return {"confident": False, "offset_sec": None}
     if kept_here:
-        entry = await asyncio.to_thread(set_lyrics_offset, job, job_dir, shift)
-        if entry is None:
-            raise HTTPException(status_code=500, detail="could not save lyrics")
-        shift = entry["offset_sec"]
+        # Measured on `synced`, outside any lock (it reads a stem): kept only
+        # if those are still the lyrics, never on a file imported meanwhile.
+        shift = (await _keep_offset(job, job_dir, shift, synced))["offset_sec"]
     return {"confident": True, "offset_sec": shift}
 
 

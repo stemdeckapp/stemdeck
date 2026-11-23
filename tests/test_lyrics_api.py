@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import threading
 import time
 from unittest.mock import patch
 
@@ -18,7 +19,9 @@ from fastapi.testclient import TestClient
 import app.api.jobs as jobs_mod
 import app.pipeline.lyrics_lookup as ll
 from app.core.models import Job
-from app.core.registry import _jobs
+from app.core.registry import _jobs, registry_path
+from app.core.settings import set_online_sources
+from app.pipeline.lyrics_retime import lyric_line_texts
 from tests.test_lyrics_align import HOP, LINES, envelope, lrc
 
 LYRICS = {
@@ -817,6 +820,278 @@ def test_an_import_needs_a_finished_job(client):
     assert r.status_code == 409
 
 
-def test_an_import_of_an_unknown_job_is_404(client):
-    r = client.post("/api/jobs/bbbbbbbbbbbb/lyrics/import", json={"text": "[00:01.00]one"})
+def test_the_import_route_is_registered():
+    from app.main import app
+
+    routes = [(r.path, r.methods) for r in app.routes if hasattr(r, "methods")]
+    assert ("/api/jobs/{job_id}/lyrics/import", {"POST"}) in routes
+
+
+# The route's own 404, not the router's "Not Found" for a path it lacks.
+@pytest.mark.parametrize("job_id", ["bbbbbbbbbbbb", "not-a-job", "AAAAAAAAAAAA", "aaaa"])
+def test_an_import_for_an_unknown_or_malformed_id_is_the_routes_404(client, job_id):
+    r = client.post(f"/api/jobs/{job_id}/lyrics/import", json={"text": "[00:01.00]one"})
     assert r.status_code == 404
+    assert r.json()["detail"] == "job not found"
+
+
+@pytest.mark.parametrize("job_id", ["../../etc/passwd", "..%2F..%2Fetc"])
+def test_an_import_for_a_traversal_id_is_refused_not_500(client, job_id):
+    _done_job()
+    r = client.post(f"/api/jobs/{job_id}/lyrics/import", json={"text": "[00:01.00]one"})
+    assert r.status_code in (404, 405)
+    assert not any(jobs_mod.JOBS_DIR.parent.glob("**/lyrics.json"))
+
+
+def test_an_import_that_cannot_be_written_is_500_and_changes_nothing_else(client):
+    job = _done_job()
+    candidates = jobs_mod.JOBS_DIR / job.id / "lyrics_candidates.json"
+    candidates.write_text(
+        json.dumps({"v": 1, "searched_at": time.time(), "others": []}), encoding="utf-8"
+    )
+    with patch.object(ll, "write_cleaned_lyrics", lambda *a, **k: None):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": "[00:01.00]one"})
+    assert r.status_code == 500
+    assert r.json()["detail"] == "could not save lyrics"
+    assert candidates.is_file()
+    assert not registry_path(jobs_mod.JOBS_DIR).exists()
+
+
+def test_an_import_past_the_body_cap_is_413(client):
+    job = _done_job()
+    raw = b'{"text":"' + b"x" * (jobs_mod._LYRICS_BODY_MAX_BYTES + 1) + b'"}'
+    r = client.post(
+        f"/api/jobs/{job.id}/lyrics/import",
+        content=raw,
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code == 413
+    assert not _lyrics_file(job).is_file()
+
+
+def test_text_no_file_can_hold_is_422_not_500(client):
+    """A lone surrogate: JSON carries it, UTF-8 cannot write it."""
+    job = _done_job()
+    r = client.post(
+        f"/api/jobs/{job.id}/lyrics/import",
+        content=b'{"text": "[00:01.00]one \\ud800 two"}',
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code == 422
+    assert not _lyrics_file(job).is_file()
+
+
+def test_an_import_answers_the_entry_as_stored_not_as_made(client):
+    """A title past the name limit is clamped when written: the answer is the
+    clamped one, the same as GET then serves."""
+    job = _done_job()
+    job.title = "T" * 400
+    body = _imported(client, "[00:01.00]one", job)
+    assert body["track"] == "T" * 300
+    assert client.get(f"/api/jobs/{job.id}/lyrics").json() == body
+
+
+def test_a_partly_timed_file_says_how_many_lines_it_lost(client):
+    job = _done_job()
+    body = _imported(client, "[00:01.00]Title\nverse one\n\nverse two\n[ti:Song]", job)
+    assert body["synced"] == "[00:01.00]Title\n\n[ti:Song]"
+    assert body["dropped_lines"] == 2
+    # Not part of what is kept.
+    assert "dropped_lines" not in client.get(f"/api/jobs/{job.id}/lyrics").json()
+
+
+def test_a_fully_timed_file_has_no_dropped_lines_key(client):
+    assert "dropped_lines" not in _imported(client, "[00:01.00]one\n[00:02.00]two")
+
+
+def _imported(client, text, job=None):
+    job = job or _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": text})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_windows_lrc_loses_its_bom_and_carriage_returns(client):
+    body = _imported(client, "\ufeff[00:01.00]one\r\n[00:02.00]two\r\n")
+    assert body["synced"] == "[00:01.00]one\n[00:02.00]two"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Enhanced LRC: word stamps stay, parseLrc reads them.
+        "[00:01.00]<00:01.00>one <00:01.50>two\n[00:03.00]<00:03.00>three",
+        # The file's own offset tag and a chorus written once for two times.
+        "[offset:+250]\n[00:01.00][00:20.00]chorus\n[00:10.00]verse",
+        # A stamp after leading spaces, as some editors indent.
+        "  [00:01.00]one\n\t[00:02.00]two",
+    ],
+)
+def test_timed_lines_are_kept_as_the_file_has_them(client, text):
+    assert _imported(client, text)["synced"] == text
+
+
+def test_a_section_header_among_timed_lines_is_kept_and_read_as_no_line(client):
+    """Harmless: parseLrc and the timing code skip a bracket that is no stamp."""
+    body = _imported(client, "[Chorus]\n[00:01.00]one\n[00:02.00]two")
+    assert body["synced"] == "[Chorus]\n[00:01.00]one\n[00:02.00]two"
+    assert lyric_line_texts(body) == ["one", "two"]
+
+
+def test_text_without_stamps_loses_its_id_tags_but_not_its_section_headers(client):
+    body = _imported(client, "[ar:Band]\n[ti: Song ]\n[Chorus: Band]\nline one\n[Verse]\nline two")
+    assert body["synced"] == ""
+    assert body["plain"] == "[Chorus: Band]\nline one\n[Verse]\nline two"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[ti:Song]\n[ar:Band]\n[by:someone]",
+        "[00:01.00]\n[00:02.00]   \n[00:03.00]<00:03.00>",
+        '{"t":0,"c":[{"tx":"Composed: "}]}\n[ti:Song]\n[00:01.00]',
+    ],
+)
+def test_a_file_of_tags_or_empty_stamps_has_no_lyrics(client, text):
+    job = _done_job()
+    r = client.post(f"/api/jobs/{job.id}/lyrics/import", json={"text": text})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "no lyrics in the text"
+    assert not _lyrics_file(job).is_file()
+
+
+def test_an_import_answers_what_get_then_serves(client):
+    """Answered from what was written, not read back from disk."""
+    job = _done_job(audio_tags={**TAGS, "album": "Images and Words"})
+    body = _imported(client, "[00:01.00]one", job)
+    r = client.get(f"/api/jobs/{job.id}/lyrics")
+    assert r.status_code == 200
+    assert r.json() == body
+    assert body["others"] == []
+
+
+def test_an_import_works_with_online_sources_off(client):
+    """It reaches no network, so the switch that gates yt-dlp does not apply."""
+    set_online_sources(False)
+    job = _done_job()
+    assert _imported(client, "[00:01.00]one", job)["source"] == "file"
+
+
+def test_an_import_keeps_has_lyrics_in_the_registry(client):
+    job = _done_job()
+    _imported(client, "[00:01.00]one", job)
+    records = json.loads(registry_path(jobs_mod.JOBS_DIR).read_text(encoding="utf-8"))["jobs"]
+    assert [r["has_lyrics"] for r in records if r["id"] == job.id] == [True]
+
+
+def test_an_import_waits_for_a_lyrics_edit_in_progress(client):
+    """An Align or a line-by-line timing holds the lock between reading the
+    lyrics and writing them back: an import in between was overwritten."""
+    job = _done_job()
+    job_dir = jobs_mod.JOBS_DIR / job.id
+    done = threading.Event()
+
+    def run():
+        ll.import_lyrics(job, job_dir, "[00:01.00]mine")
+        done.set()
+
+    with ll._OFFSET_LOCK:
+        worker = threading.Thread(target=run)
+        worker.start()
+        assert not done.wait(0.3), "the import wrote while another edit held the lock"
+        assert not _lyrics_file(job).is_file()
+    worker.join(5)
+    assert done.is_set()
+    assert json.loads(_lyrics_file(job).read_text(encoding="utf-8"))["synced"] == "[00:01.00]mine"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        ll.LookupAnswer(lyrics=LYRICS, others=[]),
+        ll.LookupAnswer(lyrics=None, others=[{**LYRICS, "lrclib_id": 4}]),
+    ],
+)
+def test_a_lookup_answer_never_lands_on_lyrics_imported_meanwhile(client, answer):
+    """The Lyrics tab's lookup and the tag backfill ask LRCLIB for seconds; a
+    file imported meanwhile stays, and no versions are offered beside it."""
+    job = _done_job()
+    job_dir = jobs_mod.JOBS_DIR / job.id
+    _imported(client, "[00:01.00]mine", job)
+    assert ll.keep_answer(job, job_dir, answer, unless_kept=True) is False
+    assert ll.read_lyrics(job_dir)["synced"] == "[00:01.00]mine"
+    assert not (job_dir / "lyrics_candidates.json").exists()
+
+
+def test_the_lyrics_tabs_lookup_keeps_nothing_over_an_import_that_landed_meanwhile(client):
+    job = _done_job(audio_tags=TAGS)
+    job_dir = jobs_mod.JOBS_DIR / job.id
+    real = ll.keep_answer
+
+    def import_first(*args, **kwargs):
+        # Lands after the route chose to keep the answer, before it writes.
+        ll.import_lyrics(job, job_dir, "[00:01.00]mine")
+        return real(*args, **kwargs)
+
+    answer = ll.LookupAnswer(lyrics=LYRICS, others=[])
+    with (
+        patch.object(jobs_mod, "lookup_lyrics", lambda *a, **k: answer),
+        patch.object(jobs_mod, "keep_answer", import_first),
+    ):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/lookup", json={})
+    assert r.status_code == 200
+    assert r.json()["synced"] == "[00:01.00]mine"
+
+
+def test_the_backfill_keeps_nothing_over_an_import_that_landed_meanwhile(client, monkeypatch):
+    monkeypatch.setattr(ll, "_fetch_json", Lrclib(ROWS))
+    job = _done_job(audio_tags=TAGS, artist=DT)
+    job_dir = jobs_mod.JOBS_DIR / job.id
+    real = ll.keep_answer
+
+    def import_first(*args, **kwargs):
+        # Lands after the backfill found LRCLIB's lyrics, before it writes.
+        ll.import_lyrics(job, job_dir, "[00:01.00]mine")
+        return real(*args, **kwargs)
+
+    with patch.object(jobs_mod, "keep_answer", import_first):
+        r = client.post(f"/api/jobs/{job.id}/audio-tags")
+    assert r.status_code == 200
+    assert r.json()["has_lyrics"] is True
+    assert ll.read_lyrics(job_dir)["synced"] == "[00:01.00]mine"
+
+
+# ── an Align offset, and a file imported while it was worked out ──
+
+
+def _import_during(name: str, text: str, job: Job):
+    """Patch jobs_mod.<name> so a file is imported just after it runs: after
+    the route read the lyrics, before it writes the offset."""
+    real = getattr(jobs_mod, name)
+    job_dir = jobs_mod.JOBS_DIR / job.id
+
+    def then_import(*args, **kwargs):
+        answer = real(*args, **kwargs)
+        ll.import_lyrics(job, job_dir, text)
+        return answer
+
+    return patch.object(jobs_mod, name, then_import)
+
+
+@pytest.mark.parametrize("text", ["[00:02.00]other words", "plain words only"])
+def test_auto_detect_keeps_no_offset_on_a_file_imported_while_it_measured(client, text):
+    job = _synced_job([t + 16 for t in LINES])
+    with _import_during("detect_offset", text, job):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/align")
+    assert r.status_code == 409
+    assert "offset_sec" not in client.get(f"/api/jobs/{job.id}/lyrics").json()
+
+
+@pytest.mark.parametrize("text", ["[00:02.00]other words", "plain words only"])
+def test_an_offset_is_not_kept_on_a_file_imported_after_it_was_checked(client, text):
+    job = _synced_job()
+    with _import_during("_synced_lyrics", text, job):
+        r = client.post(f"/api/jobs/{job.id}/lyrics/offset", json={"offset_sec": 1.5})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "the lyrics changed meanwhile"
+    assert "offset_sec" not in client.get(f"/api/jobs/{job.id}/lyrics").json()

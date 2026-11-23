@@ -584,6 +584,15 @@ def has_synced_lines(text: str) -> bool:
     return bool(_LRC_STAMP.search(text or ""))
 
 
+# An LRC ID tag on a line of its own, with its line break: the standard
+# names only, so a lyric sheet's own "[Chorus: Artist]" is not one.
+_LRC_ID_TAG = re.compile(
+    r"^[ \t]*\[(?:ar|al|ti|au|by|length|offset|re|ve|tool|la|lang|id|#)[ \t]*:"
+    r"[^\]\n]*\][ \t]*(?:\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 # ── what to look up ──
 
 
@@ -807,9 +816,11 @@ def lyrics_from_text(
     artist: str = "",
     album: str = "",
     duration: float = 0.0,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any], int] | None:
     """The lyrics a .lrc or text file the user picked makes, in the shape
-    lyrics.json keeps, or None when it has no words.
+    lyrics.json keeps, and how many lines with words were dropped from it;
+    None when it has no words, or is not text a file can hold (a lone
+    surrogate, which JSON can carry and UTF-8 cannot).
 
     Timed lyrics keep their LRC lines as they are, tags included: the page's
     parseLrc owns what a stamp means. Text with no [mm:ss.xx] stamp is kept as
@@ -817,21 +828,35 @@ def lyrics_from_text(
     line is dropped, because the page could not show it: a NetEase export puts
     its credits among the lyrics as JSON objects ({"t":0,"c":[...]}), and they
     would only make the file larger and the sync editor's line list longer.
+    A file timed only in part loses its untimed lines the same way, which is
+    why they are counted: the Lyrics tab says how many. An LRC's ID tags
+    ([ar:...], [ti:...]) in text with no stamp go too, uncounted: shown as
+    text, they would read as lines of the song. "No words" is a file of tags
+    only, or of stamps with nothing after them.
     """
-    text = _lyric_text(text, _TEXT_MAX_CHARS)
-    if not text.strip():
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
         return None
+    text = _lyric_text(text, _TEXT_MAX_CHARS)
+    dropped = 0
     if has_synced_lines(text):
-        kept = [
-            line for line in text.split("\n") if not line.strip() or line.lstrip().startswith("[")
-        ]
+        kept = []
+        for line in text.split("\n"):
+            if not line.strip() or line.lstrip().startswith("["):
+                kept.append(line)
+            else:
+                dropped += 1
         synced = "\n".join(kept).strip("\n")
-        if not has_synced_lines(synced):
+        # The lines the page and the timing code read: none is no lyrics.
+        if not lyric_line_texts({"synced": synced}):
             return None
         plain = ""
     else:
-        synced, plain = "", text.strip("\n")
-    return {
+        synced, plain = "", _LRC_ID_TAG.sub("", text).strip("\n")
+        if not plain.strip():
+            return None
+    entry = {
         "v": 1,
         "source": "file",
         "track": track,
@@ -845,31 +870,7 @@ def lyrics_from_text(
         "others": [],
         "lrclib_id": None,
     }
-
-
-def import_lyrics(job: Job, job_dir: Path, text: str) -> dict[str, Any] | None:
-    """Keep the lyrics from a file the user picked in the Lyrics tab as the
-    job's lyrics.json, and return the entry as written; None when the text has
-    no words or could not be written.
-
-    Kept as source "file": every client that shows the file's own lyrics shows
-    these too (the Lyrics tab's SERVER_SOURCES), and an older client that does
-    not know a new source would drop them altogether. LRCLIB's candidates for
-    the track go, since the user's own copy is the answer now.
-    """
-    query = build_query(job)
-    tags = job.audio_tags or {}
-    entry = lyrics_from_text(
-        text,
-        track=(query.track if query else "") or _name(tags.get("title")) or job.title,
-        artist=(query.artist if query else "") or _name(tags.get("artist")),
-        album=(query.album if query else "") or _name(tags.get("album")),
-        duration=_number(job.duration_sec),
-    )
-    if entry is None or not write_lyrics(job, job_dir, entry):
-        return None
-    candidates_path(job_dir).unlink(missing_ok=True)
-    return entry
+    return entry, dropped
 
 
 def _artist_aliases(query: LyricsQuery, cancelled: Callable[[], bool]) -> list[str]:
@@ -1247,18 +1248,24 @@ def write_lyrics(job: Job, job_dir: Path, entry: dict[str, Any]) -> bool:
 
     LRCLIB lyrics carry their own others, so they replace the candidates
     file. A transcription leaves it: its versions are still worth offering."""
+    return write_cleaned_lyrics(job, job_dir, entry) is not None
+
+
+def write_cleaned_lyrics(job: Job, job_dir: Path, entry: dict[str, Any]) -> dict[str, Any] | None:
+    """write_lyrics, answering the entry as written (clean_lyrics: names
+    clamped, text with one kind of line break), or None when it was not."""
     entry = clean_lyrics(entry)
     if entry is None:
-        return False
+        return None
     try:
         _write_json_atomic(lyrics_path(job_dir), entry)
         if entry["source"] == "lrclib":
             candidates_path(job_dir).unlink(missing_ok=True)
     except OSError:
         logger.warning("could not write lyrics for job %s", job.id, exc_info=True)
-        return False
+        return None
     _set(job, has_lyrics=True)
-    return True
+    return entry
 
 
 def write_candidates(job: Job, job_dir: Path, others: list[dict[str, Any]]) -> bool:
@@ -1305,39 +1312,65 @@ def lyrics_settled(job_dir: Path, now: float | None = None) -> bool:
     return found is not None and now - found["searched_at"] < LYRICS_NOT_FOUND_RETRY_SEC
 
 
-def keep_answer(job: Job, job_dir: Path, answer: LookupAnswer) -> bool:
+# One write of lyrics.json at a time once the track is separated: the Lyrics
+# tab's edits, the alignments that read the file, work out a change and write
+# it back whole, and the writes that replace it (a file the user imported, a
+# lookup's answer). Without it, a replacement landing between another's read
+# and write was overwritten by the old lyrics.
+_OFFSET_LOCK = threading.Lock()
+
+
+def keep_answer(
+    job: Job, job_dir: Path, answer: LookupAnswer, *, unless_kept: bool = False
+) -> bool:
     """Keep a lookup's answer: the lyrics, or the candidates and when they
     were asked for. True when lyrics were written (has_lyrics changed).
 
+    ``unless_kept``: keep nothing when the job has lyrics by the time the
+    answer is written. For the lookups of a finished track (the Lyrics tab's
+    and the tag backfill), which take seconds: a file the user imported
+    meanwhile is theirs, and the check is made under the lock that import
+    writes under, so it cannot land between the check and the write.
+
     Lyrics of unverified timing are then moved onto the track, which needs
-    the vocals stem: both callers (LyricsLookup.finish and the tag backfill)
-    run once separation is done."""
-    if answer.lyrics is None:
-        write_candidates(job, job_dir, answer.others)
-        return False
-    if not write_lyrics(job, job_dir, answer.lyrics):
-        return False
+    the vocals stem: every caller (LyricsLookup.finish, the tag backfill and
+    the Lyrics tab's lookup) runs once separation is done."""
+    with _OFFSET_LOCK:
+        if unless_kept and lyrics_path(job_dir).is_file():
+            return False
+        if answer.lyrics is None:
+            write_candidates(job, job_dir, answer.others)
+            return False
+        if not write_lyrics(job, job_dir, answer.lyrics):
+            return False
+    # Outside the lock, which align_lyrics takes itself for its own write.
     align_lyrics(job, job_dir)
     return True
 
 
-# One edit of lyrics.json at a time from the Lyrics tab: each reads the file,
-# changes the offset and writes it back whole.
-_OFFSET_LOCK = threading.Lock()
+class LyricsChanged(ValueError):
+    """The lyrics an edit was made for are not the job's any more (a file
+    imported meanwhile), or have no timing for it to move."""
 
 
-def set_lyrics_offset(job: Job, job_dir: Path, offset: float) -> dict[str, Any] | None:
+def set_lyrics_offset(job: Job, job_dir: Path, offset: float, synced: str) -> dict[str, Any] | None:
     """Keep ``offset`` seconds as the user's alignment of the job's synced
     lyrics (0 is their own timing again) and return the entry as written.
-    None when the job has no synced lyrics or they could not be written. The
-    synced text itself is never rewritten, so their own timing stays there."""
+    ``synced`` is the text the offset was chosen or measured for: raises
+    LyricsChanged when lyrics.json has other synced text by the time the
+    lock is taken (an import, plain or timed, landed after the caller read
+    it), since an offset belongs to those lines only. None when the job has
+    no lyrics or they could not be written. The synced text itself is never
+    rewritten, so their own timing stays there."""
     cleaned = clean_offset(offset)
     if cleaned is None:
         return None
     with _OFFSET_LOCK:
         entry = read_lyrics(job_dir)
-        if entry is None or not entry["synced"]:
+        if entry is None:
             return None
+        if not entry["synced"] or entry["synced"] != synced:
+            raise LyricsChanged("not the lyrics the offset was set for")
         entry = {**entry, "offset_sec": cleaned}
         return entry if write_lyrics(job, job_dir, entry) else None
 
@@ -1364,6 +1397,56 @@ def set_user_synced(job: Job, job_dir: Path, synced: str | None) -> dict[str, An
                 raise NotTheseLyrics("not a timing of these lyrics")
             entry["user_synced"] = cleaned
         return entry if write_lyrics(job, job_dir, entry) else None
+
+
+class NoLyricsInText(ValueError):
+    """An imported file with no words to keep (lyrics_from_text)."""
+
+
+def import_lyrics(job: Job, job_dir: Path, text: str) -> tuple[dict[str, Any], int] | None:
+    """Keep the lyrics from a file the user picked in the Lyrics tab as the
+    job's lyrics.json, and return the entry as written (clean_lyrics, as GET
+    .../lyrics serves it) with the count of lines dropped from the file
+    (lyrics_from_text); None when it could not be written. Raises
+    NoLyricsInText when the text has no words or is not text.
+
+    Kept as source "file": every client that shows the file's own lyrics shows
+    these too (the Lyrics tab's SERVER_SOURCES), and an older client that does
+    not know a new source would drop them altogether. LRCLIB's candidates for
+    the track go, since the user's own copy is the answer now.
+
+    Written under _OFFSET_LOCK, as every other write of a finished track's
+    lyrics is: an Align or a line-by-line timing reads the old lyrics, works
+    for a while, and writes them back with its result, and an import between
+    the two was lost. One still running when the import lands checks the
+    lyrics again under the lock and keeps nothing when they changed:
+    align_lyrics compares the whole entry, lyrics_retime.retime_job their
+    source and text, and set_lyrics_offset (the Align panel, its
+    Auto-detect) the synced text it was given.
+    """
+    query = build_query(job)
+    tags = job.audio_tags or {}
+    made = lyrics_from_text(
+        text,
+        track=(query.track if query else "") or _name(tags.get("title")) or job.title,
+        artist=(query.artist if query else "") or _name(tags.get("artist")),
+        album=(query.album if query else "") or _name(tags.get("album")),
+        duration=_number(job.duration_sec),
+    )
+    if made is None:
+        raise NoLyricsInText("no lyrics in the text")
+    entry, dropped = made
+    with _OFFSET_LOCK:
+        entry = write_cleaned_lyrics(job, job_dir, entry)
+        if entry is None:
+            return None
+        try:
+            candidates_path(job_dir).unlink(missing_ok=True)
+        except OSError:
+            # The lyrics are kept; LRCLIB's versions are only offered beside
+            # them until the next lookup replaces the file.
+            logger.warning("could not drop lyrics candidates for job %s", job.id, exc_info=True)
+    return entry, dropped
 
 
 def copy_lyrics(src_dir: Path, dest_dir: Path) -> bool:
