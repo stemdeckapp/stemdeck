@@ -2,10 +2,18 @@
 // several (NIHIL: Instagram and Spotify) is a plain card with one labelled link
 // per destination, since a link cannot hold other links. The featured artist
 // at the top of the dialog is covered by featured-artist.spec.mjs.
+//
+// The featured artist is left out of the grid, so a test about a named
+// partner steps aside when that partner is the one featured (FEATURED below):
+// featuring someone is then a change to featuredArtist.js alone.
 
 import { test, expect } from "@playwright/test";
 
 import { seedLibrary, stubUpdateCheck } from "./helpers.mjs";
+import { FEATURED_ARTISTS } from "../../static/js/featuredArtist.js";
+
+const FEATURED = FEATURED_ARTISTS.at(-1)?.name;
+const ABOVE = "featured above the grid; featured-artist.spec.mjs checks its links";
 
 async function openWeRecommend(page) {
   await seedLibrary(page);
@@ -16,6 +24,7 @@ async function openWeRecommend(page) {
 
 test.describe("We Recommend", () => {
   test("a card with two links offers both, each opening outside the app", async ({ page }) => {
+    test.skip(FEATURED === "NIHIL", `NIHIL is ${ABOVE}`);
     await openWeRecommend(page);
     const card = page.locator(".lib-friend").filter({ hasText: "NIHIL" });
     await expect(card).toHaveCount(1);
@@ -38,13 +47,19 @@ test.describe("We Recommend", () => {
 
   test("a card with one link is still a link as a whole", async ({ page }) => {
     await openWeRecommend(page);
-    const card = page.locator(".lib-friend").filter({ hasText: "Analog4Lyfe" });
+    // Two candidates, so one is always in the grid whoever is featured.
+    const [name, url] = [
+      ["Analog4Lyfe", "https://www.instagram.com/analog4lyfe"],
+      ["Kris Luthier", "https://www.instagram.com/krisluthier"],
+    ].find(([n]) => n !== FEATURED);
+    const card = page.locator(".lib-friend").filter({ hasText: name });
     expect(await card.evaluate((el) => el.tagName)).toBe("A");
-    await expect(card).toHaveAttribute("href", "https://www.instagram.com/analog4lyfe");
+    await expect(card).toHaveAttribute("href", url);
     await expect(card.locator(".lib-friend-pill")).toHaveCount(0);
   });
 
   test("Killah Trakz and NIHIL offer Instagram and Spotify, and Killah Trakz Apple Music too", async ({ page }) => {
+    test.skip(FEATURED === "NIHIL" || FEATURED === "Killah Trakz", `${FEATURED} is ${ABOVE}`);
     await openWeRecommend(page);
     const pills = (name) => page.locator(".lib-friend").filter({ hasText: name }).locator(".lib-friend-pill");
     await expect(pills("Killah Trakz")).toHaveText(["Instagram", "Spotify", "Apple Music"]);

@@ -4444,7 +4444,11 @@ input, textarea { font-family: inherit; }
   padding: 18%;
   background: var(--panel-3);
 }
-.featured-body { display: flex; flex-direction: column; min-width: 0; }
+/* Centred beside the photo when it is the shorter of the two, as with an
+   entry that has no track or quote, so no empty band is left under the
+   links. When it is the taller one, it sets the row height and this does
+   nothing. */
+.featured-body { display: flex; flex-direction: column; min-width: 0; align-self: center; }
 /* No photo (or it failed to load): the text takes the whole width. */
 .featured-artist.featured-no-photo { grid-template-columns: 1fr; }
 .featured-label {

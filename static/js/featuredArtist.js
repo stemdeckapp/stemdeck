@@ -1,11 +1,39 @@
-// The featured artist at the top of the We Recommend dialog (#1092): which
-// entry is current, which came before it, and what the partner grid leaves
-// out. Pure, with no DOM, so tests/js/featured-artist.test.mjs can run it in
-// node. catalog.js holds the data (FEATURED_ARTISTS beside FRIEND_GROUPS) and
+// The featured artist at the top of the We Recommend dialog (#1092): the
+// list of featured artists, which entry is current, which came before it, and
+// what the partner grid leaves out. Pure, with no DOM, so node and the browser
+// tests import the list from here: changing the featured artist is a change
+// to FEATURED_ARTISTS alone. catalog.js holds the partners (FRIEND_GROUPS) and
 // draws the card.
 //
 // The last entry of the list is the current one. There is no clock: the card
 // stays when its month has passed, until the next entry is added.
+
+/**
+ * The featured artists, newest last. The last entry is the current one; the
+ * ones before it are "Previously featured". Add an entry to feature someone
+ * new; never remove one that was shown, or it drops out of that row.
+ *
+ * - `name` must be a member of FRIEND_GROUPS in catalog.js, which gives the
+ *   photo and the role line. An entry that names nobody is skipped. The
+ *   current artist is left out of the grid below the card; earlier ones stay.
+ * - `month` is "YYYY-MM", shown in the label in the UI language.
+ * - `quoteKey` (optional) is an i18n key holding the maintainer's own words.
+ *   With no key, or a key no table has, the card draws no quote.
+ * - `track` (optional) is { title, kindKey, year, url }: one track to start
+ *   with, a single external link. `kindKey` is the release type ("Single").
+ *   With no track, the card has no "Start here" row.
+ * - `links` are the artist's pages, as { label, url }, opening externally.
+ */
+export const FEATURED_ARTISTS = [
+  {
+    id: "analog4lyfe",
+    // A placeholder until the maintainer confirms the month.
+    month: "2026-11",
+    name: "Analog4Lyfe",
+    quoteKey: "friends.featured.quote.analog4lyfe",
+    links: [{ label: "Instagram", url: "https://www.instagram.com/analog4lyfe" }],
+  },
+];
 
 /** The FRIEND_GROUPS member called `name`, or null. Names are proper nouns,
  *  identical in every language, so they match exactly. */

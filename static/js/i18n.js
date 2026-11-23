@@ -125,6 +125,11 @@ function _interpolate(str, vars) {
   return str.replace(/\{(\w+)\}/g, (m, key) => (key in vars ? String(vars[key]) : m));
 }
 
+/** Whether any table the current language reads from has `key`. */
+export function hasKey(key) {
+  return _tables().some((table) => table[key] != null && table[key] !== "");
+}
+
 export function t(key, vars) {
   let str;
   for (const table of _tables()) {
@@ -1334,7 +1339,7 @@ const en = {
   "friends.role.notAnotherAudioPodcast": "Audio, music and tech industry podcast by working professionals",
   "friends.featured.label": "Featured artist",
   "friends.featured.labelMonth": "Featured artist · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Start here",
   "friends.featured.kind.single": "Single",
   "friends.featured.release": "{kind} · {year}",
@@ -3544,7 +3549,7 @@ const pl = {
   "friends.role.notAnotherAudioPodcast": "Podcast o branży audio, muzycznej i technologicznej, prowadzony przez praktyków",
   "friends.featured.label": "W centrum uwagi",
   "friends.featured.labelMonth": "W centrum uwagi · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Zacznij tutaj",
   "friends.featured.kind.single": "Singiel",
   "friends.featured.release": "{kind} · {year}",
@@ -5748,7 +5753,7 @@ const ja = {
   "friends.role.notAnotherAudioPodcast": "オーディオ、音楽、テック業界のポッドキャスト。現役のプロが語る",
   "friends.featured.label": "注目のアーティスト",
   "friends.featured.labelMonth": "注目のアーティスト · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "まずはこの曲から",
   "friends.featured.kind.single": "シングル",
   "friends.featured.release": "{kind} · {year}",
@@ -7922,7 +7927,7 @@ const zhHans = {
   "friends.role.notAnotherAudioPodcast": "关于音频、音乐与科技行业的播客。由一线从业者主持",
   "friends.featured.label": "精选艺术家",
   "friends.featured.labelMonth": "精选艺术家 · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "从这里开始",
   "friends.featured.kind.single": "单曲",
   "friends.featured.release": "{kind} · {year}",
@@ -10097,7 +10102,7 @@ const de = {
   "friends.role.notAnotherAudioPodcast": "Podcast über die Audio-, Musik- und Tech-Branche von Profis aus der Praxis",
   "friends.featured.label": "Im Fokus",
   "friends.featured.labelMonth": "Im Fokus · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Hier anfangen",
   "friends.featured.kind.single": "Single",
   "friends.featured.release": "{kind} · {year}",
@@ -12285,7 +12290,7 @@ const pt = {
   "friends.role.notAnotherAudioPodcast": "Podcast sobre a indústria de áudio, música e tecnologia, feito por profissionais da área",
   "friends.featured.label": "Artista em destaque",
   "friends.featured.labelMonth": "Artista em destaque · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Comece por aqui",
   "friends.featured.kind.single": "Single",
   "friends.featured.release": "{kind} · {year}",
@@ -14474,7 +14479,7 @@ const id = {
   "friends.role.notAnotherAudioPodcast": "Podcast tentang industri audio, musik, dan teknologi oleh para profesional aktif",
   "friends.featured.label": "Artis pilihan",
   "friends.featured.labelMonth": "Artis pilihan · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Mulai dari sini",
   "friends.featured.kind.single": "Singel",
   "friends.featured.release": "{kind} · {year}",
@@ -16649,7 +16654,7 @@ const fr = {
   "friends.role.notAnotherAudioPodcast": "Podcast sur les industries de l'audio, de la musique et de la tech, par des professionnels en activité",
   "friends.featured.label": "À l'honneur",
   "friends.featured.labelMonth": "À l'honneur · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Commencez ici",
   "friends.featured.kind.single": "Single",
   "friends.featured.release": "{kind} · {year}",
@@ -19404,7 +19409,7 @@ const es = {
   "friends.role.notAnotherAudioPodcast": "Podcast sobre la industria del audio, la música y la tecnología, hecho por profesionales en activo",
   "friends.featured.label": "En primer plano",
   "friends.featured.labelMonth": "En primer plano · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "Empieza por aquí",
   "friends.featured.kind.single": "Sencillo",
   "friends.featured.release": "{kind} · {year}",
@@ -21614,7 +21619,7 @@ const ko = {
   "friends.role.notAnotherAudioPodcast": "현업 전문가들이 전하는 오디오, 음악, 테크 업계 팟캐스트",
   "friends.featured.label": "추천 아티스트",
   "friends.featured.labelMonth": "추천 아티스트 · {month}",
-  "friends.featured.quote.adriannaClaro": "[QUOTE PENDING]",
+  "friends.featured.quote.analog4lyfe": "[QUOTE PENDING]",
   "friends.featured.startHere": "여기서 시작하세요",
   "friends.featured.kind.single": "싱글",
   "friends.featured.release": "{kind} · {year}",

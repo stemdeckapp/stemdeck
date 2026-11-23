@@ -27,9 +27,9 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
-import { findFriendCard, formatFeaturedMonth, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
+import { FEATURED_ARTISTS, findFriendCard, formatFeaturedMonth, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
 import { keepTabInside } from "./dialogFocus.js";
-import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
+import { t as i18nT, hasKey as i18nHasKey, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
 function esc(s) {
@@ -59,6 +59,9 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 //
 // Links open externally via the document-level a[target="_blank"] handler in
 // main.js (click plus auxclick; Tauri open_url on desktop).
+//
+// The featured artist shown above the grid is chosen in featuredArtist.js
+// (FEATURED_ARTISTS), by the name of one of these members.
 const FRIEND_GROUPS = [
   {
     labelKey: "friends.cat.artists",
@@ -217,37 +220,6 @@ const FRIEND_GROUPS = [
         logo: "/img/friends/alexandre-borges.jpg",
         avatar: true,
       },
-    ],
-  },
-];
-
-// The featured artist at the top of We Recommend (#1092), newest last. The
-// last entry is the current one; the ones before it are "Previously featured".
-// There is no clock: the card stays after its month, until an entry is added.
-//
-// `name` must be a member of FRIEND_GROUPS, which gives the photo and the role
-// line. An entry that names nobody is skipped (featuredArtist.js). The current
-// artist is left out of the grid below the card; earlier ones stay in it.
-//
-// `quoteKey` is an i18n key holding the maintainer's own words.
-// `track.kindKey` is the release type ("Single"). Links open externally, as
-// every partner link does.
-const FEATURED_ARTISTS = [
-  {
-    id: "adriannaClaro",
-    month: "2026-11",
-    name: "Adrianna Claro",
-    quoteKey: "friends.featured.quote.adriannaClaro",
-    track: {
-      title: "Happy",
-      kindKey: "friends.featured.kind.single",
-      year: 2021,
-      url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728",
-    },
-    // Instagram goes here once its address is known.
-    links: [
-      { label: "Spotify", url: "https://open.spotify.com/album/10fZ48iJhIe3lWcXSMUlFG" },
-      { label: "Apple Music", url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728" },
     ],
   },
 ];
@@ -4052,7 +4024,9 @@ function featuredCard({ current, previous }, grid) {
   body.append(label, name);
   if (member.roleKey) body.appendChild(i18nSpan("featured-role", member.roleKey, "p"));
 
-  if (entry.quoteKey) {
+  // Optional, as the track is: an entry with no quote, or a key no table has
+  // yet, draws no quote block rather than an empty one or the raw key.
+  if (entry.quoteKey && i18nHasKey(entry.quoteKey)) {
     const quote = document.createElement("blockquote");
     quote.className = "featured-quote";
     quote.appendChild(i18nSpan("featured-quote-text", entry.quoteKey, "p"));

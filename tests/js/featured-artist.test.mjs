@@ -20,8 +20,9 @@ import {
   initialOf,
   previousFaces,
   findFriendCard,
+  FEATURED_ARTISTS,
 } from "../../static/js/featuredArtist.js";
-import { TRANSLATIONS } from "../../static/js/i18n.js";
+import { TRANSLATIONS, hasKey } from "../../static/js/i18n.js";
 
 let pass = 0,
   fail = 0;
@@ -163,12 +164,49 @@ check("no name is a question mark", initialOf("") === "?" && initialOf(undefined
   check("no cards is null", findFriendCard(undefined, "Ana") === null);
 }
 
+// ── FEATURED_ARTISTS itself: read from the data, so a new featured artist
+//    is a change to the list alone ──
+{
+  const ids = FEATURED_ARTISTS.map((e) => e.id);
+  check("every entry has a unique id", new Set(ids).size === ids.length && ids.every(Boolean), ids.join(", "));
+  for (const e of FEATURED_ARTISTS) {
+    check(`${e.id}: has a name`, typeof e.name === "string" && e.name.trim().length > 0);
+    check(`${e.id}: its month is a month`, parseMonth(e.month) !== null, e.month);
+    check(`${e.id}: its month formats`, formatFeaturedMonth(e.month, "en").length > 0);
+    check(`${e.id}: every link is https with a label`,
+      (e.links || []).every((l) => l.label && /^https:\/\//.test(l.url)), JSON.stringify(e.links));
+    if (e.track) {
+      check(`${e.id}: its track has a title and an https link`, Boolean(e.track.title) && /^https:\/\//.test(e.track.url));
+      check(`${e.id}: its track kind is a key every full table has`, Object.entries(TRANSLATIONS)
+        .filter(([lang]) => lang !== "pt-PT").every(([, table]) => e.track.kindKey in table));
+    }
+    if (e.quoteKey) {
+      const missing = Object.entries(TRANSLATIONS)
+        .filter(([lang, table]) => lang !== "pt-PT" && !(e.quoteKey in table)).map(([lang]) => lang);
+      check(`${e.id}: its quote is in every full table`, missing.length === 0, missing.join(", "));
+    }
+  }
+  // A quote key no entry names is a leftover from an artist taken off the list.
+  const named = new Set(FEATURED_ARTISTS.map((e) => e.quoteKey).filter(Boolean));
+  const orphans = Object.keys(TRANSLATIONS.en).filter((k) => k.startsWith("friends.featured.quote.") && !named.has(k));
+  check("no quote is left for an artist no longer on the list", orphans.length === 0, orphans.join(", "));
+  // The list as the card sees it: groups made from the entries' own names, so
+  // this checks the list (order, duplicates), not who is in FRIEND_GROUPS.
+  const groups = [{ members: FEATURED_ARTISTS.map((e) => ({ name: e.name })) }];
+  const { current, previous } = pickFeatured(FEATURED_ARTISTS, groups);
+  check("the last entry is the current one", current?.entry === FEATURED_ARTISTS.at(-1));
+  check("the current artist is never also listed as before", !previous.some((p) => p.entry.name === current?.entry.name));
+}
+
+// ── hasKey: how the card decides to draw a quote at all ──
+check("a key a table has is there", hasKey("friends.featured.startHere"));
+check("a key no table has is not, so the card draws no quote", !hasKey("friends.featured.quote.nobodyAtAll"));
+
 // ── The strings the card reads ──
 const KEYS = [
   "friends.taglineAsk", "friends.featured.label", "friends.featured.labelMonth", "friends.featured.startHere",
   "friends.featured.kind.single", "friends.featured.release", "friends.featured.listen",
   "friends.featured.trackAria", "friends.featured.previous", "friends.featured.previousGo",
-  "friends.featured.quote.adriannaClaro",
 ];
 for (const [lang, table] of Object.entries(TRANSLATIONS)) {
   if (lang === "pt-PT") continue; // a variant: resolves through pt
