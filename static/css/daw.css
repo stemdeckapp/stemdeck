@@ -4386,6 +4386,229 @@ input, textarea { font-family: inherit; }
    what was pushing the list past the dialog and putting a scrollbar on it. */
 .friends-card { width: min(1020px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
+/* With the featured artist above the grid (#1092), the grid scrolling on its
+   own would leave it a sliver on a normal window. Everything under the close
+   button scrolls instead, once it is taller than the window, and the grid
+   takes its height. The card itself does not scroll, so the close button,
+   positioned on the card, stays in view. The padding moves to the scroller so
+   its scroll bar sits at the card's edge. */
+.friends-card {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+}
+.friends-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 28px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Over the scrolled content, so it needs a face of its own. */
+.friends-card .about-close { z-index: 1; background: var(--panel-2); }
+.friends-card .about-close:hover { background: var(--panel-3); }
+.friends-card .lib-friends-grid { max-height: none; overflow: visible; flex: 0 0 auto; }
+.friends-card .friends-intro { max-width: 720px; margin-bottom: 6px; }
+.friends-card .friends-ask { max-width: 720px; color: var(--fg-2); }
+.friends-ask strong { font-weight: 600; }
+
+/* The featured artist: a large square photo with a thin accent edge on the
+   left, the text on the right. Stacks once the window is too narrow for both. */
+.featured-artist {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) 1fr;
+  gap: 22px;
+  align-items: start;
+  width: 100%;
+  margin: 4px 0 16px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+}
+.featured-photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  -webkit-user-drag: none;
+  user-select: none;
+}
+/* A wordmark, not a photo: shown whole on a padded panel, never cropped. */
+.featured-photo.featured-photo-logo {
+  object-fit: contain;
+  padding: 18%;
+  background: var(--panel-3);
+}
+/* Centred beside the photo when it is the shorter of the two, as with an
+   entry that has no track or quote, so no empty band is left under the
+   links. When it is the taller one, it sets the row height and this does
+   nothing. */
+.featured-body { display: flex; flex-direction: column; min-width: 0; align-self: center; }
+/* No photo (or it failed to load): the text takes the whole width. */
+.featured-artist.featured-no-photo { grid-template-columns: 1fr; }
+.featured-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.featured-star { width: 12px; height: 12px; flex: 0 0 auto; fill: currentColor; }
+/* Two classes deep, as .artist-name, to outrank .about-card h2. */
+.featured-artist .featured-name {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.featured-role { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.featured-quote {
+  position: relative;
+  margin: 14px 0 0;
+  padding: 0 0 0 30px;
+}
+.featured-quote::before {
+  content: "\201C";
+  position: absolute;
+  left: 0;
+  top: -6px;
+  font-family: var(--font-sans);
+  font-size: 44px;
+  line-height: 1;
+  color: var(--accent);
+}
+.featured-quote-text { margin: 0; font-size: 14px; font-style: italic; line-height: 1.5; color: var(--fg-2); }
+.featured-start {
+  margin: 16px 0 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.featured-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg-2);
+  text-decoration: none;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.featured-track:hover { background: var(--panel-3); border-color: var(--accent); color: var(--fg); }
+.featured-track:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.featured-track-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+}
+.featured-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.featured-track-text { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.featured-track-title { font-size: 14px; font-weight: 700; color: var(--fg); overflow-wrap: anywhere; }
+.featured-track-meta { margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+.featured-track-listen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.featured-track-listen .featured-icon { width: 13px; height: 13px; }
+.featured-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 18px;
+  margin-top: 14px;
+}
+.featured-links { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The grid's pills, a size up: these are the card's main links. */
+/* One class deeper than the .lib-friend-pill rules further down, which
+   would otherwise win on order. */
+.featured-links .featured-pill { padding: 4px 11px; font-size: 11px; }
+.featured-links .featured-pill .lib-friend-link,
+.featured-links .featured-pill .lib-friend-ig { width: 12px; height: 12px; }
+.featured-links .featured-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.featured-prev { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.featured-prev-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.featured-prev-faces { display: flex; gap: 4px; }
+.featured-prev-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-3);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+}
+.featured-prev-btn:hover { border-color: var(--accent); }
+.featured-prev-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.featured-prev-btn img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+/* A wordmark in the small circle: whole, inset from the round edge. */
+.featured-prev-btn img.featured-prev-logo { object-fit: contain; padding: 4px; }
+/* A grid card reached from a "Previously featured" avatar. */
+.lib-friend:focus-visible,
+.lib-friend.lib-friend-located { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 640px) {
+  .featured-artist { grid-template-columns: 1fr; gap: 14px; padding: 14px; }
+  .featured-photo { width: min(240px, 100%); }
+  .featured-artist .featured-name { font-size: 22px; }
+  .featured-prev { margin-left: 0; }
+}
 
 /* ── Lyrics tab (#699) ──
    A view of the sidebar, like Favorites and Trash, but not a list: while it is
