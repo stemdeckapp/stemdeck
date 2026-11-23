@@ -186,6 +186,18 @@ check("no name is a question mark", initialOf("") === "?" && initialOf(undefined
       check(`${e.id}: its quote is in every full table`, missing.length === 0, missing.join(", "));
     }
   }
+  // A placeholder quote can never ship. Bracketed capitals ("[SOMETHING
+  // PENDING]") or a value starting with PLACEHOLDER, in any table, pt-PT too.
+  const latest = FEATURED_ARTISTS.at(-1);
+  if (latest?.quoteKey) {
+    const placeholder = (v) => /\[[A-Z][A-Z ]*\]/.test(v) || /^\s*PLACEHOLDER/.test(v);
+    const held = Object.entries(TRANSLATIONS)
+      .filter(([, table]) => typeof table[latest.quoteKey] === "string" && placeholder(table[latest.quoteKey]))
+      .map(([lang]) => lang);
+    check(`${latest.id}: no table holds a placeholder quote`, held.length === 0, held.join(", "));
+    check("the placeholder test catches a pending quote", placeholder("[" + "QUOTE " + "PENDING]") && placeholder("PLACEHOLDER text"));
+    check("and lets a real quote through", !placeholder(TRANSLATIONS.en[latest.quoteKey] || ""));
+  }
   // A quote key no entry names is a leftover from an artist taken off the list.
   const named = new Set(FEATURED_ARTISTS.map((e) => e.quoteKey).filter(Boolean));
   const orphans = Object.keys(TRANSLATIONS.en).filter((k) => k.startsWith("friends.featured.quote.") && !named.has(k));
