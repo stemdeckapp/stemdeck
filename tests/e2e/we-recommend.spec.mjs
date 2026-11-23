@@ -1,6 +1,7 @@
 // We Recommend: a partner card with one link is a link as a whole; a card with
-// several (Adrianna Claro: Spotify and Apple Music) is a plain card with one
-// labelled link per destination, since a link cannot hold other links.
+// several (NIHIL: Instagram and Spotify) is a plain card with one labelled link
+// per destination, since a link cannot hold other links. The featured artist
+// at the top of the dialog is covered by featured-artist.spec.mjs.
 
 import { test, expect } from "@playwright/test";
 
@@ -16,20 +17,20 @@ async function openWeRecommend(page) {
 test.describe("We Recommend", () => {
   test("a card with two links offers both, each opening outside the app", async ({ page }) => {
     await openWeRecommend(page);
-    const card = page.locator(".lib-friend").filter({ hasText: "Adrianna Claro" });
+    const card = page.locator(".lib-friend").filter({ hasText: "NIHIL" });
     await expect(card).toHaveCount(1);
     await expect(card).toBeVisible();
     // Not a link itself, so the two below are the only things to click.
     expect(await card.evaluate((el) => el.tagName)).toBe("DIV");
-    // Her photo loads, rather than falling back to the monogram.
-    await expect(card.locator("img.lib-friend-avatar")).toHaveAttribute("src", "/img/friends/adrianna-claro.webp");
+    // The photo loads, rather than falling back to the monogram.
+    await expect(card.locator("img.lib-friend-avatar")).toHaveAttribute("src", "/img/friends/nihil.jpg");
     await expect.poll(() => card.locator("img.lib-friend-avatar").evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
 
+    const instagram = card.locator(".lib-friend-pill", { hasText: "Instagram" });
     const spotify = card.locator(".lib-friend-pill", { hasText: "Spotify" });
-    const apple = card.locator(".lib-friend-pill", { hasText: "Apple Music" });
-    await expect(spotify).toHaveAttribute("href", "https://open.spotify.com/album/10fZ48iJhIe3lWcXSMUlFG");
-    await expect(apple).toHaveAttribute("href", "https://music.apple.com/us/album/happy/1592026727?i=1592026728");
-    for (const link of [spotify, apple]) {
+    await expect(instagram).toHaveAttribute("href", "https://www.instagram.com/somosnihil/");
+    await expect(spotify).toHaveAttribute("href", "https://open.spotify.com/artist/1OeKplJxFNM6JHrWeo2SaV");
+    for (const link of [instagram, spotify]) {
       await expect(link).toHaveAttribute("target", "_blank");
       await expect(link).toHaveAttribute("rel", "noopener noreferrer");
     }

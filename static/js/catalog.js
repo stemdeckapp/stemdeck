@@ -27,6 +27,7 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
+import { formatFeaturedMonth, groupsWithout, pickFeatured } from "./featuredArtist.js";
 import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -215,6 +216,41 @@ const FRIEND_GROUPS = [
         logo: "/img/friends/alexandre-borges.jpg",
         avatar: true,
       },
+    ],
+  },
+];
+
+// The year "Happy" came out. Not confirmed yet: the maintainer checks it
+// before this ships.
+const HAPPY_RELEASE_YEAR_UNCONFIRMED = 2021;
+
+// The featured artist at the top of We Recommend (#1092), newest last. The
+// last entry is the current one; the ones before it are "Previously featured".
+// There is no clock: the card stays after its month, until an entry is added.
+//
+// `name` must be a member of FRIEND_GROUPS, which gives the photo and the role
+// line. An entry that names nobody is skipped (featuredArtist.js). The current
+// artist is left out of the grid below the card; earlier ones stay in it.
+//
+// `quoteKey` is an i18n key holding the maintainer's own words.
+// `track.kindKey` is the release type ("Single"). Links open externally, as
+// every partner link does.
+const FEATURED_ARTISTS = [
+  {
+    id: "adriannaClaro",
+    month: "2026-11",
+    name: "Adrianna Claro",
+    quoteKey: "friends.featured.quote.adriannaClaro",
+    track: {
+      title: "Happy",
+      kindKey: "friends.featured.kind.single",
+      year: HAPPY_RELEASE_YEAR_UNCONFIRMED,
+      url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728",
+    },
+    // Instagram goes here once its address is known.
+    links: [
+      { label: "Spotify", url: "https://open.spotify.com/album/10fZ48iJhIe3lWcXSMUlFG" },
+      { label: "Apple Music", url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728" },
     ],
   },
 ];
@@ -3852,6 +3888,8 @@ function friendCard(f) {
   const a = multi ? document.createElement("div") : friendLink(f.url);
   a.className = multi ? "lib-friend lib-friend-multi" : "lib-friend";
   a.title = f.name;
+  // How a "Previously featured" avatar finds this card (locateFriend).
+  a.dataset.friend = f.name;
 
   // A monogram badge (first initial) keeps the card on-brand when an entry has
   // no image, or when its image fails to load (e.g. before the asset is added).
@@ -3913,6 +3951,200 @@ function friendCard(f) {
   return a;
 }
 
+// Stroked 24x24 glyphs for the featured card (Feather icons): a music note on
+// the track button, since nothing plays in the app and a play triangle would
+// say it does, and the arrow that marks a link leaving the app.
+const MUSIC_ICON = { paths: ["M9 18V5l12-2v13"], circles: [[6, 18, 3], [18, 16, 3]] };
+const EXTERNAL_ICON = { paths: ["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", "M15 3h6v6", "M10 14 21 3"], circles: [] };
+const STAR_ICON_PATH = "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z";
+
+function strokeIcon(cls, { paths, circles }) {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of paths) {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  }
+  for (const [cx, cy, r] of circles) {
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("cx", String(cx));
+    c.setAttribute("cy", String(cy));
+    c.setAttribute("r", String(r));
+    svg.appendChild(c);
+  }
+  return svg;
+}
+
+function starIcon() {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "featured-star");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(SVGNS, "path");
+  p.setAttribute("d", STAR_ICON_PATH);
+  svg.appendChild(p);
+  return svg;
+}
+
+/** A span carrying an i18n key, so a language switch re-resolves it. */
+function i18nSpan(cls, key, tag = "span") {
+  const el = document.createElement(tag);
+  el.className = cls;
+  el.setAttribute("data-i18n", key);
+  el.textContent = i18nT(key);
+  return el;
+}
+
+/** Scroll to the partner card of `name` in the grid and give it focus. */
+function locateFriend(grid, name) {
+  const card = [...grid.querySelectorAll(".lib-friend")].find((el) => el.dataset.friend === name);
+  if (!card) return;
+  // A card with several links is a plain div: focusable only from script.
+  if (card.tagName !== "A") card.tabIndex = -1;
+  card.classList.add("lib-friend-located");
+  card.addEventListener("blur", () => card.classList.remove("lib-friend-located"), { once: true });
+  card.scrollIntoView({ block: "nearest" });
+  card.focus({ preventScroll: true });
+}
+
+/**
+ * The featured artist card (#1092) above the partner grid: photo, the month,
+ * name, role, the maintainer's quote, one track to start with, the artist's
+ * links, and the artists featured before. `paint` sets the text built from
+ * templates, which data-i18n cannot re-resolve on a language switch.
+ */
+function featuredCard({ current, previous }, grid) {
+  const { entry, member } = current;
+  const section = document.createElement("section");
+  section.className = "featured-artist";
+  section.setAttribute("aria-labelledby", "featuredName");
+
+  const photo = document.createElement("img");
+  photo.className = "featured-photo";
+  if (member.logo) photo.src = member.logo;
+  // The heading next to it names the artist; the photo adds no words.
+  photo.alt = "";
+  // No photo, or one that fails to load: the text takes the whole width.
+  const noPhoto = () => {
+    photo.remove();
+    section.classList.add("featured-no-photo");
+  };
+  photo.addEventListener("error", noPhoto);
+  if (member.logo) section.appendChild(photo);
+  else noPhoto();
+
+  const body = document.createElement("div");
+  body.className = "featured-body";
+
+  const label = document.createElement("p");
+  label.className = "featured-label";
+  const labelText = document.createElement("span");
+  label.append(starIcon(), labelText);
+
+  const name = document.createElement("h3");
+  name.className = "featured-name";
+  name.id = "featuredName";
+  name.textContent = entry.name;
+
+  body.append(label, name);
+  if (member.roleKey) body.appendChild(i18nSpan("featured-role", member.roleKey, "p"));
+
+  if (entry.quoteKey) {
+    const quote = document.createElement("blockquote");
+    quote.className = "featured-quote";
+    quote.appendChild(i18nSpan("featured-quote-text", entry.quoteKey, "p"));
+    body.appendChild(quote);
+  }
+
+  let track = null;
+  let trackMeta = null;
+  if (entry.track?.url) {
+    body.appendChild(i18nSpan("featured-start", "friends.featured.startHere", "p"));
+    // The whole row is one link: one place to press, one destination.
+    track = friendLink(entry.track.url);
+    track.className = "featured-track";
+    const btn = document.createElement("span");
+    btn.className = "featured-track-btn";
+    btn.appendChild(strokeIcon("featured-icon", MUSIC_ICON));
+    const text = document.createElement("span");
+    text.className = "featured-track-text";
+    const title = document.createElement("span");
+    title.className = "featured-track-title";
+    title.textContent = entry.track.title;
+    trackMeta = document.createElement("span");
+    trackMeta.className = "featured-track-meta";
+    text.append(title, trackMeta);
+    const listen = document.createElement("span");
+    listen.className = "featured-track-listen";
+    listen.append(i18nSpan("", "friends.featured.listen"), strokeIcon("featured-icon", EXTERNAL_ICON));
+    track.append(btn, text, listen);
+    body.appendChild(track);
+  }
+
+  const foot = document.createElement("div");
+  foot.className = "featured-foot";
+  const links = entry.links || [];
+  if (links.length) {
+    const row = document.createElement("div");
+    row.className = "featured-links";
+    for (const link of links) {
+      const l = friendLink(link.url);
+      l.className = "lib-friend-pill featured-pill";
+      l.title = `${entry.name}: ${link.label}`;
+      l.append(friendGlyph(link.url), link.label);
+      row.appendChild(l);
+    }
+    foot.appendChild(row);
+  }
+  // Absent, not empty, while no one has been featured before.
+  if (previous.length) {
+    const prev = document.createElement("div");
+    prev.className = "featured-prev";
+    prev.appendChild(i18nSpan("featured-prev-label", "friends.featured.previous"));
+    const faces = document.createElement("div");
+    faces.className = "featured-prev-faces";
+    for (const p of previous) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "featured-prev-btn";
+      b.title = p.entry.name;
+      b.setAttribute("aria-label", p.entry.name);
+      if (p.member.logo) {
+        const img = document.createElement("img");
+        img.src = p.member.logo;
+        img.alt = "";
+        img.addEventListener("error", () => { img.replaceWith(p.entry.name.trim().charAt(0).toUpperCase()); });
+        b.appendChild(img);
+      } else {
+        b.textContent = p.entry.name.trim().charAt(0).toUpperCase();
+      }
+      b.addEventListener("click", () => locateFriend(grid, p.entry.name));
+      faces.appendChild(b);
+    }
+    prev.appendChild(faces);
+    foot.appendChild(prev);
+  }
+  if (foot.childElementCount) body.appendChild(foot);
+  section.appendChild(body);
+
+  const paint = () => {
+    const month = formatFeaturedMonth(entry.month, getLanguage());
+    labelText.textContent = month ? i18nT("friends.featured.labelMonth", { month }) : i18nT("friends.featured.label");
+    if (track) {
+      const kind = entry.track.kindKey ? i18nT(entry.track.kindKey) : "";
+      trackMeta.textContent = kind && entry.track.year
+        ? i18nT("friends.featured.release", { kind, year: entry.track.year })
+        : kind || String(entry.track.year || "");
+      track.setAttribute("aria-label", i18nT("friends.featured.trackAria", { title: entry.track.title, artist: entry.name }));
+    }
+  };
+  paint();
+  return { el: section, paint };
+}
+
 // Supporters dialog: a TV rail button opens a centered modal (like About) with
 // the partner cards, grouped by category. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url on
@@ -3930,6 +4162,17 @@ function wireSupportersDialog(languageReady) {
   const fillGrid = () => {
     if (!grid || grid.dataset.ready === "1") return;
     grid.dataset.ready = "1";
+
+    // The featured artist goes above the grid and out of it, so no one is
+    // shown twice. With no entry there is no card, and the grid is whole.
+    const pick = pickFeatured(FEATURED_ARTISTS, FRIEND_GROUPS);
+    if (pick.current) {
+      const card = featuredCard(pick, grid);
+      grid.before(card.el);
+      onLanguageChange(card.paint);
+    }
+    const shown = groupsWithout(FRIEND_GROUPS, pick.current?.entry.name);
+
     // Two columns with a rule between them, rather than one long list. Six
     // sections stacked is taller than the dialog on any normal window, so the
     // whole thing scrolled and half the people on it were never seen.
@@ -3950,7 +4193,7 @@ function wireSupportersDialog(languageReady) {
     // localeCompare so accents and case land where a reader expects them
     // (Dead roses next to Dlima, not after Z).
     const collator = new Intl.Collator(getLanguage(), { sensitivity: "base", numeric: true });
-    const groups = FRIEND_GROUPS.map((group) => ({
+    const groups = shown.map((group) => ({
       ...group,
       label: i18nT(group.labelKey),
       members: [...group.members].sort((a, b) => collator.compare(a.name, b.name)),

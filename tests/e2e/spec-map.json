@@ -277,6 +277,11 @@
       "specs": ["donate", "help-mode"]
     },
     {
+      "why": "We Recommend (#1092): the featured artist card above the partner grid, which artist is current and who is left out of the grid, its strings, its Guide entries and its layout",
+      "paths": ["static/js/featuredArtist.js", "static/js/catalog.js", "static/js/i18n.js", "static/js/helpMode.js", "static/css/daw.css", "static/img/friends/**"],
+      "specs": ["featured-artist", "we-recommend"]
+    },
+    {
       "why": "Notifications, failure reports and release cards",
       "paths": ["static/js/notifications.js", "static/js/releaseVersion.js"],
       "specs": ["report-failure", "release-full-download", "update-check", "error-banner"]
