@@ -32,6 +32,8 @@ const presenceName = (el) => t(`stem.${el.dataset.stem}`);
 const stemsRowName = (el) => el.closest(".stems-pop-row")?.querySelector(".stems-pop-name")?.textContent.trim() || "";
 /** The featured artist's controls name the artist in their sentence. */
 const featuredName = (el) => el.closest(".featured-artist")?.querySelector(".featured-name")?.textContent.trim() || "";
+/** A partner card in the We Recommend grid, and its links, name the partner. */
+const friendName = (el) => el.closest(".lib-friend")?.dataset.friend || "";
 
 // Order matters only where selectors overlap: the first match wins.
 const HELP = [
@@ -87,10 +89,17 @@ const HELP = [
   ["#notifClearAll", "help.notifClear"],
   [".daw-notif-close", "help.notifClose"],
   ["#notifBtn", "help.notifications"],
-  // The featured artist card at the top of We Recommend (catalog.js, #1092).
+  // The We Recommend dialog (catalog.js), which opens in the Guide. The
+  // featured artist card at its top (#1092), then the partner grid. The
+  // card's pills also carry .lib-friend-pill, so they come first; a pill
+  // comes before the card it sits in.
+  ["#friendsClose", "help.friendsClose"],
   [".featured-track", "help.featuredTrack", featuredName],
   [".featured-pill", "help.featuredLink", featuredName],
-  [".featured-prev-btn", "help.featuredPrevious", (el) => el.getAttribute("aria-label") || ""],
+  [".featured-prev-btn", "help.featuredPrevious", (el) => el.dataset.name || ""],
+  [".lib-friend-pill", "help.friendPill", friendName],
+  ["a.lib-friend", "help.friendCard", friendName],
+  [".lib-friend-multi", "help.friendCardMulti", friendName],
   ["#friendsBtn", "help.recommend"],
   ["#settingsBtn", "settings"],
   ["#aboutBtn", "help.about"],

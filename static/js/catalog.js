@@ -27,7 +27,8 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
-import { formatFeaturedMonth, groupsWithout, pickFeatured } from "./featuredArtist.js";
+import { findFriendCard, formatFeaturedMonth, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
+import { keepTabInside } from "./dialogFocus.js";
 import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -220,10 +221,6 @@ const FRIEND_GROUPS = [
   },
 ];
 
-// The year "Happy" came out. Not confirmed yet: the maintainer checks it
-// before this ships.
-const HAPPY_RELEASE_YEAR_UNCONFIRMED = 2021;
-
 // The featured artist at the top of We Recommend (#1092), newest last. The
 // last entry is the current one; the ones before it are "Previously featured".
 // There is no clock: the card stays after its month, until an entry is added.
@@ -244,7 +241,7 @@ const FEATURED_ARTISTS = [
     track: {
       title: "Happy",
       kindKey: "friends.featured.kind.single",
-      year: HAPPY_RELEASE_YEAR_UNCONFIRMED,
+      year: 2021,
       url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728",
     },
     // Instagram goes here once its address is known.
@@ -4000,7 +3997,7 @@ function i18nSpan(cls, key, tag = "span") {
 
 /** Scroll to the partner card of `name` in the grid and give it focus. */
 function locateFriend(grid, name) {
-  const card = [...grid.querySelectorAll(".lib-friend")].find((el) => el.dataset.friend === name);
+  const card = findFriendCard(grid.querySelectorAll(".lib-friend"), name);
   if (!card) return;
   // A card with several links is a plain div: focusable only from script.
   if (card.tagName !== "A") card.tabIndex = -1;
@@ -4022,8 +4019,11 @@ function featuredCard({ current, previous }, grid) {
   section.className = "featured-artist";
   section.setAttribute("aria-labelledby", "featuredName");
 
+  // A profile photo fills the square; a wordmark is shown whole on a padded
+  // panel, as the grid letterboxes it, so its lettering is never cropped.
+  const shape = imageShape(member);
   const photo = document.createElement("img");
-  photo.className = "featured-photo";
+  photo.className = shape === "logo" ? "featured-photo featured-photo-logo" : "featured-photo";
   if (member.logo) photo.src = member.logo;
   // The heading next to it names the artist; the photo adds no words.
   photo.alt = "";
@@ -4033,8 +4033,8 @@ function featuredCard({ current, previous }, grid) {
     section.classList.add("featured-no-photo");
   };
   photo.addEventListener("error", noPhoto);
-  if (member.logo) section.appendChild(photo);
-  else noPhoto();
+  if (shape === "none") noPhoto();
+  else section.appendChild(photo);
 
   const body = document.createElement("div");
   body.className = "featured-body";
@@ -4061,6 +4061,7 @@ function featuredCard({ current, previous }, grid) {
 
   let track = null;
   let trackMeta = null;
+  const prevButtons = [];
   if (entry.track?.url) {
     body.appendChild(i18nSpan("featured-start", "friends.featured.startHere", "p"));
     // The whole row is one link: one place to press, one destination.
@@ -4101,27 +4102,36 @@ function featuredCard({ current, previous }, grid) {
   }
   // Absent, not empty, while no one has been featured before.
   if (previous.length) {
+    // A group named by its label, so a screen reader says "Previously
+    // featured" before the names.
     const prev = document.createElement("div");
     prev.className = "featured-prev";
-    prev.appendChild(i18nSpan("featured-prev-label", "friends.featured.previous"));
+    prev.setAttribute("role", "group");
+    prev.setAttribute("aria-labelledby", "featuredPrevLabel");
+    const prevLabel = i18nSpan("featured-prev-label", "friends.featured.previous");
+    prevLabel.id = "featuredPrevLabel";
+    prev.appendChild(prevLabel);
     const faces = document.createElement("div");
     faces.className = "featured-prev-faces";
-    for (const p of previous) {
+    for (const face of previousFaces(previous)) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "featured-prev-btn";
-      b.title = p.entry.name;
-      b.setAttribute("aria-label", p.entry.name);
-      if (p.member.logo) {
-        const img = document.createElement("img");
-        img.src = p.member.logo;
-        img.alt = "";
-        img.addEventListener("error", () => { img.replaceWith(p.entry.name.trim().charAt(0).toUpperCase()); });
-        b.appendChild(img);
+      // The tooltip is the name; the accessible name says where it goes.
+      b.title = face.name;
+      b.dataset.name = face.name;
+      if (face.shape === "none") {
+        b.textContent = face.initial;
       } else {
-        b.textContent = p.entry.name.trim().charAt(0).toUpperCase();
+        const img = document.createElement("img");
+        img.src = face.image;
+        img.alt = "";
+        if (face.shape === "logo") img.className = "featured-prev-logo";
+        img.addEventListener("error", () => img.replaceWith(face.initial));
+        b.appendChild(img);
       }
-      b.addEventListener("click", () => locateFriend(grid, p.entry.name));
+      b.addEventListener("click", () => locateFriend(grid, face.name));
+      prevButtons.push(b);
       faces.appendChild(b);
     }
     prev.appendChild(faces);
@@ -4140,6 +4150,7 @@ function featuredCard({ current, previous }, grid) {
         : kind || String(entry.track.year || "");
       track.setAttribute("aria-label", i18nT("friends.featured.trackAria", { title: entry.track.title, artist: entry.name }));
     }
+    for (const b of prevButtons) b.setAttribute("aria-label", i18nT("friends.featured.previousGo", { name: b.dataset.name }));
   };
   paint();
   return { el: section, paint };
@@ -4232,15 +4243,42 @@ function wireSupportersDialog(languageReady) {
     });
   };
 
+  // As the Donate dialog (donate.js): opening moves focus to the close
+  // button, so Esc reaches the handler below and Tab starts inside the
+  // dialog; closing gives focus back to what opened it. Without this, focus
+  // stayed on the rail button behind the backdrop, and Esc never arrived.
+  // With the Guide on, its own Esc handler takes the first press and turns
+  // the Guide off; the next press closes the dialog, as Donate does.
+  let opener = null;
   const open = () => {
     fillGrid();
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : btn;
     dialog.classList.remove("hidden");
+    close?.focus();
   };
-  const hide = () => dialog.classList.add("hidden");
+  const hide = () => {
+    if (dialog.classList.contains("hidden")) return;
+    dialog.classList.add("hidden");
+    const back = opener?.isConnected && opener.getClientRects().length ? opener : btn;
+    back.focus();
+    opener = null;
+  };
   btn.addEventListener("click", () => languageReady.then(open));
   close?.addEventListener("click", hide);
-  dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) hide(); });
-  dialog.addEventListener("keydown", (e) => { if (e.code === "Escape") hide(); });
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target !== dialog) return;
+    // Kept from moving focus to the page, so it can go back to the opener.
+    e.preventDefault();
+    hide();
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      hide();
+      return;
+    }
+    keepTabInside(dialog, e);
+  });
 }
 
 // Ground truth for "done" <-> "unavailable" is the server (it checks the

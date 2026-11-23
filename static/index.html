@@ -1392,16 +1392,19 @@
         <button class="about-close" id="friendsClose" type="button" aria-label="Close friends dialog" data-i18n-aria-label="friends.closeAria">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
-        <div class="about-logo" aria-hidden="true">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
-          </svg>
+        <!-- Scrolls on its own, so the close button above stays in view. -->
+        <div class="friends-scroll">
+          <div class="about-logo" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+            </svg>
+          </div>
+          <h2 id="friendsTitle" data-i18n="friends.title">We Recommend</h2>
+          <p class="about-tagline friends-intro" data-i18n="friends.tagline">StemDeck is free, and it takes no money, sponsorship or funding from any of the artists and creators listed here. Not now, not ever. These are makers, artists and communities doing beautiful work that deserves to be heard, and the best thing I can give them is recognition.</p>
+          <p class="about-tagline friends-ask"><strong data-i18n="friends.taglineAsk">If something here speaks to you, a follow, a listen or a share means more to them than you might think. Go say hello.</strong></p>
+          <!-- The featured artist card (#1092) is drawn here, above the grid, by catalog.js. -->
+          <div class="lib-friends-grid" id="friendsDialogGrid"></div>
         </div>
-        <h2 id="friendsTitle" data-i18n="friends.title">We Recommend</h2>
-        <p class="about-tagline friends-intro" data-i18n="friends.tagline">StemDeck is free, and it takes no money, sponsorship or funding from any of the artists and creators listed here. Not now, not ever. These are makers, artists and communities doing beautiful work that deserves to be heard, and the best thing I can give them is recognition.</p>
-        <p class="about-tagline friends-ask"><strong data-i18n="friends.taglineAsk">If something here speaks to you, a follow, a listen or a share means more to them than you might think. Go say hello.</strong></p>
-        <!-- The featured artist card (#1092) is drawn here, above the grid, by catalog.js. -->
-        <div class="lib-friends-grid" id="friendsDialogGrid"></div>
       </div>
     </div>
 

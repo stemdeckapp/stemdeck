@@ -24,6 +24,7 @@
 
 import { DONATE_LINKS, DONATE_LINK_TEMPLATES, DONATE_QR, SOCIAL_LINKS, donateHref, isConfigured, socialHref } from "./donateLinks.js";
 import { t, onLanguageChange } from "./i18n.js";
+import { keepTabInside } from "./dialogFocus.js";
 
 export const REPO_URL = "https://github.com/stemdeckapp/stemdeck";
 export const AMOUNT_MIN = 2;
@@ -147,12 +148,6 @@ export function readAmount(raw, commit = false) {
 }
 
 const HINT_KEYS = { digits: "donate.hintDigits", min: "donate.hintMin", max: "donate.hintMax" };
-
-function focusables(root) {
-  return [...root.querySelectorAll("button, [href], input, select, textarea, [tabindex]")].filter(
-    (el) => el.tabIndex >= 0 && !el.disabled && !el.hidden && el.getClientRects().length > 0,
-  );
-}
 
 export function wireDonateDialog() {
   const btn = document.getElementById("donateBtn");
@@ -323,17 +318,6 @@ export function wireDonateDialog() {
       hide();
       return;
     }
-    if (e.key !== "Tab") return;
-    const items = focusables(dialog);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
+    keepTabInside(dialog, e);
   });
 }

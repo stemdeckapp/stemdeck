@@ -4383,9 +4383,31 @@ input, textarea { font-family: inherit; }
 .friends-card { width: min(1020px, calc(100vw - 32px)); }
 .friends-card .lib-friends-grid { width: 100%; margin-top: 4px; }
 /* With the featured artist above the grid (#1092), the grid scrolling on its
-   own would leave it a sliver on a normal window. The whole dialog scrolls
-   instead, once it is taller than the window, and the grid takes its height. */
-.friends-card { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+   own would leave it a sliver on a normal window. Everything under the close
+   button scrolls instead, once it is taller than the window, and the grid
+   takes its height. The card itself does not scroll, so the close button,
+   positioned on the card, stays in view. The padding moves to the scroller so
+   its scroll bar sits at the card's edge. */
+.friends-card {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+}
+.friends-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 28px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Over the scrolled content, so it needs a face of its own. */
+.friends-card .about-close { z-index: 1; background: var(--panel-2); }
+.friends-card .about-close:hover { background: var(--panel-3); }
 .friends-card .lib-friends-grid { max-height: none; overflow: visible; flex: 0 0 auto; }
 .friends-card .friends-intro { max-width: 720px; margin-bottom: 6px; }
 .friends-card .friends-ask { max-width: 720px; color: var(--fg-2); }
@@ -4415,6 +4437,12 @@ input, textarea { font-family: inherit; }
   border: 1px solid var(--accent);
   -webkit-user-drag: none;
   user-select: none;
+}
+/* A wordmark, not a photo: shown whole on a padded panel, never cropped. */
+.featured-photo.featured-photo-logo {
+  object-fit: contain;
+  padding: 18%;
+  background: var(--panel-3);
 }
 .featured-body { display: flex; flex-direction: column; min-width: 0; }
 /* No photo (or it failed to load): the text takes the whole width. */
@@ -4526,10 +4554,12 @@ input, textarea { font-family: inherit; }
 }
 .featured-links { display: flex; flex-wrap: wrap; gap: 6px; }
 /* The grid's pills, a size up: these are the card's main links. */
-.featured-pill { padding: 4px 11px; font-size: 11px; }
-.featured-pill .lib-friend-link,
-.featured-pill .lib-friend-ig { width: 12px; height: 12px; }
-.featured-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* One class deeper than the .lib-friend-pill rules further down, which
+   would otherwise win on order. */
+.featured-links .featured-pill { padding: 4px 11px; font-size: 11px; }
+.featured-links .featured-pill .lib-friend-link,
+.featured-links .featured-pill .lib-friend-ig { width: 12px; height: 12px; }
+.featured-links .featured-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .featured-prev { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .featured-prev-label {
   font-family: var(--font-mono);
@@ -4560,6 +4590,8 @@ input, textarea { font-family: inherit; }
 .featured-prev-btn:hover { border-color: var(--accent); }
 .featured-prev-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .featured-prev-btn img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+/* A wordmark in the small circle: whole, inset from the round edge. */
+.featured-prev-btn img.featured-prev-logo { object-fit: contain; padding: 4px; }
 /* A grid card reached from a "Previously featured" avatar. */
 .lib-friend:focus-visible,
 .lib-friend.lib-friend-located { outline: 2px solid var(--accent); outline-offset: 2px; }

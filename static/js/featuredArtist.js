@@ -64,6 +64,42 @@ export function groupsWithout(groups, name) {
     .filter((group) => group.members.length > 0);
 }
 
+/**
+ * How a member's image is drawn, as the grid does (friendCard in catalog.js):
+ * "photo" for a square profile photo (`avatar: true`), cropped to fill;
+ * "logo" for a wordmark, shown whole on a padded panel, since cropping would
+ * cut the lettering; "none" when there is no image, which draws an initial.
+ */
+export function imageShape(member) {
+  if (!member?.logo) return "none";
+  return member.avatar ? "photo" : "logo";
+}
+
+/** The first letter of a name, for a slot with no image. */
+export function initialOf(name) {
+  return String(name ?? "").trim().charAt(0).toUpperCase() || "?";
+}
+
+/**
+ * What the "Previously featured" row draws: one face per artist, in the order
+ * pickFeatured gave them, with the image, how to draw it, and the letter to
+ * fall back on.
+ */
+export function previousFaces(previous) {
+  return (previous || []).map(({ entry, member }) => ({
+    name: entry.name,
+    image: member.logo || "",
+    shape: imageShape(member),
+    initial: initialOf(entry.name),
+  }));
+}
+
+/** The grid card whose `data-friend` is `name`, or null. */
+export function findFriendCard(cards, name) {
+  for (const card of cards || []) if (card?.dataset?.friend === name) return card;
+  return null;
+}
+
 /** "2026-11" as { year: 2026, month: 11 }, or null when it is not a month. */
 export function parseMonth(month) {
   const m = /^(\d{4})-(\d{2})$/.exec(String(month ?? ""));

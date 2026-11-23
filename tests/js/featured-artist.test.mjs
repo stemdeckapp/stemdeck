@@ -1,5 +1,11 @@
 // The featured artist at the top of We Recommend (static/js/featuredArtist.js, #1092):
-// which entry is current, who came before, what the grid leaves out, and the month.
+// which entry is current, who came before, what the grid leaves out, the month,
+// how an image is drawn, and the "Previously featured" row.
+//
+// The row only draws with two entries or more, and FEATURED_ARTISTS has one, so
+// no browser test can reach it without changing the data. What the row draws
+// (previousFaces) and which grid card an avatar goes to (findFriendCard) are
+// therefore tested here; featured-artist.spec.mjs checks the row is absent.
 //
 // Run:  node tests/js/featured-artist.test.mjs
 
@@ -10,6 +16,10 @@ import {
   groupsWithout,
   parseMonth,
   formatFeaturedMonth,
+  imageShape,
+  initialOf,
+  previousFaces,
+  findFriendCard,
 } from "../../static/js/featuredArtist.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 
@@ -116,11 +126,49 @@ check("January stays January in UTC", formatFeaturedMonth("2027-01", "en") === "
 check("Spanish names the month in Spanish", /noviembre/.test(formatFeaturedMonth("2026-11", "es")), formatFeaturedMonth("2026-11", "es"));
 check("an invalid month formats as nothing", formatFeaturedMonth("soon", "en") === "");
 
+// ── imageShape: a photo is cropped, a wordmark is shown whole ──
+check("a profile photo is a photo", imageShape({ logo: "/a.jpg", avatar: true }) === "photo");
+check("an image without avatar is a wordmark", imageShape({ logo: "/w.png" }) === "logo");
+check("no image is none", imageShape({ name: "X" }) === "none");
+check("no member is none", imageShape(undefined) === "none");
+
+// ── initialOf ──
+check("the initial is the first letter, upper case", initialOf("  dead roses") === "D");
+check("no name is a question mark", initialOf("") === "?" && initialOf(undefined) === "?");
+
+// ── previousFaces: what the "Previously featured" row draws ──
+{
+  const groups = [{ members: [
+    { name: "Ana", logo: "/a.jpg", avatar: true },
+    { name: "Bea", logo: "/b.png" },
+    { name: "Cid" },
+    { name: "Dan", logo: "/d.jpg", avatar: true },
+  ] }];
+  const list = [entry("Ana", "2026-09"), entry("Bea", "2026-10"), entry("Cid", "2026-11"), entry("Dan", "2026-12")];
+  const faces = previousFaces(pickFeatured(list, groups).previous);
+  check("one face per earlier artist, most recent first", same(faces.map((f) => f.name), ["Cid", "Bea", "Ana"]));
+  check("a photo face is cropped", same(faces[2], { name: "Ana", image: "/a.jpg", shape: "photo", initial: "A" }));
+  check("a wordmark face is shown whole", faces[1].shape === "logo" && faces[1].image === "/b.png");
+  check("a face with no image draws its initial", faces[0].shape === "none" && faces[0].image === "" && faces[0].initial === "C");
+  check("no earlier artist draws no face", same(previousFaces(pickFeatured([entry("Ana")], groups).previous), []));
+  check("nothing draws nothing", same(previousFaces(undefined), []));
+}
+
+// ── findFriendCard: where an avatar goes ──
+{
+  const card = (name) => ({ dataset: { friend: name } });
+  const cards = [card("Ana"), card("Bea"), {}, card("Cid")];
+  check("the card named by data-friend is found", findFriendCard(cards, "Bea") === cards[1]);
+  check("a name with no card is null", findFriendCard(cards, "Zed") === null);
+  check("no cards is null", findFriendCard(undefined, "Ana") === null);
+}
+
 // ── The strings the card reads ──
 const KEYS = [
   "friends.taglineAsk", "friends.featured.label", "friends.featured.labelMonth", "friends.featured.startHere",
   "friends.featured.kind.single", "friends.featured.release", "friends.featured.listen",
-  "friends.featured.trackAria", "friends.featured.previous", "friends.featured.quote.adriannaClaro",
+  "friends.featured.trackAria", "friends.featured.previous", "friends.featured.previousGo",
+  "friends.featured.quote.adriannaClaro",
 ];
 for (const [lang, table] of Object.entries(TRANSLATIONS)) {
   if (lang === "pt-PT") continue; // a variant: resolves through pt
@@ -129,10 +177,17 @@ for (const [lang, table] of Object.entries(TRANSLATIONS)) {
   check(`${lang} label keeps its {month}`, table["friends.featured.labelMonth"]?.includes("{month}"));
   check(`${lang} track name keeps {title} and {artist}`,
     table["friends.featured.trackAria"]?.includes("{title}") && table["friends.featured.trackAria"]?.includes("{artist}"));
+  check(`${lang} avatar name keeps its {name}`, table["friends.featured.previousGo"]?.includes("{name}"));
 }
+// The design has no monthly cadence: the card stays until the next entry.
+const monthly = /del mes|of the month|du mois|do mês|des Monats/i;
+const promises = Object.values(TRANSLATIONS).flatMap((table) =>
+  ["friends.featured.label", "friends.featured.labelMonth", "friends.featured.previous", "help.featuredPrevious", "help.recommend"]
+    .filter((k) => monthly.test(table[k] || "")).map((k) => `${k}: ${table[k]}`));
+check("no label promises a featured artist every month", promises.length === 0, promises.join(" | "));
 const allText = Object.values(TRANSLATIONS)
   .flatMap((table) => Object.entries(table))
-  .filter(([k]) => k.startsWith("friends.") || k.startsWith("help.featured") || k === "help.recommend")
+  .filter(([k]) => k.startsWith("friends.") || k.startsWith("help.featured") || k.startsWith("help.friend") || k === "help.recommend")
   .map(([, v]) => v)
   .join("\n");
 check("no em dash in the We Recommend strings", !allText.includes(String.fromCharCode(0x2014)));
