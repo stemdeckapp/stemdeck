@@ -27,7 +27,9 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
-import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
+import { FEATURED_ARTISTS, findFriendCard, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
+import { keepTabInside } from "./dialogFocus.js";
+import { t as i18nT, hasKey as i18nHasKey, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
 function esc(s) {
@@ -57,6 +59,9 @@ const DELETED_JOBS_KEY = "stemdeck.deleted_jobs";
 //
 // Links open externally via the document-level a[target="_blank"] handler in
 // main.js (click plus auxclick; Tauri open_url on desktop).
+//
+// The featured artist shown above the grid is chosen in featuredArtist.js
+// (FEATURED_ARTISTS), by the name of one of these members.
 const FRIEND_GROUPS = [
   {
     labelKey: "friends.cat.artists",
@@ -3852,6 +3857,8 @@ function friendCard(f) {
   const a = multi ? document.createElement("div") : friendLink(f.url);
   a.className = multi ? "lib-friend lib-friend-multi" : "lib-friend";
   a.title = f.name;
+  // How a "Previously featured" avatar finds this card (locateFriend).
+  a.dataset.friend = f.name;
 
   // A monogram badge (first initial) keeps the card on-brand when an entry has
   // no image, or when its image fails to load (e.g. before the asset is added).
@@ -3913,6 +3920,213 @@ function friendCard(f) {
   return a;
 }
 
+// Stroked 24x24 glyphs for the featured card (Feather icons): a music note on
+// the track button, since nothing plays in the app and a play triangle would
+// say it does, and the arrow that marks a link leaving the app.
+const MUSIC_ICON = { paths: ["M9 18V5l12-2v13"], circles: [[6, 18, 3], [18, 16, 3]] };
+const EXTERNAL_ICON = { paths: ["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", "M15 3h6v6", "M10 14 21 3"], circles: [] };
+const STAR_ICON_PATH = "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z";
+
+function strokeIcon(cls, { paths, circles }) {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of paths) {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  }
+  for (const [cx, cy, r] of circles) {
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("cx", String(cx));
+    c.setAttribute("cy", String(cy));
+    c.setAttribute("r", String(r));
+    svg.appendChild(c);
+  }
+  return svg;
+}
+
+function starIcon() {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "featured-star");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(SVGNS, "path");
+  p.setAttribute("d", STAR_ICON_PATH);
+  svg.appendChild(p);
+  return svg;
+}
+
+/** A span carrying an i18n key, so a language switch re-resolves it. */
+function i18nSpan(cls, key, tag = "span") {
+  const el = document.createElement(tag);
+  el.className = cls;
+  el.setAttribute("data-i18n", key);
+  el.textContent = i18nT(key);
+  return el;
+}
+
+/** Scroll to the partner card of `name` in the grid and give it focus. */
+function locateFriend(grid, name) {
+  const card = findFriendCard(grid.querySelectorAll(".lib-friend"), name);
+  if (!card) return;
+  // A card with several links is a plain div: focusable only from script.
+  if (card.tagName !== "A") card.tabIndex = -1;
+  card.classList.add("lib-friend-located");
+  card.addEventListener("blur", () => card.classList.remove("lib-friend-located"), { once: true });
+  card.scrollIntoView({ block: "nearest" });
+  card.focus({ preventScroll: true });
+}
+
+/**
+ * The featured artist card (#1092) above the partner grid: photo, the
+ * "Featured artist" label, name, role, the maintainer's quote, one track to
+ * start with, the artist's links, and the artists featured before. `paint` sets the text built from
+ * templates, which data-i18n cannot re-resolve on a language switch.
+ */
+function featuredCard({ current, previous }, grid) {
+  const { entry, member } = current;
+  const section = document.createElement("section");
+  section.className = "featured-artist";
+  section.setAttribute("aria-labelledby", "featuredName");
+
+  // A profile photo fills the square; a wordmark is shown whole on a padded
+  // panel, as the grid letterboxes it, so its lettering is never cropped.
+  const shape = imageShape(member);
+  const photo = document.createElement("img");
+  photo.className = shape === "logo" ? "featured-photo featured-photo-logo" : "featured-photo";
+  if (member.logo) photo.src = member.logo;
+  // The heading next to it names the artist; the photo adds no words.
+  photo.alt = "";
+  // No photo, or one that fails to load: the text takes the whole width.
+  const noPhoto = () => {
+    photo.remove();
+    section.classList.add("featured-no-photo");
+  };
+  photo.addEventListener("error", noPhoto);
+  if (shape === "none") noPhoto();
+  else section.appendChild(photo);
+
+  const body = document.createElement("div");
+  body.className = "featured-body";
+
+  const label = document.createElement("p");
+  label.className = "featured-label";
+  label.append(starIcon(), i18nSpan("", "friends.featured.label"));
+
+  const name = document.createElement("h3");
+  name.className = "featured-name";
+  name.id = "featuredName";
+  name.textContent = entry.name;
+
+  body.append(label, name);
+  if (member.roleKey) body.appendChild(i18nSpan("featured-role", member.roleKey, "p"));
+
+  // Optional, as the track is: an entry with no quote, or a key no table has
+  // yet, draws no quote block rather than an empty one or the raw key.
+  if (entry.quoteKey && i18nHasKey(entry.quoteKey)) {
+    const quote = document.createElement("blockquote");
+    quote.className = "featured-quote";
+    quote.appendChild(i18nSpan("featured-quote-text", entry.quoteKey, "p"));
+    body.appendChild(quote);
+  }
+
+  let track = null;
+  let trackMeta = null;
+  const prevButtons = [];
+  if (entry.track?.url) {
+    body.appendChild(i18nSpan("featured-start", "friends.featured.startHere", "p"));
+    // The whole row is one link: one place to press, one destination.
+    track = friendLink(entry.track.url);
+    track.className = "featured-track";
+    const btn = document.createElement("span");
+    btn.className = "featured-track-btn";
+    btn.appendChild(strokeIcon("featured-icon", MUSIC_ICON));
+    const text = document.createElement("span");
+    text.className = "featured-track-text";
+    const title = document.createElement("span");
+    title.className = "featured-track-title";
+    title.textContent = entry.track.title;
+    trackMeta = document.createElement("span");
+    trackMeta.className = "featured-track-meta";
+    text.append(title, trackMeta);
+    const listen = document.createElement("span");
+    listen.className = "featured-track-listen";
+    listen.append(i18nSpan("", "friends.featured.listen"), strokeIcon("featured-icon", EXTERNAL_ICON));
+    track.append(btn, text, listen);
+    body.appendChild(track);
+  }
+
+  const foot = document.createElement("div");
+  foot.className = "featured-foot";
+  const links = entry.links || [];
+  if (links.length) {
+    const row = document.createElement("div");
+    row.className = "featured-links";
+    for (const link of links) {
+      const l = friendLink(link.url);
+      l.className = "lib-friend-pill featured-pill";
+      l.title = `${entry.name}: ${link.label}`;
+      l.append(friendGlyph(link.url), link.label);
+      row.appendChild(l);
+    }
+    foot.appendChild(row);
+  }
+  // Absent, not empty, while no one has been featured before.
+  if (previous.length) {
+    // A group named by its label, so a screen reader says "Previously
+    // featured" before the names.
+    const prev = document.createElement("div");
+    prev.className = "featured-prev";
+    prev.setAttribute("role", "group");
+    prev.setAttribute("aria-labelledby", "featuredPrevLabel");
+    const prevLabel = i18nSpan("featured-prev-label", "friends.featured.previous");
+    prevLabel.id = "featuredPrevLabel";
+    prev.appendChild(prevLabel);
+    const faces = document.createElement("div");
+    faces.className = "featured-prev-faces";
+    for (const face of previousFaces(previous)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "featured-prev-btn";
+      // The tooltip is the name; the accessible name says where it goes.
+      b.title = face.name;
+      b.dataset.name = face.name;
+      if (face.shape === "none") {
+        b.textContent = face.initial;
+      } else {
+        const img = document.createElement("img");
+        img.src = face.image;
+        img.alt = "";
+        if (face.shape === "logo") img.className = "featured-prev-logo";
+        img.addEventListener("error", () => img.replaceWith(face.initial));
+        b.appendChild(img);
+      }
+      b.addEventListener("click", () => locateFriend(grid, face.name));
+      prevButtons.push(b);
+      faces.appendChild(b);
+    }
+    prev.appendChild(faces);
+    foot.appendChild(prev);
+  }
+  if (foot.childElementCount) body.appendChild(foot);
+  section.appendChild(body);
+
+  const paint = () => {
+    if (track) {
+      const kind = entry.track.kindKey ? i18nT(entry.track.kindKey) : "";
+      trackMeta.textContent = kind && entry.track.year
+        ? i18nT("friends.featured.release", { kind, year: entry.track.year })
+        : kind || String(entry.track.year || "");
+      track.setAttribute("aria-label", i18nT("friends.featured.trackAria", { title: entry.track.title, artist: entry.name }));
+    }
+    for (const b of prevButtons) b.setAttribute("aria-label", i18nT("friends.featured.previousGo", { name: b.dataset.name }));
+  };
+  paint();
+  return { el: section, paint };
+}
+
 // Supporters dialog: a TV rail button opens a centered modal (like About) with
 // the partner cards, grouped by category. Links open externally via the
 // document-level a[target="_blank"] handler in main.js (Tauri open_url on
@@ -3930,6 +4144,17 @@ function wireSupportersDialog(languageReady) {
   const fillGrid = () => {
     if (!grid || grid.dataset.ready === "1") return;
     grid.dataset.ready = "1";
+
+    // The featured artist goes above the grid and out of it, so no one is
+    // shown twice. With no entry there is no card, and the grid is whole.
+    const pick = pickFeatured(FEATURED_ARTISTS, FRIEND_GROUPS);
+    if (pick.current) {
+      const card = featuredCard(pick, grid);
+      grid.before(card.el);
+      onLanguageChange(card.paint);
+    }
+    const shown = groupsWithout(FRIEND_GROUPS, pick.current?.entry.name);
+
     // Two columns with a rule between them, rather than one long list. Six
     // sections stacked is taller than the dialog on any normal window, so the
     // whole thing scrolled and half the people on it were never seen.
@@ -3950,7 +4175,7 @@ function wireSupportersDialog(languageReady) {
     // localeCompare so accents and case land where a reader expects them
     // (Dead roses next to Dlima, not after Z).
     const collator = new Intl.Collator(getLanguage(), { sensitivity: "base", numeric: true });
-    const groups = FRIEND_GROUPS.map((group) => ({
+    const groups = shown.map((group) => ({
       ...group,
       label: i18nT(group.labelKey),
       members: [...group.members].sort((a, b) => collator.compare(a.name, b.name)),
@@ -3989,15 +4214,42 @@ function wireSupportersDialog(languageReady) {
     });
   };
 
+  // As the Donate dialog (donate.js): opening moves focus to the close
+  // button, so Esc reaches the handler below and Tab starts inside the
+  // dialog; closing gives focus back to what opened it. Without this, focus
+  // stayed on the rail button behind the backdrop, and Esc never arrived.
+  // With the Guide on, its own Esc handler takes the first press and turns
+  // the Guide off; the next press closes the dialog, as Donate does.
+  let opener = null;
   const open = () => {
     fillGrid();
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : btn;
     dialog.classList.remove("hidden");
+    close?.focus();
   };
-  const hide = () => dialog.classList.add("hidden");
+  const hide = () => {
+    if (dialog.classList.contains("hidden")) return;
+    dialog.classList.add("hidden");
+    const back = opener?.isConnected && opener.getClientRects().length ? opener : btn;
+    back.focus();
+    opener = null;
+  };
   btn.addEventListener("click", () => languageReady.then(open));
   close?.addEventListener("click", hide);
-  dialog.addEventListener("mousedown", (e) => { if (e.target === dialog) hide(); });
-  dialog.addEventListener("keydown", (e) => { if (e.code === "Escape") hide(); });
+  dialog.addEventListener("mousedown", (e) => {
+    if (e.target !== dialog) return;
+    // Kept from moving focus to the page, so it can go back to the opener.
+    e.preventDefault();
+    hide();
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      hide();
+      return;
+    }
+    keepTabInside(dialog, e);
+  });
 }
 
 // Ground truth for "done" <-> "unavailable" is the server (it checks the

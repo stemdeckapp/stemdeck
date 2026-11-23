@@ -273,8 +273,13 @@
     },
     {
       "why": "The Donate button and dialog, and the two links it reads",
-      "paths": ["static/js/donate.js", "static/js/donateLinks.js"],
+      "paths": ["static/js/donate.js", "static/js/donateLinks.js", "static/js/dialogFocus.js"],
       "specs": ["donate", "help-mode"]
+    },
+    {
+      "why": "We Recommend (#1092): the featured artist card above the partner grid, which artist is current and who is left out of the grid, its strings, its Guide entries and its layout",
+      "paths": ["static/js/featuredArtist.js", "static/js/dialogFocus.js", "static/js/catalog.js", "static/js/i18n.js", "static/js/helpMode.js", "static/css/daw.css", "static/img/friends/**"],
+      "specs": ["featured-artist", "we-recommend"]
     },
     {
       "why": "Notifications, failure reports and release cards",
