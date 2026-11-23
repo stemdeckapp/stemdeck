@@ -33,6 +33,10 @@ class SeparationError(RuntimeError):
 # Deliberately coarse: these route a user (or a bug report) to the right
 # next step, they don't diagnose. "unknown" is the honest default.
 _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Online sources turned off in Settings (#1089), in the fixed words of
+    # app/core/online_sources.py. First: it is StemDeck's own sentence and
+    # cannot be mistaken for any other cause.
+    ("online-sources-off", ("online search and link import are off",)),
     (
         "out-of-memory",
         (
@@ -118,9 +122,9 @@ _CAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def classify_failure(text: str) -> str:
-    """Map failure output to one of: out-of-memory, unsupported-device,
-    disk-full, model-download, source-blocked, source-unavailable, bad-input,
-    unknown."""
+    """Map failure output to one of: online-sources-off, out-of-memory,
+    unsupported-device, disk-full, model-download, source-blocked,
+    source-unavailable, bad-input, unknown."""
     low = text.lower()
     for cause, patterns in _CAUSE_PATTERNS:
         if any(p in low for p in patterns):

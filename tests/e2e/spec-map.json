@@ -122,7 +122,12 @@
     {
       "why": "The import form: URL box, search, file drop, playlist import, and the stem choice submitted with it",
       "paths": ["static/js/search.js", "static/js/playlist.js", "static/js/stemChoice.js", "app/api/search.py", "app/api/playlist.py", "app/pipeline/search.py", "app/pipeline/preview.py", "app/_vendor/**"],
-      "specs": ["search", "file-drop", "native-file-drop", "error-box-narrow", "import-background", "job-form-submit", "composer-arming", "boot-failure", "work-info", "artist-from-server", "about-reach"]
+      "specs": ["search", "file-drop", "native-file-drop", "error-box-narrow", "import-background", "job-form-submit", "composer-arming", "boot-failure", "work-info", "artist-from-server", "about-reach", "online-sources"]
+    },
+    {
+      "why": "Online search and link import are opt-in (#1089): the page's copy of the setting, the search box and composer that follow it, the Experimental settings tab, and the phone page's link field",
+      "paths": ["static/js/onlineSources.js", "app/core/online_sources.py", "app/pipeline/download.py", "app/pipeline/errors.py"],
+      "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode"]
     },
     {
       "why": "Versions of a song (#804): the rows under a song in the library, the versions part of the Stems popover, the version-scoped mix and stem records, and the endpoints behind them",
@@ -142,7 +147,7 @@
     {
       "why": "Settings: navigation, every settings pane, and the config endpoint behind them",
       "paths": ["static/js/settingsNav.js", "static/css/settings.css", "app/api/config.py"],
-      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "idle-unload-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle"]
+      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "idle-unload-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle", "online-sources"]
     },
     {
       "why": "The artist and work dialog, and the lookups behind it",
@@ -309,7 +314,7 @@
     {
       "why": "The phone page and the QR code that opens it",
       "paths": ["static/mobile/**", "static/js/shared/**", "app/api/qr.py"],
-      "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order"]
+      "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order", "online-sources"]
     }
   ]
 }

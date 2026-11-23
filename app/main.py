@@ -51,6 +51,11 @@ from app.core.config import (
 from app.core.device_reason import cpu_reason, device_diagnostics, refresh_nvidia_gpu
 from app.core.logging_setup import configure_logging
 from app.core.models import JobBusy
+from app.core.online_sources import (
+    ONLINE_SOURCES_OFF_CODE,
+    ONLINE_SOURCES_OFF_DETAIL,
+    OnlineSourcesOff,
+)
 from app.core.process import process_exists as _process_exists
 from app.core.redact import redact
 from app.core.registry import all_jobs as registry_all_jobs
@@ -78,6 +83,7 @@ from app.core.settings import (
     get_idle_unload_minutes,
     get_jobs_dir,
     get_max_duration_sec,
+    get_online_sources,
     get_playlist_max_items,
     get_port,
     get_separation_quality,
@@ -99,6 +105,7 @@ from app.core.settings import (
     set_idle_unload_minutes,
     set_jobs_dir,
     set_max_duration_sec,
+    set_online_sources,
     set_playlist_max_items,
     set_port,
     set_separation_quality,
@@ -503,6 +510,10 @@ def _settings_payload() -> dict[str, object]:
         # Absent unless the user set one. Only the path is exposed, never the
         # file's contents -- those are the user's YouTube session.
         "cookies_file": get_cookies_file(),
+        # Search and link import through yt-dlp (#1089). Off until the user
+        # turns it on in Settings, Experimental, and off for a settings file
+        # that has no such key.
+        "online_sources": get_online_sources(),
         # Never the key itself: whether one is set, and its last four
         # characters so the field can show which one.
         "acoustid_api_key_set": acoustid_api_key_hint() is not None,
@@ -608,6 +619,12 @@ async def update_settings(request: Request) -> dict[str, object]:
         set_auto_sections(bool(body["auto_sections"]))
     if "auto_lyrics" in body:
         set_auto_lyrics(bool(body["auto_lyrics"]))
+    if "online_sources" in body:
+        # Only a JSON true or false: bool("false") is True, and a string must
+        # never be what turns online sources on.
+        if not isinstance(body["online_sources"], bool):
+            raise HTTPException(status_code=422, detail="online_sources must be true or false")
+        set_online_sources(body["online_sources"])
     if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
         # Refused rather than clamped: true would be stored as 1 minute and -1
         # as 0, which turns the unload off, so a typo must not change it.
@@ -1275,6 +1292,17 @@ async def refuse_while_busy(_request: Request, _exc: JobBusy) -> JSONResponse:
             "code": "job_busy",
         },
         status_code=409,
+    )
+
+
+# Search, a preview, a link import, a playlist or any other request that would
+# start yt-dlp while online sources are off (#1089). Its own code, which the UI
+# translates and answers with a pointer to Settings, Experimental.
+@app.exception_handler(OnlineSourcesOff)
+async def refuse_online_sources_off(_request: Request, _exc: OnlineSourcesOff) -> JSONResponse:
+    return JSONResponse(
+        {"detail": ONLINE_SOURCES_OFF_DETAIL, "code": ONLINE_SOURCES_OFF_CODE},
+        status_code=403,
     )
 
 

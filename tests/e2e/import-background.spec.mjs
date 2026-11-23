@@ -8,6 +8,7 @@
 import { test, expect } from "@playwright/test";
 
 import {
+  allowOnlineSources,
   JOB_ID,
   SIBLING_JOB_ID,
   TRACK_TITLE,
@@ -41,6 +42,7 @@ async function startImport(page) {
   const queue = await stubImportQueue(page, JOB_ID, "Importing Song");
   await stubExportEndpoints(page);
   await stubUpdateCheck(page);
+  await allowOnlineSources(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator(".cat-item").first().waitFor({ timeout: 20000 });
   await page.locator("#url").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ");

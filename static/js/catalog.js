@@ -27,6 +27,7 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
+import { onlineSourcesFrom, setOnlineSourcesState } from "./onlineSources.js";
 import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -4697,6 +4698,78 @@ function wireDiscogsSetting(overlay) {
 }
 
 // General settings: max track length (minutes), playlist import limit, and
+// Settings, Experimental: Online search and link import (#1089).
+//
+// Off until the user ticks "I have read this and I accept it" and then turns
+// the switch on. The server owns the setting and refuses every yt-dlp request
+// while it is off, so the switch shows the server's answer, never a hope. The
+// acceptance is not kept on its own: turning the switch off clears the tick,
+// and turning it on again needs a new one. The switch stays reachable while
+// the box is clear, so a keyboard or screen reader user who tries it hears why
+// it did not turn on and lands on the box. Turning it off asks nothing.
+async function wireOnlineSources(overlay) {
+  const sw = overlay.querySelector(".online-sources-input");
+  const accept = overlay.querySelector(".online-sources-accept-input");
+  const msg = overlay.querySelector(".online-sources-msg");
+  if (!sw || !accept) return;
+
+  const say = (key, isError = false) => {
+    if (!msg) return;
+    msg.textContent = key ? i18nT(key) : "";
+    msg.classList.toggle("error", Boolean(isError));
+  };
+  const paint = (on) => {
+    sw.checked = on;
+    // Accepted for as long as it is on: the tick cannot be taken back while
+    // the switch relies on it. Off, the box is the user's to tick.
+    if (on) accept.checked = true;
+    accept.disabled = on;
+    say(on || accept.checked ? null : "settings.onlineSources.acceptFirst");
+  };
+  paint(false);
+
+  accept.addEventListener("change", () => paint(sw.checked));
+  sw.addEventListener("change", async () => {
+    const want = sw.checked;
+    if (want && !accept.checked) {
+      sw.checked = false;
+      say("settings.onlineSources.acceptFirst", true);
+      accept.focus();
+      return;
+    }
+    sw.disabled = true;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ online_sources: want }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const on = onlineSourcesFrom(await r.json());
+      if (!on) accept.checked = false;
+      paint(on);
+      setOnlineSourcesState(on);
+    } catch (e) {
+      console.warn("[online sources] could not save the setting:", e);
+      // Not saved: show what is still in force, and say so.
+      sw.checked = !want;
+      say("settings.onlineSources.saveFailed", true);
+    } finally {
+      sw.disabled = false;
+    }
+  });
+
+  try {
+    const r = await fetch("/api/settings", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    const on = onlineSourcesFrom(await r.json());
+    paint(on);
+    setOnlineSourcesState(on);
+  } catch (e) {
+    console.warn("[online sources] could not read the setting:", e);
+  }
+}
+
 // MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
 async function wireGeneralSettings(overlay) {
@@ -5513,6 +5586,7 @@ const SETTINGS_ICON = {
   export: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>',
   recording: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>',
   network: '<path d="M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>',
+  experimental: '<path d="M9 3h6M10 3v6.5L4.6 18.4A1.7 1.7 0 0 0 6.1 21h11.8a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3"/><path d="M7.2 15h9.6"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/>',
   registry: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
 };
@@ -5523,6 +5597,7 @@ const SETTINGS_SECTIONS = [
   { id: "export", label: "settings.tab.export", text: "Export", desc: "settings.desc.export" },
   { id: "recording", label: "settings.tab.recording", text: "Recording", desc: "settings.desc.recording" },
   { id: "network", label: "settings.tab.network", text: "Network", desc: "settings.desc.network" },
+  { id: "experimental", label: "settings.tab.experimental", text: "Experimental", desc: "settings.desc.experimental" },
   { id: "logs", label: "settings.tab.logs", text: "Logs", desc: "settings.desc.logs", group: "troubleshooting" },
   { id: "registry", label: "settings.tab.registry", text: "Registry", desc: "settings.desc.registry", group: "troubleshooting" },
 ];
@@ -5676,14 +5751,6 @@ function openLibraryEditor() {
                 <div class="settings-row-desc" data-i18n="settings.playlistLimit.desc">Most tracks one playlist import will queue (max 200).</div>
               </div>
               ${unitField('<input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" data-i18n-aria-label="settings.playlistLimit.title" />', "settings.unit.tracks", "tracks")}
-            </div>
-            <div class="settings-row settings-row-stack">
-              <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.cookies.title">YouTube cookies</div>
-                <div class="settings-row-desc" data-i18n="settings.cookies.desc">Optional. A cookies.txt file in the StemDeck data folder, used only when YouTube asks StemDeck to confirm it is not a bot. Leave this empty unless imports are failing.</div>
-              </div>
-              <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
-              <div class="cookies-file-msg" role="status" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -5923,6 +5990,46 @@ function openLibraryEditor() {
           </div>
         </div>
       </div>
+      <!-- Online sources (#1089). The responsibility text is always on show,
+           not only at the moment of turning them on, and the box under it is
+           ticked before the switch can turn on (wireOnlineSources). YouTube
+           cookies sit here because they only matter while the switch is on. -->
+      <div class="settings-pane hidden" data-pane="experimental" id="settings-pane-experimental" role="tabpanel" aria-labelledby="settings-tab-experimental">
+        <div class="settings-group">
+          <h4 class="settings-group-title" data-i18n="settings.group.onlineSources">Online sources</h4>
+          <div class="settings-section">
+            <div class="settings-row settings-row-stack online-sources-terms">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.onlineSources.termsTitle">Your responsibility</div>
+                <p class="settings-row-desc online-sources-disclaimer" id="onlineSourcesDisclaimer" data-i18n="settings.onlineSources.disclaimer">You alone are responsible for what you search for and download, and for following the terms of each service and copyright law. StemDeck only provides a connection to the open source tool yt-dlp and has no responsibility for how it is used.</p>
+              </div>
+              <label class="online-sources-accept">
+                <input type="checkbox" class="online-sources-accept-input" aria-describedby="onlineSourcesDisclaimer" />
+                <span data-i18n="settings.onlineSources.accept">I have read this and I accept it</span>
+              </label>
+            </div>
+            <div class="settings-row online-sources-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.onlineSources.title">Online search and link import</div>
+                <div class="settings-row-desc" data-i18n="settings.onlineSources.desc">Off by default. When on, the box at the top searches YouTube and SoundCloud, and a link from either one is imported through yt-dlp. Files you upload work either way.</div>
+              </div>
+              <label class="settings-switch">
+                <input type="checkbox" role="switch" class="online-sources-input" aria-label="Online search and link import" data-i18n-aria-label="settings.onlineSources.title" aria-describedby="onlineSourcesMsg" />
+                <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+              </label>
+            </div>
+            <div class="online-sources-msg" id="onlineSourcesMsg" role="status" aria-live="polite"></div>
+            <div class="settings-row settings-row-stack">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.cookies.title">YouTube cookies</div>
+                <div class="settings-row-desc" data-i18n="settings.cookies.desc">Optional. A cookies.txt file in the StemDeck data folder, used only when YouTube asks StemDeck to confirm it is not a bot. Leave this empty unless imports are failing.</div>
+              </div>
+              <input type="text" class="settings-text-input set-cookies-file" spellcheck="false" autocomplete="off" placeholder="Path to cookies.txt" data-i18n-placeholder="settings.cookies.placeholder" aria-label="YouTube cookies" data-i18n-aria-label="settings.cookies.title" />
+              <div class="cookies-file-msg" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="settings-pane hidden" data-pane="logs" id="settings-pane-logs" role="tabpanel" aria-labelledby="settings-tab-logs">
         <div class="settings-section">
           <div class="settings-row">
@@ -6094,6 +6201,7 @@ function openLibraryEditor() {
   const isDesktop = Boolean(window.__TAURI__?.core?.invoke);
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
+  wireOnlineSources(overlay);
   wireVideoEncoderSetting(overlay, showError);
   wireAcoustidSetting(overlay);
   wireDiscogsSetting(overlay);

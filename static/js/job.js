@@ -21,6 +21,7 @@ import { t } from "./i18n.js";
 import { formatKey } from "./keyLabel.js";
 import { JOB_BUSY, errorReason, importFailure, responseErrorMessage } from "./errorReason.js";
 import { isReimportableSource } from "./utils.js";
+import { isOnlineSourcesRefusal, setOnlineSourcesState } from "./onlineSources.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -361,6 +362,17 @@ window.addEventListener(
 // `action` ({ label, run, className }) is that button for anything else: it closes the
 // box and calls `run`, as the Lead + Backing notice does to split again (#832).
 // The close button is always there, so no failure can leave the box stuck open.
+/**
+ * A link import, a playlist or a restore the server refused because online
+ * sources are off (#1089): the page's copy of the setting follows the server,
+ * and the box says where to turn them on. No Try again: the same request would
+ * be refused the same way until the setting changes.
+ */
+export function showOnlineSourcesOff() {
+  setOnlineSourcesState(false);
+  showError(t("onlineSources.off"), null, { retry: false });
+}
+
 export function showError(message, detail, { retry = true, action = null } = {}) {
   delete errorEl.dataset.kind; // see showPlaybackError
   errorEl.textContent = "";
@@ -905,6 +917,12 @@ export async function importFromUrl(url, { title, stems, vocalSplit = false, onR
     });
     // A body that is not JSON (a proxy's error page) must not hide the status.
     const data = await res.json().catch(() => null);
+    if (isOnlineSourcesRefusal(data)) {
+      showOnlineSourcesOff();
+      onRefused?.(t("onlineSources.off"));
+      setSubmitProcessing(false);
+      return null;
+    }
     if (!res.ok) throw new Error(responseErrorMessage(res, data));
     jobId = data?.job_id;
     // An ok answer without an id has no reason to give: the toast says so.
@@ -1104,6 +1122,11 @@ export function wireJobForm() {
     try {
       const res = await fetch(endpoint, fetchInit);
       const data = await res.json().catch(() => null);
+      if (isOnlineSourcesRefusal(data)) {
+        showOnlineSourcesOff();
+        setSubmitProcessing(false);
+        return;
+      }
       if (!res.ok) throw new Error(responseErrorMessage(res, data));
       jobId = data?.job_id;
       if (!jobId) throw new Error("");

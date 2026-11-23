@@ -15,11 +15,12 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import JOBS_DIR, MAX_PENDING_URL_JOBS, STEM_NAMES
 from app.core.models import Job
+from app.core.online_sources import OnlineSourcesOff, require_online_sources
 from app.core.registry import pending_count as registry_pending_count
 from app.core.registry import persist as registry_persist
 from app.core.registry import register_if_capacity as registry_register_if_capacity
@@ -34,7 +35,9 @@ from app.pipeline.download import InvalidPlaylistURL, expand_playlist
 
 logger = logging.getLogger("stemdeck.api")
 
-router = APIRouter(tags=["playlist"])
+# Every playlist route expands a YouTube or SoundCloud link with yt-dlp, so
+# the whole router refuses while online sources are off (#1089).
+router = APIRouter(tags=["playlist"], dependencies=[Depends(require_online_sources)])
 
 
 class PlaylistRequest(BaseModel):
@@ -57,6 +60,9 @@ async def _expand(url: str) -> dict[str, Any]:
         return await asyncio.to_thread(expand_playlist, url, get_playlist_max_items())
     except InvalidPlaylistURL as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    except OnlineSourcesOff:
+        # Turned off while the expansion waited: the same 403 as at the door.
+        raise
     except Exception as e:
         logger.exception("playlist expansion failed")
         raise HTTPException(status_code=502, detail="Could not read that playlist") from e

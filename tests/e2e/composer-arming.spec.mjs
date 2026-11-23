@@ -16,7 +16,7 @@
 // rewriting syncWithServer's own payload to fight the fixture's local source,
 // which tests the stub more than it tests the app.
 import { expect, test } from "@playwright/test";
-import { openStudio, JOB_ID, TRACK_TITLE, resetVersions } from "./helpers.mjs";
+import { allowOnlineSources, openStudio, JOB_ID, TRACK_TITLE, resetVersions } from "./helpers.mjs";
 
 const YOUTUBE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 
@@ -87,6 +87,7 @@ test.describe("composer arming", () => {
   test("a typed URL still wins over the open upload", async ({ page }) => {
     // The composer is not disabled while such a track is open: putting a link
     // in it is a new import, not a re-split of what happens to be loaded.
+    await allowOnlineSources(page);
     await openStudio(page);
 
     const hits = [];
@@ -111,6 +112,7 @@ test.describe("composer arming", () => {
     // setSubmitProcessing restored a label the markup never used, so the first
     // submit of a session renamed the button to "Process" for good -- on a
     // successful import as much as on a failed one.
+    await allowOnlineSources(page);
     await openStudio(page);
     const label = page.locator("#submit span");
     const before = await label.textContent();

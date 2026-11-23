@@ -317,6 +317,21 @@
 .acoustid-key-msg.error, .discogs-token-msg.error, .idle-unload-msg.error { color: var(--danger); }
 .stems-location-msg.ok { color: var(--accent); }
 
+/* Settings, Experimental (#1089): the responsibility text is always shown,
+   and the box under it is ticked before Online search and link import can
+   turn on. */
+.online-sources-disclaimer { margin: 6px 0 0; color: var(--fg-2); }
+.online-sources-accept {
+  display: inline-flex; align-items: center; gap: 10px; margin-top: 14px;
+  font-size: 13.5px; color: var(--fg); cursor: pointer;
+}
+.online-sources-accept input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.online-sources-accept:has(input:disabled) { cursor: default; opacity: 0.75; }
+.online-sources-accept:has(input:disabled) input { cursor: default; }
+.online-sources-msg { padding: 0 0 18px; margin-top: -8px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.online-sources-msg:empty { display: none; }
+.online-sources-msg.error { color: var(--danger); }
+
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
 .library-editor-sync:disabled { opacity: 0.55; cursor: default; }
 /* A list that can run long scrolls in its own box, header pinned. */

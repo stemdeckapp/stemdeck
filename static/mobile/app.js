@@ -9,6 +9,10 @@ import { createChunkedAudioEngine } from "../js/chunkedAudioEngine.js";
 import { hasCompressedStems } from "../js/playbackStems.js";
 import { PITCH_MAX, PITCH_MIN, clampPitch } from "../js/pitchBus.js";
 import { createPlaybackContext } from "../js/audioContext.js";
+// The strings this page added for online sources (#1089) go through the
+// shared tables; the rest of the page is still English-only.
+import { getLanguage, initI18n, t } from "../js/i18n.js";
+import { isOnlineSourcesRefusal, onOnlineSourcesChange, onlineSourcesOn, refreshOnlineSources, setOnlineSourcesState } from "../js/onlineSources.js";
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
 const STEM_META = {
@@ -617,11 +621,17 @@ function extractProgressCard() {
 
 function extractScreen() {
   const fileName = state.extractFile?.name;
+  // Online sources off (#1089): no link field offering an import the server
+  // would refuse, and one line that says where they are turned on.
+  const linkPart = onlineSourcesOn()
+    ? `<div class="sub">Paste a link or upload audio to split into stems.</div>
+      <div class="paste">${ICON.link}<input id="ext-url" class="ext-input" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste YouTube or audio URL" value="${esc(state.extractUrl || "")}"></div>`
+    : `<div class="sub" lang="${esc(getLanguage())}">${esc(t("mobile.extractSubUpload"))}</div>
+      <div class="paste-off" role="note">${ICON.link}<span lang="${esc(getLanguage())}">${esc(t("mobile.onlineSourcesOff"))}</span></div>`;
   return `<div class="screen scrl">
     <div class="pad">
       <div class="h1">Extract stems</div>
-      <div class="sub">Paste a link or upload audio to split into stems.</div>
-      <div class="paste">${ICON.link}<input id="ext-url" class="ext-input" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste YouTube or audio URL" value="${esc(state.extractUrl || "")}"></div>
+      ${linkPart}
       <button class="upload" data-action="pick-file">${ICON.upload}${fileName ? esc(fileName) : "Upload audio file"}</button>
       <input id="ext-file" type="file" accept="audio/*,video/mp4,.mp3,.wav,.flac,.m4a,.ogg,.opus" style="display:none">
       <div class="eyebrow">STEMS TO EXTRACT</div>
@@ -648,8 +658,12 @@ async function startExtraction() {
   const stems = Object.keys(state.selected).filter((k) => state.selected[k]);
   if (!stems.length) { toast("Pick at least one stem."); return; }
   const file = state.extractFile;
-  const url = (state.extractUrl || "").trim();
-  if (!file && !url) { toast("Paste a URL or choose a file first."); return; }
+  // A link typed while online sources were on is not sent once they are off.
+  const url = onlineSourcesOn() ? (state.extractUrl || "").trim() : "";
+  if (!file && !url) {
+    toast(onlineSourcesOn() ? "Paste a URL or choose a file first." : t("mobile.chooseFileFirst"));
+    return;
+  }
 
   let init, title;
   if (file) {
@@ -671,6 +685,14 @@ async function startExtraction() {
   try {
     const res = await fetch("/api/jobs", init);
     const data = await res.json().catch(() => ({}));
+    if (isOnlineSourcesRefusal(data)) {
+      // Turned off since this page read the setting: believe the server.
+      state.extractJob = null;
+      setOnlineSourcesState(false);
+      toast(t("mobile.onlineSourcesOff"));
+      render();
+      return;
+    }
     if (!res.ok) throw new Error(data.detail || res.statusText);
     jobId = data.job_id;
   } catch (e) {
@@ -1105,6 +1127,11 @@ async function reimportTrack(card) {
     toast("This track's audio is gone. Re-upload it to restore it.");
     return;
   }
+  // Reimporting fetches the link again, which waits for online sources.
+  if (!onlineSourcesOn()) {
+    toast(t("mobile.onlineSourcesOff"));
+    return;
+  }
   toast("Reimporting…");
   try {
     const res = await fetch("/api/jobs", {
@@ -1113,6 +1140,11 @@ async function reimportTrack(card) {
       body: JSON.stringify({ url: card.sourceUrl, stems: card.selectedStems || [] }),
     });
     const data = await res.json().catch(() => ({}));
+    if (isOnlineSourcesRefusal(data)) {
+      setOnlineSourcesState(false);
+      toast(t("mobile.onlineSourcesOff"));
+      return;
+    }
     if (!res.ok) throw new Error(data.detail || res.statusText);
     await loadLibrary();
   } catch (e) {
@@ -1139,3 +1171,16 @@ async function loadLibrary() {
 
 render();
 loadLibrary();
+// The language the desktop page chose, for the strings that are translated,
+// and whether online sources are on (Settings, Experimental, #1089). The
+// Extract screen follows both without a reload.
+onOnlineSourcesChange(() => render());
+initI18n()
+  .then(() => {
+    // initI18n names the page's language, but this page is still English
+    // apart from the translated lines, which carry their own lang.
+    document.documentElement.lang = "en";
+    render();
+  })
+  .catch((e) => console.warn("[mobile] could not read the language:", e));
+refreshOnlineSources();

@@ -15,6 +15,11 @@ from app.core.config import MAX_PENDING_UPLOAD_JOBS, MAX_PENDING_URL_JOBS, STEM_
 from app.core.models import Job
 from app.core.registry import _jobs
 
+# Online sources are off by default (#1089). The link, search, preview and
+# playlist paths these tests exercise need them on; the refusal while they are
+# off is pinned in tests/test_online_sources.py.
+pytestmark = pytest.mark.usefixtures("online_sources_on")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_registry():

@@ -821,6 +821,21 @@ button {
   color: var(--muted-2);
   font-size: 13.5px;
 }
+/* Online sources off (#1089): where the link field was, the line that says
+   where they are turned on. Read as text, not as a field to tap. */
+.paste-off {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 14px;
+  margin-top: 22px;
+  color: var(--muted-2);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.paste-off svg { flex-shrink: 0; margin-top: 1px; }
 .paste .label {
   flex: 1;
 }

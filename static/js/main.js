@@ -12,6 +12,7 @@ import { renderEmptyShell, buildStripStems, downloadCurrentMix, downloadCurrentV
 import { transposeExportFromHealth } from "./transposeExport.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
+import { refreshOnlineSources } from "./onlineSources.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange, clearLoop, isCountInRunning } from "./transport.js";
@@ -496,6 +497,9 @@ initSearch((item) => {
   urlInput.focus();
   urlInput.setSelectionRange(urlInput.value.length, urlInput.value.length);
 });
+// Whether search and link import are on (Settings, Experimental, #1089). Off
+// until the server says so; the search box follows the answer.
+refreshOnlineSources();
 wireTransportButtons();
 // Sections deliberately does not import the transport, so that it stays
 // loadable without a DOM. This is the one place that owns both.

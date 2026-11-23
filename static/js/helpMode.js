@@ -444,7 +444,6 @@ const SETTINGS = [
     ["settings.idleUnload.title", "help.set.idleUnload"],
     ["settings.maxDuration.title", "help.set.maxDuration"],
     ["settings.playlistLimit.title", "help.set.playlistLimit"],
-    ["settings.cookies.title", "help.set.cookies"],
   ]],
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],
@@ -475,6 +474,13 @@ const SETTINGS = [
   ["settings.tab.network", [
     ["settings.network.allowTitle", "help.set.network"],
     ["settings.network.port.title", "help.set.port"],
+  ]],
+  // Online sources (#1089): the box that accepts the responsibility text, the
+  // switch it unlocks, and the cookies that only matter while it is on.
+  ["settings.tab.experimental", [
+    ["settings.onlineSources.termsTitle", "help.set.onlineSourcesAccept"],
+    ["settings.onlineSources.title", "help.set.onlineSources"],
+    ["settings.cookies.title", "help.set.cookies"],
   ]],
   ["settings.tab.logs", [
     ["settings.exportLogs.title", "help.set.exportLogs"],

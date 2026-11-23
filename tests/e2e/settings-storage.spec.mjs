@@ -211,10 +211,10 @@ test("a shell too old to know the exports folder hides the row", async ({ page }
   await expect(page.locator(".exports-location-row")).toHaveCount(0);
 });
 
-// ── General: cookies, max track length, playlist limit ──────────────────────
+// ── Experimental: cookies (#1089). General: max track length, playlist limit ──
 
 test("a cookies file that does not exist is refused with a message", async ({ page, request }) => {
-  await openSettings(page, "general");
+  await openSettings(page, "experimental");
   const input = page.locator(".set-cookies-file");
   await input.fill(path.join(SCRATCH, "missing", "cookies.txt"));
   await input.press("Tab");
@@ -230,7 +230,7 @@ test("a cookies file outside the data folder is refused like a missing one", asy
   fs.mkdirSync(SCRATCH, { recursive: true });
   const outside = path.join(SCRATCH, "cookies.txt");
   fs.writeFileSync(outside, "# Netscape HTTP Cookie File\n");
-  await openSettings(page, "general");
+  await openSettings(page, "experimental");
   const input = page.locator(".set-cookies-file");
   await input.fill(outside);
   await input.press("Tab");
@@ -247,7 +247,7 @@ test("a cookies file that exists is kept, and clearing it clears it", async ({ p
   const dataDir = path.dirname((await (await request.get("/api/logs")).json()).dir);
   const cookies = path.join(dataDir, "cookies.txt");
   fs.writeFileSync(cookies, "# Netscape HTTP Cookie File\n");
-  await openSettings(page, "general");
+  await openSettings(page, "experimental");
   const input = page.locator(".set-cookies-file");
 
   await input.fill(cookies);

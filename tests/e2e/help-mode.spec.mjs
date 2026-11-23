@@ -5,7 +5,7 @@
 
 import { test, expect } from "@playwright/test";
 
-import { JOB_ID, chooseMode, openStudio, seedLibrary, serveDonateLinks, stubAudioTags, stubUpdateCheck } from "./helpers.mjs";
+import { allowOnlineSources, JOB_ID, chooseMode, openStudio, seedLibrary, serveDonateLinks, stubAudioTags, stubUpdateCheck } from "./helpers.mjs";
 
 const tip = (page) => page.locator("#helpTip");
 
@@ -189,7 +189,7 @@ test.describe("help mode", () => {
     await openStudio(page);
     await helpOn(page);
     await page.locator("#settingsBtn").hover();
-    for (const text of ["General", "Library", "Song details", "Network", "Export", "Recording", "Logs", "Registry", "Port", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches"]) {
+    for (const text of ["General", "Library", "Song details", "Network", "Export", "Recording", "Experimental", "Logs", "Registry", "Port", "Online search and link import", "YouTube cookies", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches"]) {
       await expect(tip(page)).toContainText(text);
     }
   });
@@ -351,6 +351,7 @@ test.describe("help mode leaves no control unexplained", () => {
       { title: "Result two", url: "https://www.youtube.com/watch?v=bbbbbbbbbbb", duration: 9000, uploader: "Channel", too_long: true },
     ] } }));
     await page.route("**/api/search/preview**", (route) => route.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.alloc(0) }));
+    await allowOnlineSources(page);
     await openStudio(page);
     await page.locator("#url").fill("some song ");
     await page.locator("#search-panel .search-preview-btn").first().click();

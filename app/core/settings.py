@@ -13,6 +13,7 @@ at startup), so the Settings UI can change them without a restart:
 - `separation_quality` — demucs shift-averaging: standard | best (2x slower).
 - `idle_unload_minutes` - idle minutes before the separation models unload (0 never).
 - `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
+- `online_sources`    - whether search and link import (yt-dlp) may run (off).
 - `auto_delete_jobs`  — whether finished jobs are deleted after a while (off).
 - `auto_delete_days`  — how long they are kept when that is on.
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
@@ -464,6 +465,29 @@ def set_cookies_file(value: str | None) -> str | None:
         _ensure()["cookies_file"] = str(resolved)
         _save()
         return str(resolved)
+
+
+# ── online_sources ──
+# Whether StemDeck may reach YouTube and SoundCloud through yt-dlp at all:
+# the search in the top box, its previews, importing a link and expanding a
+# playlist (#1089). Off until the user turns it on in Settings, Experimental,
+# after accepting that what they search for and import is their own
+# responsibility.
+#
+# Off for an install that has a settings file from before this key existed,
+# too. A missing key is off, never migrated to on: the user has not accepted
+# anything yet, so nothing may assume they did. No environment variable turns
+# it on for the same reason. Only a stored JSON true counts.
+def get_online_sources() -> bool:
+    with _LOCK:
+        return _ensure().get("online_sources") is True
+
+
+def set_online_sources(value: bool) -> bool:
+    with _LOCK:
+        _ensure()["online_sources"] = bool(value)
+        _save()
+        return bool(value)
 
 
 # ── playlist_max_items ──

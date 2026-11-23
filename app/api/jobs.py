@@ -50,6 +50,7 @@ from app.core.models import (
     _set,
     settle_cancelled,
 )
+from app.core.online_sources import require_online_sources
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
@@ -69,6 +70,7 @@ from app.core.settings import (
     get_auto_sections,
     get_discogs_token,
     get_max_duration_sec,
+    get_online_sources,
 )
 from app.core.stem_files import stem_path, stem_url
 from app.core.stems_location import is_relocating
@@ -399,6 +401,9 @@ async def create_job(request: Request) -> dict[str, str]:
 
 
 async def _create_youtube_job(request: Request) -> dict[str, str]:
+    # A link is fetched with yt-dlp, so it is refused while online sources are
+    # off (#1089), before the body is read. An upload never comes here.
+    require_online_sources()
     try:
         body = await request.json()
     except Exception as e:
@@ -639,6 +644,10 @@ def extract_stopped_job(job_id: str) -> dict:
         )
     if job.trashed_at is not None:
         raise HTTPException(status_code=409, detail="restore it from the Trash first")
+    # A stopped link starts again from its link, so it is fetched again: not
+    # while online sources are off (#1089). An upload runs from its own file.
+    if not is_upload(job):
+        require_online_sources()
     job_dir = JOBS_DIR / job_id
     failed_dir = _failed_dir(job_id)
     # Not when the quarantine failed and left the folder where it was.
@@ -1313,6 +1322,9 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     source = _retained_source(job_id) if (job.source_url or "").startswith("local:") else None
     if source is None and (job.source_url or "local:").startswith("local:"):
         raise HTTPException(status_code=409, detail=_FILL_REFUSALS["no_source"])
+    # No kept file: the fill fetches the song's link again (#1089).
+    if source is None:
+        require_online_sources()
     # Checked again here, after the await above: the first of two requests
     # to get this far is the one that runs, and a split started meanwhile
     # keeps the song.
@@ -1566,6 +1578,11 @@ def _lookup_audio_tags(job: Job) -> dict[str, str] | None:
     if source_url.startswith("local:"):
         source = _retained_source(job.id)
         return probe_tags(source) if source is not None else None
+    # Asking the link means yt-dlp, which waits for online sources to be on
+    # (#1089). Off, it is "nothing found", like any lookup that fails, and the
+    # rest of the lookup (MusicBrainz, the band, the lyrics) still runs.
+    if not get_online_sources():
+        return None
     try:
         url = validate_youtube_url(source_url)
     except InvalidYouTubeURL:

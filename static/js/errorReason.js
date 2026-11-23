@@ -14,11 +14,16 @@ export const RESTART_REQUIRED = "restart_required";
 // The server's code for a delete, a library move or a reset it refuses while a
 // stem fill or a vocal split runs (refuse_while_busy in app/main.py).
 export const JOB_BUSY = "job_busy";
+// The server's code for search, a preview, a link import or a playlist it
+// refuses while online sources are off in Settings, Experimental
+// (refuse_online_sources_off in app/main.py, #1089).
+export const ONLINE_SOURCES_OFF = "online_sources_off";
 
 /** The translated sentence for a code this side knows, or "". */
 export function codeMessage(data) {
   if (data?.code === RESTART_REQUIRED) return t("settings.stemsLocation.restartToSave");
   if (data?.code === JOB_BUSY) return t("library.songBusy");
+  if (data?.code === ONLINE_SOURCES_OFF) return t("onlineSources.off");
   return "";
 }
 
@@ -58,6 +63,7 @@ export function errorReason(err) {
 // The causes classify_failure gives a failed job (app/pipeline/errors.py), and
 // the sentence that says each one with its next step (#175).
 const CAUSE_KEYS = {
+  "online-sources-off": "job.cause.onlineSourcesOff",
   "out-of-memory": "job.cause.outOfMemory",
   "unsupported-device": "job.cause.unsupportedDevice",
   "disk-full": "job.cause.diskFull",
