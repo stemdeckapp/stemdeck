@@ -19,9 +19,9 @@ import { initTimelineTags } from "./timelineTags.js";
 import { importPlaylist, looksLikePlaylist } from "./playlist.js";
 import { t } from "./i18n.js";
 import { formatKey } from "./keyLabel.js";
-import { JOB_BUSY, errorReason, importFailure, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, ONLINE_SOURCES_OFF_CAUSE, errorReason, importFailure, responseErrorMessage, stoppedForOnlineSources } from "./errorReason.js";
 import { isReimportableSource } from "./utils.js";
-import { isOnlineSourcesRefusal, setOnlineSourcesState } from "./onlineSources.js";
+import { isOnlineSourcesRefusal, onlineSourcesKnown, setOnlineSourcesState } from "./onlineSources.js";
 
 // Playful stage label rotation (Claude-Code-style flair). The backend
 // emits truthful stage strings; we surface them in the small #job-detail
@@ -722,6 +722,18 @@ function applyState(state) {
     setWaveformLoading(false);
     jobBox.classList.add("hidden");
     setForegroundJobId(null);
+    // A link whose turn came while online sources were off (#1089): it waits
+    // as stopped for Extract. The same card the library's reconciler shows,
+    // keyed on the job, so the two sightings make one.
+    if (stoppedForOnlineSources(state)) {
+      setOnlineSourcesState(false);
+      notifyFailure({
+        kind: "import",
+        message: importFailure(state).message,
+        cause: ONLINE_SOURCES_OFF_CAUSE,
+        context: { jobId: state.job_id },
+      });
+    }
   } else if (state.status === "done") {
     stopJobPolling();
     updateTrackStatus(state.job_id, "done");
@@ -903,6 +915,15 @@ function sanitizeFilename(name) {
 // Resync can say why a track did not come back.
 export async function importFromUrl(url, { title, stems, vocalSplit = false, onRefused = null } = {}) {
   if (!url || url.startsWith("local:")) return null; // local files can't auto-restore
+  // Fetching a link waits for online sources (#1089). Known to be off, the
+  // refusal is said before reset(), which would tear down the song that is
+  // open (Resync, a reimported unavailable track) for an import that cannot
+  // start.
+  if (!(await onlineSourcesKnown())) {
+    showOnlineSourcesOff();
+    onRefused?.(t("onlineSources.off"));
+    return null;
+  }
   reset();
   setSubmitProcessing(true);
   setWaveformLoading(true, "");

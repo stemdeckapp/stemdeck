@@ -50,7 +50,7 @@ from app.core.models import (
     _set,
     settle_cancelled,
 )
-from app.core.online_sources import require_online_sources
+from app.core.online_sources import OnlineSourcesOff, require_online_sources
 from app.core.registry import all_jobs as registry_all_jobs
 from app.core.registry import get as registry_get
 from app.core.registry import get_proc as registry_get_proc
@@ -1332,6 +1332,7 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
         raise HTTPException(status_code=409, detail="the song is busy")
     # A cancel is for the run it was sent to, as for the vocal split.
     job.cancel_requested = False
+    fill_before = job.stem_fill
     job.stem_fill = "running"
     _set(job, stage="Extracting missing stems...")
     try:
@@ -1343,6 +1344,14 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
         _set(job, stage="Done")
         await asyncio.to_thread(registry_persist, JOBS_DIR)
         raise HTTPException(status_code=409, detail=_FILL_REFUSALS[e.code]) from None
+    except OnlineSourcesOff:
+        # Turned off while the fill waited for the pipeline (#1089): nothing
+        # was fetched or separated, so the song is as it was, and the answer
+        # is the same 403 as at the door, not a 500.
+        job.stem_fill = fill_before
+        _set(job, stage="Done")
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+        raise
     except Exception:
         if not job.cancel_requested:
             logger.exception("[%s] filling missing stems failed", job_id)

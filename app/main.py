@@ -611,6 +611,19 @@ async def update_settings(request: Request) -> dict[str, object]:
         body = {}
     if not isinstance(body, dict):
         body = {}
+    # Checks that need nothing but the value run before any setting is
+    # written, so a request that carries one bad value changes nothing at all.
+    if "online_sources" in body and not isinstance(body["online_sources"], bool):
+        # Only a JSON true or false: bool("false") is True, and a string must
+        # never be what turns online sources on (#1089).
+        raise HTTPException(status_code=422, detail="online_sources must be true or false")
+    if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
+        # Refused rather than clamped: true would be stored as 1 minute and -1
+        # as 0, which turns the unload off, so a typo must not change it.
+        raise HTTPException(
+            status_code=422,
+            detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
+        )
     if "allow_network" in body:
         set_allow_network(bool(body["allow_network"]))
     if "auto_delete_jobs" in body:
@@ -620,18 +633,7 @@ async def update_settings(request: Request) -> dict[str, object]:
     if "auto_lyrics" in body:
         set_auto_lyrics(bool(body["auto_lyrics"]))
     if "online_sources" in body:
-        # Only a JSON true or false: bool("false") is True, and a string must
-        # never be what turns online sources on.
-        if not isinstance(body["online_sources"], bool):
-            raise HTTPException(status_code=422, detail="online_sources must be true or false")
         set_online_sources(body["online_sources"])
-    if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
-        # Refused rather than clamped: true would be stored as 1 minute and -1
-        # as 0, which turns the unload off, so a typo must not change it.
-        raise HTTPException(
-            status_code=422,
-            detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
-        )
     for key, setter in (
         ("auto_delete_days", set_auto_delete_days),
         ("max_duration_sec", set_max_duration_sec),

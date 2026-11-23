@@ -23,6 +23,7 @@ from app.api import search as api_search
 from app.core import settings as _settings
 from app.core.models import Job
 from app.core.online_sources import (
+    ONLINE_SOURCES_OFF_CAUSE,
     ONLINE_SOURCES_OFF_CODE,
     ONLINE_SOURCES_OFF_DETAIL,
     OnlineSourcesOff,
@@ -31,6 +32,7 @@ from app.core.online_sources import (
 from app.core.registry import _jobs
 from app.pipeline import download as dl_mod
 from app.pipeline import preview as preview_mod
+from app.pipeline import runner as runner_mod
 from app.pipeline import search as search_mod
 from app.pipeline.errors import classify_failure
 
@@ -283,10 +285,109 @@ def test_a_queued_link_is_not_fetched_while_off(tmp_path, yt_dlp_forbidden):
     assert job.status == "queued", "it must not claim to be downloading"
 
 
-def test_the_failure_is_classified_and_not_retried():
+def test_the_refusal_is_not_retried_and_not_read_from_failure_text():
     exc = OnlineSourcesOff()
-    assert classify_failure(repr(exc)) == "online-sources-off"
     assert dl_mod._is_retriable(exc) is False
+    # Known by its type, never by its words: a failure whose output happens to
+    # contain the sentence is not taken for it.
+    assert classify_failure(repr(exc)) == "unknown"
+
+
+async def test_a_queued_link_waits_as_stopped_while_off(
+    client, tmp_path, monkeypatch, yt_dlp_forbidden
+):
+    """Through the runner, as the queue runs it: not failed, not quarantined,
+    its folder kept, and Extract runs it once online sources are on."""
+
+    def no_quarantine(*_a, **_k):
+        raise AssertionError("a link waiting for online sources is not a failure")
+
+    monkeypatch.setattr(runner_mod, "_quarantine_failed_job", no_quarantine)
+    job = Job(id=JOB, status="queued", source_url=LINK)
+    _jobs[job.id] = job
+
+    await runner_mod.run_pipeline(job, LINK, tmp_path)
+
+    assert job.status == "stopped"
+    assert job.error is None
+    assert job.error_detail == ONLINE_SOURCES_OFF_CAUSE
+    assert (tmp_path / JOB).is_dir(), "its folder is kept"
+    assert not (tmp_path / "failed").exists()
+    saved = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))
+    assert [j["status"] for j in saved["jobs"] if j["id"] == JOB] == ["stopped"]
+
+    # Extract is refused while they are off, and runs it once they are on.
+    _refused(client.post(f"/api/jobs/{JOB}/extract"))
+    assert client.post("/api/settings", json={"online_sources": True}).status_code == 200
+    r = client.post(f"/api/jobs/{JOB}/extract")
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+    assert job.error_detail is None, "the reason goes with the new run"
+
+
+def test_a_playlist_turned_off_during_its_expansion_queues_nothing(
+    client, monkeypatch, online_sources_on
+):
+    def expand_then_off(url, limit):
+        _settings.set_online_sources(False)
+        return {
+            "playlist_title": "Mix",
+            "playlist_url": PLAYLIST,
+            "items": [{"url": LINK, "title": "One", "duration": 200, "thumbnail": None}],
+            "unavailable": 0,
+            "truncated": False,
+        }
+
+    monkeypatch.setattr("app.api.playlist.expand_playlist", expand_then_off)
+    _refused(client.post("/api/playlist", json={"url": PLAYLIST}))
+    assert _jobs == {}
+
+
+def test_a_fill_turned_off_while_it_waited_answers_403(
+    client, tmp_path, monkeypatch, online_sources_on
+):
+    job = _done_link_job(tmp_path)
+
+    def off(*_a, **_k):
+        raise OnlineSourcesOff()
+
+    monkeypatch.setattr(jobs_api, "fill_stems", off)
+    _refused(client.post(f"/api/jobs/{JOB}/fill-stems", json={"stems": ["drums"]}))
+    assert job.stem_fill == "none", "the song is left as it was"
+
+
+def test_the_preview_proxy_refuses_while_off(monkeypatch):
+    def no_socket(*_a, **_k):
+        raise AssertionError("no connection may open while online sources are off")
+
+    monkeypatch.setattr(api_search.urllib.request, "urlopen", no_socket)
+    stream = {"url": "https://rr1.googlevideo.com/x", "headers": {}, "mime": "audio/webm"}
+    with pytest.raises(OnlineSourcesOff):
+        api_search._proxy(stream, None)
+
+
+def test_a_preview_turned_off_after_it_resolved_answers_403(client, monkeypatch, online_sources_on):
+    def resolve_then_off(url):
+        _settings.set_online_sources(False)
+        return {"url": "https://rr1.googlevideo.com/x", "headers": {}, "mime": "audio/webm"}
+
+    monkeypatch.setattr(api_search, "resolve_preview", resolve_then_off)
+    _refused(client.get(f"/api/search/preview?url={LINK}"))
+
+
+def test_a_bad_value_changes_no_other_setting(client):
+    before = (_settings.get_allow_network(), _settings.get_auto_lyrics())
+    r = client.post(
+        "/api/settings",
+        json={
+            "allow_network": not before[0],
+            "auto_lyrics": not before[1],
+            "online_sources": "yes",
+        },
+    )
+    assert r.status_code == 422
+    assert (_settings.get_allow_network(), _settings.get_auto_lyrics()) == before
+    assert _settings.get_online_sources() is False
 
 
 def test_search_and_preview_refuse_at_the_source_too(yt_dlp_forbidden):

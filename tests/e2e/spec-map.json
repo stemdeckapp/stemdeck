@@ -126,7 +126,7 @@
     },
     {
       "why": "Online search and link import are opt-in (#1089): the page's copy of the setting, the search box and composer that follow it, the Experimental settings tab, and the phone page's link field",
-      "paths": ["static/js/onlineSources.js", "app/core/online_sources.py", "app/pipeline/download.py", "app/pipeline/errors.py"],
+      "paths": ["static/js/onlineSources.js", "static/js/catalog.js", "static/js/job.js", "static/js/errorReason.js", "static/js/main.js", "static/js/versions.js", "app/core/online_sources.py", "app/pipeline/download.py", "app/pipeline/errors.py", "app/pipeline/runner.py"],
       "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode"]
     },
     {

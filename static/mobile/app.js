@@ -12,7 +12,7 @@ import { createPlaybackContext } from "../js/audioContext.js";
 // The strings this page added for online sources (#1089) go through the
 // shared tables; the rest of the page is still English-only.
 import { getLanguage, initI18n, t } from "../js/i18n.js";
-import { isOnlineSourcesRefusal, onOnlineSourcesChange, onlineSourcesOn, refreshOnlineSources, setOnlineSourcesState } from "../js/onlineSources.js";
+import { isOnlineSourcesRefusal, onOnlineSourcesChange, onlineSourcesKnown, onlineSourcesOn, refreshOnlineSources, setOnlineSourcesState } from "../js/onlineSources.js";
 // Per-stem label + color, keyed by the backend stem name. Unknown names fall
 // back to a rotating palette so non-standard models still render sensibly.
 const STEM_META = {
@@ -1031,6 +1031,9 @@ app.addEventListener("click", (e) => {
       return;
     case "tab":
       state.tab = t.dataset.tab;
+      // Turned on in Settings since this page loaded: the Extract screen
+      // offers the link field again without a reload (#1089).
+      if (state.tab === "extract") refreshOnlineSources();
       break;
     case "mixview":
       state.mixerView = t.dataset.view;
@@ -1127,8 +1130,10 @@ async function reimportTrack(card) {
     toast("This track's audio is gone. Re-upload it to restore it.");
     return;
   }
-  // Reimporting fetches the link again, which waits for online sources.
-  if (!onlineSourcesOn()) {
+  // Reimporting fetches the link again, which waits for online sources. Asked
+  // of the server first if this page has not heard yet, so a tap that comes
+  // before the first answer is not refused for a setting that is on.
+  if (!(await onlineSourcesKnown())) {
     toast(t("mobile.onlineSourcesOff"));
     return;
   }
@@ -1171,7 +1176,8 @@ async function loadLibrary() {
 
 render();
 loadLibrary();
-// The language the desktop page chose, for the strings that are translated,
+// The language this browser chose (stored in its own localStorage by
+// i18n.js, else the browser's language), for the strings that are translated,
 // and whether online sources are on (Settings, Experimental, #1089). The
 // Extract screen follows both without a reload.
 onOnlineSourcesChange(() => render());

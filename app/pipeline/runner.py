@@ -18,6 +18,7 @@ from app.core.config import (
     TIMEOUT_FFMPEG,
 )
 from app.core.models import Job, JobCancelled, _set, settle_cancelled
+from app.core.online_sources import ONLINE_SOURCES_OFF_CAUSE, OnlineSourcesOff
 from app.core.redact import redact
 from app.core.registry import is_upload, keep_added_time, mark_stems_complete, saved_fields
 from app.core.registry import persist as persist_registry
@@ -508,6 +509,29 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
         _rmtree(job_dir)
 
 
+async def _wait_for_online_sources(job: Job, jobs_dir: Path) -> None:
+    """Settle a link whose turn came while online sources are off (#1089).
+
+    Not a failure: nothing is wrong with the link, the user has not turned
+    online sources on, or turned them off while it waited. So no traceback,
+    no quarantine and no deleted folder: the job is "stopped", the state a
+    link taken out of the Queue ends in, and Extract runs it again once
+    online sources are on (Extract is gated on them too). error_detail
+    carries the cause code alone, so the page can say why it stopped."""
+    logger.info("[%s] online sources are off; the link waits as stopped", job.id)
+    release_source(job.id)
+    _set(
+        job,
+        status="stopped",
+        stage="Stopped",
+        progress=0.0,
+        error=None,
+        error_detail=ONLINE_SOURCES_OFF_CAUSE,
+    )
+    await asyncio.to_thread(persist_registry, jobs_dir)
+    await jobqueue.finish_deferred_delete(job, jobs_dir)
+
+
 async def _run_async(
     job: Job,
     job_dir: Path,
@@ -526,6 +550,9 @@ async def _run_async(
         async with _pipeline_lock:
             await asyncio.to_thread(blocking_fn, job, *fn_args, job_dir)
     except Exception as e:
+        if isinstance(e, OnlineSourcesOff) and not job.cancel_requested:
+            await _wait_for_online_sources(job, jobs_dir)
+            return
         if not isinstance(e, JobCancelled) and not job.cancel_requested:
             if jobqueue.is_stopping():
                 # The shutdown killed the demucs worker under this job, which

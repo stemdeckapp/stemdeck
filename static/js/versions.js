@@ -25,6 +25,8 @@ import { freezeVoiceInVersions, layoutBlockedReason, layoutState, runVocalSplit,
 import { reloadKeepingPlace } from "./reloadPlace.js";
 import { splitFailedText } from "./vocalSplitState.js";
 import { openTrackInStudio } from "./catalog.js";
+import { ONLINE_SOURCES_OFF, responseErrorMessage } from "./errorReason.js";
+import { isOnlineSourcesRefusal, setOnlineSourcesState } from "./onlineSources.js";
 
 function announce(jobId) {
   document.dispatchEvent(new CustomEvent("stemdeck:versions-changed", { detail: { jobId } }));
@@ -42,8 +44,13 @@ async function api(path, init) {
   const res = await fetch(path, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(typeof data?.detail === "string" ? data.detail : res.statusText);
+    // The server's code first, translated (errorReason.js), then its words.
+    const err = new Error(responseErrorMessage(res, data));
     err.status = res.status;
+    err.code = typeof data?.code === "string" ? data.code : null;
+    // A fill of a link with no kept file fetches it again, which waits for
+    // online sources (#1089): the page's copy follows the server.
+    if (isOnlineSourcesRefusal(data)) setOnlineSourcesState(false);
     throw err;
   }
   return data;
@@ -233,6 +240,9 @@ export async function extractAsVersion(stems, voice, onBusy = () => {}, expectJo
     return { handled: true, text: t("versions.created", { name }) };
   } catch (err) {
     console.warn("[versions] extract as a version failed:", err);
+    // Refused because online sources are off: say that, and where to turn
+    // them on, rather than that the extraction failed.
+    if (err?.code === ONLINE_SOURCES_OFF) return { handled: true, text: err.message };
     return { handled: true, text: t("versions.extractFailed") };
   }
 }

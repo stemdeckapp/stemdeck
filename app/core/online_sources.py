@@ -20,9 +20,11 @@ from app.core.settings import get_online_sources
 
 # The code the page reads to show its own sentence (static/js/errorReason.js).
 ONLINE_SOURCES_OFF_CODE = "online_sources_off"
+# The cause a link job carries in error_detail when its turn came while they
+# were off: it is then "stopped", not failed (app/pipeline/runner.py), and the
+# page tells the reason by this code (errorReason.js CAUSE_KEYS).
+ONLINE_SOURCES_OFF_CAUSE = "online-sources-off"
 # A fixed sentence, safe to show and to log. It names no path and no link.
-# app/pipeline/errors.py classifies a failed job by these words, so a change
-# here changes the pattern there.
 ONLINE_SOURCES_OFF_DETAIL = (
     "Online search and link import are off. Turn them on in Settings, Experimental."
 )

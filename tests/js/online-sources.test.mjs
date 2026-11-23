@@ -5,13 +5,14 @@
 //
 // Run:  node tests/js/online-sources.test.mjs
 
-import { codeMessage, importFailure, ONLINE_SOURCES_OFF } from "../../static/js/errorReason.js";
+import { codeMessage, importFailure, ONLINE_SOURCES_OFF, ONLINE_SOURCES_OFF_CAUSE, stoppedForOnlineSources } from "../../static/js/errorReason.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 import {
   isOnlineSourcesRefusal,
   looksLikeLink,
   onOnlineSourcesChange,
   onlineSourcesFrom,
+  onlineSourcesKnown,
   onlineSourcesOn,
   setOnlineSourcesState,
 } from "../../static/js/onlineSources.js";
@@ -93,6 +94,28 @@ const failed = importFailure({
   source_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 });
 eq("a queued link refused by the pipeline names the cause", failed.message, TRANSLATIONS.en["job.cause.onlineSourcesOff"]);
+
+// A link whose turn came while they were off waits as stopped, with the
+// cause code alone (app/pipeline/runner.py _wait_for_online_sources).
+eq("the cause is the server's", ONLINE_SOURCES_OFF_CAUSE, "online-sources-off");
+eq("a stopped link with the cause is one", stoppedForOnlineSources({ status: "stopped", error_detail: "online-sources-off" }), true);
+eq("a stopped job without it is not", stoppedForOnlineSources({ status: "stopped", error_detail: null }), false);
+eq("a failed job with it is not", stoppedForOnlineSources({ status: "error", error_detail: "online-sources-off" }), false);
+eq("no state is not", stoppedForOnlineSources(null), false);
+
+// onlineSourcesKnown: asks the server once, and later calls wait for that
+// first answer instead of asking again, or refusing before it arrives.
+let asked = 0;
+globalThis.fetch = async () => {
+  asked += 1;
+  return { ok: true, json: async () => ({ online_sources: true }) };
+};
+eq("the first answer is waited for", await onlineSourcesKnown(), true);
+eq("the server is asked once", asked, 1);
+await onlineSourcesKnown();
+eq("and not again", asked, 1);
+setOnlineSourcesState(false);
+eq("a later change is what it answers", await onlineSourcesKnown(), false);
 
 // Every new sentence exists in every table, and none carries an em dash.
 const EM_DASH = String.fromCharCode(0x2014);

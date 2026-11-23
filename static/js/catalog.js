@@ -10,7 +10,7 @@ import { trackFormat, formatIconSvg, paintNowPlayingArt } from "./formatIcon.js"
 import { formatKey } from "./keyLabel.js";
 import { paintLoudnessNote, wireLoudnessNote } from "./loudnessNote.js";
 import { showError, importFromUrl, detachForegroundJob, reset, runVocalSplitIfWanted, followVocalSplit } from "./job.js";
-import { JOB_BUSY, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage } from "./errorReason.js";
+import { JOB_BUSY, ONLINE_SOURCES_OFF_CAUSE, RESTART_REQUIRED, codeMessage, importFailure, responseErrorMessage, stoppedForOnlineSources } from "./errorReason.js";
 import {
   currentIds, getQueueSnapshot, isPaused, onJobSettled, onQueueChange,
   queueCount, queueRowStates, refreshQueue, reorderQueuedJob, runningLabel, startQueue,
@@ -27,7 +27,7 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
-import { onlineSourcesFrom, setOnlineSourcesState } from "./onlineSources.js";
+import { isOnlineSourcesRefusal, onlineSourcesFrom, onlineSourcesOn, setOnlineSourcesState } from "./onlineSources.js";
 import { t as i18nT, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
 // Escape user-supplied strings before inserting into innerHTML.
@@ -2209,8 +2209,13 @@ async function extractStoppedTrack(trackId) {
     const res = await fetch(`/api/jobs/${encodeURIComponent(trackId)}/extract`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const message = body.code === RESTART_REQUIRED ? responseErrorMessage(res, body) : body.detail;
-      notifyFailure({ kind: "import", message: message || i18nT("job.audioProcessingFailed") });
+      // A stopped link starts again from its link, which waits for online
+      // sources (#1089): the page's copy follows the server.
+      if (isOnlineSourcesRefusal(body)) setOnlineSourcesState(false);
+      // A code the page knows (the restart, online sources) in the chosen
+      // language, else the server's words.
+      const message = codeMessage(body) || body.detail;
+      notifyFailure({ kind: "import", message: message || i18nT("job.audioProcessingFailed"), context: { jobId: trackId } });
       render();
       return;
     }
@@ -2806,6 +2811,18 @@ async function completeSettledJob(jobId) {
           gpuFallback: state.gpu_fallback,
           timings: state.stage_timings ? JSON.stringify(state.stage_timings) : null,
         },
+      });
+    }
+    // A link whose turn came while online sources were off (#1089) waits as
+    // stopped, its folder kept, until Extract runs it. Said once, on its row's
+    // job, so the card goes when Extract is accepted.
+    if (stoppedForOnlineSources(state)) {
+      setOnlineSourcesState(false);
+      notifyFailure({
+        kind: "import",
+        message: importFailure(state).message,
+        cause: ONLINE_SOURCES_OFF_CAUSE,
+        context: { jobId },
       });
     }
 
@@ -4697,7 +4714,6 @@ function wireDiscogsSetting(overlay) {
   });
 }
 
-// General settings: max track length (minutes), playlist import limit, and
 // Settings, Experimental: Online search and link import (#1089).
 //
 // Off until the user ticks "I have read this and I accept it" and then turns
@@ -4755,7 +4771,10 @@ async function wireOnlineSources(overlay) {
       sw.checked = !want;
       say("settings.onlineSources.saveFailed", true);
     } finally {
+      // Disabling the switch while it saved took focus off it; give it back,
+      // as the network switch does, so the keyboard stays where it was.
       sw.disabled = false;
+      sw.focus();
     }
   });
 
@@ -4770,6 +4789,7 @@ async function wireOnlineSources(overlay) {
   }
 }
 
+// General settings: max track length (minutes), playlist import limit, and
 // MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
 async function wireGeneralSettings(overlay) {

@@ -137,6 +137,9 @@ async def create_playlist_jobs(request: Request) -> dict[str, Any]:
         selected = list(STEM_NAMES)
 
     result = await _expand(payload.url)
+    # Asked again after the expansion, which takes seconds: turned off in the
+    # meantime, nothing is registered or queued (#1089).
+    require_online_sources()
     items, too_long = _partition(result["items"])
     if not items:
         raise HTTPException(status_code=422, detail="No importable tracks in that playlist")

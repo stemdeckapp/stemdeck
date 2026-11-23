@@ -34,6 +34,8 @@ export function looksLikeLink(text) {
 
 let on = false;
 const listeners = new Set();
+// The first read of the setting from the server, once one has started.
+let firstRead = null;
 
 /** The page's copy of the setting. */
 export function onlineSourcesOn() {
@@ -60,14 +62,29 @@ export function onOnlineSourcesChange(fn) {
   return () => listeners.delete(fn);
 }
 
-/** Read the setting from the server. Leaves it off when that fails. */
-export async function refreshOnlineSources() {
-  try {
-    const r = await fetch("/api/settings", { cache: "no-store" });
-    if (!r.ok) throw new Error(String(r.status));
-    setOnlineSourcesState(onlineSourcesFrom(await r.json()));
-  } catch (e) {
-    console.warn("[online sources] could not read the setting:", e);
-  }
+/** Read the setting from the server. Leaves it as it was when that fails. */
+export function refreshOnlineSources() {
+  const read = (async () => {
+    try {
+      const r = await fetch("/api/settings", { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      setOnlineSourcesState(onlineSourcesFrom(await r.json()));
+    } catch (e) {
+      console.warn("[online sources] could not read the setting:", e);
+    }
+    return on;
+  })();
+  firstRead ??= read;
+  return read;
+}
+
+/**
+ * The setting once the page has asked the server at least once: the first
+ * read if one is under way or done, else a read started now. Before a
+ * refusal that the page decides on its own, so a click that comes before the
+ * first answer is not refused for a setting that is on.
+ */
+export async function onlineSourcesKnown() {
+  await (firstRead ?? refreshOnlineSources());
   return on;
 }

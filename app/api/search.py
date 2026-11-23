@@ -188,6 +188,11 @@ def _proxy(stream: dict, range_header: str | None):
     Range is forwarded rather than swallowed, so seeking the time bar costs one
     short request instead of pulling the track from the beginning again.
     """
+    # Online sources first, asked again at the call that opens the socket:
+    # they may have been turned off since the endpoint let the request in, and
+    # a resolved preview can come from the cache without reaching yt-dlp
+    # (#1089).
+    require_online_sources()
     # Belt and suspenders, the same shape as the path-traversal checks in
     # api/stems.py. preview.resolve() already refuses anything that is not
     # http(s), and this refuses it again at the one call that actually opens a
@@ -243,6 +248,8 @@ async def preview(url: str, request: Request):
     except urllib.error.HTTPError as e:
         # A signed URL that expired between resolve and play, most often.
         raise HTTPException(status_code=502, detail="Could not load a preview") from e
+    except OnlineSourcesOff:
+        raise
     except Exception as e:
         logger.exception("preview proxy failed")
         raise HTTPException(status_code=502, detail="Could not load a preview") from e
