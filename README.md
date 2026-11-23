@@ -49,7 +49,7 @@
   <img src="imgs/screenshot/stemdeck.png" alt="The StemDeck studio: a song split into vocals, drums, bass, guitar, piano and other, each on its own lane" width="100%">
 </p>
 
-StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Sing along in Karaoke, or film yourself playing along in Performance. Drop in an audio file, or, once you turn on online sources in Settings, paste a YouTube or SoundCloud link. Separation runs on your own machine, and StemDeck does not upload your audio.
+StemDeck splits a song into up to six stems, vocals, drums, bass, guitar, piano and other, and opens them in a studio where you can mute, solo, slow down, loop, change the key and play along with a click. Sing along in Karaoke, or film yourself playing along in Performance. Drop in an audio file, or, once you turn on online search in Settings, Experimental, search for a song or paste a link. Separation runs on your own machine, and StemDeck does not upload your audio.
 
 > **A separation tool, not a downloader.** StemDeck is for processing audio you have the right to use. What you import, the stems made from it, and the takes you record, are saved in your library folder on the machine that runs StemDeck; StemDeck does not upload or share them. See the [Disclaimer](#disclaimer).
 
@@ -128,7 +128,7 @@ Pick one from **Mode** in the left rail. Each mode keeps its own choice of stems
 - **Up to six stems** with Meta's open Demucs model: vocals, drums, bass, guitar, piano and other.
 - **Lead and backing vocals** as separate lanes, on demand (not on Intel Macs).
 - **Files:** MP3, WAV, FLAC, OGG, Opus, M4A and MP4.
-- **Links and search, off by default:** in Settings, Experimental, you can turn on importing a YouTube or SoundCloud link, searching both with a preview, and queueing a whole playlist, after you accept that what you search for and import is your own responsibility. They work through the open source tool yt-dlp. See the [disclaimer](#disclaimer).
+- **Online search, off by default:** in Settings, Experimental, you can turn on online search with a preview, importing from a link, and queueing a whole playlist, after you accept that what you search for and import is your own responsibility. It works through the open source tool yt-dlp. See the [disclaimer](#disclaimer).
 - **Pick only what you need** before you extract.
 - **Choose the lanes in each mode** with **Stems**: the stems you pick get their own lane, the rest play together in Original. Nothing is separated again.
 
@@ -275,7 +275,7 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 StemDeck is a local audio stem separation tool intended for personal study, research, and experimentation. It is not a downloading service. Audio you import, the stems made from it, and the takes you record, are saved only in the library folder on the machine that runs StemDeck, and StemDeck does not upload, share or redistribute them. To find song details and lyrics it sends the song's name to the services named in its Settings and, only if you add an AcoustID key, an audio fingerprint; it does not send the audio itself.
 
-Importing from a YouTube or SoundCloud link, and searching those services, are off by default, on every new install and on every install updated from an earlier version. They turn on only in Settings, Experimental, and only after you accept a statement that is always shown there: you alone are responsible for what you search for and download, and for following the terms of each service and copyright law. StemDeck only provides a connection to the open source tool [yt-dlp](https://github.com/yt-dlp/yt-dlp) and has no responsibility for how it is used. Automated downloading may be against a service's terms of service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, for complying with the terms of service of any site you use, and for respecting the copyright of the material you work with.
+Online search and importing from a link are off by default, on every new install and on every install updated from an earlier version. They turn on only in Settings, Experimental, and only after you accept a statement that is always shown there: you alone are responsible for what you search for and download, and for following the terms of each service and copyright law. StemDeck only provides a connection to the open source tool [yt-dlp](https://github.com/yt-dlp/yt-dlp) and has no responsibility for how it is used. Automated downloading may be against a service's terms of service. You, the user, are solely responsible for ensuring you have the right to process any audio you submit, for complying with the terms of service of any site you use, and for respecting the copyright of the material you work with.
 
 You are also responsible for following the licenses of the underlying tools this project depends on (yt-dlp, Demucs, FFmpeg, PyTorch, and others listed in `pyproject.toml`).
 
