@@ -1,5 +1,5 @@
-// The featured artist at the top of We Recommend (#1092): one artist, with a
-// month, an optional quote, an optional track to start with, and their links,
+// The featured artist at the top of We Recommend (#1092): one artist, under a
+// "Featured artist" label with no date, an optional quote, an optional track to start with, and their links,
 // all opening outside the app. Nothing plays in StemDeck, so a track row is a
 // link, not a player. The featured artist is not repeated in the grid below.
 //
@@ -16,7 +16,7 @@
 import { test, expect } from "@playwright/test";
 
 import { seedLibrary, stubUpdateCheck } from "./helpers.mjs";
-import { FEATURED_ARTISTS, formatFeaturedMonth } from "../../static/js/featuredArtist.js";
+import { FEATURED_ARTISTS } from "../../static/js/featuredArtist.js";
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 
 const CURRENT = FEATURED_ARTISTS.at(-1);
@@ -45,7 +45,7 @@ async function openWithGuide(page) {
 }
 
 test.describe("We Recommend: featured artist", () => {
-  test("the card shows the current artist with the month, photo, role and quote", async ({ page }) => {
+  test("the card shows the current artist with the label, photo, role and quote", async ({ page }) => {
     await openWeRecommend(page);
     const card = page.getByRole("region", { name: CURRENT.name });
     await expect(card).toBeVisible();
@@ -57,8 +57,8 @@ test.describe("We Recommend: featured artist", () => {
     });
     expect(order).toBe(true);
 
-    const month = formatFeaturedMonth(CURRENT.month, "en");
-    await expect(card.locator(".featured-label")).toHaveText(en("friends.featured.labelMonth", { month }));
+    // "Featured artist" and nothing more: no month, no date.
+    await expect(card.locator(".featured-label")).toHaveText(en("friends.featured.label"));
     await expect(card.getByRole("heading", { name: CURRENT.name })).toBeVisible();
     // The role comes from the partner's own entry: shown, and never a raw key.
     const role = card.locator(".featured-role");

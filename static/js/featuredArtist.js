@@ -5,8 +5,9 @@
 // to FEATURED_ARTISTS alone. catalog.js holds the partners (FRIEND_GROUPS) and
 // draws the card.
 //
-// The last entry of the list is the current one. There is no clock: the card
-// stays when its month has passed, until the next entry is added.
+// The last entry of the list is the current one. There is no date and no
+// clock: the order of the list alone says who is current and who came before,
+// and the card stays until the next entry is added.
 
 /**
  * The featured artists, newest last. The last entry is the current one; the
@@ -16,7 +17,6 @@
  * - `name` must be a member of FRIEND_GROUPS in catalog.js, which gives the
  *   photo and the role line. An entry that names nobody is skipped. The
  *   current artist is left out of the grid below the card; earlier ones stay.
- * - `month` is "YYYY-MM", shown in the label in the UI language.
  * - `quoteKey` (optional) is an i18n key holding the maintainer's own words.
  *   With no key, or a key no table has, the card draws no quote.
  * - `track` (optional) is { title, kindKey, year, url }: one track to start
@@ -27,8 +27,6 @@
 export const FEATURED_ARTISTS = [
   {
     id: "analog4lyfe",
-    // A placeholder until the maintainer confirms the month.
-    month: "2026-11",
     name: "Analog4Lyfe",
     quoteKey: "friends.featured.quote.analog4lyfe",
     links: [{ label: "Instagram", url: "https://www.instagram.com/analog4lyfe" }],
@@ -126,31 +124,4 @@ export function previousFaces(previous) {
 export function findFriendCard(cards, name) {
   for (const card of cards || []) if (card?.dataset?.friend === name) return card;
   return null;
-}
-
-/** "2026-11" as { year: 2026, month: 11 }, or null when it is not a month. */
-export function parseMonth(month) {
-  const m = /^(\d{4})-(\d{2})$/.exec(String(month ?? ""));
-  if (!m) return null;
-  const year = Number(m[1]);
-  const mon = Number(m[2]);
-  if (mon < 1 || mon > 12) return null;
-  return { year, month: mon };
-}
-
-/**
- * The month an entry is featured, in the UI language ("November 2026",
- * "noviembre de 2026"), or "" when the month is not valid. Read in UTC, so a
- * time zone west of Greenwich never turns the 1st into the month before.
- */
-export function formatFeaturedMonth(month, locale) {
-  const parsed = parseMonth(month);
-  if (!parsed) return "";
-  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, 1));
-  try {
-    return new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" }).format(date);
-  } catch (err) {
-    console.warn("[featured] month format failed:", err);
-    return new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(date);
-  }
 }

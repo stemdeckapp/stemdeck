@@ -27,7 +27,7 @@ import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
-import { FEATURED_ARTISTS, findFriendCard, formatFeaturedMonth, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
+import { FEATURED_ARTISTS, findFriendCard, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
 import { keepTabInside } from "./dialogFocus.js";
 import { t as i18nT, hasKey as i18nHasKey, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
 
@@ -3980,9 +3980,9 @@ function locateFriend(grid, name) {
 }
 
 /**
- * The featured artist card (#1092) above the partner grid: photo, the month,
- * name, role, the maintainer's quote, one track to start with, the artist's
- * links, and the artists featured before. `paint` sets the text built from
+ * The featured artist card (#1092) above the partner grid: photo, the
+ * "Featured artist" label, name, role, the maintainer's quote, one track to
+ * start with, the artist's links, and the artists featured before. `paint` sets the text built from
  * templates, which data-i18n cannot re-resolve on a language switch.
  */
 function featuredCard({ current, previous }, grid) {
@@ -4013,8 +4013,7 @@ function featuredCard({ current, previous }, grid) {
 
   const label = document.createElement("p");
   label.className = "featured-label";
-  const labelText = document.createElement("span");
-  label.append(starIcon(), labelText);
+  label.append(starIcon(), i18nSpan("", "friends.featured.label"));
 
   const name = document.createElement("h3");
   name.className = "featured-name";
@@ -4115,8 +4114,6 @@ function featuredCard({ current, previous }, grid) {
   section.appendChild(body);
 
   const paint = () => {
-    const month = formatFeaturedMonth(entry.month, getLanguage());
-    labelText.textContent = month ? i18nT("friends.featured.labelMonth", { month }) : i18nT("friends.featured.label");
     if (track) {
       const kind = entry.track.kindKey ? i18nT(entry.track.kindKey) : "";
       trackMeta.textContent = kind && entry.track.year

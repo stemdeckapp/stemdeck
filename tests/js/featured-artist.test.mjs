@@ -1,5 +1,5 @@
 // The featured artist at the top of We Recommend (static/js/featuredArtist.js, #1092):
-// which entry is current, who came before, what the grid leaves out, the month,
+// which entry is current, who came before, what the grid leaves out,
 // how an image is drawn, and the "Previously featured" row.
 //
 // The row only draws with two entries or more, and FEATURED_ARTISTS has one, so
@@ -14,8 +14,6 @@ import {
   resolveFeatured,
   pickFeatured,
   groupsWithout,
-  parseMonth,
-  formatFeaturedMonth,
   imageShape,
   initialOf,
   previousFaces,
@@ -41,7 +39,7 @@ const GROUPS = [
   { labelKey: "cat.artists", members: [{ name: "Ana", logo: "/a.webp" }, { name: "Bea" }, { name: "Cid" }] },
   { labelKey: "cat.gear", members: [{ name: "Dan" }] },
 ];
-const entry = (name, month = "2026-11") => ({ id: name.toLowerCase(), month, name });
+const entry = (name) => ({ id: name.toLowerCase(), name });
 
 // ── findMember ──
 check("a member is found by its exact name", findMember(GROUPS, "Dan")?.name === "Dan");
@@ -116,17 +114,6 @@ check("a name nobody has leaves every member", groupsWithout(GROUPS, "Zed").flat
   check("an earlier featured artist stays in the grid", names.includes("Ana") && !names.includes("Bea"));
 }
 
-// ── parseMonth / formatFeaturedMonth ──
-check("a month parses", same(parseMonth("2026-11"), { year: 2026, month: 11 }));
-check("month 13 is not a month", parseMonth("2026-13") === null);
-check("month 00 is not a month", parseMonth("2026-00") === null);
-check("a date is not a month", parseMonth("2026-11-01") === null);
-check("nothing is not a month", parseMonth(undefined) === null);
-check("English reads November 2026", formatFeaturedMonth("2026-11", "en") === "November 2026", formatFeaturedMonth("2026-11", "en"));
-check("January stays January in UTC", formatFeaturedMonth("2027-01", "en") === "January 2027", formatFeaturedMonth("2027-01", "en"));
-check("Spanish names the month in Spanish", /noviembre/.test(formatFeaturedMonth("2026-11", "es")), formatFeaturedMonth("2026-11", "es"));
-check("an invalid month formats as nothing", formatFeaturedMonth("soon", "en") === "");
-
 // ── imageShape: a photo is cropped, a wordmark is shown whole ──
 check("a profile photo is a photo", imageShape({ logo: "/a.jpg", avatar: true }) === "photo");
 check("an image without avatar is a wordmark", imageShape({ logo: "/w.png" }) === "logo");
@@ -171,8 +158,6 @@ check("no name is a question mark", initialOf("") === "?" && initialOf(undefined
   check("every entry has a unique id", new Set(ids).size === ids.length && ids.every(Boolean), ids.join(", "));
   for (const e of FEATURED_ARTISTS) {
     check(`${e.id}: has a name`, typeof e.name === "string" && e.name.trim().length > 0);
-    check(`${e.id}: its month is a month`, parseMonth(e.month) !== null, e.month);
-    check(`${e.id}: its month formats`, formatFeaturedMonth(e.month, "en").length > 0);
     check(`${e.id}: every link is https with a label`,
       (e.links || []).every((l) => l.label && /^https:\/\//.test(l.url)), JSON.stringify(e.links));
     if (e.track) {
@@ -216,7 +201,7 @@ check("a key no table has is not, so the card draws no quote", !hasKey("friends.
 
 // ── The strings the card reads ──
 const KEYS = [
-  "friends.taglineAsk", "friends.featured.label", "friends.featured.labelMonth", "friends.featured.startHere",
+  "friends.taglineAsk", "friends.featured.label", "friends.featured.startHere",
   "friends.featured.kind.single", "friends.featured.release", "friends.featured.listen",
   "friends.featured.trackAria", "friends.featured.previous", "friends.featured.previousGo",
 ];
@@ -224,7 +209,6 @@ for (const [lang, table] of Object.entries(TRANSLATIONS)) {
   if (lang === "pt-PT") continue; // a variant: resolves through pt
   const missing = KEYS.filter((k) => !(k in table));
   check(`${lang} has every featured-artist string`, missing.length === 0, missing.join(", "));
-  check(`${lang} label keeps its {month}`, table["friends.featured.labelMonth"]?.includes("{month}"));
   check(`${lang} track name keeps {title} and {artist}`,
     table["friends.featured.trackAria"]?.includes("{title}") && table["friends.featured.trackAria"]?.includes("{artist}"));
   check(`${lang} avatar name keeps its {name}`, table["friends.featured.previousGo"]?.includes("{name}"));
@@ -232,7 +216,7 @@ for (const [lang, table] of Object.entries(TRANSLATIONS)) {
 // The design has no monthly cadence: the card stays until the next entry.
 const monthly = /del mes|of the month|du mois|do mês|des Monats/i;
 const promises = Object.values(TRANSLATIONS).flatMap((table) =>
-  ["friends.featured.label", "friends.featured.labelMonth", "friends.featured.previous", "help.featuredPrevious", "help.recommend"]
+  ["friends.featured.label", "friends.featured.previous", "help.featuredPrevious", "help.recommend"]
     .filter((k) => monthly.test(table[k] || "")).map((k) => `${k}: ${table[k]}`));
 check("no label promises a featured artist every month", promises.length === 0, promises.join(" | "));
 const allText = Object.values(TRANSLATIONS)
