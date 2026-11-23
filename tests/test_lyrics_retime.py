@@ -565,6 +565,31 @@ def test_a_cancel_leaves_the_lyrics_alone(monkeypatch, tmp_path):
     assert lyrics_path(job_dir).read_bytes() == before
 
 
+def test_a_timing_of_the_old_copy_is_not_kept_on_a_file_of_the_same_words(monkeypatch, tmp_path):
+    """An .lrc imported while the run worked, word for word the same lines:
+    its stamps are the user's own, and a timing made for LRCLIB's copy must
+    not be put in front of them."""
+    job_dir = job_dir_with(tmp_path, entry(), VOICED)
+    stub_worker(monkeypatch, tmp_path, HEARD)
+    imported = entry(
+        source="file",
+        lrclib_id=None,
+        timing="exact",
+        synced="[00:19.80]znowu to samo\n[00:24.90]chciałabym bardzo",
+    )
+    real = rt.retime_lines
+
+    def import_meanwhile(*args, **kwargs):
+        write_lyrics(make_job(), job_dir, imported)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rt, "retime_lines", import_meanwhile)
+    with pytest.raises(rt.RetimeFailed):
+        rt.retime_job(make_job(), job_dir, cancelled=lambda: False)
+    kept = read_lyrics(job_dir)
+    assert kept["source"] == "file" and "aligned" not in kept
+
+
 def test_a_failed_transcription_is_a_failure(tmp_path):
     job_dir = job_dir_with(tmp_path, entry(), VOICED)
     with pytest.raises(rt.RetimeFailed):

@@ -236,7 +236,8 @@ def test_an_offset_set_while_the_shift_is_worked_out_is_kept(tmp_path: Path, mon
     real = la.estimate_offset
 
     def slow(*args, **kwargs):
-        set_lyrics_offset(job, tmp_path, 2.5)  # the user, meanwhile
+        # The user, meanwhile, on the lyrics as they are.
+        set_lyrics_offset(job, tmp_path, 2.5, read_lyrics(tmp_path)["synced"])
         return real(*args, **kwargs)
 
     monkeypatch.setattr(la, "estimate_offset", slow)
