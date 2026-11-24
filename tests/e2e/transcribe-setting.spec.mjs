@@ -62,7 +62,7 @@ test.describe("transcribe lyrics", () => {
     await expect(page.locator(".set-transcribe-lyrics option").first()).toHaveText("Auto (NVIDIA/AMD GPU only)");
     await expect(page.locator(".set-transcribe-desc")).toContainText("only on an NVIDIA/AMD GPU");
 
-    await page.locator('.settings-tab[data-tab="general"]').click();
+    await page.locator('.settings-tab[data-tab="separation"]').click();
     await expect(page.locator('.set-demucs-device option[value="cuda"]')).toHaveText("ROCm (AMD)");
     await expect(page.locator(".set-demucs-desc")).toContainText("(currently: cuda, ROCm)");
   });
@@ -81,7 +81,7 @@ test.describe("transcribe lyrics", () => {
     await expect(page.locator(".set-transcribe-lyrics option").first()).toHaveText("Auto (NVIDIA GPU only)");
     await expect(page.locator(".set-transcribe-desc")).toContainText("only on an NVIDIA GPU");
 
-    await page.locator('.settings-tab[data-tab="general"]').click();
+    await page.locator('.settings-tab[data-tab="separation"]').click();
     await expect(page.locator('.set-demucs-device option[value="cuda"]')).toHaveText("CUDA (NVIDIA)");
     await expect(page.locator(".set-demucs-desc")).toContainText("(currently: cuda)");
   });

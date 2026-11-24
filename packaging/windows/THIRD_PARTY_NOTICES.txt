@@ -84,6 +84,18 @@ Demucs model weights are not bundled in the StemDeck alpha zip. They are
 downloaded during first use. StemDeck should display the model source and
 license/usage terms before or during download.
 
+Separation model weights are not bundled either. They are downloaded when a
+song first uses them, into the models folder, and are not redistributed by
+StemDeck:
+
+- Mel-Band RoFormer vocals model by Kimberley Jensen (the Kim model). License:
+  MIT, as its model card declares. StemDeck downloads one pinned revision and
+  checks its SHA-256. Source: https://huggingface.co/KimberleyJSN/melbandroformer
+  It runs through audio-separator (MIT).
+- Demucs fine-tuned models (htdemucs_ft), from the same Demucs project as the
+  Demucs entry above. License: MIT (Meta/Facebook Research).
+  Source: https://github.com/facebookresearch/demucs
+
 Disclaimer
 ----------
 

@@ -78,6 +78,8 @@ _RAW_BODY_ROUTES: tuple[tuple[str, re.Pattern[str], str | None], ...] = (
     # File import. The same route takes a JSON link import, which the generic
     # rule covers; only multipart is the extra case.
     ("POST", re.compile(r"^/api/jobs/?$"), "multipart/form-data"),
+    # A model of the user's own and its config (My models, app/api/my_models.py).
+    ("POST", re.compile(r"^/api/my-models/upload$"), "multipart/form-data"),
     # A recorded take arrives as raw float32 or video bytes, any type.
     ("PUT", re.compile(r"^/api/jobs/[^/]+/takes/[^/]+/parts/[^/]+$"), None),
     # An effects chain print arrives as raw WAV bytes (app/core/fx_prints.py).

@@ -1,7 +1,9 @@
 """Eager model pre-download for the desktop first-boot setup wizard (#275).
 
 Run as `python -m app.pipeline.warmup`. Downloads/caches the ML
-checkpoint families StemDeck uses: Demucs (htdemucs_6s), beat-this,
+checkpoint families StemDeck uses: Demucs (htdemucs_6s, plus the models
+Settings, Separation would add to it here, such as Kim's vocal model on an
+NVIDIA GPU), beat-this,
 All-In-One song sections, the on-demand lead/backing vocal-split karaoke
 model, and Whisper for lyrics transcription when that would run. This keeps a user's first real job from paying for them mid-pipeline. Invoked by the Tauri
 `warmup_models` command (desktop/src-tauri/src/main.rs) as one of the setup
@@ -50,6 +52,7 @@ import shutil
 import socket
 import sys
 
+from app.core import stem_models
 from app.core.config import (
     BEAT_MODEL_CHECKPOINT,
     DEMUCS_MODEL,
@@ -75,13 +78,61 @@ _DOWNLOAD_BYTES = {
     "vocal_split": 52_834_731,
     "turbo": 1_617_941_637,
     "small": 483_617_219,
+    # The separation models a plan can add to the base (app/core/stem_models.py).
+    "htdemucs_ft": stem_models.MODELS["htdemucs_ft"].download_bytes,
+    "kim_mel_roformer": stem_models.MODELS["kim_mel_roformer"].download_bytes,
 }
 
 
+def _extra_models() -> tuple[str, ...]:
+    """The models the next separation here would use besides the base, from
+    Settings, Separation as resolved for this machine's device: Kim's vocal
+    model on an NVIDIA GPU with room for it, unless it is set otherwise. Like
+    the Whisper step, only what would run is fetched. Best-effort: a plan that
+    cannot be read adds nothing, and the first job fetches what it needs."""
+    from app.core.settings import get_demucs_device, resolve_stem_models
+
+    try:
+        plan = resolve_stem_models(get_demucs_device())
+    except Exception as e:
+        print(f"WARMUP_NOTE separation plan not read: {e}", flush=True)
+        return ()
+    return tuple(
+        sorted({m for m in plan.values() if m != DEMUCS_MODEL and m in stem_models.MODELS})
+    )
+
+
 def _warm_demucs() -> None:
+    """The base model, then each model the plan adds. A cached checkpoint that
+    is not its pinned file is removed first, so torch.hub fetches it again
+    through the verified download (model_download.drop_unverified).
+
+    An extra model that cannot be fetched is said on a WARMUP_NOTE line and
+    does not fail the step: the base model is what makes separation work at
+    all, and the first job that needs the extra one fetches it, or says why
+    it cannot."""
     from demucs.pretrained import get_model
 
+    from app.core.model_download import drop_unverified
+
+    drop_unverified(DEMUCS_MODEL)
     get_model(DEMUCS_MODEL)
+    for model_id in _extra_models():
+        try:
+            if stem_models.MODELS[model_id].engine == "mel_roformer":
+                from app.pipeline import mel_roformer
+
+                # The checkpoint, verified, as a job would fetch it. Not
+                # loaded: 913 MB into memory proves nothing the size and
+                # SHA-256 do not.
+                mel_roformer.ensure_checkpoint(
+                    read_timeout=TIMEOUT_MODEL_DOWNLOAD_READ, attempts=MODEL_DOWNLOAD_ATTEMPTS
+                )
+            else:
+                drop_unverified(model_id)
+                get_model(model_id)
+        except Exception as e:
+            print(f"WARMUP_NOTE {model_id} not fetched: {e}", flush=True)
 
 
 def _warm_beat_this() -> None:
@@ -199,6 +250,8 @@ def _bytes_needed() -> int:
     for name, _ in _STEPS:
         key = _whisper_model() if name == "whisper" else name
         total += _DOWNLOAD_BYTES.get(key or "", 0)
+        if name == "demucs":
+            total += sum(_DOWNLOAD_BYTES.get(m, 0) for m in _extra_models())
     present = sum(
         path.stat().st_size
         for path in (MODELS_DIR.rglob("*") if MODELS_DIR.is_dir() else ())

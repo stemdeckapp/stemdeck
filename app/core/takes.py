@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -59,6 +60,143 @@ def camera_file(folder: Path) -> Path | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Picture placement: the one rule the review and the export share.
+#
+# The truth clock is the take's audio timeline: raw audio frame 0 of
+# audio.raw.wav, placed in song time at placement_sec(). The camera file's
+# t=0 is its first video frame (the render restarts its timestamps there).
+# video.sync.offsetMs is where that t=0 sits on the audio timeline, measured
+# from the camera file's own sound (app/pipeline/av_sync.py) or, when that
+# could not be done, the browser's estimate (video.firstFrameAtMs). Then
+#
+#     picture_offset_ms = offsetMs - drawAgeMs + nudgeMs - cameraOffsetMs
+#     camera_start_sec  = placement_sec + picture_offset_ms / 1000
+#
+# drawAgeMs (video.drawAgeMs, Performance only) is how old the camera frame
+# was when the canvas drew it: the recorded frames carry the draw time, the
+# picture in them was captured that much earlier. nudgeMs is the Performance
+# export's manual correction (positive: the picture later); cameraOffsetMs
+# the studio's older one (positive: earlier).
+# camera_start_sec is song time as heard: a player drawing the picture
+# against AudioContext.currentTime shows it early by the output latency.
+
+SYNC_NUDGE_MAX_MS = 2000.0
+DRAW_AGE_MAX_MS = 1000.0
+SYNC_REASONS = (
+    "ok",
+    "no-camera-audio",
+    "no-camera-mic",
+    "camera-mic-denied",
+    "camera-mic-not-asked",
+    "camera-mic-failed",
+    "silent",
+    "low-confidence",
+    "measure-failed",
+    "legacy",
+)
+
+
+def _finite(value: Any, default: float = 0.0) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return default
+    return n if math.isfinite(n) else default
+
+
+def placement_sec(sidecar: dict[str, Any]) -> float:
+    """Song time of raw audio frame 0: the browser's placement (round trip
+    folded in) less the user's nudge."""
+    timeline = sidecar.get("timeline") or {}
+    latency = sidecar.get("latency") or {}
+    return _finite(timeline.get("first_sample_song_sec")) - (
+        _finite(latency.get("user_nudge_ms")) / 1000.0
+    )
+
+
+def sync_block(
+    *,
+    estimate_ms: float,
+    measured_ms: float | None = None,
+    confidence: float | None = None,
+    reason: str = "legacy",
+    nudge_ms: float = 0.0,
+    measured_at: float | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The video.sync block written to take.json. A measured offset is used
+    only with reason "ok"; anything else keeps the estimate."""
+    measured = reason == "ok" and measured_ms is not None and math.isfinite(measured_ms)
+    nudge = max(-SYNC_NUDGE_MAX_MS, min(SYNC_NUDGE_MAX_MS, _finite(nudge_ms)))
+    base = "measured" if measured else "estimated"
+    conf = None
+    if confidence is not None and math.isfinite(confidence):
+        conf = round(max(0.0, min(1.0, float(confidence))), 3)
+    return {
+        "v": 1,
+        "source": "manual" if nudge else base,
+        "base": base,
+        "offsetMs": round(float(measured_ms) if measured else _finite(estimate_ms), 3),
+        "estimateMs": round(_finite(estimate_ms), 3),
+        "nudgeMs": round(nudge, 3),
+        "confidence": conf,
+        "reason": reason if reason in SYNC_REASONS else "measure-failed",
+        "measuredAt": measured_at,
+        "metrics": metrics or None,
+    }
+
+
+def video_sync(video: dict[str, Any]) -> dict[str, Any]:
+    """The take's sync as it applies now, for any take with a camera: the
+    stored block, checked, or for a take finished before sync was measured
+    the browser's estimate (reason "legacy", never written back). Adds
+    pictureOffsetMs, the sum the picture is placed with."""
+    estimate = _finite(video.get("firstFrameAtMs"))
+    stored = video.get("sync")
+    if isinstance(stored, dict):
+        measured = stored.get("base") == "measured"
+        reason = stored.get("reason")
+        if measured:
+            reason = "ok"
+        elif reason == "ok" or reason not in SYNC_REASONS:
+            reason = "measure-failed"
+        at = stored.get("measuredAt")
+        metrics = stored.get("metrics")
+        block = sync_block(
+            estimate_ms=_finite(stored.get("estimateMs"), estimate),
+            measured_ms=_finite(stored.get("offsetMs"), estimate) if measured else None,
+            confidence=_finite(stored.get("confidence"), math.nan),
+            reason=reason,
+            nudge_ms=_finite(stored.get("nudgeMs")),
+            measured_at=float(at) if isinstance(at, (int, float)) and math.isfinite(at) else None,
+            metrics=metrics if isinstance(metrics, dict) else None,
+        )
+    else:
+        block = sync_block(estimate_ms=estimate)
+    draw_age = max(0.0, min(DRAW_AGE_MAX_MS, _finite(video.get("drawAgeMs"))))
+    block["drawAgeMs"] = round(draw_age, 3)
+    block["pictureOffsetMs"] = round(
+        block["offsetMs"] - draw_age + block["nudgeMs"] - _finite(video.get("cameraOffsetMs")), 3
+    )
+    return block
+
+
+def picture_offset_ms(video: dict[str, Any], camera_offset_ms: float | None = None) -> float:
+    """offsetMs - drawAgeMs + nudgeMs - cameraOffsetMs; `camera_offset_ms` replaces the
+    stored cameraOffsetMs (a render request's own value)."""
+    if camera_offset_ms is not None:
+        video = {**video, "cameraOffsetMs": camera_offset_ms}
+    return video_sync(video)["pictureOffsetMs"]
+
+
+def camera_start_sec(sidecar: dict[str, Any], camera_offset_ms: float | None = None) -> float:
+    """Song time of the camera file's first frame: the review and every
+    export (any fit) place the picture here."""
+    video = sidecar.get("video") or {}
+    return placement_sec(sidecar) + picture_offset_ms(video, camera_offset_ms) / 1000.0
+
+
 def take_entry(job_id: str, sidecar: dict[str, Any], has_camera: bool) -> dict[str, Any]:
     """The record a finished take gets in job.takes, built from its sidecar.
 
@@ -68,17 +206,7 @@ def take_entry(job_id: str, sidecar: dict[str, Any], has_camera: bool) -> dict[s
     take_id = str(sidecar["id"])
     latency = sidecar.get("latency") or {}
     video = sidecar.get("video") or {}
-    timeline = sidecar.get("timeline") or {}
-    camera_offset_ms = float(video.get("cameraOffsetMs") or 0.0) if has_camera else 0.0
-    # Where the camera's first frame falls in the song, as the video render
-    # places it (app/api/takes.py): the take's placement, the first frame's
-    # time in the take, less the sync nudge.
-    camera_start_sec = (
-        float(timeline.get("first_sample_song_sec") or 0.0)
-        - float(latency.get("user_nudge_ms") or 0.0) / 1000.0
-        + float(video.get("firstFrameAtMs") or 0.0) / 1000.0
-        - camera_offset_ms / 1000.0
-    )
+    camera_offset_ms = _finite(video.get("cameraOffsetMs")) if has_camera else 0.0
     base = f"/api/jobs/{job_id}/takes/{take_id}"
     track_id = str(sidecar.get("track_id") or "")
     return {
@@ -91,7 +219,8 @@ def take_entry(job_id: str, sidecar: dict[str, Any], has_camera: bool) -> dict[s
         "has_camera": has_camera,
         "camera_offset_ms": camera_offset_ms,
         "camera_url": f"{base}/camera" if has_camera else None,
-        "camera_start_sec": round(camera_start_sec, 4) if has_camera else None,
+        "camera_start_sec": round(camera_start_sec(sidecar), 4) if has_camera else None,
+        "video_sync": video_sync(video) if has_camera else None,
     }
 
 

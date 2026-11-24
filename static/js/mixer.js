@@ -758,7 +758,8 @@ export function renderMixerRow(stem) {
   // the lane's colour swatch, the fader and the level it sets, the meter under
   // the fader, and a line for a recording track's own controls
   // (capture/takeLanes.js). On the right two columns the full height of the
-  // row: the key (+, KEY and the offset, minus) and the rail of mute, solo,
+  // row: the key (+, KEY and the offset, minus), in Advanced mode the Model
+  // chip's column, and the rail of mute, solo,
   // the EQ tab (eq/eqRows.js fills the slot) and download, so they sit in the
   // same place on every row. The effects chain's tab is not a fifth cell: five
   // cells in a 72 px row are 14 px each, under the 17 px a rail cell needs, so
@@ -788,13 +789,21 @@ export function renderMixerRow(stem) {
   keyRail.className = "mx-keyrail";
   keyRail.append(key);
 
+  // The Model chip's column, between the key and the rail (Advanced mode
+  // only; laneModelRows.js fills it on the stems a model is chosen for). One
+  // cell the full height of the row, empty on every other lane, so the rail
+  // sits at the same x on every row.
+  const modelSlot = document.createElement("div");
+  modelSlot.className = "mx-model-slot";
+  modelSlot.dataset.stem = stem.name;
+
   const rail = document.createElement("div");
   rail.className = "mx-rail";
   rail.append(muteBtn, soloBtn, eqSlot, dl);
 
   row.classList.add("mx-row-rail");
   row.style.setProperty("--lane-color", color);
-  row.append(iconCell, card, keyRail, rail);
+  row.append(iconCell, card, keyRail, modelSlot, rail);
 
   muteBtn.addEventListener("click", () => toggleStemMute(stem.name));
   soloBtn.addEventListener("click", () => toggleStemSolo(stem.name));

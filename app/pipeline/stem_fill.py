@@ -2,8 +2,9 @@
 
 Extract on a song that is already in the library never separates it over
 again: the stems it has are kept as they are, byte for byte, and only a stem it
-is missing is made, with the same model and quality the song was separated
-with, so the new stem adds up with the old ones to the original. A stem that
+is missing is made, with the same model per stem (the plan recorded as
+stem_models) and quality the song was separated with, so the new stem adds up
+with the old ones to the original. A stem that
 appears on disk while this runs is never replaced either.
 
 The run works on a stand-in Job with the song's id, so the song itself stays
@@ -24,9 +25,12 @@ import threading
 import uuid
 from pathlib import Path
 
+from app.core import stem_models
 from app.core.config import DEMUCS_MODEL, STEM_NAMES, TIMEOUT_FFMPEG, ffmpeg_executable
 from app.core.models import Job
 from app.core.stem_files import stem_exists, stem_url
+from app.core.stem_models import MODELS, model_available
+from app.pipeline import stem_plan
 from app.pipeline.cancel import check_cancel, run_registered
 from app.pipeline.collect import merge_stem_peaks, presence_for_split
 from app.pipeline.download import download
@@ -47,11 +51,56 @@ _STAND_INS_LOCK = threading.Lock()
 
 class FillRefused(Exception):
     """The song cannot be filled as asked. `code` is a fixed word the API
-    turns into a safe message: "no_source", "model"."""
+    turns into a safe message: "no_source", "model", "model_unavailable",
+    "model_removed"."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def recorded_plan(job: Job) -> dict[str, str]:
+    """The plan the song was separated with, to separate its missing stems
+    the same way, so they add up with the ones it has.
+
+    A song separated before plans were recorded (stem_models None) was made
+    with its base model alone. FillRefused("model") when the plan names a
+    model this version does not know, or one that cannot make that stem;
+    FillRefused("model_removed") when it names a model the person added and
+    has removed since; FillRefused("model_unavailable") when it names one
+    this install cannot run (its package is missing here, or a model the
+    person added that is not usable now: refused, or its file changed). Never
+    the current Settings: they may have changed since the song was separated.
+
+    A fill never stands another model in for one that cannot run: a stem
+    made with another model would not add up with the ones on disk."""
+    base = job.separation_model or DEMUCS_MODEL
+    if job.stem_models is None:
+        return stem_plan.base_plan(base)
+    # A stem this version cannot choose (a newer version's plan, read back
+    # after a downgrade) is refused too: "other" here would hold what that
+    # stem held there, and the stems would not add up. A model the person
+    # added passes by its shape here and is classified below.
+    try:
+        plan = stem_plan.check_plan(job.stem_models, base=base, allow_gone=True)
+    except ValueError:
+        raise FillRefused("model") from None
+    added = sorted({m for m in plan.values() if stem_models.is_user_model(m)})
+    entries = {m: stem_models.user_model_entry(m) for m in added}
+    if any(entry is None for entry in entries.values()):
+        raise FillRefused("model_removed")
+    for stem, model_id in plan.items():
+        if model_id not in entries:
+            continue
+        declared = entries[model_id].get("stems")
+        if not (isinstance(declared, (list, tuple)) and stem in declared):
+            raise FillRefused("model")
+    for model_id in sorted(set(plan.values())):
+        if model_id in entries and not stem_models.user_model_usable(model_id):
+            raise FillRefused("model_unavailable")
+        if model_id in MODELS and not model_available(model_id):
+            raise FillRefused("model_unavailable")
+    return plan
 
 
 def cancel_fill(job_id: str) -> bool:
@@ -129,6 +178,7 @@ def fill_stems(job: Job, job_dir: Path, wanted: list[str], source: Path | None) 
     if model != DEMUCS_MODEL:
         # A different model's stems would not add up with these.
         raise FillRefused("model")
+    plan = recorded_plan(job)
     url = None if source is not None else (job.source_url or "")
     if source is None and (not url or url.startswith("local:")):
         raise FillRefused("no_source")
@@ -152,7 +202,7 @@ def fill_stems(job: Job, job_dir: Path, wanted: list[str], source: Path | None) 
         # The separation only looks at the flag once it is over.
         check_cancel(stand_in)
         quality = job.separation_quality or FALLBACK_QUALITY
-        stems_root = separate(stand_in, src, work, quality=quality)
+        stems_root = separate(stand_in, src, work, quality=quality, plan=plan)
         for name in missing:
             if _place(stems_root / f"{name}.wav", stems_dir / f"{name}.wav"):
                 added.append(name)

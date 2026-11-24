@@ -127,7 +127,7 @@
     {
       "why": "Online search and link import are opt-in (#1089): the page's copy of the setting, the search box and composer that follow it, the Experimental settings tab, and the phone page's link field",
       "paths": ["static/js/onlineSources.js", "static/js/catalog.js", "static/js/job.js", "static/js/errorReason.js", "static/js/main.js", "static/js/versions.js", "app/core/online_sources.py", "app/pipeline/download.py", "app/pipeline/errors.py", "app/pipeline/runner.py"],
-      "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode"]
+      "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode", "my-models"]
     },
     {
       "why": "Versions of a song (#804): the rows under a song in the library, the versions part of the Stems popover, the version-scoped mix and stem records, and the endpoints behind them",
@@ -145,9 +145,39 @@
       "specs": ["library-drag-rebuild"]
     },
     {
+      "why": "Settings > Separation: the per-stem model rows and their pure view (labels, Recommended tag, estimate, what a choice posts), the registry and settings behind /api/settings stem_models, and the moved device, quality and idle rows",
+      "paths": ["static/js/separationSettings.js", "static/js/stemModelsView.js", "app/core/stem_models.py"],
+      "specs": ["separation-settings", "my-models", "speed-test", "settings-nav", "settings-scroll", "help-mode", "device-why", "idle-unload-setting", "transcribe-setting", "lane-model"]
+    },
+    {
+      "why": "The left column's width (--daw-col-w, 334 px in Advanced mode for the lane header's Model chip column): the stems panel, the label cell over the lanes and the master drawer's settings column are sized from it, and the waveform column takes what is left",
+      "paths": ["static/css/variables.css"],
+      "specs": ["track-header", "lane-alignment", "zoom", "sections-zoom", "footer-fit", "eq-panels", "master-live", "lane-model"]
+    },
+    {
+      "why": "The lanes' Model tab and its row (Advanced mode): the chip in its own column of each lane header between the key and the rail, the re-extract row laid out after the EQ and effects rows, and its pure rules (what the select lists, what a run's line says)",
+      "paths": ["static/js/laneModelRows.js", "static/js/laneModelView.js"],
+      "specs": ["lane-model", "eq-panels", "lane-alignment", "help-mode", "track-header", "fx-chain-studio"]
+    },
+    {
+      "why": "Settings > Separation > My models: the section and its pure view (the link rule, what is still missing, each row's status and reason), the (yours) and Add a model... options of the stem selects, and the /api/my-models routes, store, fetch and check behind them",
+      "paths": ["static/js/myModels.js", "static/js/myModelsView.js", "app/api/my_models.py", "app/core/user_models.py", "app/core/user_model_format.py", "app/core/hf_fetch.py", "app/core/user_model_check.py", "app/pipeline/user_model_check_worker.py"],
+      "specs": ["my-models", "separation-settings", "help-mode"]
+    },
+    {
+      "why": "catalog.js builds the Settings dialog: the Separation pane, its search entries, and the settings-applied and settings-answer events the Separation tab repaints from",
+      "paths": ["static/js/catalog.js"],
+      "specs": ["separation-settings", "settings-nav", "speed-test", "my-models"]
+    },
+    {
+      "why": "Settings > Separation > Speed test: its pure view (table rows, estimated and measured labels, reason, what Apply posts), the /api/speed-test routes, the recommendation and the one-shot worker",
+      "paths": ["static/js/speedTestView.js", "app/api/speed_test.py", "app/core/speed_test.py", "app/pipeline/speed_test_worker.py"],
+      "specs": ["speed-test", "separation-settings", "help-mode"]
+    },
+    {
       "why": "Settings: navigation, every settings pane, and the config endpoint behind them",
       "paths": ["static/js/settingsNav.js", "static/css/settings.css", "app/api/config.py"],
-      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "idle-unload-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle", "online-sources"]
+      "specs": ["settings-nav", "settings-scroll", "settings-storage", "acoustid-setting", "discogs-setting", "retention-setting", "idle-unload-setting", "transcribe-setting", "network-transpose-warning", "video-take", "recording", "update-check", "lyrics-toggle", "song-structure-toggle", "online-sources", "separation-settings", "device-why", "my-models"]
     },
     {
       "why": "The artist and work dialog, and the lookups behind it",
@@ -218,7 +248,7 @@
     {
       "why": "EQ: the engine, the panels and the suggestions",
       "paths": ["static/js/eq/**", "static/js/eqEngine.js", "static/js/eqMath.js", "static/js/fxChain.js", "static/css/eq.css"],
-      "specs": ["eq-engine", "eq-panels", "eq-suggest", "modes", "master-live", "lane-alignment"]
+      "specs": ["eq-engine", "eq-panels", "eq-suggest", "modes", "master-live", "lane-alignment", "lane-model", "track-header"]
     },
     {
       "why": "Effects chains (Advanced mode): the engine, the pedals, the FX row and the export prints",
@@ -261,6 +291,11 @@
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
       "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume"]
+    },
+    {
+      "why": "Sound and picture sync of a take with a camera: the export step's state in words and its nudge (syncControl.js, video/avSync.js), the sync route and the one picture placement on the server, and the loaded take it updates (takeLanes.js updateTakeEntry)",
+      "paths": ["static/js/streamer/syncControl.js", "static/js/video/avSync.js", "static/js/capture/takeLanes.js", "static/js/video/cameraAudio.js", "static/js/video/cameraRecorder.js", "static/js/streamer/streamerRecord.js", "app/api/takes.py", "app/core/takes.py", "app/pipeline/av_sync.py", "app/pipeline/take_render.py", "static/js/video/frameAge.js", "static/js/video/videoCodec.js"],
+      "specs": ["avsync-export", "streamer-media", "video-sync", "video-take", "help-mode", "avsync-record"]
     },
     {
       "why": "A lane's level as a number (the Studio fader's dB text, Performance's lane volumes and Monitor level)",

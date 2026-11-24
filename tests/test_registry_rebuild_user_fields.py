@@ -41,6 +41,34 @@ SAVED = {
     "source_format": "mp3",
     "separation_model": "htdemucs_6s",
     "separation_quality": "best",
+    # The plan the song was separated with: a later Extract runs the same one.
+    "stem_models": {
+        "vocals": "kim_mel_roformer",
+        "drums": "htdemucs_6s",
+        "bass": "htdemucs_ft",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    },
+    # A model the person added that could not run: 6s stood in for its stem.
+    "stem_model_fallbacks": {
+        "guitar": {"model": "user_0123456789ab", "name": "My guitar", "code": "key_mismatch"},
+    },
+    # A re-extracted stem (POST .../reextract): its undo copy, the revision
+    # its URL carries, and the level every stem was turned down by.
+    "stem_undo": {
+        "drums": {
+            "model": "htdemucs_6s",
+            "fallback": None,
+            "dir": "drums-0a1b2c3d",
+            "file": "drums.wav",
+            "gain": 1.0,
+            "saved_at": 1790860000.0,
+            "extras": [],
+            "vocal_split": None,
+        },
+    },
+    "stem_revisions": {"drums": 1, "other": 1},
+    "stem_gain": 0.98,
     "auto_lyrics": False,
     "created_at": 1790800000.0,
     "has_video": True,
@@ -209,6 +237,66 @@ def test_saved_values_from_disk_are_checked_like_a_registry_record(jobs_dir):
     assert job.created_at == (jobs_dir / SONG).stat().st_mtime
 
 
+def test_the_separation_plan_survives_persist_and_restore(jobs_dir):
+    """The registry record carries the plan, and so does the song's state."""
+    plan = SAVED["stem_models"]
+    _finished(jobs_dir, stem_models=plan)
+    record = json.loads(registry_path(jobs_dir).read_text(encoding="utf-8"))["jobs"][0]
+    assert record["stem_models"] == plan
+
+    job = _restart(jobs_dir)
+
+    assert job.stem_models == plan
+    assert job.to_state()["stem_models"] == plan
+    meta = json.loads((jobs_dir / SONG / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["stem_models"] == plan, "a rebuild from the folder has its copy"
+
+
+def test_a_song_from_before_the_plan_existed_has_none(jobs_dir):
+    _finished(jobs_dir)
+    job = _restart(jobs_dir)
+    assert job.stem_models is None, "None reads as all htdemucs_6s"
+    assert job.to_state()["stem_models"] is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "kim_mel_roformer",
+        ["htdemucs_6s"],
+        {"vocals": "kim_mel_roformer"},  # a plan has every selectable stem
+        {**SAVED["stem_models"], "vocals": 5},
+        {**SAVED["stem_models"], "vocals": "../../etc/passwd"},
+        {**SAVED["stem_models"], "vocals": ""},
+        {**SAVED["stem_models"], "Bad Stem": "htdemucs_6s"},
+    ],
+)
+@pytest.mark.parametrize("where", ["registry", "metadata"])
+def test_a_damaged_separation_plan_is_dropped(jobs_dir, value, where):
+    _finished(jobs_dir, stem_models=SAVED["stem_models"])
+    if where == "registry":
+        path = registry_path(jobs_dir)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["jobs"][0]["stem_models"] = value
+    else:
+        path = jobs_dir / SONG / "metadata.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["stem_models"] = value
+        registry_path(jobs_dir).unlink()
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert _restart(jobs_dir).stem_models is None
+
+
+def test_a_plan_naming_a_model_this_version_does_not_know_is_kept(jobs_dir):
+    # A model removed later, or one a newer version added: kept as recorded,
+    # so a fill can refuse it by name instead of filling with another model.
+    plan = {**SAVED["stem_models"], "vocals": "future_model_v2", "lead_guitar": "x_model"}
+    _finished(jobs_dir, stem_models=plan)
+    registry_path(jobs_dir).unlink()
+    assert _restart(jobs_dir).stem_models == plan
+
+
 def test_a_metadata_file_that_is_not_an_object_does_not_stop_the_other_folders(jobs_dir):
     _finished(jobs_dir, **SAVED)
     (jobs_dir / OLD / "stems").mkdir(parents=True)
@@ -363,3 +451,79 @@ def test_a_registry_that_loads_is_not_overridden_by_metadata(jobs_dir):
     _registry.persist(jobs_dir)
 
     assert _restart(jobs_dir).favorite is False
+
+
+# ── models the person added (My models) ──
+
+USER_PLAN = {
+    "vocals": "user_0123456789ab",
+    "drums": "user_0123456789ab",
+    "bass": "htdemucs_ft",
+    "guitar": "htdemucs_6s",
+    "piano": "htdemucs_6s",
+}
+
+
+def test_a_plan_with_a_user_model_and_its_stand_ins_survive_a_rebuild(jobs_dir):
+    fallbacks = {
+        "piano": {"model": "user_ba9876543210", "name": "Gone piano", "code": "changed"},
+        "guitar": {"model": "user_ba9876543210", "name": None, "code": "unavailable"},
+    }
+    _finished(jobs_dir, stem_models=USER_PLAN, stem_model_fallbacks=fallbacks)
+    record = json.loads(registry_path(jobs_dir).read_text(encoding="utf-8"))["jobs"][0]
+    assert record["stem_model_fallbacks"] == fallbacks
+    job = _restart(jobs_dir)
+    assert job.stem_models == USER_PLAN
+    assert job.stem_model_fallbacks == fallbacks
+    assert job.to_state()["stem_model_fallbacks"] == fallbacks
+
+    registry_path(jobs_dir).unlink()
+    job = _restart(jobs_dir)
+    assert job.stem_models == USER_PLAN, "the folder's metadata.json has its copy"
+    assert job.stem_model_fallbacks == fallbacks
+
+
+def test_a_song_without_stand_ins_has_none(jobs_dir):
+    _finished(jobs_dir, stem_models=USER_PLAN)
+    job = _restart(jobs_dir)
+    assert job.stem_model_fallbacks is None
+    assert job.to_state()["stem_model_fallbacks"] is None
+
+
+_GOOD = {"model": "user_0123456789ab", "name": "Mine", "code": "key_mismatch"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "user_0123456789ab",
+        ["guitar"],
+        {"other": _GOOD},  # "other" is never chosen, so never stood in for
+        {"Bad Stem": _GOOD},
+        {"guitar": "user_0123456789ab"},
+        {"guitar": {**_GOOD, "model": "../../etc/passwd"}},
+        {"guitar": {**_GOOD, "model": "htdemucs_6s"}},
+        {"guitar": {**_GOOD, "code": "Not A Code"}},
+        {"guitar": {**_GOOD, "name": 5}},
+        {"guitar": {**_GOOD, "name": "x" * 201}},
+        {"guitar": {**_GOOD, "extra": 1}},
+        {"guitar": {"model": "user_0123456789ab", "code": "key_mismatch"}},
+    ],
+)
+@pytest.mark.parametrize("where", ["registry", "metadata"])
+def test_a_damaged_stand_in_record_is_dropped(jobs_dir, value, where):
+    _finished(jobs_dir, stem_models=USER_PLAN, stem_model_fallbacks={"guitar": dict(_GOOD)})
+    if where == "registry":
+        path = registry_path(jobs_dir)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["jobs"][0]["stem_model_fallbacks"] = value
+    else:
+        path = jobs_dir / SONG / "metadata.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["stem_model_fallbacks"] = value
+        registry_path(jobs_dir).unlink()
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    job = _restart(jobs_dir)
+    assert job.stem_model_fallbacks is None
+    assert job.stem_models == USER_PLAN

@@ -128,6 +128,27 @@ export function getTracks() {
   return _tracks.slice();
 }
 
+/**
+ * A take's entry changed on the server with its audio unchanged (its picture
+ * sync, POST .../sync): the loaded tracks take the new fields at once, so the
+ * review and the next export read them with no song reload. Returns whether
+ * the take was found.
+ */
+export function updateTakeEntry(jobId, entry) {
+  if (!jobId || jobId !== _jobId || !entry?.id) return false;
+  let found = false;
+  for (const tr of _tracks) {
+    // `active` is one of `takes` (takeStemsFromJob), so one assign covers both.
+    for (const tk of [...(tr.takes || []), tr.active]) {
+      if (tk && tk.id === entry.id) {
+        Object.assign(tk, entry);
+        found = true;
+      }
+    }
+  }
+  return found;
+}
+
 export function armedTracks() {
   return _tracks.filter((tr) => _armed.has(tr.id));
 }

@@ -26,6 +26,7 @@
   --sm-muted: var(--muted);
   --sm-faint: #59636e;
   --sm-red: #e5484d;
+  --sm-warn: #e9c23a;
   --sm-blue: #3e7be0;
 }
 .streamer {
@@ -1265,6 +1266,29 @@ html.streamer-open .daw-footer { display: none !important; }
 /* Show in folder or Save the raw recording beside it when they fit. */
 .sm-export-row .sm-ib.sm-export-reveal, .sm-export-row .sm-ib.sm-export-raw { height: 38px; }
 .sm-export-go:disabled { opacity: .45; cursor: default; }
+
+/* Sound and picture sync of the last take, under its export (syncControl.js):
+   the state in words, the warning when it is only estimated, then the nudge
+   slider between its two step buttons, with the value beside it. */
+.sm-sync { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--sm-line); }
+.sm-sync[hidden] { display: none; }
+.sm-sync p { margin: 0; overflow-wrap: break-word; }
+.sm-sync-title { font-size: 13px; font-weight: 600; color: var(--sm-text); }
+.sm-sync-state, .sm-sync-offset { font-size: 12px; line-height: 1.4; color: var(--sm-text-2); }
+.sm-sync-warn { font-size: 12px; line-height: 1.4; color: var(--sm-warn); }
+.sm-sync-warn[hidden] { display: none; }
+.sm-sync-label { margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--sm-text-2); }
+.sm-sync-row { display: flex; align-items: center; gap: 6px; }
+.sm-sync-row .sm-ib { width: 28px; height: 28px; font-size: 15px; font-weight: 600; }
+.sm-sync-range { flex: 1 1 auto; min-width: 0; accent-color: var(--sm-yellow); }
+.sm-sync-value { flex: none; min-width: 64px; text-align: right; font: 500 12px var(--font-mono); color: var(--sm-text-2); }
+.sm-sync-hint { font-size: 11.5px; line-height: 1.4; color: var(--sm-muted); }
+.sm-sync-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sm-sync-actions .sm-ib { width: auto; height: 28px; padding: 0 10px; font-size: 12px; font-weight: 600; }
+.sm-sync-actions [hidden], .sm-sync-actions:not(:has(:not([hidden]))) { display: none; }
+.sm-sync-status { font-size: 12px; line-height: 1.4; color: var(--sm-text-2); }
+.sm-sync-status[hidden] { display: none; }
+.sm-sync :disabled { opacity: .45; cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
   .sm-rec.recording .sm-rec-dot { animation: none; }

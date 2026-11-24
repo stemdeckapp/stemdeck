@@ -254,8 +254,9 @@ def _mixdown_cache_key(
 ) -> str:
     """Every render input is in the key, so a different mixer state, region,
     or a Settings change (export sample rate) misses cleanly -- never a stale
-    hit. Stems are immutable once a job reaches "done", so job_id alone pins
-    the underlying audio; gains are formatted to match the %.6f precision
+    hit. Stems are immutable once a job reaches "done" but for a re-extract,
+    whose revisions _take_versions adds, so job_id with them pins the
+    underlying audio; gains are formatted to match the %.6f precision
     already used in the ffmpeg volume filter, so cosmetically-different but
     ffmpeg-equivalent gain strings (e.g. "1" vs "1.0") share a cache entry.
 
@@ -391,7 +392,27 @@ def _take_versions(job_id: str, names: list[str]) -> list[str]:
         take_id = _lane_take_id(job_id, name)
         st = _take_lane_path(job_id, name).stat()
         out.append(f"{name}={take_id}@{st.st_size}:{st.st_mtime_ns}")
+    # A stem file replaced in place by a re-extract or its undo
+    # (app/pipeline/stem_reextract.py): its revision, for every lane, since
+    # Original and the mix are sums of stems. Only once one was replaced, so
+    # every other song keeps the keys it had.
+    revisions = _stem_revisions_fragment(job_id)
+    if revisions:
+        out.append(revisions)
     return out
+
+
+def _stem_revisions_fragment(job_id: str) -> str:
+    job = registry_get(job_id)
+    revisions = job.stem_revisions if job is not None else None
+    if not isinstance(revisions, dict):
+        return ""
+    parts = [
+        f"{name}={rev}"
+        for name, rev in sorted(revisions.items())
+        if isinstance(name, str) and isinstance(rev, int) and not isinstance(rev, bool) and rev > 0
+    ]
+    return "r:" + ",".join(parts) if parts else ""
 
 
 def _validate_stem_path(job_id: str, name: str):

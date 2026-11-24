@@ -97,8 +97,14 @@ def test_online_sources_are_off_and_a_link_is_refused(client):
 def test_an_upgrade_writes_neither_choice_into_settings_json(client):
     # Nothing is decided for the user at startup: the keys stay absent, so a
     # STEMDECK_* variable set later still applies, and Settings shows the
-    # default rather than a choice the user never made.
-    client.get("/api/settings")
+    # default rather than a choice the user never made. The payload carries
+    # the separation settings this release added (all "auto", no speed test)
+    # without writing them.
+    body = client.get("/api/settings").json()
+    assert body["stem_models"] == {
+        stem: "auto" for stem in ("vocals", "drums", "bass", "guitar", "piano")
+    }
+    assert body["speed_test"] is None
     on_disk = (
         json.loads(_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
         if _settings._SETTINGS_PATH.exists()
@@ -107,4 +113,23 @@ def test_an_upgrade_writes_neither_choice_into_settings_json(client):
     assert "stem_format" not in on_disk
     assert "stem_mp3_kbps" not in on_disk
     assert "auto_lyrics" not in on_disk
+    assert "stem_models" not in on_disk
+    assert "speed_test" not in on_disk
     assert "online_sources" not in on_disk
+
+
+def test_every_stem_model_reads_as_auto(client, monkeypatch):
+    # 0.20.0 had no stem_models key: every stem was htdemucs_6s's. It reads as
+    # "auto" for every stem, the same as a fresh install, so the next song
+    # gets the recommendation for its device: htdemucs_6s on a CPU, as before.
+    from app.core import stem_models
+
+    monkeypatch.setattr("app.main.get_demucs_device", lambda: "cpu")
+    all_auto = dict.fromkeys(stem_models.SELECTABLE_STEMS, "auto")
+    assert _settings.get_stem_model_choices() == all_auto
+    body = client.get("/api/settings").json()
+    assert body["stem_models"] == all_auto
+    assert body["stem_models_resolved"] == dict.fromkeys(
+        stem_models.SELECTABLE_STEMS, "htdemucs_6s"
+    )
+    assert _settings.resolve_stem_models("cpu") == body["stem_models_resolved"]

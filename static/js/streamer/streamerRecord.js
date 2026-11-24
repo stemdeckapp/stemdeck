@@ -17,6 +17,11 @@
 // The take is announced as not primary, so the studio's own camera
 // (video/videoTake.js) never films it.
 //
+// The camera's own microphone, when it has one, is recorded into the same
+// file as the picture (video/cameraAudio.js): never heard, never mixed. The
+// server compares that sound with the take's to place the picture
+// (app/pipeline/av_sync.py), and keeps the browser's estimate when it cannot.
+//
 // The view (streamer.js) asks: start(), stop(), state, and calls draw()
 // every frame while a take is open.
 
@@ -26,6 +31,9 @@ import { openSilentCapture } from "../capture/captureGraph.js";
 import { recordBlockReason } from "../capture/takeMath.js";
 import { requestTakesReload } from "../capture/takeLanes.js";
 import { startCameraRecording } from "../video/cameraRecorder.js";
+import { openCameraAudio } from "../video/cameraAudio.js";
+import { watchFrameAge } from "../video/frameAge.js";
+import { getStreamerMedia, cameraSource } from "./streamerDevices.js";
 import { videoRecordBlockKey, supportedRecorderMimes, platformFromUserAgent } from "../video/recordSupport.js";
 import { audioEngine, playbackSpeed } from "../state.js";
 import { transport, togglePlayPause, setPlayheadTime } from "../transport.js";
@@ -45,6 +53,8 @@ const rec = {
   takeId: null,
   session: null,
   camera: null, // the camera recorder on the canvas stream
+  camAudio: null, // { track, state, label }: the camera's microphone for the picture's file
+  frameAge: null, // the drawn camera frames' age (video/frameAge.js), while the picture records
   canvas: null,
   ctx: null,
   stream: null,
@@ -194,8 +204,12 @@ export async function startRecording({ jobId, capture, settings, aspect, range, 
   const goOn = () => {
     if (rec.aborted) throw Object.assign(new Error("aborted"), { code: "aborted" });
   };
+  // The camera's microphone opens while the track is found, so Record waits
+  // for it at most once (cameraAudio.OPEN_TIMEOUT_MS). Not with no camera.
+  const camAudio = openSceneAudio(camera);
   try {
     const trackId = await ensureTrack(jobId, trackName);
+    rec.camAudio = await camAudio;
     goOn();
     if (audioEngine !== engine) throw Object.assign(new Error("the song changed"), { code: "engine" });
     let cap = capture && capture.ctx === engine.audioContext && !capture.closed ? capture : null;
@@ -259,6 +273,7 @@ export async function startRecording({ jobId, capture, settings, aspect, range, 
     watch(rec.session);
     return { ok: true };
   } catch (err) {
+    if (!rec.camAudio) rec.camAudio = await camAudio;
     cleanup();
     if (err?.code === "aborted") {
       rec.aborted = false;
@@ -289,6 +304,8 @@ export async function stopRecording() {
 export function drawOutput(draw) {
   if (!rec.ctx || !isTakeOpen(rec.state)) return;
   draw(rec.ctx, rec.size.width, rec.size.height);
+  // The frame just drawn was captured this long ago (sent as drawAgeMs).
+  rec.frameAge?.sample();
 }
 
 // A hidden window draws no frames (requestAnimationFrame stops), so the
@@ -297,11 +314,31 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden && isTakeOpen(rec.state)) rec.hiddenWhileRecording = true;
 });
 
+/** The camera's microphone for take with the camera `camera` ("on", "off"
+ * or null), or null when there is no camera to match. Never rejects. */
+async function openSceneAudio(camera) {
+  if (camera === "off") return null;
+  const media = getStreamerMedia();
+  const video = media.camera?.getVideoTracks?.()[0];
+  if (!video) return null;
+  try {
+    return await openCameraAudio(video, [media.audio].filter(Boolean));
+  } catch (err) {
+    console.warn("[streamer] the camera microphone did not open:", err);
+    return { track: null, state: "failed", label: "" };
+  }
+}
+
 /** The take ended (kept, failed or discarded): the recorder lets go of the
- * canvas, the capture it opened and the recorder worklet. */
+ * canvas, the capture it opened, the camera's microphone and the recorder
+ * worklet. */
 function cleanup() {
   try { rec.camera?.abort(); } catch (err) { console.warn(err); }
   rec.camera = null;
+  try { rec.camAudio?.track?.stop(); } catch (err) { console.warn(err); }
+  rec.camAudio = null;
+  rec.frameAge?.stop();
+  rec.frameAge = null;
   for (const tr of rec.stream?.getTracks() || []) tr.stop();
   rec.stream = null;
   rec.canvas = null;
@@ -431,6 +468,8 @@ onTakeEvent((ev) => {
     const jobId = ev.jobId;
     const takeId = ev.takeId;
     try {
+      rec.frameAge?.stop();
+      rec.frameAge = watchFrameAge(cameraSource());
       rec.camera = startCameraRecording({
         stream: rec.stream,
         jobId,
@@ -441,6 +480,8 @@ onTakeEvent((ev) => {
         deviceLabel: "Performance scene",
         mirrorPreview: false,
         previewVideo: null,
+        audioTrack: rec.camAudio?.track || null,
+        cameraAudio: rec.camAudio ? { state: rec.camAudio.state, label: rec.camAudio.label } : null,
         upload: (seq, blob) => uploadPart(jobId, takeId, "camera", seq, blob),
       });
     } catch (err) {
@@ -453,16 +494,27 @@ onTakeEvent((ev) => {
   } else if ((ev.type === "failed" || ev.type === "discarded") && ev.takeId === rec.takeId) {
     try { rec.camera?.abort(); } catch (err) { console.warn(err); }
     rec.camera = null;
+    try { rec.camAudio?.track?.stop(); } catch (err) { console.warn(err); }
+    rec.camAudio = null;
+    rec.frameAge?.stop();
+    rec.frameAge = null;
   }
 });
 
 registerTakeParticipant(async (takeId) => {
   if (!rec.camera || rec.camera.takeId !== takeId) return null;
   const camera = rec.camera;
+  const age = rec.frameAge;
   rec.camera = null;
+  rec.frameAge = null;
   try {
-    return await camera.stop();
+    const block = await camera.stop();
+    age?.stop();
+    const drawAgeMs = age?.medianMs();
+    if (block && drawAgeMs != null) block.drawAgeMs = drawAgeMs;
+    return block;
   } catch (err) {
+    age?.stop();
     console.warn("[streamer] the scene upload failed:", err);
     return null;
   }

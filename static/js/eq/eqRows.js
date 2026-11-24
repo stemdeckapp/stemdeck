@@ -29,6 +29,8 @@ import {
 // The effects rows (Advanced mode) share this layout: their height, place
 // and order are counted with the EQ rows', so player.js needs no change.
 import { setFxContext, syncFxRows, syncFxRowOrder, fxPanelsHeight } from "../fx/fxRows.js";
+// And the model rows (Advanced mode, laneModelRows.js), after the effects rows.
+import { setModelContext, syncModelRows, syncModelRowOrder, modelPanelsHeight } from "../laneModelRows.js";
 
 // The panel modules, by kind, loaded on first open.
 const LOADERS = {
@@ -105,7 +107,7 @@ export function laneKind(lane) {
 
 /** Height the open panels add to the lane stack (px). player.js uses it. */
 export function eqPanelsHeight() {
-  const fxPx = fxPanelsHeight();
+  const fxPx = fxPanelsHeight() + modelPanelsHeight();
   if (!_enabled) return fxPx;
   return openPanelsHeight(_lanes, isPanelOpen, laneKind) + fxPx;
 }
@@ -126,6 +128,9 @@ export function setEqContext({ jobId, lanes, enabled }) {
   // The effects row opens from this lane's EQ row, so it is open only while
   // that row is.
   setFxContext({ jobId, lanes, enabled, panelOpen: isPanelOpen });
+  // The model rows open on their own (their tab is in the lane's header),
+  // under the EQ and effects rows when those are open.
+  setModelContext({ jobId, lanes, enabled });
 }
 
 // Practice and DAW: the tabs and the open panels go or come back, and the
@@ -350,6 +355,7 @@ export function syncEqRows() {
     for (const lane of [..._rows.keys()]) dropRows(lane);
     dropTabs(null);
     syncFxRows();
+    syncModelRows();
     return;
   }
   dropTabs(_lanes);
@@ -375,8 +381,10 @@ export function syncEqRows() {
     mountPanel(lane);
   }
   syncEqRowOrder();
-  // After the EQ rows, so an effects row goes right after its lane's EQ row.
+  // After the EQ rows, so an effects row goes right after its lane's EQ row,
+  // and a model row after both.
   syncFxRows();
+  syncModelRows();
 }
 
 /** A mounted panel's own measurements (tests read the spectrum's cost). */
@@ -395,6 +403,7 @@ export function syncEqRowOrder() {
     r.mixRow.style.order = Number.isFinite(mo) ? String(eqRowOrder(mo)) : "";
   }
   syncFxRowOrder();
+  syncModelRowOrder();
 }
 
 /** The visible width of the waveform area, for panels that span it at any zoom. */

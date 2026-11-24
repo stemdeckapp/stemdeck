@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from app.core import device_reason
 
-RTX = {"name": "NVIDIA GeForce RTX 3080", "driver": "616.64", "cuda": "13.4"}
+RTX = {"name": "NVIDIA GeForce RTX 3080", "driver": "616.64", "cuda": "13.4", "memory_mb": 10240}
 
 # The header of driver 616.64, verbatim: it labels the CUDA version
 # "CUDA UMD Version", not "CUDA Version" as older drivers do.
@@ -202,7 +202,7 @@ def test_diagnostics_carry_only_known_setup_words(facts, setup_reason, shown):
 # The nvidia-smi probe itself.
 
 
-def _fake_smi(monkeypatch, header, query="NVIDIA GeForce RTX 3080, 616.64\n", code=0):
+def _fake_smi(monkeypatch, header, query="NVIDIA GeForce RTX 3080, 616.64, 10240 MiB\n", code=0):
     calls = []
 
     def run(args, **_kw):
@@ -222,12 +222,43 @@ def test_the_616_header_is_read(monkeypatch):
 
 
 def test_the_older_header_is_read(monkeypatch):
-    _fake_smi(monkeypatch, HEADER_OLD, query="NVIDIA GeForce RTX 4060, 560.94\n")
+    _fake_smi(monkeypatch, HEADER_OLD, query="NVIDIA GeForce RTX 4060, 560.94, 8188 MiB\n")
     assert device_reason.nvidia_gpu() == {
         "name": "NVIDIA GeForce RTX 4060",
         "driver": "560.94",
         "cuda": "12.6",
+        "memory_mb": 8188,
     }
+
+
+def test_the_query_asks_for_the_total_memory(monkeypatch):
+    # The separation model recommendation weighs it (app/core/stem_models.py):
+    # read from nvidia-smi, never from torch, which would start CUDA here.
+    calls = _fake_smi(monkeypatch, HEADER_616)
+    device_reason.nvidia_gpu()
+    [query] = [a for args in calls for a in args if a.startswith("--query-gpu")]
+    assert query == "--query-gpu=name,driver_version,memory.total"
+
+
+@pytest.mark.parametrize(
+    ("line", "name", "memory_mb"),
+    [
+        ("NVIDIA GeForce RTX 3080, 616.64, 10240 MiB", "NVIDIA GeForce RTX 3080", 10240),
+        ("NVIDIA GeForce RTX 3080, 616.64, 10240", "NVIDIA GeForce RTX 3080", 10240),
+        ("NVIDIA GeForce GT 1030, 616.64, [N/A]", "NVIDIA GeForce GT 1030", None),
+        ("NVIDIA GeForce GT 1030, 616.64, 2 GiB", "NVIDIA GeForce GT 1030", None),
+        ("NVIDIA GeForce GT 1030, 616.64, 0 MiB", "NVIDIA GeForce GT 1030", None),
+        ("NVIDIA GeForce GT 1030, 616.64, ", "NVIDIA GeForce GT 1030", None),
+        # A comma in the name cannot move the driver or the memory.
+        ("NVIDIA RTX A2000, Laptop, 616.64, 4096 MiB", "NVIDIA RTX A2000, Laptop", 4096),
+        # Two fields, as a driver that left out the third would print.
+        ("NVIDIA GeForce RTX 3080, 616.64", "NVIDIA GeForce RTX 3080", None),
+    ],
+)
+def test_the_total_memory_is_read_in_mib_or_unknown(monkeypatch, line, name, memory_mb):
+    _fake_smi(monkeypatch, HEADER_616, query=line + "\n")
+    gpu = device_reason.nvidia_gpu()
+    assert (gpu["name"], gpu["driver"], gpu["memory_mb"]) == (name, "616.64", memory_mb)
 
 
 # The header forms nvidia-smi prints, and output that holds no version, shared
@@ -287,7 +318,7 @@ def test_concurrent_first_requests_share_one_probe(monkeypatch):
     def run(args, **_kw):
         calls.append(args)
         release.wait(5)
-        out = "NVIDIA GeForce RTX 3080, 616.64\n" if len(args) > 1 else HEADER_616
+        out = "NVIDIA GeForce RTX 3080, 616.64, 10240 MiB\n" if len(args) > 1 else HEADER_616
         return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
 
     monkeypatch.setattr(device_reason, "_nvidia_smi_path", lambda: "nvidia-smi")
@@ -319,6 +350,63 @@ def test_a_hung_nvidia_smi_is_no_gpu(monkeypatch):
     monkeypatch.setattr(device_reason.subprocess, "run", run)
     device_reason.reset_state()
     assert device_reason.nvidia_gpu() is None
+
+
+def _flaky_smi(monkeypatch):
+    """nvidia-smi that answers while ``ok[0]`` is True and fails otherwise,
+    and a clock that moves past the TTL before every probe."""
+    ok = [True]
+
+    def run(args, **_kw):
+        if not ok[0]:
+            return subprocess.CompletedProcess(args, 9, stdout="", stderr="")
+        out = "NVIDIA GeForce RTX 3080, 616.64, 10240 MiB\n" if len(args) > 1 else HEADER_616
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    clock = [1000.0]
+    monkeypatch.setattr(device_reason, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(device_reason.subprocess, "run", run)
+    monkeypatch.setattr(device_reason.time, "monotonic", lambda: clock[0])
+    device_reason.reset_state()
+
+    def probe():
+        clock[0] += device_reason.NVIDIA_SMI_TTL_SEC + 1
+        return device_reason.refresh_nvidia_gpu()
+
+    return ok, probe
+
+
+def test_a_failed_probe_keeps_the_last_good_answer(monkeypatch):
+    """One nvidia-smi timeout used to read as "no GPU" for the whole TTL,
+    which moved the separation recommendation and staled the speed test."""
+    ok, probe = _flaky_smi(monkeypatch)
+    assert probe() == RTX
+    ok[0] = False
+    assert probe() == RTX
+    assert probe() == RTX
+    assert device_reason.nvidia_gpu() == RTX
+    # The third failure in a row: the GPU is taken as gone.
+    assert probe() is None
+    assert device_reason.nvidia_gpu() is None
+
+
+def test_a_good_answer_resets_the_failure_count(monkeypatch):
+    ok, probe = _flaky_smi(monkeypatch)
+    probe()
+    ok[0] = False
+    probe()
+    probe()
+    ok[0] = True
+    assert probe() == RTX
+    ok[0] = False
+    assert probe() == RTX
+    assert probe() == RTX
+
+
+def test_failures_with_no_good_answer_yet_are_no_gpu(monkeypatch):
+    ok, probe = _flaky_smi(monkeypatch)
+    ok[0] = False
+    assert probe() is None
 
 
 def test_no_nvidia_smi_is_no_gpu(monkeypatch):

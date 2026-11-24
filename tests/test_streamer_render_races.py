@@ -19,6 +19,7 @@ import pytest
 
 from app.api import stems as stems_mod
 from app.api import takes as takes_mod
+from app.core.takes import camera_start_sec
 from app.pipeline import take_render
 from tests.ffmpeg_probe import skip_without_ffmpeg
 from tests.test_takes_render import JOB, _make_job, _needs_x264, _sidecar, _take_with_camera
@@ -273,17 +274,21 @@ def test_stale_render_temps_are_swept(tmp_path):
     assert not stale.exists() and keep.exists()
 
 
-def test_a_composed_scene_is_placed_at_the_heard_time():
-    """Fix pass G: a Streamer scene's frames show the heard playhead, so its
-    first frame is placed with the round trip added back and no nudge; a
-    filmed camera keeps the audio's placement (round trip and nudge off)."""
+def test_a_composed_scene_is_placed_like_a_filmed_camera():
+    """One placement for every fit (app/core/takes.py camera_start_sec): the
+    take's placement (round trip folded in by the browser, the nudge off)
+    plus the picture's offset. The scene draws only the camera, so the old
+    fix pass G rule (round trip added back for "fill") is gone: on the
+    maintainer's StreamCam it put the picture 500 to 600 ms late."""
     side = {
         "timeline": {"first_sample_song_sec": 29.72},
         "latency": {"round_trip_ms": 150.0, "user_nudge_ms": 40.0},
+        "video": {"firstFrameAtMs": 22.0},
     }
-    video = {"firstFrameAtMs": 22.0}
-    assert takes_mod._scene_start_sec(side, video, 0.0) == pytest.approx(29.72 + 0.15 + 0.022)
-    assert takes_mod._scene_start_sec(side, video, 10.0) == pytest.approx(29.72 + 0.15 + 0.012)
+    assert not hasattr(takes_mod, "_scene_start_sec")
     assert takes_mod._placement_sec(side) == pytest.approx(29.72 - 0.04)
+    assert camera_start_sec(side) == pytest.approx(29.72 - 0.04 + 0.022)
+    # A render's own camera_offset_ms (positive: earlier) is taken off.
+    assert camera_start_sec(side, 10.0) == pytest.approx(29.72 - 0.04 + 0.012)
     no_latency = {"timeline": {"first_sample_song_sec": 5.0}}
-    assert takes_mod._scene_start_sec(no_latency, {}, 0.0) == pytest.approx(5.0)
+    assert camera_start_sec(no_latency) == pytest.approx(5.0)

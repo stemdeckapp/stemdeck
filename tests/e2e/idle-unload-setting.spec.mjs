@@ -1,4 +1,4 @@
-// "Free memory when idle" in Settings > General (#975): how many minutes
+// "Free memory when idle" in Settings > Separation (#975): how many minutes
 // without a new track before the separation models are unloaded, 0 for never.
 //
 // Driven in a real browser because the risk is the field, not the value: 0 is a
@@ -11,10 +11,14 @@ import { openStudio, seedLibrary } from "./helpers.mjs";
 
 const field = (page) => page.locator(".set-idle-unload");
 
+// The row lives in the Separation tab, which Settings does not open on.
+const showSeparation = (page) => page.locator('.settings-tab[data-tab="separation"]').click();
+
 async function openSettings(page) {
   await seedLibrary(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
+  await showSeparation(page);
   await expect(field(page)).toBeVisible();
 }
 
@@ -206,6 +210,8 @@ test.describe("free memory when idle", () => {
   test("the description follows a language switch while Settings is open", async ({ page }) => {
     await openSettings(page);
     await expect(page.locator(".set-idle-unload-desc")).toContainText("at most 1440");
+    // The language is on General; the dialog rebuilds and the field keeps its text.
+    await page.locator('.settings-tab[data-tab="general"]').click();
     await page.locator(".set-language").selectOption("de");
     await expect(page.locator(".set-idle-unload-desc")).toContainText("höchstens 1440");
   });
@@ -216,6 +222,7 @@ test.describe("free memory when idle", () => {
     await page.route("**/api/settings", (route) => route.abort());
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.locator("#settingsBtn").click();
+    await showSeparation(page);
     await expect(page.locator(".set-idle-unload-desc")).toContainText("höchstens 1440");
     await field(page).fill("40");
     await field(page).blur();

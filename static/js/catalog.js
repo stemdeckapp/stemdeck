@@ -24,6 +24,7 @@ import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailur
 // Aliased (not the bare "t") -- this file already uses "t"/"tr" as local
 // variable names for track objects and table rows in several scopes.
 import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
+import { SETTINGS_ANSWER_EVENT, SETTINGS_APPLIED_EVENT, wireSeparationSettings } from "./separationSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
@@ -92,6 +93,19 @@ const FRIEND_GROUPS = [
         url: "https://www.instagram.com/dead_rosesband",
         logo: "/img/friends/dead-roses.jpg",
         avatar: true,
+      },
+      {
+        name: "GOATWOLF",
+        roleKey: "friends.role.goatwolf",
+        url: "https://www.instagram.com/prodbygoatwolf/",
+      },
+      {
+        name: "The Designer of Things",
+        roleKey: "friends.role.designerOfThings",
+        links: [
+          { label: "Website", url: "https://thedesignerofthings.com" },
+          { label: "Instagram", url: "https://www.instagram.com/thedesignerofthings/" },
+        ],
       },
       {
         name: "Killah Trakz",
@@ -669,6 +683,24 @@ export function getTrackSummary(trackId) {
   };
 }
 
+/**
+ * The open track's models, in the job state's own words, for the lanes'
+ * Model tabs (laneModelRows.js): { job_id, stem_models, stem_undo,
+ * stem_reextract, vocal_split }, or null when none is open.
+ */
+export function getCurrentTrackModels() {
+  const track = tracks[_currentTrackId];
+  if (!track) return null;
+  return {
+    job_id: _currentTrackId,
+    stem_models: track.stemModels ?? null,
+    stem_undo: track.stemUndo ?? null,
+    stem_reextract: track.stemReextract ?? null,
+    // Whether the Lead + Backing pair exists: a Vocals re-extract sets it aside.
+    vocal_split: track.vocalSplit ?? null,
+  };
+}
+
 /** Open a library song in the studio, as a click on its row does. */
 export function openTrackInStudio(trackId) {
   return loadTrackIntoStudio(trackId);
@@ -893,6 +925,12 @@ function stateMetadataToTrack(state, fallbackTrack) {
     // Its versions (#804): the library shows them under the song.
     versions: Array.isArray(state.versions) ? state.versions : fallbackTrack.versions ?? null,
     activeVersion: state.active_version ?? fallbackTrack.activeVersion ?? null,
+    // The model each stem was made with, its undo copies and the song's last
+    // one-stem re-extract (laneModelRows.js, Advanced mode). Not `??`: a null
+    // from the server is newer than whatever the row last held.
+    stemModels: "stem_models" in state ? state.stem_models : fallbackTrack.stemModels ?? null,
+    stemUndo: "stem_undo" in state ? state.stem_undo : fallbackTrack.stemUndo ?? null,
+    stemReextract: "stem_reextract" in state ? state.stem_reextract : fallbackTrack.stemReextract ?? null,
     createdAt: state.created_at ?? fallbackTrack.createdAt,
     favorite: fallbackTrack.favorite ?? false,
     // The band (#699): the one saved on the track first, since a band chosen
@@ -5206,7 +5244,15 @@ async function wireGeneralSettings(overlay) {
       deviceDiagnostics = d.device_diagnostics || "";
       if (deviceCopyStatus) deviceCopyStatus.textContent = "";
     }
+    // The per-stem models follow the device and the quality: separationSettings.js
+    // repaints from every answer applied here.
+    overlay.dispatchEvent(new CustomEvent(SETTINGS_APPLIED_EVENT, { detail: d }));
   };
+  // A settings answer separationSettings.js got (the speed test's Apply): the
+  // device row shows what it saved.
+  overlay.addEventListener(SETTINGS_ANSWER_EVENT, (e) => {
+    if (e.detail && typeof e.detail === "object") apply(e.detail);
+  });
   deviceCopy?.addEventListener("click", async () => {
     let copied = false;
     try {
@@ -5853,6 +5899,7 @@ function openResetConfirm() {
 // gone wrong, so they sit apart under their own heading.
 const SETTINGS_ICON = {
   general: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  separation: '<path d="M3 12h5M8 12c3 0 4-6 8-6h5M8 12c3 0 4 6 8 6h5M8 12h13"/>',
   library: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>',
   details: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   export: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>',
@@ -5864,6 +5911,7 @@ const SETTINGS_ICON = {
 };
 const SETTINGS_SECTIONS = [
   { id: "general", label: "settings.tab.general", text: "General", desc: "settings.desc.general" },
+  { id: "separation", label: "settings.tab.separation", text: "Separation", desc: "settings.desc.separation" },
   { id: "library", label: "settings.tab.library", text: "Library", desc: "settings.desc.library" },
   { id: "details", label: "settings.tab.songDetails", text: "Song details", desc: "settings.desc.details" },
   { id: "export", label: "settings.tab.export", text: "Export", desc: "settings.desc.export" },
@@ -5968,7 +6016,28 @@ function openLibraryEditor() {
           </div>
         </div>
         <div class="settings-group">
-          <h4 class="settings-group-title" data-i18n="settings.group.separation">Separation</h4>
+          <h4 class="settings-group-title" data-i18n="settings.group.imports">Imports</h4>
+          <div class="settings-section">
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.maxDuration.title">Max track length</div>
+                <div class="settings-row-desc set-max-duration-desc">Longest track accepted for processing, in minutes (max 60).</div>
+              </div>
+              ${unitField('<input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" data-i18n-aria-label="settings.maxDuration.title" />', "settings.unit.minutes", "min")}
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.playlistLimit.title">Playlist import limit</div>
+                <div class="settings-row-desc" data-i18n="settings.playlistLimit.desc">Most tracks one playlist import will queue (max 200).</div>
+              </div>
+              ${unitField('<input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" data-i18n-aria-label="settings.playlistLimit.title" />', "settings.unit.tracks", "tracks")}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane hidden" data-pane="separation" id="settings-pane-separation" role="tabpanel" aria-labelledby="settings-tab-separation">
+        <div class="settings-group">
+          <h4 class="settings-group-title" data-i18n="settings.group.speed">Device and speed</h4>
           <div class="settings-section">
             <div class="settings-row">
               <div class="settings-row-text">
@@ -6007,22 +6076,122 @@ function openLibraryEditor() {
             <div class="idle-unload-msg" role="status" aria-live="polite"></div>
           </div>
         </div>
-        <div class="settings-group">
-          <h4 class="settings-group-title" data-i18n="settings.group.imports">Imports</h4>
+        <!-- Filled by static/js/separationSettings.js from /api/settings. An
+             older server sends no per-stem model fields, and the group stays hidden. -->
+        <div class="settings-group stem-models-group" hidden>
+          <h4 class="settings-group-title" data-i18n="settings.group.stemModels">Model for each stem</h4>
+          <p class="settings-group-desc" data-i18n="settings.stemModels.desc">Which model separates each stem. A change applies to the next track. Best quality applies to the Demucs models only.</p>
+          <div class="settings-section">
+            <div class="stem-models-summary">
+              <p class="settings-row-desc set-stem-models-why" hidden></p>
+              <p class="settings-row-desc set-stem-models-estimate" hidden></p>
+              <div class="stem-models-actions">
+                <button class="settings-btn set-stem-models-reset" type="button" data-i18n="settings.stemModels.reset">Use recommended</button>
+                <span class="settings-row-desc stem-models-msg" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+            <div class="stem-models-rows"></div>
+          </div>
+        </div>
+        <!-- Speed test, drawn by static/js/separationSettings.js. Shown only
+             when the server answers GET /api/speed-test. -->
+        <div class="settings-group speed-test-group" hidden>
+          <h4 class="settings-group-title" data-i18n="settings.speedTest.title">Benchmark</h4>
           <div class="settings-section">
             <div class="settings-row">
               <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.maxDuration.title">Max track length</div>
-                <div class="settings-row-desc set-max-duration-desc">Longest track accepted for processing, in minutes (max 60).</div>
+                <div class="settings-row-title" data-i18n="settings.speedTest.run">Run benchmark</div>
+                <div class="settings-row-desc" data-i18n="settings.speedTest.desc">About a minute. It separates a short generated clip on each device and writes one test file to the StemData folder, then deletes it. Nothing is downloaded, and it runs only while no track is being separated.</div>
               </div>
-              ${unitField('<input type="text" class="settings-num-input set-max-duration" inputmode="numeric" maxlength="2" aria-label="Max track length in minutes" data-i18n-aria-label="settings.maxDuration.title" />', "settings.unit.minutes", "min")}
+              <button class="settings-btn settings-btn-accent set-speedtest-run" type="button" data-i18n="settings.speedTest.run">Run benchmark</button>
+              <button class="settings-btn set-speedtest-cancel" type="button" hidden data-i18n="settings.speedTest.cancel">Cancel</button>
             </div>
-            <div class="settings-row">
-              <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.playlistLimit.title">Playlist import limit</div>
-                <div class="settings-row-desc" data-i18n="settings.playlistLimit.desc">Most tracks one playlist import will queue (max 200).</div>
+            <div class="set-speedtest-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Benchmark" data-i18n-aria-label="settings.speedTest.title" hidden><span class="speed-test-bar"></span></div>
+            <div class="settings-row-desc set-speedtest-msg" role="status" aria-live="polite"></div>
+            <div class="set-speedtest-result" hidden>
+              <div class="settings-row-title" data-i18n="settings.speedTest.result.title">Last result</div>
+              <p class="settings-row-desc set-speedtest-stale" hidden data-i18n="settings.speedTest.stale">This result is from different hardware. Run the benchmark again.</p>
+              <p class="settings-row-desc speed-test-reason" hidden></p>
+              <p class="settings-row-desc speed-test-why" hidden></p>
+              <p class="settings-row-desc speed-test-disk" hidden></p>
+              <!-- Not a scroll box: the pane scrolls, the table grows with it. -->
+              <div class="speed-test-table-wrap">
+                <table class="library-editor-table set-speedtest-table" id="settings-speedtest-table">
+                  <thead><tr>
+                    <th scope="col" data-i18n="settings.speedTest.col.device">Device</th>
+                    <th scope="col" data-i18n="settings.speedTest.col.model">Model</th>
+                    <th scope="col" data-i18n="settings.speedTest.col.minutesHead">Time for a typical 4-minute song</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
               </div>
-              ${unitField('<input type="text" class="settings-num-input set-playlist-max" inputmode="numeric" maxlength="3" aria-label="Playlist import limit" data-i18n-aria-label="settings.playlistLimit.title" />', "settings.unit.tracks", "tracks")}
+              <p class="settings-row-desc speed-test-estimate-note" hidden data-i18n="settings.speedTest.estimateNote">Estimate: not measured on your computer, calculated from the measured one.</p>
+              <div class="speed-test-actions">
+                <button class="settings-btn set-speedtest-devices" type="button" hidden aria-expanded="false" aria-controls="settings-speedtest-table">Show all devices</button>
+                <button class="settings-btn settings-btn-accent set-speedtest-apply" type="button" hidden data-i18n="settings.speedTest.apply">Apply recommendation</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- My models, wired by static/js/myModels.js. Shown only when the
+             server answers GET /api/my-models; an older server has no route. -->
+        <div class="settings-group my-models-group" hidden>
+          <h4 class="settings-group-title my-models-head">
+            <button class="my-models-toggle" type="button" aria-expanded="false" aria-controls="myModelsBody"><span class="my-models-chevron" aria-hidden="true"></span><span data-i18n="settings.myModels.title">Advanced: My models</span></button>
+          </h4>
+          <div class="my-models-body" id="myModelsBody" hidden>
+            <p class="my-models-notice" id="myModelsNotice" data-i18n="settings.myModels.notice">These models come from third parties. Models you load are your own responsibility, including their licence and your right to use them.</p>
+            <p class="settings-row-desc my-models-pinned" hidden data-i18n="settings.myModels.pinned">This install uses one fixed model for every stem, so the models you add here are not used.</p>
+            <p class="settings-row-desc my-models-unavailable" hidden data-i18n="settings.myModels.reason.unavailable">Models you add cannot run on this install.</p>
+            <p class="settings-row-desc my-models-registry-reset" hidden data-i18n="settings.myModels.registryReset">The list of your models could not be read and was started again. The old file was kept beside it.</p>
+            <form class="settings-section my-models-form" novalidate aria-labelledby="myModelsAddTitle">
+              <div class="settings-row-title my-models-subtitle" id="myModelsAddTitle" data-i18n="settings.myModels.add.title">Add a model</div>
+              <div class="my-models-field">
+                <label class="my-models-label" for="myModelsLink" data-i18n="settings.myModels.link.label">Option 1: a Hugging Face link</label>
+                <p class="settings-row-desc my-models-hint" id="myModelsLinkHint" data-i18n="settings.myModels.link.hint">Paste the address of the model's page. StemDeck downloads the model file and its config file for you.</p>
+                <p class="settings-row-desc my-models-link-off" id="myModelsLinkOff" hidden data-i18n="settings.myModels.link.off">Adding by link needs Online search and link import, which is off. Turn it on in Settings, Experimental. Files from your computer work either way.</p>
+                <input class="settings-text-input my-models-link" id="myModelsLink" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="https://huggingface.co/owner/repo" aria-describedby="myModelsLinkHint myModelsLinkOff" />
+              </div>
+              <div class="my-models-or" aria-hidden="true" data-i18n="settings.myModels.or">or</div>
+              <div class="my-models-label" data-i18n="settings.myModels.disk.label">Option 2: files from your computer</div>
+              <p class="settings-row-desc my-models-hint" data-i18n="settings.myModels.disk.hint">Use this if you already downloaded the model.</p>
+              <div class="my-models-field my-models-pick">
+                <button class="settings-btn my-models-file-btn" type="button" aria-describedby="myModelsFileName myModelsFileHint" data-i18n="settings.myModels.file.choose">Choose model file...</button>
+                <span class="my-models-file-name" id="myModelsFileName" data-i18n="settings.myModels.file.none">No model file chosen</span>
+                <input class="my-models-file-input" id="myModelsFile" type="file" accept=".safetensors,.ckpt,.pth,.pt" hidden />
+              </div>
+              <p class="settings-row-desc my-models-hint" id="myModelsFileHint" data-i18n="settings.myModels.file.hint">The model itself, usually a .safetensors or .ckpt file, often several hundred MB.</p>
+              <div class="my-models-field my-models-pick">
+                <button class="settings-btn my-models-config-btn" type="button" aria-describedby="myModelsConfigName myModelsConfigHint" data-i18n="settings.myModels.config.choose">Choose config file...</button>
+                <span class="my-models-file-name my-models-config-name" id="myModelsConfigName" data-i18n="settings.myModels.config.none">No config file chosen</span>
+                <input class="my-models-config-input" id="myModelsConfig" type="file" accept=".yaml,.yml" hidden />
+              </div>
+              <p class="settings-row-desc my-models-hint" id="myModelsConfigHint" data-i18n="settings.myModels.config.hint">The small .yaml file published with the model. It is required: it describes how the model is built.</p>
+              <fieldset class="my-models-stems">
+                <legend class="my-models-label" data-i18n="settings.myModels.stems.legend">Which stems does this model separate?</legend>
+                <p class="settings-row-desc my-models-stems-hint" data-i18n="settings.myModels.stems.hint">Tap every stem the model can extract.</p>
+                <div class="my-models-stem-boxes">
+                  <label class="my-models-chip"><input type="checkbox" class="my-models-stem" value="vocals" /><span class="my-models-chip-text" data-i18n="stem.vocals">Vocals</span></label>
+                  <label class="my-models-chip"><input type="checkbox" class="my-models-stem" value="drums" /><span class="my-models-chip-text" data-i18n="stem.drums">Drums</span></label>
+                  <label class="my-models-chip"><input type="checkbox" class="my-models-stem" value="bass" /><span class="my-models-chip-text" data-i18n="stem.bass">Bass</span></label>
+                  <label class="my-models-chip"><input type="checkbox" class="my-models-stem" value="guitar" /><span class="my-models-chip-text" data-i18n="stem.guitar">Guitar</span></label>
+                  <label class="my-models-chip"><input type="checkbox" class="my-models-stem" value="piano" /><span class="my-models-chip-text" data-i18n="stem.piano">Piano</span></label>
+                </div>
+              </fieldset>
+              <label class="my-models-check my-models-licence"><input type="checkbox" class="my-models-licence-input" aria-describedby="myModelsNotice" /><span data-i18n="settings.myModels.licence">I have read this model's licence and I am allowed to use it</span></label>
+              <div class="my-models-actions">
+                <button class="settings-btn settings-btn-accent my-models-add" type="submit" disabled aria-describedby="myModelsMissing" data-i18n="settings.myModels.add">Add model</button>
+                <button class="settings-btn my-models-upload-cancel" type="button" hidden data-i18n="settings.myModels.cancel">Cancel</button>
+                <span class="settings-row-desc my-models-missing" id="myModelsMissing"></span>
+              </div>
+              <div class="my-models-upload" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload" data-i18n-aria-label="settings.myModels.upload.label" hidden><span class="my-models-upload-bar"></span></div>
+              <p class="settings-row-desc my-models-msg" role="status" aria-live="polite"></p>
+            </form>
+            <div class="settings-section my-models-list-wrap">
+              <div class="settings-row-title my-models-subtitle my-models-list-title" id="myModelsListTitle" tabindex="-1" data-i18n="settings.myModels.list.title">Your models</div>
+              <ul class="my-models-list" aria-labelledby="myModelsListTitle" hidden></ul>
+              <p class="settings-row-desc my-models-empty" data-i18n="settings.myModels.list.empty">No models yet. Add one above.</p>
+              <p class="my-models-live" role="status" aria-live="polite"></p>
             </div>
           </div>
         </div>
@@ -6473,6 +6642,7 @@ function openLibraryEditor() {
   const isDesktop = Boolean(window.__TAURI__?.core?.invoke);
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
+  wireSeparationSettings(overlay);
   wireOnlineSources(overlay);
   wireVideoEncoderSetting(overlay, showError);
   wireAcoustidSetting(overlay);
@@ -6607,9 +6777,10 @@ function settingsSearchEntries(overlay) {
       continue;
     }
     for (const row of rows) {
-      // A row its own section is hiding (the MP3 bitrate while WAV is chosen)
+      // A row its own section is hiding (the MP3 bitrate while WAV is chosen),
+      // or one inside a hidden group (the speed test on a server without it),
       // would be a result that opens on nothing.
-      if (row.hidden) continue;
+      if (row.hidden || row.parentElement?.closest("[hidden]")) continue;
       const title = row.querySelector(".settings-row-title")?.textContent.trim();
       if (!title) continue;
       const desc = [...row.querySelectorAll(".settings-row-desc")]

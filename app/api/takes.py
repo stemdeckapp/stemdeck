@@ -7,6 +7,8 @@ Contract (agreed with the recording and video frontends):
     GET    /api/jobs/{id}/takes/{take_id}/parts              upload state, to resync
     POST   /api/jobs/{id}/takes/{take_id}/finish             sidecar -> audio.wav, job.takes
     PATCH  /api/jobs/{id}/takes/{take_id}                    label, user_nudge_ms, camera_offset_ms
+    GET    /api/jobs/{id}/takes/{take_id}/sync               picture sync (video.sync)
+    POST   /api/jobs/{id}/takes/{take_id}/sync               nudgeMs, remeasure
     DELETE /api/jobs/{id}/takes/{take_id}
     GET    /api/jobs/{id}/takes/{take_id}/audio.wav          (and HEAD)
     GET    /api/jobs/{id}/takes/{take_id}/camera
@@ -24,6 +26,13 @@ re-render from the raw capture:
 
 Positive means late, subtract: the same sign as every latency in the capture
 layer.
+
+Picture placement: one rule for the review and every export, in
+app/core/takes.py (camera_start_sec). The camera file's own sound is
+compared with audio.raw.wav at finish (app/pipeline/av_sync.py) to measure
+where the camera file starts on the take's audio timeline; without a clear
+match the browser's estimate (video.firstFrameAtMs) stands, and
+video.sync says which and why.
 
 Render length (RenderBody.span): "take" (the default) covers the take's own
 span, from its count-in to where it stopped, clamped to the song; "song"
@@ -95,15 +104,21 @@ from app.core.registry import persist as registry_persist
 from app.core.settings import get_export_sample_rate
 from app.core.stem_files import stem_path
 from app.core.takes import (
+    DRAW_AGE_MAX_MS,
+    SYNC_NUDGE_MAX_MS,
     camera_file,
+    camera_start_sec,
     make_track,
     new_track_id,
     normalise_tracks,
+    placement_sec,
+    sync_block,
     take_dir,
     take_entry,
+    video_sync,
     write_tracks,
 )
-from app.pipeline import video_encoder
+from app.pipeline import av_sync, video_encoder
 from app.pipeline.click_render import CLICK_TO_STEREO
 from app.pipeline.click_sounds import DEFAULT_CLICK_SOUND
 from app.pipeline.collect import merge_stem_peaks
@@ -294,31 +309,50 @@ def _size_cap(job: Job, kind: str) -> int:
 
 
 def _placement_sec(sidecar: dict[str, Any]) -> float:
-    timeline = sidecar.get("timeline") or {}
-    latency = sidecar.get("latency") or {}
-    return float(timeline.get("first_sample_song_sec") or 0.0) - (
-        float(latency.get("user_nudge_ms") or 0.0) / 1000.0
+    return placement_sec(sidecar)
+
+
+# What the browser says about the camera's microphone, and the reason the
+# sync keeps the estimate when the camera file has no sound.
+_CAMERA_AUDIO_REASON = {
+    "no-mic": "no-camera-mic",
+    "denied": "camera-mic-denied",
+    "not-asked": "camera-mic-not-asked",
+    "failed": "camera-mic-failed",
+}
+
+
+def _measure_sync(
+    folder: Path, camera: Path, video: dict[str, Any], nudge_ms: float = 0.0
+) -> tuple[dict[str, Any], bool]:
+    """Blocking. (block, failed): the video.sync block for a take whose
+    camera file and audio.raw.wav are on disk, measured or the estimate and
+    why, and whether the measurement itself could not run (ffmpeg, a file, a
+    timeout), as opposed to a genuine "no clear match". Never raises: the
+    sync is worth having, never worth the take."""
+    estimate = float(video.get("firstFrameAtMs") or 0.0)
+    try:
+        result = av_sync.measure_take_offset(camera, folder / "audio.raw.wav", estimate)
+    except Exception:
+        logger.exception("av sync measurement failed for %s", folder.name)
+        result = av_sync.SyncResult(False, "measure-failed")
+    failed = result.reason == "measure-failed"
+    reason = result.reason
+    if not result.ok:
+        # The browser's word on the camera's sound explains a miss best: no
+        # sound in the file, or sound that failed part way (cameraRecorder.js).
+        state = (video.get("cameraAudio") or {}).get("state")
+        reason = _CAMERA_AUDIO_REASON.get(state, reason)
+    block = sync_block(
+        estimate_ms=estimate,
+        measured_ms=result.offset_ms if result.ok else None,
+        confidence=result.confidence,
+        reason=reason,
+        nudge_ms=nudge_ms,
+        measured_at=round(time.time(), 3),
+        metrics=result.metrics or None,
     )
-
-
-def _scene_start_sec(sidecar: dict[str, Any], video: dict[str, Any], offset_ms: float) -> float:
-    """Song time of a composed scene's first frame (Streamer Mode, fit "fill").
-
-    A camera films the player, who plays to what was heard one round trip
-    before the microphone took it: the take's audio is placed with the round
-    trip and the nudge taken off (first_sample_song_sec, _placement_sec), and
-    the camera shares that placement. A composed scene is not filmed: each
-    frame draws the playhead heard at the moment it is drawn, so its frame 0
-    is at the song time heard then, the round trip added back and no nudge.
-    Measured on exports (fix pass G): with the round trip taken off, the
-    picture ran a round trip early (-113 ms at 150 ms, +20 ms at 0)."""
-    timeline = sidecar.get("timeline") or {}
-    latency = sidecar.get("latency") or {}
-    first = float(timeline.get("first_sample_song_sec") or 0.0)
-    round_trip = float(latency.get("round_trip_ms") or 0.0) / 1000.0
-    return (
-        first + round_trip + float(video.get("firstFrameAtMs") or 0.0) / 1000.0 - offset_ms / 1000.0
-    )
+    return block, failed
 
 
 def _refresh_peaks(job_id: str, take_id: str, folder: Path, *, remove: bool = False) -> None:
@@ -566,6 +600,15 @@ class CaptureModel(BaseModel):
     dropped_quanta: int | None = Field(default=None, ge=0, le=10**12)
 
 
+class CameraAudioModel(BaseModel):
+    """Whether the camera's microphone was recorded with the picture
+    (static/js/video/cameraAudio.js): "recorded", or why not."""
+
+    model_config = ConfigDict(extra="ignore")
+    state: Literal["recorded", "no-mic", "denied", "not-asked", "failed", "unsupported"]
+    label: str | None = Field(default=None, max_length=200)
+
+
 class VideoModel(BaseModel):
     """The camera block (06-video-recording 5.5). Absent fields take their
     defaults: the browser omits what it did not report."""
@@ -586,6 +629,12 @@ class VideoModel(BaseModel):
     # recorder's start event when the engine reports no capture times.
     firstFrameClock: Literal["capture", "recorder-start"] | None = None  # noqa: N815
     parts: int | None = Field(default=None, ge=0, le=TAKE_MAX_SEQ + 1)
+    cameraAudio: CameraAudioModel | None = None  # noqa: N815
+    # Performance's canvas: how long before it was drawn the camera frame on
+    # show was captured (median, static/js/video/frameAge.js). The picture is
+    # placed that much earlier than its recorded frames (app/core/takes.py).
+    drawAgeMs: float | None = _finite(0, DRAW_AGE_MAX_MS)  # noqa: N815
+    # video.sync is the server's (measured at finish): a sent one is ignored.
 
 
 class FinishBody(BaseModel):
@@ -709,7 +758,11 @@ async def finish_take(job_id: str, take_id: str, request: Request) -> dict[str, 
                 assemble_raw_wav(audio_part, raw_wav, rate, channels)
                 audio_part.unlink()
             if camera_ext is not None:
-                os.replace(camera_part, folder / f"camera.{camera_ext}")
+                camera = folder / f"camera.{camera_ext}"
+                os.replace(camera_part, camera)
+                # A failed measurement at finish still writes the estimate:
+                # there is no earlier block to keep.
+                sidecar["video"]["sync"], _failed = _measure_sync(folder, camera, sidecar["video"])
             else:
                 camera_part.unlink(missing_ok=True)
             render_take_audio(raw_wav, folder / "audio.wav", placement, frames, rate, channels)
@@ -761,6 +814,9 @@ async def patch_take(job_id: str, take_id: str, request: Request) -> dict[str, A
         raise HTTPException(status_code=409, detail="video render running")
 
     async with _lock_for(job_id, take_id):
+        # Again under the lock: a render queued while the body was read.
+        if _render_busy(job_id, take_id):
+            raise HTTPException(status_code=409, detail="video render running")
         sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
         has_camera = await asyncio.to_thread(camera_file, folder)
         if body.camera_offset_ms is not None and has_camera is None:
@@ -801,9 +857,102 @@ async def patch_take(job_id: str, take_id: str, request: Request) -> dict[str, A
         except TakeRenderError:
             logger.warning("[%s] take %s re-render failed", job_id, take_id, exc_info=True)
             raise HTTPException(status_code=500, detail="take render failed") from None
-        if nudged or offset_moved:
+        if (nudged or offset_moved) and not _render_busy(job_id, take_id):
+            # A finished run's view is dropped; a running one never is (its
+            # Cancel must still reach it).
             _renders.pop((job_id, take_id), None)
         entry = take_entry(job_id, sidecar, has_camera is not None)
+        _replace_entry(job, entry, take_id)
+    return entry
+
+
+class SyncBody(BaseModel):
+    """POST .../sync: the manual nudge (absolute, positive = picture later)
+    and/or a new measurement."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Strict: a number, never a numeric string.
+    nudgeMs: float | None = Field(  # noqa: N815
+        default=None, ge=-SYNC_NUDGE_MAX_MS, le=SYNC_NUDGE_MAX_MS, allow_inf_nan=False, strict=True
+    )
+    remeasure: StrictBool | None = None
+
+
+@router.get("/{job_id}/takes/{take_id}/sync")
+async def get_take_sync(job_id: str, take_id: str) -> dict[str, Any]:
+    """The take's picture sync (video.sync, as it applies now) and the song
+    time its camera starts at."""
+    _job, folder, _entry_ = _finished_or_404(job_id, take_id)
+    if await asyncio.to_thread(camera_file, folder) is None:
+        raise HTTPException(status_code=422, detail="take has no camera")
+    sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
+    return {
+        "video_sync": video_sync(sidecar.get("video") or {}),
+        "camera_start_sec": round(camera_start_sec(sidecar), 4),
+    }
+
+
+@router.post("/{job_id}/takes/{take_id}/sync")
+async def set_take_sync(job_id: str, take_id: str, request: Request) -> dict[str, Any]:
+    """Set the picture's manual nudge, or measure its offset again. A moved
+    picture drops the earlier video render: it no longer matches."""
+    job, folder = _take_or_404(job_id, take_id)
+    body: SyncBody = await _parse_body(request, SyncBody)
+    if body.nudgeMs is None and not body.remeasure:
+        raise HTTPException(status_code=422, detail="nothing to change")
+    if _entry(job, take_id) is None:
+        raise HTTPException(status_code=409, detail="take not finished")
+    if _render_busy(job_id, take_id):
+        raise HTTPException(status_code=409, detail="video render running")
+
+    async with _lock_for(job_id, take_id):
+        # Again under the lock: a render queued while the body was read.
+        if _render_busy(job_id, take_id):
+            raise HTTPException(status_code=409, detail="video render running")
+        sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
+        camera = await asyncio.to_thread(camera_file, folder)
+        video = sidecar.get("video")
+        if camera is None or not isinstance(video, dict):
+            raise HTTPException(status_code=422, detail="take has no camera")
+        before = video_sync(video)
+        nudge = body.nudgeMs if body.nudgeMs is not None else before["nudgeMs"]
+        if body.remeasure:
+            block, failed = await asyncio.to_thread(_measure_sync, folder, camera, video, nudge)
+            if failed:
+                # The measurement could not run: the stored sync, the nudge
+                # and the render stay exactly as they were.
+                raise HTTPException(
+                    status_code=503, detail="measurement could not run: nothing changed"
+                )
+        else:
+            stored = video.get("sync") if isinstance(video.get("sync"), dict) else None
+            block = sync_block(
+                estimate_ms=before["estimateMs"],
+                measured_ms=before["offsetMs"] if before["base"] == "measured" else None,
+                confidence=before["confidence"],
+                reason=before["reason"],
+                nudge_ms=nudge,
+                measured_at=before["measuredAt"],
+                metrics=before["metrics"],
+            )
+            if stored is None:
+                # A take from before sync was measured: its estimate is
+                # written down with the nudge, still marked "legacy".
+                block["reason"] = "legacy"
+        video["sync"] = block
+        moved = video_sync(video)["pictureOffsetMs"] != before["pictureOffsetMs"]
+
+        def apply() -> None:
+            if moved:
+                (folder / _RENDER_FILE).unlink(missing_ok=True)
+            _write_json_atomic(folder / _SIDECAR_FILE, sidecar)
+
+        await asyncio.to_thread(apply)
+        if moved and not _render_busy(job_id, take_id):
+            # A finished run's view is dropped; a running one never is (its
+            # Cancel must still reach it).
+            _renders.pop((job_id, take_id), None)
+        entry = take_entry(job_id, sidecar, True)
         _replace_entry(job, entry, take_id)
     return entry
 
@@ -1764,17 +1913,9 @@ async def _prepare_render(
     if take is None:
         take = _TakeSound(folder / "audio.wav", body.take_gain, "")
     sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
-    video = sidecar.get("video") or {}
-    offset_ms = (
-        body.camera_offset_ms
-        if body.camera_offset_ms is not None
-        else float(video.get("cameraOffsetMs") or 0.0)
-    )
-    camera_start = (
-        _placement_sec(sidecar) + float(video.get("firstFrameAtMs") or 0.0) / 1000.0
-    ) - offset_ms / 1000.0
-    if body.fit == "fill":
-        camera_start = _scene_start_sec(sidecar, video, offset_ms)
+    # The one placement the review uses too (app/core/takes.py), for every
+    # fit: Performance's scene is the camera alone, filmed with the take.
+    camera_start = camera_start_sec(sidecar, body.camera_offset_ms)
     frames = await asyncio.to_thread(_song_frames, job_id)
     song_sec = frames / TAKE_RATE
     if body.span == "range" and _range_outside_take(
