@@ -5278,6 +5278,17 @@ input, textarea { font-family: inherit; }
   text-align: center;
   transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
 }
+/* A recently added entry: gold edge, and a squared "New" tag at the bottom
+   right. */
+.lib-friend-new { position: relative; padding-bottom: 25px; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(232,200,64,0.35); }
+.lib-friend-new:hover { border-color: var(--accent); }
+.lib-friend-new-tag {
+  position: absolute; right: 6px; bottom: 6px;
+  padding: 2px 5px; border-radius: 2px;
+  background: var(--accent); color: #11161a;
+  font-size: 9px; font-weight: 700; line-height: 1; letter-spacing: 0.06em; text-transform: uppercase;
+  pointer-events: none;
+}
 .lib-friend:hover {
   background: var(--panel-2);
   color: var(--fg);

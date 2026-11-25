@@ -96,16 +96,30 @@ const FRIEND_GROUPS = [
       },
       {
         name: "GOATWOLF",
+        isNew: true,
         roleKey: "friends.role.goatwolf",
         url: "https://www.instagram.com/prodbygoatwolf/",
+        logo: "/img/friends/goatwolf.jpg",
+        avatar: true,
       },
       {
         name: "The Designer of Things",
+        isNew: true,
         roleKey: "friends.role.designerOfThings",
         links: [
           { label: "Website", url: "https://thedesignerofthings.com" },
           { label: "Instagram", url: "https://www.instagram.com/thedesignerofthings/" },
         ],
+        logo: "/img/friends/designer-of-things.jpg",
+        avatar: true,
+      },
+      {
+        name: "Sassy",
+        isNew: true,
+        roleKey: "friends.role.sassy",
+        url: "https://www.instagram.com/sassysingz/",
+        logo: "/img/friends/sassy.jpg",
+        avatar: true,
       },
       {
         name: "Killah Trakz",
@@ -3915,6 +3929,17 @@ function friendCard(f) {
   a.title = f.name;
   // How a "Previously featured" avatar finds this card (locateFriend).
   a.dataset.friend = f.name;
+
+  // A recently added entry: a gold edge and a small "New" tag, dropped by removing
+  // `isNew` from the entry once it has been up for a release or two.
+  if (f.isNew) {
+    a.classList.add("lib-friend-new");
+    const tag = document.createElement("span");
+    tag.className = "lib-friend-new-tag";
+    tag.setAttribute("data-i18n", "friends.new");
+    tag.textContent = i18nT("friends.new");
+    a.appendChild(tag);
+  }
 
   // A monogram badge (first initial) keeps the card on-brand when an entry has
   // no image, or when its image fails to load (e.g. before the asset is added).
