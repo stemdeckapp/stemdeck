@@ -135,6 +135,10 @@ jobs:
 
       - name: build macOS arm64
         env:
+          # The crash report address (desktop/src-tauri/src/telemetry.rs reads it
+          # at compile time). A DSN only allows sending reports, never reading
+          # them. Set on this step alone, never echoed, never in PR checks.
+          STEMDECK_SENTRY_DSN: ${{ secrets.STEMDECK_SENTRY_DSN }}
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -152,6 +156,10 @@ jobs:
 
       - name: build macOS x64
         env:
+          # The crash report address (desktop/src-tauri/src/telemetry.rs reads it
+          # at compile time). A DSN only allows sending reports, never reading
+          # them. Set on this step alone, never echoed, never in PR checks.
+          STEMDECK_SENTRY_DSN: ${{ secrets.STEMDECK_SENTRY_DSN }}
           SSL_CERT_FILE: /etc/ssl/cert.pem
           REQUESTS_CA_BUNDLE: /etc/ssl/cert.pem
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
