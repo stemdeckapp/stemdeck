@@ -14,14 +14,28 @@ export const MIME_LADDER = [
   "video/webm",
 ];
 
+// With the camera's microphone in the same recorder (static/js/video/
+// cameraAudio.js): the picture's codec as above, the sound AAC in MP4 or
+// Opus. The plain container types come last: with an audio track the engine
+// adds its own default sound codec to them.
+export const MIME_LADDER_AV = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.42E01E,opus",
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/mp4",
+  "video/webm",
+];
+
 /**
  * First supported type in the ladder, or "" when none is (the recorder is
  * then built with no mimeType and reports its own choice in recorder.mimeType).
- * `isTypeSupported` is injected so tests do not need a browser.
+ * `isTypeSupported` is injected so tests do not need a browser. `withAudio`
+ * walks the ladder for a picture with its sound (MIME_LADDER_AV).
  */
-export function pickRecorderMime(isTypeSupported) {
+export function pickRecorderMime(isTypeSupported, withAudio = false) {
   if (typeof isTypeSupported !== "function") return "";
-  for (const type of MIME_LADDER) {
+  for (const type of withAudio ? MIME_LADDER_AV : MIME_LADDER) {
     try {
       if (isTypeSupported(type)) return type;
     } catch (err) {
@@ -165,7 +179,7 @@ export function firstRecordedCapture(captures, startCallMs) {
 export function buildVideoBlock({
   mime, ext, width, height, fps, deviceLabel, mirrorPreview,
   perfMsAtFrame0, ctxTimeAtFrame0, startedAtPerf, firstChunkAtPerf, firstCapturePerf,
-  parts, cameraOffsetMs = 0,
+  parts, cameraOffsetMs = 0, cameraAudio = null,
 }) {
   // The server validates every number as finite and bounded, so a value the browser
   // did not report is left out rather than sent as null.
@@ -190,7 +204,24 @@ export function buildVideoBlock({
     block.firstFrameAtMs = Math.max(-600000, Math.min(600000, _round(firstAt - perfMsAtFrame0)));
     block.firstFrameClock = fromCapture ? "capture" : "recorder-start";
   }
+  // Whether the camera's microphone went into the file, or why not: the
+  // server measures the picture's offset from that sound (app/pipeline/
+  // av_sync.py) and says why when it cannot.
+  const audioState = cameraAudioState(cameraAudio?.state);
+  if (audioState) {
+    block.cameraAudio = { state: audioState };
+    const label = String(cameraAudio.label || "").slice(0, 200);
+    if (label) block.cameraAudio.label = label;
+  }
   return block;
+}
+
+// The states the server accepts for video.cameraAudio.state.
+export const CAMERA_AUDIO_STATES = ["recorded", "no-mic", "denied", "not-asked", "failed", "unsupported"];
+
+/** A known camera-audio state, or null. */
+export function cameraAudioState(state) {
+  return CAMERA_AUDIO_STATES.includes(state) ? state : null;
 }
 
 /** Does a registry take entry carry a camera recording? */

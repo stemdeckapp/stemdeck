@@ -15,8 +15,22 @@ import torch.hub
 from app.pipeline import warmup
 
 ROOT = Path(__file__).resolve().parents[1]
-# The real one, before the fixture below replaces it for every test.
+# The real ones, before the fixtures below replace them for every test.
 _FREE_BYTES = warmup._free_bytes
+_EXTRA_MODELS = warmup._extra_models
+
+
+@pytest.fixture(autouse=True)
+def _no_extra_separation_models(monkeypatch, tmp_path):
+    """The plan's extra models depend on this machine's GPU and Settings; no
+    test counts or fetches them unless it says so."""
+    monkeypatch.setattr(warmup, "_extra_models", lambda: ())
+    # The Demucs step checks torch.hub's cached checkpoints against their pins
+    # and removes one that does not match: never in a real cache.
+    from app.core import stem_models
+
+    hub = tmp_path / "torch-hub" / "checkpoints"
+    monkeypatch.setattr(stem_models, "hub_checkpoints_dir", lambda: hub)
 
 
 @pytest.fixture(autouse=True)
@@ -378,3 +392,119 @@ def test_section_worker_disables_hugging_face_symlinks():
     module = importlib.import_module("app.pipeline.section_worker")
 
     assert "HF_HUB_DISABLE_SYMLINKS" in module.os.environ
+
+
+# The separation plan's extra models (Settings, Separation), warmed inside the
+# "demucs" step like the Whisper model: only what the next job would use.
+
+_ALL_6S = {s: "htdemucs_6s" for s in ("vocals", "drums", "bass", "guitar", "piano")}
+
+
+@pytest.fixture()
+def plan_is(monkeypatch):
+    from app.core import settings
+
+    monkeypatch.setattr(warmup, "_extra_models", _EXTRA_MODELS)
+    monkeypatch.setattr(settings, "get_demucs_device", lambda: "cuda")
+
+    def set_plan(plan):
+        monkeypatch.setattr(settings, "resolve_stem_models", lambda device: dict(plan))
+
+    return set_plan
+
+
+@pytest.fixture()
+def warmed(monkeypatch):
+    import demucs.pretrained
+
+    from app.pipeline import mel_roformer
+
+    seen: dict[str, list] = {"get_model": [], "kim": []}
+    monkeypatch.setattr(demucs.pretrained, "get_model", lambda name: seen["get_model"].append(name))
+    monkeypatch.setattr(mel_roformer, "ensure_checkpoint", lambda **kw: seen["kim"].append(kw))
+    return seen
+
+
+def test_warmup_fetches_the_vocal_model_only_when_the_plan_uses_it(plan_is, warmed):
+    plan_is({**_ALL_6S, "vocals": "kim_mel_roformer"})
+    warmup._warm_demucs()
+    assert warmed["get_model"] == [warmup.DEMUCS_MODEL]
+    assert warmed["kim"] == [
+        {
+            "read_timeout": warmup.TIMEOUT_MODEL_DOWNLOAD_READ,
+            "attempts": warmup.MODEL_DOWNLOAD_ATTEMPTS,
+        }
+    ]
+
+    warmed["get_model"].clear()
+    warmed["kim"].clear()
+    plan_is(_ALL_6S)
+    warmup._warm_demucs()
+    assert warmed["get_model"] == [warmup.DEMUCS_MODEL]
+    assert warmed["kim"] == []
+
+
+def test_warmup_fetches_a_chosen_demucs_model_through_torch_hub(plan_is, warmed):
+    plan_is({**_ALL_6S, "drums": "htdemucs_ft", "bass": "htdemucs_ft"})
+    warmup._warm_demucs()
+    assert warmed["get_model"] == [warmup.DEMUCS_MODEL, "htdemucs_ft"]
+    assert warmed["kim"] == []
+
+
+def test_the_space_check_counts_the_plans_extra_models(plan_is, monkeypatch):
+    monkeypatch.setattr(warmup, "_STEPS", (("demucs", lambda: None),))
+    plan_is({**_ALL_6S, "vocals": "kim_mel_roformer"})
+    assert warmup._bytes_needed() == (
+        warmup._DOWNLOAD_BYTES["demucs"] + warmup._DOWNLOAD_BYTES["kim_mel_roformer"]
+    )
+    assert warmup._DOWNLOAD_BYTES["kim_mel_roformer"] == 913_106_900
+    plan_is(_ALL_6S)
+    assert warmup._bytes_needed() == warmup._DOWNLOAD_BYTES["demucs"]
+
+
+def test_a_plan_that_cannot_be_read_adds_nothing(plan_is, monkeypatch, capsys):
+    from app.core import settings
+
+    def broken(device):
+        raise OSError("settings unreadable")
+
+    monkeypatch.setattr(settings, "resolve_stem_models", broken)
+    assert warmup._extra_models() == ()
+    assert "WARMUP_NOTE separation plan not read: settings unreadable" in capsys.readouterr().out
+
+
+def test_a_vocal_model_that_cannot_be_fetched_does_not_fail_the_demucs_step(
+    plan_is, warmed, monkeypatch, capsys
+):
+    """The base model is what separation needs; the desktop reads WARMUP_OK
+    demucs as "separation is ready". The vocal model's failure is a note, and
+    the first job that needs it fetches it again or says why it cannot."""
+    from app.core.model_download import ModelDownloadError
+    from app.pipeline import mel_roformer
+
+    def offline(**kw):
+        raise ModelDownloadError("https://h/m.ckpt", "/models/roformer", "DNS lookup failed")
+
+    monkeypatch.setattr(mel_roformer, "ensure_checkpoint", offline)
+    monkeypatch.setattr(warmup, "_STEPS", (("demucs", warmup._warm_demucs),))
+    plan_is({**_ALL_6S, "vocals": "kim_mel_roformer"})
+
+    assert warmup.main() == 0
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "WARMUP_START demucs 1 1"
+    assert out[1].startswith("WARMUP_NOTE kim_mel_roformer not fetched: model download failed:")
+    assert out[2] == "WARMUP_OK demucs"
+    assert warmed["get_model"] == [warmup.DEMUCS_MODEL]
+
+
+def test_the_demucs_step_checks_cached_checkpoints_against_their_pins(plan_is, warmed, monkeypatch):
+    from app.core import model_download
+
+    checked: list[str] = []
+    monkeypatch.setattr(model_download, "drop_unverified", lambda m: checked.append(m) or [])
+    plan_is({**_ALL_6S, "drums": "htdemucs_ft"})
+
+    warmup._warm_demucs()
+
+    assert checked == [warmup.DEMUCS_MODEL, "htdemucs_ft"]

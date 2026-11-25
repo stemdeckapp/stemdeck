@@ -19,6 +19,8 @@ Downloaded during first-run setup:
 - FFmpeg and ffprobe
 - Chromaprint's fpcalc, when the FFmpeg in use has no chromaprint support
 - Demucs model weights
+- Separation model weights, when a song first uses them (the Kim Mel-Band
+  RoFormer vocals model, and the Demucs fine-tuned models)
 
 The runtime pack carries the full inventory under licenses/. INDEX.txt there
 lists every packaged Python dependency with its version and license, and each
@@ -99,3 +101,17 @@ static/js/zhVariants.js) is derived from OpenCC's TSCharacters.txt,
 Copyright Carbo Kuo (BYVoid) and the OpenCC contributors: only the first
 simplified form of each character is kept. The license text is
 app/_vendor/opencc/LICENSE.
+
+Separation model weights
+------------------------
+Separation model weights are not bundled either. They are downloaded when a
+song first uses them, into the models folder, and are not redistributed by
+StemDeck:
+
+- Mel-Band RoFormer vocals model by Kimberley Jensen (the Kim model). License:
+  MIT, as its model card declares. StemDeck downloads one pinned revision and
+  checks its SHA-256. Source: https://huggingface.co/KimberleyJSN/melbandroformer
+  It runs through audio-separator (MIT).
+- Demucs fine-tuned models (htdemucs_ft), from the same Demucs project as the
+  Demucs entry above. License: MIT (Meta/Facebook Research).
+  Source: https://github.com/facebookresearch/demucs

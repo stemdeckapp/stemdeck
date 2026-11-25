@@ -332,6 +332,164 @@
 .online-sources-msg:empty { display: none; }
 .online-sources-msg.error { color: var(--danger); }
 
+/* Settings, Separation: the model for each stem (separationSettings.js). The
+   reason, the estimate and "Use recommended" sit at the top of the card, then
+   one row per stem. A stem without a choice reads as a line, not a control. */
+.stem-models-summary { display: flex; flex-direction: column; gap: 6px; padding: 18px 0; }
+.stem-models-summary .settings-row-desc { margin: 0; }
+.set-stem-models-why { color: var(--fg-2); }
+.stem-models-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.stem-models-actions .settings-row-desc { margin-top: 0; }
+.stem-models-msg:empty { display: none; }
+.stem-models-msg.error { color: var(--danger); }
+.stem-models-rows > .settings-row { border-top: 1px solid var(--border); }
+.stem-model-row label.settings-row-title { display: block; cursor: pointer; }
+.stem-model-fixed { color: var(--fg-2); }
+.stem-model-note:empty { display: none; }
+.set-stem-model-warn { color: var(--accent); }
+.set-stem-model-warn[data-kind="unavailable"], .set-stem-model-warn.is-unavailable { color: var(--danger); }
+
+/* Settings, Separation, Benchmark: the bar while it runs, then the last
+   result with its table. Estimated rows read dimmer than measured ones. */
+.set-speedtest-progress {
+  height: 6px; margin: 0 0 12px; overflow: hidden;
+  border-radius: 3px; background: var(--panel-3);
+}
+.speed-test-bar { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--t-base) var(--easing); }
+.set-speedtest-msg { margin: 0 0 12px; }
+.set-speedtest-msg:empty { display: none; }
+.set-speedtest-msg.error { color: var(--danger); }
+.set-speedtest-result { padding: 4px 0 18px; }
+.set-speedtest-result .settings-row-desc { margin: 6px 0 0; }
+.set-speedtest-stale { color: var(--accent); }
+.speed-test-reason { color: var(--fg); }
+.speed-test-why, .speed-test-disk { display: flex; flex-direction: column; gap: 2px; }
+.speed-test-disk-line.is-slow { color: var(--accent); }
+/* The table keeps the library tables' frame but is no scroll box of its
+   own: the pane scrolls, and the cells wrap to fit its width. */
+.speed-test-table-wrap {
+  margin: 12px 0 0;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2);
+}
+.set-speedtest-table thead th { position: static; white-space: normal; }
+.set-speedtest-table td { overflow-wrap: anywhere; }
+.set-speedtest-table tr.is-recommended td { color: var(--fg); font-weight: 600; }
+.set-speedtest-table tr[data-measured="false"] td { color: var(--muted); }
+.set-speedtest-table tr.is-recommended[data-measured="false"] td { color: var(--fg-2); }
+.speed-test-tech { color: var(--muted); font-weight: 400; font-size: 12px; }
+.speed-test-time-text { white-space: nowrap; }
+/* The rating is a word on a solid badge, never colour alone. Dark text on
+   each colour passes 4.5:1 (Fast 8.45, OK 10.72, Slow 4.97). */
+.speed-test-rating {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+  color: var(--bg);
+}
+.speed-test-rating[data-rating="fast"] { background: var(--guitar); }
+.speed-test-rating[data-rating="ok"] { background: var(--accent); }
+.speed-test-rating[data-rating="slow"] { background: var(--danger); }
+/* Read by a screen reader, not shown: the speed factor is the tooltip. */
+.speed-test-sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.speed-test-estimate-note { color: var(--muted); font-size: 12.5px; }
+.speed-test-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+/* A device the test could not measure, with why. */
+.set-speedtest-table tr.is-failed td { color: var(--danger); white-space: normal; }
+
+/* ── My models: add a model of your own, and the list of them
+   (static/js/myModels.js; the markup is in catalog.js). ── */
+.my-models-head { margin: 0; }
+.my-models-toggle {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px; margin: -6px -8px;
+  border: 0; border-radius: 6px; background: none; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+}
+.my-models-toggle:hover { color: var(--fg-2); }
+.my-models-chevron {
+  width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--t-base) var(--easing);
+}
+.my-models-toggle[aria-expanded="true"] .my-models-chevron { transform: rotate(45deg); }
+.my-models-body { display: flex; flex-direction: column; gap: 12px; }
+.my-models-notice {
+  margin: 0; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: var(--set-accent-soft); color: var(--fg-2);
+}
+.my-models-form, .my-models-list-wrap { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; padding-bottom: 18px; }
+.my-models-subtitle { margin: 0; }
+.my-models-subtitle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.my-models-field { display: flex; flex-direction: column; gap: 6px; }
+.my-models-label { font-size: 13px; font-weight: 600; color: var(--fg-2); padding: 0; }
+.my-models-link { width: 100%; max-width: 520px; box-sizing: border-box; }
+.my-models-link:disabled { opacity: 0.55; cursor: not-allowed; }
+.my-models-link-off { margin: 0; max-width: 520px; color: var(--fg-2); }
+.my-models-pinned, .my-models-registry-reset, .my-models-unavailable { margin: 0; color: var(--fg-2); }
+.my-models-or { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.my-models-pick { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
+.my-models-file-name { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.my-models-stems { margin: 0; padding: 0; border: 0; min-width: 0; }
+.my-models-stems legend { margin-bottom: 8px; }
+.my-models-stems-hint { margin: 0 0 10px; }
+.my-models-hint { margin: 0; max-width: 520px; }
+.my-models-stem-boxes { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Each stem is a pill. The native checkbox stays in the page (keyboard, screen readers) but is not drawn. */
+.my-models-chip { position: relative; display: inline-flex; cursor: pointer; }
+.my-models-chip input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.my-models-chip-text { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--panel-2); color: var(--fg-2); font-size: 13.5px; transition: background 0.12s, border-color 0.12s, color 0.12s; }
+.my-models-chip:hover .my-models-chip-text { border-color: var(--muted); }
+.my-models-chip input:checked + .my-models-chip-text { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.my-models-chip input:checked + .my-models-chip-text::before { content: "\2713"; font-size: 12px; }
+.my-models-chip input:focus-visible + .my-models-chip-text { outline: 2px solid var(--accent); outline-offset: 2px; }
+.my-models-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--fg-2); cursor: pointer; }
+.my-models-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.my-models-licence { align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--panel-2); }
+.my-models-licence input { width: 18px; height: 18px; margin-top: 1px; }
+.my-models-licence:has(input:checked) { border-color: var(--accent); }
+.my-models-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.my-models-actions .settings-row-desc { margin: 0; }
+.my-models-msg { margin: 0; }
+.my-models-msg:empty { display: none; }
+.my-models-msg.error { color: var(--danger); }
+/* Upload progress, the same bar as the Benchmark's. */
+.my-models-upload { position: relative; width: 100%; max-width: 520px; height: 6px; overflow: hidden; border-radius: 3px; background: var(--panel-3); }
+.my-models-upload-bar { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width var(--t-base) var(--easing); }
+.my-models-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.my-models-list[hidden], .my-models-empty[hidden] { display: none; }
+.my-models-empty { margin: 0; }
+.my-models-live { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.my-model-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px;
+  padding: 14px 0; border-top: 1px solid var(--border);
+}
+.my-model-row:first-child { border-top: 0; padding-top: 4px; }
+.my-model-main { min-width: 0; flex: 1 1 260px; display: flex; flex-direction: column; gap: 4px; }
+.my-model-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+.my-model-meta, .my-model-source, .my-model-redownload { margin: 0; overflow-wrap: anywhere; }
+.my-model-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.my-model-reason { margin: 0; color: var(--danger); }
+/* The same solid badges as the Benchmark rating: a word, never colour alone. */
+.my-model-status {
+  display: inline-block; padding: 1px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+  color: var(--bg); background: var(--fg-2);
+}
+.my-model-status[data-status="ready"] { background: var(--guitar); }
+.my-model-status[data-status="refused"], .my-model-status[data-status="missing"], .my-model-status[data-status="unusable"] { background: var(--danger); }
+/* A download: how far it is, as a bar with its number in the badge beside it. */
+.my-model-progress { position: relative; width: 90px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--panel-3); }
+.my-model-progress-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width var(--t-base) var(--easing); }
+.my-model-checking-bar {
+  position: relative; width: 90px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--panel-3);
+}
+.my-model-checking-bar::after {
+  content: ""; position: absolute; inset: 0 60% 0 0; background: var(--accent);
+  animation: my-model-checking 1.1s var(--easing) infinite;
+}
+@keyframes my-model-checking { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.my-model-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
 .library-editor-sync:disabled { opacity: 0.55; cursor: default; }
 /* A list that can run long scrolls in its own box, header pinned. */

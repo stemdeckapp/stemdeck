@@ -221,6 +221,23 @@ def _isolate_network_settings(tmp_path, monkeypatch):
     _settings._state = None
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_models(tmp_path, monkeypatch):
+    """No test reads or writes the real models folder's user models (My
+    models, app/core/user_models.py). Every use of their folder goes through
+    user_models.root(), looked up at call time, so replacing that one function
+    moves them all; config.MODELS_DIR itself is left alone, since other code
+    reads it for the built-in models. The module's memory copy is forgotten
+    on both sides."""
+    from app.core import user_models as _user_models
+
+    user_root = tmp_path / "_models" / "user"
+    monkeypatch.setattr(_user_models, "root", lambda: user_root)
+    _user_models.reset_state()
+    yield
+    _user_models.reset_state()
+
+
 @pytest.fixture
 def online_sources_on(_isolate_network_settings):
     """Turn online sources on (#1089). They are off by default, and every test

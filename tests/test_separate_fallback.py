@@ -580,3 +580,48 @@ def test_a_model_download_failure_is_not_retried_on_cpu(job, tmp_path, monkeypat
     assert attempts == ["cuda"]
     assert exc_info.value.device == "cuda"
     assert job.gpu_fallback is False
+
+
+# A first-use download whose finished bar prints its 100% twice (tqdm's last
+# refresh, then its close), before the separation sweep starts.
+_DOUBLE_100_DOWNLOAD_WORKER = """
+import sys, json, os
+sys.stderr.write('Downloading: "http://models.example/demucs/5c90dfd2-34c22ccb.th" to '
+                 '/cache/torch/hub/checkpoints/5c90dfd2-34c22ccb.th\\n')
+sys.stderr.write(" 50%|#####     |\\r100%|##########|\\r100%|##########|\\n")
+sys.stderr.write("@@READY@@\\n")
+for line in sys.stdin:
+    req = json.loads(line)
+    d = os.path.join(req["job_dir"], "htdemucs_6s", "source")
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "vocals.wav"), "wb").write(b"RIFF")
+    sys.stderr.write(" 40%|####      |\\r100%|##########|\\n@@DONE@@\\n")
+    sys.stderr.flush()
+"""
+
+
+def test_a_download_finishing_twice_does_not_move_the_separation_bar(job, tmp_path, monkeypatch):
+    stages: list[str] = []
+    real = sep_mod._set
+
+    def record(j, **fields):
+        if "stage" in fields:
+            stages.append(fields["stage"])
+        real(j, **fields)
+
+    monkeypatch.setattr(sep_mod, "_set", record)
+    monkeypatch.setattr(
+        sep_mod, "_spawn_worker_cmd", lambda d: [sys.executable, "-c", _DOUBLE_100_DOWNLOAD_WORKER]
+    )
+    monkeypatch.setattr(sep_mod, "get_demucs_device", lambda: "cpu")
+
+    _separate_within(30, job, tmp_path / "source.wav", tmp_path)
+
+    # The duplicate 100% was the download's: the first sweep line is its 40%.
+    assert stages == [
+        "Separating stems...",
+        "Downloading the separation model 50%",
+        "Downloading the separation model 100%",
+        "Separating 40%",
+        "Separating 100%",
+    ]

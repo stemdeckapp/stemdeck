@@ -11,6 +11,8 @@ at startup), so the Settings UI can change them without a restart:
 - `export_sample_rate` — sample rate for exported mixes/regions (WAV/FLAC/MP3).
 - `demucs_device`     — compute device for separation: auto | cuda | mps | cpu.
 - `separation_quality` — demucs shift-averaging: standard | best (2x slower).
+- `stem_models`       - the model per stem: {stem: "auto" | a model id}.
+- `speed_test`        - the last hardware speed test's result (saved by the test).
 - `idle_unload_minutes` - idle minutes before the separation models unload (0 never).
 - `cookies_file`      — optional cookies.txt handed to yt-dlp for YouTube.
 - `online_sources`    - whether search and link import (yt-dlp) may run (off).
@@ -38,6 +40,7 @@ import time
 import uuid
 from pathlib import Path
 
+from app.core import device_reason, speed_test, stem_models
 from app.core.config import (
     DATA_DIR,
     DEFAULT_STEM_STORAGE,
@@ -645,6 +648,193 @@ def set_separation_quality(value: str) -> str:
         _ensure()["separation_quality"] = choice
         _save()
         return choice
+
+
+# ── stem_models ──
+# Which model separates each selectable stem (app/core/stem_models.py): a dict
+# of stem to "auto" or a model id. "auto" (and a missing key, so an install
+# from before this reads as all "auto") resolves per job to the recommendation
+# for the device that job runs on. Read when separation starts
+# (app/pipeline/separate.py), so a change applies to the next separation and a
+# running one keeps the plan it started with.
+def _saved_stem_models() -> dict:
+    v = _ensure().get("stem_models")
+    return v if isinstance(v, dict) else {}
+
+
+def get_stem_model_choices() -> dict[str, str]:
+    """The saved choice per stem, all five SELECTABLE_STEMS keys. A value that
+    is not one of the stem's choices reads as "auto". A choice that is not
+    available on this install is kept as saved: it resolves to the
+    recommendation, and Settings marks it. A model the person added is one of
+    the choices only while it is usable (stem_models.choices_for); removing
+    it scrubs it from here (scrub_stem_model).
+
+    Lock order: this module's _LOCK, then the user-model store's. The store
+    never calls back into settings while it holds its own."""
+    with _LOCK:
+        saved = _saved_stem_models()
+        out: dict[str, str] = {}
+        for stem in stem_models.SELECTABLE_STEMS:
+            v = saved.get(stem)
+            ok = isinstance(v, str) and v in stem_models.choices_for(stem)
+            out[stem] = v if ok else "auto"
+        return out
+
+
+def check_stem_model_choices(value: object) -> dict[str, str]:
+    """``value`` as a whitelisted partial choice, or ValueError with a fixed
+    message that never echoes it. Writes nothing; an empty object is valid."""
+    if not isinstance(value, dict):
+        raise ValueError("stem_models must be an object of stem to model")
+    out: dict[str, str] = {}
+    for key, raw in value.items():
+        if key not in stem_models.SELECTABLE_STEMS:
+            raise ValueError(
+                "stem_models: unknown stem; choose from " + ", ".join(stem_models.SELECTABLE_STEMS)
+            )
+        # The whitelist's own strings from here on, never the request's.
+        stem = stem_models.SELECTABLE_STEMS[stem_models.SELECTABLE_STEMS.index(key)]
+        allowed = ("auto", *stem_models.choices_for(stem))
+        choice = raw.strip().lower() if isinstance(raw, str) else None
+        if choice not in allowed:
+            raise ValueError(f"stem_models.{stem} must be one of: " + ", ".join(allowed))
+        choice = allowed[allowed.index(choice)]
+        if choice != "auto" and not stem_models.model_available(choice):
+            raise ValueError(f"stem_models.{stem}: {choice} is not available on this install")
+        out[stem] = choice
+    return out
+
+
+def set_stem_model_choices(patch: object) -> dict[str, str]:
+    """Merge ``patch`` into the saved choices and persist them, after the whole
+    patch is checked: one bad value changes nothing. Returns every choice."""
+    checked = check_stem_model_choices(patch)
+    with _LOCK:
+        if checked:
+            _ensure()["stem_models"] = {**get_stem_model_choices(), **checked}
+            _save()
+        return get_stem_model_choices()
+
+
+def stem_model_vram_mb(device: str) -> int | None:
+    """The GPU memory the recommendation weighs on ``device``, in MiB: the
+    first NVIDIA GPU's total, from nvidia-smi, on "cuda"; None elsewhere and
+    when it is not known (an AMD GPU under ROCm, no nvidia-smi)."""
+    if device != "cuda":
+        return None
+    gpu = device_reason.nvidia_gpu()
+    memory = gpu.get("memory_mb") if gpu else None
+    return memory if isinstance(memory, int) and not isinstance(memory, bool) else None
+
+
+def resolve_stem_models(device: str) -> dict[str, str]:
+    """The model each selectable stem is separated with by a job that starts
+    now on ``device`` (the job's real device, not the "auto" choice).
+
+    A stem left on "auto" (or on a choice this install cannot run) takes the
+    speed test's plan for ``device`` when a test result is saved and still
+    describes this machine; otherwise the static recommendation."""
+    choices = get_stem_model_choices()
+    plan = stem_models.resolve(choices, device, stem_model_vram_mb(device))
+    measured = measured_stem_models(device)
+    if measured is None:
+        return plan
+    for stem in stem_models.SELECTABLE_STEMS:
+        choice = choices[stem]
+        # A usable model the person added is a valid choice, so a benchmark
+        # never overrides it.
+        if not (choice in stem_models.choices_for(stem) and stem_models.model_available(choice)):
+            plan[stem] = measured[stem]
+    return plan
+
+
+def scrub_stem_model(model_id: str) -> list[str]:
+    """Set every stem whose saved choice is ``model_id`` back to "auto" and
+    persist it: a model the person removed is never left as a choice.
+    Returns the stems that changed. The caller must not hold the user-model
+    store's lock (lock order: this module's _LOCK first)."""
+    with _LOCK:
+        saved = _saved_stem_models()
+        changed = [s for s in stem_models.SELECTABLE_STEMS if saved.get(s) == model_id]
+        if changed:
+            _ensure()["stem_models"] = {
+                **saved,
+                **{stem: "auto" for stem in changed},
+            }
+            _save()
+        return changed
+
+
+def recommended_stem_models(device: str) -> dict[str, str]:
+    """What "auto" picks per stem on ``device``: the speed test's plan when a
+    fresh result is saved, else the static recommendation."""
+    vram_mb = stem_model_vram_mb(device)
+    static = {
+        stem: stem_models.recommended(stem, device, vram_mb)
+        for stem in stem_models.SELECTABLE_STEMS
+    }
+    return measured_stem_models(device) or static
+
+
+def stem_models_reason(device: str) -> str:
+    """Why "auto" picks what it picks on ``device``: the static reason
+    (stem_models.recommendation_reason), or "over-budget" when a fresh speed
+    test moved the vocals from Kim, which the static rule picks there, to
+    htdemucs_6s."""
+    vram_mb = stem_model_vram_mb(device)
+    reason = stem_models.recommendation_reason(device, vram_mb)
+    if reason == "gpu":
+        measured = measured_stem_models(device)
+        if measured is not None and measured["vocals"] == speed_test.MEASURED_MODEL:
+            return "over-budget"
+    return reason
+
+
+def measured_stem_models(device: str) -> dict[str, str] | None:
+    """The saved speed test's plan for a job on ``device``, or None when there
+    is none, it is stale, the deployment pins its own model, or a model in it
+    cannot run here. Kim is allowed only where the static rule allows it."""
+    if stem_models.deployment_pinned():
+        return None
+    vram_mb = stem_model_vram_mb(device)
+    kim_ok = stem_models.recommended("vocals", device, vram_mb) == speed_test.KIM
+    plan = speed_test.measured_plan(get_speed_test_public(), device, kim_ok)
+    if plan is None:
+        return None
+    if not all(stem_models.model_available(model_id) for model_id in plan.values()):
+        return None
+    return plan
+
+
+# ── speed_test ──
+# The last hardware speed test (app/core/speed_test.py, Settings, Separation):
+# what it measured and recommended, and the hardware it ran on. Replaced by
+# every finished run. Read through speed_test.sanitize, so a hand-edited or
+# older value reads as "never run" rather than steering a job.
+def get_speed_test() -> dict | None:
+    """The saved result, checked, or None when there is none."""
+    with _LOCK:
+        return speed_test.sanitize(_ensure().get("speed_test"))
+
+
+def get_speed_test_public() -> dict | None:
+    """The saved result as the API serves it, with "stale" set against this
+    machine's fingerprint; None when there is none."""
+    saved = get_speed_test()
+    return speed_test.public(saved) if saved is not None else None
+
+
+def set_speed_test(result: object) -> dict:
+    """Save a finished run's result, replacing the last one. ValueError when it
+    does not check, and nothing is written."""
+    clean = speed_test.sanitize(result)
+    if clean is None:
+        raise ValueError("speed_test result does not check")
+    with _LOCK:
+        _ensure()["speed_test"] = clean
+        _save()
+        return clean
 
 
 # ── idle_unload_minutes ──

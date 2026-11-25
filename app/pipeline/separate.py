@@ -11,11 +11,17 @@ import threading
 import time
 from pathlib import Path
 
+from app.core import stem_models
 from app.core.config import DEMUCS_MODEL, TIMEOUT_DEMUCS_STALL, TIMEOUT_MODEL_STALL
 from app.core.models import Job, JobCancelled, _set
 from app.core.registry import set_proc
-from app.core.settings import get_demucs_device, get_separation_quality
-from app.pipeline import idle_unload, jobqueue
+from app.core.settings import (
+    get_demucs_device,
+    get_separation_quality,
+    get_stem_model_choices,
+    resolve_stem_models,
+)
+from app.pipeline import idle_unload, jobqueue, stem_plan
 from app.pipeline.errors import SeparationError, classify_failure
 from app.pipeline.idle_unload import IdleResource
 
@@ -27,6 +33,17 @@ _DOWNLOADING_RE = re.compile(r'^Downloading: "(?P<url>[^"]+)" to (?P<dst>.+)$')
 # Terminate demucs if stderr produces no output for this many seconds.
 # GPU processing can be silent for minutes; 30 min covers legitimate pauses
 # while still catching genuine hangs (GPU deadlock, OOM stall, etc.).
+
+# The worker's last line when a model the person added could not be loaded or
+# run (demucs_worker.UserModelFailed): matched whole, on the LAST tail line
+# only, so the same words anywhere else in a tail never pick this branch.
+_USER_FAILED_RE = re.compile(r"user model failed: (user_[a-f0-9]{12}): ([a-z_]{1,32})")
+# What stands in for a model the person added that could not run: it makes
+# every selectable stem, and every install that separates at all has it.
+STAND_IN_MODEL = "htdemucs_6s"
+# At most this many models the person added are stood in for in one job; a
+# plan names at most five, and a job failing over and over must end.
+MAX_STAND_INS = 3
 
 # Persistent worker (#309): only one job ever runs at a time (_pipeline_lock
 # in runner.py), so there is exactly one worker to track, not a pool. Reused
@@ -261,6 +278,22 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
 
     Returns (returncode, stderr_tail). Raises JobCancelled when the exit was
     caused by POST /cancel. The retry policy lives in separate()."""
+    # The plan separate() recorded for this job: the CPU retry runs the same
+    # one. None (a caller that recorded none) is the base model alone.
+    plan = job.stem_models
+    # What the worker needs to run each model the person added that the plan
+    # names, and nothing for any other: it never reads their store. Built
+    # before a worker is started: one removed since the plan was made fails
+    # the attempt as that model's failure, so separate() stands 6s in.
+    user: dict[str, dict] = {}
+    for model_id in sorted({m for m in (plan or {}).values() if stem_models.is_user_model(m)}):
+        try:
+            user[model_id] = stem_models.user_worker_spec(model_id)
+        except Exception:  # noqa: BLE001 -- removed or no longer usable since resolved
+            logger.warning(
+                "[%s] model %s cannot be handed to the worker", job.id, model_id, exc_info=True
+            )
+            return 1, [f"user model failed: {model_id}: unavailable"]
     # GPU only: one check per GPU attempt, so the kill count below counts jobs.
     if device != "cpu" and device in _reap_left_behind():
         # A worker given up on after kill() may still hold the GPU's memory,
@@ -281,7 +314,15 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     # The quality separate() recorded for this job (#804), else the setting.
     quality = job.separation_quality or get_separation_quality()
     shifts = 2 if quality == "best" else 1
-    req = json.dumps({"source": str(source), "job_dir": str(job_dir), "shifts": shifts}) + "\n"
+    request: dict[str, object] = {"source": str(source), "job_dir": str(job_dir), "shifts": shifts}
+    if plan is not None:
+        request["plan"] = plan
+    if user:
+        request["user_models"] = user
+    req = json.dumps(request) + "\n"
+    phases = stem_plan.phases(
+        plan or stem_plan.base_plan(), device, quality, stem_models.user_model_rtf
+    )
     try:
         proc.stdin.write(req)
         proc.stdin.flush()
@@ -305,6 +346,18 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     # (#288/#309). Subprocess isolation (kill-on-cancel, crash containment)
     # is a design feature we keep regardless of which case this run hits.
     startup_recorded = False
+    # The pass the worker is on (its @@PHASE@@ line), mapped onto one bar,
+    # and the sweep inside it: Demucs runs one 0-100% sweep per model of its
+    # bag and per shift (@@SWEEPS@@), and a drop in the percentage is the next.
+    phase = phases[0]
+    phase_at: float | None = None
+    sweeps, sweep, last_pct = 1, 0, -1
+
+    def _end_phase(now: float) -> None:
+        if phase_at is not None:
+            logger.info(
+                "[%s] pass %s took %.1f s on %s", job.id, phase.model_id, now - phase_at, device
+            )
 
     # tqdm uses \r to redraw -- read char-by-char and split on \r or \n.
     # Keep the last few non-progress lines so we can surface them if the job
@@ -319,6 +372,9 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     # model say nothing either, and are not held to it. A reused worker loaded
     # its model on an earlier job, so it never downloads.
     fetching: re.Match[str] | None = None
+    # tqdm prints a finished bar's 100% twice (the last refresh, then the close).
+    # The second one is the download's, not a separation sweep's.
+    after_fetch_100 = False
     # Set by the watchdog when it stops a worker that stalled downloading.
     stalled_fetching = threading.Event()
     # Event set by the reader loop when the job finishes so the watchdog can
@@ -370,8 +426,31 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     fetching = None
                     continue
                 if line == "@@DONE@@":
+                    _end_phase(time.monotonic())
                     job_ok = True
                     break
+                if line.startswith("@@PHASE@@"):
+                    # A new pass: any download before it is over.
+                    fetching = None
+                    now = time.monotonic()
+                    _end_phase(now)
+                    model_id = line[len("@@PHASE@@") :]
+                    phase = next((p for p in phases if p.model_id == model_id), phase)
+                    phase_at = now
+                    sweeps, sweep, last_pct = 1, 0, -1
+                    continue
+                if line.startswith("@@SWEEPS@@"):
+                    count = line[len("@@SWEEPS@@") :]
+                    sweeps = max(1, min(64, int(count))) if count.isdigit() else 1
+                    sweep, last_pct = 0, -1
+                    continue
+                if line.startswith("@@SCALE@@"):
+                    logger.info(
+                        "[%s] stems scaled down by %s to fit, the same for every stem",
+                        job.id,
+                        line[len("@@SCALE@@") :],
+                    )
+                    continue
                 if line.startswith("@@ERROR@@"):
                     msg = line[len("@@ERROR@@") :]
                     try:
@@ -381,6 +460,14 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     tail.append(str(msg))
                     job_ok = False
                     break
+                # Before the percentage: a destination path can hold a "%".
+                downloading = _DOWNLOADING_RE.match(line)
+                if downloading is not None:
+                    fetching = downloading
+                    tail.append(line)
+                    if len(tail) > 40:
+                        tail.pop(0)
+                    continue
                 m = _PCT_RE.search(line)
                 if m and fetching is not None:
                     # The model download's progress bar, not separation.
@@ -388,7 +475,11 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                     _set(job, stage=f"Downloading the separation model {pct}%")
                     if pct == 100:
                         fetching = None
+                        after_fetch_100 = True
+                elif m and after_fetch_100 and int(m.group(1)) >= 100:
+                    after_fetch_100 = False
                 elif m:
+                    after_fetch_100 = False
                     if not startup_recorded:
                         startup_recorded = True
                         # A new dict, as runner._lap writes one.
@@ -397,9 +488,16 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
                             "separate_startup": round(time.monotonic() - spawn_at, 1),
                         }
                     pct = max(0, min(100, int(m.group(1))))
-                    _set(job, progress=pct / 100.0, stage=f"Separating {pct}%")
+                    if pct < last_pct:
+                        sweep = min(sweep + 1, sweeps - 1)
+                    last_pct = pct
+                    done = (sweep + pct / 100.0) / sweeps
+                    _set(
+                        job,
+                        progress=phase.start + phase.span * done,
+                        stage=f"{phase.label} {round(done * 100)}%",
+                    )
                 else:
-                    fetching = _DOWNLOADING_RE.match(line) or fetching
                     tail.append(line)
                     if len(tail) > 40:
                         tail.pop(0)
@@ -437,7 +535,15 @@ def _run_demucs(job: Job, source: Path, job_dir: Path, device: str) -> tuple[int
     return (0, tail) if job_ok else (1, tail)
 
 
-def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) -> Path:
+def separate(
+    job: Job,
+    source: Path,
+    job_dir: Path,
+    quality: str | None = None,
+    plan: dict[str, str] | None = None,
+    *,
+    stand_in: bool = False,
+) -> Path:
     """Run demucs on the configured device, falling back to CPU once when a
     GPU attempt fails (#276).
 
@@ -453,13 +559,38 @@ def separate(job: Job, source: Path, job_dir: Path, quality: str | None = None) 
     model (#804), so stems separated later for the same song (fill-stems) use
     the same settings and add up with the ones it has.
 
+    `plan` is the model per selectable stem (app/core/stem_models.py); None
+    resolves Settings, Separation for the device this job runs on, when it
+    starts. Recorded on the job as stem_models before the worker sees it, so
+    a Settings change while it runs applies to the next separation, the CPU
+    retry runs the same plan, and a later fill-stems runs it again.
+
+    A model the person added that cannot be loaded or run is stood in for:
+    the job runs again from scratch on the same device with htdemucs_6s for
+    that model's stems, stem_models says what really ran, and
+    stem_model_fallbacks records which model each stood-in stem was meant
+    for and why. Loud like the CPU retry: the stage line, a WARNING with the
+    tail, and the record in job state and metadata. A given plan (a fill) is
+    never stood in for: a 6s stem would not add up with the stems the song
+    has, so the fill fails instead. ``stand_in`` lets a given plan be stood in
+    for too: a re-extract (stem_reextract.py) takes one stem of the run and
+    rebuilds "other" around it, so any model's stem adds up.
+
     Holds the worker in use for the whole call, the CPU retry included, so the
     idle timer never stops it under a job (#975)."""
     with WORKER.in_use():
-        return _separate(job, source, job_dir, quality)
+        return _separate(job, source, job_dir, quality, plan, stand_in=stand_in)
 
 
-def _separate(job: Job, source: Path, job_dir: Path, quality: str | None) -> Path:
+def _separate(
+    job: Job,
+    source: Path,
+    job_dir: Path,
+    quality: str | None = None,
+    plan: dict[str, str] | None = None,
+    *,
+    stand_in: bool = False,
+) -> Path:
     _set(job, status="separating", progress=0.0, stage="Separating stems...")
     quality = quality or get_separation_quality()
     job.separation_model = DEMUCS_MODEL
@@ -470,9 +601,34 @@ def _separate(job: Job, source: Path, job_dir: Path, quality: str | None) -> Pat
     # the completion summary / metadata / failure quarantine.
     device = get_demucs_device()
     job.compute_device = device
-    logger.info("[%s] separating on device=%s", job.id, device)
+    # The plan, like the device, is read once per job, here: a new dict, so
+    # nothing that changes later reaches the one this job runs. Read with it:
+    # what the stems left on "auto" resolve to on the CPU, for the CPU retry.
+    # A given plan (a fill's recorded one) is never changed.
+    cpu_plan: dict[str, str] | None = None
+    job.stem_model_fallbacks = None
+    if plan is not None:
+        job.stem_models = dict(plan)
+    else:
+        auto = {stem for stem, choice in get_stem_model_choices().items() if choice == "auto"}
+        job.stem_models = resolve_stem_models(device)
+        if device != "cpu" and auto:
+            on_cpu = resolve_stem_models("cpu")
+            cpu_plan = {
+                stem: on_cpu[stem] if stem in auto else model_id
+                for stem, model_id in job.stem_models.items()
+            }
+    logger.info(
+        "[%s] separating on device=%s plan: %s",
+        job.id,
+        device,
+        stem_plan.describe(job.stem_models),
+    )
 
-    rc, tail = _run_demucs(job, source, job_dir, device)
+    stand_ins = _StandIns(job, source, job_dir, may_stand_in=plan is None or stand_in)
+    rc, tail = stand_ins.run(device)
+    if stand_ins.replaced and cpu_plan is not None:
+        cpu_plan = stand_ins.substitute(cpu_plan)
     cause = classify_failure("\n".join(tail)) if rc != 0 else ""
 
     # A worker the shutdown killed is not a GPU failure: a CPU pass started
@@ -498,8 +654,14 @@ def _separate(job: Job, source: Path, job_dir: Path, quality: str | None) -> Pat
         _set(job, progress=0.0, stage="GPU failed — retrying on CPU (slower)...")
         job.gpu_fallback = True
         job.compute_device = f"cpu (fallback from {device})"
+        # The stems on "auto" get what "auto" picks on the CPU (htdemucs_6s's
+        # vocals, not the vocal model's 3.4 x real time); a stem chosen in
+        # Settings keeps its model.
+        if cpu_plan is not None and cpu_plan != job.stem_models:
+            job.stem_models = cpu_plan
+            logger.info("[%s] CPU retry plan: %s", job.id, stem_plan.describe(cpu_plan))
         first_tail = tail
-        rc, tail = _run_demucs(job, source, job_dir, "cpu")
+        rc, tail = stand_ins.run("cpu")
         if rc != 0:
             combined = [
                 f"--- attempt on {device} ---",
@@ -524,3 +686,81 @@ def _separate(job: Job, source: Path, job_dir: Path, quality: str | None) -> Pat
     if not stems_root.is_dir():
         raise SeparationError(f"demucs output not found at {stems_root}", device=job.compute_device)
     return stems_root
+
+
+def user_failure(tail: list[str]) -> tuple[str, str] | None:
+    """(model id, reason code) when the LAST line of ``tail`` is the worker's
+    "user model failed" line, else None."""
+    if not tail:
+        return None
+    m = _USER_FAILED_RE.fullmatch(tail[-1].strip())
+    return (m.group(1), m.group(2)) if m else None
+
+
+class _StandIns:
+    """Runs one attempt of a job on a device, and again with htdemucs_6s in
+    place of each model the person added that could not run, at most
+    MAX_STAND_INS times in all for the job, on that same device."""
+
+    def __init__(self, job: Job, source: Path, job_dir: Path, *, may_stand_in: bool) -> None:
+        self.job = job
+        self.source = source
+        self.job_dir = job_dir
+        self.may_stand_in = may_stand_in
+        self.count = 0
+        # Every model stood in for so far, so the CPU retry's plan gets the
+        # same stand-ins.
+        self.replaced: set[str] = set()
+
+    def substitute(self, plan: dict[str, str]) -> dict[str, str]:
+        return {
+            stem: STAND_IN_MODEL if model_id in self.replaced else model_id
+            for stem, model_id in plan.items()
+        }
+
+    def run(self, device: str) -> tuple[int, list[str]]:
+        job = self.job
+        rc, tail = _run_demucs(job, self.source, self.job_dir, device)
+        while rc != 0 and self.may_stand_in and self.count < MAX_STAND_INS:
+            failed = user_failure(tail)
+            plan = job.stem_models or {}
+            if failed is None or failed[0] not in plan.values():
+                break
+            model_id, code = failed
+            self.count += 1
+            logger.warning(
+                "[%s] the model %s could not run on %s (%s); separating its stems with %s."
+                " tail:\n%s",
+                job.id,
+                model_id,
+                device,
+                code,
+                STAND_IN_MODEL,
+                "\n".join(tail[-15:]),
+            )
+            # The failed attempt's partial output must not be mistaken for
+            # results; the next attempt starts from scratch, so does progress.
+            shutil.rmtree(self.job_dir / DEMUCS_MODEL, ignore_errors=True)
+            if job.cancel_requested:
+                raise JobCancelled()
+            name = stem_models.user_model_name(model_id)
+            record = {
+                "model": model_id,
+                "name": name[:200] if isinstance(name, str) else None,
+                "code": code,
+            }
+            # New dicts, so nothing holding the old ones sees them change.
+            job.stem_model_fallbacks = {
+                **(job.stem_model_fallbacks or {}),
+                **{stem: dict(record) for stem, m in plan.items() if m == model_id},
+            }
+            self.replaced.add(model_id)
+            job.stem_models = self.substitute(plan)
+            logger.info(
+                "[%s] plan with HT Demucs 6 stems standing in: %s",
+                job.id,
+                stem_plan.describe(job.stem_models),
+            )
+            _set(job, progress=0.0, stage="A model could not run; using HT Demucs 6 stems...")
+            rc, tail = _run_demucs(job, self.source, self.job_dir, device)
+        return rc, tail

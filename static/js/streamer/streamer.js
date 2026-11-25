@@ -36,7 +36,7 @@ import {
   trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, playheadLabelLeft,
 } from "./streamerModel.js";
 import { getBeats, getBeatGridSnap } from "../beatgrid.js";
-import { getTracks, selectTake, twoPress, requestTakesReload } from "../capture/takeLanes.js";
+import { getTracks, selectTake, twoPress, requestTakesReload, updateTakeEntry } from "../capture/takeLanes.js";
 import { deleteTake } from "../capture/takeUpload.js";
 import { loadScene, saveScene, flushScene } from "./sceneStore.js";
 import {
@@ -71,6 +71,7 @@ import { encoderNote } from "../videoEncoderNote.js";
 import { renderRequest, exportTake, cancelExport, saveRawRecording, rawRecordingType, canRevealSaved, revealSaved, forgetSaved } from "./streamerExport.js";
 import { shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep, performanceTrackId } from "./recordModel.js";
 import { renderStage } from "./stageRenderer.js";
+import { createSyncControl } from "./syncControl.js";
 import { reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio } from "./reviewModel.js";
 import { takeLaneRows, showsTakeLanes, chooseAction, followTake, scrollTarget, takeLanesSig } from "./takeListModel.js";
 import {
@@ -765,7 +766,10 @@ function buildSide() {
   const expRaw = tx(button("sm-ib sm-export-raw"), "streamer.export.saveRaw");
   expRaw.addEventListener("click", () => saveRaw());
   expRow.append(expGo, expCancel, expReveal, expRaw);
-  exp.append(expText, expBar, expRow);
+  // Sound and picture sync of the last take, under its export: what was
+  // measured, and the nudge the export then uses (syncControl.js).
+  const expSync = createSyncControl({ onSaved: syncSaved });
+  exp.append(expText, expBar, expRow, expSync.el);
   body.append(
     field("streamer.videoSource", "streamerVideoSrc", vsrc.sel), vsrc.wrap, vstate.line,
     field("streamer.audioSource", "streamerAudioSrc", asrc.sel), asrc.wrap, astate.line,
@@ -779,7 +783,7 @@ function buildSide() {
   return {
     aside, fps: fps.sel, vsrc: vsrc.sel, asrc: asrc.sel, vstate, astate,
     meter, meterRows, level, res: res.sel, heavy, sw,
-    exp, expText, expBar, expGo, expCancel, expReveal, expRaw,
+    exp, expText, expBar, expGo, expCancel, expReveal, expRaw, expSync,
   };
 }
 
@@ -1987,6 +1991,9 @@ function paintExport(st) {
   const job = currentJobId;
   const take = job ? lastTake(job) : null;
   const busy = Boolean(exporting);
+  // Locked while a take records or this take exports: the server refuses a
+  // sync change during its render.
+  s.expSync.paint({ jobId: job, take: takeOpen() ? null : serverTake(take), locked: busy });
   const elsewhere = busy && exporting.jobId !== job;
   const shot = take ? takeInfo(take) : null;
   const asRecorded = shot && shot.aspect !== scene.aspect ? shot.aspect : "";
@@ -2092,6 +2099,17 @@ async function runExport() {
     exporting = null;
     painted.exp = null;
   }
+}
+
+/** The last take's sync was changed (syncControl.js): the loaded take takes
+ * the server's entry (its new picture placement), so the review moves at
+ * once; a file exported before has the old sync, which the note says. */
+function syncSaved(jobId, entry) {
+  updateTakeEntry(jobId, entry);
+  painted.review = null;
+  painted.takeBlock = null;
+  if (jobId === currentJobId && exportNote && !exporting) exportNote = t("avsync.exportAgain");
+  painted.exp = null;
 }
 
 /** What `takeId` was recorded at, else the current scene and settings. */

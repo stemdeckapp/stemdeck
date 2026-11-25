@@ -1,4 +1,5 @@
-// Why the NVIDIA GPU is not used, under the Compute device picker (#247).
+// Why the NVIDIA GPU is not used, under the Compute device picker (#247),
+// in Settings > Separation.
 //
 // Settings used to say only "currently: cpu", so a CPU-only PyTorch, a CUDA
 // that cannot start and a failed CUDA install all looked the same. The server
@@ -26,6 +27,8 @@ async function openSettings(page, why) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
   await expect(page.locator(".library-editor")).toBeVisible();
+  await page.locator('.settings-tab[data-tab="separation"]').click();
+  await expect(page.locator('.settings-pane[data-pane="separation"]')).toBeVisible();
 }
 
 test("the reason the GPU is not used shows under the Compute device picker", async ({ page }) => {

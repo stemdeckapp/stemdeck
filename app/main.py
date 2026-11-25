@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import router
-from app.core import csrf, tls_listener
+from app.core import csrf, stem_models, tls_listener
 from app.core.compression import COMPRESS_LEVEL, MINIMUM_SIZE, TextGZipMiddleware
 from app.core.config import (
     ACOUSTID_CHECK_KEY,
@@ -69,6 +69,7 @@ from app.core.settings import (
     DURATION_MIN_SEC,
     acoustid_api_key_hint,
     acoustid_key_format_ok,
+    check_stem_model_choices,
     discogs_token_format_ok,
     discogs_token_hint,
     get_allow_network,
@@ -87,11 +88,15 @@ from app.core.settings import (
     get_playlist_max_items,
     get_port,
     get_separation_quality,
+    get_speed_test_public,
     get_stem_format,
+    get_stem_model_choices,
     get_stem_mp3_kbps,
     get_transcribe_lyrics,
     get_video_encoder,
     get_video_max_height,
+    recommended_stem_models,
+    resolve_stem_models,
     set_acoustid_api_key,
     set_allow_network,
     set_auto_delete_days,
@@ -109,10 +114,12 @@ from app.core.settings import (
     set_playlist_max_items,
     set_port,
     set_separation_quality,
+    set_stem_model_choices,
     set_stem_storage,
     set_transcribe_lyrics,
     set_video_encoder,
     set_video_max_height,
+    stem_models_reason,
 )
 from app.core.stems_location import (
     StemsLocationError,
@@ -284,6 +291,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     except Exception:
         _log.exception("could not sweep crash leftovers")
+    # A speed test's disk file a killed process left in the jobs folder.
+    try:
+        from app.core.speed_test import sweep_stale_temp_files
+
+        await asyncio.to_thread(sweep_stale_temp_files, JOBS_DIR)
+    except Exception:
+        _log.exception("could not sweep stale speed test files")
+    # The models a person added (Settings, My models): end what a stop left
+    # half done, and the partial files it left. Never raises.
+    from app.core.user_models import reconcile as reconcile_user_models
+
+    await asyncio.to_thread(reconcile_user_models)
 
     # An FFmpeg older than 5.1 cannot run any export (app/pipeline/audio_encoders.py).
     # The server still starts, so imports and playback work and the page can
@@ -347,6 +366,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.api.takes import cancel_all_renders
 
     cancel_all_renders()
+    # A running speed test's subprocess stops with the server too.
+    from app.api.speed_test import cancel_running as cancel_speed_test
+
+    cancel_speed_test()
+    # So does a download or check of a model a person added.
+    from app.api.my_models import cancel_all as cancel_my_models
+
+    cancel_my_models()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
     # its own, unlike the desktop backend itself. Waits for an idle unload
@@ -464,9 +491,51 @@ def _is_lan_ipv4(ip: str) -> bool:
     return len(parts) == 4 and all(p.isdigit() for p in parts)
 
 
+def _stem_models_payload(device: str) -> dict[str, object]:
+    """Settings, Separation: the saved choice per stem, what the next job on
+    ``device`` runs, the recommendation and why, and the catalog the rows are
+    drawn from.
+
+    Never fails the payload: on any error the recommendation is htdemucs_6s
+    for every stem, which every install that can separate at all has."""
+    choices = {stem: "auto" for stem in stem_models.SELECTABLE_STEMS}
+    try:
+        choices = get_stem_model_choices()
+        catalog = stem_models.catalog(lead_backing_available=vocal_split_capability()["available"])
+        return {
+            "stem_models": choices,
+            # Both follow a saved speed test that still describes this
+            # machine (app/core/speed_test.py), as the next job does.
+            "stem_models_resolved": resolve_stem_models(device),
+            "stem_models_recommended": recommended_stem_models(device),
+            # "over-budget" when a fresh speed test moved the vocals off Kim.
+            "stem_models_reason": stem_models_reason(device),
+            "stem_model_catalog": catalog,
+        }
+    except Exception:  # noqa: BLE001 -- Settings must still open
+        _log.warning("could not work out the separation models; showing htdemucs_6s", exc_info=True)
+        base = {stem: "htdemucs_6s" for stem in stem_models.SELECTABLE_STEMS}
+        return {
+            "stem_models": choices,
+            "stem_models_resolved": base,
+            "stem_models_recommended": dict(base),
+            "stem_models_reason": "unavailable",
+            "stem_model_catalog": stem_models.catalog(
+                lead_backing_available=False,
+                available=lambda model_id: model_id == "htdemucs_6s",
+                downloaded=lambda _model_id: False,
+                # The store of the models a person added may be what failed.
+                include_user=False,
+            ),
+        }
+
+
 def _settings_payload() -> dict[str, object]:
     devices = available_torch_devices()
     why = cpu_reason()
+    # The device the next job runs on, as the device row shows it, so the
+    # model rows recommend for the same device.
+    device = get_demucs_device()
     return {
         "allow_network": get_allow_network(),
         # Off unless the user asked for it. The days value is published even
@@ -527,7 +596,7 @@ def _settings_payload() -> dict[str, object]:
         # select; the resolved value shows what jobs will actually run on;
         # available lets the UI gray out devices this machine can't use.
         "demucs_device": get_demucs_device_choice(),
-        "demucs_device_resolved": get_demucs_device(),
+        "demucs_device_resolved": device,
         "demucs_devices_available": devices,
         # What drives "cuda": "cuda" (NVIDIA) | "rocm" (AMD) | None. A ROCm
         # build serves an AMD GPU as "cuda", so the device alone cannot tell
@@ -541,7 +610,20 @@ def _settings_payload() -> dict[str, object]:
         # diagnostics line is what Copy GPU details puts on the clipboard.
         "demucs_device_why": why,
         "device_diagnostics": device_diagnostics(why),
+        # The model per stem (Settings, Separation; app/core/stem_models.py).
+        **_stem_models_payload(device),
+        # The last speed test (app/core/speed_test.py), "stale" when this
+        # machine's hardware changed since; None when never run.
+        "speed_test": _speed_test_payload(),
     }
+
+
+def _speed_test_payload() -> dict | None:
+    try:
+        return get_speed_test_public()
+    except Exception:  # noqa: BLE001 -- Settings must still open
+        _log.warning("could not read the saved speed test", exc_info=True)
+        return None
 
 
 @app.get("/api/settings", tags=["settings"])
@@ -617,6 +699,15 @@ async def update_settings(request: Request) -> dict[str, object]:
         # Only a JSON true or false: bool("false") is True, and a string must
         # never be what turns online sources on (#1089).
         raise HTTPException(status_code=422, detail="online_sources must be true or false")
+    stem_models_patch = None
+    if "stem_models" in body:
+        try:
+            # A partial choice, checked whole: one bad stem or model and
+            # nothing is written. Kept only after every other setting below.
+            stem_models_patch = check_stem_model_choices(body["stem_models"])
+        except ValueError as e:
+            # Fixed messages that list the whitelist; they never echo the value.
+            raise HTTPException(status_code=422, detail=str(e)) from None
     if "idle_unload_minutes" in body and not _whole_minutes(body["idle_unload_minutes"]):
         # Refused rather than clamped: true would be stored as 1 minute and -1
         # as 0, which turns the unload off, so a typo must not change it.
@@ -730,6 +821,12 @@ async def update_settings(request: Request) -> dict[str, object]:
         except ValueError as e:
             # The message lists the whitelist; it never echoes the value.
             raise HTTPException(status_code=422, detail=str(e)) from None
+    if stem_models_patch:
+        try:
+            set_stem_model_choices(stem_models_patch)
+        except ValueError as e:
+            # A model that stopped being available since the check above.
+            raise HTTPException(status_code=422, detail=str(e)) from None
     # Off the event loop: the payload can run nvidia-smi (app/core/device_reason.py).
     return await asyncio.to_thread(_settings_payload)
 
@@ -825,6 +922,15 @@ async def set_stems_location(request: Request) -> dict[str, object]:
             )
         if any(j.post_hoc_running() for j in registry_all_jobs().values()):
             raise JobBusy()
+        from app.api.speed_test import is_running as speed_test_running
+
+        if speed_test_running():
+            # Its disk test holds a file open in this folder, which the move
+            # would carry (or, on Windows, fail to rename) part way.
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for the benchmark to finish before moving the stems folder",
+            )
         target = validate_target(Path(raw), JOBS_DIR)
     except StemsLocationError as e:
         abandon_relocation()

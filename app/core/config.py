@@ -647,6 +647,65 @@ TIMEOUT_AUDIO_FILTER_LIST = _env_int("STEMDECK_TIMEOUT_AUDIO_FILTER_LIST", 15)
 # Settings asks on every open and a GPU does not come and go within minutes.
 TIMEOUT_NVIDIA_SMI = _env_int("STEMDECK_TIMEOUT_NVIDIA_SMI", 10)
 NVIDIA_SMI_TTL_SEC = 300
+# A failed nvidia-smi run keeps the last good answer: one timeout must not
+# read as "the GPU is gone", which changes the separation recommendation and
+# makes a saved speed test stale. Only this many failures in a row clear it.
+NVIDIA_SMI_MAX_FAILURES = 3
+
+# The hardware speed test (Settings, Separation; app/core/speed_test.py).
+# One device's measuring subprocess is stopped after this many seconds in
+# all, or after this many with no line from it (it prints one at least every
+# timed run: about 6 s on a CPU at the registry's speed).
+TIMEOUT_SPEED_TEST_DEVICE = max(30, _env_int("STEMDECK_TIMEOUT_SPEED_TEST_DEVICE", 180))
+TIMEOUT_SPEED_TEST_STALL = max(10, _env_int("STEMDECK_TIMEOUT_SPEED_TEST_STALL", 90))
+# How long a stopped subprocess gets to exit before it, and every process it
+# started, is killed.
+SPEED_TEST_KILL_WAIT_SEC = max(1, _env_int("STEMDECK_SPEED_TEST_KILL_WAIT_SEC", 5))
+# The disk test writes one file of this many MiB into the jobs folder, synced,
+# and is given up on (reported as "timeout") after this many seconds: a dead
+# network share must not hold the test, and the pipeline lock with it.
+SPEED_TEST_DISK_MIB = max(1, min(1024, _env_int("STEMDECK_SPEED_TEST_DISK_MIB", 128)))
+TIMEOUT_SPEED_TEST_DISK = max(5, _env_int("STEMDECK_TIMEOUT_SPEED_TEST_DISK", 60))
+# Skipped when the jobs folder has less free space than this, in MiB.
+SPEED_TEST_DISK_MIN_FREE_MIB = max(1, _env_int("STEMDECK_SPEED_TEST_DISK_MIN_FREE_MIB", 512))
+# Under this write speed, in MiB/s, the folder is flagged slow: likely a
+# network share or a spinning drive.
+SPEED_TEST_DISK_SLOW_MB_S = max(1, _env_int("STEMDECK_SPEED_TEST_DISK_SLOW_MB_S", 40))
+# A Demucs model other than htdemucs_6s is measured for real only when it is
+# downloaded and its warm-up and timed runs are expected to take at most this
+# many seconds; otherwise it is estimated.
+SPEED_TEST_REAL_MEASURE_MAX_SEC = max(0, _env_int("STEMDECK_SPEED_TEST_REAL_MEASURE_MAX_SEC", 40))
+
+# My models (Settings, Separation; app/core/user_models.py): separation models
+# the user adds from a Hugging Face link or from two files on disk. An id is
+# "user_" and 12 hex, random, so the same file can be added again after a
+# removal; a second copy of a file already there is found by its SHA-256.
+USER_MODEL_ID_RE = re.compile(r"^user_[a-f0-9]{12}\Z")
+# The model file's limit: 2 GiB, enforced while the bytes arrive, not only
+# from a header that could lie.
+MAX_USER_MODEL_BYTES = 2 * 1024**3
+# The config file's limit. Real RoFormer configs are a few KiB.
+MAX_USER_MODEL_CONFIG_BYTES = 256 * 1024
+# How many models the list holds, refused and checking ones included.
+MAX_USER_MODELS = 12
+# The parameter limit, checked from the config before any model is built. A
+# 2 GiB fp16 file can hold about a billion parameters, so the file limit alone
+# does not bound the memory a model takes. Kim's vocal model has 228 M.
+MAX_USER_MODEL_PARAMS = 500_000_000
+# Free space a new model needs beyond twice its size under the models folder.
+USER_MODEL_DISK_MARGIN_BYTES = 512 * 1024 * 1024
+# The test run of a new model (app/pipeline/user_model_check_worker.py): on
+# the CPU, on a clip of this many seconds, stopped after this many seconds in
+# all or after this many with no line from it.
+USER_MODEL_CHECK_CLIP_SEC = 3.0
+TIMEOUT_USER_MODEL_CHECK = max(30, _env_int("STEMDECK_TIMEOUT_USER_MODEL_CHECK", 180))
+TIMEOUT_USER_MODEL_CHECK_STALL = max(10, _env_int("STEMDECK_TIMEOUT_USER_MODEL_CHECK_STALL", 60))
+# The address-space limit of that test run on Linux and macOS, so a model that
+# would take the machine's memory fails on its own. Windows has no equivalent;
+# the parameter limit above is the guard there.
+USER_MODEL_CHECK_MEMORY_BYTES = 6 * 1024**3
+# What a Hugging Face model's page answers with: read up to this many bytes.
+HF_API_MAX_BYTES = 2 * 1024 * 1024
 # How long a probe result is trusted. A pass for a week, a failure for a day (a
 # driver installed today is tried tomorrow, or at once with Test encoders), a
 # timeout or a busy device for ten minutes (never as a lasting answer).

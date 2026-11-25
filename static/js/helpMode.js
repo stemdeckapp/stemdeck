@@ -94,6 +94,7 @@ const HELP = [
   // card's pills also carry .lib-friend-pill, so they come first; a pill
   // comes before the card it sits in.
   ["#friendsClose", "help.friendsClose"],
+  [".friends-playlist a", "help.friendsPlaylist"],
   [".featured-track", "help.featuredTrack", featuredName],
   [".featured-pill", "help.featuredLink", featuredName],
   [".featured-prev-btn", "help.featuredPrevious", (el) => el.dataset.name || ""],
@@ -320,6 +321,15 @@ const HELP = [
   // control cannot exist without its Guide sentence (each spec control names
   // its help.* key; the knob or select carries its pedal's type).
   ...pedalHelpEntries(),
+  // The Model chip, a column of its own in a lane's header beside the key,
+  // and the model row it opens (laneModelRows.js, Advanced mode). The chip
+  // and the buttons reuse the EQ's classes, so these come before the EQ entries.
+  [".model-tab", "help.modelTab"],
+  [".model-select", "help.modelSelect"],
+  [".model-reextract", "help.modelReextract"],
+  [".model-undo", "help.modelUndo"],
+  [".model-keep", "help.modelKeep"],
+  [".model-cancel", "help.modelCancel"],
   // EQ tab and panels. Inside .waves-column and the mixer rows, so before them.
   [".eq-tab", "help.eqTab"],
   [".eq-power", "help.eqPower"],
@@ -423,6 +433,12 @@ const HELP = [
   // Its text changes with the take (Try again), so the name is fixed.
   ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.go"],
   ["#streamer .sm-export-reveal", "help.smReveal", null, "streamer.export.reveal"],
+  // Sound and picture sync under the export (syncControl.js): its buttons
+  // and the nudge first, then the group around them.
+  ["#streamer .sm-sync-reset", "help.avSyncReset", null, "avsync.reset"],
+  ["#streamer .sm-sync-measure", "help.avSyncMeasure", null, "avsync.measureAgain"],
+  ["#streamer .sm-sync-step, #streamer .sm-sync-range, #streamer .sm-sync-label, #streamer .sm-sync-value", "help.avSyncNudge", null, "avsync.nudge"],
+  ["#streamer .sm-sync", "help.avSync", null, "avsync.title"],
   ["#streamer .sm-part", "help.smPart", null, "streamer.part.label"],
   // The timeline's take lanes (streamer.js paintTakeRows): a row per take of
   // the Performance track, its label (a button, named "Take 2") and its wave
@@ -455,12 +471,40 @@ const HELP = [
 const SETTINGS = [
   ["settings.tab.general", [
     ["settings.language.title", "help.set.language"],
+    ["settings.maxDuration.title", "help.set.maxDuration"],
+    ["settings.playlistLimit.title", "help.set.playlistLimit"],
+  ]],
+  // The device, the quality and the idle unload, then the model for each
+  // stem (separationSettings.js), in the pane's own row order.
+  ["settings.tab.separation", [
     ["settings.device.title", "help.set.device"],
     ["settings.device.copyDetails", "help.set.deviceCopy"],
     ["settings.quality.title", "help.set.quality"],
     ["settings.idleUnload.title", "help.set.idleUnload"],
-    ["settings.maxDuration.title", "help.set.maxDuration"],
-    ["settings.playlistLimit.title", "help.set.playlistLimit"],
+    ["stem.vocals", "help.set.stemVocals"],
+    ["vocalMode.split", "help.set.stemLeadBacking"],
+    ["stem.drums", "help.set.stemDrums"],
+    ["stem.bass", "help.set.stemBass"],
+    ["stem.guitar", "help.set.stemGuitar"],
+    ["stem.piano", "help.set.stemPiano"],
+    ["stem.other", "help.set.stemOther"],
+    ["settings.stemModels.reset", "help.set.stemModelsReset"],
+    ["settings.speedTest.run", "help.set.speedTestRun"],
+    ["settings.speedTest.cancel", "help.set.speedTestCancel"],
+    ["settings.speedTest.showAll", "help.set.speedTestDevices"],
+    ["settings.speedTest.apply", "help.set.speedTestApply"],
+    // My models (myModels.js): the section, its form, and each model's
+    // buttons. "Add a model..." in a stem's list is in the stem sentences.
+    ["settings.myModels.title", "help.set.myModels"],
+    ["settings.myModels.link.label", "help.set.myModelsLink"],
+    ["settings.myModels.file.choose", "help.set.myModelsFile"],
+    ["settings.myModels.config.choose", "help.set.myModelsConfig"],
+    ["settings.myModels.stems.legend", "help.set.myModelsStems"],
+    ["settings.myModels.licence", "help.set.myModelsLicence"],
+    ["settings.myModels.add", "help.set.myModelsAdd"],
+    ["settings.myModels.cancel", "help.set.myModelsCancel"],
+    ["settings.myModels.check", "help.set.myModelsCheck"],
+    ["settings.myModels.remove", "help.set.myModelsRemove"],
   ]],
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],

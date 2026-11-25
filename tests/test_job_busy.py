@@ -154,7 +154,7 @@ def _blocking_separate(started: threading.Event, workers: list[_Worker], calls: 
     """A separation that runs until its worker is terminated, then ends the
     way the real one does: JobCancelled when the stand-in was cancelled."""
 
-    def run(stand_in, source, job_dir, quality=None):
+    def run(stand_in, source, job_dir, quality=None, plan=None):
         calls.append(stand_in)
         worker = _Worker()
         workers.append(worker)

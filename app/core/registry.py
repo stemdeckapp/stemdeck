@@ -27,6 +27,7 @@ from app.core.config import (
     TAKES_DIRNAME,
     TRACK_ID_RE,
     UPLOAD_EXTS,
+    USER_MODEL_ID_RE,
 )
 from app.core.models import (
     FINISHED_STATUSES,
@@ -38,6 +39,7 @@ from app.core.models import (
 )
 from app.core.settings import fsync_dir, quarantine_corrupt
 from app.core.stem_files import stem_exists, stem_names_on_disk, stem_path, stem_url
+from app.core.stem_models import SELECTABLE_STEMS
 from app.core.takes import reconcile_tracks, recover_takes
 from app.core.versions import clean_stems
 
@@ -45,7 +47,7 @@ logger = logging.getLogger("stemdeck.registry")
 
 REGISTRY_VERSION = 2
 
-Operation = Literal["pipeline", "fill", "split", "retime"]
+Operation = Literal["pipeline", "fill", "split", "retime", "reextract"]
 
 _jobs: dict[str, Job] = {}
 # Active subprocesses keyed by job id and operation. Lets POST /cancel
@@ -108,6 +110,14 @@ SAVED_FIELDS = (
     "source_format",
     "separation_model",
     "separation_quality",
+    "stem_models",
+    "stem_model_fallbacks",
+    # A re-extracted stem (#reextract): its undo copy, the level every stem
+    # was turned down by, and the revision its URL carries. The files are on
+    # disk, but nothing there says which model made them or what to undo to.
+    "stem_undo",
+    "stem_revisions",
+    "stem_gain",
     "auto_lyrics",
     "created_at",
 )
@@ -115,6 +125,45 @@ SAVED_FIELDS = (
 
 def saved_fields(job: Job) -> dict[str, Any]:
     return {name: getattr(job, name) for name in SAVED_FIELDS}
+
+
+def stem_revision(job: Job, name: str) -> int:
+    """How many times stem file ``name`` was replaced in place (re-extract,
+    undo), 0 when never. A damaged record reads as 0."""
+    revisions = job.stem_revisions
+    value = revisions.get(name) if isinstance(revisions, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def versioned_stem_url(job: Job, stems_dir: Path, name: str) -> str:
+    """stem_url, with "?v=<revision>" once the file was replaced in place, so
+    the page never plays a copy its browser cached of the file before (the
+    stem routes let a browser keep a stem for a year). ``name`` must already
+    be whitelisted."""
+    url = stem_url(job.id, stems_dir, name)
+    revision = stem_revision(job, name)
+    return f"{url}?v={revision}" if revision else url
+
+
+def refresh_stem_urls(job: Job, stems_dir: Path) -> None:
+    """Point every stem entry, and the mix link when it is a stem file, at
+    the file on disk with its revision."""
+    prefix = f"/api/jobs/{job.id}/stems/"
+    stems = []
+    for entry in job.stems:
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if isinstance(name, str) and stem_exists(stems_dir, name):
+            stems.append({**entry, "url": versioned_stem_url(job, stems_dir, name)})
+        else:
+            stems.append(entry)
+    job.stems = stems
+    mix_url = job.mix_url
+    if isinstance(mix_url, str) and mix_url.startswith(prefix):
+        name = Path(mix_url[len(prefix) :].split("?", 1)[0]).stem
+        if name in (*STEM_NAMES, "mix") and stem_exists(stems_dir, name):
+            job.mix_url = versioned_stem_url(job, stems_dir, name)
 
 
 # Held by the requests that change a song's metadata.json (app/api/jobs.py)
@@ -448,6 +497,55 @@ def _annotation_types(annotation: object) -> tuple[type, ...] | None:
     return tuple(allowed)
 
 
+# A recorded plan's keys and model ids. Unknown ids are kept (a model removed
+# in a later version must still be refused by name when a fill asks for it),
+# and so are extra stems (a newer version's), but only in a plain shape.
+_PLAN_STEM_RE = re.compile(r"^[a-z_]{1,32}\Z")
+_PLAN_MODEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}\Z")
+
+
+def _stem_models_ok(value: object) -> bool:
+    """Whether ``value`` is a recorded separation plan: every selectable stem
+    named, each to a model id of plain characters."""
+    if not isinstance(value, dict) or len(value) > 32:
+        return False
+    if not all(stem in value for stem in SELECTABLE_STEMS):
+        return False
+    return all(
+        isinstance(k, str)
+        and _PLAN_STEM_RE.match(k)
+        and isinstance(v, str)
+        and _PLAN_MODEL_RE.match(v)
+        for k, v in value.items()
+    )
+
+
+# A recorded stand-in (Job.stem_model_fallbacks): the id of a model the person
+# added, the name it had then, and a reason code.
+_FALLBACK_CODE_RE = re.compile(r"^[a-z_]{1,32}\Z")
+_FALLBACK_NAME_MAX = 200
+
+
+def _stem_model_fallbacks_ok(value: object) -> bool:
+    """Whether ``value`` is a recorded set of stand-ins: at most the five
+    selectable stems, each to {"model", "name", "code"} of plain values."""
+    if not isinstance(value, dict) or len(value) > len(SELECTABLE_STEMS):
+        return False
+    for stem, entry in value.items():
+        if stem not in SELECTABLE_STEMS or not isinstance(entry, dict):
+            return False
+        if set(entry) != {"model", "name", "code"}:
+            return False
+        model, name, code = entry["model"], entry["name"], entry["code"]
+        if not (isinstance(model, str) and USER_MODEL_ID_RE.match(model)):
+            return False
+        if not (isinstance(code, str) and _FALLBACK_CODE_RE.match(code)):
+            return False
+        if name is not None and not (isinstance(name, str) and len(name) <= _FALLBACK_NAME_MAX):
+            return False
+    return True
+
+
 def _repair_field_types(job: Job) -> list[str]:
     """Reset every field whose value is the wrong JSON type to its default.
 
@@ -478,6 +576,10 @@ def _repair_field_types(job: Job) -> list[str]:
             # The same check the rebuild from a folder applies, so a record
             # and a metadata.json read back after a downgrade agree with it.
             ok = _clean_timeline_tags(value) is not None
+        elif ok and f.name == "stem_models" and value is not None:
+            ok = _stem_models_ok(value)
+        elif ok and f.name == "stem_model_fallbacks" and value is not None:
+            ok = _stem_model_fallbacks_ok(value)
         elif ok and f.name in _ENTRY_IDS:
             ok = all(
                 isinstance(entry, dict) and _ENTRY_IDS[f.name].match(str(entry.get("id")))
@@ -1007,6 +1109,10 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         job, meta, (*SAVED_FIELDS, "has_video", "video_status", "loudness_remeasured")
     )
     job.selected_stems = clean_stems(job.selected_stems) or selected
+    if job.stem_revisions:
+        # A stem replaced in place keeps the URL it had, never the plain one a
+        # browser may still hold the file before under.
+        refresh_stem_urls(job, stems_dir)
     # The add time is there from the start: it says nothing of the rest.
     return job, any(name in meta for name in SAVED_FIELDS if name != "created_at")
 

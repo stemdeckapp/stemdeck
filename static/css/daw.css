@@ -2531,6 +2531,52 @@ input, textarea { font-family: inherit; }
 /* Drums: the control stays whole, dimmed, explaining itself on hover. */
 .mx-keyrail .lane-key.locked { opacity: 0.45; }
 
+/* The Model chip's column (laneModelRows.js, Advanced mode): between the key
+   and the rail, one cell the full height of the row, the microchip centred
+   in it, with a small gold dot under it while the song's model for the stem
+   is not the one Settings uses for new songs. The EQ tab's face and states
+   as the rail draws it (no box, no chevron, the open tint from eq.css). The
+   column is there on every lane, empty where there is no model to choose, so
+   the rail sits at the same x on every row; --daw-col-w (variables.css) grows
+   by its width and the row's gap in Advanced mode. */
+.mx-model-slot {
+  width: 24px;
+  flex-shrink: 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+.mx-model-slot > .model-tab {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mx-model-slot > .model-tab:hover { background: var(--panel-2); }
+.mx-model-slot > .model-tab::after { display: none; }
+.model-tab .model-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.model-tab .model-tab-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.model-tab-dot {
+  display: none;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.model-tab.differs .model-tab-dot { display: block; }
+
 /* The rail: four equal cells the full height of the row. */
 .mx-rail {
   display: flex;
@@ -4416,6 +4462,18 @@ input, textarea { font-family: inherit; }
 .friends-card .friends-intro { max-width: 720px; margin-bottom: 6px; }
 .friends-card .friends-ask { max-width: 720px; color: var(--fg-2); }
 .friends-ask strong { font-weight: 600; }
+/* The playlist link under the ask: a quiet pill, like the cards' own links,
+   so it reads as one more place to listen rather than a call to action. */
+.friends-card .friends-playlist { margin: 2px 0 14px; text-align: center; }
+.friends-playlist a {
+  display: inline-flex; align-items: center;
+  padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--panel-2);
+  color: var(--fg-2); font-size: 12px; font-weight: 600; text-decoration: none;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.friends-playlist a:hover { color: var(--fg); border-color: var(--accent); }
+.friends-playlist a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* The featured artist: a large square photo with a thin accent edge on the
    left, the text on the right. Stacks once the window is too narrow for both. */
@@ -6260,6 +6318,7 @@ html:not(.mode-daw) #recPanel,
 html:not(.mode-daw) .add-track-row,
 html:not(.mode-daw) .add-track-spacer,
 html:not(.mode-daw) .mx-rail > .mx-eq-slot,
+html:not(.mode-daw) .mx-model-slot,
 html:not(.mode-daw) .track-lane .mx-actions,
 html:not(.mode-daw) #t-master-btn,
 html:not(.mode-daw) #t-export-master,

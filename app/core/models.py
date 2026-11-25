@@ -237,6 +237,18 @@ LOUDNESS_VERSION = 2
 LOUDNESS_BASES = ("source", "stems")
 
 
+def public_stem_undo(undo: object) -> dict[str, dict[str, Any]]:
+    """Which stems have an undo copy, as the page sees it: {stem: {"model",
+    "saved_at"}}. The file names and gains stay on the server."""
+    if not isinstance(undo, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for stem, entry in undo.items():
+        if isinstance(stem, str) and isinstance(entry, dict):
+            out[stem] = {"model": entry.get("model"), "saved_at": entry.get("saved_at")}
+    return out
+
+
 @dataclass
 class Job:
     id: str
@@ -397,10 +409,42 @@ class Job:
     # they add up to the song. None for a song separated before this existed.
     separation_model: str | None = None
     separation_quality: str | None = None
+    # The model each selectable stem was separated with ({stem: model id},
+    # app/core/stem_models.py), recorded when separation starts, so a later
+    # Extract runs the same plan. separation_model stays the base Demucs model.
+    # None for a song separated before this existed: every stem was
+    # htdemucs_6s's.
+    stem_models: dict[str, str] | None = None
+    # The stems a model the person added was meant to separate and could not
+    # (it failed to load or run), so HT Demucs 6 stems separated them instead,
+    # on the same device: {stem: {"model": "<user id>", "name": "<its name
+    # then>", "code": "<reason code>"}}. stem_models holds what really ran.
+    # None when nothing stood in. Kept in metadata.json like stem_models.
+    stem_model_fallbacks: dict[str, dict] | None = None
     # Separating the stems a song does not have yet (POST .../fill-stems), a
     # post-hoc action on a "done" job like vocal_split. "error" leaves every
     # stem the song had as it was.
     stem_fill: Literal["none", "running", "done", "error"] = "none"
+    # Re-extract one stem (POST .../reextract, app/pipeline/stem_reextract.py):
+    # the last run or undo on this song, {"stem", "model", "action", "state",
+    # "phase", "progress", "code", "used_model", "fallback", "gain_db",
+    # "started_at", "finished_at"}, or None when none ever ran. A post-hoc
+    # action on a "done" job like stem_fill: "error" and "cancelled" leave
+    # every stem as it was.
+    stem_reextract: dict[str, Any] | None = None
+    # The undo copy of each re-extracted stem, by stem: {"model", "fallback",
+    # "dir", "file", "gain", "saved_at", "extras", "vocal_split"}. The files
+    # live in <job>/stem-undo/<dir>/. None when there is none.
+    stem_undo: dict[str, dict[str, Any]] | None = None
+    # How many times each stem file was replaced in place by a re-extract or an
+    # undo ({name: n}). Its URL carries "?v=<n>", so a browser never plays a
+    # cached copy of the file it replaced, and the export caches miss. None
+    # until the first replacement: every file is as the separation wrote it.
+    stem_revisions: dict[str, int] | None = None
+    # The level every stem was turned down by since the separation, so that a
+    # re-extracted stem and the rebuilt "other" fit without clipping (the
+    # shared-scale rule, app/pipeline/stem_plan.py). None is 1.0.
+    stem_gain: float | None = None
     # When the user put this job in the Trash, or None if they have not.
     #
     # Server-side on purpose. The Trash used to live only in the browser's
@@ -504,6 +548,10 @@ class Job:
             "versions": versions_of(self),
             "active_version": active_of(self),
             "stem_fill": self.stem_fill,
+            "stem_models": self.stem_models,
+            "stem_model_fallbacks": self.stem_model_fallbacks,
+            "stem_reextract": self.stem_reextract,
+            "stem_undo": public_stem_undo(self.stem_undo),
             "trashed_at": self.trashed_at,
             "favorite": self.favorite,
             "created_at": self.created_at,
@@ -512,7 +560,16 @@ class Job:
     def post_hoc_running(self) -> bool:
         """A stem fill or a vocal split is writing into this song's folder.
         The queue statuses do not show it: the song stays "done" meanwhile."""
-        return self.stem_fill == "running" or self.vocal_split == "running"
+        return (
+            self.stem_fill == "running"
+            or self.vocal_split == "running"
+            or self.stem_reextract_running()
+        )
+
+    def stem_reextract_running(self) -> bool:
+        """A re-extract or its undo is writing into this song's folder."""
+        run = self.stem_reextract
+        return isinstance(run, dict) and run.get("state") == "running"
 
     def to_queue_state(self) -> dict[str, Any]:
         """The compact record the queue view needs. Deliberately not to_state():
@@ -562,6 +619,16 @@ class Job:
             job.active_version = None
         if job.stem_fill == "running":
             job.stem_fill = "error"
+        # Saved while a re-extract ran: its files were never swapped in (the
+        # swap is the run's last step, one rename per file), so the song is
+        # as it was, and says why the run did not finish.
+        if job.stem_reextract_running():
+            job.stem_reextract = {
+                **job.stem_reextract,
+                "state": "error",
+                "phase": None,
+                "code": "interrupted",
+            }
         return job
 
 

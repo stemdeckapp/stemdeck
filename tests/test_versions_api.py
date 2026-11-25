@@ -304,8 +304,8 @@ def _fake_separate(calls: list):
     """A stand-in for Demucs: writes all six stems, with new bytes, where the
     real worker would, and records the settings it was asked for."""
 
-    def run(job, source, job_dir, quality=None):
-        calls.append({"job": job, "source": source, "quality": quality})
+    def run(job, source, job_dir, quality=None, plan=None):
+        calls.append({"job": job, "source": source, "quality": quality, "plan": plan})
         root = job_dir / DEMUCS_MODEL / source.stem
         root.mkdir(parents=True, exist_ok=True)
         for name in STEM_NAMES:

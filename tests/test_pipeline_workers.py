@@ -56,6 +56,9 @@ def _run_worker(
     # The child reads its folders from the environment: keep it inside tmp_path.
     for name in ("JOBS", "DATA", "CACHE"):
         env[f"STEMDECK_{name}_DIR"] = str(tmp_path / f"child-{name.lower()}")
+    # And torch.hub's cache: the worker checks the checkpoints it finds there
+    # against their pins, and removes one that does not match.
+    env["TORCH_HOME"] = str(tmp_path / "child-torch")
     env.update(extra_env or {})
     return subprocess.run(
         [sys.executable, "-m", f"app.pipeline.{module}", *args],
@@ -73,10 +76,24 @@ def _run_worker(
 _FAKE_DEMUCS = {
     "demucs/__init__.py": "",
     "demucs/pretrained.py": """
+        import os
+
+
         class _Model:
             audio_channels = 2
             samplerate = 8000
-            sources = ["vocals", "drums"]
+
+            def __init__(self, name):
+                self.name = name
+                if name == "htdemucs_ft":
+                    self.sources = ["drums", "bass", "other", "vocals"]
+                    # Source i of this model is the normalised mix times i + 10.
+                    self.factor = 10
+                    # A bag of four, like the real one: four progress sweeps.
+                    self.models = [None] * 4
+                else:
+                    self.sources = os.environ.get("FAKE_SOURCES", "vocals,drums").split(",")
+                    self.factor = 1
 
             def eval(self):
                 return self
@@ -86,7 +103,7 @@ _FAKE_DEMUCS = {
 
 
         def get_model(name):
-            return _Model()
+            return _Model(name)
     """,
     "demucs/separate.py": """
         import numpy as np
@@ -112,20 +129,42 @@ _FAKE_DEMUCS = {
                         segment):
             sys.stderr.write(" 50%|#####     |\\r100%|##########|\\n")
             LAST.update(device=device, shifts=shifts)
-            # Source i is the (normalised) mix times i + 1.
-            return np.stack([mix * (i + 1) for i in range(len(model.sources))], axis=1)
+            # Source i is the (normalised) mix times i + the model's factor.
+            return np.stack(
+                [mix * (i + model.factor) for i in range(len(model.sources))], axis=1
+            )
     """,
     "demucs/audio.py": """
         import json
+
+        import numpy as np
 
         from demucs import apply
 
 
         def save_audio(tensor, path, samplerate, clip, bits_per_sample, as_float):
+            # demucs.audio.prevent_clip's two modes, so a clamp that cuts a
+            # sample shows in what is written.
+            data = np.asarray(tensor, dtype=float)
+            if clip == "clamp":
+                data = np.clip(data, -0.99, 0.99)
+            elif clip == "rescale":
+                data = data / max(1.01 * np.abs(data).max(), 1)
             with open(path, "w") as f:
-                json.dump({"first": float(tensor[0][0]), "rate": samplerate, **apply.LAST}, f)
+                json.dump(
+                    {
+                        "first": float(data[0][0]),
+                        "data": data.tolist(),
+                        "clip": clip,
+                        "rate": samplerate,
+                        **apply.LAST,
+                    },
+                    f,
+                )
     """,
 }
+
+_SIX = ("drums", "bass", "other", "vocals", "guitar", "piano")
 
 
 def _demucs_job(tmp_path: Path, name: str, content: str, **extra) -> tuple[str, Path]:
@@ -140,6 +179,32 @@ def _stem(job_dir: Path, name: str, stem: str) -> dict:
     return json.loads((job_dir / DEMUCS_MODEL / name / f"{stem}.wav").read_text())
 
 
+def _fake_mix(level: float) -> np.ndarray:
+    """What the fake load_track reads for a source holding ``level``."""
+    n = 64
+    return np.stack([np.full(n, level), np.linspace(-1.0, 1.0, n) * level])
+
+
+def _fake_sources(mix: np.ndarray, count: int, factor: int = 1) -> list[np.ndarray]:
+    """What the fake Demucs makes of ``mix``: source i is the normalised mix
+    times i + factor, put back to the mix's level the way the worker does."""
+    ref = mix.mean(0)
+    norm = (mix - ref.mean()) / ref.std()
+    return [norm * (i + factor) * ref.std() + ref.mean() for i in range(count)]
+
+
+def _scale(stems: dict[str, np.ndarray]) -> float:
+    """The shared scale, from the clamp's own ceiling (stem_plan)."""
+    from app.pipeline.stem_plan import CLAMP_CEILING, CLAMP_MARGIN
+
+    peak = max(float(np.abs(a).max()) for a in stems.values())
+    return max(1.0, peak * (1 + CLAMP_MARGIN) / CLAMP_CEILING)
+
+
+def _phases(stderr: str) -> list[str]:
+    return [ln for ln in stderr.splitlines() if ln.startswith("@@PHASE@@")]
+
+
 def test_demucs_worker_serves_jobs_until_stdin_closes(tmp_path):
     fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
     first, dir1 = _demucs_job(tmp_path, "one", "0.5", shifts=2)
@@ -151,16 +216,20 @@ def test_demucs_worker_serves_jobs_until_stdin_closes(tmp_path):
     assert r.stderr.count("@@DONE@@") == 2
     assert "@@ERROR@@" not in r.stderr
     assert "50%" in r.stderr  # tqdm-style progress reaches the parent's reader
+    # A request without a plan is the base model alone: one pass.
+    assert _phases(r.stderr) == [f"@@PHASE@@{DEMUCS_MODEL}"] * 2
+    # Normalised for the model, then put back, then one scale for all stems:
+    # the first stem is the input, the second twice the normalised mix.
+    vocals, drums = _fake_sources(_fake_mix(0.5), 2)
+    stems = {"vocals": vocals, "drums": drums, "other": _fake_mix(0.5) - vocals - drums}
+    s = _scale(stems)
     one = _stem(dir1, "one", "vocals")
-    # Normalised for the model, then put back: the first stem is the input.
-    assert one["first"] == pytest.approx(0.5)
+    assert one["first"] == pytest.approx(0.5 / s)
+    assert _stem(dir1, "one", "drums")["first"] == pytest.approx(0.75 / s)
     assert one["rate"] == 8000
     assert one["shifts"] == 2
     assert one["device"] == "mps"
-    # Source 2 is twice the normalised mix: 2 * (x - mean) + mean.
-    assert _stem(dir1, "one", "drums")["first"] == pytest.approx(0.75)
     two = _stem(dir2, "two", "vocals")
-    assert two["first"] == pytest.approx(0.25)
     assert two["shifts"] == 1  # default when the request leaves it out
 
 
@@ -174,6 +243,125 @@ def test_demucs_worker_defaults_to_the_cpu(tmp_path):
     assert _stem(job_dir, "one", "vocals")["device"] == "cpu"
 
 
+def test_demucs_worker_stems_add_up_to_the_mix_with_one_shared_scale(tmp_path):
+    """ "other" is the mix minus the five kept stems, not Demucs' own "other",
+    and every stem is written divided by the same s with clip "clamp", so the
+    six files still add up to the song. The old worker wrote Demucs' "other"
+    and rescaled each stem on its own."""
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    job, job_dir = _demucs_job(tmp_path, "one", "0.5")
+
+    r = _run_worker(
+        "demucs_worker", ["cpu"], fakes, tmp_path, job + "\n", {"FAKE_SOURCES": ",".join(_SIX)}
+    )
+
+    assert r.returncode == 0, r.stderr
+    mix = _fake_mix(0.5)
+    by_name = dict(zip(_SIX, _fake_sources(mix, 6), strict=True))
+    kept = {n: by_name[n] for n in ("drums", "bass", "vocals", "guitar", "piano")}
+    expected = {**kept, "other": mix - sum(kept.values())}
+    s = _scale(expected)
+    assert s > 1  # the fake's stems are loud: the scale is applied and said
+    assert f"@@SCALE@@{s:.4f}" in r.stderr
+    written = {n: np.array(_stem(job_dir, "one", n)["data"]) for n in expected}
+    for name, audio in expected.items():
+        np.testing.assert_allclose(written[name], audio / s, atol=1e-9)
+        assert _stem(job_dir, "one", name)["clip"] == "clamp"
+    # Demucs' own "other" (source 2) is not what was written.
+    assert not np.allclose(written["other"], by_name["other"] / s)
+    np.testing.assert_allclose(sum(written.values()), mix / s, atol=1e-9)
+
+
+def test_demucs_worker_takes_each_stem_from_the_model_the_plan_names(tmp_path):
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    plan = {
+        "vocals": "htdemucs_6s",
+        "drums": "htdemucs_ft",
+        "bass": "htdemucs_ft",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+    job, job_dir = _demucs_job(tmp_path, "one", "0.5", plan=plan)
+
+    r = _run_worker(
+        "demucs_worker",
+        ["cpu"],
+        fakes,
+        tmp_path,
+        job + "\n",
+        {"FAKE_SOURCES": ",".join(_SIX), "STEMDECK_DEMUCS_MODEL": "htdemucs_6s"},
+    )
+
+    assert r.returncode == 0, r.stderr
+    # One pass per model, the base first, both on the mix (no vocal model ran),
+    # each saying how many progress sweeps it makes.
+    assert _phases(r.stderr) == ["@@PHASE@@htdemucs_6s", "@@PHASE@@htdemucs_ft"]
+    sweeps = [ln for ln in r.stderr.splitlines() if ln.startswith("@@SWEEPS@@")]
+    assert sweeps == ["@@SWEEPS@@1", "@@SWEEPS@@4"]
+    mix = _fake_mix(0.5)
+    six = dict(zip(_SIX, _fake_sources(mix, 6), strict=True))
+    ft = dict(zip(("drums", "bass", "other", "vocals"), _fake_sources(mix, 4, 10), strict=True))
+    kept = {
+        "vocals": six["vocals"],
+        "drums": ft["drums"],
+        "bass": ft["bass"],
+        "guitar": six["guitar"],
+        "piano": six["piano"],
+    }
+    expected = {**kept, "other": mix - sum(kept.values())}
+    s = _scale(expected)
+    root = job_dir / "htdemucs_6s" / "one"
+    for name, audio in expected.items():
+        data = np.array(json.loads((root / f"{name}.wav").read_text())["data"])
+        np.testing.assert_allclose(data, audio / s, atol=1e-9)
+
+
+def test_best_quality_doubles_the_sweeps(tmp_path):
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    job, _ = _demucs_job(tmp_path, "one", "0.5", shifts=2)
+    r = _run_worker("demucs_worker", ["cpu"], fakes, tmp_path, job + "\n")
+    assert r.returncode == 0, r.stderr
+    assert "@@SWEEPS@@2" in r.stderr.splitlines()
+
+
+def test_a_silent_source_gives_silent_stems_not_an_error(tmp_path):
+    """Normalising silence divides by zero: every sample would be NaN, and
+    the job would fail on the GPU and again on the CPU."""
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    job, job_dir = _demucs_job(tmp_path, "one", "0")
+
+    r = _run_worker(
+        "demucs_worker", ["cpu"], fakes, tmp_path, job + "\n", {"FAKE_SOURCES": ",".join(_SIX)}
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "@@DONE@@" in r.stderr and "@@SCALE@@" not in r.stderr
+    for name in ("vocals", "drums", "bass", "guitar", "piano", "other"):
+        assert not np.array(_stem(job_dir, "one", name)["data"]).any()
+
+
+def test_demucs_worker_refuses_a_plan_it_cannot_run(tmp_path):
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    plan = {
+        "vocals": "a_model_from_the_future",
+        "drums": "htdemucs_6s",
+        "bass": "htdemucs_6s",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+    job, job_dir = _demucs_job(tmp_path, "one", "0.5", plan=plan)
+
+    r = _run_worker("demucs_worker", ["cpu"], fakes, tmp_path, job + "\n")
+
+    assert r.returncode == 1
+    lines = [ln for ln in r.stderr.splitlines() if ln.startswith("@@")]
+    assert lines == [
+        "@@READY@@",
+        '@@ERROR@@"the separation plan has no usable model for vocals"',
+    ]
+    assert not (job_dir / DEMUCS_MODEL).exists()
+
+
 def test_demucs_worker_exits_on_the_first_failed_job(tmp_path):
     fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
     ok, _ = _demucs_job(tmp_path, "ok", "0.5")
@@ -183,10 +371,112 @@ def test_demucs_worker_exits_on_the_first_failed_job(tmp_path):
     r = _run_worker("demucs_worker", ["cpu"], fakes, tmp_path, f"{ok}\n{bad}\n{never}\n")
 
     assert r.returncode == 1
-    lines = [ln for ln in r.stderr.splitlines() if ln.startswith("@@")]
-    assert lines == ["@@READY@@", "@@DONE@@", '@@ERROR@@"cannot decode this source"']
+    lines = [
+        ln
+        for ln in r.stderr.splitlines()
+        if ln.startswith("@@") and not ln.startswith(("@@PHASE@@", "@@SWEEPS@@"))
+    ]
+    assert lines[0] == "@@READY@@"
+    assert [ln for ln in lines if not ln.startswith("@@SCALE@@")] == [
+        "@@READY@@",
+        "@@DONE@@",
+        '@@ERROR@@"cannot decode this source"',
+    ]
     # A worker in an unknown state never serves another job.
     assert not (never_dir / DEMUCS_MODEL).exists()
+
+
+# A RoFormer pass in the worker, in this process: real torch tensors, a
+# stand-in vocal model (it keeps 30% of what it hears) and a stand-in Demucs.
+
+
+class _HalfModel:
+    """Stands in for any model: records the device moves it was given."""
+
+    def __init__(self, sources=(), samplerate=44100, audio_channels=2):
+        self.sources = list(sources)
+        self.samplerate = samplerate
+        self.audio_channels = audio_channels
+        self.moves: list[str] = []
+
+    def cpu(self):
+        self.moves.append("cpu")
+        return self
+
+    def to(self, device):
+        self.moves.append(device)
+        return self
+
+
+def test_a_vocal_model_runs_on_the_mix_and_demucs_on_the_rest(monkeypatch):
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    mix = torch.linspace(-0.5, 0.5, 2 * 3000).reshape(2, 3000)
+    kim = _HalfModel()
+    base = _HalfModel(_SIX)
+    ft = _HalfModel(("drums", "bass", "other", "vocals"))
+    heard: dict[str, torch.Tensor] = {}
+
+    def fake_vocals(model, audio, device, progress=None):
+        assert model is kim
+        heard["kim"] = audio
+        return audio * 0.3
+
+    def fake_demucs(model, audio, device, shifts):
+        heard["ft" if model is ft else "6s"] = audio
+        factor = 10 if model is ft else 1
+        return torch.stack([audio * (i + factor) / 100 for i in range(len(model.sources))])
+
+    monkeypatch.setattr(mel_roformer, "separate_vocals", fake_vocals)
+    monkeypatch.setattr(demucs_worker, "run_demucs", fake_demucs)
+    monkeypatch.setattr(demucs_worker, "_load_mel_roformer", lambda model_id: kim)
+    monkeypatch.setattr(demucs_worker, "load_demucs", lambda name: ft)
+    models = demucs_worker.Models("htdemucs_6s", base)
+    plan = {
+        "vocals": "kim_mel_roformer",
+        "drums": "htdemucs_6s",
+        "bass": "htdemucs_ft",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+
+    stems = demucs_worker.separate_plan(models, "cpu", mix, plan, 1)
+
+    rest = mix * 0.7
+    torch.testing.assert_close(heard["kim"], mix)
+    torch.testing.assert_close(heard["6s"], rest)
+    torch.testing.assert_close(heard["ft"], rest)
+    torch.testing.assert_close(stems["vocals"], mix * 0.3)
+    torch.testing.assert_close(stems["drums"], rest * 1 / 100)  # 6s source 0
+    torch.testing.assert_close(stems["bass"], rest * 11 / 100)  # ft source 1
+    torch.testing.assert_close(stems["guitar"], rest * 5 / 100)  # 6s source 4
+    total = sum(stems.values())
+    torch.testing.assert_close(total, mix, atol=1e-6, rtol=0)
+    # The vocal model and ft went back to the CPU after their pass; the base
+    # stays where it is.
+    assert kim.moves == ["cpu", "cpu"]
+    assert ft.moves == ["cpu"]
+    assert base.moves == []
+    assert models.loaded() == {"htdemucs_6s", "kim_mel_roformer", "htdemucs_ft"}
+
+    # The next job without them drops both before it runs.
+    demucs_worker.separate_plan(models, "cpu", mix, {s: "htdemucs_6s" for s in plan}, 1)
+    assert models.loaded() == {"htdemucs_6s"}
+
+
+def test_the_vocal_model_needs_44_1_khz_stereo(monkeypatch):
+    import torch
+
+    from app.pipeline import demucs_worker
+
+    monkeypatch.setattr(demucs_worker, "_load_mel_roformer", lambda model_id: _HalfModel())
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX, samplerate=8000))
+    plan = {s: "htdemucs_6s" for s in ("drums", "bass", "guitar", "piano")}
+    plan["vocals"] = "kim_mel_roformer"
+    with pytest.raises(ValueError, match="44.1 kHz stereo"):
+        demucs_worker.separate_plan(models, "cpu", torch.zeros(2, 100), plan, 1)
 
 
 def test_demucs_worker_reports_a_model_it_cannot_download(tmp_path):
@@ -865,3 +1155,380 @@ def test_transcribe_worker_process_prints_one_utf8_json_line(tmp_path):
     assert " olá".encode() in r.stdout
     assert b"decoding chatter" in r.stderr
     assert b"@@PHASE@@transcribe" in r.stderr
+
+
+@pytest.mark.parametrize("device", ["cuda", "mps", "cpu"])
+def test_a_model_is_released_back_to_the_cpu_with_its_gpu_cache(monkeypatch, device):
+    import torch
+
+    from app.pipeline import demucs_worker
+
+    emptied: list[str] = []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: emptied.append("cuda"))
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    monkeypatch.setattr(torch.mps, "empty_cache", lambda: emptied.append("mps"))
+    model = _HalfModel()
+
+    demucs_worker._release(model, device)
+
+    assert model.moves == ["cpu"]
+    assert emptied == ([] if device == "cpu" else [device])
+
+
+def test_each_pass_keeps_only_the_stems_it_is_for(monkeypatch):
+    """ft's vocals and other, and 6s's vocals when the vocal model ran, are
+    not kept until the end of the job; what is kept is a copy, not a view
+    that holds the whole pass's output."""
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    kept: dict[str, dict] = {}
+    real_assemble = demucs_worker.stem_plan.assemble
+
+    def spy(mix, plan, outputs):
+        kept.update({k: dict(v) for k, v in outputs.items()})
+        return real_assemble(mix, plan, outputs)
+
+    out = torch.zeros(6, 2, 10)
+
+    monkeypatch.setattr(demucs_worker.stem_plan, "assemble", spy)
+    monkeypatch.setattr(mel_roformer, "separate_vocals", lambda m, a, d, p=None: a * 0.5)
+    monkeypatch.setattr(demucs_worker, "run_demucs", lambda m, a, d, s: out[: len(m.sources)])
+    monkeypatch.setattr(demucs_worker, "_load_mel_roformer", lambda model_id: _HalfModel())
+    ft = _HalfModel(("drums", "bass", "other", "vocals"))
+    monkeypatch.setattr(demucs_worker, "load_demucs", lambda name: ft)
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    plan = {
+        "vocals": "kim_mel_roformer",
+        "drums": "htdemucs_ft",
+        "bass": "htdemucs_6s",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+
+    demucs_worker.separate_plan(models, "cpu", torch.ones(2, 10), plan, 1)
+
+    assert set(kept["htdemucs_6s"]) == {"bass", "guitar", "piano"}
+    assert set(kept["htdemucs_ft"]) == {"drums"}
+    for stems in (kept["htdemucs_6s"], kept["htdemucs_ft"]):
+        for audio in stems.values():
+            assert audio.untyped_storage().data_ptr() != out.untyped_storage().data_ptr()
+
+
+# --- models the person added (My models) in the separation worker ----------------
+
+USER_A = "user_0123456789ab"
+USER_B = "user_ba9876543210"
+_SHA = "a" * 64
+
+
+def _user_entry(model_id: str, stems: list[str], outputs: dict[str, int], **over) -> dict:
+    """A request line's description of a model the person added, as
+    user_models.worker_spec gives it."""
+    return {
+        "id": model_id,
+        "path": f"/nowhere/{model_id}/model.ckpt",
+        "arch": "mel_band_roformer",
+        "kwargs": {"num_stems": max(outputs.values()) + 1},
+        "audio": {"chunk": 44100, "overlap": 2, "batch": 1},
+        "outputs": outputs,
+        "num_stems": max(outputs.values()) + 1,
+        "sha256": _SHA,
+        "size": 10,
+        "mtime_ns": 1,
+        "stems": stems,
+        "format": "torch",
+        **over,
+    }
+
+
+@pytest.fixture
+def user_engine(monkeypatch):
+    """Stand-ins for the RoFormer engine: a user model "keeps" a distinct share
+    of what it hears per output index, 6s and ft keep shares of theirs. What
+    each heard is recorded."""
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    heard: dict[str, torch.Tensor] = {}
+    asked: dict[str, tuple] = {}
+    loaded: dict[str, _HalfModel] = {}
+
+    def fake_load(model_id, spec, file):
+        loaded[model_id] = _HalfModel()
+        loaded[model_id].model_id = model_id
+        return loaded[model_id]
+
+    def fake_separate(model, audio, device, spec, progress=None, stems=None):
+        heard[model.model_id] = audio
+        asked[model.model_id] = tuple(stems)
+        base = 0.05 if model.model_id == USER_A else 0.02
+        return {s: audio * (base + 0.01 * spec.outputs[s]) for s in stems}
+
+    def fake_demucs(model, audio, device, shifts):
+        heard[getattr(model, "name", "6s")] = audio
+        return torch.stack([audio * (i + 1) / 100 for i in range(len(model.sources))])
+
+    monkeypatch.setattr(demucs_worker, "_load_user_model", fake_load)
+    monkeypatch.setattr(mel_roformer, "separate", fake_separate)
+    monkeypatch.setattr(mel_roformer, "separate_vocals", lambda m, a, d, p=None: a * 0.3)
+    monkeypatch.setattr(demucs_worker, "run_demucs", fake_demucs)
+    monkeypatch.setattr(demucs_worker, "_load_mel_roformer", lambda model_id: _HalfModel())
+    ft = _HalfModel(("drums", "bass", "other", "vocals"))
+    ft.name = "ft"
+    monkeypatch.setattr(demucs_worker, "load_demucs", lambda name: ft)
+    return heard, asked, loaded
+
+
+def _user(entries: dict[str, dict]) -> dict:
+    from app.pipeline import demucs_worker
+
+    return {m: (s, f) for m, (s, f, _) in demucs_worker._user_models(entries).items()}
+
+
+_E_SUM_CASES = [
+    # user(drums, bass) + 6s
+    (
+        {
+            "vocals": "htdemucs_6s",
+            "drums": USER_A,
+            "bass": USER_A,
+            "guitar": "htdemucs_6s",
+            "piano": "htdemucs_6s",
+        },
+        {USER_A: _user_entry(USER_A, ["drums", "bass"], {"drums": 1, "bass": 0})},
+    ),
+    # user(drums) + ft(bass) + 6s
+    (
+        {
+            "vocals": "htdemucs_6s",
+            "drums": USER_A,
+            "bass": "htdemucs_ft",
+            "guitar": "htdemucs_6s",
+            "piano": "htdemucs_6s",
+        },
+        {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})},
+    ),
+    # two user models, and Kim
+    (
+        {
+            "vocals": "kim_mel_roformer",
+            "drums": USER_A,
+            "bass": USER_B,
+            "guitar": "htdemucs_6s",
+            "piano": "htdemucs_6s",
+        },
+        {
+            USER_A: _user_entry(USER_A, ["drums"], {"drums": 0}),
+            USER_B: _user_entry(USER_B, ["bass"], {"bass": 0}),
+        },
+    ),
+    # a user model that declares a stem the plan gave to 6s (bass)
+    (
+        {
+            "vocals": "htdemucs_6s",
+            "drums": USER_A,
+            "bass": "htdemucs_6s",
+            "guitar": "htdemucs_6s",
+            "piano": "htdemucs_6s",
+        },
+        {USER_A: _user_entry(USER_A, ["drums", "bass"], {"drums": 1, "bass": 0})},
+    ),
+]
+
+
+@pytest.mark.parametrize(("plan", "entries"), _E_SUM_CASES)
+def test_the_stems_add_up_to_the_mix_whatever_a_user_model_makes(user_engine, plan, entries):
+    """E-sum: other == mix - sum(kept) for every mix of engines, and a user
+    model is asked for, and takes from the rest, only the stems the plan gave
+    it."""
+    import torch
+
+    from app.pipeline import demucs_worker
+
+    heard, asked, _ = user_engine
+    mix = torch.linspace(-0.5, 0.5, 2 * 3000).reshape(2, 3000)
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+
+    stems = demucs_worker.separate_plan(models, "cpu", mix, plan, 1, _user(entries))
+
+    assert set(stems) == {"vocals", "drums", "bass", "guitar", "piano", "other"}
+    kept = sum(v for k, v in stems.items() if k != "other")
+    torch.testing.assert_close(stems["other"], mix - kept, atol=1e-6, rtol=0)
+    torch.testing.assert_close(sum(stems.values()), mix, atol=1e-6, rtol=0)
+    for model_id in entries:
+        given = tuple(
+            s for s in ("vocals", "drums", "bass", "guitar", "piano") if plan[s] == model_id
+        )
+        assert asked[model_id] == given
+        torch.testing.assert_close(heard[model_id], mix)  # on the mix, never the rest
+    # 6s hears the mix minus exactly the stems the RoFormer passes kept.
+    first = [s for s in plan if plan[s] in entries or plan[s] == "kim_mel_roformer"]
+    if first:
+        rest = mix - sum(stems[s] for s in first)
+        torch.testing.assert_close(heard["6s"], rest, atol=1e-6, rtol=0)
+
+
+def test_a_user_model_that_cannot_load_fails_the_job_with_its_code(monkeypatch):
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    said: list[str] = []
+    monkeypatch.setattr(demucs_worker, "_say", said.append)
+
+    def broken(model_id, spec, file):
+        raise mel_roformer.GatesMissing()
+
+    monkeypatch.setattr(demucs_worker, "_load_user_model", broken)
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    plan = {s: "htdemucs_6s" for s in ("vocals", "bass", "guitar", "piano")}
+    plan["drums"] = USER_A
+    entries = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})}
+
+    with pytest.raises(demucs_worker.UserModelFailed) as exc_info:
+        demucs_worker.separate_plan(models, "cpu", torch.zeros(2, 100), plan, 1, _user(entries))
+
+    assert str(exc_info.value) == f"user model failed: {USER_A}: gates_missing"
+    assert any("to_gates" in line and USER_A in line for line in said)
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (RuntimeError("CUDA out of memory. Tried 2 GiB"), "forward_failed"),
+        (ValueError("the model returned audio of an unexpected shape"), "forward_failed"),
+    ],
+)
+def test_a_user_model_that_fails_while_running_is_one_code(monkeypatch, failure, code):
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    monkeypatch.setattr(demucs_worker, "_say", lambda line: None)
+    model = _HalfModel()
+    monkeypatch.setattr(demucs_worker, "_load_user_model", lambda m, s, f: model)
+
+    def fails(*a, **kw):
+        raise failure
+
+    monkeypatch.setattr(mel_roformer, "separate", fails)
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    plan = dict.fromkeys(("vocals", "bass", "guitar", "piano"), "htdemucs_6s")
+    plan["drums"] = USER_A
+    entries = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})}
+
+    with pytest.raises(demucs_worker.UserModelFailed) as exc_info:
+        demucs_worker.separate_plan(models, "cuda", torch.zeros(2, 100), plan, 1, _user(entries))
+    assert exc_info.value.code == code
+    # Back on the CPU even after the failure.
+    assert model.moves == ["cuda", "cpu"]
+
+
+def test_a_user_model_that_gives_samples_that_are_not_numbers_is_non_finite(monkeypatch):
+    """S-6: an fp16 overflow on a GPU is this model's failure, so the job
+    stands 6s in, instead of the generic "not numbers" failure at the write."""
+    import torch
+
+    from app.pipeline import demucs_worker, mel_roformer
+
+    monkeypatch.setattr(demucs_worker, "_say", lambda line: None)
+    monkeypatch.setattr(demucs_worker, "_load_user_model", lambda m, s, f: _HalfModel())
+    monkeypatch.setattr(
+        mel_roformer,
+        "separate",
+        lambda model, audio, device, spec, progress=None, stems=None: {
+            s: audio * float("nan") for s in stems
+        },
+    )
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    plan = dict.fromkeys(("vocals", "bass", "guitar", "piano"), "htdemucs_6s")
+    plan["drums"] = USER_A
+    entries = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})}
+
+    with pytest.raises(demucs_worker.UserModelFailed) as exc_info:
+        demucs_worker.separate_plan(models, "cpu", torch.ones(2, 100), plan, 1, _user(entries))
+    assert exc_info.value.code == "non_finite"
+
+
+def test_a_user_model_is_loaded_again_for_other_bytes_and_dropped_when_unused(user_engine):
+    import torch
+
+    from app.pipeline import demucs_worker
+
+    _, _, loaded = user_engine
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    plan = dict.fromkeys(("vocals", "bass", "guitar", "piano"), "htdemucs_6s")
+    plan["drums"] = USER_A
+    mix = torch.zeros(2, 100)
+    entries = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})}
+    demucs_worker.separate_plan(models, "cpu", mix, plan, 1, _user(entries))
+    first = loaded[USER_A]
+    demucs_worker.separate_plan(models, "cpu", mix, plan, 1, _user(entries))
+    assert loaded[USER_A] is first, "the same bytes: kept loaded"
+    other = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0}, sha256="b" * 64)}
+    demucs_worker.separate_plan(models, "cpu", mix, plan, 1, _user(other))
+    assert loaded[USER_A] is not first
+    demucs_worker.separate_plan(models, "cpu", mix, dict.fromkeys(plan, "htdemucs_6s"), 1)
+    assert models.loaded() == {"htdemucs_6s"}
+
+
+def test_a_user_id_is_never_loaded_as_demucs(monkeypatch):
+    from app.pipeline import demucs_worker
+
+    monkeypatch.setattr(demucs_worker, "load_demucs", lambda name: pytest.fail("ran as Demucs"))
+    models = demucs_worker.Models("htdemucs_6s", _HalfModel(_SIX))
+    with pytest.raises(ValueError):
+        models.get(USER_A)
+
+
+def test_demucs_worker_says_a_user_model_failure_on_its_last_line_and_exits(tmp_path):
+    """The parent stands 6s in only on this exact last line."""
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    plan = {
+        "vocals": "htdemucs_6s",
+        "drums": USER_A,
+        "bass": "htdemucs_6s",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+    entries = {USER_A: _user_entry(USER_A, ["drums"], {"drums": 0})}
+    job, job_dir = _demucs_job(tmp_path, "one", "0.5", plan=plan, user_models=entries)
+    second, _ = _demucs_job(tmp_path, "two", "0.5")
+
+    r = _run_worker(
+        "demucs_worker",
+        ["cpu"],
+        fakes,
+        tmp_path,
+        f"{job}\n{second}\n",
+        {"FAKE_SOURCES": ",".join(_SIX)},
+    )
+
+    assert r.returncode == 1
+    lines = [ln for ln in r.stderr.splitlines() if ln.strip()]
+    # The fake base model is 8 kHz: the user model cannot run on it.
+    assert lines[-1] == "@@ERROR@@" + json.dumps(f"user model failed: {USER_A}: unsupported_audio")
+    assert lines[-2].startswith(f"user model {USER_A} could not run (unsupported_audio)")
+    assert "@@DONE@@" not in r.stderr, "the worker exits; the second job is not served"
+    assert not (job_dir / DEMUCS_MODEL).exists()
+
+
+def test_demucs_worker_refuses_a_user_model_its_request_does_not_describe(tmp_path):
+    fakes = _write_pkg(tmp_path / "fakes", _FAKE_DEMUCS)
+    plan = {
+        "vocals": "htdemucs_6s",
+        "drums": USER_A,
+        "bass": "htdemucs_6s",
+        "guitar": "htdemucs_6s",
+        "piano": "htdemucs_6s",
+    }
+    job, _ = _demucs_job(tmp_path, "one", "0.5", plan=plan)
+
+    r = _run_worker("demucs_worker", ["cpu"], fakes, tmp_path, job + "\n")
+
+    assert r.returncode == 1
+    last = [ln for ln in r.stderr.splitlines() if ln.strip()][-1]
+    assert last == "@@ERROR@@" + json.dumps("the separation plan has no usable model for drums")

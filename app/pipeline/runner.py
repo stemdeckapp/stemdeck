@@ -22,7 +22,7 @@ from app.core.online_sources import ONLINE_SOURCES_OFF_CAUSE, OnlineSourcesOff
 from app.core.redact import redact
 from app.core.registry import is_upload, keep_added_time, mark_stems_complete, saved_fields
 from app.core.registry import persist as persist_registry
-from app.pipeline import jobqueue
+from app.pipeline import jobqueue, stem_plan
 from app.pipeline.analyze import analyze, refine_key_from_stems
 from app.pipeline.beatgrid import compute_beat_grid
 from app.pipeline.cancel import check_cancel as _check_cancel
@@ -481,6 +481,8 @@ def _quarantine_failed_job(job: Job, job_dir: Path, jobs_dir: Path, exc: Excepti
             f"stage: {job.stage_message}",
             f"device: {job.compute_device or getattr(exc, 'device', None) or '(not reached)'}",
             f"model: {DEMUCS_MODEL}",
+            f"stem models: {stem_plan.describe(job.stem_models)}",
+            f"stem model fallbacks: {stem_plan.describe_fallbacks(job.stem_model_fallbacks)}",
             f"cause: {cause}",
             f"timings: {json.dumps(job.stage_timings) if job.stage_timings else '(none)'}",
             f"exception: {redact(repr(exc))}",
@@ -613,10 +615,12 @@ async def _run_async(
     # regressions (and the CPU-vs-GPU question) answerable from logs (#293).
     t = job.stage_timings or {}
     logger.info(
-        "[%s] done device=%s model=%s %s total=%.1fs",
+        "[%s] done device=%s model=%s plan: %s fallbacks: %s %s total=%.1fs",
         job.id,
         job.compute_device or "n/a",
         DEMUCS_MODEL,
+        stem_plan.describe(job.stem_models),
+        stem_plan.describe_fallbacks(job.stem_model_fallbacks),
         " ".join(f"{k}={v}s" for k, v in t.items()),
         sum(t.values()),
     )

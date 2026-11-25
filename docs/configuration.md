@@ -18,7 +18,8 @@
 | `STEMDECK_FPCALC` | `fpcalc` | Path to Chromaprint's fpcalc, used for song fingerprinting when FFmpeg has no chromaprint muxer. |
 | `STEMDECK_MAX_DURATION_SEC` | `1200` | Reject audio longer than this (seconds). |
 | `STEMDECK_JOB_TTL_SECONDS` | `86400` | How long to keep job dirs on disk. |
-| `STEMDECK_MAX_PENDING_JOBS` | `3` | Max queued jobs before returning 503. |
+| `STEMDECK_MAX_PENDING_JOBS` | `20` | Max queued uploads before returning 503 (1 to 200). A queued upload holds its file on disk while it waits. |
+| `STEMDECK_MAX_PENDING_URL_JOBS` | `200` | Max queued URL imports before returning 503 (1 to 500). A queued URL holds nothing until its turn, so the limit is higher. |
 | `STEMDECK_STEM_FORMAT` | `mp3` | How new songs' stems are stored: `mp3` or `wav`. Songs already in the library keep their format. A choice saved in Settings > Library wins over this. |
 | `STEMDECK_STEM_MP3_KBPS` | `128` | MP3 stem bitrate: `128`, `192` or `256` (constant bitrate). Used only with `mp3`. |
 | `STEMDECK_VIDEO_ENCODER` | (none) | H.264 encoder for video renders: `auto`, `cpu` or one encoder (`h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_vaapi`, `h264_videotoolbox`). Wins over Settings > Export > Video encoder; `cpu` turns the GPU encoders off. |
@@ -30,12 +31,79 @@
 | `STEMDECK_MODEL_DOWNLOAD_ATTEMPTS` | `3` | Tries for the separation model's download, 2 s then 5 s apart, before the Split fails and names the file and the folder to put it in by hand. |
 | `STEMDECK_MODEL_MIRROR` | `https://files.stemdeck.app` | Where the default separation model (`htdemucs_6s`) is downloaded from first, under the same path as on `dl.fbaipublicfiles.com`. The file is used only if its size and full SHA-256 match the ones StemDeck ships with; on any failure the original host is used. `https` only; an empty value turns the mirror off. Other models are always downloaded from their own host. |
 | `STEMDECK_TIMEOUT_MODEL_STALL` | `120` | Stop the separation worker if it is silent this many seconds while it downloads its model. Everything else, separating included, uses the Demucs stall limit above. |
+| `STEMDECK_TIMEOUT_SPEED_TEST_DEVICE` | `180` | Settings > Separation > Run benchmark: stop one device's measurement after this many seconds in all (30 or more). The 6s timing is kept if it was taken. |
+| `STEMDECK_TIMEOUT_SPEED_TEST_STALL` | `90` | Stop one device's measurement after this many seconds with no output from it (10 or more). |
+| `STEMDECK_SPEED_TEST_KILL_WAIT_SEC` | `5` | Seconds a stopped benchmark process gets to exit before it, and every process it started, is killed. |
+| `STEMDECK_SPEED_TEST_DISK_MIB` | `128` | Size of the benchmark's write test file in the songs folder, in MiB (1 to 1024). It is removed when the benchmark ends, and at the next start if a crash left it. |
+| `STEMDECK_TIMEOUT_SPEED_TEST_DISK` | `60` | Give up on the write test after this many seconds and report it as `timeout` (a network share that stopped answering). |
+| `STEMDECK_SPEED_TEST_DISK_MIN_FREE_MIB` | `512` | Skip the write test when the songs folder has less free space than this, in MiB. |
+| `STEMDECK_SPEED_TEST_DISK_SLOW_MB_S` | `40` | Flag the songs folder as slow under this write speed, in MiB/s. |
+| `STEMDECK_SPEED_TEST_REAL_MEASURE_MAX_SEC` | `40` | Time an already downloaded `htdemucs_ft` for real only when that is expected to take at most this many seconds; otherwise it is estimated. |
 | `STEMDECK_IDLE_UNLOAD_MINUTES` | `10` | Minutes with no separation or analysis running before the separation worker and the beat model are unloaded from memory; `0` keeps them loaded. The next track loads them again and starts a few seconds later. Unloading frees the graphics card's memory, and another program may take it meanwhile, so the next separation on the GPU can fall back to the CPU (its progress line says so). A value saved in Settings > General wins over this. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
 
 `run.sh` also reads: `HOST` (default `0.0.0.0`, every network interface), `PORT` (default `8000`), `RELOAD=1` (enable uvicorn auto-reload for development), `FOREGROUND=1` (run in foreground instead of backgrounding).
+
+### Separation settings
+
+Settings > Separation holds how a song is separated. These are saved in
+`settings.json` in the data folder, not read from environment variables
+(`STEMDECK_DEMUCS_DEVICE` and `STEMDECK_DEMUCS_MODEL` above still apply).
+
+- **`stem_models`**: the model for each of `vocals`, `drums`, `bass`, `guitar`
+  and `piano`. Each value is `"auto"` or a model id (`htdemucs_6s`,
+  `htdemucs_ft`, `kim_mel_roformer`, or a model you added; see [Models](models.md)). A missing key,
+  or a missing stem, means `"auto"`, so a `settings.json` from an earlier
+  release changes nothing until you choose. Other is always what is left over,
+  and lead and backing are always the Karaoke 2 split.
+- **Best quality** (`separation_quality`) applies to the Demucs passes only. The
+  Kim pass is not affected.
+- **`speed_test`**: the result of the last **Run benchmark**: the machine it
+  ran on (CPU, cores, GPU, torch version, devices), the measured and estimated
+  speed of each model per device, the write speed of the songs folder, and the
+  recommendation. "Auto" uses it only while it matches this machine; otherwise
+  it is marked stale and the built-in rule applies. A new run replaces it.
+  Settings shows each time for a typical 4-minute song in words ("about 16
+  seconds", "about 2 minutes") with a rating: **Fast** under 30 seconds, **OK**
+  up to 3 minutes, **Slow** over that. Only the recommended device's rows show
+  until **Show all devices**; a time the test did not measure is marked
+  **estimate**.
+- A choice applies to the **next song**. A song that is already separating
+  keeps the models it started with, and Fill stems reuses the models a song was
+  separated with.
+- A deployment that sets `STEMDECK_DEMUCS_MODEL` to a model outside the three
+  above separates every stem with that model, and Settings shows the stems as
+  set by the deployment.
+
+### My models
+
+A model you add in Settings > Separation > My models (see
+[Models](models.md#my-models-bring-your-own)) is stored under the models folder
+(`STEMDECK_MODELS_DIR`, by default `models` in the data folder):
+
+```
+<models>/user/models.json          the list, written atomically
+<models>/user/<id>/model.safetensors or model.ckpt
+<models>/user/<id>/config.yaml
+```
+
+The file names are fixed; the name of the file you picked is only shown. A
+Docker or Unraid install must keep the models folder on a volume, or the models
+are gone after an update. A list that cannot be read is moved aside and started
+again, and the model folders are kept, never deleted on their own.
+
+`stem_models` may hold the id of a model you added (`user_` and 12 hex
+digits). Removing the model sets those stems back to `"auto"`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STEMDECK_TIMEOUT_USER_MODEL_CHECK` | `180` | Seconds the test run of a model you add may take (at least 30). |
+| `STEMDECK_TIMEOUT_USER_MODEL_CHECK_STALL` | `60` | Seconds the test run may go without progress (at least 10). |
+
+The size, count and parameter limits (2 GiB, 12 models, 500 million
+parameters) are fixed.
 
 ### Who can reach StemDeck
 

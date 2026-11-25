@@ -73,6 +73,7 @@ from app.core.settings import (
     get_online_sources,
 )
 from app.core.stem_files import stem_path, stem_url
+from app.core.stem_models import SELECTABLE_STEMS
 from app.core.stems_location import is_relocating
 from app.core.versions import (
     MAX_VERSIONS,
@@ -87,7 +88,7 @@ from app.core.versions import (
 from app.core.vocal_split_outcome import CANCELLED as SPLIT_CANCELLED
 from app.core.vocal_split_outcome import WORKER_FAILED as SPLIT_WORKER_FAILED
 from app.core.vocal_split_outcome import message_for as split_message_for
-from app.pipeline import discogs, jobqueue, vocal_split_status
+from app.pipeline import discogs, jobqueue, stem_reextract, vocal_split_status
 from app.pipeline.analyze import dynamic_range_db, measure_loudness
 from app.pipeline.artist_lookup import tagged_artist_name
 from app.pipeline.audio_tags import probe_tags
@@ -833,7 +834,14 @@ def cancel_job(job_id: str) -> dict:
         # cancel_fill sets once the fill holds the pipeline lock; before that,
         # the song's flag stops it from starting, and the process under this
         # id is someone else's, so it is left alone.
-        if job.stem_fill == "running":
+        # A re-extract of one stem (or its undo) reads its stand-in's flag
+        # only; the song's own stays as it is.
+        if job.stem_reextract_running():
+            if stem_reextract.cancel(job_id):
+                proc = registry_get_proc(job_id, "reextract")
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+        elif job.stem_fill == "running":
             job.cancel_requested = True
             if cancel_fill(job_id):
                 proc = registry_get_proc(job_id, "fill")
@@ -1086,7 +1094,7 @@ async def start_vocal_split(job_id: str) -> Response:
     # Refused, not queued behind it: starting it here cleared the cancel sent
     # to the fill. No await from here to "running", and the fill re-checks
     # after its own, so the two never both start.
-    if job.stem_fill == "running":
+    if job.stem_fill == "running" or job.stem_reextract_running():
         raise JobBusy()
 
     stems_dir = (JOBS_DIR / job_id / "stems").resolve()
@@ -1299,6 +1307,8 @@ class FillStemsBody(BaseModel):
 _FILL_REFUSALS = {
     "no_source": "no source kept for this track",
     "model": "this song was separated with another model",
+    "model_unavailable": "the model this song was separated with is not available on this install",
+    "model_removed": "a model this song was separated with was removed",
 }
 
 
@@ -1369,6 +1379,195 @@ async def fill_missing_stems(job_id: str, body: FillStemsBody) -> JSONResponse:
     _set(job, stage="Done")
     await asyncio.to_thread(registry_persist, JOBS_DIR)
     return JSONResponse({"filled": filled, "state": _job_state(job)})
+
+
+# -- Re-extract one stem with another model (app/pipeline/stem_reextract.py)
+#
+# Every refusal is {"detail": <fixed sentence>, "code": <code>}. A run starts
+# only while nothing holds the pipeline, and holds it until it is over.
+
+_REEXTRACT_REFUSALS: dict[str, tuple[int, str]] = {
+    "not_ready": (409, "the song is not ready"),
+    "stem_not_selectable": (422, "this stem cannot be separated with another model"),
+    "stems_missing": (409, "the song is missing stems; extract them first"),
+    "model_not_allowed": (409, "this model cannot separate this stem"),
+    "model_removed": (409, "this model was removed"),
+    "model_unavailable": (409, "this model is not available on this install"),
+    "no_source": (409, "no source kept for this track"),
+    "no_undo": (409, "this stem has nothing to undo"),
+    "busy": (409, "StemDeck is separating something else. Try again when it has finished."),
+    "failed": (500, "could not change the stem"),
+}
+
+
+def _reextract_refusal(code: str) -> JSONResponse:
+    status, detail = _REEXTRACT_REFUSALS[code]
+    return JSONResponse({"detail": detail, "code": code}, status_code=status)
+
+
+class ReextractBody(BaseModel):
+    stem: str = Field(min_length=1, max_length=32)
+    model: str = Field(min_length=1, max_length=64)
+
+
+class ReextractStemBody(BaseModel):
+    stem: str = Field(min_length=1, max_length=32)
+
+
+def _reextract_job(job_id: str) -> tuple[Job | None, JSONResponse | None, Path]:
+    """The job a re-extract request names, after the id checks: 404 for
+    anything that is not a known job, "not_ready" while it is not done."""
+    if not JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    job = registry_get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    job_dir = (JOBS_DIR / job_id).resolve()
+    stems_dir = (job_dir / "stems").resolve()
+    if not job_dir.is_relative_to(JOBS_DIR.resolve()) or not stems_dir.is_relative_to(job_dir):
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != "done" or not stems_dir.is_dir():
+        return None, _reextract_refusal("not_ready"), job_dir
+    return job, None, job_dir
+
+
+def _pipeline_busy() -> bool:
+    """Anything that separates or holds the pipeline: an import running, a
+    fill, a split, a lyrics timing, the benchmark, a re-extract, a library
+    move, the server stopping."""
+    return (
+        _pipeline_lock.locked()
+        or jobqueue.running_id() is not None
+        or jobqueue.is_stopping()
+        or is_relocating()
+        or any(j.post_hoc_running() for j in registry_all_jobs().values())
+    )
+
+
+async def _after_reextract(job: Job) -> None:
+    """Keep what the run changed: the registry, and in metadata.json the
+    fields a rebuilt registry reads back."""
+    await asyncio.to_thread(registry_persist, JOBS_DIR)
+    await asyncio.to_thread(_keep_saved_fields, job)
+    await asyncio.to_thread(_write_metadata_fields, job.id, {"stem_presence": job.stem_presence})
+
+
+async def _reextract_task(
+    job: Job, job_dir: Path, stem: str, model: str, source: Path | None
+) -> None:
+    """The run, behind the pipeline lock the route took for it."""
+    try:
+        with registry_operation("reextract"):
+            await asyncio.to_thread(
+                stem_reextract.reextract_stem, job, job_dir, stem, model, source
+            )
+    finally:
+        _pipeline_lock.release()
+        _set(job, stage="Done")
+        await _after_reextract(job)
+
+
+def _reextract_done(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("re-extract task raised", exc_info=task.exception())
+
+
+# Held so a running task is never garbage-collected before it ends.
+_reextract_tasks: set[asyncio.Task] = set()
+
+
+@router.post("/{job_id}/reextract", status_code=202)
+async def reextract_stem_route(job_id: str, body: ReextractBody) -> JSONResponse:
+    """Separate one stem of a finished song again, from its original audio,
+    with the model chosen for it, and put it in place of the one it has
+    (docs/api.md). Answers at once; the run's progress and outcome are in
+    the song's state, stem_reextract."""
+    job, refused, job_dir = _reextract_job(job_id)
+    if refused is not None:
+        return refused
+    assert job is not None
+    stem = body.stem
+    if stem not in SELECTABLE_STEMS:
+        return _reextract_refusal("stem_not_selectable")
+    try:
+        stem_reextract.check_stems(job_dir / "stems", stem)
+        stem_reextract.check_model(stem, body.model)
+    except stem_reextract.ReextractRefused as e:
+        return _reextract_refusal(e.code)
+    source = _retained_source(job_id) if (job.source_url or "").startswith("local:") else None
+    if source is None and (job.source_url or "local:").startswith("local:"):
+        return _reextract_refusal("no_source")
+    if source is None:
+        require_online_sources()
+    # No await from this check to the lock: on the event loop nothing else
+    # can take it in between, and a free semaphore is taken without waiting.
+    if _pipeline_busy():
+        return _reextract_refusal("busy")
+    await _pipeline_lock.acquire()
+    _set(
+        job,
+        stem_reextract=stem_reextract.start_state(stem, body.model, "reextract"),
+        stage=f"Re-extracting {stem}...",
+    )
+    task = asyncio.create_task(_reextract_task(job, job_dir, stem, body.model, source))
+    _reextract_tasks.add(task)
+    task.add_done_callback(_reextract_tasks.discard)
+    task.add_done_callback(_reextract_done)
+    return JSONResponse({"state": _job_state(job)}, status_code=202)
+
+
+@router.post("/{job_id}/reextract/undo")
+async def undo_reextract_route(job_id: str, body: ReextractStemBody) -> JSONResponse:
+    """Put back the stem a re-extract replaced, with "other" rebuilt around
+    it. Answers when it is done: no separation runs."""
+    job, refused, job_dir = _reextract_job(job_id)
+    if refused is not None:
+        return refused
+    assert job is not None
+    stem = body.stem
+    if stem not in SELECTABLE_STEMS:
+        return _reextract_refusal("stem_not_selectable")
+    if stem_reextract.undo_entry(job, job_dir, stem) is None:
+        return _reextract_refusal("no_undo")
+    if _pipeline_busy():
+        return _reextract_refusal("busy")
+    await _pipeline_lock.acquire()
+    model = ((job.stem_undo or {}).get(stem) or {}).get("model")
+    _set(job, stem_reextract=stem_reextract.start_state(stem, model, "undo"))
+    try:
+        with registry_operation("reextract"):
+            await asyncio.to_thread(stem_reextract.undo_stem, job, job_dir, stem)
+    except stem_reextract.ReextractRefused as e:
+        return _reextract_refusal(e.code)
+    except Exception:
+        # Logged by undo_stem; the song is as it was.
+        return _reextract_refusal("failed")
+    finally:
+        _pipeline_lock.release()
+        await _after_reextract(job)
+    return JSONResponse({"state": _job_state(job)})
+
+
+@router.post("/{job_id}/reextract/keep")
+async def keep_reextract_route(job_id: str, body: ReextractStemBody) -> JSONResponse:
+    """Keep the re-extracted stem: its undo copy is deleted."""
+    job, refused, job_dir = _reextract_job(job_id)
+    if refused is not None:
+        return refused
+    assert job is not None
+    stem = body.stem
+    if stem not in SELECTABLE_STEMS:
+        return _reextract_refusal("stem_not_selectable")
+    if job.stem_reextract_running():
+        return _reextract_refusal("busy")
+    try:
+        # No await between the check above and this: a run cannot start in
+        # between, and the files it removes are the undo copy's only.
+        stem_reextract.keep_stem(job, job_dir, stem)
+    except stem_reextract.ReextractRefused as e:
+        return _reextract_refusal(e.code)
+    await _after_reextract(job)
+    return JSONResponse({"state": _job_state(job)})
 
 
 _SECTION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")

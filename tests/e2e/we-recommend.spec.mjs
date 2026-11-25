@@ -9,14 +9,17 @@
 
 import { test, expect } from "@playwright/test";
 
-import { seedLibrary, stubUpdateCheck } from "./helpers.mjs";
+import { seedLibrary, stubTauri, stubUpdateCheck } from "./helpers.mjs";
 import { FEATURED_ARTISTS } from "../../static/js/featuredArtist.js";
 
 const FEATURED = FEATURED_ARTISTS.at(-1)?.name;
 const ABOVE = "featured above the grid; featured-artist.spec.mjs checks its links";
 
-async function openWeRecommend(page) {
+const PLAYLIST = "https://open.spotify.com/playlist/0yKLnaIdrhqXvJOENDevgI";
+
+async function openWeRecommend(page, { tauri = false } = {}) {
   await seedLibrary(page);
+  if (tauri) await stubTauri(page);
   await stubUpdateCheck(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#friendsBtn").click();
@@ -65,5 +68,44 @@ test.describe("We Recommend", () => {
     await expect(pills("Killah Trakz")).toHaveText(["Instagram", "Spotify", "Apple Music"]);
     await expect(pills("NIHIL")).toHaveText(["Instagram", "Spotify"]);
     await expect(pills("NIHIL").filter({ hasText: "Spotify" })).toHaveAttribute("href", "https://open.spotify.com/artist/1OeKplJxFNM6JHrWeo2SaV");
+  });
+
+  test("the playlist link sits under the ask, with its title, and opens outside the app", async ({ page }) => {
+    await openWeRecommend(page);
+    const link = page.locator("#friendsDialog .friends-playlist a");
+    await expect(link).toHaveCount(1);
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", PLAYLIST);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(link).toContainText("StemDeck Recommended Artists");
+    // Under the ask and above the featured card and the grid.
+    const order = await page.evaluate(() => {
+      const scroll = document.querySelector("#friendsDialog .friends-scroll");
+      const kids = [...scroll.children];
+      const at = (sel) => kids.findIndex((el) => el.matches(sel));
+      return { ask: at(".friends-ask"), playlist: at(".friends-playlist"), grid: at("#friendsDialogGrid"), featured: at(".featured-artist") };
+    });
+    expect(order.playlist).toBe(order.ask + 1);
+    expect(order.playlist).toBeLessThan(order.grid);
+    if (order.featured >= 0) expect(order.playlist).toBeLessThan(order.featured);
+  });
+
+  test("on the desktop the playlist link goes to the shell, and the app stays", async ({ page }) => {
+    await openWeRecommend(page, { tauri: true });
+    const result = await page.evaluate(async () => {
+      const seen = [];
+      const original = window.__TAURI__.core.invoke;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        seen.push({ cmd, url: args?.url });
+        return original(cmd, args);
+      };
+      document.querySelector("#friendsDialog .friends-playlist a").click();
+      await new Promise((r) => setTimeout(r, 200));
+      window.__TAURI__.core.invoke = original;
+      return { seen, path: location.pathname };
+    });
+    expect(result.seen).toContainEqual({ cmd: "open_url", url: PLAYLIST });
+    expect(result.path).toBe("/");
   });
 });

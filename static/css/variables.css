@@ -63,7 +63,8 @@
   /* Layout */
   --header-w: 300px;
   /* Width of the studio's left column: the stems/mixer panel and the label
-     cell above it. */
+     cell above it (and the master drawer's settings column under it).
+     Advanced mode adds the lane header's Model chip column, below. */
   --daw-col-w: 300px;
   --lane-h:   86px;
   --radius:   10px;
@@ -118,6 +119,15 @@
   --easing: cubic-bezier(0.2,0.8,0.2,1);
   --shadow-panel: 0 4px 24px rgba(0,0,0,0.4);
 }
+
+/* Advanced mode: each lane header has one column more, the Model chip's
+   (daw.css .mx-model-slot, 24 px and the row's 10 px gap). The left column
+   grows by exactly that, so the header's card, fader and name keep their
+   width, and everything sized from --daw-col-w (the stems panel, the label
+   cell over the lanes, the master drawer's settings column) moves together:
+   the waveform column stays level with the headers. Practice has no chip and
+   keeps 300 px. */
+html.mode-daw { --daw-col-w: 334px; }
 
 @media (prefers-reduced-motion: reduce) {
   :root { --t-fast: 0ms; --t-base: 0ms; }

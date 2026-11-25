@@ -811,3 +811,94 @@
   box-sizing: border-box;
 }
 .eq-panel-lane .eq-graph-panel .eq-graph-wrap { margin: 8px 12px 8px 12px; }
+
+/* ── The model row (static/js/laneModelRows.js, Advanced mode) ──
+   Opened by the lane's Model chip (daw.css .mx-model-slot), under the lane
+   and its EQ and effects rows when those are open. It reuses the EQ row's
+   frame (.eq-panel-lane, .eq-panel-row, .eq-side) and its small buttons
+   (.eq-btn). */
+
+.model-panel-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 14px;
+}
+.model-panel-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.model-select {
+  height: 24px;
+  min-width: 0;
+  max-width: 320px;
+  flex: 0 1 320px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 12px;
+  padding: 0 6px;
+}
+.model-select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.model-select:disabled { opacity: 0.6; }
+.model-panel-line .model-btn { height: 24px; font-size: 11px; }
+.model-reextract:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+.model-reextract[hidden],
+.model-undo[hidden],
+.model-keep[hidden],
+.model-cancel[hidden],
+.model-run[hidden] { display: none; }
+/* Keep, armed by its first press (laneModelRows.js keep): red, as the
+   track's Delete tool, saying to press again. */
+.model-keep.armed:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.model-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.model-progress {
+  width: 160px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+.model-pct {
+  min-width: 4ch;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.model-status,
+.model-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-status {
+  color: var(--fg-2);
+  /* A failure's reason can be a long sentence: two lines, then the full
+     text on hover (laneModelRows.js sets the title). */
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.model-status:empty { display: none; }
+.model-status[data-kind="error"] { color: var(--danger); }
+.model-status[data-kind="done"],
+.model-status[data-kind="undone"] { color: var(--accent); }
+.model-hint { color: var(--muted); }

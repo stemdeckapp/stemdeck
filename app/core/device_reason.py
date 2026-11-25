@@ -25,6 +25,7 @@ from pathlib import Path
 
 from app.core.config import (
     DATA_DIR,
+    NVIDIA_SMI_MAX_FAILURES,
     NVIDIA_SMI_TTL_SEC,
     TIMEOUT_NVIDIA_SMI,
     available_torch_devices,
@@ -58,20 +59,25 @@ _SETUP_VALUES = _SETUP_REASONS | {"verified", "mps", "mps-unavailable"}
 # of parse_cuda_version in desktop/src-tauri/src/main.rs: keep the two one
 # rule, and both tests on tests/fixtures/nvidia_smi_headers.json (#1012).
 _CUDA_HEADER = re.compile(r"CUDA (?:UMD )?Version:\s*([0-9]+\.[0-9]+)")
+# memory.total of --query-gpu, always in MiB ("8192 MiB"); "[N/A]" when the
+# driver cannot say.
+_MEMORY_MIB = re.compile(r"^\s*([0-9]{1,9})(?:\s*MiB)?\s*$")
 
 _lock = threading.Lock()
 # Held while nvidia-smi runs, so requests that arrive meanwhile wait for its
 # answer instead of each starting their own.
 _probe_lock = threading.Lock()
-_gpu: dict[str, str | None] | None = None
+_gpu: dict[str, str | int | None] | None = None
 _gpu_at: float | None = None
+# Failed probes in a row since the last good answer (see refresh_nvidia_gpu).
+_failures = 0
 
 
 def reset_state() -> None:
     """Forget the cached nvidia-smi answer (tests)."""
-    global _gpu, _gpu_at
+    global _gpu, _gpu_at, _failures
     with _lock:
-        _gpu, _gpu_at = None, None
+        _gpu, _gpu_at, _failures = None, None, 0
 
 
 def _nvidia_smi_path() -> str | None:
@@ -109,21 +115,37 @@ def _run_smi(smi: str, *args: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
-def _query_nvidia_gpu() -> dict[str, str | None] | None:
+def _memory_mb(field: str) -> int | None:
+    """memory.total as nvidia-smi prints it ("8192 MiB", or "8192" with
+    nounits), in MiB; None for "[N/A]", another unit, or nothing."""
+    m = _MEMORY_MIB.match(field)
+    if m is None:
+        return None
+    value = int(m.group(1))
+    return value if value > 0 else None
+
+
+def _query_nvidia_gpu() -> dict[str, str | int | None] | None:
     smi = _nvidia_smi_path()
     if smi is None:
         return None
-    listing = _run_smi(smi, "--query-gpu=name,driver_version", "--format=csv,noheader")
+    listing = _run_smi(smi, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader")
     if not listing or not listing.strip():
         return None
-    # One line per GPU; the first is the one torch would use as cuda:0.
-    name, _, driver = listing.strip().splitlines()[0].partition(",")
+    # One line per GPU; the first is the one torch would use as cuda:0. The
+    # driver and the memory are the last two fields, so a comma in the name
+    # cannot shift them.
+    fields = listing.strip().splitlines()[0].split(",")
+    memory_mb = _memory_mb(fields.pop()) if len(fields) >= 3 else None
+    driver = fields.pop() if len(fields) >= 2 else ""
+    name = ",".join(fields)
     header = _run_smi(smi) or ""
     m = _CUDA_HEADER.search(header)
     return {
         "name": name.strip(),
         "driver": driver.strip() or None,
         "cuda": m.group(1) if m else None,
+        "memory_mb": memory_mb,
     }
 
 
@@ -131,24 +153,45 @@ def _fresh() -> bool:
     return _gpu_at is not None and time.monotonic() - _gpu_at < NVIDIA_SMI_TTL_SEC
 
 
-def refresh_nvidia_gpu() -> dict[str, str | None] | None:
+def refresh_nvidia_gpu() -> dict[str, str | int | None] | None:
     """Ask nvidia-smi now unless an answer is fresh, and keep it. Started at
     server start (app/main.py lifespan), so Settings never waits for the first
-    answer; a GPU waking up can take seconds."""
-    global _gpu, _gpu_at
+    answer; a GPU waking up can take seconds.
+
+    A probe that finds nothing after a good answer keeps that answer, until
+    NVIDIA_SMI_MAX_FAILURES probes in a row have failed: one nvidia-smi
+    timeout (a GPU waking, a driver busy) must not read as "no GPU", which
+    changes the separation recommendation and makes a saved speed test stale.
+    The answer still counts as fresh for the TTL, so a failing nvidia-smi is
+    asked again no more often than a working one."""
+    global _gpu, _gpu_at, _failures
     with _probe_lock:
         with _lock:
             if _fresh():
                 return _gpu
         gpu = _query_nvidia_gpu()
         with _lock:
+            if gpu is not None:
+                _failures = 0
+            elif _gpu is not None:
+                _failures += 1
+                if _failures < NVIDIA_SMI_MAX_FAILURES:
+                    logger.warning(
+                        "nvidia-smi gave no answer (%d in a row); keeping the last one",
+                        _failures,
+                    )
+                    gpu = _gpu
+                else:
+                    logger.warning("nvidia-smi gave no answer %d times in a row", _failures)
             _gpu, _gpu_at = gpu, time.monotonic()
         return gpu
 
 
-def nvidia_gpu() -> dict[str, str | None] | None:
-    """{"name", "driver", "cuda" (the newest CUDA the driver runs)} of the first
-    NVIDIA GPU, or None when there is none or nvidia-smi cannot say.
+def nvidia_gpu() -> dict[str, str | int | None] | None:
+    """{"name", "driver", "cuda" (the newest CUDA the driver runs), "memory_mb"
+    (its total memory in MiB, None when unknown)} of the first NVIDIA GPU, or
+    None when there is none or nvidia-smi cannot say. Read from nvidia-smi,
+    never from torch: the server process does not start CUDA.
 
     Waits only for the very first answer. An expired one is still returned,
     and a new one is asked for in the background."""
