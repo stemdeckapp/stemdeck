@@ -6,7 +6,7 @@
     "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to next-release catches what core misses.",
     "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
     "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
-    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
+    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and speed-control drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
     "Specs are named without tests/e2e/ and .spec.mjs. Paths are globs: * stays inside one folder, ** crosses folders.",
     "The rules were built from what the specs touch: modules they import with page.evaluate, element ids and classes the module renders, and the API routes they hit or stub."
   ],
@@ -14,7 +14,7 @@
   "smoke": ["modes", "library-rows", "queue-progress", "mode-stems", "settings-nav"],
 
   "core": [
-    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "slow-speed",
+    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "speed-control",
     "footer-time", "zoom", "lane-alignment", "track-header", "playback-memory", "trash-restore", "job-form-submit",
     "error-banner", "boot-failure"
   ],
@@ -225,15 +225,15 @@
     {
       "why": "Speed, pitch and transpose: the stretch stages and the pitch bus",
       "paths": [
-        "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js",
+        "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js", "static/js/speedParse.js",
         "static/vendor/signalsmith-stretch.js", "static/vendor/soundtouch-processor.js"
       ],
-      "specs": ["tempo-stage", "slow-speed", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
+      "specs": ["tempo-stage", "speed-control", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
     },
     {
       "why": "Footer and transport layout",
       "paths": ["static/js/footerFit.js"],
-      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "slow-speed"]
+      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "speed-control"]
     },
     {
       "why": "Recording: capture, takes, take folders, track inputs, meters",

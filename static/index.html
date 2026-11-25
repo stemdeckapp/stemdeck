@@ -997,10 +997,14 @@
           <div class="footer-group footer-group-speed">
             <span class="footer-group-label" data-i18n="speed.group">Speed</span>
             <div class="footer-group-body">
-              <div class="footer-seg speed-group" id="t-speed-wrap" role="radiogroup" aria-label="Playback speed" data-i18n-aria-label="speed.ariaLabel">
-                <button class="speed-btn" id="t-speed-05" type="button" role="radio" aria-checked="false" data-speed="0.5">0.5x</button>
-                <button class="speed-btn" id="t-speed-075" type="button" role="radio" aria-checked="false" data-speed="0.75">0.75x</button>
-                <button class="speed-btn active" id="t-speed-1" type="button" role="radio" aria-checked="true" data-speed="1">1x</button>
+              <div class="footer-seg speed-group" id="t-speed-wrap" role="group" aria-label="Playback speed" data-i18n-aria-label="speed.ariaLabel">
+                <div class="speed-fader">
+                  <input type="range" class="speed-slider" id="t-speed-slider" min="0.5" max="1" step="0.01" value="1" aria-label="Playback speed" data-i18n-aria-label="speed.ariaLabel" aria-valuetext="1.00x">
+                </div>
+                <label class="speed-value">
+                  <input type="text" class="speed-input" id="t-speed-input" inputmode="decimal" spellcheck="false" autocomplete="off" value="1.00" aria-label="Exact playback speed, 0.50 to 1.50" data-i18n-aria-label="speed.inputAria">
+                  <span class="speed-value-unit" aria-hidden="true">x</span>
+                </label>
               </div>
             </div>
           </div>

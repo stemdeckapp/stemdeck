@@ -5,14 +5,15 @@
 // computes all of it from the player's own state every frame.
 
 import { currentLineIndex, wordTimings } from "../lyricsLookup.js";
+import { SPEED_MIN, SPEED_MAX } from "../speedParse.js";
 
 // ── Speed ──
 
-// The range transport.setSpeed clamps to (transport.js SPEED_MIN/MAX): kept
-// here as numbers because this module runs in Node, where transport.js,
-// which reaches the page at import, cannot be loaded.
-export const SPEED_MIN = 0.5;
-export const SPEED_MAX = 1.5;
+// The range transport.setSpeed clamps to, shared with the footer's speed
+// control through speedParse.js: that module touches no page, so it loads in
+// Node like this one, where transport.js, which reaches the page at import,
+// cannot.
+export { SPEED_MIN, SPEED_MAX };
 export const SPEED_STEP = 0.05;
 export const SPEED_PRESETS = Object.freeze([0.5, 0.75, 1, 1.25, 1.5]);
 

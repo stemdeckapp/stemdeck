@@ -1227,6 +1227,14 @@ document.addEventListener("keydown", (e) => {
   } else if (e.code === "BracketRight") {
     e.preventDefault();
     setPlayheadTime(transport().getCurrentTime() + 5);
+  } else if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && arrowSeekAllowed(e)) {
+    // Left and Right step the open song 5 s back or forward,
+    // Shift for 1 s: the same move as [ and ], on the keys a DAW uses. Karaoke
+    // and the streamer answer their own arrows, a dialog or menu keeps them,
+    // and a take being recorded must not be moved.
+    e.preventDefault();
+    const step = e.shiftKey ? 1 : 5;
+    setPlayheadTime(transport().getCurrentTime() + (e.code === "ArrowLeft" ? -step : step));
   } else if (e.code === "KeyL") {
     e.preventDefault();
     loopBtn.click();
@@ -1253,6 +1261,12 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
 });
+
+/** Whether Left and Right may seek the open song. */
+function arrowSeekAllowed(e) {
+  const s = markerKeyState(e);
+  return !(s.karaokeOpen || s.streamerOpen || s.dialogOpen || s.guideOpen || s.recording || s.countIn);
+}
 
 /**
  * What the marker keys need to know about the rest of the app, each read from
