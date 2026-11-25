@@ -251,6 +251,15 @@ const HELP = [
   [".midi-cancel", "help.midiCancel"],
   [".midi-download", "help.midiDownload"],
   [".midi-remove", "help.midiRemove"],
+  [".midi-source-btn", "help.midiSource", null, "laneMidi.source.label"],
+  // The piano roll over a lane's waveform: pointable only while the Guide
+  // is on (waves.css), so it is matched before the waves column.
+  [".midi-roll", "help.midiRoll", null, "help.midiRollTitle"],
+  // A lane's download button while the lane has a MIDI file, and its menu.
+  [".lane-dl-opt[data-choice=\"audio\"]", "help.dlAudio"],
+  [".lane-dl-opt[data-choice=\"midi\"]", "help.dlMidi"],
+  [".lane-dl-opt[data-choice=\"both\"]", "help.dlBoth"],
+  [".lane-dl[aria-haspopup]", "help.downloadMidi", laneName],
   [".lane-dl", "help.download", laneName],
   ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
   ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],

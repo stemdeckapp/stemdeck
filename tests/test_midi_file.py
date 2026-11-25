@@ -202,3 +202,70 @@ def test_the_engine_is_described_from_its_manifest():
     assert mf.engine_version() == "0.4.0"
     assert isinstance(mf.vendor_id(), str) and len(mf.vendor_id()) == 16
     assert mf.MODEL_PATH.is_file() and mf.MODEL_PATH.name == "nmp.onnx"
+
+
+# -- reading a file back (read_notes, the server's own reader)
+
+
+@pytest.mark.parametrize("plan", ["default", "song"])
+def test_read_notes_gives_back_the_times_written(tmp_path, plan):
+    """write_midi then read_notes: every note within a tick of where it was
+    heard, through the lead-in bar of a song tempo too. Needs no mido: the
+    server reads the file without it."""
+    pytest.importorskip("numpy")
+    tempo_plan = mf.default_tempo() if plan == "default" else mf.tempo_plan(_grid())
+    rng = np.random.default_rng(5)
+    starts = np.sort(rng.uniform(0, 19, 40))
+    notes = [
+        (float(s), float(s) + 0.25, 36 + i % 40, 0.1 + (i % 9) / 10, None)
+        for i, s in enumerate(starts)
+    ]
+    path = tmp_path / "bass.mid"
+    sys.path.insert(0, str(mf.VENDOR_DIR))
+    try:
+        mf.write_midi(notes, path, "bass", tempo_plan)
+    finally:
+        sys.path.remove(str(mf.VENDOR_DIR))
+    read = mf.read_notes(path)
+    expected = sorted((s, e, p, mf.velocity(a)) for s, e, p, a, _b in notes)
+    got = read["notes"]
+    assert len(got) == len(expected)
+    for (s, e, p, v), (gs, ge, gp, gv) in zip(expected, sorted(got), strict=True):
+        assert gp == p and gv == v
+        assert gs == pytest.approx(s, abs=0.002) and ge == pytest.approx(e, abs=0.002)
+    assert read["bpm"] == pytest.approx(120.0 if plan == "default" else 60_000_000 / 500_000)
+
+
+def _smf(track: bytes, division: int = 480) -> bytes:
+    header = b"MThd" + (6).to_bytes(4, "big") + (0).to_bytes(2, "big") + (1).to_bytes(2, "big")
+    return header + division.to_bytes(2, "big") + b"MTrk" + len(track).to_bytes(4, "big") + track
+
+
+def test_read_notes_running_status_velocity_zero_and_a_held_note(tmp_path):
+    # Tempo 1 s per quarter; C4 on at 0, off by a velocity-0 note-on in running
+    # status at 480 ticks (1 s); E4 on at 480 and never released before the
+    # last event at 960 ticks (2 s), so it ends there.
+    track = bytes(
+        [0x00, 0xFF, 0x51, 0x03, 0x0F, 0x42, 0x40]  # 1,000,000 us per quarter
+        + [0x00, 0x90, 60, 100]
+        + [0x83, 0x60, 60, 0]  # delta 480, running status, velocity 0 = off
+        + [0x00, 64, 80]  # delta 0, running status, E4 on
+        + [0x83, 0x60, 0x80, 62, 0]  # delta 480, an off of a pitch never on
+        + [0x00, 0xFF, 0x2F, 0x00]
+    )
+    path = tmp_path / "x.mid"
+    path.write_bytes(_smf(track))
+    read = mf.read_notes(path)
+    assert read["notes"] == [[0.0, 1.0, 60, 100], [1.0, 2.0, 64, 80]]
+    assert read["bpm"] == 60.0
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"", b"MThd new file", b"RIFF" + b"\0" * 20, _smf(b"\x00\x90\x3c"), _smf(b"\x00\x3c\x40")],
+)
+def test_read_notes_refuses_what_it_cannot_read(tmp_path, data):
+    path = tmp_path / "bad.mid"
+    path.write_bytes(data)
+    with pytest.raises(mf.MidiReadError):
+        mf.read_notes(path)

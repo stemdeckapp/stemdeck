@@ -49,6 +49,8 @@ async function stubServer(page, { midi = {}, settings = {}, status = STATUS, ref
     midi: { ...midi },
     settings: { transcribe_piano: "auto", transcribe_bass: "auto", transcribe_detail: "balanced", ...settings },
     calls: [],
+    // Inside the 6 s fixture song: three bass notes.
+    notes: [[1, 1.5, 40, 127], [2, 3, 45, 64], [4, 4.5, 52, 100]],
   };
   await page.route("**/api/transcribe/status", (route) => route.fulfill({ json: status }));
   await page.route("**/api/settings", async (route) => {
@@ -92,6 +94,12 @@ async function stubServer(page, { midi = {}, settings = {}, status = STATUS, ref
   });
   await page.route(new RegExp(`/api/jobs/${JOB_ID}/stems/(piano|bass)\\.mid`), (route) =>
     route.fulfill({ status: 200, contentType: "audio/midi", body: Buffer.from("MThd") }));
+  // The notes of the file, for the piano roll and the MIDI sound.
+  await page.route(new RegExp(`/api/jobs/${JOB_ID}/midi/(piano|bass)/notes`), (route) => {
+    const stem = new URL(route.request().url()).pathname.split("/")[5];
+    if (!state.midi[stem]?.has_file) return route.fulfill({ status: 404, json: { detail: "no", code: "no_midi" } });
+    return route.fulfill({ json: { notes: state.notes, bpm: 120, tempo_source: "song" } });
+  });
   return state;
 }
 
@@ -150,7 +158,8 @@ test("the chip sits under the Model chip on Bass only, and moves nothing", async
   expect(after.cols, "the bass header's columns").toEqual(before.cols);
   // Bass only: the other lanes have no chip.
   for (const lane of ["vocals", "drums", "other"]) await expect(chip(page, lane)).toHaveCount(0);
-  await expect(chip(page, "bass")).toHaveText("MIDI");
+  // Two notes, drawn in the rail's line style, not a word.
+  await expect(chip(page, "bass").locator(".midi-tab-face svg")).toHaveCount(1);
   await expect(chip(page, "bass")).toHaveAttribute("aria-label", "MIDI from Bass");
   await expect(chip(page, "bass")).toHaveAttribute("title", "MIDI from Bass");
   // Under the Model chip, the two cells filling the column.
@@ -331,12 +340,159 @@ test("the Guide explains the chip and the row's controls", async ({ page }) => {
   const tip = page.locator("#helpTip");
   const row = waveRow(page, "bass");
   for (const [loc, words] of [
-    [chip(page, "bass"), "under the microchip"],
+    [chip(page, "bass"), "the notes icon under the microchip"],
     [row.locator(".midi-download"), "as a .mid file"],
     [row.locator(".midi-rerun"), "Transcribes the lane again"],
     [row.locator(".midi-remove"), "Deletes the lane's MIDI file"],
   ]) {
     await loc.hover();
+    await expect(tip).toBeVisible();
+    await expect(tip).toContainText(words);
+  }
+});
+
+/** The heard playhead's x and a roll note's left edge, after a seek to `t`. */
+async function noteAndPlayhead(page, index, t) {
+  return page.evaluate(async ([i, at]) => {
+    const st = await import("/js/state.js");
+    st.audioEngine.seek(at);
+    await new Promise((r) => setTimeout(r, 300));
+    const rect = document.querySelectorAll('.midi-roll[data-midi-lane="bass"] rect')[i].getBoundingClientRect();
+    const line = document.querySelector(".lane-playhead-line").getBoundingClientRect();
+    return { note: rect.left, playhead: line.left + line.width / 2 };
+  }, [index, t]);
+}
+
+test("the notes icon opens the row and draws the notes over the waveform, on its timeline", async ({ page }) => {
+  await stubServer(page, { midi: { bass: { ...DONE } } });
+  await openStudio(page);
+  await openMidiRow(page);
+  await expect(chip(page, "bass")).toHaveClass(/viewing/);
+  const row = page.locator('.stem-waveform-layer > .stem-waveform-row[data-stem="bass"]');
+  const roll = row.locator(':scope > svg.midi-roll[data-midi-lane="bass"]');
+  await expect(roll).toHaveCount(1);
+  await expect(row).toHaveClass(/midi-view/);
+  await expect(roll.locator("rect")).toHaveCount(3);
+  // Highest note at the top, a harder note stronger.
+  const ys = await roll.locator("rect").evaluateAll((els) => els.map((e) => Number(e.getAttribute("y"))));
+  expect(ys[2]).toBeLessThan(ys[1]);
+  expect(ys[1]).toBeLessThan(ys[0]);
+  await expect(roll.locator("rect").first()).toHaveAttribute("fill-opacity", "1");
+  // The waveform is still there, under it.
+  await expect(row.locator(":scope > .stem-waveform-svg")).toHaveCount(1);
+  for (const [i, t] of [[0, 1], [1, 2], [2, 4]]) {
+    const at = await noteAndPlayhead(page, i, t);
+    expect(Math.abs(at.note - at.playhead), `note ${i} at zoom 1`).toBeLessThanOrEqual(1.5);
+  }
+  // Zoomed in, the lanes are redrawn and the roll comes back, still in line.
+  await page.evaluate(async () => (await import("/js/transport.js")).setWaveZoomLevel(4));
+  await expect(roll).toHaveCount(1);
+  const at = await noteAndPlayhead(page, 1, 2);
+  expect(Math.abs(at.note - at.playhead), "note 1 at zoom 4").toBeLessThanOrEqual(1.5);
+  // Closing the row takes the roll away.
+  await chip(page, "bass").click();
+  await expect(roll).toHaveCount(0);
+  await expect(chip(page, "bass")).not.toHaveClass(/viewing/);
+});
+
+test("Stem, MIDI and Both switch what the lane plays", async ({ page }) => {
+  await stubServer(page, { midi: { bass: { ...DONE } } });
+  await openStudio(page);
+  await openMidiRow(page);
+  const source = waveRow(page, "bass").locator(".midi-source");
+  await expect(source).toBeVisible();
+  await expect(source.locator(".midi-source-btn")).toHaveText(["Stem", "MIDI", "Both"]);
+  await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
+  const tracks = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.getAnalysers("bass").length);
+  expect(await tracks()).toBe(1);
+  await source.locator('[data-source="midi"]').click();
+  await expect(source.locator('[data-source="midi"]')).toHaveAttribute("aria-pressed", "true");
+  // The MIDI sound is added to the lane, in the engine, beside the stem.
+  await expect.poll(tracks).toBe(2);
+  await source.locator('[data-source="both"]').click();
+  await expect(source.locator('[data-source="both"]')).toHaveAttribute("aria-pressed", "true");
+  await source.locator('[data-source="stem"]').click();
+  await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
+  // The visuals still read the stems' buffers only.
+  const keys = await page.evaluate(async () => [...(await import("/js/state.js")).audioEngine.getBuffers().keys()]);
+  expect(keys.filter((k) => k.startsWith("bass"))).toEqual(["bass"]);
+});
+
+test("without a MIDI file the row has no source switch", async ({ page }) => {
+  await stubServer(page);
+  await openStudio(page);
+  await openMidiRow(page);
+  await expect(waveRow(page, "bass").locator(".midi-source")).toBeHidden();
+});
+
+/** Every download link click, recorded and not followed. */
+async function recordDownloads(page) {
+  await page.evaluate(() => {
+    window.__dl = [];
+    HTMLAnchorElement.prototype.click = function click() {
+      window.__dl.push({ href: this.getAttribute("href"), download: this.download });
+    };
+  });
+  return () => page.evaluate(() => window.__dl);
+}
+
+test("the lane's download button offers Audio, MIDI, or Audio and MIDI", async ({ page }) => {
+  await stubServer(page, { midi: { bass: { ...DONE } } });
+  await openStudio(page);
+  const dl = header(page, "bass").locator("a.lane-dl");
+  await expect(dl).toHaveAttribute("aria-haspopup", "menu");
+  await expect(header(page, "vocals").locator("a.lane-dl")).not.toHaveAttribute("aria-haspopup", /.+/);
+  const downloads = await recordDownloads(page);
+  await dl.click();
+  const menu = page.locator(".lane-dl-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.locator(".lane-dl-opt")).toHaveText(["Audio", "MIDI", "Audio and MIDI"]);
+  await expect(menu.locator('.lane-dl-opt[data-choice="audio"]')).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.locator('.lane-dl-opt[data-choice="midi"]')).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(dl).toBeFocused();
+  for (const choice of ["audio", "midi", "both"]) {
+    await dl.click();
+    await menu.locator(`.lane-dl-opt[data-choice="${choice}"]`).click();
+  }
+  const got = await downloads();
+  expect(got.map((d) => d.href)).toEqual([
+    await dl.getAttribute("href"),
+    `/api/jobs/${JOB_ID}/stems/bass.mid?v=2026-11-25T10%3A00%3A00Z`,
+    `/api/jobs/${JOB_ID}/stems/all.zip?format=wav&stems=bass&midi=1`,
+  ]);
+  expect(got[1].download).toBe("E2E_Fixture_Track_bass.mid");
+  expect(got[2].download).toBe("E2E_Fixture_Track_bass_audio_midi.zip");
+});
+
+test("without a MIDI file the download button is the plain download", async ({ page }) => {
+  await stubServer(page);
+  await openStudio(page);
+  const dl = header(page, "bass").locator("a.lane-dl");
+  await expect(dl).not.toHaveAttribute("aria-haspopup", /.+/);
+  const downloads = await recordDownloads(page);
+  await dl.click();
+  await expect(page.locator(".lane-dl-menu")).toHaveCount(0);
+  expect((await downloads()).length).toBe(1);
+});
+
+test("the Guide explains the icon, the source switch, the roll and the download choice", async ({ page }) => {
+  await stubServer(page, { midi: { bass: { ...DONE } } });
+  await openStudio(page);
+  await openMidiRow(page);
+  await expect(page.locator(".midi-roll")).toHaveCount(1);
+  await page.locator("#helpModeBtn").click();
+  await expect(page.locator("body")).toHaveClass(/help-mode/);
+  const tip = page.locator("#helpTip");
+  for (const [loc, words] of [
+    [chip(page, "bass"), "the notes icon under the microchip"],
+    [waveRow(page, "bass").locator('.midi-source-btn[data-source="midi"]'), "What the lane plays"],
+    [page.locator('.midi-roll[data-midi-lane="bass"]'), "on the same timeline"],
+    [header(page, "bass").locator("a.lane-dl"), "asks what to save"],
+  ]) {
+    await loc.hover({ force: true });
     await expect(tip).toBeVisible();
     await expect(tip).toContainText(words);
   }

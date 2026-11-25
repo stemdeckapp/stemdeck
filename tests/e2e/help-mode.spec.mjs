@@ -190,7 +190,7 @@ test.describe("help mode", () => {
     await expect(page.locator('.midi-panel-lane[data-midi-lane="bass"]')).toBeVisible();
     await helpOn(page);
     await chip.hover();
-    await expect(tip(page)).toContainText("under the microchip");
+    await expect(tip(page)).toContainText("the notes icon under the microchip");
     await page.locator('.midi-panel-lane[data-midi-lane="bass"] .midi-download').hover();
     await expect(tip(page)).toContainText("as a .mid file");
     await page.locator("#t-export-btn").click();

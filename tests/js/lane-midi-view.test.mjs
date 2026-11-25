@@ -290,7 +290,7 @@ const KEYS = Object.keys(en).filter((k) => k.startsWith("laneMidi.") || k.starts
   || k.startsWith("help.set.midi") || k.startsWith("export.includeMidi") || k === "help.exportMidi"
   || k === "settings.tab.transcription" || k === "settings.desc.transcription" || k === "settings.group.midi");
 check("the English table has the MIDI strings", KEYS.length >= 80, String(KEYS.length));
-check("no em dash in the MIDI English", KEYS.every((k) => !en[k].includes("—")));
+check("no em dash in the MIDI English", KEYS.every((k) => !en[k].includes("\u2014")));
 check("no \"we\" in the MIDI English", KEYS.every((k) => !/\bwe\b|\bour\b/i.test(en[k])));
 const FULL = ["pl", "ja", "zh-Hans", "de", "fr", "es", "pt", "id", "ko"];
 for (const lang of FULL) {
@@ -300,7 +300,7 @@ for (const lang of FULL) {
     return m ? !Object.keys(table).some((x) => x.startsWith(`${m[1]}.`)) : !(k in table);
   });
   check(`${lang} has every MIDI string`, missing.length === 0, missing.join(", "));
-  check(`${lang} has no em dash in them`, KEYS.every((k) => !(table[k] || "").includes("—")));
+  check(`${lang} has no em dash in them`, KEYS.every((k) => !(table[k] || "").includes("\u2014")));
 }
 check("pt-PT overrides only keys pt has", Object.keys(TRANSLATIONS["pt-PT"]).filter((k) => KEYS.includes(k)).every((k) => k in TRANSLATIONS.pt));
 

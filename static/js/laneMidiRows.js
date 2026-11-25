@@ -1,10 +1,14 @@
 // The MIDI chip on the Piano and Bass lanes and the MIDI row it opens
-// (Advanced mode only), and the Export menu's Include MIDI.
+// (Advanced mode only), and the Export menu's Include MIDI. The piano roll,
+// the lane's source switch and the download button's choices are in
+// laneMidiPlay.js, called from here.
 //
 // The chip sits in the lane header's Model column (mixer.js .mx-model-slot),
 // under the Model chip: the column keeps its width and the row its height, so
 // adding it moves nothing (the column is split in two cells, Model above, MIDI
-// below; daw.css .mx-model-slot.has-midi). It shows only when the lane's
+// below; daw.css .mx-model-slot.has-midi), drawn as two notes. A click opens
+// the row and, when the lane has a MIDI file, its MIDI view (the piano roll
+// over the waveform); the icon is gold while it is on. It shows only when the lane's
 // setting in Settings > Transcription is Auto, the song is finished and the
 // server has transcription; when the engine cannot run on this computer it
 // shows dimmed and its tooltip says why. While a run goes the chip carries the
@@ -39,6 +43,16 @@ import {
   laneHasMidi, maxMinutes, midiFilename, midiOf, midiUrl, parseExportMidi, progressText, refusalNote,
   rowView, transcriptionFields, zipWantsMidi,
 } from "./laneMidiView.js";
+import {
+  buildSourceSwitch, checkEngine, paintDownloads, paintSourceSwitch, setPlayContext, soundNote, syncRolls,
+} from "./laneMidiPlay.js";
+
+// Two notes on a stem, in the left rail's line style (the Model chip's
+// microchip is drawn the same way, laneModelView.js).
+const MIDI_ICON =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+  + '<path d="M9 17V5l10-2v12"/><circle cx="6.5" cy="17" r="2.5"/><circle cx="16.5" cy="15" r="2.5"/>'
+  + "</svg>";
 
 /** Height of a MIDI row, px, the same in both columns. */
 export const MIDI_PANEL_HEIGHT = 84;
@@ -122,6 +136,7 @@ export function setMidiContext({ jobId, lanes, enabled: want }) {
     stopPoll();
     _job = null;
     _sending = null;
+    setPlayContext({ jobId: jobId || null, job: null, onChange: paintAll });
   }
   _jobId = jobId || null;
   _lanes = (Array.isArray(lanes) ? lanes : []).filter(laneHasMidi);
@@ -162,6 +177,8 @@ function afterChange() {
   syncTabs();
   paintAll();
   paintExport();
+  paintDownloads();
+  if (enabled()) syncRolls(_lanes, (lane) => isMidiOpen(lane) && !!midiOf(_job, lane)?.has_file);
 }
 
 // ─── Data ───
@@ -189,10 +206,12 @@ function takeJob(state) {
     job_id: _jobId,
     status: state.status ?? null,
     title: typeof state.title === "string" ? state.title : "",
+    duration: Number(state.duration) || 0,
     midi: state.midi ?? null,
     stem_reextract: state.stem_reextract ?? null,
   };
   if (anyRunning(_job)) startPoll(_jobId);
+  setPlayContext({ jobId: _jobId, job: _job, onChange: paintAll });
   afterChange();
 }
 
@@ -428,6 +447,7 @@ function ensureTab(lane) {
     tab.dataset.midiLane = lane;
     const face = el("span", "midi-tab-face");
     face.setAttribute("aria-hidden", "true");
+    face.innerHTML = MIDI_ICON;
     const mark = el("span", "midi-tab-mark");
     mark.setAttribute("aria-hidden", "true");
     tab.append(face, mark);
@@ -455,7 +475,7 @@ function paintTab(tab, lane) {
   tab.classList.toggle("open", open);
   tab.classList.toggle("off", chip.off);
   tab.dataset.mark = mark;
-  tab.querySelector(".midi-tab-face").textContent = t("laneMidi.chip");
+  tab.classList.toggle("viewing", open && !!midiOf(_job, lane)?.has_file);
   tab.querySelector(".midi-tab-mark").textContent = mark === "run" ? progressText(m) : "";
   if (chip.off) tab.setAttribute("aria-disabled", "true");
   else tab.removeAttribute("aria-disabled");
@@ -524,7 +544,9 @@ function buildRows(lane) {
   // through the desktop shell, a browser downloads it by its name).
   const download = el("a", "eq-btn model-btn lane-dl midi-download");
   const removeBtn = button("midi-remove", () => remove(lane));
-  line.append(transcribeBtn, rerunBtn, retryBtn, run, download, removeBtn);
+  // Stem, MIDI or Both: what the lane plays (laneMidiPlay.js).
+  const source = buildSourceSwitch(lane);
+  line.append(transcribeBtn, rerunBtn, retryBtn, run, download, removeBtn, source);
   const status = el("p", "model-status midi-status");
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
@@ -550,7 +572,7 @@ function buildRows(lane) {
 
   return {
     waveRow, mixRow, transcribe: transcribeBtn, rerun: rerunBtn, retry: retryBtn, run, progress, pct,
-    cancel: cancelBtn, download, remove: removeBtn, status, hint, titleEl, laneEl, removeArmed: false, removeTimer: 0,
+    cancel: cancelBtn, download, remove: removeBtn, source, status, hint, titleEl, laneEl, removeArmed: false, removeTimer: 0,
   };
 }
 
@@ -601,9 +623,12 @@ function paintRow(lane) {
     armed ? t("laneMidi.removeAgain") : t("laneMidi.removeTitle", { name }));
   r.remove.classList.toggle("armed", armed);
 
-  // The status line: a request's own answer first, then the lane's state.
+  paintSourceSwitch(r.source, lane);
+
+  // The status line: a request's own answer first, then the sound being
+  // prepared or refused, then the lane's state.
   const note = _notes.get(lane);
-  const status = note && !(m?.state === "running" && note.kind !== "error") ? note : v.status;
+  const status = (note && !(m?.state === "running" && note.kind !== "error") ? note : null) || soundNote(lane) || v.status;
   r.status.textContent = status.text;
   r.status.title = status.text;
   r.status.dataset.kind = status.kind;
@@ -618,9 +643,13 @@ function paintAll() {
 
 /** Put the chips and the open rows in place (eqRows.syncEqRows calls it). */
 export function syncMidiRows() {
+  // The download buttons were redrawn with the lanes: their choice comes back.
+  paintDownloads();
+  checkEngine();
   if (!enabled()) {
     for (const lane of [..._rows.keys()]) dropRows(lane);
     syncTabs();
+    syncRolls([], () => false);
     return;
   }
   loadSettings();
@@ -647,6 +676,9 @@ export function syncMidiRows() {
   }
   _laidOut = openSignature();
   syncMidiRowOrder();
+  // The MIDI view: the roll over the waveform of each lane whose row is open
+  // and which has a file.
+  syncRolls(_lanes, (lane) => isMidiOpen(lane) && !!midiOf(_job, lane)?.has_file);
 }
 
 /** The last of the lane's own EQ, effects and model rows right after it, else the lane. */

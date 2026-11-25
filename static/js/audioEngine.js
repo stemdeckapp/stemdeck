@@ -49,6 +49,19 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const busLanes = new Array(INPUT_COUNT).fill(0);
   /** @type {Map<string,object>} playback tracks by stem name (filled while decoding) */
   const tracks = new Map();
+  // A lane's alternate source (addAltSource): a second track of the lane, its
+  // controlName the lane's, so it takes the lane's volume, mute, solo, EQ,
+  // effects chain, key and the shared tempo stage exactly as the stem does.
+  // Which of the two sound is the lane's source (setLaneSource): "stem",
+  // "alt" or "both", by controlName; a track's `srcOn` is 1 or 0 from it.
+  const laneSource = new Map();
+  const srcOnFor = (controlName, alt) => {
+    const mode = laneSource.get(controlName) || "stem";
+    return (alt ? mode !== "stem" : mode !== "alt") ? 1 : 0;
+  };
+  // The gain a track's node is set to: the lane's level, unless the lane's
+  // source switch has its source off.
+  const levelOf = (t) => t.level * t.srcOn;
   // Effects: a slot per track between its gain and its analyser, and the
   // master slot between master and the destination (fxChain.js).
   // The effects chain of a lane (Advanced mode only) goes between its source
@@ -209,7 +222,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
             level: 1,
             visualOnly,
             fx: null,
+            alt: false,
+            srcOn: srcOnFor(s.controlName || s.name, false),
           };
+          gain.gain.value = levelOf(track);
           tracks.set(s.name, track);
           // gain -> fx slot (EQ) -> analyser; the VU reads post-EQ.
           if (!visualOnly) fx.attachSource(track, gain, analyser);
@@ -419,7 +435,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     for (const t of tracks.values()) {
       if (!t.visualOnly && t.controlName === name) {
         t.level = Math.max(0, v);
-        t.gain.gain.setTargetAtTime(t.level, ctx.currentTime, 0.01);
+        t.gain.gain.setTargetAtTime(levelOf(t), ctx.currentTime, 0.01);
       }
     }
   }
@@ -469,8 +485,98 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     g.setValueAtTime(g.value, at);
     g.linearRampToValueAtTime(0, at + ROUTE_FADE);
     g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(t.level, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
+    g.linearRampToValueAtTime(levelOf(t), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
     setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
+  }
+
+  /**
+   * A second source for lane `controlName`: `buffer` (a MIDI rendering, say)
+   * plays in step with the stems through the lane's own gain, effects, EQ,
+   * pitch bus and the tempo stage. It replaces the lane's earlier one. It
+   * sounds only while setLaneSource says so, and it never changes the song's
+   * length or what getBuffers() hands the visuals. Joins a running playback
+   * at the place the other sources have reached. False when the lane has no
+   * track to follow.
+   */
+  function addAltSource(controlName, buffer) {
+    if (destroyed || !buffer) return false;
+    const lead = [...tracks.values()].find((t) => !t.visualOnly && !t.alt && t.controlName === controlName);
+    if (!lead) return false;
+    removeAltSource(controlName);
+    const gain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    const track = {
+      buffer,
+      gain,
+      analyser,
+      source: null,
+      name: `${controlName}::alt`,
+      controlName,
+      pitchable: lead.pitchable,
+      pitched: lead.pitched,
+      pitch: lead.pitch,
+      bus: null,
+      level: lead.level,
+      visualOnly: false,
+      fx: null,
+      alt: true,
+      srcOn: srcOnFor(controlName, true),
+    };
+    gain.gain.value = levelOf(track);
+    tracks.set(track.name, track);
+    fx.attachSource(track, gain, analyser);
+    routeTrack(track, true);
+    if (playing) {
+      // The place the running sources have reached, in their own time
+      // (sourceTimeToCtxTime's inverse); during a count-in, their start.
+      const at = Math.max(ctx.currentTime, startCtxTime);
+      const offset = ctxTimeToSourceTime(at);
+      if (offset < buffer.duration) {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        if (!stNode) src.playbackRate.value = _playbackRate;
+        src.connect(fx.sourceInput(track));
+        src.start(at, Math.max(0, offset));
+        track.source = src;
+      }
+    }
+    return true;
+  }
+
+  /** Take lane `controlName`'s alternate source out of the graph. */
+  function removeAltSource(controlName) {
+    for (const [key, t] of tracks) {
+      if (!t.alt || t.controlName !== controlName) continue;
+      if (t.source) {
+        try { t.source.stop(); } catch { /* already stopped */ }
+        try { t.source.disconnect(); } catch { /* noop */ }
+        t.source = null;
+      }
+      // Its effects chain, if the lane has one (fx/chainHost.js), goes with it.
+      try { t.chainHost?.dispose(); } catch { /* already gone */ }
+      t.chainHost = null;
+      try { t.gain.disconnect(); } catch { /* noop */ }
+      try { t.fx?.output?.disconnect(); } catch { /* noop */ }
+      try { t.analyser.disconnect(); } catch { /* noop */ }
+      _laneLeft(t.bus);
+      t.bus = null;
+      tracks.delete(key);
+    }
+  }
+
+  /**
+   * Which source lane `controlName` sounds: "stem" (the default), "alt" or
+   * "both". A short ramp, so a switch while playing does not click.
+   */
+  function setLaneSource(controlName, mode) {
+    const next = mode === "alt" || mode === "both" ? mode : "stem";
+    laneSource.set(controlName, next);
+    for (const t of tracks.values()) {
+      if (t.visualOnly || t.controlName !== controlName) continue;
+      t.srcOn = srcOnFor(controlName, t.alt);
+      t.gain.gain.setTargetAtTime(levelOf(t), ctx.currentTime, 0.01);
+    }
   }
 
   function setMasterGain(v) {
@@ -612,6 +718,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     },
     setGain,
     setMasterGain,
+    // A lane's alternate source (the MIDI of a Piano or Bass lane,
+    // laneMidiRows.js). The streaming engine has none.
+    supportsAltSource: true,
+    addAltSource,
+    removeAltSource,
+    setLaneSource,
     getAnalysers: (name) => [...tracks.values()]
       .filter((track) => !track.visualOnly && track.controlName === name)
       .map((track) => track.analyser),
@@ -622,7 +734,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     // multitrack to also decode the audio. Map<name, AudioBuffer>.
     getBuffers: () => {
       const m = new Map();
-      for (const [name, t] of tracks) m.set(name, t.buffer);
+      for (const [name, t] of tracks) if (!t.alt) m.set(name, t.buffer);
       return m;
     },
     ...engineFxApi(fx),

@@ -606,6 +606,88 @@ async def test_the_zip_carries_midi_only_when_asked(jobs_dir, client, worker):
     assert archive.read("Song_bass.mid") == b"MThd new file"
 
 
+async def test_an_audio_and_midi_download_of_one_stem_carries_its_own_file_only(
+    jobs_dir, client, worker
+):
+    _song(jobs_dir)
+    async with client as c:
+        for stem in ("bass", "piano"):
+            await c.post(f"/api/jobs/{JOB}/midi", json={"stem": stem})
+            await _settled(c, stem)
+        one = await c.get(f"/api/jobs/{JOB}/stems/all.zip?stems=bass&midi=1")
+        every = await c.get(f"/api/jobs/{JOB}/stems/all.zip?midi=1")
+    assert one.status_code == 200, one.text
+    assert sorted(zipfile.ZipFile(io.BytesIO(one.content)).namelist()) == [
+        "Song_bass.mid",
+        "Song_bass.wav",
+    ]
+    names = set(zipfile.ZipFile(io.BytesIO(every.content)).namelist())
+    assert {"Song_bass.mid", "Song_piano.mid"} <= names
+
+
+# -- the notes of a file (the piano roll)
+
+
+def _smf_notes() -> bytes:
+    """A format 0 file at 120 BPM, 480 ticks per quarter: A2 from 0.5 s to 1 s
+    at velocity 90, then C3 from 1 s to 1.25 s at velocity 40."""
+    track = bytes(
+        [0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20]
+        + [0x83, 0x60, 0x90, 45, 90]
+        + [0x83, 0x60, 0x80, 45, 0]
+        + [0x00, 0x90, 48, 40]
+        + [0x81, 0x70, 0x80, 48, 0]
+        + [0x00, 0xFF, 0x2F, 0x00]
+    )
+    head = b"MThd" + bytes([0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0])
+    return head + b"MTrk" + len(track).to_bytes(4, "big") + track
+
+
+async def test_the_notes_route_reads_the_file(jobs_dir, client):
+    job = _song(jobs_dir)
+    folder = jobs_dir / JOB / "midi"
+    folder.mkdir(parents=True)
+    (folder / "bass.mid").write_bytes(_smf_notes())
+    job.midi = {
+        "bass": {
+            "state": "done",
+            "pct": 100,
+            "notes": 2,
+            "engine": "basic_pitch",
+            "detail": "balanced",
+            "tempo_source": "song",
+            "at": "2026-11-25T10:00:00Z",
+            "error_code": None,
+            "has_file": True,
+        }
+    }
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/midi/bass/notes")
+    assert r.status_code == 200, r.text
+    assert r.headers["cache-control"] == "no-cache"
+    body = r.json()
+    assert body["notes"] == [[0.5, 1.0, 45, 90], [1.0, 1.25, 48, 40]]
+    assert body["bpm"] == 120.0
+    assert body["tempo_source"] == "song"
+
+
+async def test_the_notes_route_refuses_like_the_file_route(jobs_dir, client, caplog):
+    _song(jobs_dir)
+    (jobs_dir / "secret.mid").write_bytes(_smf_notes())
+    async with client as c:
+        _refused(await c.get(f"/api/jobs/{JOB}/midi/bass/notes"), 404, "no_midi")
+        _refused(await c.get(f"/api/jobs/{JOB}/midi/vocals/notes"), 404, "no_midi")
+        _refused(await c.get(f"/api/jobs/{OTHER}/midi/bass/notes"), 404, "job_not_found")
+        r = await c.get(f"/api/jobs/{JOB}/midi/..%2F..%2Fsecret/notes")
+        assert r.status_code == 404
+        assert (await c.get("/api/jobs/..%2Fetc/midi/bass/notes")).status_code == 404
+        folder = jobs_dir / JOB / "midi"
+        folder.mkdir(parents=True)
+        (folder / "piano.mid").write_bytes(b"MThd new file")
+        _refused(await c.get(f"/api/jobs/{JOB}/midi/piano/notes"), 404, "no_midi")
+    assert "could not read the piano MIDI file" in caplog.text
+
+
 # -- the tempo of a real song folder
 
 

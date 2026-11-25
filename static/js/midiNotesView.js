@@ -1,0 +1,229 @@
+// Seeing, hearing and downloading the MIDI of a Piano or Bass lane (Advanced
+// mode), the pure part: the piano roll's rectangles, the lane's source switch
+// (Stem, MIDI, Both), the download choices of the lane's download button and
+// the synth voice each lane is played with. No DOM and no Web Audio, so
+// tests/js/midi-notes-view.test.mjs runs it in node. laneMidiRows.js draws,
+// midiSynth.js renders the sound.
+//
+// The notes come from GET /api/jobs/{id}/midi/{stem}/notes:
+// { notes: [[start s, end s, pitch, velocity], ...], bpm, tempo_source }.
+
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
+/** The usable notes of a notes answer, each [start, end, pitch, velocity], by start. */
+export function cleanNotes(answer) {
+  const list = Array.isArray(answer?.notes) ? answer.notes : [];
+  const out = [];
+  for (const n of list) {
+    if (!Array.isArray(n) || n.length < 4) continue;
+    const [s, e, p, v] = n;
+    if (!isNum(s) || !isNum(e) || !Number.isInteger(p) || p < 0 || p > 127 || e <= s || s < 0) continue;
+    out.push([s, e, p, isNum(v) ? Math.max(0, Math.min(127, Math.round(v))) : 100]);
+  }
+  out.sort((a, b) => a[0] - b[0] || a[2] - b[2]);
+  return out;
+}
+
+// ─── The piano roll ───
+
+/** Pitches kept free above and below the lane's notes. */
+export const ROLL_PAD = 2;
+/** The smallest pitch range a roll spans, so a few notes are not each a lane tall. */
+export const ROLL_MIN_SPAN = 12;
+/** Each note's height, of its pitch row, and the gap the rest leaves. */
+export const ROLL_NOTE_H = 0.8;
+
+/**
+ * The roll of `notes` over a song of `duration` seconds, in the units of an
+ * SVG viewBox stretched over the lane (preserveAspectRatio none): x is
+ * seconds, so it follows the waveform's timeline and zoom; y is pitch rows,
+ * highest at the top, over the lane's own note range with ROLL_PAD rows
+ * spare. Velocity is the note's opacity, 0.35 to 1.
+ * Returns { width, height, lo, hi, rects: [{ x, y, w, h, o }] }, or null
+ * when there is nothing to draw.
+ */
+export function rollGeometry(notes, duration) {
+  if (!Array.isArray(notes) || !notes.length || !isNum(duration) || duration <= 0) return null;
+  let min = 127;
+  let max = 0;
+  for (const n of notes) {
+    if (n[2] < min) min = n[2];
+    if (n[2] > max) max = n[2];
+  }
+  let lo = min - ROLL_PAD;
+  let hi = max + ROLL_PAD;
+  if (hi - lo + 1 < ROLL_MIN_SPAN) {
+    const grow = ROLL_MIN_SPAN - (hi - lo + 1);
+    lo -= Math.floor(grow / 2);
+    hi += Math.ceil(grow / 2);
+  }
+  const height = hi - lo + 1;
+  const off = (1 - ROLL_NOTE_H) / 2;
+  const rects = [];
+  for (const [s, e, p, v] of notes) {
+    if (s >= duration) continue;
+    rects.push({
+      x: s,
+      y: hi - p + off,
+      w: Math.min(e, duration) - s,
+      h: ROLL_NOTE_H,
+      o: Math.round((0.35 + 0.65 * (v / 127)) * 100) / 100,
+    });
+  }
+  return { width: duration, height, lo, hi, rects };
+}
+
+const f = (n) => String(Math.round(n * 10000) / 10000);
+
+/** The roll as the inside of an SVG (its <rect>s), for one innerHTML write. */
+export function rollRects(geometry) {
+  if (!geometry) return "";
+  return geometry.rects
+    .map((r) => `<rect x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" fill-opacity="${r.o}"></rect>`)
+    .join("");
+}
+
+// ─── The lane's source switch ───
+
+/** What a lane plays: its stem (the default), its MIDI, or both together. */
+export const SOURCES = Object.freeze(["stem", "midi", "both"]);
+
+/** A stored or asked-for source, made one of SOURCES. */
+export function normalSource(value) {
+  return SOURCES.includes(value) ? value : "stem";
+}
+
+/** The engine's name for a source (audioEngine.setLaneSource): the MIDI is its "alt". */
+export function engineSource(source) {
+  const s = normalSource(source);
+  return s === "midi" ? "alt" : s;
+}
+
+/** Whether the MIDI sound is needed (it is rendered and added to the lane). */
+export function needsMidiSound(source) {
+  return normalSource(source) !== "stem";
+}
+
+/**
+ * What the switch shows: hidden without a MIDI file; off with its reason
+ * when the engine playing the song cannot add a source (the streaming
+ * engine of a long song) or the sound is being prepared.
+ */
+export function sourceSwitch({ hasFile, engineSupports, preparing = false }) {
+  if (!hasFile) return { show: false, disabled: false, reasonKey: "" };
+  if (!engineSupports) return { show: true, disabled: true, reasonKey: "laneMidi.source.unsupported" };
+  return { show: true, disabled: preparing, reasonKey: "" };
+}
+
+// ─── The lane's download button ───
+
+/** The choices of a lane's download button, or [] for the plain download. */
+export function downloadChoices({ hasMidi }) {
+  if (!hasMidi) return [];
+  return [
+    { id: "audio", key: "laneMidi.dl.audio" },
+    { id: "midi", key: "laneMidi.dl.midi" },
+    { id: "both", key: "laneMidi.dl.both" },
+  ];
+}
+
+/** The audio format of a stem URL ("wav", "mp3", ...), as the zip asks for it. */
+export function audioFormat(url) {
+  const m = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(String(url || ""));
+  const ext = m ? m[1].toLowerCase() : "";
+  return ["wav", "mp3", "flac", "ogg"].includes(ext) ? ext : "wav";
+}
+
+/** The "Audio and MIDI" zip: the one stem in its own format, and its .mid. */
+export function bothZipUrl(jobId, stem, audioUrl) {
+  const q = new URLSearchParams({ format: audioFormat(audioUrl), stems: stem, midi: "1" });
+  return `/api/jobs/${encodeURIComponent(jobId)}/stems/all.zip?${q}`;
+}
+
+/** Its file name: "<song>_<stem>_audio_midi.zip" (the safe title of laneMidiView.js). */
+export function bothZipName(safeTitle, stem) {
+  return safeTitle ? `${safeTitle}_${stem}_audio_midi.zip` : `${stem}_audio_midi.zip`;
+}
+
+// ─── The synth voice ───
+
+/**
+ * The voice a lane's MIDI is played with: a soft electric-piano tone for
+ * Keys (a sine and a quieter octave, a quick decay to a low sustain), a round
+ * bass for Bass (a sine and a quiet saw through a low-pass). Short attack and
+ * release, so notes start on time and do not click. `gain` keeps a full
+ * chord under clipping.
+ */
+export function voiceFor(stem) {
+  if (stem === "bass") {
+    return {
+      partials: [{ type: "sine", ratio: 1, gain: 1 }, { type: "sawtooth", ratio: 1, gain: 0.3 }],
+      lowpass: 900,
+      attack: 0.004,
+      decay: 0.25,
+      sustain: 0.7,
+      release: 0.08,
+      gain: 0.5,
+    };
+  }
+  return {
+    partials: [{ type: "sine", ratio: 1, gain: 1 }, { type: "sine", ratio: 2, gain: 0.28 }, { type: "triangle", ratio: 4, gain: 0.05 }],
+    lowpass: 0,
+    attack: 0.005,
+    decay: 0.9,
+    sustain: 0.3,
+    release: 0.25,
+    gain: 0.22,
+  };
+}
+
+/** A MIDI pitch in hertz (A4 = 69 = 440 Hz). */
+export function pitchHz(pitch) {
+  return 440 * 2 ** ((pitch - 69) / 12);
+}
+
+/** Note velocity as a level, 0 to 1, a little curved so soft notes stay audible. */
+export function velocityGain(velocity) {
+  const v = Math.max(0, Math.min(127, Number(velocity) || 0)) / 127;
+  return Math.round(Math.sqrt(v) * 1000) / 1000;
+}
+
+/** The rendered sound's length: the song, or the last release, whichever is longer. */
+export function renderSeconds(notes, duration, voice) {
+  let end = isNum(duration) && duration > 0 ? duration : 0;
+  for (const n of notes) end = Math.max(end, n[1] + voice.release + 0.05);
+  return end;
+}
+
+/**
+ * The gain that puts the rendered MIDI at the loudness of the lane's stem:
+ * the ratio of their RMS levels, kept within 0.05 to 4 and under a peak of
+ * 0.98, so switching Stem and MIDI does not jump in level. 1 without a stem
+ * level to match (a silent stem, a rendering of silence).
+ */
+export function levelScale(renderRms, stemRms, renderPeak) {
+  if (!(renderRms > 0) || !(stemRms > 0)) return 1;
+  let k = Math.max(0.05, Math.min(4, stemRms / renderRms));
+  if (renderPeak > 0) k = Math.min(k, 0.98 / renderPeak);
+  return Math.round(k * 10000) / 10000;
+}
+
+/** RMS and peak of `samples`, every `stride`th sample (a fast estimate). */
+export function levelOf(samples, stride = 4) {
+  let sum = 0;
+  let n = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += stride) {
+    const v = samples[i];
+    sum += v * v;
+    n++;
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+  }
+  return { rms: n ? Math.sqrt(sum / n) : 0, peak };
+}
+
+/** Which rendering a lane can reuse: the song, the lane, its file and the rate. */
+export function soundKey(jobId, stem, at, sampleRate) {
+  return `${jobId}|${stem}|${at || ""}|${sampleRate}`;
+}

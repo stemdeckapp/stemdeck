@@ -546,6 +546,22 @@
   overflow: visible;
 }
 
+/* A lane's MIDI view (laneMidiPlay.js): its notes as a piano roll over the
+   waveform, in the same stretched coordinates (x is seconds over the lane),
+   so the zoom, the scroll and the playhead are the waveform's. The waveform
+   stays under it, dimmed, to compare the two. The roll takes no pointer, as
+   the layer, so a press still seeks; with the Guide on it can be pointed at. */
+.midi-roll {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.midi-roll rect { fill: var(--stem-color); }
+body.help-mode .midi-roll { pointer-events: auto; }
+.stem-waveform-row.midi-view > .stem-waveform-svg rect { opacity: 0.3; filter: none; }
+
 .stem-waveform-svg path,
 .stem-waveform-svg rect {
   fill: var(--stem-color);

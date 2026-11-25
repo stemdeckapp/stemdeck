@@ -5,6 +5,7 @@
     POST   /api/jobs/{id}/midi/{stem}/cancel
     DELETE /api/jobs/{id}/midi/{stem}
     GET    /api/jobs/{id}/stems/{stem}.mid
+    GET    /api/jobs/{id}/midi/{stem}/notes     the file's notes, for the piano roll
 
 Its own router rather than more of jobs.py (2900 lines): the five routes, the
 refusal table and the run task are one feature. Every refusal is
@@ -36,7 +37,7 @@ from app.core.registry import persist as registry_persist
 from app.core.settings import get_transcribe_detail, midi_stem_enabled
 from app.core.stem_files import stem_path
 from app.core.stems_location import is_relocating
-from app.pipeline import jobqueue
+from app.pipeline import jobqueue, midi_file
 from app.pipeline import midi as midi_run
 
 logger = logging.getLogger("stemdeck.api.midi")
@@ -255,6 +256,33 @@ async def get_midi(job_id: str, stem: str) -> FileResponse | JSONResponse:
         path,
         media_type="audio/midi",
         filename=_stem_download_name(job_id, stem, "mid"),
+        # A run replaces the file in place under the same URL.
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.get("/jobs/{job_id}/midi/{stem}/notes", response_model=None)
+async def get_midi_notes(job_id: str, stem: str) -> JSONResponse:
+    """The notes of the stem's MIDI file, read back from the file itself:
+    {"notes": [[start s, end s, pitch, velocity], ...], "bpm", "tempo_source"}.
+    The studio draws them as a piano roll and plays them (laneMidiRows.js).
+    The same checks and refusals as the file's own route."""
+    job, job_dir = _job(job_id)
+    if job is None or job_dir is None:
+        return _refusal("job_not_found")
+    if stem not in MIDI_STEMS:
+        return _refusal("no_midi")
+    path = midi_run.midi_path(job_dir, stem).resolve()
+    if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        return _refusal("no_midi")
+    try:
+        read = await asyncio.to_thread(midi_file.read_notes, path)
+    except (OSError, midi_file.MidiReadError):
+        logger.exception("[%s] could not read the %s MIDI file", job_id, stem)
+        return _refusal("no_midi")
+    entry = (clean_midi(job.midi) or {}).get(stem) or {}
+    return JSONResponse(
+        {"notes": read["notes"], "bpm": read["bpm"], "tempo_source": entry.get("tempo_source")},
         # A run replaces the file in place under the same URL.
         headers={"Cache-Control": "no-cache"},
     )

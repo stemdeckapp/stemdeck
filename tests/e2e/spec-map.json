@@ -376,6 +376,11 @@
       "why": "The transcription routes and the Basic Pitch worker behind the MIDI chip, the Transcription tab and the zip's .mid files",
       "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/_vendor/transcribe/**", "app/api/stems.py"],
       "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
+    },
+    {
+      "why": "Seeing, hearing and downloading a Piano or Bass lane's MIDI: the piano roll over the waveform, the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
+      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/css/waves.css"],
+      "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "slow-speed"]
     }
   ]
 }

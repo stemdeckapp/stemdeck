@@ -315,3 +315,137 @@ def write_midi(notes: Iterable[Sequence[Any]], path: Path, stem: str, plan: dict
         handle.flush()
         os.fsync(handle.fileno())
     return sum(1 for m in midi.tracks[0] if m.type == "note_on")
+
+
+# -- reading a file back
+
+
+class MidiReadError(ValueError):
+    """The file is not a Standard MIDI File this module can read."""
+
+
+def _varlen(data: bytes, pos: int) -> tuple[int, int]:
+    value = 0
+    for _ in range(4):
+        if pos >= len(data):
+            raise MidiReadError("truncated variable-length number")
+        byte = data[pos]
+        pos += 1
+        value = (value << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            return value, pos
+    raise MidiReadError("variable-length number over four bytes")
+
+
+def _read_events(data: bytes) -> tuple[int, list[tuple[int, int]], list[tuple[int, int, int, int]]]:
+    """(ticks per quarter, [(tick, us per quarter)], [(tick, on, pitch, velocity)])."""
+    if len(data) < 14 or data[:4] != b"MThd":
+        raise MidiReadError("not a MIDI file")
+    header_len = int.from_bytes(data[4:8], "big")
+    if header_len < 6:
+        raise MidiReadError("short header")
+    division = int.from_bytes(data[12:14], "big")
+    if division & 0x8000 or division == 0:
+        raise MidiReadError("SMPTE time is not supported")
+    pos = 8 + header_len
+    tempos: list[tuple[int, int]] = []
+    events: list[tuple[int, int, int, int]] = []
+    while pos + 8 <= len(data):
+        tag = data[pos : pos + 4]
+        length = int.from_bytes(data[pos + 4 : pos + 8], "big")
+        pos += 8
+        end = pos + length
+        if end > len(data):
+            raise MidiReadError("truncated track")
+        if tag != b"MTrk":
+            pos = end
+            continue
+        tick, status = 0, 0
+        while pos < end:
+            delta, pos = _varlen(data, pos)
+            tick += delta
+            if pos >= end:
+                raise MidiReadError("truncated event")
+            if data[pos] & 0x80:
+                status = data[pos]
+                pos += 1
+            elif not status:
+                raise MidiReadError("running status with no status")
+            if status == 0xFF:
+                if pos >= end:
+                    raise MidiReadError("truncated meta event")
+                kind = data[pos]
+                size, pos = _varlen(data, pos + 1)
+                if kind == 0x51 and size == 3:
+                    tempos.append((tick, int.from_bytes(data[pos : pos + 3], "big")))
+                pos += size
+                status = 0
+            elif status in (0xF0, 0xF7):
+                size, pos = _varlen(data, pos)
+                pos += size
+                status = 0
+            else:
+                high = status & 0xF0
+                width = 1 if high in (0xC0, 0xD0) else 2
+                if pos + width > end:
+                    raise MidiReadError("truncated channel event")
+                if high in (0x80, 0x90):
+                    pitch, vel = data[pos], data[pos + 1]
+                    events.append((tick, 1 if high == 0x90 and vel > 0 else 0, pitch, vel))
+                pos += width
+        pos = end
+    return division, tempos, events
+
+
+def read_notes(path: Path) -> dict[str, Any]:
+    """The notes of a .mid as {"notes": [[start s, end s, pitch, velocity]],
+    "bpm": the file's last tempo}, for the studio's piano roll and its MIDI
+    sound (GET /api/jobs/{id}/midi/{stem}/notes).
+
+    Read in the server without mido, which only the worker has on its path:
+    a small reader of Standard MIDI Files with metrical time, which is what
+    write_midi writes. Times follow the file's tempo map, so they come back
+    within half a tick of the times Basic Pitch heard (TempoMap). A note-on
+    of velocity 0 is a note-off; a note still held at the end of the file
+    ends at its last event. Raises MidiReadError on a file it cannot read."""
+    division, tempos, events = _read_events(Path(path).read_bytes())
+    tempos.sort()
+    if not tempos or tempos[0][0] > 0:
+        tempos.insert(0, (0, 500_000))
+    # (start tick, start seconds, seconds per tick); a later tempo at the same
+    # tick replaces an earlier one.
+    segments: list[tuple[int, float, float]] = []
+    for at, us in tempos:
+        start = 0.0
+        if segments:
+            prev_at, prev_start, per = segments[-1]
+            start = prev_start + (at - prev_at) * per
+            if at == prev_at:
+                segments.pop()
+        segments.append((at, start, us / 1_000_000 / division))
+
+    def seconds(tick: int) -> float:
+        at, start, per = segments[0]
+        for segment in segments[1:]:
+            if tick >= segment[0]:
+                at, start, per = segment
+        return start + (tick - at) * per
+
+    events.sort(key=lambda e: (e[0], e[1]))
+    held: dict[int, tuple[int, int]] = {}
+    notes: list[tuple[int, int, int, int]] = []
+    last = events[-1][0] if events else 0
+    for tick, on, pitch, vel in events:
+        began = held.pop(pitch, None)
+        if began is not None and tick > began[0]:
+            notes.append((began[0], tick, pitch, began[1]))
+        if on:
+            held[pitch] = (tick, vel)
+    for pitch, (tick, vel) in held.items():
+        if last > tick:
+            notes.append((tick, last, pitch, vel))
+    notes.sort()
+    return {
+        "notes": [[round(seconds(a), 4), round(seconds(b), 4), p, v] for a, b, p, v in notes],
+        "bpm": round(60_000_000 / tempos[-1][1], 3) if tempos[-1][1] else None,
+    }

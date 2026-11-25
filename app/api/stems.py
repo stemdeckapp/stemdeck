@@ -2755,8 +2755,9 @@ async def get_all_stems_zip(
     """Bundle the requested stems into a single ZIP, named after the song.
 
     `midi` adds every MIDI file the song has (app/pipeline/midi.py), each
-    named as its stem is, `<song>_<stem>.mid`. A song with none gets the zip
-    it would have had without it.
+    named as its stem is, `<song>_<stem>.mid`; with `stems`, only those of the
+    stems asked for. A song with none gets the zip it would have had without
+    it.
 
     `reaper` adds `<song>.rpp`: a REAPER project with one track per file in
     the zip (the click too, when asked for), at the song's sample rate and
@@ -2832,7 +2833,9 @@ async def get_all_stems_zip(
 
     midi_files: list[tuple[str, Path]] = []
     if midi:
-        for name in MIDI_STEMS:
+        # With a `stems` subset, only the MIDI of the stems asked for: a lane's
+        # "Audio and MIDI" download asks for one stem and its own file.
+        for name in [n for n in MIDI_STEMS if not stems or n in wanted]:
             p = (JOBS_DIR / job_id / MIDI_DIRNAME / f"{name}.mid").resolve()
             if p.is_file() and p.is_relative_to(jobs_root):
                 midi_files.append((name, p))
