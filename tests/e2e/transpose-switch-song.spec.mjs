@@ -344,7 +344,8 @@ test.describe("a song's key after switching songs (#781)", () => {
     await recordGraph(page);
     await openStudio(page);
     await settled(page, JOB_ID);
-    await page.locator("#t-speed-075").click();
+    await page.locator("#t-speed-input").fill("0.75");
+    await page.locator("#t-speed-input").press("Enter");
     await page.locator('.lane-header[data-stem="bass"] .lane-icon-toggle').click();
     await expect.poll(() => summary(page)).toMatchObject({ speed: 0.75, bassMuted: true });
 
@@ -353,7 +354,8 @@ test.describe("a song's key after switching songs (#781)", () => {
 
     await openSong(page, JOB_ID);
     await expect.poll(() => summary(page)).toMatchObject({ speed: 0.75, bassMuted: true });
-    await expect(page.locator("#t-speed-075")).toHaveClass(/active/);
+    await expect(page.locator("#t-speed-input")).toHaveValue("0.75");
+    await expect(page.locator("#t-speed-slider")).toHaveValue("0.75");
   });
 
   test("switching back and forth keeps one engine and no pitch chain for a key nothing is in", async ({ page }) => {

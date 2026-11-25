@@ -207,6 +207,24 @@ Because it is signed by nobody, **your phone will show a "your connection is
 not private" warning the first time**. Tap Advanced, then Continue. Once per
 device, per computer. Settings says so, in red, next to the toggle.
 
+### Crash reports (desktop app only)
+
+Off on every install. They are sent only after the person turns on **Settings,
+Privacy, Send crash reports** in the desktop app, and turning it off stops them
+at once. The Docker image, the Unraid template, a server and a source run in a
+browser never send crash reports: the code that sends them lives only in the
+desktop shell. No environment variable turns them on or points them elsewhere:
+the shell does not read `SENTRY_DSN`, `SENTRY_RELEASE` or `SENTRY_ENVIRONMENT`.
+The report address is compiled in from `STEMDECK_SENTRY_DSN`, which only the
+release workflows set; a desktop app built from source has none, so its Privacy
+tab says crash reports are not available and it never sends anything.
+A report goes out through the same HTTP client, and so the same proxy settings,
+as StemDeck's other downloads, and never follows a redirect.
+
+What a report holds, where it goes and how to have it deleted:
+[privacy notice](privacy.md). The duties that sit outside the code:
+[maintainer's checklist](privacy-checklist-maintainer.md).
+
 ## Environment variables for the desktop app
 
 These are for development and testing. Release builds only recognize the variables marked "release".

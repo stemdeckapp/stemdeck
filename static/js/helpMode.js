@@ -386,9 +386,7 @@ const HELP = [
   ["#t-loop", "help.loop"],
   ["#t-loop-start", "help.loopStart"],
   ["#t-loop-end", "help.loopEnd"],
-  ["#t-speed-05", "help.speedHalf"],
-  ["#t-speed-075", "help.speedSlow"],
-  ["#t-speed-1", "help.speedNormal"],
+  ["#t-speed-wrap", "help.speed", null, "speed.group"],
   ["#t-pitch-down", "help.keyDown"],
   ["#t-pitch-up", "help.keyUp"],
   ["#t-pitch-reset", "help.keyReset"],
@@ -574,6 +572,13 @@ const SETTINGS = [
     ["settings.onlineSources.termsTitle", "help.set.onlineSourcesAccept"],
     ["settings.onlineSources.title", "help.set.onlineSources"],
     ["settings.cookies.title", "help.set.cookies"],
+  ]],
+  // Crash reports (desktop only, off by default): the switch, and the view
+  // of the last report with its Refresh.
+  ["settings.tab.privacy", [
+    ["settings.crashReports.title", "help.set.crashReports"],
+    ["settings.crashReports.exampleTitle", "help.set.crashReportsExample"],
+    ["settings.crashReports.lastTitle", "help.set.crashReportsLast"],
   ]],
   ["settings.tab.logs", [
     ["settings.exportLogs.title", "help.set.exportLogs"],

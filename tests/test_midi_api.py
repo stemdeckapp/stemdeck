@@ -149,6 +149,19 @@ async def _settled(c: httpx.AsyncClient, stem: str = "piano", job_id: str = JOB)
     raise AssertionError("the MIDI run never ended")
 
 
+async def _saved_meta(job_dir: Path, stem: str, entry: dict) -> dict:
+    """metadata.json once the run's state is saved in it. The page sees the end
+    of a run first; the API task saves it to disk just after (app/api/midi.py
+    _persist), so reading the file at once raced that save."""
+    meta: dict = {}
+    for _ in range(200):
+        meta = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
+        if (meta.get("midi") or {}).get(stem) == entry:
+            return meta
+        await asyncio.sleep(0.025)
+    raise AssertionError(f"metadata.json never held the {stem} run: {meta.get('midi')}")
+
+
 def _refused(r: httpx.Response, status: int, code: str) -> None:
     assert r.status_code == status, r.text
     assert r.json()["code"] == code, r.text
@@ -278,7 +291,7 @@ async def test_a_run_writes_the_file_and_serves_its_state(jobs_dir, client, work
     assert record["bpm"] == 120.0 and record["seconds_audio"] == 3.0
     assert isinstance(record["seconds_run"], float) and record["created_at"].endswith("Z")
     # Kept where a restart and a registry rebuilt from the folder find it.
-    meta = json.loads((jobs_dir / JOB / "metadata.json").read_text(encoding="utf-8"))
+    meta = await _saved_meta(jobs_dir / JOB, "piano", state["midi"]["piano"])
     assert meta["midi"]["piano"]["state"] == "done"
     registry = json.loads((jobs_dir / "registry.json").read_text(encoding="utf-8"))
     assert next(j for j in registry["jobs"] if j["id"] == JOB)["midi"]["piano"]["notes"] == 7
@@ -807,5 +820,5 @@ async def test_the_tempo_of_a_song_loaded_from_its_folder(
         assert plan["beats_per_bar"] == 4
         assert plan["bar_start"] == pytest.approx(0.21 + 2 * 60 / 100.552, abs=1e-5)
     # The run's state is kept in that metadata.json, beside what was there.
-    meta = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
+    meta = await _saved_meta(job_dir, "bass", entry)
     assert meta["midi"]["bass"]["tempo_source"] == source and meta["bpm"] == 152

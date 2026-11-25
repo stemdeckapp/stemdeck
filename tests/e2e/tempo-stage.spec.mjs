@@ -31,7 +31,8 @@ test("slowed playback runs on the Signalsmith stage", async ({ page }) => {
   await recordWorkletMessages(page);
   await openStudio(page);
 
-  await page.locator("#t-speed-075").click();
+  await page.locator("#t-speed-input").fill("0.75");
+  await page.locator("#t-speed-input").press("Enter");
   await page.locator("#t-play").click();
 
   await expect.poll(

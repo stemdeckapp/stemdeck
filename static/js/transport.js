@@ -3,7 +3,8 @@ import { MIN_LOOP_SEC, loopDragResult } from "./loopRegion.js";
 import { tickStepAt } from "./rulerTicks.js";
 import {
   playBtn, stopBtn, loopBtn,
-  speedBtns,
+  speedSlider,
+  speedInput,
   pitchDownBtn,
   pitchUpBtn,
   pitchValueEl,
@@ -34,6 +35,7 @@ import { CLICK_SOUNDS } from "./clickSounds.js";
 import { t, onLanguageChange } from "./i18n.js";
 import { pitchBlockedKey } from "./pitchBus.js";
 import { refitFooter } from "./footerFit.js";
+import { SPEED_MIN, SPEED_MAX, FADER_MAX, SPEED_NOTCH, clampSpeed, parseSpeed, nextNotch } from "./speedParse.js";
 import { initRecordUi } from "./capture/recordUi.js";
 
 // Zoom range. 1 is the whole track fitted to the panel; there is nothing below
@@ -1149,107 +1151,100 @@ export function wireTransportButtons() {
   initRecordUi();
 }
 
-// Three buttons rather than a dial -- practice speeds for slowing a part
-// down, not a general-purpose tempo control (#269 follow-up): half speed,
-// a slow speed the player sets, and normal.
+// A stepped fader and a box to type into -- practice speeds for slowing a
+// part down, not a general-purpose tempo control (#269 follow-up).
 //
-// The slow one is set by the player (#701): scroll over it, or press the up
-// and down arrow keys on it, to move it a hundredth at a time between
-// SLOW_MIN and SLOW_MAX. Some fills want 0.75x, some only a nudge to 0.9x.
-// It was fixed at 0.75x when the stretch was WSOLA, whose artefacts made
-// anything slower hard to follow (#433); Signalsmith Stretch (#729) holds up
-// further down, so the floor is 0.5x. Kept between sessions, and the footer
-// keeps its width: the button only ever reads "0.xxx".
-const SLOW_MIN = 0.5;
-const SLOW_MAX = 0.99;
-const SLOW_DEFAULT = 0.75;
-const _SLOW_SPEED_KEY = "stemdeck:slow-speed";
-// A turn of the wheel fires many events; the rate itself is applied once
-// they stop, since every change of rate flushes the tempo stage.
-const SLOW_APPLY_DELAY_MS = 150;
+// Both go to the hundredth: some fills want 0.75x, some only a nudge to 0.93x
+// (#701). The fader runs from SPEED_MIN to FADER_MAX and is notched every
+// SPEED_NOTCH; scrolling over it jumps notch to notch, and dragging it or its
+// arrow keys move a hundredth. The box takes the whole SPEED_MIN..SPEED_MAX
+// range Karaoke Mode's presets reach, so it always reads the speed that is
+// playing; above 1x the fader sits pinned at its end (speedParse.js).
+//
+// This was three buttons (0.5x, a slow speed, 1x). The limit came from WSOLA,
+// whose artefacts made slow speeds hard to follow (#433), and from a scheduler
+// stutter on every change of rate (#722, fixed). The stretch is Signalsmith
+// Stretch now (#729), which holds up down to 0.5x, so any hundredth is
+// playable. There is one value and it is not kept between sessions: a track
+// opens at 1x, and the open mode's record of the song brings its own speed
+// back (restoreGlobals).
+export { SPEED_MIN, SPEED_MAX };
+// A drag or a turn of the wheel fires many events; the rate itself is applied
+// once they stop, since every change of rate flushes the tempo stage.
+const SPEED_APPLY_DELAY_MS = 150;
 
-const clampSlow = (rate) => Math.round(Math.min(SLOW_MAX, Math.max(SLOW_MIN, rate)) * 100) / 100;
-let _slowRate = SLOW_DEFAULT;
-let _slowApplyTimer = 0;
-const halfBtn = () => document.getElementById("t-speed-05");
-const slowBtn = () => document.getElementById("t-speed-075");
-const normalBtn = () => document.getElementById("t-speed-1");
+// The speed the control shows. It runs ahead of playbackSpeed (the one
+// playing) only while a deferred change waits for SPEED_APPLY_DELAY_MS.
+let _speed = 1;
+let _speedApplyTimer = 0;
 
-function paintSlowButton() {
-  const btn = slowBtn();
-  if (!btn) return;
-  btn.dataset.speed = String(_slowRate);
-  btn.textContent = `${_slowRate.toFixed(2)}x`;
-  btn.title = t("speed.slowTitle");
-}
-
-/**
- * Play at the speed of `btn`, one of the three buttons: half, the slow speed,
- * or normal. Without one, anything under 1 is the slow button's. The button
- * pressed is the one lit, so half speed and a slow speed set to 0.50x never
- * light together.
- */
-function applySpeed(rate, btn = null, { record = true } = {}) {
-  const pressed = btn ?? (rate >= 1 ? normalBtn() : slowBtn());
-  const applied = pressed === halfBtn() ? 0.5 : pressed === slowBtn() ? _slowRate : 1;
-  applyRate(applied, pressed, { record });
-}
-
-// The range any speed may take (Karaoke's presets and its 5% steps reach
-// 1.5x; the transport's three buttons stay inside it).
-export const SPEED_MIN = 0.5;
-export const SPEED_MAX = 1.5;
-
-/**
- * Play at exactly `rate` (clamped to SPEED_MIN..SPEED_MAX, in hundredths), from
- * anywhere other than the three buttons: Karaoke Mode's presets and steps. The
- * button whose speed it is lights (half at 0.5, the slow button at its own
- * speed, normal at 1); any other speed lights none, so the transport never
- * claims a speed that is not playing.
- */
-export function setSpeed(rate) {
-  const r = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(rate) || 1)) * 100) / 100;
-  const pressed = r === 0.5 ? halfBtn() : r === 1 ? normalBtn() : Math.abs(r - _slowRate) < 1e-6 ? slowBtn() : null;
-  applyRate(r, pressed);
-  return r;
-}
-
-function applyRate(applied, pressed, { record = true } = {}) {
-  // The speed is part of the open mode's saved record of the song. Not when
-  // the speed is only being put back (a song loads, a mode is restored).
-  if (record) setMixGlobals({ speed: applied });
-  setPlaybackSpeed(applied);
-  for (const b of speedBtns) {
-    if (!b) continue;
-    const on = b === pressed;
-    b.classList.toggle("active", on);
-    b.setAttribute("aria-checked", on ? "true" : "false");
+/** Show `_speed` on the fader and in the box. Leaves the box alone while it is being typed in. */
+function paintSpeed() {
+  const label = `${_speed.toFixed(2)}x`;
+  if (speedSlider) {
+    const onFader = Math.min(FADER_MAX, _speed);
+    speedSlider.value = String(onFader);
+    speedSlider.style.setProperty("--speed-frac", String((onFader - SPEED_MIN) / (FADER_MAX - SPEED_MIN)));
+    // The speed that is playing, even when the fader is pinned at 1x.
+    speedSlider.setAttribute("aria-valuetext", label);
   }
-  audioEngine?.setPlaybackRate?.(applied);
+  if (speedInput) {
+    if (document.activeElement !== speedInput) speedInput.value = _speed.toFixed(2);
+    // Lit when not at 1x, so "this is not the song's own speed" reads at a glance.
+    speedInput.closest(".speed-value")?.classList.toggle("active", _speed !== 1);
+  }
+}
+
+/**
+ * Play at `rate`. `record` keeps it in the open mode's saved record of the
+ * song; not when the speed is only being put back (a song loads, a mode is
+ * restored). A rate already playing is not applied again, since applying
+ * restarts the sources, unless `force` says the engine may be a new one.
+ */
+function applyRate(rate, { record = true, force = false } = {}) {
+  clearTimeout(_speedApplyTimer);
+  if (record) setMixGlobals({ speed: rate });
+  if (!force && rate === playbackSpeed) return;
+  setPlaybackSpeed(rate);
+  audioEngine?.setPlaybackRate?.(rate);
   if (multitrack) {
     for (const a of (multitrack.audios ?? [])) {
-      try { a.playbackRate = applied; } catch { /* noop */ }
+      try { a.playbackRate = rate; } catch { /* noop */ }
     }
   }
 }
 
-/** Move the slow speed by `steps` hundredths, and play at it. */
-function nudgeSlowSpeed(steps) {
-  const next = clampSlow(_slowRate + steps / 100);
-  if (next === _slowRate) return;
-  _slowRate = next;
-  paintSlowButton();
-  storeSet(_SLOW_SPEED_KEY, _slowRate).catch((e) => console.warn("[transport] failed to save the slow speed:", e));
-  clearTimeout(_slowApplyTimer);
-  _slowApplyTimer = setTimeout(() => applySpeed(_slowRate, slowBtn()), SLOW_APPLY_DELAY_MS);
+/**
+ * Show `rate`, held to SPEED_MIN..`max` in hundredths, and play at it.
+ * `defer` shows it at once but applies it only once the changes stop coming.
+ * Returns the speed now shown; a rate that is not a number changes nothing.
+ */
+function changeSpeed(rate, { defer = false, record = true, force = false, max = SPEED_MAX } = {}) {
+  const r = clampSpeed(rate, SPEED_MIN, max);
+  if (!Number.isFinite(r)) return _speed;
+  _speed = r;
+  paintSpeed();
+  clearTimeout(_speedApplyTimer);
+  if (defer) _speedApplyTimer = setTimeout(() => applyRate(_speed, { record }), SPEED_APPLY_DELAY_MS);
+  else applyRate(r, { record, force });
+  return r;
+}
+
+/**
+ * Play at exactly `rate` (clamped to SPEED_MIN..SPEED_MAX, in hundredths), from
+ * outside the footer: Karaoke Mode's presets and steps. The fader and the box
+ * show it, the box with its real value even above 1x. Recorded in the open
+ * mode's record, like a speed set in the footer.
+ */
+export function setSpeed(rate) {
+  return changeSpeed(Number(rate) || 1);
 }
 
 
 // ── Transpose (#245) ────────────────────────────────────────────────────────
 //
-// Semitones, not a continuous dial, for the same reason the speed control uses
-// presets: this is for moving a backing track into a singer's range, and every
-// useful destination is a whole semitone away.
+// Semitones, not a continuous dial: this is for moving a backing track into a
+// singer's range, and every useful destination is a whole semitone away.
 //
 // Capped at a fifth rather than an octave. The worklet stretches then resamples,
 // and past roughly five semitones that starts to be audible on sustained
@@ -1351,10 +1346,8 @@ export function resetAllKeys() {
 export function restoreGlobals() {
   _pitchSemitones = mixGlobals.pitch;
   renderPitch();
-  const r = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, mixGlobals.speed)) * 100) / 100;
-  if (r === playbackSpeed) return;
-  const pressed = r === 0.5 ? halfBtn() : r === 1 ? normalBtn() : Math.abs(r - _slowRate) < 1e-6 ? slowBtn() : null;
-  applyRate(r, pressed, { record: false });
+  // Not recorded; and not applied when it is already playing (applyRate).
+  changeSpeed(mixGlobals.speed, { record: false });
 }
 
 export function updatePitchAvailability(available) {
@@ -1370,35 +1363,56 @@ function wirePitchControl() {
 }
 
 /** A song is being torn down or opened: back to 1x, and not remembered (the
- * song's own saved speed comes back with its mix: restoreGlobals). */
+ * song's own saved speed comes back with its mix: restoreGlobals). Applied
+ * even if 1x is already playing, since the engine may be a new one. */
 export function resetSpeed() {
-  applySpeed(1.0, null, { record: false });
+  changeSpeed(1, { record: false, force: true });
 }
 
 function wireSpeedControl() {
-  for (const btn of speedBtns) {
-    btn?.addEventListener("click", () => applySpeed(parseFloat(btn.dataset.speed), btn));
+  paintSpeed();
+  if (speedSlider) {
+    // The fader only reaches FADER_MAX; a faster speed set elsewhere stays
+    // until the fader is moved.
+    speedSlider.addEventListener("input", () => changeSpeed(parseFloat(speedSlider.value), { defer: true, max: FADER_MAX }));
+    speedSlider.addEventListener("change", () => changeSpeed(parseFloat(speedSlider.value), { max: FADER_MAX }));
+    speedSlider.addEventListener("dblclick", () => changeSpeed(1));
+    speedSlider.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      if (!e.deltaY) return;
+      const dir = e.deltaY < 0 ? 1 : -1;
+      // Pinned at its end above 1x: up has nowhere to go on the fader, and
+      // down comes back onto its notches.
+      if (dir > 0 && _speed >= FADER_MAX) return;
+      changeSpeed(nextNotch(_speed, dir), { defer: true, max: FADER_MAX });
+    }, { passive: false });
   }
-  const slow = slowBtn();
-  if (!slow) return;
-  paintSlowButton();
-  onLanguageChange(paintSlowButton);
-  slow.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    if (e.deltaY) nudgeSlowSpeed(e.deltaY < 0 ? 1 : -1);
-  }, { passive: false });
-  slow.addEventListener("keydown", (e) => {
+  if (!speedInput) return;
+  const commit = () => {
+    const rate = clampSpeed(parseSpeed(speedInput.value));
+    // Nonsense is ignored, and the box goes back to the speed shown.
+    if (Number.isFinite(rate) && rate !== _speed) changeSpeed(rate);
+    speedInput.value = _speed.toFixed(2);
+  };
+  speedInput.addEventListener("focus", () => speedInput.select());
+  speedInput.addEventListener("change", commit);
+  speedInput.addEventListener("blur", commit);
+  speedInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); speedInput.blur(); return; }
+    if (e.key === "Escape") { e.preventDefault(); speedInput.value = _speed.toFixed(2); speedInput.blur(); return; }
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
-    nudgeSlowSpeed(e.key === "ArrowUp" ? 1 : -1);
+    const typed = clampSpeed(parseSpeed(speedInput.value));
+    const step = (e.shiftKey ? SPEED_NOTCH : 0.01) * (e.key === "ArrowUp" ? 1 : -1);
+    changeSpeed((Number.isFinite(typed) ? typed : _speed) + step, { defer: true });
+    speedInput.value = _speed.toFixed(2);
   });
-  storeGet(_SLOW_SPEED_KEY, null).then((saved) => {
-    if (typeof saved !== "number" || !Number.isFinite(saved)) return;
-    const wasSlow = slow.classList.contains("active");
-    _slowRate = clampSlow(saved);
-    paintSlowButton();
-    if (wasSlow) applySpeed(_slowRate, slow);
-  }).catch(() => {});
+  speedInput.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (!e.deltaY) return;
+    changeSpeed(_speed + (e.deltaY < 0 ? 0.01 : -0.01), { defer: true });
+    speedInput.value = _speed.toFixed(2);
+  }, { passive: false });
 }
 
 // ─── Click track ────────────────────────────────────────────

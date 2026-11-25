@@ -107,12 +107,22 @@ jobs:
           Write-Host "Wrote version $version to all version files"
 
       - name: build Windows NVIDIA
+        # The crash report address (desktop/src-tauri/src/telemetry.rs reads it
+        # at compile time). A DSN only allows sending reports, never reading
+        # them. Set on this step alone, never echoed, never in PR checks.
+        env:
+          STEMDECK_SENTRY_DSN: ${{ secrets.STEMDECK_SENTRY_DSN }}
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64.NVIDIA `
             -PackageVersion "$env:REF_NAME"
 
       - name: build Windows CPU
+        # The crash report address (desktop/src-tauri/src/telemetry.rs reads it
+        # at compile time). A DSN only allows sending reports, never reading
+        # them. Set on this step alone, never echoed, never in PR checks.
+        env:
+          STEMDECK_SENTRY_DSN: ${{ secrets.STEMDECK_SENTRY_DSN }}
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/make-portable.ps1 `
             -PackageName StemDeck-Windows-x64 `

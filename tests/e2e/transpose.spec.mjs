@@ -167,13 +167,17 @@ test.describe("transpose", () => {
     // The two share a worklet, and the pitch stage changes the stretch ratio
     // the speed control also depends on. They have to stay independent.
     await openStudio(page);
-    await page.locator("#t-speed-075").click();
-    await expect(page.locator("#t-speed-075")).toHaveClass(/active/);
+    const speed = page.locator("#t-speed-input");
+    const rate = () => page.evaluate(async () => (await import("/js/state.js")).playbackSpeed);
+    await speed.fill("0.75");
+    await speed.press("Enter");
+    await expect.poll(rate).toBe(0.75);
 
     await up(page).click();
     await expect(value(page)).toHaveText("+1");
-    await expect(page.locator("#t-speed-075")).toHaveClass(/active/);
-    await expect(page.locator("#t-speed-1")).not.toHaveClass(/active/);
+    await expect(speed).toHaveValue("0.75");
+    await expect(page.locator("#t-speed-slider")).toHaveValue("0.75");
+    await expect.poll(rate).toBe(0.75);
   });
 
   test("reopening a track keeps its displayed and applied key", async ({ page }) => {

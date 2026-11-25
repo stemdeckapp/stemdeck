@@ -96,7 +96,8 @@ test.describe("Karaoke Mode", () => {
     await openStudio(page);
     // Advanced (the tests' mode): the vocals muted, played at 0.75x.
     await mute(page, "vocals", true);
-    await page.locator("#t-speed-075").click();
+    await page.locator("#t-speed-input").fill("0.75");
+    await page.locator("#t-speed-input").press("Enter");
     await expect.poll(async () => (await savedMix(page, "daw"))?.__global?.speed).toBe(0.75);
 
     // Practice: its own, not Advanced's.
@@ -130,6 +131,8 @@ test.describe("Karaoke Mode", () => {
     await expect(page.locator("#karaoke")).toBeHidden();
     await expect.poll(async () => (await mixOf(page)).drums?.[0]).toBe("-");
     expect(await speedOf(page)).toBe(0.75);
+    // The footer shows the speed put back, not Karaoke's.
+    await expect(page.locator("#t-speed-input")).toHaveValue("0.75");
     expect((await savedMix(page, "daw")).vocals.muted).toBe(true);
     expect((await savedMix(page, "daw")).drums.muted).toBe(false);
     expect((await savedMix(page, "practice")).bass.muted).toBe(true);
@@ -297,10 +300,14 @@ test.describe("Karaoke Mode", () => {
 
     await ev(page, async () => (await import("/js/transport.js")).setSpeed(1.25));
     expect(await ev(page, async () => (await import("/js/state.js")).playbackSpeed)).toBe(1.25);
-    for (const id of ["#t-speed-05", "#t-speed-075", "#t-speed-1"]) await expect(page.locator(id)).not.toHaveClass(/active/);
-    // Karaoke has no speed box, and the footer with the studio's speed
-    // buttons is hidden while it is open.
-    await expect(page.locator("#t-speed-1")).toBeHidden();
+    // The footer's box holds the real speed even above 1x, and its fader,
+    // which stops at 1x, is pinned at that end.
+    await expect(page.locator("#t-speed-input")).toHaveValue("1.25");
+    await expect(page.locator("#t-speed-slider")).toHaveValue("1");
+    await expect(page.locator("#t-speed-slider")).toHaveAttribute("aria-valuetext", "1.25x");
+    // Karaoke has no speed box of its own, and the footer with the studio's
+    // speed control is hidden while it is open.
+    await expect(page.locator("#t-speed-wrap")).toBeHidden();
     await expect(kk(page, ".kk-speed")).toHaveCount(0);
 
     const pitch = await ev(page, async () => (await import("/js/transport.js")).getGlobalPitch());

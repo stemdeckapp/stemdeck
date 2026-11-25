@@ -115,6 +115,12 @@ jobs:
           echo "Wrote version $VERSION to all version files"
 
       - name: build Linux CPU
+        # The crash report address (desktop/src-tauri/src/telemetry.rs reads it
+        # at compile time). A DSN only allows sending reports, never reading
+        # them. Set on this step alone (the NVIDIA step reuses this binary),
+        # never echoed, never in PR checks.
+        env:
+          STEMDECK_SENTRY_DSN: ${{ secrets.STEMDECK_SENTRY_DSN }}
         run: |
           # PUBLISH_UPDATER_ASSETS=1 also emits the slim app-layer asset the
           # in-app updater downloads (#421). Built once here: StemDeck and

@@ -22,6 +22,9 @@ local-ip-address = "0.6"
 # certificate would ship its private key to every download, which is strictly
 # worse than plain http because it looks secure. See src/certs.rs.
 rcgen = "0.13"
+# Scrubbing crash reports (src/telemetry.rs). Already in the tree at this
+# version; named here because telemetry.rs uses it directly.
+regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 # Decoding the drag preview the UI renders for a lane. Already in the tree via
 # reqwest; named here because dragout.rs uses it directly.
@@ -31,6 +34,12 @@ base64 = "0.22"
 # start_drag only as a #[command], which would mean JavaScript naming the file
 # path. See dragout.rs.
 drag = "2.1.1"
+# Opt-in crash reports (src/telemetry.rs). No default features: no transport
+# of its own (reports go out through the reqwest client above), no contexts
+# (it reads the hostname), no debug images (they list library paths on disk),
+# no logs, no metrics, no sessions. Only the panic event builder and the stack
+# trace it needs; the panic hook itself is telemetry.rs's own.
+sentry = { version = "0.49.6", default-features = false, features = ["backtrace", "panic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

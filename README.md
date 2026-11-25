@@ -194,7 +194,7 @@ StemDeck is not trying to beat the commercial stem-separation services. It cover
 | **Where it runs** | On your own machine | Usually in the cloud, so your audio is uploaded |
 | **Account** | None | Usually required |
 | **Internet** | For links, the first model download, update checks, and song details and lyrics | Usually needed to process audio |
-| **Privacy** | Your audio is not uploaded; song names are looked up for details and lyrics | Processed on their servers, under their own retention policy |
+| **Privacy** | Your audio is not uploaded; song names are looked up for details and lyrics; crash reports only if you turn them on ([Privacy](#privacy)) | Processed on their servers, under their own retention policy |
 | **Separation model** | Demucs `htdemucs_6s`, open source from Meta | Their own models, which may give better results |
 | **Stems** | 6, plus lead and backing vocals | Varies; some offer more instruments |
 | **Speed** | Depends on your hardware: fast on a GPU, slow on a CPU | Fast on any hardware |
@@ -269,6 +269,14 @@ StemDeck is built on **[Python 3.12](https://python.org)** managed via **[uv](ht
 
 </details>
 
+
+<a name="privacy"></a>
+
+## <img src="imgs/readme/eye.svg" width="26" align="top" alt=""> Privacy
+
+Your audio, stems, recordings and library stay on the machine that runs StemDeck. The one thing StemDeck can send about itself is a crash report, and only from the desktop app, only after you turn on **Settings, Privacy, Send crash reports**. It is off on every install. A report holds the error message, with paths, file and song names, addresses and names taken out first, and the names of the StemDeck functions that were running with their line numbers (never a file name or a path), plus the app version, the operating system and the processor type. It holds no ID that points to you. Turning it off stops reports at once. The Docker image, the Unraid template and any server never send crash reports.
+
+What is sent, where it goes and how to have it deleted: [privacy notice](docs/privacy.md).
 
 <a name="disclaimer"></a>
 

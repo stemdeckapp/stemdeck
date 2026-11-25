@@ -6,7 +6,7 @@
     "A changed file matching 'hubs', or one under static/ or app/ that matches no rule, also adds 'core'. It no longer runs the whole suite: the full run on the next push to next-release catches what core misses.",
     "A changed file matching 'full' runs the whole suite: these change how the suite itself runs. So does a changed non-spec file under tests/e2e/ that matches no rule.",
     "uv.lock and pyproject.toml are hubs, not full: a dependency change can move backend behaviour the core set exercises, but it does not change how Playwright runs, and the desktop-update-gate check covers the lock separately.",
-    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and slow-speed drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
+    "Why the core set is these specs: each drives a hub through the real UI. help-mode reaches every control and its i18n.js sentence; artist-languages switches the UI language; partial-stems and export-menu read stems through state.js, mixer.js and app/api/stems.py; karaoke crosses mode.js, mixer.js, transport.js, sections.js and /api/jobs; master-live builds the master bus; transpose and speed-control drive the audio engine's pitch and speed; footer-time checks transport.js against the engine clock; zoom redraws the multitrack vendor lanes; lane-alignment and track-header lay out the mixer rows over --lane-h; playback-memory runs chunkedAudioEngine.js; trash-restore moves library rows through catalog.js and app/api/jobs.py; job-form-submit and error-banner cover job.js and the composer form; boot-failure covers main.js wiring and boot-diagnostics.",
     "Specs are named without tests/e2e/ and .spec.mjs. Paths are globs: * stays inside one folder, ** crosses folders.",
     "The rules were built from what the specs touch: modules they import with page.evaluate, element ids and classes the module renders, and the API routes they hit or stub."
   ],
@@ -14,7 +14,7 @@
   "smoke": ["modes", "library-rows", "queue-progress", "mode-stems", "settings-nav"],
 
   "core": [
-    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "slow-speed",
+    "help-mode", "artist-languages", "partial-stems", "export-menu", "karaoke", "master-live", "transpose", "speed-control",
     "footer-time", "zoom", "lane-alignment", "track-header", "playback-memory", "trash-restore", "job-form-submit",
     "error-banner", "boot-failure"
   ],
@@ -130,6 +130,11 @@
       "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode", "my-models"]
     },
     {
+      "why": "Crash reports are opt-in and desktop only: the page's forwarding guard, and the Privacy settings tab with its switch and Last report view",
+      "paths": ["static/js/crashReports.js", "static/js/catalog.js", "static/js/main.js", "static/css/settings.css"],
+      "specs": ["privacy-settings", "settings-nav", "help-mode"]
+    },
+    {
       "why": "Versions of a song (#804): the rows under a song in the library, the versions part of the Stems popover, the version-scoped mix and stem records, and the endpoints behind them",
       "paths": ["static/js/versions.js", "static/js/versionScope.js", "app/core/versions.py", "app/pipeline/stem_fill.py"],
       "specs": ["song-versions", "mode-stems", "library-rows", "help-mode", "partial-stems"]
@@ -225,15 +230,15 @@
     {
       "why": "Speed, pitch and transpose: the stretch stages and the pitch bus",
       "paths": [
-        "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js",
+        "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js", "static/js/speedParse.js",
         "static/vendor/signalsmith-stretch.js", "static/vendor/soundtouch-processor.js"
       ],
-      "specs": ["tempo-stage", "slow-speed", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
+      "specs": ["tempo-stage", "speed-control", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
     },
     {
       "why": "Footer and transport layout",
       "paths": ["static/js/footerFit.js"],
-      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "slow-speed"]
+      "specs": ["footer-fit", "footer-no-clip", "footer-time", "click-track", "export-menu", "speed-control"]
     },
     {
       "why": "Recording: capture, takes, take folders, track inputs, meters",
@@ -380,7 +385,7 @@
     {
       "why": "Seeing, hearing and downloading a Piano or Bass lane's MIDI: the piano roll over the waveform, the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
       "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/css/waves.css"],
-      "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "slow-speed"]
+      "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
     },
     {
       "why": "Settings > Models: the built-in models by purpose and their pure view (grouping, Used for, the state badge and size), the read-only /api/models route and inventory behind it, and the links from Separation and Transcription; My models lives in this tab",

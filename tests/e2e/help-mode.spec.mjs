@@ -75,11 +75,12 @@ test.describe("help mode", () => {
   test("pointing at a control explains it, under its own label", async ({ page }) => {
     await openStudio(page);
     await helpOn(page);
-    await page.locator("#t-speed-075").hover();
+    // The fader and the box are one control, with one entry for both.
+    await page.locator("#t-speed-slider").hover();
     await expect(tip(page)).toBeVisible();
-    await expect(tip(page).locator("b")).toHaveText("0.75x");
-    await expect(tip(page)).toContainText("three-quarter speed");
-    await expect(page.locator("#t-speed-075")).toHaveClass(/help-current/);
+    await expect(tip(page).locator("b")).toHaveText("Speed");
+    await expect(tip(page)).toContainText("without changing its pitch");
+    await expect(page.locator("#t-speed-wrap")).toHaveClass(/help-current/);
   });
 
   test("a lane's control names its instrument", async ({ page }) => {
@@ -220,7 +221,7 @@ test.describe("help mode", () => {
     await openStudio(page);
     await helpOn(page);
     await page.locator("#settingsBtn").hover();
-    for (const text of ["General", "Separation", "Transcription", "Keys", "Shows or hides the MIDI button on the Piano lane.", "Shows or hides the MIDI button on the Bass lane.", "How many notes a transcription keeps", "Library", "Song details", "Network", "Export", "Recording", "Experimental", "Logs", "Registry", "Port", "Online search and link import", "YouTube cookies", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches", "Use recommended", "Picks the model that separates the vocals.", "Run benchmark", "Apply recommendation", "Stops a running benchmark.", "Show all devices", "Shows the times for every device this computer has, not only the recommended one.", "Advanced: My models", "Option 1: a Hugging Face link", "Adds the model. StemDeck checks it with a short test run before it can be used.", "Check again", "Removes a model and its files. A stem that used it goes back to the recommended model.", "Models", "Built-in models", "Lists the models StemDeck comes with, grouped by what they do, with whether each one is downloaded, the space it takes and what it is used for now.", "Add or remove models in Models", "See the transcription model in Models"]) {
+    for (const text of ["General", "Separation", "Transcription", "Keys", "Shows or hides the MIDI button on the Piano lane.", "Shows or hides the MIDI button on the Bass lane.", "How many notes a transcription keeps", "Library", "Song details", "Network", "Export", "Recording", "Experimental", "Privacy", "Send crash reports", "Example report", "Last report", "Logs", "Registry", "Port", "Online search and link import", "YouTube cookies", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches", "Use recommended", "Picks the model that separates the vocals.", "Run benchmark", "Apply recommendation", "Stops a running benchmark.", "Show all devices", "Shows the times for every device this computer has, not only the recommended one.", "Advanced: My models", "Option 1: a Hugging Face link", "Adds the model. StemDeck checks it with a short test run before it can be used.", "Check again", "Removes a model and its files. A stem that used it goes back to the recommended model.", "Models", "Built-in models", "Lists the models StemDeck comes with, grouped by what they do, with whether each one is downloaded, the space it takes and what it is used for now.", "Add or remove models in Models", "See the transcription model in Models"]) {
       await expect(tip(page)).toContainText(text);
     }
   });
