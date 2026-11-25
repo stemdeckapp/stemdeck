@@ -381,6 +381,11 @@
       "why": "Seeing, hearing and downloading a Piano or Bass lane's MIDI: the piano roll over the waveform, the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
       "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/css/waves.css"],
       "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "slow-speed"]
+    },
+    {
+      "why": "Settings > Models: the built-in models by purpose and their pure view (grouping, Used for, the state badge and size), the read-only /api/models route and inventory behind it, and the links from Separation and Transcription; My models lives in this tab",
+      "paths": ["static/js/modelsSettings.js", "static/js/modelsView.js", "app/core/model_inventory.py", "app/api/config.py", "static/js/catalog.js", "static/css/settings.css"],
+      "specs": ["models-settings", "my-models", "settings-nav", "help-mode"]
     }
   ]
 }

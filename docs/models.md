@@ -148,7 +148,7 @@ the page asks you to run it again.
 
 ## My models (bring your own)
 
-Settings > Separation > **Advanced: My models** adds a separation model you
+Settings > Models > **Advanced: My models** adds a separation model you
 found yourself. StemDeck ships none of these, downloads none on its own, and
 checks no licence. The notice there says it plainly: the models come from third
 parties, and the model you load, its licence and your right to use it are your

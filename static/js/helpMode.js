@@ -513,8 +513,20 @@ const SETTINGS = [
     ["settings.speedTest.cancel", "help.set.speedTestCancel"],
     ["settings.speedTest.showAll", "help.set.speedTestDevices"],
     ["settings.speedTest.apply", "help.set.speedTestApply"],
-    // My models (myModels.js): the section, its form, and each model's
-    // buttons. "Add a model..." in a stem's list is in the stem sentences.
+    ["settings.models.open", "help.set.modelsOpen"],
+  ]],
+  // MIDI from the Piano and Bass lanes (transcriptionSettings.js).
+  ["settings.tab.transcription", [
+    ["settings.midi.keys.title", "help.set.midiKeys"],
+    ["settings.midi.bass.title", "help.set.midiBass"],
+    ["settings.midi.detail.title", "help.set.midiDetail"],
+    ["settings.models.openTranscription", "help.set.modelsOpenTranscription"],
+  ]],
+  // Every model in one place: the built-in ones by purpose (modelsSettings.js),
+  // then My models (myModels.js): the section, its form, and each model's
+  // buttons. "Add a model..." in a stem's list is in the stem sentences.
+  ["settings.tab.models", [
+    ["settings.models.builtIn.title", "help.set.modelsBuiltIn"],
     ["settings.myModels.title", "help.set.myModels"],
     ["settings.myModels.link.label", "help.set.myModelsLink"],
     ["settings.myModels.file.choose", "help.set.myModelsFile"],
@@ -525,12 +537,6 @@ const SETTINGS = [
     ["settings.myModels.cancel", "help.set.myModelsCancel"],
     ["settings.myModels.check", "help.set.myModelsCheck"],
     ["settings.myModels.remove", "help.set.myModelsRemove"],
-  ]],
-  // MIDI from the Piano and Bass lanes (transcriptionSettings.js).
-  ["settings.tab.transcription", [
-    ["settings.midi.keys.title", "help.set.midiKeys"],
-    ["settings.midi.bass.title", "help.set.midiBass"],
-    ["settings.midi.detail.title", "help.set.midiDetail"],
   ]],
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],

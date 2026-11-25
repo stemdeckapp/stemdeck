@@ -1,6 +1,8 @@
-// Settings > Separation, "My models": add a model of your own (a Hugging Face
+// Settings > Models, "My models": add a model of your own (a Hugging Face
 // link, or a model file and its config file from this computer), the list of
-// the models you added, and Check again, Cancel and Remove on each.
+// the models you added, what each is used for, and Check again, Cancel and
+// Remove on each. Wired by separationSettings.js, whose stem selects offer a
+// model once it is usable and whose "Add a model..." opens this section.
 //
 // The section is static HTML in catalog.js (".my-models-group"), hidden until
 // GET /api/my-models answers: an older server has no route and no section.
@@ -14,11 +16,14 @@
 //   field is disabled with a line that says so, and files work either way.
 // - A model that became usable, or went, changes the stem selects: the caller's
 //   onModelsChanged reads the settings again so they repaint.
+// - "Used for" on each row is the stems the next job separates with it, from
+//   the settings answer the stem selects were drawn from (fromPlan).
 // - Every name and reason is written as text (textContent), never as HTML: a
 //   model name is the user's own text.
 
 import { t, getLanguage } from "./i18n.js";
 import { onOnlineSourcesChange, onlineSourcesFrom, onlineSourcesOn } from "./onlineSources.js";
+import { usedForLine } from "./modelsView.js";
 import {
   CONFIG_ACCEPT,
   MODEL_ACCEPT,
@@ -43,7 +48,8 @@ import {
   uploadPct,
 } from "./myModelsView.js";
 
-/** separationSettings.js asks for the section when "Add a model..." is picked. */
+/** separationSettings.js asks for the section when "Add a model..." is picked:
+ *  it opens the Models tab at the form. */
 export const OPEN_MY_MODELS_EVENT = "stemdeck:open-my-models";
 
 const API = "/api/my-models";
@@ -70,7 +76,7 @@ const usableSignature = (entries) =>
 
 /**
  * Wires the section in an open Settings overlay. Returns
- * { start, offered, fromSettings }, or null when the overlay has no section.
+ * { start, offered, fromSettings, fromPlan }, or null when the overlay has no section.
  *   onModelsChanged()  a model became usable or went: read the settings again
  *   onOffered()        the server has the routes: the selects may offer "Add a model..."
  */
@@ -117,6 +123,8 @@ export function wireMyModels(overlay, { onModelsChanged, onOffered } = {}) {
   // This install can run a model the user adds (GET says "available").
   let runnable = true;
   let signature = null;
+  // The settings answer "Used for" is read from (stem_models_resolved).
+  let plan = null;
   // The last status each row showed, so a change is said once.
   const shown = new Map();
 
@@ -242,6 +250,9 @@ export function wireMyModels(overlay, { onModelsChanged, onOffered } = {}) {
     main.append(status);
     // A link entry with no files: Check again fetches it again, which needs
     // online sources on. Said here, and Check again is off while they are off.
+    // What the next job separates with it; nothing while it is not usable.
+    const used = el("div", "settings-row-desc my-model-used", view.status === "ready" ? usedForLine({ id: m.id, use: "stems" }, plan, t, locale) : "");
+    main.append(used);
     const redownload = needsDownload(m);
     if (redownload) main.append(el("div", "settings-row-desc my-model-redownload", t("settings.myModels.row.redownload")));
 
@@ -530,14 +541,25 @@ export function wireMyModels(overlay, { onModelsChanged, onOffered } = {}) {
     else addByFiles(s);
   });
 
-  // "Add a model..." in a stem select: open the section at the form.
+  // "Add a model..." in a stem select: open the Models tab, and the section
+  // at its form. The tab's click is the one way into a section (catalog.js).
   overlay.addEventListener(OPEN_MY_MODELS_EVENT, () => {
     if (!offered) return;
+    const pane = group.closest(".settings-pane");
+    if (pane?.dataset.pane) overlay.querySelector(`.settings-tab[data-tab="${pane.dataset.pane}"]`)?.click();
     open(true);
     group.scrollIntoView({ block: "start", behavior: "smooth" });
     const target = link && !link.disabled ? link : fileBtn;
     target?.focus({ preventScroll: true });
   });
+
+  /** What each stem is separated with now, from a settings answer: the rows'
+   *  "Used for" follows it. */
+  const fromPlan = (d) => {
+    if (!d || typeof d !== "object" || !d.stem_models_resolved) return;
+    plan = d;
+    if (entries.length) render();
+  };
 
   paintLinkAllowed();
   refreshAdd();
@@ -552,7 +574,9 @@ export function wireMyModels(overlay, { onModelsChanged, onOffered } = {}) {
         paintLinkAllowed();
       }
       if (pinnedNote) pinnedNote.hidden = !d?.stem_model_catalog?.deployment;
+      fromPlan(d);
     },
+    fromPlan,
     /** Shows the section when this server has the routes, and follows work under way. */
     async start() {
       try {

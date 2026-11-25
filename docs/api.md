@@ -35,7 +35,8 @@ The endpoints the web app itself uses. They are not a stable public interface an
 | POST | `/api/settings` | JSON with any of the settings; answers the same body as the GET. `{"stem_models": {...}}` below |
 | POST | `/api/speed-test` | Start the benchmark (Settings > Separation): `202 {"state": "running"}`; `409` with `code: "busy"` and a fixed `detail` while a song is separating, a song waits in a queue that is not paused, a stem fill or a Lead + Backing split holds the pipeline, a benchmark is already running, the server is stopping, or a stems folder move is in progress. A running benchmark holds the pipeline, so a song imported meanwhile waits for it |
 | POST | `/api/speed-test/cancel` | Cancel a running benchmark; answers the state as the GET does |
-| GET | `/api/my-models` | The models you added (Settings > Separation > My models). See [My models](#my-models) |
+| GET | `/api/models` | Every built-in model (Settings > Models): its purpose, licence, and state and size on disk. Read-only. See [Built-in models](#built-in-models) |
+| GET | `/api/my-models` | The models you added (Settings > Models > My models). See [My models](#my-models) |
 | POST | `/api/my-models/link` | Add a model from a Hugging Face link: `202` and the new entry |
 | POST | `/api/my-models/upload` | Add a model from two files (multipart): `202` and the new entry |
 | POST | `/api/my-models/{id}/check` | Check a model again: `202` and the entry |
@@ -276,9 +277,41 @@ works on it is refused with `409 job_busy`, as for every other run on a
 finished song. Deleting a song, emptying the Trash and the factory reset
 remove its `midi/` folder and `midi.json` with the rest of it.
 
+## Built-in models
+
+`GET /api/models` lists every model StemDeck comes with, for Settings > Models:
+
+```
+{
+  "models": [
+    {"id": "htdemucs_6s", "group": "separation", "use": "stems",
+     "name": "HT Demucs 6 stems", "stems": ["vocals", ...], "license": "MIT",
+     "state": "downloaded", "size_bytes": 54996327, "download_bytes": 54996327,
+     "available": true},
+    ...
+  ],
+  "remove": false
+}
+```
+
+`group` is `separation` (the three separation models and the Karaoke 2 split),
+`transcription` (Basic Pitch) or `analysis` (Whisper for lyrics, the beat
+model). `use` is `stems`, `lead_backing`, `midi`, `lyrics`, `lyrics_gpu`,
+`lyrics_cpu` or `beats`. `state` is `downloaded`, `partial` (some files, or a
+pinned file at the wrong size), `not_downloaded`, `built_in` (Basic Pitch ships
+inside StemDeck) or `unknown` (the folder could not be worked out, for example
+when torch does not load). `size_bytes` is what is on disk now, or null;
+`download_bytes` is a full download, or null when unknown. `license` is null
+when the code does not know it. No path is ever in the answer. What a model is
+used for comes from `stem_models_resolved` and `transcribe_piano` /
+`transcribe_bass` in `GET /api/settings`, not from here. The song-sections
+model is not listed: the Hugging Face hub caches it under a layout only its
+package names. Built-in models are never removed through the API (`remove` is
+false): a running separation may be reading the file.
+
 ## My models
 
-Models you add yourself (Settings > Separation > My models). StemDeck ships
+Models you add yourself (Settings > Models > My models). StemDeck ships
 none and checks no licence: see [Models](models.md#my-models-bring-your-own).
 The routes are refused from another site like every other write, and a link
 add makes network calls, so it is refused while online sources are off.
