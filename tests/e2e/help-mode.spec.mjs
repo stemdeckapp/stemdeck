@@ -75,11 +75,12 @@ test.describe("help mode", () => {
   test("pointing at a control explains it, under its own label", async ({ page }) => {
     await openStudio(page);
     await helpOn(page);
-    await page.locator("#t-speed-075").hover();
+    // The fader and the box are one control, with one entry for both.
+    await page.locator("#t-speed-slider").hover();
     await expect(tip(page)).toBeVisible();
-    await expect(tip(page).locator("b")).toHaveText("0.75x");
-    await expect(tip(page)).toContainText("three-quarter speed");
-    await expect(page.locator("#t-speed-075")).toHaveClass(/help-current/);
+    await expect(tip(page).locator("b")).toHaveText("Speed");
+    await expect(tip(page)).toContainText("without changing its pitch");
+    await expect(page.locator("#t-speed-wrap")).toHaveClass(/help-current/);
   });
 
   test("a lane's control names its instrument", async ({ page }) => {
