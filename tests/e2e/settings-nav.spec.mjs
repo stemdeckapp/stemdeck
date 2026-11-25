@@ -21,7 +21,7 @@ test("the sections are a vertical tablist with one tab in the tab order", async 
   const list = page.locator(".settings-tabs");
   await expect(list).toHaveAttribute("role", "tablist");
   await expect(list).toHaveAttribute("aria-orientation", "vertical");
-  await expect(page.locator(".settings-tab")).toHaveCount(10);
+  await expect(page.locator(".settings-tab")).toHaveCount(11);
   await expect(page.locator('.settings-tab[tabindex="0"]')).toHaveCount(1);
   await expect(activeTab(page)).toHaveAttribute("data-tab", "general");
   await expect(activeTab(page)).toHaveAttribute("aria-selected", "true");

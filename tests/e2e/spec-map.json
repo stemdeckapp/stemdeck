@@ -130,6 +130,11 @@
       "specs": ["online-sources", "search", "help-mode", "settings-nav", "settings-storage", "submit-error", "composer-arming", "import-failure", "mobile-vocal-mode", "my-models"]
     },
     {
+      "why": "Crash reports are opt-in and desktop only: the page's forwarding guard, and the Privacy settings tab with its switch and Last report view",
+      "paths": ["static/js/crashReports.js", "static/js/catalog.js", "static/js/main.js", "static/css/settings.css"],
+      "specs": ["privacy-settings", "settings-nav", "help-mode"]
+    },
+    {
       "why": "Versions of a song (#804): the rows under a song in the library, the versions part of the Stems popover, the version-scoped mix and stem records, and the endpoints behind them",
       "paths": ["static/js/versions.js", "static/js/versionScope.js", "app/core/versions.py", "app/pipeline/stem_fill.py"],
       "specs": ["song-versions", "mode-stems", "library-rows", "help-mode", "partial-stems"]

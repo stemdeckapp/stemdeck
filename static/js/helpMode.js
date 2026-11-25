@@ -541,6 +541,13 @@ const SETTINGS = [
     ["settings.onlineSources.title", "help.set.onlineSources"],
     ["settings.cookies.title", "help.set.cookies"],
   ]],
+  // Crash reports (desktop only, off by default): the switch, and the view
+  // of the last report with its Refresh.
+  ["settings.tab.privacy", [
+    ["settings.crashReports.title", "help.set.crashReports"],
+    ["settings.crashReports.exampleTitle", "help.set.crashReportsExample"],
+    ["settings.crashReports.lastTitle", "help.set.crashReportsLast"],
+  ]],
   ["settings.tab.logs", [
     ["settings.exportLogs.title", "help.set.exportLogs"],
     [null, "help.set.logs"],

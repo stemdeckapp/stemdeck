@@ -29,6 +29,7 @@ import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
 import { isOnlineSourcesRefusal, onlineSourcesFrom, onlineSourcesOn, setOnlineSourcesState } from "./onlineSources.js";
+import { crashReportsAvailable, readCrashReportExample, readCrashReports, saveCrashReports } from "./crashReports.js";
 import { FEATURED_ARTISTS, findFriendCard, groupsWithout, imageShape, pickFeatured, previousFaces } from "./featuredArtist.js";
 import { keepTabInside } from "./dialogFocus.js";
 import { t as i18nT, hasKey as i18nHasKey, plural as i18nPlural, LANGUAGES, getLanguage, setLanguage, onLanguageChange, applyTranslations } from "./i18n.js";
@@ -5104,6 +5105,92 @@ async function wireOnlineSources(overlay) {
   }
 }
 
+// Settings, Privacy: crash reports (desktop only, off by default). The shell
+// owns the state and the consent record (set_crash_reports in main.rs); the
+// switch shows what the shell answers, never what was clicked, so a save that
+// failed cannot look like it worked. Off needs nothing but the switch, the
+// same one move as on.
+function paintCrashReports(overlay, status) {
+  const sw = overlay.querySelector(".crash-reports-input");
+  const last = overlay.querySelector(".crash-reports-last");
+  if (sw) sw.checked = status?.on === true;
+  if (last) last.value = status?.lastReport || i18nT("settings.crashReports.lastEmpty");
+  // The shell says whether this build carries a report address at all; a
+  // build from source has none. Only its "false" disables: the page never
+  // guesses, and the shell refuses an "on" by itself anyway.
+  const unavailable = status?.available === false;
+  if (sw) sw.disabled = unavailable;
+  const note = overlay.querySelector(".crash-reports-unavailable");
+  if (note) note.hidden = !unavailable;
+}
+
+async function loadCrashReportsView(overlay) {
+  if (!crashReportsAvailable()) return;
+  try {
+    paintCrashReports(overlay, await readCrashReports());
+  } catch (e) {
+    console.warn("[crash reports] could not read the setting:", e);
+  }
+}
+
+// The example is made once per dialog: it is made-up data with this
+// machine's coarse facts, so there is nothing to refresh.
+async function loadCrashReportExample(overlay) {
+  const box = overlay.querySelector(".crash-reports-example");
+  if (!box) return;
+  try {
+    const json = await readCrashReportExample();
+    box.value = json || i18nT("settings.crashReports.exampleFailed");
+  } catch (e) {
+    console.warn("[crash reports] could not make the example:", e);
+    box.value = i18nT("settings.crashReports.exampleFailed");
+  }
+}
+
+function wirePrivacySettings(overlay) {
+  const sw = overlay.querySelector(".crash-reports-input");
+  const msg = overlay.querySelector(".crash-reports-msg");
+  if (!sw) return;
+  if (!crashReportsAvailable()) {
+    // A server, Docker or a browser: nothing to switch, and nothing is sent.
+    overlay.querySelectorAll("[data-pane='privacy'] .crash-desktop-only").forEach((el) => { el.hidden = true; });
+    const note = overlay.querySelector(".crash-reports-server-note");
+    if (note) note.hidden = false;
+    const exampleNote = overlay.querySelector(".crash-reports-example-server");
+    if (exampleNote) exampleNote.hidden = false;
+    return;
+  }
+  loadCrashReportExample(overlay);
+  const say = (key, isError = false) => {
+    if (!msg) return;
+    msg.textContent = key ? i18nT(key) : "";
+    msg.classList.toggle("error", Boolean(isError));
+  };
+  sw.checked = false;
+  sw.addEventListener("change", async () => {
+    const want = sw.checked;
+    sw.disabled = true;
+    try {
+      const status = await saveCrashReports(want);
+      paintCrashReports(overlay, status);
+      say(status?.on ? "settings.crashReports.on" : "settings.crashReports.off");
+    } catch (e) {
+      console.warn("[crash reports] could not save the setting:", e);
+      // Ask again rather than guess: a failed "off" is already off in the
+      // shell, a failed "on" is not on.
+      await loadCrashReportsView(overlay);
+      say("settings.crashReports.saveFailed", true);
+    } finally {
+      // Stays disabled in a build that cannot send (paintCrashReports).
+      const note = overlay.querySelector(".crash-reports-unavailable");
+      sw.disabled = Boolean(note && !note.hidden);
+      if (!sw.disabled) sw.focus();
+    }
+  });
+  overlay.querySelector(".crash-reports-refresh")?.addEventListener("click", () => loadCrashReportsView(overlay));
+  loadCrashReportsView(overlay);
+}
+
 // General settings: max track length (minutes), playlist import limit, and
 // MP4 video quality. Read live
 // and POSTed on change to /api/settings (same runtime store as the toggle).
@@ -5931,6 +6018,7 @@ const SETTINGS_ICON = {
   recording: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>',
   network: '<path d="M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>',
   experimental: '<path d="M9 3h6M10 3v6.5L4.6 18.4A1.7 1.7 0 0 0 6.1 21h11.8a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3"/><path d="M7.2 15h9.6"/>',
+  privacy: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/>',
   logs: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/>',
   registry: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
 };
@@ -5943,6 +6031,7 @@ const SETTINGS_SECTIONS = [
   { id: "recording", label: "settings.tab.recording", text: "Recording", desc: "settings.desc.recording" },
   { id: "network", label: "settings.tab.network", text: "Network", desc: "settings.desc.network" },
   { id: "experimental", label: "settings.tab.experimental", text: "Experimental", desc: "settings.desc.experimental" },
+  { id: "privacy", label: "settings.tab.privacy", text: "Privacy", desc: "settings.desc.privacy" },
   { id: "logs", label: "settings.tab.logs", text: "Logs", desc: "settings.desc.logs", group: "troubleshooting" },
   { id: "registry", label: "settings.tab.registry", text: "Registry", desc: "settings.desc.registry", group: "troubleshooting" },
 ];
@@ -6496,6 +6585,87 @@ function openLibraryEditor() {
           </div>
         </div>
       </div>
+      <!-- Crash reports (desktop only, off by default; docs/privacy.md). The
+           switch is the only way in, nothing is pre-ticked, and every feature
+           works the same with it off. wirePrivacySettings asks the shell for
+           the state: the page never decides it. -->
+      <div class="settings-pane hidden" data-pane="privacy" id="settings-pane-privacy" role="tabpanel" aria-labelledby="settings-tab-privacy">
+        <div class="settings-group">
+          <h4 class="settings-group-title" data-i18n="settings.group.crashReports">Crash reports</h4>
+          <p class="settings-server-note crash-reports-server-note" hidden data-i18n="settings.crashReports.serverNote">This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.</p>
+          <div class="settings-section">
+            <div class="settings-row crash-reports-row crash-desktop-only">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.title">Send crash reports</div>
+                <div class="settings-row-desc" id="crashReportsDesc" data-i18n="settings.crashReports.desc">Off unless you turn it on. When on, the desktop app sends a short report to StemDeck's developer each time it crashes or hits an error, so the problem can be found and fixed. Turning it off stops reports at once. Every feature works the same either way.</div>
+              </div>
+              <label class="settings-switch">
+                <input type="checkbox" role="switch" class="crash-reports-input" aria-label="Send crash reports" data-i18n-aria-label="settings.crashReports.title" aria-describedby="crashReportsDesc crashReportsMsg" />
+                <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+              </label>
+            </div>
+            <p class="settings-server-note crash-reports-unavailable" hidden data-i18n="settings.crashReports.unavailable">Crash reports are not available in this build. Nothing is ever sent from it.</p>
+            <div class="crash-reports-msg crash-desktop-only" id="crashReportsMsg" role="status" aria-live="polite"></div>
+            <div class="settings-row settings-row-stack">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.sentTitle">What a report holds</div>
+                <p class="crash-reports-promise" data-i18n="settings.crashReports.promise">Nothing personal is sent. A report never holds your name, email address, file or song names, folder paths, or any ID that points to you. Personal details are removed on your computer, before anything is sent, and you can read the exact report below.</p>
+                <ul class="crash-reports-list">
+                  <li data-i18n="settings.crashReports.sentError">The error message, and the names of the functions in StemDeck's code that were running, with their line numbers. Never a file name or a folder path. Folder paths, file and song names, web addresses, email addresses, IP addresses and long ID numbers are taken out of the message first.</li>
+                  <li data-i18n="settings.crashReports.sentVersion">The StemDeck version, and whether it is a release or a test build.</li>
+                  <li data-i18n="settings.crashReports.sentSystem">The operating system (Windows, macOS or Linux) and the processor type, such as x86_64.</li>
+                  <li data-i18n="settings.crashReports.sentGpu">How stems are separated here: CUDA, Apple MPS or the CPU. Never the graphics card's name.</li>
+                  <li data-i18n="settings.crashReports.sentPart">Whether the error came from the app window or from the part of the app that starts it.</li>
+                </ul>
+              </div>
+            </div>
+            <!-- Made-up data, built in Rust by the real scrubbing (crash_report_example),
+                 so it cannot drift from what a real report holds. Static once loaded. -->
+            <div class="settings-row settings-row-stack crash-reports-example-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.exampleTitle">Example report</div>
+                <div class="settings-row-desc crash-desktop-only" id="crashReportsExampleDesc" data-i18n="settings.crashReports.exampleDesc">Made-up sample data, not taken from your computer. It shows the exact shape a real report has. The fake folder path, song file name, email address and web address in the sample error are already replaced, as they would be in a real report.</div>
+                <div class="settings-row-desc crash-reports-example-server" hidden data-i18n="settings.crashReports.exampleServer">In the desktop app, an example report shows here. A server sends no reports, so there is nothing to show.</div>
+              </div>
+              <textarea class="settings-registry-view crash-reports-example crash-desktop-only" readonly spellcheck="false" aria-label="Example report (read only)" data-i18n-aria-label="settings.crashReports.exampleAria" aria-describedby="crashReportsExampleDesc" data-i18n="settings.logs.loading">Loading…</textarea>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.neverTitle">What is never sent</div>
+                <ul class="crash-reports-list">
+                  <li data-i18n="settings.crashReports.neverPerson">Your name, user name, email address, computer name, or any ID that could link one report to another or to you.</li>
+                  <li data-i18n="settings.crashReports.neverFiles">Your songs, stems, recordings, lyrics, or the names of any file or folder.</li>
+                  <li data-i18n="settings.crashReports.neverActivity">What you click, play or search for. StemDeck does not track how you use it.</li>
+                  <li data-i18n="settings.crashReports.neverIp">Your IP address is not put in a report. Like any connection, the report server sees it while the report arrives, and it is set not to store it.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.whereTitle">Where reports go</div>
+                <div class="settings-row-desc" data-i18n="settings.crashReports.where">To Sentry, a crash reporting service, which stores them in the European Union. Only StemDeck's developer can read them. They are never sold or shared, and they are deleted after a fixed time.</div>
+                <a class="crash-reports-notice" href="https://github.com/stemdeckapp/stemdeck/blob/main/docs/privacy.md" target="_blank" rel="noopener noreferrer" data-i18n="settings.crashReports.notice">Read the privacy notice</a>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack crash-desktop-only">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.crashReports.deleteTitle">Delete what was sent</div>
+                <div class="settings-row-desc" data-i18n="settings.crashReports.delete">A report carries nothing that points to you, so nobody can look your reports up by name. To have a report deleted, copy its event_id from Last report below and send it to the developer, using the contact in the privacy notice. For an older report, give the date and time of the crash.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section settings-section-fill crash-desktop-only">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <div class="settings-row-title" data-i18n="settings.crashReports.lastTitle">Last report</div>
+              <div class="settings-row-desc" data-i18n="settings.crashReports.lastDesc">The exact report sent most recently, as it was sent. Kept in memory only, and gone when StemDeck closes.</div>
+            </div>
+            <button class="settings-btn crash-reports-refresh" type="button" data-i18n="settings.logs.refresh">Refresh</button>
+          </div>
+          <textarea class="settings-registry-view crash-reports-last" readonly spellcheck="false" aria-label="Last report (read only)" data-i18n-aria-label="settings.crashReports.lastAria" data-i18n="settings.crashReports.lastEmpty">Nothing has been sent yet.</textarea>
+        </div>
+      </div>
       <div class="settings-pane hidden" data-pane="logs" id="settings-pane-logs" role="tabpanel" aria-labelledby="settings-tab-logs">
         <div class="settings-section">
           <div class="settings-row">
@@ -6669,6 +6839,7 @@ function openLibraryEditor() {
   wireGeneralSettings(overlay);
   wireSeparationSettings(overlay);
   wireOnlineSources(overlay);
+  wirePrivacySettings(overlay);
   wireVideoEncoderSetting(overlay, showError);
   wireAcoustidSetting(overlay);
   wireDiscogsSetting(overlay);
@@ -6756,6 +6927,7 @@ function selectSettingsTab(overlay, name, { deferRecording = false } = {}) {
   setSettingsHead(overlay, i18nT(section.label), i18nT(section.desc));
   if (name === "registry") loadRegistryView(overlay);
   if (name === "logs") loadLogsView(overlay);
+  if (name === "privacy") loadCrashReportsView(overlay);
   // The Recording tab holds the microphone and camera open while it shows.
   if (name === "recording") {
     if (!deferRecording) enterRecordingPane(overlay);

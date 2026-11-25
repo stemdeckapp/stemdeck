@@ -13,6 +13,7 @@ import { transposeExportFromHealth } from "./transposeExport.js";
 import { wireJobForm, showError } from "./job.js";
 import { initSearch } from "./search.js";
 import { refreshOnlineSources } from "./onlineSources.js";
+import { installCrashForwarding } from "./crashReports.js";
 import { wireTransportButtons } from "./transport.js";
 import { wireBeatGridUi } from "./beatgridUi.js";
 import { togglePlayPause, updateLoopRegionVisual, toggleMetronome, transport, setPlayheadTime, setLoopRange, clearLoop, isCountInRunning } from "./transport.js";
@@ -1436,6 +1437,9 @@ window.addEventListener("error", (e) => {
 window.addEventListener("unhandledrejection", (e) => {
   console.error("[app:unhandledrejection]", e.reason?.message ?? e.reason, "\n", e.reason?.stack ?? "");
 });
+// Desktop app only, and only while Settings, Privacy has crash reports on
+// (the shell checks that again for every error it is handed).
+installCrashForwarding();
 
 // ─── Bootstrap ───
 

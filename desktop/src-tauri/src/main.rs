@@ -6,6 +6,7 @@ mod dragout;
 mod dropin;
 mod mediaperm;
 mod reaper;
+mod telemetry;
 #[cfg(any(not(target_os = "macos"), test))]
 mod torchswap;
 
@@ -443,6 +444,9 @@ fn main() {
     #[cfg(target_os = "linux")]
     dmabuf::apply_at_startup();
     apply_portable_env();
+    // Reports a panic only once crash reports are on; until then it finds no
+    // reporter and passes straight to the previous hook.
+    telemetry::install_panic_hook();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -512,6 +516,11 @@ fn main() {
             // only; see mediaperm.rs for what each webview needs.
             let handle = app.handle().clone();
             mediaperm::install(&window, move || current_backend_url(&handle));
+
+            // Crash reports start only on a consent of this text version. Off
+            // the main thread: the store file can be several MB to load.
+            let consent_handle = app.handle().clone();
+            thread::spawn(move || apply_stored_crash_consent(&consent_handle));
 
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
@@ -642,6 +651,10 @@ fn main() {
             pick_exports_folder,
             current_exports_dir,
             start_audio_drag,
+            crash_reports_status,
+            crash_report_example,
+            set_crash_reports,
+            report_web_error,
             store_get,
             store_set,
             store_set_many,
@@ -936,9 +949,19 @@ fn store_get(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Va
     Ok(store.get(&key))
 }
 
+/// Keys the page may not write through store_set: the crash report consent
+/// is changed only by set_crash_reports, which also starts or stops the
+/// reporter, so the page cannot record a consent the person did not give.
+fn is_reserved_store_key(key: &str) -> bool {
+    key == telemetry::CONSENT_KEY
+}
+
 /// Set a value in the persistent user-data store and immediately flush to disk.
 #[tauri::command]
 fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    if is_reserved_store_key(&key) {
+        return Err("this setting is changed in Settings, Privacy".to_string());
+    }
     let path = documents_store_path(&app)?;
     let store = app.store(path).map_err(|e| e.to_string())?;
     store.set(key, value);
@@ -986,9 +1009,178 @@ fn store_set_many(
     app: tauri::AppHandle,
     entries: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    if entries.keys().any(|k| is_reserved_store_key(k)) {
+        return Err("this setting is changed in Settings, Privacy".to_string());
+    }
     let path = documents_store_path(&app)?;
     let store = app.store(path).map_err(|e| e.to_string())?;
     set_all_then_save(store.as_ref(), entries)
+}
+
+// ── Crash reports (opt-in; see telemetry.rs and docs/privacy.md) ────────────
+
+/// What Settings, Privacy shows: whether this build can send reports at all
+/// (a build from source carries no report address and cannot), whether they
+/// are on, the consent text version this build asks about, when consent was
+/// given, and the last report exactly as sent (memory only).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CrashReportsStatus {
+    available: bool,
+    on: bool,
+    version: u32,
+    given_at: Option<u64>,
+    last_report: Option<String>,
+}
+
+fn crash_reports_status_for(app: &tauri::AppHandle) -> CrashReportsStatus {
+    let reporter = telemetry::existing_reporter();
+    let on = reporter.is_some_and(|r| r.is_on());
+    let given_at = if on {
+        stored_consent(app).and_then(|v| telemetry::consent_given(Some(&v)))
+    } else {
+        None
+    };
+    CrashReportsStatus {
+        available: telemetry::available(),
+        on,
+        version: telemetry::CONSENT_VERSION,
+        given_at,
+        last_report: reporter.and_then(|r| r.last_report()),
+    }
+}
+
+fn stored_consent(app: &tauri::AppHandle) -> Option<serde_json::Value> {
+    let store = app.store(documents_store_path(app).ok()?).ok()?;
+    store.get(telemetry::CONSENT_KEY)
+}
+
+/// Start the reporter for this build. The GPU class comes from the device
+/// setup already persisted; nothing is probed for it. A build without a
+/// report address refuses here, before any reporter or client exists.
+fn start_crash_reports() -> Result<(), String> {
+    let dsn = telemetry::build_dsn()
+        .ok_or_else(|| "crash reports are not available in this build".to_string())?;
+    telemetry::reporter().enable(Some(dsn), crash_report_facts(), telemetry::http_transport)
+}
+
+/// What a report from this machine says about it (os, cpu, gpu class,
+/// release), and the names to take out of its text.
+fn crash_report_facts() -> telemetry::Facts {
+    let torch_device = local_data_dir()
+        .ok()
+        .and_then(|d| read_config_str(&d, "torchDevice"));
+    telemetry::Facts::for_this_build(torch_device.as_deref(), telemetry::Redactions::from_env())
+}
+
+/// The example report Settings, Privacy shows before anything is turned on:
+/// a made-up error put through the real scrubbing, with this machine's own
+/// coarse facts. Read-only: no consent needed, no client made, nothing sent.
+#[tauri::command]
+async fn crash_report_example() -> Result<String, String> {
+    off_main_thread(|| Ok(telemetry::example_report(&crash_report_facts()))).await
+}
+
+/// At launch: start reporting only if a consent of this text version is on
+/// record. Anything else, an older version included, leaves reports off.
+fn apply_stored_crash_consent(app: &tauri::AppHandle) {
+    let _change = lock_crash_consent();
+    if !telemetry::available() {
+        return;
+    }
+    if telemetry::consent_given(stored_consent(app).as_ref()).is_some() {
+        if let Err(e) = start_crash_reports() {
+            if let Ok(data_dir) = local_data_dir() {
+                append_to_setup_log(&data_dir, &format!("crash reports could not start: {e}"));
+            }
+        }
+    }
+}
+
+/// Async because the first read of the store loads the whole file.
+#[tauri::command]
+async fn crash_reports_status(app: tauri::AppHandle) -> Result<CrashReportsStatus, String> {
+    off_main_thread(move || Ok(crash_reports_status_for(&app))).await
+}
+
+/// One consent change at a time, the launch-time start included: a "turn
+/// off" that lands while the launch is still reading an earlier "on" must
+/// not be undone by it.
+fn lock_crash_consent() -> std::sync::MutexGuard<'static, ()> {
+    static CHANGE: Mutex<()> = Mutex::new(());
+    CHANGE.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Turn crash reports on or off. `version` is the consent text the page
+/// showed; a page and a build that disagree on it cannot turn reports on.
+/// Off takes effect before anything else, the store included, so a failed
+/// save never leaves reports running.
+#[tauri::command]
+async fn set_crash_reports(
+    app: tauri::AppHandle,
+    on: bool,
+    version: u32,
+) -> Result<CrashReportsStatus, String> {
+    off_main_thread(move || set_crash_reports_blocking(&app, on, version)).await
+}
+
+fn set_crash_reports_blocking(
+    app: &tauri::AppHandle,
+    on: bool,
+    version: u32,
+) -> Result<CrashReportsStatus, String> {
+    let _change = lock_crash_consent();
+    if !on {
+        if let Some(r) = telemetry::existing_reporter() {
+            r.disable();
+        }
+    }
+    let store = app
+        .store(documents_store_path(app)?)
+        .map_err(|e| e.to_string())?;
+    if on {
+        // Refused before the consent is written: this build cannot send.
+        if !telemetry::available() {
+            return Err("crash reports are not available in this build".to_string());
+        }
+        if version != telemetry::CONSENT_VERSION {
+            return Err("the consent text changed; reopen Settings".to_string());
+        }
+        store.set(
+            telemetry::CONSENT_KEY,
+            telemetry::consent_record(true, telemetry::now_secs()),
+        );
+        store.save().map_err(|e| e.to_string())?;
+        if let Err(e) = start_crash_reports() {
+            if let Some(r) = telemetry::existing_reporter() {
+                r.disable();
+            }
+            store.set(
+                telemetry::CONSENT_KEY,
+                telemetry::consent_record(false, telemetry::now_secs()),
+            );
+            let _ = store.save();
+            return Err(e);
+        }
+    } else {
+        // Already stopped above; this records the withdrawal.
+        store.set(
+            telemetry::CONSENT_KEY,
+            telemetry::consent_record(false, telemetry::now_secs()),
+        );
+        store.save().map_err(|e| e.to_string())?;
+    }
+    Ok(crash_reports_status_for(app))
+}
+
+/// An error from the web page. Gated here, not only in the page: with
+/// reports off this returns false and nothing is kept.
+#[tauri::command]
+async fn report_web_error(report: telemetry::WebReport) -> bool {
+    match telemetry::existing_reporter() {
+        Some(r) => r.capture_web(&report),
+        None => false,
+    }
 }
 
 /// Clear the persistent user-data store entirely (Settings -> General ->
@@ -998,6 +1190,11 @@ fn store_set_many(
 /// no fixed enumeration to clear individually.
 #[tauri::command]
 fn reset_user_data(app: tauri::AppHandle) -> Result<(), String> {
+    // The consent record goes with the rest of the store, so reports stop now.
+    let _change = lock_crash_consent();
+    if let Some(r) = telemetry::existing_reporter() {
+        r.disable();
+    }
     let path = documents_store_path(&app)?;
     let store = app.store(path).map_err(|e| e.to_string())?;
     store.clear();
@@ -9992,6 +10189,15 @@ mod tests {
             serde_json::Value::Object(store.values.borrow().clone()),
             given
         );
+    }
+
+    /// The page cannot record a crash report consent through the store: only
+    /// set_crash_reports writes it, and starts or stops the reporter with it.
+    #[test]
+    fn the_crash_report_consent_key_is_reserved() {
+        assert!(super::is_reserved_store_key(super::telemetry::CONSENT_KEY));
+        assert!(!super::is_reserved_store_key("stemdeck:mix:e2e0deadbeef"));
+        assert!(!super::is_reserved_store_key("stemdeck.folders"));
     }
 
     #[test]
