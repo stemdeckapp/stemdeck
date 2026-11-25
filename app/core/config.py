@@ -1141,6 +1141,97 @@ TRANSCRIBE_WORD_GAP_SEC = 0.3
 # line) in the plain text.
 TRANSCRIBE_STANZA_GAP_SEC = 4.0
 
+# MIDI from the piano and bass stems (app/pipeline/midi.py, midi_worker.py):
+# notes transcribed with Spotify's Basic Pitch 0.4.0 (Apache-2.0), vendored in
+# app/_vendor/transcribe with its ONNX model, run on the CPU in a fresh worker
+# process per request. Not the lyrics transcription above, which is Whisper.
+#
+# Measured in the 2026-11-25 spike (data/transcribe-spike/bp/out/results.json,
+# onnxruntime 1.29 on the CPU): a 359 s song took 6.3 to 12.3 s per stem and
+# a 229 s song 4.6 to 7.8 s, with a 0.4 to 0.5 GB peak working set. Basic
+# Pitch decodes the whole file before it starts, and memory grew by about
+# 0.9 MB per second of audio, so the length is capped, checked from the file
+# header before anything is decoded: 1200 s is a 20 minute song, about 1.5 GB.
+TRANSCRIBE_MAX_SECONDS = max(30, _env_int("STEMDECK_TRANSCRIBE_MAX_SECONDS", 1200))
+# The whole run. At the spike's slowest rate (12.3 s for 359 s) the longest
+# song allowed takes about 45 s; ten times that is a hang, not a slow machine.
+TIMEOUT_MIDI = max(60, _env_int("STEMDECK_TIMEOUT_MIDI", 600))
+# No output for this long is a hang. The worker reports each 2 s model window,
+# and decoding the longest song allowed is the one quiet stretch.
+TIMEOUT_MIDI_STALL = max(30, _env_int("STEMDECK_TIMEOUT_MIDI_STALL", 120))
+# The stems a MIDI file is made from, and the pitch range searched in each
+# (Hz, Basic Pitch's minimum_frequency and maximum_frequency). Piano: A0 to
+# about C8, the 88 keys. Bass: B0 on a five-string down to 30 Hz, up to 400 Hz,
+# above the 24th fret of a four-string's G string (392 Hz). The spike ran with
+# exactly these ranges.
+MIDI_STEMS = ("piano", "bass")
+MIDI_STEM_RANGES: dict[str, tuple[float, float]] = {
+    "piano": (27.5, 4200.0),
+    "bass": (30.0, 400.0),
+}
+# The General MIDI program and track name of each stem's file: 0 Acoustic
+# Grand Piano, 33 Electric Bass (finger).
+MIDI_STEM_PROGRAMS: dict[str, tuple[int, str]] = {
+    "piano": (0, "Keys"),
+    "bass": (33, "Bass"),
+}
+# How much detail is kept, as Basic Pitch's thresholds (0..1) and minimum
+# note length (ms). The spike's numbers on the same two songs:
+# - Basic Pitch's own defaults (onset 0.5, frame 0.3, 127.7 ms) drop the 16th
+#   notes of a bass line at 144 BPM (104 ms each); 58 ms kept about 46% more
+#   bass notes.
+# - Strict thresholds (onset 0.7, frame 0.5) found 40 to 65% fewer notes:
+#   485 piano notes against 1208 on the 359 s song, 179 bass against 433 on
+#   the 229 s one. Fewer false notes, and fewer real ones.
+# "balanced" keeps the default thresholds with an 80 ms floor (a 16th at up
+# to about 187 BPM); "detailed" is the 58 ms run with slightly lower
+# thresholds; "clean" is the strict run at the default length.
+MIDI_DETAILS = ("balanced", "detailed", "clean")
+MIDI_DEFAULT_DETAIL = "balanced"
+MIDI_DETAIL_PRESETS: dict[str, dict[str, float | bool]] = {
+    "balanced": {
+        "onset_threshold": 0.5,
+        "frame_threshold": 0.3,
+        "minimum_note_length": 80.0,
+        "melodia_trick": True,
+    },
+    "detailed": {
+        "onset_threshold": 0.4,
+        "frame_threshold": 0.25,
+        "minimum_note_length": 58.0,
+        "melodia_trick": True,
+    },
+    "clean": {
+        "onset_threshold": 0.7,
+        "frame_threshold": 0.5,
+        "minimum_note_length": 127.7,
+        "melodia_trick": True,
+    },
+}
+# The written file: ticks per quarter note, and the velocity range a note's
+# amplitude (0..1) maps onto, so the quietest note is still heard and the
+# loudest leaves headroom.
+MIDI_PPQ = 480
+MIDI_VELOCITY_MIN = 20
+MIDI_VELOCITY_MAX = 110
+# A beat grid is trusted for the file's tempo and bar lines when it is steady
+# (the beat grid's own regularity gate, BEATGRID_MAX_IRREGULARITY below) and
+# at least this many of its beats sit on a detected onset. The same floor the
+# section refiner uses to trust the grid for snapping
+# (SECTION_REFINEMENT_GRID_MIN_CONFIDENCE). A grid the user edited is trusted
+# as it is. Anything else is written at 120 BPM, tempo_source "default".
+# Measured on the six beat_this grids in the repository's test libraries
+# (2026-11-25): the three steady songs scored irregularity 0.021 to 0.026 and
+# confidence 90 to 95 (one meter each, or three bar marks); the three that
+# change tempo or meter all the way through (Bohemian Rhapsody, What Is This
+# Feeling, one more) scored 62, 64 and 68 with 6 to 11 bar marks, and one of
+# them irregularity 0.68. One tempo cannot describe those, so they get the
+# default; the gap between 68 and 90 is where 70 sits. Job.bpm (librosa, the
+# first 180 s, no beat times) is never used: on What Is This Feeling it says
+# 152 where the grid's median beat says 104.
+MIDI_TEMPO_MIN_CONFIDENCE = SECTION_REFINEMENT_GRID_MIN_CONFIDENCE
+MIDI_DEFAULT_BPM = 120.0
+
 # Beat-grid analysis parameters. 22050 Hz is plenty for onset detection (the
 # percussive energy that matters lives well under 11 kHz) and keeps the decode
 # cheap; hop 512 gives ~23 ms grid resolution, the librosa default pairing.

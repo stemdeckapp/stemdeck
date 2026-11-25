@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS
+from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS, MIDI_STEMS
 from app.core.versions import VERSION_ID_RE, active_of, clean_versions, versions_of
 from app.core.vocal_split_outcome import INTERRUPTED, message_for
 
@@ -249,6 +249,55 @@ def public_stem_undo(undo: object) -> dict[str, dict[str, Any]]:
     return out
 
 
+# MIDI from a stem (app/pipeline/midi.py): the stems it is made from, what
+# a run can be in, and what the page is told about each.
+MIDI_STEM_NAMES = MIDI_STEMS
+MIDI_RUN_STATES = ("running", "done", "error", "cancelled")
+_MIDI_CODE_RE = re.compile(r"^[a-z_]{1,32}\Z")
+_MIDI_DETAIL_RE = re.compile(r"^[a-z]{1,16}\Z")
+_MIDI_AT_MAX = 40
+
+
+def clean_midi(value: Any) -> dict[str, dict[str, Any]] | None:
+    """A job's MIDI runs, {stem: entry}, in the one shape the page reads, or
+    None when there are none. For everything written and everything read back
+    from disk, so a damaged record never reaches the page in another shape.
+
+    An entry is {"state", "pct", "notes", "engine", "detail", "tempo_source",
+    "at", "error_code", "has_file"}. The state, pct, detail, at and error_code
+    describe the latest run; notes, tempo_source and has_file describe the
+    file on disk, which a failed or cancelled run leaves as it was."""
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, dict[str, Any]] = {}
+    for stem in MIDI_STEM_NAMES:
+        entry = value.get(stem)
+        if not isinstance(entry, dict) or entry.get("state") not in MIDI_RUN_STATES:
+            continue
+        pct = entry.get("pct")
+        if isinstance(pct, bool) or not isinstance(pct, (int, float)) or not math.isfinite(pct):
+            pct = 0
+        notes = entry.get("notes")
+        if isinstance(notes, bool) or not isinstance(notes, int) or notes < 0:
+            notes = None
+        detail = entry.get("detail")
+        code = entry.get("error_code")
+        at = entry.get("at")
+        tempo = entry.get("tempo_source")
+        out[stem] = {
+            "state": entry["state"],
+            "pct": int(max(0, min(100, pct))),
+            "notes": notes,
+            "engine": "basic_pitch",
+            "detail": detail if isinstance(detail, str) and _MIDI_DETAIL_RE.match(detail) else None,
+            "tempo_source": tempo if tempo in ("song", "default") else None,
+            "at": at if isinstance(at, str) and len(at) <= _MIDI_AT_MAX else None,
+            "error_code": code if isinstance(code, str) and _MIDI_CODE_RE.match(code) else None,
+            "has_file": entry.get("has_file") is True,
+        }
+    return out or None
+
+
 @dataclass
 class Job:
     id: str
@@ -445,6 +494,12 @@ class Job:
     # re-extracted stem and the rebuilt "other" fit without clipping (the
     # shared-scale rule, app/pipeline/stem_plan.py). None is 1.0.
     stem_gain: float | None = None
+    # MIDI made from the piano and bass stems (POST .../midi,
+    # app/pipeline/midi.py): clean_midi's {stem: entry}, or None when none
+    # was ever asked for. The files are <job>/midi/<stem>.mid and what made
+    # each is in <job>/midi.json. A post-hoc action on a "done" job like
+    # stem_fill: a run that fails or is cancelled leaves the file it had.
+    midi: dict[str, dict[str, Any]] | None = None
     # When the user put this job in the Trash, or None if they have not.
     #
     # Server-side on purpose. The Trash used to live only in the browser's
@@ -552,18 +607,30 @@ class Job:
             "stem_model_fallbacks": self.stem_model_fallbacks,
             "stem_reextract": self.stem_reextract,
             "stem_undo": public_stem_undo(self.stem_undo),
+            "midi": clean_midi(self.midi) or {},
             "trashed_at": self.trashed_at,
             "favorite": self.favorite,
             "created_at": self.created_at,
         }
 
     def post_hoc_running(self) -> bool:
-        """A stem fill or a vocal split is writing into this song's folder.
-        The queue statuses do not show it: the song stays "done" meanwhile."""
+        """A stem fill, a vocal split, a re-extract or a MIDI run is writing
+        into this song's folder. The queue statuses do not show it: the song
+        stays "done" meanwhile."""
         return (
             self.stem_fill == "running"
             or self.vocal_split == "running"
             or self.stem_reextract_running()
+            or self.midi_running()
+        )
+
+    def midi_running(self, stem: str | None = None) -> bool:
+        """A MIDI run is writing into this song's midi/ folder: for ``stem``,
+        or for any stem when it is None."""
+        runs = self.midi if isinstance(self.midi, dict) else {}
+        stems = (stem,) if stem is not None else MIDI_STEM_NAMES
+        return any(
+            isinstance(runs.get(s), dict) and runs[s].get("state") == "running" for s in stems
         )
 
     def stem_reextract_running(self) -> bool:
@@ -629,6 +696,12 @@ class Job:
                 "phase": None,
                 "code": "interrupted",
             }
+        # Saved while a MIDI run was writing: its file was written to a temp
+        # name and never renamed, so the file the song had is still there.
+        job.midi = clean_midi(job.midi)
+        for entry in (job.midi or {}).values():
+            if entry["state"] == "running":
+                entry.update(state="error", pct=0, error_code="interrupted")
         return job
 
 

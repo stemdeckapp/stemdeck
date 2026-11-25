@@ -2577,6 +2577,68 @@ input, textarea { font-family: inherit; }
 }
 .model-tab.differs .model-tab-dot { display: block; }
 
+/* The MIDI chip (laneMidiRows.js, Advanced mode), on the Piano and Bass lanes
+   only: the Model column splits into two cells of the row's height, the Model
+   chip above and MIDI below, so the column keeps its 24 px and the row its
+   height. "MIDI" in the key label's small capitals, with the percent under it
+   while a transcription runs, a gold dot once a file is there, a red one
+   after a failed run. Dimmed, with the reason in its tooltip, when the engine
+   cannot run on this computer. */
+.mx-model-slot.has-midi { flex-direction: column; }
+.mx-model-slot.has-midi > .model-tab {
+  order: 1;
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
+.mx-model-slot > .midi-tab {
+  order: 2;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mx-model-slot.has-midi > .model-tab + .midi-tab,
+.mx-model-slot.has-midi > .midi-tab:not(:first-child) { border-top: 1px solid var(--border); }
+.mx-model-slot > .midi-tab:hover { background: var(--panel-2); }
+.mx-model-slot > .midi-tab::after { display: none; }
+.midi-tab-face {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-indent: 0.06em;
+  line-height: 1;
+}
+.midi-tab-mark {
+  display: none;
+  font-size: 8px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.midi-tab[data-mark="run"] .midi-tab-mark { display: block; color: var(--accent); }
+.midi-tab[data-mark="done"] .midi-tab-mark,
+.midi-tab[data-mark="error"] .midi-tab-mark {
+  display: block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.midi-tab[data-mark="error"] .midi-tab-mark {
+  background: var(--danger);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 70%, transparent);
+}
+.mx-model-slot > .midi-tab.off { opacity: 0.45; cursor: default; }
+.mx-model-slot > .midi-tab.off:hover { background: transparent; color: var(--fg-2); }
+
 /* The rail: four equal cells the full height of the row. */
 .mx-rail {
   display: flex;
@@ -3881,7 +3943,11 @@ input, textarea { font-family: inherit; }
 #t-export-panel.fmt-mp4 #t-export-stems,
 #t-export-panel.fmt-mp4 #t-export-reaper,
 #t-export-panel.fmt-mp4 #t-export-open-reaper,
-#t-export-panel.fmt-mp4 #t-export-region { display: none; }
+#t-export-panel.fmt-mp4 #t-export-region,
+/* Include MIDI (laneMidiRows.js): only while the open song has a MIDI file,
+   and only for the stems zips, which MP4 hides. */
+#t-export-midi-wrap[hidden],
+#t-export-panel.fmt-mp4 #t-export-midi-wrap { display: none; }
 
 /* ── About dialog ── */
 .about-backdrop {

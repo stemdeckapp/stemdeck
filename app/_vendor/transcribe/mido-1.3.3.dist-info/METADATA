@@ -1,0 +1,217 @@
+Metadata-Version: 2.1
+Name: mido
+Version: 1.3.3
+Summary: MIDI Objects for Python
+Author-email: Ole Martin Bjorndalen <ombdalen@gmail.com>
+Maintainer-email: Radovan Bast <radovan.bast@gmail.com>, Raphaël Doursenaud <rdoursenaud@gmail.com>
+License: MIT
+Project-URL: documentation, https://mido.readthedocs.io
+Project-URL: source, https://github.com/mido/mido
+Keywords: python,midi,midifile
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Natural Language :: English
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Multimedia :: Sound/Audio :: MIDI
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Utilities
+Requires-Python: ~=3.7
+Description-Content-Type: text/x-rst
+License-File: LICENSE
+Requires-Dist: packaging
+Requires-Dist: importlib-metadata ; python_version < "3.8"
+Provides-Extra: build-docs
+Requires-Dist: sphinx ~=4.3.2 ; extra == 'build-docs'
+Requires-Dist: sphinx-rtd-theme ~=1.2.2 ; extra == 'build-docs'
+Provides-Extra: check-manifest
+Requires-Dist: check-manifest >=0.49 ; extra == 'check-manifest'
+Provides-Extra: dev
+Requires-Dist: mido[check-manifest] ; extra == 'dev'
+Requires-Dist: mido[lint-code] ; extra == 'dev'
+Requires-Dist: mido[test-code] ; extra == 'dev'
+Requires-Dist: mido[lint-reuse] ; extra == 'dev'
+Requires-Dist: mido[build-docs] ; extra == 'dev'
+Requires-Dist: mido[release] ; extra == 'dev'
+Provides-Extra: lint-code
+Requires-Dist: ruff ~=0.1.6 ; extra == 'lint-code'
+Provides-Extra: lint-reuse
+Requires-Dist: reuse ~=1.1.2 ; extra == 'lint-reuse'
+Provides-Extra: ports-all
+Requires-Dist: mido[ports-pygame] ; extra == 'ports-all'
+Requires-Dist: mido[ports-rtmidi] ; extra == 'ports-all'
+Requires-Dist: mido[ports-rtmidi-python] ; extra == 'ports-all'
+Provides-Extra: ports-pygame
+Requires-Dist: PyGame ~=2.5 ; extra == 'ports-pygame'
+Provides-Extra: ports-rtmidi
+Requires-Dist: python-rtmidi ~=1.5.4 ; extra == 'ports-rtmidi'
+Provides-Extra: ports-rtmidi-python
+Requires-Dist: rtmidi-python ~=0.2.2 ; extra == 'ports-rtmidi-python'
+Provides-Extra: release
+Requires-Dist: twine ~=4.0.2 ; extra == 'release'
+Provides-Extra: test-code
+Requires-Dist: pytest ~=7.4.0 ; extra == 'test-code'
+
+.. SPDX-FileCopyrightText: 2013 Ole Martin Bjorndalen <ombdalen@gmail.com>
+..
+.. SPDX-License-Identifier: CC-BY-4.0
+
+Mido - MIDI Objects for Python
+==============================
+
+.. image:: https://img.shields.io/badge/License-MIT-blue.svg
+   :alt: MIT License
+   :target: https://github.com/mido/mido/blob/main/LICENSES/MIT.txt
+
+.. image:: https://img.shields.io/pypi/v/mido.svg
+   :alt: PyPi version
+   :target: https://pypi.org/project/mido
+
+.. image:: https://img.shields.io/pypi/pyversions/mido.svg
+   :alt: Python version
+   :target: https://python.org
+
+.. image:: https://pepy.tech/badge/mido
+   :alt: Downloads
+   :target: https://pepy.tech/project/mido
+
+.. image:: https://github.com/mido/mido/workflows/Test/badge.svg
+   :alt: Test status
+   :target: https://github.com/mido/mido/actions
+
+.. image:: https://readthedocs.org/projects/mido/badge/?version=latest
+   :alt: Docs status
+   :target: https://mido.readthedocs.io/
+
+.. image:: https://api.reuse.software/badge/github.com/mido/mido
+   :alt: REUSE status
+   :target: https://api.reuse.software/info/github.com/mido/mido
+
+.. image:: https://www.bestpractices.dev/projects/7987/badge
+           :alt: OpenSSF Best Practices
+           :target: https://www.bestpractices.dev/projects/7987
+
+Mido is a library for working with MIDI messages and ports:
+
+.. code-block:: python
+
+   >>> import mido
+   >>> msg = mido.Message('note_on', note=60)
+   >>> msg.type
+   'note_on'
+   >>> msg.note
+   60
+   >>> msg.bytes()
+   [144, 60, 64]
+   >>> msg.copy(channel=2)
+   Message('note_on', channel=2, note=60, velocity=64, time=0)
+
+.. code-block:: python
+
+   port = mido.open_output('Port Name')
+   port.send(msg)
+
+.. code-block:: python
+
+    with mido.open_input() as inport:
+        for msg in inport:
+            print(msg)
+
+.. code-block:: python
+
+    mid = mido.MidiFile('song.mid')
+    for msg in mid.play():
+        port.send(msg)
+
+
+Full documentation at https://mido.readthedocs.io/
+
+
+Main Features
+-------------
+
+* convenient message objects.
+
+* supports RtMidi, PortMidi and Pygame. New backends are easy to
+  write.
+
+* full support for all 18 messages defined by the MIDI standard.
+
+* standard port API allows all kinds of input and output ports to be
+  used interchangeably. New port types can be written by subclassing
+  and overriding a few methods.
+
+* includes a reusable MIDI stream parser.
+
+* full support for MIDI files (read, write, create and play) with
+  complete access to every message in the file, including all common
+  meta messages.
+
+* can read and write SYX files (binary and plain text).
+
+* implements (somewhat experimental) MIDI over TCP/IP with socket
+  ports. This allows for example wireless MIDI between two
+  computers.
+
+* includes programs for playing MIDI files, listing ports and
+  serving and forwarding ports over a network.
+
+
+Status
+------
+
+1.3 is the fourth stable release.
+
+This project uses `Semantic Versioning <https://semver.org>`_.
+
+
+Requirements
+------------
+
+Mido requires Python 3.7 or higher.
+
+
+Installing
+----------
+
+::
+
+    python3 -m pip install mido
+
+Or, alternatively, if you want to use ports with the default backend::
+
+   python3 -m pip install mido[ports-rtmidi]
+
+See ``docs/backends/`` for other backends.
+
+
+
+Source Code
+-----------
+
+https://github.com/mido/mido/
+
+
+License
+-------
+
+Mido is released under the terms of the `MIT license
+<http://en.wikipedia.org/wiki/MIT_License>`_.
+
+
+Questions and suggestions
+-------------------------
+
+For questions and proposals which may not fit into issues or pull requests,
+we recommend to ask and discuss in the `Discussions
+<https://github.com/mido/mido/discussions>`_ section.

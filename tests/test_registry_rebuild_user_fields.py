@@ -69,6 +69,21 @@ SAVED = {
     },
     "stem_revisions": {"drums": 1, "other": 1},
     "stem_gain": 0.98,
+    # MIDI made from a stem (POST .../midi): the state of its last run, in
+    # clean_midi's shape. The file is in midi/, the state only here.
+    "midi": {
+        "bass": {
+            "state": "done",
+            "pct": 100,
+            "notes": 412,
+            "engine": "basic_pitch",
+            "detail": "balanced",
+            "tempo_source": "song",
+            "at": "2026-11-25T10:00:00Z",
+            "error_code": None,
+            "has_file": True,
+        },
+    },
     "auto_lyrics": False,
     "created_at": 1790800000.0,
     "has_video": True,

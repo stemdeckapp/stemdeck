@@ -40,6 +40,9 @@
 | `STEMDECK_SPEED_TEST_DISK_SLOW_MB_S` | `40` | Flag the songs folder as slow under this write speed, in MiB/s. |
 | `STEMDECK_SPEED_TEST_REAL_MEASURE_MAX_SEC` | `40` | Time an already downloaded `htdemucs_ft` for real only when that is expected to take at most this many seconds; otherwise it is estimated. |
 | `STEMDECK_IDLE_UNLOAD_MINUTES` | `10` | Minutes with no separation or analysis running before the separation worker and the beat model are unloaded from memory; `0` keeps them loaded. The next track loads them again and starts a few seconds later. Unloading frees the graphics card's memory, and another program may take it meanwhile, so the next separation on the GPU can fall back to the CPU (its progress line says so). A value saved in Settings > General wins over this. |
+| `STEMDECK_TRANSCRIBE_MAX_SECONDS` | `1200` | MIDI from a stem: refuse a song or stem longer than this (seconds, 30 or more), read from the file's header before anything is decoded. Basic Pitch decodes the whole file, about 0.9 MB of memory per second of audio. |
+| `STEMDECK_TIMEOUT_MIDI` | `600` | Stop a MIDI run after this many seconds in all (60 or more). |
+| `STEMDECK_TIMEOUT_MIDI_STALL` | `120` | Stop a MIDI run after this many seconds with no output from its worker (30 or more). |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |
@@ -76,6 +79,22 @@ Settings > Separation holds how a song is separated. These are saved in
 - A deployment that sets `STEMDECK_DEMUCS_MODEL` to a model outside the three
   above separates every stem with that model, and Settings shows the stems as
   set by the deployment.
+
+### MIDI settings
+
+MIDI from the piano and bass stems (see [Models](models.md#midi-from-a-stem)).
+Saved in `settings.json` like the separation settings, and read on each
+request, so a change applies to the next run.
+
+- **`transcribe_piano`**, **`transcribe_bass`**: `"auto"` (default) or
+  `"off"`. `"off"` refuses MIDI from that stem (`403 disabled`).
+- **`transcribe_detail`**: the preset a run uses when the request names none.
+  `"balanced"` (default: onset 0.5, frame 0.3, notes of 80 ms or more),
+  `"detailed"` (onset 0.4, frame 0.25, 58 ms, for fast lines) or `"clean"`
+  (onset 0.7, frame 0.5, 127.7 ms, 40 to 65% fewer notes).
+
+Any other value is refused with a 422 that lists the allowed ones, and a
+request with one bad value changes nothing.
 
 ### My models
 

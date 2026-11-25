@@ -241,6 +241,16 @@ const HELP = [
   [".lane-key-value", "help.laneKey", laneName, "help.laneKeyTitle"],
   [".mx-btn.mute", "help.mute", laneName],
   [".mx-btn.solo", "help.solo", laneName],
+  // The MIDI chip under the Model chip on the Piano and Bass lanes, and the
+  // MIDI row it opens (laneMidiRows.js, Advanced mode). Its Download link is
+  // an a.lane-dl and the chip an .eq-tab, so these come before both entries.
+  [".midi-tab", "help.midiTab"],
+  [".midi-transcribe", "help.midiTranscribe"],
+  [".midi-rerun", "help.midiRerun"],
+  [".midi-retry", "help.midiRetry"],
+  [".midi-cancel", "help.midiCancel"],
+  [".midi-download", "help.midiDownload"],
+  [".midi-remove", "help.midiRemove"],
   [".lane-dl", "help.download", laneName],
   ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
   ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],
@@ -391,6 +401,7 @@ const HELP = [
   [".export-format-toggle", "help.exportFormat", null, "export.formatAria"],
   ["#t-export-click-wrap", "help.exportClick"],
   ["#t-export-count-in-wrap", "help.exportCountIn"],
+  ["#t-export-midi-wrap", "help.exportMidi"],
   ["#t-export-master", "help.masterExportRow", null, "master.title"],
   ["#t-export-mix", "help.exportMix"],
   ["#t-export-stems", "help.exportStems"],
@@ -505,6 +516,12 @@ const SETTINGS = [
     ["settings.myModels.cancel", "help.set.myModelsCancel"],
     ["settings.myModels.check", "help.set.myModelsCheck"],
     ["settings.myModels.remove", "help.set.myModelsRemove"],
+  ]],
+  // MIDI from the Piano and Bass lanes (transcriptionSettings.js).
+  ["settings.tab.transcription", [
+    ["settings.midi.keys.title", "help.set.midiKeys"],
+    ["settings.midi.bass.title", "help.set.midiBass"],
+    ["settings.midi.detail.title", "help.set.midiDetail"],
   ]],
   ["settings.tab.library", [
     ["settings.stemsLocation.title", "help.set.stemsLocation"],

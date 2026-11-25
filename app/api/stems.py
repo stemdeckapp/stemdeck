@@ -34,6 +34,7 @@ from app.core.config import (
     FX_PRINT_PART_MAX_BYTES,
     JOB_ID_RE,
     JOBS_DIR,
+    MIDI_STEMS,
     STEM_NAMES,
     TAKE_ID_RE,
     TIMEOUT_FFMPEG,
@@ -81,6 +82,7 @@ from app.pipeline.mastering import (
     run_plan,
     trim_filter,
 )
+from app.pipeline.midi import MIDI_DIRNAME
 from app.pipeline.reaper_project import build_rpp
 from app.pipeline.take_render import (
     AAC_ENCODE_ARGS,
@@ -2691,6 +2693,16 @@ def _add_reaper_project(
         zf.writestr(f"{prefix or 'stems'}.rpp", text.encode("utf-8"))
 
 
+def _add_midi_files(midi: list[tuple[str, Path]], dest: Path, prefix: str) -> None:
+    """Blocking: add each stem's MIDI file to the finished zip, named as its
+    stem is (`<song>_<stem>.mid` beside `<song>_<stem>.<format>`). A file a
+    MIDI run is replacing meanwhile is still whole: the run renames its new
+    file into place (app/pipeline/midi.py)."""
+    with zipfile.ZipFile(dest, "a", zipfile.ZIP_STORED) as zf:
+        for name, path in midi:
+            zf.write(path, arcname=_arcname(prefix, name, "mid"))
+
+
 def _build_stems_zip_with_click(
     sources: list[tuple[str, Path]],
     fmt: str,
@@ -2699,22 +2711,25 @@ def _build_stems_zip_with_click(
     click: _ClickStem | None,
     reaper_bpm: float | None = None,
     reaper: bool = False,
+    midi: list[tuple[str, Path]] | None = None,
 ) -> None:
     """Blocking: _build_stems_zip, plus the click entry when one is asked for,
-    plus a REAPER project for them all when `reaper` is set. The first source
-    is the length reference: every stem and take shares the song's frame
-    count."""
+    plus a REAPER project for them all when `reaper` is set, plus the MIDI
+    files in `midi`. The first source is the length reference: every stem
+    and take shares the song's frame count."""
     if click is None:
         _build_stems_zip(sources, fmt, dest, prefix)
         if reaper:
             _add_reaper_project(sources, fmt, dest, prefix, reaper_bpm)
-        return
-    with tempfile.TemporaryDirectory(prefix=".zipwork-", dir=dest.parent) as td:
-        path = _render_click_stem(click, sources[0][1], fmt, Path(td))
-        extra = [(CLICK_STEM_NAME, path)] if path is not None else []
-        _build_stems_zip([*sources, *extra], fmt, dest, prefix)
-        if reaper:
-            _add_reaper_project([*sources, *extra], fmt, dest, prefix, reaper_bpm)
+    else:
+        with tempfile.TemporaryDirectory(prefix=".zipwork-", dir=dest.parent) as td:
+            path = _render_click_stem(click, sources[0][1], fmt, Path(td))
+            extra = [(CLICK_STEM_NAME, path)] if path is not None else []
+            _build_stems_zip([*sources, *extra], fmt, dest, prefix)
+            if reaper:
+                _add_reaper_project([*sources, *extra], fmt, dest, prefix, reaper_bpm)
+    if midi:
+        _add_midi_files(midi, dest, prefix)
 
 
 @router.get("/jobs/{job_id}/stems/all.zip")
@@ -2735,8 +2750,13 @@ async def get_all_stems_zip(
         default=DEFAULT_CLICK_SOUND, max_length=32, description=CLICK_SOUND_QUERY_DESCRIPTION
     ),
     reaper: bool = Query(default=False, description="Add a REAPER project (.rpp) for the stems"),
+    midi: bool = Query(default=False, description="Add each stem's MIDI file (.mid)"),
 ) -> FileResponse:
     """Bundle the requested stems into a single ZIP, named after the song.
+
+    `midi` adds every MIDI file the song has (app/pipeline/midi.py), each
+    named as its stem is, `<song>_<stem>.mid`. A song with none gets the zip
+    it would have had without it.
 
     `reaper` adds `<song>.rpp`: a REAPER project with one track per file in
     the zip (the click too, when asked for), at the song's sample rate and
@@ -2810,6 +2830,13 @@ async def get_all_stems_zip(
     if not sources:
         raise HTTPException(status_code=404, detail="no stems found")
 
+    midi_files: list[tuple[str, Path]] = []
+    if midi:
+        for name in MIDI_STEMS:
+            p = (JOBS_DIR / job_id / MIDI_DIRNAME / f"{name}.mid").resolve()
+            if p.is_file() and p.is_relative_to(jobs_root):
+                midi_files.append((name, p))
+
     click_stem: _ClickStem | None = None
     grid = await asyncio.to_thread(_read_beat_grid, job_id) if (click or reaper) else None
     reaper_bpm: float | None = None
@@ -2843,6 +2870,7 @@ async def get_all_stems_zip(
                 click_stem,
                 reaper_bpm=reaper_bpm,
                 reaper=reaper,
+                midi=midi_files,
             )
         except Exception:
             # Logged here: after a cancel nobody awaits the thread.

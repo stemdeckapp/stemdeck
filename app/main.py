@@ -69,6 +69,7 @@ from app.core.settings import (
     DURATION_MIN_SEC,
     acoustid_api_key_hint,
     acoustid_key_format_ok,
+    check_midi_setting,
     check_stem_model_choices,
     discogs_token_format_ok,
     discogs_token_hint,
@@ -92,7 +93,10 @@ from app.core.settings import (
     get_stem_format,
     get_stem_model_choices,
     get_stem_mp3_kbps,
+    get_transcribe_bass,
+    get_transcribe_detail,
     get_transcribe_lyrics,
+    get_transcribe_piano,
     get_video_encoder,
     get_video_max_height,
     recommended_stem_models,
@@ -116,7 +120,10 @@ from app.core.settings import (
     set_separation_quality,
     set_stem_model_choices,
     set_stem_storage,
+    set_transcribe_bass,
+    set_transcribe_detail,
     set_transcribe_lyrics,
+    set_transcribe_piano,
     set_video_encoder,
     set_video_max_height,
     stem_models_reason,
@@ -374,6 +381,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.api.my_models import cancel_all as cancel_my_models
 
     cancel_my_models()
+    # A MIDI run's worker stops too; the run is recorded as interrupted.
+    from app.api.midi import cancel_all as cancel_midi
+
+    cancel_midi()
     # Tear down the persistent demucs worker (#309) so a clean shutdown never
     # leaves it as an orphaned process -- it has no parent-death watchdog of
     # its own, unlike the desktop backend itself. Waits for an idle unload
@@ -573,6 +584,12 @@ def _settings_payload() -> dict[str, object]:
         # Whisper lyrics for a job no lookup found any for: "auto" (on a GPU
         # only) | "on" | "off".
         "transcribe_lyrics": get_transcribe_lyrics(),
+        # MIDI from the piano and bass stems (app/pipeline/midi.py): per stem
+        # "auto" | "off", and the detail a run uses: "balanced" | "detailed"
+        # | "clean". GET /api/transcribe/status says whether it can run here.
+        "transcribe_piano": get_transcribe_piano(),
+        "transcribe_bass": get_transcribe_bass(),
+        "transcribe_detail": get_transcribe_detail(),
         # The take render's H.264 encoder: "auto" | "cpu" | an encoder name.
         # GET/POST /api/video-encoders list and test what this machine has.
         "video_encoder": get_video_encoder(),
@@ -715,6 +732,13 @@ async def update_settings(request: Request) -> dict[str, object]:
             status_code=422,
             detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
         )
+    for key in ("transcribe_piano", "transcribe_bass", "transcribe_detail"):
+        if key in body:
+            try:
+                check_midi_setting(key, body[key])
+            except ValueError as e:
+                # The message lists the whitelist; it never echoes the value.
+                raise HTTPException(status_code=422, detail=str(e)) from None
     if "allow_network" in body:
         set_allow_network(bool(body["allow_network"]))
     if "auto_delete_jobs" in body:
@@ -813,6 +837,15 @@ async def update_settings(request: Request) -> dict[str, object]:
             set_transcribe_lyrics(str(body["transcribe_lyrics"]))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
+    for key, setter in (
+        ("transcribe_piano", set_transcribe_piano),
+        ("transcribe_bass", set_transcribe_bass),
+        ("transcribe_detail", set_transcribe_detail),
+    ):
+        if key in body:
+            # Checked with the other value-only checks above, before anything
+            # was written.
+            setter(body[key])
     if "video_encoder" in body:
         if not isinstance(body["video_encoder"], str):
             raise HTTPException(status_code=422, detail="video_encoder must be a string")

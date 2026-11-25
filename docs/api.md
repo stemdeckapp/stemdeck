@@ -15,12 +15,17 @@ The endpoints the web app itself uses. They are not a stable public interface an
 | POST | `/api/jobs/{id}/reextract` | Separate one stem again with another model, from the song's original audio, and replace it in place: JSON `{stem, model}` → `202 {state}`. See [Re-extract one stem](#re-extract-one-stem) |
 | POST | `/api/jobs/{id}/reextract/undo` | Put back the stem the last re-extract of it replaced: JSON `{stem}` → `200 {state}` |
 | POST | `/api/jobs/{id}/reextract/keep` | Keep the re-extracted stem and delete its undo copy: JSON `{stem}` → `200 {state}` |
+| GET | `/api/transcribe/status` | Whether MIDI can be made on this install, with what engine, from which stems. See [MIDI from a stem](#midi-from-a-stem) |
+| POST | `/api/jobs/{id}/midi` | Make MIDI from the song's piano or bass stem: JSON `{stem, detail?}` → `202 {state: "running"}` |
+| POST | `/api/jobs/{id}/midi/{stem}/cancel` | Stop that run; the file the stem had stays: `200 {state}` |
+| DELETE | `/api/jobs/{id}/midi/{stem}` | Remove the stem's MIDI file and its record: `200 {deleted: stem}` |
+| GET | `/api/jobs/{id}/stems/{stem}.mid` | The stem's MIDI file (`audio/midi`), named `<song>_<stem>.mid` like a stem download |
 | PATCH | `/api/jobs/{id}/sections` | Save waveform section markers for a job |
 | PATCH | `/api/jobs/{id}/timeline-tags` | Save the timeline markers for a job: JSON `{timeline_tags: [{id, name, time}]}`, the whole list, stored in time order (#1075) |
 | POST | `/api/jobs/{id}/lyrics/import` | Keep the lyrics from a `.lrc` or `.txt` the user picked, decoded by the page: JSON `{text}`, at most 100,000 characters → `lyrics.json`, source `file`, answered as `GET .../lyrics` then serves it, plus `dropped_lines` (a count) when untimed lines with words were dropped. Timed when the text has `[mm:ss.xx]` stamps (tags, `[offset:]`, multi-stamp lines and `<mm:ss.xx>` word stamps kept, other lines dropped), plain otherwise (LRC ID tags dropped; plain lyrics cannot be aligned or synced line by line). Replaces the old lyrics with their Align offset, own timing and vocal timing, and LRCLIB's other versions; the page asks first when any of those three is set. The page reads a file as UTF-8 (or UTF-16 with a byte order mark), else GB18030, so a Windows-1252, Shift-JIS or Big5 file can come out as garbled letters: save it as UTF-8 first. 409 while the job is not finished, 422 for no words, too long text or text UTF-8 cannot hold. An Align offset (`.../lyrics/offset`, Auto-detect) answers 409 when an import replaced the lyrics it was set for (#1083) |
 | GET | `/api/jobs/{id}/stems/{name}.wav` | Stream a single stem as the song stores it: WAV, or MP3 (`audio/mpeg`) for a song stored as MP3 (#783) |
 | GET | `/api/jobs/{id}/stems/{name}.mp3` | A stem as MP3: the stored file for a song stored as MP3, else a cached transcode |
-| GET | `/api/jobs/{id}/stems/all.zip` | The chosen stems (and takes) as one ZIP, named after the song. Query: `format`, `stems`, and the click options. `reaper=1` (default off) adds `<song>.rpp`, a REAPER project with one track per file in the zip (the click too), at the stems' sample rate and the beat grid's median tempo (120 without a grid), each file named relative to the project; the download is then named `<song>_reaper.zip`. Without it the zip is unchanged (#1071) |
+| GET | `/api/jobs/{id}/stems/all.zip` | The chosen stems (and takes) as one ZIP, named after the song. Query: `format`, `stems`, and the click options. `reaper=1` (default off) adds `<song>.rpp`, a REAPER project with one track per file in the zip (the click too), at the stems' sample rate and the beat grid's median tempo (120 without a grid), each file named relative to the project; the download is then named `<song>_reaper.zip`. Without it the zip is unchanged (#1071). `midi=1` (default off) adds every MIDI file the song has, `<song>_<stem>.mid` beside `<song>_<stem>.<format>`; a song with none gets the zip it would have had |
 | GET | `/api/jobs/{id}/video.mp4` | Mux the current mix with the source video (MP4 upload or YouTube) into an MP4 |
 | DELETE | `/api/jobs/{id}` | Remove job dir from disk (terminal jobs only) |
 | GET | `/api/jobs/{id}/takes/{take_id}/sync` | A recorded take's picture sync: `{video_sync, camera_start_sec}`. See [Take picture sync](#take-picture-sync) |
@@ -159,6 +164,116 @@ What a re-extract of a stem changes:
 Not done again: the beat grid (also after drums: the beats are the song's, and
 a grid you edited or practised with does not move), the key, the sections and
 the loudness, since the stems still add up to the same song.
+
+## MIDI from a stem
+
+The notes of a finished song's piano or bass stem as a standard MIDI file,
+made on request by Spotify's Basic Pitch (see [models.md](models.md#midi-from-a-stem)).
+It runs on the CPU, one run at a time across the server, a few seconds a song.
+
+`GET /api/transcribe/status` is cheap and never loads the engine:
+
+```
+{"available": true | false,
+ "reason": null | "no_runtime" | "unsupported_platform" | "engine_error",
+ "engines": [{"id": "basic_pitch", "label": "Basic Pitch", "version": "0.4.0", "licence": "Apache-2.0"}],
+ "stems": ["piano", "bass"], "max_seconds": 1200,
+ "details": ["balanced", "detailed", "clean"]}
+```
+
+`unsupported_platform` is Intel macOS, which has no onnxruntime; `no_runtime`
+is a module the engine needs that is not installed; `engine_error` is a
+vendored engine that is incomplete, or one that failed to import in a run
+since the server started.
+
+`POST /api/jobs/{id}/midi` takes `{"stem": "piano" | "bass", "detail"?}` and
+answers `202 {"state": "running"}` at once. Without `detail` the
+`transcribe_detail` setting is used. A body of the wrong shape (a missing or
+non-string `stem`, more than 32 characters) is FastAPI's own `422`. Every
+refusal is `{"detail": <fixed sentence>, "code": <code>}`, checked in this
+order:
+
+| Status | `code` | When |
+|---|---|---|
+| 404 | `job_not_found` | Not a job id, or no such job |
+| 400 | `stem_not_supported` | `stem` is not `piano` or `bass` |
+| 400 | `bad_detail` | `detail` is not `balanced`, `detailed` or `clean` |
+| 503 | `engine_unavailable` | The status above says `available: false` |
+| 403 | `disabled` | `transcribe_piano` or `transcribe_bass` is `off` for that stem |
+| 409 | `busy` | The song is queued or separating, or a fill, a Lead + Backing split, a re-extract or a MIDI run is working on it; or a MIDI run is going on any song; or the server is stopping or the stems folder is moving |
+| 409 | `no_stem` | The song is not `done`, or has no such stem file |
+| 413 | `too_long` | The song, or the stem file's header, is longer than `max_seconds` |
+
+The run's progress and outcome are in the job state, per stem: poll
+`GET /api/jobs/{id}` about once a second while `state` is `running` (the job's
+event stream ends at once for a finished song, so it does not carry them):
+
+```
+"midi": {
+  "piano": {
+    "state": "running" | "done" | "error" | "cancelled",
+    "pct": 0..100, "notes": <int> | null, "engine": "basic_pitch",
+    "detail": "balanced" | "detailed" | "clean",
+    "tempo_source": "song" | "default" | null,
+    "at": "<ISO 8601, UTC>", "error_code": <code> | null,
+    "has_file": true | false
+  },
+  "bass": {...}
+}
+```
+
+`midi` is `{}` until the first run, and a stem is there only once it had one.
+`state`, `pct`, `detail`, `at` and `error_code` describe the latest run;
+`notes`, `tempo_source` and `has_file` describe the file on disk. A run that
+fails or is cancelled never touches the file the stem had: the new one is
+written under a temp name and renamed into place only when it is complete, so
+`has_file` stays `true` with the old file's notes. `error_code` is one of
+`too_long`, `no_audio` (the stem cannot be read), `engine`, `disk` (no space
+left), `io` (any other write error), `timeout`, `stalled` (no output for two
+minutes) or `interrupted` (the server stopped during the run; a run found
+`running` at startup becomes this). The state survives a restart: it is kept in
+`registry.json` and in the song's `metadata.json`.
+
+`tempo_source` is `song` when the song's beat grid is trusted (edited by you,
+or steady with at least 70% of its beats on an onset): the file then carries
+the grid's tempo and first meter, and one lead-in bar from 0 s to a bar line of
+the song, at the tempo that makes the song's bar lines the file's. `default`
+is 120 BPM in 4/4 from 0 s. Either way the notes keep the times they were
+heard at, so the file lines up with the stems from their first sample; they
+are never quantised.
+
+`POST /api/jobs/{id}/midi/{stem}/cancel` stops the run of that stem: the
+worker and every process it started are killed, and the answer waits for the
+run to record it (at most 15 s): `200 {"state": "cancelled"}`. With no run of
+that stem going on it changes nothing and answers the stem's state, or
+`{"state": null}` when it never had one. `404 job_not_found`, `400
+stem_not_supported`.
+
+`DELETE /api/jobs/{id}/midi/{stem}` removes the file, its `midi.json` record
+and its entry: `200 {"deleted": "<stem>"}`. `409 busy` while a run of that
+stem is going on, `404 no_midi` when there is none of the three, `500 failed`
+when the file could not be removed.
+
+`GET /api/jobs/{id}/stems/{stem}.mid` serves the file as `audio/midi` with
+`Content-Disposition: attachment; filename="<song>_<stem>.mid"` (the same
+name rule as a stem download), and `Cache-Control: no-cache`, since a run
+replaces it under the same URL. `404 no_midi` when there is none or `stem` is
+not `piano` or `bass`.
+
+On disk, per song: `midi/<stem>.mid`, and `midi.json`:
+
+```
+{"v": 1, "stems": {"piano": {
+  "engine": "basic_pitch", "engine_version": "0.4.0", "vendor_id": "<16 hex>",
+  "stem", "detail", "params": {Basic Pitch's thresholds, note length, frequency range},
+  "notes", "tempo_source", "bpm", "beats_per_bar", "bar_start",
+  "created_at", "seconds_audio", "seconds_run"}}}
+```
+
+A song being deleted, moved with the stems folder or reset while a MIDI run
+works on it is refused with `409 job_busy`, as for every other run on a
+finished song. Deleting a song, emptying the Trash and the factory reset
+remove its `midi/` folder and `midi.json` with the rest of it.
 
 ## My models
 

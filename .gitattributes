@@ -3,3 +3,9 @@
 # them out with CRLF, so the browser test harness (tests/e2e/serve.sh) is only
 # runnable on Linux. Pin them to LF regardless of the developer's setting.
 *.sh text eol=lf
+
+# The vendored note engine (app/_vendor/transcribe) is kept byte for byte as
+# its PyPI wheels ship it, and tests/test_midi_vendor.py checks every file
+# against the wheel's own RECORD hashes. core.autocrlf would rewrite its line
+# endings on a Windows checkout and fail that check, so git leaves it alone.
+app/_vendor/transcribe/** -text

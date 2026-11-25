@@ -250,6 +250,49 @@ into `<TORCH_HOME>/whisper`, or during desktop setup when transcription would
 run, and are verified by Whisper's own SHA-256 check. Not bundled in StemDeck
 installers.
 
+## MIDI from a stem
+
+- **Engine**: Spotify's Basic Pitch 0.4.0 (PyPI `basic-pitch`, released
+  2024-08-16, `spotify/basic-pitch`), its ICASSP 2022 model as ONNX
+  (`nmp.onnx`, 230 KB), run by the onnxruntime StemDeck already ships for the
+  Lead + Backing split. CPU only.
+- **Shipped in**: `app/_vendor/transcribe/`, with pretty-midi 0.2.11.post0,
+  mir-eval 0.8.2, mido 1.3.3 and importlib-resources 7.1.0, each unpacked
+  unchanged from its PyPI wheel and checked against the wheel's sha256 and
+  RECORD. Vendored rather than declared in `pyproject.toml`: the PyPI
+  package pulls TensorFlow, and a new dependency would change `uv.lock` and
+  stop the desktop's in-app update. The folder's `README.md` has the versions,
+  hashes and how to update.
+- **License**: Apache-2.0 for Basic Pitch's code and its published model
+  weights (its `LICENSE` and `NOTICE` ship beside it); MIT for pretty-midi,
+  mir-eval and mido; Apache-2.0 for importlib-resources.
+- **Upstream**: https://github.com/spotify/basic-pitch
+
+**Training data: not settled.** The weights are published under Apache-2.0,
+but Basic Pitch's own dataset loaders (`basic_pitch/data/datasets/`) name the
+sets it was trained on: GuitarSet, iKala, MAESTRO, MedleyDB-Pitch and Slakh.
+Some of those are distributed for non-commercial use only (MAESTRO and
+MedleyDB under CC BY-NC-SA, iKala for non-commercial research, going by their
+publishers; not verified for this note). Whether a non-commercial dataset
+licence reaches a model trained on it is a legal question with no settled
+answer, and Spotify publishes the weights without such a restriction.
+StemDeck is free and never sold, which keeps this out of the commercial case
+those terms are about; anyone redistributing StemDeck commercially should
+check it for themselves.
+
+What it does: the notes of a finished song's piano or bass stem, on request
+(the stem's menu in the studio, `POST /api/jobs/{id}/midi`), as a standard
+MIDI file. Each run is a fresh worker process with no network access, with the
+pitch range set per stem (piano 27.5 to 4200 Hz, bass 30 to 400 Hz) and one of
+three detail presets (`transcribe_detail`). Measured on the CPU of the
+development machine: a 6 minute song took 6 to 12 s per stem and about 0.5 GB
+of memory, a 30 s excerpt about 6 s, most of it starting the process. Not
+available on Intel macOS, whose runtime has no onnxruntime.
+
+Basic Pitch is one model for every instrument. It hears overtones as quiet
+extra notes and a held note can come out as several; the file is a starting
+point to edit, not a score.
+
 ## UVR-MDX-NET Karaoke 2 (on-demand lead/backing vocal split, #275)
 
 - **File**: `UVR_MDXNET_KARA_2.onnx`

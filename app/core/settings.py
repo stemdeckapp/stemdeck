@@ -21,6 +21,8 @@ at startup), so the Settings UI can change them without a restart:
 - `acoustid_api_key`  - the user's AcoustID key, for fingerprint identification.
 - `discogs_token`     - the user's Discogs token, for band profiles.
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
+- `transcribe_piano`, `transcribe_bass` - MIDI from that stem may be made: auto | off.
+- `transcribe_detail` - how much detail MIDI keeps: balanced | detailed | clean.
 - `video_encoder`     - H.264 encoder of the take render: auto | cpu | an encoder.
 - `stem_format`       - how new songs' stems are stored: wav | mp3 (#783).
 - `stem_mp3_kbps`     - the MP3 bitrate when stem_format is mp3: 128 | 192 | 256.
@@ -47,6 +49,8 @@ from app.core.config import (
     IDLE_UNLOAD_MINUTES,
     IDLE_UNLOAD_MINUTES_MAX,
     MAX_DURATION_SEC,
+    MIDI_DEFAULT_DETAIL,
+    MIDI_DETAILS,
     PLAYLIST_MAX_ITEMS,
     STEM_FORMAT_CHOICES,
     STEM_MP3_KBPS_CHOICES,
@@ -994,6 +998,72 @@ def transcribe_lyrics_enabled(device: str | None) -> bool:
     if choice == "auto":
         return device == "cuda"
     return choice == "on"
+
+
+# -- transcribe_piano, transcribe_bass, transcribe_detail
+# MIDI from the piano and bass stems (app/pipeline/midi.py). Per stem, "auto"
+# (default) lets the studio offer and make it, "off" refuses it for that stem
+# (POST .../midi answers 403 "disabled"). transcribe_detail is the preset a
+# run uses when the request names none (config.MIDI_DETAIL_PRESETS). Read per
+# request, so a change applies to the next one.
+MIDI_STEM_CHOICES = ("auto", "off")
+
+
+def _midi_choice(key: str, choices: tuple[str, ...], default: str) -> str:
+    with _LOCK:
+        v = _ensure().get(key)
+        return v if isinstance(v, str) and v in choices else default
+
+
+def check_midi_setting(key: str, value: object) -> str:
+    """The stored form of a transcribe_* value, or ValueError with a fixed
+    message that lists the whitelist and never echoes the value."""
+    choices = MIDI_DETAILS if key == "transcribe_detail" else MIDI_STEM_CHOICES
+    choice = value.strip().lower() if isinstance(value, str) else None
+    if choice not in choices:
+        raise ValueError(f"{key} must be one of: " + ", ".join(choices))
+    return choices[choices.index(choice)]
+
+
+def _set_midi_choice(key: str, value: object) -> str:
+    choice = check_midi_setting(key, value)
+    with _LOCK:
+        _ensure()[key] = choice
+        _save()
+        return choice
+
+
+def get_transcribe_piano() -> str:
+    return _midi_choice("transcribe_piano", MIDI_STEM_CHOICES, "auto")
+
+
+def set_transcribe_piano(value: object) -> str:
+    return _set_midi_choice("transcribe_piano", value)
+
+
+def get_transcribe_bass() -> str:
+    return _midi_choice("transcribe_bass", MIDI_STEM_CHOICES, "auto")
+
+
+def set_transcribe_bass(value: object) -> str:
+    return _set_midi_choice("transcribe_bass", value)
+
+
+def get_transcribe_detail() -> str:
+    return _midi_choice("transcribe_detail", MIDI_DETAILS, MIDI_DEFAULT_DETAIL)
+
+
+def set_transcribe_detail(value: object) -> str:
+    return _set_midi_choice("transcribe_detail", value)
+
+
+def midi_stem_enabled(stem: str) -> bool:
+    """Whether MIDI may be made from ``stem`` (piano or bass)."""
+    if stem == "piano":
+        return get_transcribe_piano() != "off"
+    if stem == "bass":
+        return get_transcribe_bass() != "off"
+    return False
 
 
 def lyrics_mending_enabled() -> bool:

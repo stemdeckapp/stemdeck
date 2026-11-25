@@ -356,6 +356,26 @@
       "why": "The phone page and the QR code that opens it",
       "paths": ["static/mobile/**", "static/js/shared/**", "app/api/qr.py"],
       "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order", "online-sources"]
+    },
+    {
+      "why": "The MIDI chip on the Piano and Bass lanes and its row (Advanced mode): the chip under the Model chip in the lane header's Model column, the row laid out after the EQ, effects and model rows, and its pure rules (when the chip shows, what each state offers and says, the refusals, the .mid name and URL)",
+      "paths": ["static/js/laneMidiRows.js", "static/js/laneMidiView.js", "static/js/eq/eqRows.js", "static/css/eq.css", "static/css/daw.css"],
+      "specs": ["lane-midi", "lane-model", "eq-panels", "lane-alignment", "help-mode", "track-header"]
+    },
+    {
+      "why": "Settings > Transcription: the Keys, Bass and Detail selects, the notice and the engine line from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
+      "paths": ["static/js/transcriptionSettings.js", "static/js/laneMidiView.js", "static/js/catalog.js", "static/css/settings.css"],
+      "specs": ["transcription-settings", "lane-midi", "settings-nav", "settings-scroll", "help-mode"]
+    },
+    {
+      "why": "Include MIDI in the Export menu (index.html, laneMidiRows.js) and the midi=1 the stems zip request adds (player.js _stemsZipRequest)",
+      "paths": ["static/index.html", "static/js/player.js", "static/js/laneMidiRows.js"],
+      "specs": ["lane-midi", "export-menu", "export-all-stems", "reaper-export"]
+    },
+    {
+      "why": "The transcription routes and the Basic Pitch worker behind the MIDI chip, the Transcription tab and the zip's .mid files",
+      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/_vendor/transcribe/**", "app/api/stems.py"],
+      "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
     }
   ]
 }

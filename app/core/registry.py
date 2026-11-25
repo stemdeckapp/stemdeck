@@ -47,7 +47,7 @@ logger = logging.getLogger("stemdeck.registry")
 
 REGISTRY_VERSION = 2
 
-Operation = Literal["pipeline", "fill", "split", "retime", "reextract"]
+Operation = Literal["pipeline", "fill", "split", "retime", "reextract", "midi"]
 
 _jobs: dict[str, Job] = {}
 # Active subprocesses keyed by job id and operation. Lets POST /cancel
@@ -118,6 +118,9 @@ SAVED_FIELDS = (
     "stem_undo",
     "stem_revisions",
     "stem_gain",
+    # The MIDI made from its stems: the files are in midi/, but the state of
+    # the last run of each (and why one failed) is not.
+    "midi",
     "auto_lyrics",
     "created_at",
 )

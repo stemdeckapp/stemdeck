@@ -25,6 +25,7 @@ import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailur
 // variable names for track objects and table rows in several scopes.
 import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { SETTINGS_ANSWER_EVENT, SETTINGS_APPLIED_EVENT, wireSeparationSettings } from "./separationSettings.js";
+import { wireTranscriptionSettings } from "./transcriptionSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
@@ -5900,6 +5901,8 @@ function openResetConfirm() {
 const SETTINGS_ICON = {
   general: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   separation: '<path d="M3 12h5M8 12c3 0 4-6 8-6h5M8 12c3 0 4 6 8 6h5M8 12h13"/>',
+  // A piano roll: the notes a transcription writes, as bars on a grid.
+  transcription: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h4M10 13h7M6 17h5"/>',
   library: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>',
   details: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   export: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>',
@@ -5912,6 +5915,7 @@ const SETTINGS_ICON = {
 const SETTINGS_SECTIONS = [
   { id: "general", label: "settings.tab.general", text: "General", desc: "settings.desc.general" },
   { id: "separation", label: "settings.tab.separation", text: "Separation", desc: "settings.desc.separation" },
+  { id: "transcription", label: "settings.tab.transcription", text: "Transcription", desc: "settings.desc.transcription" },
   { id: "library", label: "settings.tab.library", text: "Library", desc: "settings.desc.library" },
   { id: "details", label: "settings.tab.songDetails", text: "Song details", desc: "settings.desc.details" },
   { id: "export", label: "settings.tab.export", text: "Export", desc: "settings.desc.export" },
@@ -6193,6 +6197,58 @@ function openLibraryEditor() {
               <p class="settings-row-desc my-models-empty" data-i18n="settings.myModels.list.empty">No models yet. Add one above.</p>
               <p class="my-models-live" role="status" aria-live="polite"></p>
             </div>
+          </div>
+        </div>
+      </div>
+      <!-- MIDI from the Piano and Bass lanes, wired by static/js/transcriptionSettings.js.
+           The notice is always on show. The engine line and the reason it cannot
+           run here come from GET /api/transcribe/status. -->
+      <div class="settings-pane hidden" data-pane="transcription" id="settings-pane-transcription" role="tabpanel" aria-labelledby="settings-tab-transcription">
+        <div class="settings-group">
+          <h4 class="settings-group-title" data-i18n="settings.group.midi">MIDI from keys and bass</h4>
+          <div class="settings-section">
+            <div class="settings-row settings-row-stack transcription-notice">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.noticeTitle">Your responsibility</div>
+                <p class="settings-row-desc transcription-notice-text" data-i18n="settings.midi.notice">Transcription runs on this computer and sends nothing anywhere. You alone are responsible for having the rights to what you transcribe.</p>
+                <p class="settings-row-desc transcription-engine" hidden></p>
+                <p class="settings-row-desc transcription-unavailable" role="status" hidden></p>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.keys.title">Keys</div>
+                <div class="settings-row-desc" data-i18n="settings.midi.keys.desc">The MIDI button on the Piano lane, in Advanced mode. Off hides it.</div>
+              </div>
+              <select class="settings-select settings-select-wide set-transcribe-piano" data-field="transcribe_piano" aria-label="Keys" data-i18n-aria-label="settings.midi.keys.title">
+                <option value="auto" data-i18n="settings.midi.auto">Auto (Basic Pitch)</option>
+                <option value="off" data-i18n="settings.midi.off">Off</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.bass.title">Bass</div>
+                <div class="settings-row-desc" data-i18n="settings.midi.bass.desc">The MIDI button on the Bass lane, in Advanced mode. Off hides it.</div>
+              </div>
+              <select class="settings-select settings-select-wide set-transcribe-bass" data-field="transcribe_bass" aria-label="Bass" data-i18n-aria-label="settings.midi.bass.title">
+                <option value="auto" data-i18n="settings.midi.auto">Auto (Basic Pitch)</option>
+                <option value="off" data-i18n="settings.midi.off">Off</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.detail.title">Detail</div>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="balanced" data-i18n="settings.midi.detail.balancedDesc">Balanced: the notes most songs need, with few stray ones.</p>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="detailed" data-i18n="settings.midi.detail.detailedDesc">Detailed: quiet and short notes too, with more stray ones to delete.</p>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="clean" data-i18n="settings.midi.detail.cleanDesc">Clean: only clear notes, so some quiet ones are left out.</p>
+              </div>
+              <select class="settings-select settings-select-wide set-transcribe-detail" data-field="transcribe_detail" aria-label="Detail" data-i18n-aria-label="settings.midi.detail.title">
+                <option value="balanced" data-i18n="settings.midi.detail.balanced">Balanced</option>
+                <option value="detailed" data-i18n="settings.midi.detail.detailed">Detailed</option>
+                <option value="clean" data-i18n="settings.midi.detail.clean">Clean</option>
+              </select>
+            </div>
+            <div class="transcription-msg" role="status" aria-live="polite"></div>
           </div>
         </div>
       </div>
@@ -6643,6 +6699,7 @@ function openLibraryEditor() {
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
   wireSeparationSettings(overlay);
+  wireTranscriptionSettings(overlay);
   wireOnlineSources(overlay);
   wireVideoEncoderSetting(overlay, showError);
   wireAcoustidSetting(overlay);

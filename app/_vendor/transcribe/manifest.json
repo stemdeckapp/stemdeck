@@ -1,0 +1,109 @@
+{
+  "id": "eeb53c59a3b4204f",
+  "packages": [
+    {
+      "name": "basic-pitch",
+      "version": "0.4.0",
+      "wheel": "basic_pitch-0.4.0-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/99/0e/3a36d22562daeb0ae3c78ac78da3f8dba96543c5576ed57d4acb8ddbab5b/basic_pitch-0.4.0-py2.py3-none-any.whl",
+      "sha256": "738adb503aae7fdfc7d1e1511aa0ce35052315f260a19531ef4c356708425db0",
+      "size": 758279,
+      "licence": "Apache-2.0",
+      "packages": [
+        "basic_pitch"
+      ],
+      "dist_info": "basic_pitch-0.4.0.dist-info",
+      "removed": [
+        "basic_pitch/saved_models/icassp_2022/nmp.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+        "basic_pitch/saved_models/icassp_2022/nmp.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+        "basic_pitch/saved_models/icassp_2022/nmp.mlpackage/Manifest.json",
+        "basic_pitch/saved_models/icassp_2022/nmp.tflite",
+        "basic_pitch/saved_models/icassp_2022/nmp/saved_model.pb",
+        "basic_pitch/saved_models/icassp_2022/nmp/variables/variables.data-00000-of-00001",
+        "basic_pitch/saved_models/icassp_2022/nmp/variables/variables.index"
+      ],
+      "files": 36
+    },
+    {
+      "name": "pretty-midi",
+      "version": "0.2.11.post0",
+      "wheel": "pretty_midi-0.2.11.post0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/db/4f/fae82739ec54708915e90772938ac2745f2084550223f94cbee175a24910/pretty_midi-0.2.11.post0-py3-none-any.whl",
+      "sha256": "a3e2321736245a9c92259716d85a4762f16b7bde2f591fb0dba95bdb6e793d8a",
+      "size": 5597222,
+      "licence": "MIT",
+      "packages": [
+        "pretty_midi"
+      ],
+      "dist_info": "pretty_midi-0.2.11.post0.dist-info",
+      "removed": [
+        "pretty_midi/TimGM6mb.sf2"
+      ],
+      "files": 12
+    },
+    {
+      "name": "mir-eval",
+      "version": "0.8.2",
+      "wheel": "mir_eval-0.8.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/1b/5a/69ce896a32ebc8c75deae00b1fba9837567405fa6ef37b377f2e85b856ae/mir_eval-0.8.2-py3-none-any.whl",
+      "sha256": "114cda33d8e17408c170598e0b36ed0d71ff4a2fee8eaf9e165b58ecf1c87170",
+      "size": 102794,
+      "licence": "MIT",
+      "packages": [
+        "mir_eval"
+      ],
+      "dist_info": "mir_eval-0.8.2.dist-info",
+      "removed": [],
+      "files": 24
+    },
+    {
+      "name": "mido",
+      "version": "1.3.3",
+      "wheel": "mido-1.3.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/fd/28/45deb15c11859d2f10702b32e71de9328a9fa494f989626916db39a9617f/mido-1.3.3-py3-none-any.whl",
+      "sha256": "01033c9b10b049e4436fca2762194ca839b09a4334091dd3c34e7f4ae674fd8a",
+      "size": 54614,
+      "licence": "MIT",
+      "packages": [
+        "mido"
+      ],
+      "dist_info": "mido-1.3.3.dist-info",
+      "removed": [],
+      "files": 41
+    },
+    {
+      "name": "importlib-resources",
+      "version": "7.1.0",
+      "wheel": "importlib_resources-7.1.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/8a/db/55a262f3606bebcae07cc14095338471ad7c0bbcaa37707e6f0ee49725b7/importlib_resources-7.1.0-py3-none-any.whl",
+      "sha256": "1bd7b48b4088eddb2cd16382150bb515af0bd2c70128194392725f82ad2c96a1",
+      "size": 37232,
+      "licence": "Apache-2.0",
+      "packages": [
+        "importlib_resources"
+      ],
+      "dist_info": "importlib_resources-7.1.0.dist-info",
+      "removed": [
+        "importlib_resources/tests/__init__.py",
+        "importlib_resources/tests/_path.py",
+        "importlib_resources/tests/compat/__init__.py",
+        "importlib_resources/tests/compat/py312.py",
+        "importlib_resources/tests/compat/py39.py",
+        "importlib_resources/tests/test_compatibilty_files.py",
+        "importlib_resources/tests/test_contents.py",
+        "importlib_resources/tests/test_custom.py",
+        "importlib_resources/tests/test_files.py",
+        "importlib_resources/tests/test_functional.py",
+        "importlib_resources/tests/test_open.py",
+        "importlib_resources/tests/test_path.py",
+        "importlib_resources/tests/test_read.py",
+        "importlib_resources/tests/test_reader.py",
+        "importlib_resources/tests/test_resource.py",
+        "importlib_resources/tests/test_util.py",
+        "importlib_resources/tests/util.py",
+        "importlib_resources/tests/zip.py"
+      ],
+      "files": 18
+    }
+  ]
+}

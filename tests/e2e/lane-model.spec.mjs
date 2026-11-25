@@ -191,10 +191,14 @@ test("each lane header reads Key, chip, rail; the chip is on the stems with a mo
   for (const lane of ["vocals", "drums", "bass"]) {
     await expect(tab(page, lane)).toBeVisible();
     await expect(tab(page, lane).locator("svg")).toHaveCount(1);
-    // One cell the full height of the row, the chip centred in it.
+    // One cell the full height of the row, the chip centred in it. On Bass
+    // (and Piano) the MIDI chip shares the column when it shows
+    // (laneMidiRows.js): the two cells together are the row's height.
     const slot = await page.locator(`.mixer-column .lane-header[data-stem="${lane}"] > .mx-model-slot`).boundingBox();
     const box = await tab(page, lane).boundingBox();
-    expect(Math.abs(box.height - slot.height)).toBeLessThanOrEqual(1);
+    const midi = page.locator(`.mixer-column .lane-header[data-stem="${lane}"] > .mx-model-slot > .midi-tab`);
+    const midiH = (await midi.count()) ? (await midi.boundingBox()).height : 0;
+    expect(Math.abs(box.height + midiH - slot.height)).toBeLessThanOrEqual(1);
     const svg = await tab(page, lane).locator("svg").boundingBox();
     expect(svg.height).toBeGreaterThanOrEqual(17);
   }

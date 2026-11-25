@@ -332,6 +332,18 @@
 .online-sources-msg:empty { display: none; }
 .online-sources-msg.error { color: var(--danger); }
 
+/* Settings, Transcription (transcriptionSettings.js): the notice is always
+   shown, then the engine line, or why it cannot run here. Under Detail one
+   sentence per choice, the chosen one brighter. */
+.transcription-notice-text { margin: 6px 0 0; color: var(--fg-2); }
+.transcription-engine { margin: 8px 0 0; }
+.transcription-unavailable { margin: 8px 0 0; color: var(--danger); }
+.transcription-detail-desc { margin: 4px 0 0; }
+.transcription-detail-desc.is-current { color: var(--fg-2); }
+.transcription-msg { padding: 0 0 18px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.transcription-msg:empty { display: none; }
+.transcription-msg.error { color: var(--danger); }
+
 /* Settings, Separation: the model for each stem (separationSettings.js). The
    reason, the estimate and "Use recommended" sit at the top of the card, then
    one row per stem. A stem without a choice reads as a line, not a control. */
