@@ -366,7 +366,11 @@
 .crash-reports-msg { padding: 0 0 18px; margin-top: -8px; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .crash-reports-msg:empty { display: none; }
 .crash-reports-msg.error { color: var(--danger); }
-.crash-reports-server-note { margin: 0 0 12px; }
+/* A server's Privacy pane is this one sentence (wirePrivacySettings adds
+   .privacy-server); the desktop app never shows it. */
+.crash-reports-server-note { display: none; margin: 0 0 12px; }
+.privacy-server > .crash-reports-server-note { display: block; }
+.privacy-server > :not(.crash-reports-server-note) { display: none; }
 /* The example report: the Last report box's look, a fixed height of its own
    (it sits in a stacked row, not a filling section), scrollable, selectable. */
 .crash-reports-example { display: block; flex: none; min-height: 0; height: 300px; margin-top: 10px; user-select: text; }

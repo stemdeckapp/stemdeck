@@ -181,7 +181,6 @@ const KEYS = [
   "settings.crashReports.exampleTitle",
   "settings.crashReports.exampleDesc",
   "settings.crashReports.exampleAria",
-  "settings.crashReports.exampleServer",
   "settings.crashReports.exampleFailed",
   "help.set.crashReportsExample",
   "settings.crashReports.unavailable",
